@@ -1,0 +1,408 @@
+"""Deferred-extraction worker for the ambient-capture (observe) plane.
+
+`observe.record` writes raw tool-trace observations into the episodic plane
+with no LLM/embedding. `observe.crystallize` tags a session's observations
+READY (`crystallize:ready`). This worker picks up READY rows per session,
+replays their narratives through `memory.set_from_messages` (LLM extraction
++ embedding + conflict-surfacing + blacklist), and rewrites each source row
+`crystallize:done` so the next pass skips it — idempotent.
+
+Off by default (`LOOM_OBSERVE_EXTRACT_ENABLED`); requires LLM credentials.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from typing import Any
+
+from server.memory.app.observe_replay import _extract_replay, replay_messages
+from server.memory.domain.observation_tags import (
+    CRYSTALLIZE_DONE_TAG,
+    CRYSTALLIZE_READY_TAG,
+    OBSERVATION_TAG,
+)
+from server.memory.store.rows import next_version
+from server.workers.status import record_pass
+
+log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ObserveExtractConfig:
+    # Max sessions distilled per pass (each session = one extraction call).
+    max_sessions_per_pass: int = 10
+    # Max observations replayed per session into one extraction call.
+    max_observations_per_session: int = 100
+    # Optional scope filters — tests pass these to keep the scan
+    # deterministic under shared CH state; production runs unscoped.
+    org_filter: str | None = None
+    namespace_filter: str | None = None
+    # Buffer threshold: None = server setting; 0 disables.
+    buffer_chars: int | None = None
+    buffer_min_observations: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DistilledSession:
+    """What one session's distillation wrote."""
+
+    org: str
+    namespace: str
+    session_id: str
+    observations: int
+    written: int
+    events: int
+    notes: int
+    extra_failures: tuple[str, ...]
+
+
+@dataclass
+class ObserveExtractResult:
+    distilled_sessions: list[DistilledSession] = field(default_factory=list)
+    written_memories: int = 0
+    observations_consumed: int = 0
+    failures: list[str] = field(default_factory=list)
+    # The event and note pools written next to the facts.
+    events_written: int = 0
+
+    @property
+    def distilled_count(self) -> int:
+        return len(self.distilled_sessions)
+
+
+async def find_ready_sessions(
+    cfg: ObserveExtractConfig,
+    ch: Any | None = None,
+) -> list[dict[str, Any]]:
+    """Return the (org, namespace, agent, user_id, session_id) tuples that
+    have at least one READY-but-not-DONE episodic observation, newest
+    activity first. One tuple = one extraction batch.
+
+    FINAL collapses the RMT so the tag state read is the latest version.
+    """
+    from server.core.ch import get_client
+
+    ch = ch or get_client()
+    scope = ""
+    params: dict[str, Any] = {
+        "obs_tag": OBSERVATION_TAG,
+        "ready_tag": CRYSTALLIZE_READY_TAG,
+        "done_tag": CRYSTALLIZE_DONE_TAG,
+        "lim": cfg.max_sessions_per_pass,
+    }
+    if cfg.org_filter is not None:
+        scope += " AND org = {org_f:String}"
+        params["org_f"] = cfg.org_filter
+    if cfg.namespace_filter is not None:
+        scope += " AND namespace = {ns_f:String}"
+        params["ns_f"] = cfg.namespace_filter
+    rows = await ch.query_all(
+        f"""
+        SELECT org, namespace, agent, user_id, session_id,
+               count() AS n, max(created_at) AS last_at
+        FROM loom.memory FINAL
+        WHERE memory_type = 'episodic'
+          AND has(tags, {{obs_tag:String}})
+          AND has(tags, {{ready_tag:String}})
+          AND NOT has(tags, {{done_tag:String}})
+          AND tombstoned_at IS NULL
+          {scope}
+        GROUP BY org, namespace, agent, user_id, session_id
+        ORDER BY last_at DESC
+        LIMIT {{lim:UInt32}}
+        """,
+        params=params,
+    )
+    out = [{**dict(r), "trigger": "ready"} for r in rows]
+
+    # Buffer threshold: sessions whose un-distilled
+    # observations have grown past `buffer_chars` are distilled without an
+    # explicit READY, the way a short-term buffer flushes when full. Sessions
+    # already listed above are not repeated.
+    from server.settings import settings
+
+    buf_chars = (
+        cfg.buffer_chars if cfg.buffer_chars is not None else settings.observe_extract_buffer_chars
+    )
+    buf_min = (
+        cfg.buffer_min_observations
+        if cfg.buffer_min_observations is not None
+        else settings.observe_extract_buffer_min_observations
+    )
+    if buf_chars and buf_chars > 0 and len(out) < cfg.max_sessions_per_pass:
+        seen = {(r["org"], r["namespace"], r["agent"], r["user_id"], r["session_id"]) for r in out}
+        params2 = {**params, "buf_chars": int(buf_chars), "buf_min": int(max(1, buf_min))}
+        params2.pop("ready_tag", None)
+        more = await ch.query_all(
+            f"""
+            SELECT org, namespace, agent, user_id, session_id,
+                   count() AS n, max(created_at) AS last_at,
+                   sum(length(value)) AS chars
+            FROM loom.memory FINAL
+            WHERE memory_type = 'episodic'
+              AND has(tags, {{obs_tag:String}})
+              AND NOT has(tags, {{done_tag:String}})
+              AND tombstoned_at IS NULL
+              {scope}
+            GROUP BY org, namespace, agent, user_id, session_id
+            HAVING chars >= {{buf_chars:UInt64}} AND n >= {{buf_min:UInt32}}
+            ORDER BY chars DESC
+            LIMIT {{lim:UInt32}}
+            """,
+            params=params2,
+        )
+        for r in more:
+            key = (r["org"], r["namespace"], r["agent"], r["user_id"], r["session_id"])
+            if key in seen or len(out) >= cfg.max_sessions_per_pass:
+                continue
+            seen.add(key)
+            out.append({**dict(r), "trigger": "buffer"})
+    return out
+
+
+async def _load_session_observations(
+    session: dict[str, Any],
+    cfg: ObserveExtractConfig,
+    ch: Any,
+) -> list[Any]:
+    """Full-projection rows for one session's READY observations, oldest
+    first (chronological replay order). Full projection so the DONE rewrite
+    can mirror every persisted column."""
+    import server.memory.store as memory_repo
+
+    # One statement: the listing reads the full projection, so the rows it
+    # returns are the rows the DONE rewrite re-emits (no per-key re-read).
+    rows = await ch.query_all(
+        f"""{memory_repo._MEMORY_FINAL_PROJECTION}
+        WHERE org = {{org:String}}
+          AND namespace = {{ns:String}}
+          AND agent = {{agent:String}}
+          AND user_id = {{uid:String}}
+          AND session_id = {{sid:String}}
+          AND memory_type = 'episodic'
+          AND has(tags, {{obs_tag:String}})
+          AND (has(tags, {{ready_tag:String}}) OR {{buffer_trigger:UInt8}} = 1)
+          AND NOT has(tags, {{done_tag:String}})
+          AND tombstoned_at IS NULL
+        ORDER BY created_at ASC
+        LIMIT {{lim:UInt32}}
+        """,
+        params={
+            "org": session["org"],
+            "ns": session["namespace"],
+            "agent": session["agent"],
+            "uid": session["user_id"],
+            "sid": session["session_id"],
+            "obs_tag": OBSERVATION_TAG,
+            "ready_tag": CRYSTALLIZE_READY_TAG,
+            "done_tag": CRYSTALLIZE_DONE_TAG,
+            "lim": cfg.max_observations_per_session,
+            # A buffer-triggered session distils every un-done observation,
+            # READY-tagged or not.
+            "buffer_trigger": 1 if session.get("trigger") == "buffer" else 0,
+        },
+    )
+    return [memory_repo._hydrate(r) for r in rows]
+
+
+async def _distill_session(
+    session: dict[str, Any],
+    observations: list[Any],
+) -> DistilledSession:
+    """Replay one session's observations through memory.set_from_messages
+    (one synthetic `user` turn per narrative) and mark the sources DONE."""
+    import server.memory.store as memory_repo
+
+    msgs = replay_messages(observations, agent=str(session.get("agent") or ""))
+    # observation_date anchor: use the newest valid_at the capture path
+    # stamped, if any, so relative time refs resolve.
+    observation_date = ""
+    for o in observations:
+        va = getattr(o, "valid_at", None)
+        if va is not None:
+            observation_date = va.date().isoformat()
+
+    written = await _extract_replay(session, msgs, observation_date)
+    # The transition events and the two session notes, from
+    # the same observations, before they are marked DONE. Fail-open: the
+    # facts are already written; a failed note is a count, not a lost pass.
+    context = await _load_session_context(session, ch=get_client_for_context())
+    extras = await _distill_extras(session, observations, context=context)
+
+    # Mark sources DONE. RMT: mirror every column, only tags + version change.
+    from server.core.ch import get_client
+
+    version_rows = []
+    for existing in observations:
+        new_tags = [t for t in (existing.tags or []) if t != CRYSTALLIZE_READY_TAG]
+        if CRYSTALLIZE_DONE_TAG not in new_tags:
+            new_tags.append(CRYSTALLIZE_DONE_TAG)
+        version_rows.append(
+            memory_repo.build_memory_version_row(existing, version=next_version(), tags=new_tags)
+        )
+    # One committed insert for the session's observations.
+    await memory_repo.insert_memory_versions(version_rows, ch=get_client())
+
+    return DistilledSession(
+        org=str(session["org"]),
+        namespace=str(session["namespace"]),
+        session_id=str(session["session_id"]),
+        observations=len(observations),
+        written=written,
+        events=int(extras.events_written),
+        notes=int(extras.procedure_written) + int(extras.hint_written),
+        extra_failures=tuple(extras.failures),
+    )
+
+
+def get_client_for_context() -> Any:
+    from server.core.ch import get_client
+
+    return get_client()
+
+
+async def _load_session_context(session: dict[str, Any], *, ch: Any) -> list[Any]:
+    """Every observation of the session so far — the ones earlier passes
+    already distilled and the ones this pass is about to — as
+    `trajectory_notes.Observation`s, oldest first, bounded.
+    Content-less rows (`skipped:*`) are left out. [] when the read fails;
+    the caller then falls back to this pass's rows."""
+    from types import SimpleNamespace
+
+    from server.memory.app import trajectory_notes as tn
+
+    try:
+        rows = await ch.query_all(
+            """
+            SELECT memory_key, value, created_at, valid_at
+            FROM loom.memory FINAL
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND agent = {agent:String} AND user_id = {uid:String}
+              AND session_id = {sid:String}
+              AND memory_type = 'episodic' AND has(tags, {obs_tag:String})
+              AND NOT arrayExists(t -> startsWith(t, 'skipped:'), tags)
+              AND tombstoned_at IS NULL
+            ORDER BY created_at ASC
+            LIMIT {lim:UInt32}
+            """,
+            params={
+                "org": session["org"],
+                "ns": session["namespace"],
+                "agent": session["agent"],
+                "uid": session["user_id"],
+                "sid": session["session_id"],
+                "obs_tag": OBSERVATION_TAG,
+                "lim": int(_SESSION_CONTEXT_LIMIT),
+            },
+        )
+    except Exception as e:  # noqa: BLE001 — the session distills without context
+        log.debug("session context read skipped: %s", e)
+        return []
+    return [tn.observation_from_row(SimpleNamespace(**dict(r))) for r in rows or []]
+
+
+# The most observations a session's notes read: the notes
+# prompt is bounded by characters anyway; this bounds the read.
+_SESSION_CONTEXT_LIMIT = 400
+
+
+async def _distill_extras(
+    session: dict[str, Any], observations: list[Any], *, context: list[Any] | None = None
+) -> Any:
+    """Events + notes for one session; a missing model or any error leaves an
+    empty result. With
+    `context` the events are numbered over, and the notes
+    written from, the WHOLE session so far; only this pass's observations
+    get new events."""
+    from server.memory.app import trajectory_notes as tn
+    from server.settings import settings
+
+    res = tn.ExtrasResult()
+    obs = [tn.observation_from_row(o) for o in observations]
+    if all(o.trivial for o in obs):
+        return res  # tool names only: nothing to learn from
+    new_keys = {o.memory_key for o in obs}
+    only_after: set[str] | None = None
+    if context:
+        known = {o.memory_key for o in context}
+        # this pass's rows may not be visible to the context read yet
+        obs = list(context) + [o for o in obs if o.memory_key not in known]
+        only_after = new_keys
+    try:
+        from server.llm.client import get_llm_client
+
+        llm = get_llm_client()
+    except Exception as e:  # noqa: BLE001 — recorded as this session's failure, never raised
+        res.failures.append(f"llm: {type(e).__name__}: {e}")
+        return res
+    await tn.distill_events(
+        session,
+        obs,
+        llm=llm,
+        max_events=int(settings.observe_extract_max_events_per_session),
+        res=res,
+        only_after=only_after,
+    )
+    await tn.distill_notes(session, obs, llm=llm, res=res)
+    return res
+
+
+async def run_pass(
+    cfg: ObserveExtractConfig | None = None,
+) -> ObserveExtractResult:
+    """One scan-and-distill pass. Picks up READY observation sessions and
+    runs the deferred extraction for each. Returns the result for
+    logging/metrics."""
+    from server.core.ch import get_client
+
+    cfg = cfg or ObserveExtractConfig()
+    result = ObserveExtractResult()
+    ch = get_client()
+
+    with record_pass("observe_extract") as rec:
+        sessions = await find_ready_sessions(cfg, ch=ch)
+        for session in sessions:
+            try:
+                observations = await _load_session_observations(session, cfg, ch)
+                if not observations:
+                    continue
+                distilled = await _distill_session(session, observations)
+                result.distilled_sessions.append(distilled)
+                result.written_memories += distilled.written
+                result.observations_consumed += distilled.observations
+                result.events_written += distilled.events
+                result.failures.extend(distilled.extra_failures)
+            except Exception as e:
+                log.exception(
+                    "observe_extract failed for %s/%s/%s",
+                    session.get("org"),
+                    session.get("namespace"),
+                    session.get("session_id"),
+                )
+                result.failures.append(f"{type(e).__name__}: {e}")
+                # Keep going — one bad session shouldn't stop the pass.
+        rec.outcome = {
+            "distilled_sessions": result.distilled_count,
+            "written_memories": result.written_memories,
+            "observations_consumed": result.observations_consumed,
+            "failed": len(result.failures),
+        }
+
+    if result.distilled_count or result.failures:
+        log.info(
+            "observe_extract: distilled=%d sessions, %d memories from %d observations, %d failed",
+            result.distilled_count,
+            result.written_memories,
+            result.observations_consumed,
+            len(result.failures),
+        )
+    return result
+
+
+__all__ = [
+    "ObserveExtractConfig",
+    "ObserveExtractResult",
+    "find_ready_sessions",
+    "run_pass",
+]

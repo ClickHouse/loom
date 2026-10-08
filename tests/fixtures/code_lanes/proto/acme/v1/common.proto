@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package acme.v1;
+
+option go_package = "example.com/acme/api/v1;acmev1";
+
+// Status of a resource.
+enum Status {
+  STATUS_UNSPECIFIED = 0;
+  STATUS_ACTIVE = 1;
+  STATUS_DELETED = 2;
+}
+
+// Instance is a running thing.
+message Instance {
+  string id = 1;
+  string name = 2;
+  Status status = 3;
+  map<string, string> labels = 4;
+
+  // Endpoint is where the instance listens.
+  message Endpoint {
+    string host = 1;
+    int32 port = 2;
+  }
+  repeated Endpoint endpoints = 5;
+}

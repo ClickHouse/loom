@@ -1,0 +1,352 @@
+"""Erasure plane handlers — the four `erasure.*` ops. They validate the
+request and authorize the caller against its scope, then delegate: the saga
+engine (steps, checkpoints, resume, residue census) lives in
+`server.erasure.app.saga`; export, status and list read the erasure
+store directly.
+"""
+
+from __future__ import annotations
+
+import json
+import uuid
+from collections.abc import Mapping
+from datetime import UTC, datetime
+from typing import Any, cast
+
+from server.auth import authz
+from server.auth import context as auth_context
+from server.auth.jwt import AuthInfo
+from server.core.errors import AuthInsufficientError
+from server.erasure.api.erasure import (
+    ErasureExportInput,
+    ErasureExportOutput,
+    ErasureExportSection,
+    ErasureListInput,
+    ErasureListOutput,
+    ErasureListRow,
+    ErasureRequestInput,
+    ErasureRequestOutput,
+    ErasureStatus,
+    ErasureStatusInput,
+    ErasureStatusOutput,
+)
+from server.erasure.app.saga import audit_namespace, begin_erasure, run_saga
+from server.erasure.store import exports as erasure_exports
+from server.erasure.store import ledger as erasure_ledger
+from server.erasure.store.rows import RequestStatusRow
+from server.observability import audit
+from server.operations.base import Role
+
+
+def _org_wide_admin(auth: AuthInfo, org: str) -> bool:
+    """The org-wide view of erasure: a flat ORG_ADMIN of `org` (or of every
+    org) or a PLATFORM_ADMIN. Never a scoped token: its authority is its
+    namespaces, so its flat roles confer nothing org-wide."""
+    return not auth.has_ns_roles() and (
+        auth.has_role(Role.PLATFORM_ADMIN)
+        or (auth.has_role(Role.ORG_ADMIN) and auth.org in ("*", org))
+    )
+
+
+async def handle_erasure_request(input: ErasureRequestInput) -> ErasureRequestOutput:
+    # Scope-specific authz beyond the wire-level WRITER check: erasure needs
+    # admin on the target. namespace scope → ADMIN on the namespace by the
+    # canonical check (a scoped token's ns_roles entry is its ceiling there);
+    # user_id and namespace_list span namespaces → the org-wide view.
+    auth = auth_context.current_auth()
+    if auth is not None:
+        allowed = _org_wide_admin(auth, input.org) or (
+            input.scope_type == "namespace"
+            and await authz.row_in_scope(input.org, input.scope_value, Role.ADMIN)
+        )
+        if not allowed:
+            raise AuthInsufficientError(
+                f"erasure on scope_type={input.scope_type!r} requires admin on the target "
+                f"{input.scope_value!r}; principal {auth.subject!r} doesn't have it"
+            )
+
+    input, row, erasure_id, now = await begin_erasure(input)
+    return await run_saga(
+        input=input,
+        row=row,
+        erasure_id=erasure_id,
+        requested_at=now,
+        previously_completed=set(),
+    )
+
+
+def _serialize_row(row: Mapping[str, object]) -> dict[str, object]:
+    """Bytes decoded; datetimes, UUIDs and Decimals stay for Pydantic's JSON dump."""
+    return {
+        k: v.decode("utf-8", errors="replace") if isinstance(v, bytes) else v
+        for k, v in row.items()
+    }
+
+
+def _page(rows: list[Any], limit: int) -> tuple[list[dict[str, object]], int, bool]:
+    """(serialized rows, count, truncated) of a read that asked for `limit + 1`."""
+    truncated = len(rows) > limit
+    kept = [_serialize_row(r) for r in rows[:limit]]
+    return kept, len(kept), truncated
+
+
+async def _export_memory(
+    org: str, scope_type: str, scope_value: str, *, include_tombstoned: bool, limit: int
+) -> tuple[list[dict[str, object]], int, bool]:
+    rows = await erasure_exports.export_memory(
+        org, scope_type, scope_value, include_tombstoned=include_tombstoned, limit=limit + 1
+    )
+    return _page(rows, limit)
+
+
+async def _export_knowledge(
+    org: str, scope_type: str, scope_value: str, *, limit: int
+) -> tuple[list[dict[str, object]], int, bool]:
+    """Knowledge is namespace-scoped. For user_id exports this section is empty
+    (we don't track per-user knowledge authorship in chunks)."""
+    if scope_type != "namespace":
+        return [], 0, False
+    return _page(await erasure_exports.export_knowledge(org, scope_value, limit=limit + 1), limit)
+
+
+async def _export_agent_events(
+    org: str, scope_type: str, scope_value: str, *, limit: int
+) -> tuple[list[dict[str, object]], int, bool]:
+    rows = await erasure_exports.export_agent_events(org, scope_type, scope_value, limit=limit + 1)
+    return _page(rows, limit)
+
+
+async def _export_audit_log(
+    org: str, scope_type: str, scope_value: str, *, limit: int
+) -> tuple[list[dict[str, object]], int, bool]:
+    """Audit rows about this subject. namespace scope filters by tag; user_id
+    scope filters by substring over the JSON `subject` blob (no native user_id
+    column) — coarse but adequate for an export."""
+    if scope_type == "namespace":
+        rows = await erasure_exports.export_audit_namespace(org, scope_value, limit=limit + 1)
+    else:
+        rows = await erasure_exports.export_audit_by_subject_substring(
+            org, scope_value, limit=limit + 1
+        )
+    return _page(rows, limit)
+
+
+async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutput:
+    now = datetime.now(UTC).replace(tzinfo=None)
+
+    # The input carries no `namespace`, so the transport bound an org-only check. A
+    # namespace export is authorized against the namespace itself (a restricted one needs
+    # the two-factor ADMIN check); a subject export spans every namespace of the org and
+    # needs the org-wide view, less the restricted namespaces this caller may not read.
+    auth = auth_context.current_auth()
+    hidden: set[str] = set()
+    if auth is not None:
+        if input.scope_type == "namespace":
+            try:
+                await authz.check_authorized(
+                    auth, Role.ADMIN, org=input.org, namespace=input.scope_value
+                )
+            except PermissionError as e:
+                raise AuthInsufficientError(str(e)) from e
+        else:
+            if not _org_wide_admin(auth, input.org):
+                raise AuthInsufficientError(
+                    f"erasure.export scope_type={input.scope_type!r} requires org admin"
+                )
+            hidden = set(await auth_context.restricted_namespaces_hidden_from(input.org))
+            if "*" in hidden:
+                raise AuthInsufficientError(
+                    f"cannot export {input.org}: namespace classification unavailable"
+                )
+
+    def _visible(rows: list[dict[str, object]], count: int) -> tuple[list[dict[str, object]], int]:
+        if not hidden:
+            return rows, count
+        kept = [r for r in rows if str(r.get("namespace") or "") not in hidden]
+        return kept, count - (len(rows) - len(kept))
+
+    mem_rows, mem_count, mem_trunc = await _export_memory(
+        input.org,
+        input.scope_type,
+        input.scope_value,
+        include_tombstoned=input.include_tombstoned,
+        limit=input.section_limit,
+    )
+    know_rows, know_count, know_trunc = await _export_knowledge(
+        input.org,
+        input.scope_type,
+        input.scope_value,
+        limit=input.section_limit,
+    )
+    evt_rows, evt_count, evt_trunc = await _export_agent_events(
+        input.org,
+        input.scope_type,
+        input.scope_value,
+        limit=input.section_limit,
+    )
+    aud_rows, aud_count, aud_trunc = await _export_audit_log(
+        input.org,
+        input.scope_type,
+        input.scope_value,
+        limit=input.section_limit,
+    )
+    mem_rows, mem_count = _visible(mem_rows, mem_count)
+    know_rows, know_count = _visible(know_rows, know_count)
+    evt_rows, evt_count = _visible(evt_rows, evt_count)
+    aud_rows, aud_count = _visible(aud_rows, aud_count)
+
+    await audit.emit(
+        event_type="erasure.exported",
+        org=input.org,
+        namespace=audit_namespace(input.scope_type, input.scope_value),
+        actor=input.requester,
+        subject={
+            "scope_type": input.scope_type,
+            "scope_value": input.scope_value,
+            "counts": {
+                "memory": mem_count,
+                "knowledge": know_count,
+                "agent_events": evt_count,
+                "audit_log": aud_count,
+            },
+        },
+        request_id=str(uuid.uuid4()),
+    )
+
+    return ErasureExportOutput(
+        exported_at=now,
+        org=input.org,
+        scope_type=input.scope_type,
+        scope_value=input.scope_value,
+        requester=input.requester,
+        counts={
+            "memory": mem_count,
+            "knowledge": know_count,
+            "agent_events": evt_count,
+            "audit_log": aud_count,
+        },
+        memory=ErasureExportSection(rows=mem_rows, count=mem_count, truncated=mem_trunc),
+        knowledge=ErasureExportSection(rows=know_rows, count=know_count, truncated=know_trunc),
+        agent_events=ErasureExportSection(rows=evt_rows, count=evt_count, truncated=evt_trunc),
+        audit_log=ErasureExportSection(rows=aud_rows, count=aud_count, truncated=aud_trunc),
+    )
+
+
+async def _authorize_status_read(row: RequestStatusRow) -> bool:
+    """Whether the current principal may read this saga's status.
+
+    The op is addressed by erasure_id alone — no org in the body for the
+    transport authz to scope — so the saga row itself is the authority.
+    Namespace-scoped sagas require the token to cover (org, scope_value),
+    grant fallback included. user_id-scoped sagas span every namespace in
+    the org, so there is no namespace to bind a grant to: org membership
+    (or a wildcard-org service account) is the gate. False on refusal, so the
+    caller answers found=False exactly as for an unknown id — a 403 would
+    confirm the id exists and name its org. True when auth is disabled
+    (LOOM_AUTH_REQUIRED=false).
+    """
+    auth = auth_context.current_auth()
+    if auth is None:
+        return True
+    row_org = str(row["org"])
+    if str(row["scope_type"]) == "namespace":
+        return await authz.row_in_scope(row_org, str(row["scope_value"]), Role.VIEWER)
+    # A user_id saga spans every namespace of the org, and a scoped token's authority is its
+    # namespaces — org membership is a flat token's gate, never a scoped one's.
+    return auth.org in ("*", row_org) and not auth.has_ns_roles()
+
+
+async def handle_erasure_status(input: ErasureStatusInput) -> ErasureStatusOutput:
+    row = await erasure_ledger.fetch_request_status(input.erasure_id)
+    if row is None:
+        return ErasureStatusOutput(found=False, erasure_id=input.erasure_id)
+    if not await _authorize_status_read(row):
+        return ErasureStatusOutput(found=False, erasure_id=input.erasure_id)
+    return ErasureStatusOutput(
+        found=True,
+        erasure_id=str(row["id"]),
+        org=row["org"],
+        scope_type=row["scope_type"],
+        scope_value=row["scope_value"],
+        requester=row["requester"],
+        status=cast("ErasureStatus", row["status"]),
+        current_step=int(row["current_step"]),
+        requested_at=row["requested_at"],
+        completed_at=row["completed_at"],
+        failure_reason=row["failure_reason"] or None,
+        residue_count=int(row.get("residue_count") or 0),
+        residue=_parse_residue(row.get("residue")),
+        verified_at=row.get("verified_at"),
+    )
+
+
+def _parse_residue(raw: str | None) -> dict[str, int]:
+    try:
+        data = json.loads(raw) if raw else {}
+    except (TypeError, ValueError):
+        return {}
+    return {str(k): int(v) for k, v in data.items()} if isinstance(data, dict) else {}
+
+
+async def _list_scope(org: str) -> tuple[str, dict[str, Any]] | None:
+    """The erasure.list rows the caller may see, as (WHERE fragment, params); None = none.
+
+    The org-wide view (every scope type, user_id sagas included) is erasure.request's.
+    Even that view leaves out the restricted namespaces the caller holds no grant +
+    claim for. A namespace-wildcard flat token sees every namespace's sagas under the
+    same restricted rule; everyone else sees the namespace sagas of the namespaces it
+    may read (restricted ones only with the grant)."""
+    auth = auth_context.current_auth()
+    if auth is None:
+        return "", {}
+    admin_view = _org_wide_admin(auth, org)
+    if admin_view or (not auth.has_ns_roles() and "*" in (auth.namespaces or ())):
+        hidden = await auth_context.restricted_namespaces_hidden_from(org)
+        if hidden == ["*"]:
+            return None
+        where = "" if admin_view else " AND scope_type = 'namespace'"
+        if hidden:
+            where += " AND NOT (scope_type = 'namespace' AND scope_value IN {hidden:Array(String)})"
+        return where, ({"hidden": hidden} if hidden else {})
+    ns_list = sorted(await auth_context.resolve_my_namespaces(org))
+    if not ns_list:
+        return None
+    return (
+        " AND scope_type = 'namespace' AND scope_value IN {nslist:Array(String)}",
+        {"nslist": ns_list},
+    )
+
+
+async def handle_erasure_list(input: ErasureListInput) -> ErasureListOutput:
+    """Audit-shaped roll-up of the org's erasures the caller may see: the
+    org-wide view for an org admin, the namespace sagas of the caller's own
+    namespaces otherwise."""
+    scope = await _list_scope(input.org)
+    if scope is None:
+        return ErasureListOutput(rows=[])
+    rows = await erasure_ledger.list_requests(
+        input.org,
+        status=input.status or None,
+        limit=int(input.limit),
+        scope_where=scope[0],
+        scope_params=scope[1],
+    )
+    return ErasureListOutput(
+        rows=[
+            ErasureListRow(
+                erasure_id=str(r["id"]),
+                scope_type=str(r["scope_type"]),
+                scope_value=str(r["scope_value"]),
+                requester=str(r["requester"]),
+                status=cast("ErasureStatus", r["status"]),
+                requested_at=r["requested_at"],
+                completed_at=r["completed_at"],
+                failure_reason=str(r.get("failure_reason") or ""),
+                steps_completed_count=int(r.get("steps_completed_count") or 0),
+                reversals_count=int(r.get("reversals_count") or 0),
+                residue_count=int(r.get("residue_count") or 0),
+                verified_at=r.get("verified_at"),
+            )
+            for r in rows
+        ]
+    )

@@ -1,0 +1,312 @@
+"""Two graph/embedding quality guards.
+
+Both pin failures observed on real data, not hypotheticals.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
+from server.memory.app.entity_projections import (  # noqa: E402
+    _candidate_entities_from_value,
+)
+
+
+# --- entity candidate stoplist -------------------------------------------------
+# Function words become hub nodes: on one real graph `why` was the 7th
+# highest-degree node of 19,897, and 90 function words held 5.4% of all edge
+# degree while being 0.5% of nodes. Each word below was observed as a real node.
+@pytest.mark.parametrize(
+    "word",
+    [
+        "why",
+        "all",
+        "what",
+        "explicitly",
+        "near",
+        "which",
+        "who",
+        "where",
+        "however",
+        "actually",
+        "currently",
+        "specifically",
+        "between",
+        "through",
+    ],
+)
+def test_function_words_are_not_entities(word: str) -> None:
+    ents = _candidate_entities_from_value(f"The deployment {word} the shard replica failed")
+    assert word not in ents, f"{word!r} must not become an entity graph node"
+
+
+# The other half of the contract: the stoplist must stay closed-class. These are
+# the busiest *legitimate* nodes in a code-review namespace, and the module's own
+# comment warns that filtering them would drop real entities.
+@pytest.mark.parametrize(
+    "word", ["bug", "column", "coverage", "mergetree", "record", "show", "array"]
+)
+def test_domain_words_are_still_entities(word: str) -> None:
+    ents = _candidate_entities_from_value(f"the {word} and the shard replica")
+    assert word in ents, f"{word!r} is a real entity and must survive the stoplist"
+
+
+def test_proper_noun_phrase_survives_even_when_it_contains_a_stopword() -> None:
+    """Filtering the bare token must not cost the phrase node it appears in —
+    this is why dropping these words loses no real entity."""
+    ents = _candidate_entities_from_value("Alice reported Down Syndrome research")
+    assert "down syndrome" in ents
+    assert "down" not in ents
+
+
+def test_measured_sentence_loses_only_the_function_word() -> None:
+    """A probe sentence: `near` is not a node; the proper nouns and their
+    constituents are, because the graph read matches
+    seeds by exact string and dropping constituents would cost recall."""
+    ents = _candidate_entities_from_value(
+        "Zorbulax Quinteria met Fenwhistle Draymoor near Yalgamesh Peak"
+    )
+    assert "near" not in ents
+    for kept in (
+        "zorbulax quinteria",
+        "fenwhistle draymoor",
+        "yalgamesh peak",
+        "zorbulax",
+        "peak",
+    ):
+        assert kept in ents, f"{kept!r} must remain reachable as a seed"
+
+
+# --- batched embedding order --------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_embed_many_maps_results_by_index_not_position() -> None:
+    """A reordered provider response must not swap vectors.
+
+    `memory.set` batches [value, memory_key]. A swap puts the key vector in the
+    value column, which corrupts search silently — no error, no bad row, just
+    wrong distances forever.
+    """
+    from server.embedding import openai as oai
+
+    emb = oai.OpenAIEmbedder.__new__(oai.OpenAIEmbedder)
+    emb.model_name = "text-embedding-3-small"  # type: ignore[misc]
+    emb.dim = 0  # type: ignore[misc]
+    emb._api_key = "sk-test"  # type: ignore[misc]
+    emb._endpoint = "https://example.invalid/v1/embeddings"  # type: ignore[misc]
+    emb._encoder = "approx"  # type: ignore[misc]
+
+    class _Resp:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            # Deliberately reversed: index 1 first.
+            return {
+                "usage": {"total_tokens": 4},
+                "data": [
+                    {"index": 1, "embedding": [9.0, 9.0]},
+                    {"index": 0, "embedding": [1.0, 1.0]},
+                ],
+            }
+
+    class _Client:
+        async def post(self, *a, **k):
+            return _Resp()
+
+    import server.embedding.openai as mod
+
+    orig = mod._http_client
+    mod._http_client = lambda: _Client()  # type: ignore[assignment]
+    try:
+        vecs, _billed, _hits = await emb._embed_many_raw(["value-text", "key-text"])
+    finally:
+        mod._http_client = orig  # type: ignore[assignment]
+
+    assert vecs[0] == [1.0, 1.0], "input 0 must get the entry whose index is 0"
+    assert vecs[1] == [9.0, 9.0], "input 1 must get the entry whose index is 1"
+
+
+@pytest.mark.asyncio
+async def test_embed_many_refuses_a_short_response() -> None:
+    """Fewer vectors than inputs must raise, not leave a slot unfilled."""
+    from server.embedding import openai as oai
+
+    emb = oai.OpenAIEmbedder.__new__(oai.OpenAIEmbedder)
+    emb.model_name = "text-embedding-3-small"  # type: ignore[misc]
+    emb.dim = 0  # type: ignore[misc]
+    emb._api_key = "sk-test"  # type: ignore[misc]
+    emb._endpoint = "https://example.invalid/v1/embeddings"  # type: ignore[misc]
+    emb._encoder = "approx"  # type: ignore[misc]
+
+    class _Resp:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"usage": {}, "data": [{"index": 0, "embedding": [1.0]}]}
+
+    class _Client:
+        async def post(self, *a, **k):
+            return _Resp()
+
+    import server.embedding.openai as mod
+
+    orig = mod._http_client
+    mod._http_client = lambda: _Client()  # type: ignore[assignment]
+    try:
+        with pytest.raises(RuntimeError, match="batch size mismatch"):
+            await emb._embed_many_raw(["a", "b"])
+    finally:
+        mod._http_client = orig  # type: ignore[assignment]
+
+
+# --- provider prompt-cache accounting ------------------------------------------
+
+
+def _gen_span():
+    """A _Generation bound to a recording fake span."""
+    from server.observability import genai
+
+    class _Span:
+        def __init__(self) -> None:
+            self.attrs: dict = {}
+
+        def set_attribute(self, k, v) -> None:
+            self.attrs[k] = v
+
+    g = genai._Generation.__new__(genai._Generation)
+    span = _Span()
+    g._span = span  # type: ignore[attr-defined]
+    g._model = "gpt-4o-mini"  # type: ignore[attr-defined]
+    g._attempts = 0  # type: ignore[attr-defined]
+    return g, span
+
+
+def test_prompt_cache_read_is_recorded_with_a_ratio() -> None:
+    """loom's hottest LLM call ships a ~15k-token static system prompt, so the
+    provider cache hit rate is the main lever on its latency and cost. Without
+    it on the trace, calls with identical token counts and very different
+    latencies cannot be explained."""
+    g, span = _gen_span()
+    g.record_usage(16000, 200, priced=True, cached_input_tokens=15000)
+    assert span.attrs["gen_ai.usage.input_tokens"] == 16000
+    assert span.attrs["gen_ai.usage.cached_input_tokens"] == 15000
+    assert span.attrs["loom.llm.prompt_cache_hit_ratio"] == 0.9375
+
+
+def test_cached_tokens_do_not_alter_reported_input_tokens() -> None:
+    """Reported alongside, never subtracted: the provider's `prompt_tokens` is
+    the billed total, and making the two disagree would put loom's token
+    figure out of step with the invoice. The DOLLARS price the cached share
+    at the provider's cache rate (0.5x on OpenAI), which is
+    what the invoice does."""
+    g, span = _gen_span()
+    g.record_usage(16000, 200, priced=True, cached_input_tokens=15000)
+    from server.observability.cost_accumulator import llm_cost_usd, turn_cost_usd
+
+    assert span.attrs["gen_ai.usage.input_tokens"] == 16000
+    assert span.attrs["gen_ai.usage.cost"] == pytest.approx(
+        turn_cost_usd("gpt-4o-mini", input_tokens=1000, output_tokens=200, cache_read_tokens=15000)
+    )
+    assert span.attrs["gen_ai.usage.cost"] < llm_cost_usd("gpt-4o-mini", 16000, 200)
+
+
+def test_no_cache_attributes_when_nothing_was_cached() -> None:
+    """A zero must be absent, not present-and-zero: 'no cache read' and 'cache
+    read of nothing' are the same event, and an explicit 0 invites a panel to
+    average it in."""
+    g, span = _gen_span()
+    g.record_usage(500, 50, priced=True)
+    assert "gen_ai.usage.cached_input_tokens" not in span.attrs
+    assert "loom.llm.prompt_cache_hit_ratio" not in span.attrs
+
+
+# --- entity pair budget fairness -----------------------------------------------
+
+
+def _pair_degrees(n: int, budget: int, *, offset_major: bool) -> dict[int, int]:
+    """Per-entity edge count under a truncated pair enumeration."""
+    deg = dict.fromkeys(range(n), 0)
+    count = 0
+    if offset_major:
+        for offset in range(1, n):
+            if count >= budget:
+                break
+            for i in range(n - offset):
+                if count >= budget:
+                    break
+                deg[i] += 1
+                deg[i + offset] += 1
+                count += 1
+    else:
+        for i in range(n):
+            if count >= budget:
+                break
+            for j in range(i + 1, n):
+                if count >= budget:
+                    break
+                deg[i] += 1
+                deg[j] += 1
+                count += 1
+    return deg
+
+
+def test_pair_budget_is_spent_evenly_across_entities() -> None:
+    """`_MAX_PAIRS_PER_MEMORY` (100) truncates whenever there are more than 14
+    candidates, and `_SET_ENTITY_MAX_CANDIDATES` is 24 — so truncation is the
+    normal case, not the edge case. Because `ents` is sorted, i-major
+    enumeration made a node's co-occurrence weight depend on its spelling."""
+    n, budget = 24, 100
+    old = _pair_degrees(n, budget, offset_major=False)
+    new = _pair_degrees(n, budget, offset_major=True)
+
+    old_skew = max(old.values()) / min(old.values())
+    new_skew = max(new.values()) / min(new.values())
+
+    # The defect: the alphabetically-first four entities take 23 edges each
+    # while the last five get 4 — a 5.75x spread decided by spelling.
+    assert max(old.values()) == 23 and min(old.values()) == 4
+    assert old_skew > 5.0
+
+    # The offset walk more than halves it: a smooth 4 -> 10 gradient whose extremes are
+    # the FIRST and LAST entity. Deliberately not claiming equalization — offset
+    # enumeration still leaves a boundary effect, because ents[0] and ents[-1]
+    # participate in each offset from one side only. The point is that the
+    # remaining skew is positional and symmetric rather than alphabetical.
+    assert max(new.values()) == 10
+    assert new_skew <= 2.6
+    assert new_skew < old_skew / 2
+
+
+def test_offset_enumeration_visits_every_pair_exactly_once() -> None:
+    """Fairness must not come at the cost of correctness: with no truncation the
+    two orders must produce the identical pair SET."""
+    n = 9
+    want = {(i, j) for i in range(n) for j in range(i + 1, n)}
+    got = set()
+    for offset in range(1, n):
+        for i in range(n - offset):
+            got.add((i, i + offset))
+    assert got == want
+    assert len(got) == n * (n - 1) // 2
+
+
+def test_canonical_order_survives_offset_enumeration() -> None:
+    """`entity_a <= entity_b` is relied on by the bidirectional read query, and
+    offset enumeration must preserve it — it does, because `ents` is sorted."""
+    ents = sorted(["zulu", "alpha", "mike", "bravo", "yankee"])
+    for offset in range(1, len(ents)):
+        for i in range(len(ents) - offset):
+            assert ents[i] <= ents[i + offset]

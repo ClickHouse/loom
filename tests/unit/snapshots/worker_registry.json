@@ -1,0 +1,1437 @@
+{
+ "all_on": [
+  {
+   "deadline_seconds()": 60.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 30,
+   "interval_seconds": 5,
+   "max_pass_seconds": null,
+   "name": "embedding_worker",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.embedding:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 3600,
+   "max_pass_seconds": null,
+   "name": "audit_verifier",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.insights.workers.audit_verifier:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 604800,
+   "max_pass_seconds": null,
+   "name": "recalibration",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.recalibration:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 240.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 60,
+   "max_pass_seconds": null,
+   "name": "erasure_recovery",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.erasure.workers.recovery:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 3600,
+   "max_pass_seconds": null,
+   "name": "erasure_reclaim",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.erasure.workers.reclaim:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 300,
+   "max_pass_seconds": null,
+   "name": "retention_reconcile",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.retention_reconcile:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 3600,
+   "max_pass_seconds": null,
+   "name": "namespace_gc",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.identity.workers.namespace_gc:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 300,
+   "max_pass_seconds": null,
+   "name": "projection_repair",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.projection_repair:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 300,
+   "max_pass_seconds": null,
+   "name": "usage_fold",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.usage_fold:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 600,
+   "max_pass_seconds": null,
+   "name": "orphan_vector_reconcile",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.orphan_vector_reconcile:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 86400,
+   "max_pass_seconds": null,
+   "name": "sensitivity_sweep",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.sensitivity_sweep:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 1800,
+   "max_pass_seconds": null,
+   "name": "conversation_titler",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.knowledge.workers.conversation_titler:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 21600,
+   "max_pass_seconds": null,
+   "name": "profile_consolidation",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.profile_consolidation:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 3600,
+   "max_pass_seconds": null,
+   "name": "reflection_distill",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.reflection_distill:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 240.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 300,
+   "interval_seconds": 60,
+   "max_pass_seconds": null,
+   "name": "entity_extractor",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.entity_extractor:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 300,
+   "max_pass_seconds": null,
+   "name": "memory_expiry_sweep",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.expiry_sweep:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 300,
+   "max_pass_seconds": 900.0,
+   "name": "observe_extract",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.observe_extract:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 60.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 15,
+   "max_pass_seconds": null,
+   "name": "extraction_queue",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.extraction_queue:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 120,
+   "max_pass_seconds": 900.0,
+   "name": "code_ingest",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.ingest:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 240.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 60,
+   "max_pass_seconds": null,
+   "name": "code_scip_apply",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.scip_apply:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 300,
+   "max_pass_seconds": null,
+   "name": "code_scip_delta",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.scip_delta:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 600,
+   "max_pass_seconds": null,
+   "name": "code_scip_ts_delta",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.scip_ts_delta:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 600,
+   "max_pass_seconds": null,
+   "name": "code_scip_py_delta",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.scip_py_delta:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 7200.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 900,
+   "max_pass_seconds": 7200.0,
+   "name": "code_scip_go_delta",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.scip_go_delta:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 900,
+   "max_pass_seconds": null,
+   "name": "code_pr_history",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.pr_history:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 120.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 120,
+   "interval_seconds": 30,
+   "max_pass_seconds": null,
+   "name": "code_embed_recovery",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.embed_recovery:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 21600,
+   "max_pass_seconds": null,
+   "name": "entity_communities",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.entity_communities:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 3600.0,
+   "due_scope": null,
+   "first_pass_due": {
+    "id": "server.code.workers.graph_stats:first_pass_due"
+   },
+   "has_first_pass_hook": true,
+   "idle_interval_seconds": null,
+   "interval_seconds": 604800,
+   "max_pass_seconds": 3600.0,
+   "name": "code_graph_stats",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.graph_stats:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": {
+    "id": "server.tracker.workers.test_daily:due_scope"
+   },
+   "first_pass_due": null,
+   "has_first_pass_hook": true,
+   "idle_interval_seconds": null,
+   "interval_seconds": 1800,
+   "max_pass_seconds": 900.0,
+   "name": "tracker_test_daily",
+   "owned_tables": [
+    "OwnedTable(table='loom.qa_rollup_days', namespace_column='qa_namespace', org_column='org')",
+    "OwnedTable(table='loom.qa_test_daily', namespace_column='qa_namespace', org_column='org')"
+   ],
+   "pass_callable": {
+    "id": "server.tracker.workers.test_daily:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 604800,
+   "max_pass_seconds": null,
+   "name": "code_summary",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.summary:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 120.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 30.0,
+   "max_pass_seconds": null,
+   "name": "jwt_revocation_refresh",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.auth.revocation:refresh"
+   }
+  },
+  {
+   "deadline_seconds()": 240.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 300,
+   "interval_seconds": 60,
+   "max_pass_seconds": null,
+   "name": "task_lease_sweep",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.tasks.workers.lease_sweep:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 120.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 30,
+   "interval_seconds": 5,
+   "max_pass_seconds": 120.0,
+   "name": "task_webhook_deliver",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.tasks.workers.webhook_deliver:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 3600.0,
+   "due_scope": {
+    "id": "server.tracker.workers.links:due_scope"
+   },
+   "first_pass_due": null,
+   "has_first_pass_hook": true,
+   "idle_interval_seconds": null,
+   "interval_seconds": 86400.0,
+   "max_pass_seconds": 3600.0,
+   "name": "tracker_links",
+   "owned_tables": [
+    "OwnedTable(table='loom.qa_link_candidates', namespace_column='qa_namespace', org_column='org')"
+   ],
+   "pass_callable": {
+    "id": "server.tracker.workers.links:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": {
+    "id": "server.tracker.workers.embed:due_scope"
+   },
+   "first_pass_due": null,
+   "has_first_pass_hook": true,
+   "idle_interval_seconds": null,
+   "interval_seconds": 1800.0,
+   "max_pass_seconds": 900.0,
+   "name": "tracker_embed",
+   "owned_tables": [
+    "OwnedTable(table='loom.qa_item_embeddings', namespace_column='namespace', org_column='org')"
+   ],
+   "pass_callable": {
+    "id": "server.tracker.workers.embed:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 3600.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 86400.0,
+   "max_pass_seconds": 3600.0,
+   "name": "code_backport_gaps",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.backport_gaps:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 240.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 120,
+   "interval_seconds": 60,
+   "max_pass_seconds": null,
+   "name": "code_coverage_notify",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.coverage_notify:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 7200.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 86400.0,
+   "max_pass_seconds": 7200.0,
+   "name": "code_coverage_import",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.coverage_import:run_pass"
+   }
+  }
+ ],
+ "defaults": [
+  {
+   "deadline_seconds()": 60.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 30,
+   "interval_seconds": 5,
+   "max_pass_seconds": null,
+   "name": "embedding_worker",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.embedding:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 3600,
+   "max_pass_seconds": null,
+   "name": "audit_verifier",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.insights.workers.audit_verifier:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 604800,
+   "max_pass_seconds": null,
+   "name": "recalibration",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.recalibration:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 240.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 60,
+   "max_pass_seconds": null,
+   "name": "erasure_recovery",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.erasure.workers.recovery:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 3600,
+   "max_pass_seconds": null,
+   "name": "erasure_reclaim",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.erasure.workers.reclaim:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 300,
+   "max_pass_seconds": null,
+   "name": "retention_reconcile",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.retention_reconcile:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 3600,
+   "max_pass_seconds": null,
+   "name": "namespace_gc",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.identity.workers.namespace_gc:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 300,
+   "max_pass_seconds": null,
+   "name": "projection_repair",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.projection_repair:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 300,
+   "max_pass_seconds": null,
+   "name": "usage_fold",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.usage_fold:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 600,
+   "max_pass_seconds": null,
+   "name": "orphan_vector_reconcile",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.orphan_vector_reconcile:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 86400,
+   "max_pass_seconds": null,
+   "name": "sensitivity_sweep",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.sensitivity_sweep:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 1800,
+   "max_pass_seconds": null,
+   "name": "conversation_titler",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.knowledge.workers.conversation_titler:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 240.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 300,
+   "interval_seconds": 60,
+   "max_pass_seconds": null,
+   "name": "entity_extractor",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.entity_extractor:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 300,
+   "max_pass_seconds": null,
+   "name": "memory_expiry_sweep",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.expiry_sweep:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 60.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 15,
+   "max_pass_seconds": null,
+   "name": "extraction_queue",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.extraction_queue:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 300,
+   "max_pass_seconds": null,
+   "name": "code_scip_delta",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.scip_delta:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 600,
+   "max_pass_seconds": null,
+   "name": "code_scip_ts_delta",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.scip_ts_delta:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 600,
+   "max_pass_seconds": null,
+   "name": "code_scip_py_delta",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.scip_py_delta:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 7200.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 900,
+   "max_pass_seconds": 7200.0,
+   "name": "code_scip_go_delta",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.scip_go_delta:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": {
+    "id": "server.tracker.workers.test_daily:due_scope"
+   },
+   "first_pass_due": null,
+   "has_first_pass_hook": true,
+   "idle_interval_seconds": null,
+   "interval_seconds": 1800,
+   "max_pass_seconds": 900.0,
+   "name": "tracker_test_daily",
+   "owned_tables": [
+    "OwnedTable(table='loom.qa_rollup_days', namespace_column='qa_namespace', org_column='org')",
+    "OwnedTable(table='loom.qa_test_daily', namespace_column='qa_namespace', org_column='org')"
+   ],
+   "pass_callable": {
+    "id": "server.tracker.workers.test_daily:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 120.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 30.0,
+   "max_pass_seconds": null,
+   "name": "jwt_revocation_refresh",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.auth.revocation:refresh"
+   }
+  },
+  {
+   "deadline_seconds()": 240.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 300,
+   "interval_seconds": 60,
+   "max_pass_seconds": null,
+   "name": "task_lease_sweep",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.tasks.workers.lease_sweep:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 120.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 30,
+   "interval_seconds": 5,
+   "max_pass_seconds": 120.0,
+   "name": "task_webhook_deliver",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.tasks.workers.webhook_deliver:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 3600.0,
+   "due_scope": {
+    "id": "server.tracker.workers.links:due_scope"
+   },
+   "first_pass_due": null,
+   "has_first_pass_hook": true,
+   "idle_interval_seconds": null,
+   "interval_seconds": 86400.0,
+   "max_pass_seconds": 3600.0,
+   "name": "tracker_links",
+   "owned_tables": [
+    "OwnedTable(table='loom.qa_link_candidates', namespace_column='qa_namespace', org_column='org')"
+   ],
+   "pass_callable": {
+    "id": "server.tracker.workers.links:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": {
+    "id": "server.tracker.workers.embed:due_scope"
+   },
+   "first_pass_due": null,
+   "has_first_pass_hook": true,
+   "idle_interval_seconds": null,
+   "interval_seconds": 1800.0,
+   "max_pass_seconds": 900.0,
+   "name": "tracker_embed",
+   "owned_tables": [
+    "OwnedTable(table='loom.qa_item_embeddings', namespace_column='namespace', org_column='org')"
+   ],
+   "pass_callable": {
+    "id": "server.tracker.workers.embed:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 240.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 120,
+   "interval_seconds": 60,
+   "max_pass_seconds": null,
+   "name": "code_coverage_notify",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.coverage_notify:run_pass"
+   }
+  }
+ ],
+ "production": [
+  {
+   "deadline_seconds()": 60.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 30,
+   "interval_seconds": 5,
+   "max_pass_seconds": null,
+   "name": "embedding_worker",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.embedding:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 3600,
+   "max_pass_seconds": null,
+   "name": "audit_verifier",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.insights.workers.audit_verifier:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 604800,
+   "max_pass_seconds": null,
+   "name": "recalibration",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.recalibration:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 240.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 60,
+   "max_pass_seconds": null,
+   "name": "erasure_recovery",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.erasure.workers.recovery:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 3600,
+   "max_pass_seconds": null,
+   "name": "erasure_reclaim",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.erasure.workers.reclaim:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 300,
+   "max_pass_seconds": null,
+   "name": "retention_reconcile",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.retention_reconcile:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 3600,
+   "max_pass_seconds": null,
+   "name": "namespace_gc",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.identity.workers.namespace_gc:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 300,
+   "max_pass_seconds": null,
+   "name": "projection_repair",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.projection_repair:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 300,
+   "max_pass_seconds": null,
+   "name": "usage_fold",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.usage_fold:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 600,
+   "max_pass_seconds": null,
+   "name": "orphan_vector_reconcile",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.orphan_vector_reconcile:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 86400,
+   "max_pass_seconds": null,
+   "name": "sensitivity_sweep",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.sensitivity_sweep:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 1800,
+   "max_pass_seconds": null,
+   "name": "conversation_titler",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.knowledge.workers.conversation_titler:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 3600,
+   "max_pass_seconds": null,
+   "name": "reflection_distill",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.reflection_distill:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 240.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 300,
+   "interval_seconds": 60,
+   "max_pass_seconds": null,
+   "name": "entity_extractor",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.entity_extractor:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 300,
+   "max_pass_seconds": null,
+   "name": "memory_expiry_sweep",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.expiry_sweep:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 300,
+   "max_pass_seconds": 900.0,
+   "name": "observe_extract",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.observe_extract:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 60.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 15,
+   "max_pass_seconds": null,
+   "name": "extraction_queue",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.extraction_queue:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 120,
+   "max_pass_seconds": 900.0,
+   "name": "code_ingest",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.ingest:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 240.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 60,
+   "max_pass_seconds": null,
+   "name": "code_scip_apply",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.scip_apply:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 300,
+   "max_pass_seconds": null,
+   "name": "code_scip_delta",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.scip_delta:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 600,
+   "max_pass_seconds": null,
+   "name": "code_scip_ts_delta",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.scip_ts_delta:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 600,
+   "max_pass_seconds": null,
+   "name": "code_scip_py_delta",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.scip_py_delta:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 7200.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 900,
+   "max_pass_seconds": 7200.0,
+   "name": "code_scip_go_delta",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.scip_go_delta:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 900,
+   "max_pass_seconds": null,
+   "name": "code_pr_history",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.pr_history:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 120.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 120,
+   "interval_seconds": 30,
+   "max_pass_seconds": null,
+   "name": "code_embed_recovery",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.embed_recovery:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 21600,
+   "max_pass_seconds": null,
+   "name": "entity_communities",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.entity_communities:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 3600.0,
+   "due_scope": null,
+   "first_pass_due": {
+    "id": "server.code.workers.graph_stats:first_pass_due"
+   },
+   "has_first_pass_hook": true,
+   "idle_interval_seconds": null,
+   "interval_seconds": 604800,
+   "max_pass_seconds": 3600.0,
+   "name": "code_graph_stats",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.graph_stats:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": {
+    "id": "server.tracker.workers.test_daily:due_scope"
+   },
+   "first_pass_due": null,
+   "has_first_pass_hook": true,
+   "idle_interval_seconds": null,
+   "interval_seconds": 1800,
+   "max_pass_seconds": 900.0,
+   "name": "tracker_test_daily",
+   "owned_tables": [
+    "OwnedTable(table='loom.qa_rollup_days', namespace_column='qa_namespace', org_column='org')",
+    "OwnedTable(table='loom.qa_test_daily', namespace_column='qa_namespace', org_column='org')"
+   ],
+   "pass_callable": {
+    "id": "server.tracker.workers.test_daily:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 120.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 30.0,
+   "max_pass_seconds": null,
+   "name": "jwt_revocation_refresh",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.auth.revocation:refresh"
+   }
+  },
+  {
+   "deadline_seconds()": 240.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 300,
+   "interval_seconds": 60,
+   "max_pass_seconds": null,
+   "name": "task_lease_sweep",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.tasks.workers.lease_sweep:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 120.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 30,
+   "interval_seconds": 5,
+   "max_pass_seconds": 120.0,
+   "name": "task_webhook_deliver",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.tasks.workers.webhook_deliver:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 3600.0,
+   "due_scope": {
+    "id": "server.tracker.workers.links:due_scope"
+   },
+   "first_pass_due": null,
+   "has_first_pass_hook": true,
+   "idle_interval_seconds": null,
+   "interval_seconds": 86400.0,
+   "max_pass_seconds": 3600.0,
+   "name": "tracker_links",
+   "owned_tables": [
+    "OwnedTable(table='loom.qa_link_candidates', namespace_column='qa_namespace', org_column='org')"
+   ],
+   "pass_callable": {
+    "id": "server.tracker.workers.links:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": {
+    "id": "server.tracker.workers.embed:due_scope"
+   },
+   "first_pass_due": null,
+   "has_first_pass_hook": true,
+   "idle_interval_seconds": null,
+   "interval_seconds": 1800.0,
+   "max_pass_seconds": 900.0,
+   "name": "tracker_embed",
+   "owned_tables": [
+    "OwnedTable(table='loom.qa_item_embeddings', namespace_column='namespace', org_column='org')"
+   ],
+   "pass_callable": {
+    "id": "server.tracker.workers.embed:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 3600.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 86400.0,
+   "max_pass_seconds": 3600.0,
+   "name": "code_backport_gaps",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.backport_gaps:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 240.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 120,
+   "interval_seconds": 60,
+   "max_pass_seconds": null,
+   "name": "code_coverage_notify",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.code.workers.coverage_notify:run_pass"
+   }
+  }
+ ]
+}

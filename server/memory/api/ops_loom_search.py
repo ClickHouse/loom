@@ -1,0 +1,23 @@
+"""Operations over the wire models in `server.memory.api.models_loom_search`."""
+
+from __future__ import annotations
+
+from server.memory.api.models_loom_search import SearchInput, SearchOutput
+from server.memory.app.loom_search.handler import handle_search
+from server.operations.base import Operation, Role
+
+search = Operation(
+    name="search.query",
+    # MCP serves it as the `loom_search` tool (synthetic descriptor).
+    mcp_tool="loom_search",
+    input_model=SearchInput,
+    output_model=SearchOutput,
+    handler=handle_search,
+    idempotent=True,
+    # The tracker leg is bounded at 3 s; the memory legs run beside it.
+    budget_p99_ms=3500,
+    required_role=Role.VIEWER,
+    maturity="experimental",
+)
+
+OPERATIONS = [search]

@@ -1,0 +1,82 @@
+{
+  "_about": "sha256(system_prompt)[:12] -> the Langfuse prompt name and INTEGER version it was registered as. Written by scripts/codegen/push_langfuse_prompts.py; read by server/observability/genai.py to link generations to prompt versions with no runtime call to Langfuse.",
+  "_warning": "langfuse.prompt.version MUST be an int and MUST be sent with langfuse.prompt.name. Probed against the live API: a string version, or a name with no version, causes Langfuse to DROP the whole observation silently.",
+  "prompts": {
+    "04413e14f797": {
+      "name": "loom-conversation-title",
+      "version": 1
+    },
+    "0e233a30f817": {
+      "name": "loom-code-query-expand",
+      "version": 1
+    },
+    "26429c29e0da": {
+      "name": "loom-derived-intent",
+      "version": 2
+    },
+    "31b0a9000ae9": {
+      "name": "loom-builtin-rerank",
+      "version": 1
+    },
+    "3bad670e60c5": {
+      "name": "loom-iterative-judge",
+      "version": 2
+    },
+    "4e95226395b5": {
+      "name": "loom-entity-extract",
+      "version": 3
+    },
+    "56978db60be5": {
+      "name": "loom-verb-synonyms",
+      "version": 2
+    },
+    "74a623e2342c": {
+      "name": "loom-extract-relations",
+      "version": 2
+    },
+    "7eda42ce1904": {
+      "name": "loom-period-digest",
+      "version": 1
+    },
+    "84e51221d19f": {
+      "name": "loom-session-summary",
+      "version": 7
+    },
+    "a1ee05e21999": {
+      "name": "loom-hyde",
+      "version": 1
+    },
+    "aac51e7b5503": {
+      "name": "loom-retrieval-judge",
+      "version": 3
+    },
+    "ac4ca15570d6": {
+      "name": "loom-profile-fold",
+      "version": 2
+    },
+    "bf5e86069c97": {
+      "name": "loom-code-answer",
+      "version": 1
+    },
+    "c4e2ff65cb28": {
+      "name": "loom-code-describe",
+      "version": 1
+    },
+    "dce332a14360": {
+      "name": "loom-code-summary",
+      "version": 1
+    },
+    "e4752c943f6c": {
+      "name": "loom-judge-facts",
+      "version": 2
+    },
+    "f356d4eea132": {
+      "name": "loom-triple-extract",
+      "version": 2
+    },
+    "fc8a13c7f880": {
+      "name": "loom-extraction",
+      "version": 22
+    }
+  }
+}

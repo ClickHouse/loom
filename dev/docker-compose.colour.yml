@@ -1,0 +1,121 @@
+# One colour of a blue/green deployment. The same service as
+# dev/docker-compose.cloud.yml, parametrised by two variables the caller sets:
+#
+#   LOOM_COLOUR       blue | green          → container loom-<colour>
+#   LOOM_COLOUR_PORT  7781 | 7782           → the port uvicorn listens on AND
+#                                             publishes on 127.0.0.1 (health
+#                                             checks from the host; the proxy
+#                                             reaches it by name on loom-net)
+#
+#   LOOM_COLOUR=green LOOM_COLOUR_PORT=7782 LOOM_BUILD_COMMIT=$(git rev-parse --short HEAD) \
+#     docker compose -p loom-green --env-file .env -f dev/docker-compose.colour.yml up -d --build
+#
+# `redeploy.sh` does this. Two projects (`loom-blue`, `loom-green`) share
+# `.env`, the blob volume, the code mirrors, and one `loom-shared` volume that
+# carries the rate-limit table (keyed by path so both colours
+# draw from one cap during the overlap) and the supervisor lock (one host runs
+# the workers; the new colour takes the lease when the old one exits, on its
+# next retry). Volumes are named explicitly so
+# both projects resolve the same ones instead of a project-prefixed copy.
+#
+# Each colour is TWO containers from one image — `loom-<colour>`
+# (the web tier, LOOM_BACKGROUND_WORKERS=off) and `loom-<colour>-workers` (one
+# process, LOOM_BACKGROUND_WORKERS=auto, no published port). The workers
+# container is the only one that contends for the shared supervisor lock, so
+# the old colour's workers keep the lease through the overlap and the new
+# colour's take it within one retry interval of `docker stop loom-<old>-workers`.
+# No web process ever runs a 400 s code_ingest pass
+# on the event loop that serves a keep-alive client.
+
+x-colour-common: &colour-common
+  build:
+    context: ..
+    dockerfile: Dockerfile
+    args:
+      LOOM_EMBEDDING_MODEL: "${LOOM_EMBEDDING_MODEL:-text-embedding-3-small}"
+      LOOM_BUILD_COMMIT: "${LOOM_BUILD_COMMIT:-unknown}"
+  image: "loom:${LOOM_COLOUR:?set LOOM_COLOUR=blue|green}"
+  restart: unless-stopped
+  # A tiny init as PID 1 forwards SIGTERM to the process tree and reaps it;
+  # belt-and-braces beside the Dockerfile's `exec`.
+  init: true
+  stop_grace_period: 45s
+  ulimits:
+    nofile:
+      soft: 65536
+      hard: 65536
+  env_file:
+    - ../.env
+  networks:
+    - loom-net
+  volumes:
+    - loom-blob-data:/app/var/blobs
+    - loom-shared:/app/var/shared
+    # Code-plane git mirrors (bare clones); see docker-compose.cloud.yml.
+    - ../var/code_repos:/app/var/code_repos
+  healthcheck:
+    test:
+      [
+        "CMD",
+        "python",
+        "-c",
+        "import os, urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:'+os.environ['PORT']+'/v1/health', timeout=3).status==200 else 1)",
+      ]
+    interval: 10s
+    timeout: 5s
+    retries: 6
+    start_period: 45s
+
+services:
+  workers:
+    <<: *colour-common
+    container_name: "loom-${LOOM_COLOUR}-workers"
+    # One process; no `ports:` — /v1/health answers inside the container for
+    # the healthcheck and `docker exec loom-<colour>-workers ... ?include=workers`.
+    environment:
+      PORT: "${LOOM_COLOUR_PORT:?set LOOM_COLOUR_PORT=7781|7782}"
+      LOOM_BLOB_DIR: /app/var/blobs
+      LOOM_BACKGROUND_WORKERS: "auto"
+      LOOM_WEB_WORKERS: "1"
+      LOOM_SUPERVISOR_LOCK_PATH: /app/var/shared/supervisor.lock
+      LOOM_BOOT_MIGRATE_LOCK_PATH: /app/var/shared/migrate.lock
+      # The entity_extractor worker writes graph edges too: it marks them where
+      # the web tier's graph walks look.
+      LOOM_GRAPH_WRITE_MARKS_DIR: /app/var/shared/graph-marks
+      # Serves no client traffic: the per-process rate-limiter fallback is
+      # right for it (the shared table stays the web tier's).
+      LOOM_DEPLOYMENT: "1"
+      LOOM_INSTANCE_LABEL: "deploy:workers:${LOOM_COLOUR}"
+
+  loom:
+    <<: *colour-common
+    container_name: "loom-${LOOM_COLOUR}"
+    # stop_grace_period 45s (uvicorn drains ≤ 10 s, then the lifespan drains)
+    # and fd headroom are both in the common block.
+    environment:
+      PORT: "${LOOM_COLOUR_PORT:?set LOOM_COLOUR_PORT=7781|7782}"
+      LOOM_BLOB_DIR: /app/var/blobs
+      LOOM_RATELIMIT_SHARED_PATH: /app/var/shared/ratelimit.buckets
+      LOOM_SUPERVISOR_LOCK_PATH: /app/var/shared/supervisor.lock
+      LOOM_BOOT_MIGRATE_LOCK_PATH: /app/var/shared/migrate.lock
+      # Each namespace's last graph write and in-flight projections, shared by the
+      # web workers and the workers container, so a walk never serves a memo older
+      # than a write another process made.
+      LOOM_GRAPH_WRITE_MARKS_DIR: /app/var/shared/graph-marks
+      # The web tier serves requests and nothing else; the
+      # workers container beside it holds the lease.
+      LOOM_BACKGROUND_WORKERS: "off"
+      LOOM_DEPLOYMENT: "1"
+      LOOM_INSTANCE_LABEL: "deploy:web:${LOOM_COLOUR}"
+    ports:
+      - "127.0.0.1:${LOOM_COLOUR_PORT}:${LOOM_COLOUR_PORT}"
+
+networks:
+  loom-net:
+    name: loom-net
+
+volumes:
+  loom-blob-data:
+    name: loom-blob-data
+  loom-shared:
+    name: loom-shared

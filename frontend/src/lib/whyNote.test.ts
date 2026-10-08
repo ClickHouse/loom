@@ -1,0 +1,36 @@
+import { describe, expect, it } from "vitest";
+import { signed, whyTerms } from "./whyNote";
+
+// Non-zero components by magnitude, signed; `rank_score` / `rank_score_raw` are the base,
+// not a reason; sub-0.005 terms are noise.
+
+describe("signed / whyTerms", () => {
+  it("orders by magnitude, labels known terms, skips the base score and noise", () => {
+    const terms = whyTerms({
+      rank_score: 0.37,
+      rank_score_raw: 0.37,
+      semantic: 0.25,
+      key_match_boost_effective: 0.12,
+      date_proximity_boost: -0.3,
+      entity_ann_boost: 0.001,
+      foreign: 1,
+    });
+    expect(terms.map((t) => t.label)).toEqual(["other namespace", "date proximity", "semantic", "key match"]);
+    expect(terms[1].value).toBe(-0.3);
+  });
+
+  it("shows an unknown component under its own spelling rather than hiding it", () => {
+    expect(whyTerms({ brand_new_term: 0.2 })).toEqual([{ label: "brand new term", value: 0.2 }]);
+  });
+
+  it("tolerates a missing or malformed map", () => {
+    expect(whyTerms(undefined)).toEqual([]);
+    expect(whyTerms(null)).toEqual([]);
+    expect(whyTerms({ semantic: "0.5", nan: Number.NaN })).toEqual([]);
+  });
+
+  it("signed keeps two decimals with an explicit sign", () => {
+    expect(signed(0.125)).toBe("+0.13");
+    expect(signed(-0.004)).toBe("-0.00");
+  });
+});

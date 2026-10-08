@@ -1,0 +1,149 @@
+{
+ "hyp": "longmemeval_s answers (bench/longmemeval.py --hyp-out)",
+ "n_items": 500,
+ "judges": {
+  "gpt-4o-2024-08-06": {
+   "n": 500,
+   "correct": 483,
+   "accuracy": 0.966,
+   "by_type": {
+    "knowledge-update": {
+     "n": 78,
+     "accuracy": 1.0
+    },
+    "multi-session": {
+     "n": 133,
+     "accuracy": 0.9248
+    },
+    "single-session-assistant": {
+     "n": 56,
+     "accuracy": 1.0
+    },
+    "single-session-preference": {
+     "n": 30,
+     "accuracy": 0.9667
+    },
+    "single-session-user": {
+     "n": 70,
+     "accuracy": 0.9714
+    },
+    "temporal-reasoning": {
+     "n": 133,
+     "accuracy": 0.9699
+    }
+   },
+   "errors": []
+  },
+  "gpt-6.1-sol": {
+   "n": 500,
+   "correct": 489,
+   "accuracy": 0.978,
+   "by_type": {
+    "knowledge-update": {
+     "n": 78,
+     "accuracy": 1.0
+    },
+    "multi-session": {
+     "n": 133,
+     "accuracy": 0.9474
+    },
+    "single-session-assistant": {
+     "n": 56,
+     "accuracy": 1.0
+    },
+    "single-session-preference": {
+     "n": 30,
+     "accuracy": 0.9667
+    },
+    "single-session-user": {
+     "n": 70,
+     "accuracy": 0.9857
+    },
+    "temporal-reasoning": {
+     "n": 133,
+     "accuracy": 0.985
+    }
+   },
+   "errors": []
+  },
+  "claude-opus-5-5": {
+   "n": 500,
+   "correct": 488,
+   "accuracy": 0.976,
+   "by_type": {
+    "knowledge-update": {
+     "n": 78,
+     "accuracy": 1.0
+    },
+    "multi-session": {
+     "n": 133,
+     "accuracy": 0.9398
+    },
+    "single-session-assistant": {
+     "n": 56,
+     "accuracy": 1.0
+    },
+    "single-session-preference": {
+     "n": 30,
+     "accuracy": 0.9667
+    },
+    "single-session-user": {
+     "n": 70,
+     "accuracy": 0.9857
+    },
+    "temporal-reasoning": {
+     "n": 133,
+     "accuracy": 0.985
+    }
+   },
+   "errors": []
+  }
+ },
+ "agreement": [
+  {
+   "judges": [
+    "gpt-4o-2024-08-06",
+    "gpt-6.1-sol"
+   ],
+   "n": 500,
+   "agreement": 0.988,
+   "kappa": 0.7798,
+   "split_items": [
+    "08f4fc43",
+    "71017277",
+    "7405e8b1",
+    "8a137a7f",
+    "9ee3ecd6",
+    "bf659f65"
+   ]
+  },
+  {
+   "judges": [
+    "gpt-4o-2024-08-06",
+    "claude-opus-5-5"
+   ],
+   "n": 500,
+   "agreement": 0.99,
+   "kappa": 0.8226,
+   "split_items": [
+    "08f4fc43",
+    "71017277",
+    "7405e8b1",
+    "8a137a7f",
+    "9ee3ecd6"
+   ]
+  },
+  {
+   "judges": [
+    "gpt-6.1-sol",
+    "claude-opus-5-5"
+   ],
+   "n": 500,
+   "agreement": 0.998,
+   "kappa": 0.9555,
+   "split_items": [
+    "bf659f65"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,540 @@
+"""Health, doctor and the dashboard share one list of
+problems, each with a fix.
+
+`/v1/health` `status` reflects more than ClickHouse (no `status: ok` beside
+`fake_llm: true`); `providers_degraded` tells a configured fake from a
+failing real provider; `adaptive_thresholds.likely_cause` does not blame a
+missing OpenAI key when only the LLM is fake; and every problem names its
+fix.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+from typing import Any
+
+import pytest
+from fastapi.testclient import TestClient
+
+from server import boot
+from server.observability.problems import (
+    HealthState,
+    Problem,
+    collect_problems,
+    derive_status,
+)
+from server.settings import DEV_JWT_SECRET, Settings
+
+
+def _settings(monkeypatch: pytest.MonkeyPatch, **env: str) -> Settings:
+    for var in (
+        "LOOM_EMBEDDING_MODEL",
+        "LOOM_EMBEDDING_DIM",
+        "LOOM_LLM_PROVIDER",
+        "LOOM_LLM_MODEL",
+        "LOOM_REQUIRE_REAL_PROVIDERS",
+        "LOOM_AUTH_REQUIRED",
+        "LOOM_JWT_SECRET",
+        "LOOM_BACKGROUND_WORKERS",
+        "LOOM_DEPLOYMENT",
+        "LOOM_IDENTITY_PROVIDER",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    # Auth off unless a test says otherwise: bare Settings has auth on with
+    # the dev secret, which is its own (tested) problem.
+    for k, v in {"LOOM_AUTH_REQUIRED": "false", **env}.items():
+        monkeypatch.setenv(k, v)
+    return Settings(_env_file=None)
+
+
+def _codes(problems: list[Problem]) -> list[str]:
+    return [p.code for p in problems]
+
+
+def _by_code(problems: list[Problem], code: str) -> Problem:
+    return next(p for p in problems if p.code == code)
+
+
+# --- collect_problems: each condition -> code / severity / fix -------------
+
+
+def test_stock_dev_stack_has_two_warns_and_no_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The stock.env (fake embedder + fake LLM) must stay
+    `status: ok`: both fakes are warns, and each fix names the env var."""
+    s = _settings(
+        monkeypatch,
+        LOOM_EMBEDDING_MODEL="fake-ngram-1024",
+        LOOM_EMBEDDING_DIM="1024",
+        LOOM_LLM_PROVIDER="fake",
+    )
+    problems = collect_problems(s, HealthState(env={}))
+    assert _codes(problems) == ["fake_embedder", "fake_llm"]
+    assert {p.severity for p in problems} == {"warn"}
+    assert "LOOM_EMBEDDING_MODEL=" in _by_code(problems, "fake_embedder").fix
+    assert "LOOM_LLM_PROVIDER=openai" in _by_code(problems, "fake_llm").fix
+    assert derive_status(True, problems) == "ok"
+
+
+def test_require_real_providers_escalates_fakes_to_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    s = _settings(
+        monkeypatch,
+        LOOM_EMBEDDING_MODEL="fake-ngram-1024",
+        LOOM_LLM_PROVIDER="fake",
+        LOOM_REQUIRE_REAL_PROVIDERS="true",
+    )
+    problems = collect_problems(s, HealthState(env={}))
+    assert {p.severity for p in problems} == {"error"}
+    assert derive_status(True, problems) == "degraded"
+
+
+def test_keyed_llm_without_key_is_reported_with_the_key_as_the_fix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    s = _settings(monkeypatch, LOOM_EMBEDDING_MODEL="fake-ngram-1024", LOOM_LLM_PROVIDER="openai")
+    p = _by_code(collect_problems(s, HealthState(env={})), "llm_key_missing")
+    assert p.severity == "warn"
+    assert "OPENAI_API_KEY is not set" in p.message
+    assert p.fix.startswith("Set OPENAI_API_KEY")
+    # With the key present the problem is gone.
+    assert "llm_key_missing" not in _codes(
+        collect_problems(s, HealthState(env={"OPENAI_API_KEY": "sk"}))
+    )
+
+
+def test_keyed_embedder_without_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    s = _settings(
+        monkeypatch, LOOM_EMBEDDING_MODEL="text-embedding-3-small", LOOM_LLM_PROVIDER="fake"
+    )
+    p = _by_code(collect_problems(s, HealthState(env={})), "embedder_key_missing")
+    assert "OPENAI_API_KEY" in p.message and p.fix.startswith("Set OPENAI_API_KEY")
+    assert "embedder_key_missing" not in _codes(
+        collect_problems(s, HealthState(env={"OPENAI_API_KEY": "sk"}))
+    )
+
+
+def test_gemini_embedder_accepts_either_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    s = _settings(
+        monkeypatch, LOOM_EMBEDDING_MODEL="gemini-embedding-001", LOOM_LLM_PROVIDER="fake"
+    )
+    assert "embedder_key_missing" in _codes(collect_problems(s, HealthState(env={})))
+    assert "embedder_key_missing" not in _codes(
+        collect_problems(s, HealthState(env={"GOOGLE_API_KEY": "g"}))
+    )
+
+
+def test_embedding_dim_mismatch_is_an_error_naming_the_probed_dim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    s = _settings(
+        monkeypatch,
+        LOOM_EMBEDDING_MODEL="text-embedding-3-small",
+        LOOM_EMBEDDING_DIM="1024",
+        LOOM_LLM_PROVIDER="fake",
+    )
+    env = {"OPENAI_API_KEY": "sk"}
+    p = _by_code(
+        collect_problems(s, HealthState(probed_dim=1536, env=env)), "embedding_dim_mismatch"
+    )
+    assert p.severity == "error" and p.source == "runtime"
+    assert "LOOM_EMBEDDING_DIM=1536" in p.fix
+    assert "embedding_dim_mismatch" not in _codes(
+        collect_problems(s, HealthState(probed_dim=1024, env=env))
+    )
+    # Unknown (pre-boot) never guesses.
+    assert "embedding_dim_mismatch" not in _codes(
+        collect_problems(s, HealthState(probed_dim=None, env=env))
+    )
+
+
+def test_provider_runtime_failure_from_the_breaker(monkeypatch: pytest.MonkeyPatch) -> None:
+    s = _settings(monkeypatch, LOOM_EMBEDDING_MODEL="fake-ngram-1024", LOOM_LLM_PROVIDER="fake")
+    status = {
+        "degraded": True,
+        "providers": {
+            "openai:embeddings": {
+                "failing": True,
+                "last_error": "429 insufficient_quota",
+                "last_error_age_s": 3.0,
+            },
+            "openai:chat": {"failing": False},
+        },
+    }
+    problems = collect_problems(s, HealthState(provider_status=status, env={}))
+    p = _by_code(problems, "provider_failing:openai:embeddings")
+    assert p.severity == "error" and p.source == "runtime"
+    assert "429 insufficient_quota" in p.message and "3.0s ago" in p.message
+    assert "provider_failing:openai:chat" not in _codes(problems)
+    assert derive_status(True, problems) == "degraded"
+
+
+def test_the_key_a_problem_names_is_the_one_the_provider_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The key tables are the provider packages' own, so a key a provider
+    starts accepting is accepted here without a second edit."""
+    from server.core import llm_provider
+    from server.embedding import embedder
+
+    monkeypatch.setitem(embedder.KEY_ENVS, "gemini", ("GEMINI_KEY_NEXT", "GEMINI_API_KEY"))
+    monkeypatch.setitem(llm_provider.KEY_ENV_BY_PROVIDER, "anthropic", "ANTHROPIC_KEY_NEXT")
+    s = _settings(
+        monkeypatch, LOOM_EMBEDDING_MODEL="gemini-embedding-001", LOOM_LLM_PROVIDER="anthropic"
+    )
+    env = {"GEMINI_KEY_NEXT": "g", "ANTHROPIC_KEY_NEXT": "a"}
+    codes = _codes(collect_problems(s, HealthState(env=env)))
+    assert "embedder_key_missing" not in codes and "llm_key_missing" not in codes
+    status = {
+        "providers": {
+            "gemini:embeddings": {"failing": True, "last_error": "429"},
+            "anthropic:messages": {"failing": True, "last_error": "529"},
+        }
+    }
+    problems = collect_problems(s, HealthState(provider_status=status, env=env))
+    assert "GEMINI_KEY_NEXT's quota" in _by_code(problems, "provider_failing:gemini:embeddings").fix
+    assert (
+        "ANTHROPIC_KEY_NEXT's quota"
+        in _by_code(problems, "provider_failing:anthropic:messages").fix
+    )
+
+
+def test_dev_jwt_secret_with_auth_on_is_a_warn(monkeypatch: pytest.MonkeyPatch) -> None:
+    s = _settings(
+        monkeypatch,
+        LOOM_EMBEDDING_MODEL="fake-ngram-1024",
+        LOOM_LLM_PROVIDER="fake",
+        LOOM_AUTH_REQUIRED="true",
+        LOOM_JWT_SECRET=DEV_JWT_SECRET,
+    )
+    p = _by_code(collect_problems(s, HealthState(env={})), "dev_jwt_secret")
+    assert p.severity == "warn"
+    assert "LOOM_JWT_SECRET" in p.fix
+    # Auth off: the secret is moot, no problem.
+    s_off = _settings(
+        monkeypatch,
+        LOOM_EMBEDDING_MODEL="fake-ngram-1024",
+        LOOM_LLM_PROVIDER="fake",
+        LOOM_AUTH_REQUIRED="false",
+        LOOM_JWT_SECRET=DEV_JWT_SECRET,
+    )
+    assert "dev_jwt_secret" not in _codes(collect_problems(s_off, HealthState(env={})))
+
+
+def test_dev_sealing_secret_under_a_key_map_is_a_warn(monkeypatch: pytest.MonkeyPatch) -> None:
+    s = _settings(
+        monkeypatch,
+        LOOM_EMBEDDING_MODEL="fake-ngram-1024",
+        LOOM_LLM_PROVIDER="fake",
+        LOOM_AUTH_REQUIRED="true",
+        LOOM_JWT_SECRET=DEV_JWT_SECRET,
+        LOOM_JWT_SECRETS_JSON='{"k1": "' + "s" * 40 + '"}',
+        LOOM_JWT_ACTIVE_KID="k1",
+    )
+    codes = _codes(collect_problems(s, HealthState(env={})))
+    assert "dev_jwt_secret" not in codes
+    p = _by_code(collect_problems(s, HealthState(env={})), "dev_sealing_secret")
+    assert p.severity == "warn" and "LOOM_JWT_SECRET" in p.fix
+
+
+def test_empty_jwt_secret_is_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    s = _settings(
+        monkeypatch,
+        LOOM_EMBEDDING_MODEL="fake-ngram-1024",
+        LOOM_LLM_PROVIDER="fake",
+        LOOM_JWT_SECRET="",
+    )
+    p = _by_code(collect_problems(s, HealthState(env={})), "jwt_secret_empty")
+    assert p.severity == "error" and "Set LOOM_JWT_SECRET" in p.fix
+
+
+def test_pending_migrations_error_names_loom_migrate(monkeypatch: pytest.MonkeyPatch) -> None:
+    s = _settings(monkeypatch, LOOM_EMBEDDING_MODEL="fake-ngram-1024", LOOM_LLM_PROVIDER="fake")
+    pending = ("1000_a.sql", "1010_b.sql", "1020_c.sql", "1030_d.sql")
+    p = _by_code(
+        collect_problems(s, HealthState(pending_migrations=pending, env={})), "pending_migrations"
+    )
+    assert p.severity == "error" and p.source == "schema"
+    assert "4 migration(s)" in p.message and "…" in p.message
+    assert "loom migrate" in p.fix
+    assert "pending_migrations" not in _codes(
+        collect_problems(s, HealthState(pending_migrations=(), env={}))
+    )
+
+
+def test_instance_label_missing_only_for_a_server_outside_the_deployment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    s = _settings(monkeypatch, LOOM_EMBEDDING_MODEL="fake-ngram-1024", LOOM_LLM_PROVIDER="fake")
+    p = _by_code(
+        collect_problems(s, HealthState(instance_label="", env={})), "instance_label_missing"
+    )
+    assert p.severity == "warn" and "LOOM_INSTANCE_LABEL=" in p.fix
+    assert "instance_label_missing" not in _codes(
+        collect_problems(s, HealthState(instance_label="iso:x:7801", env={}))
+    )
+    # The doctor shell (None) is not a server process.
+    assert "instance_label_missing" not in _codes(collect_problems(s, HealthState(env={})))
+    dep = _settings(
+        monkeypatch,
+        LOOM_EMBEDDING_MODEL="fake-ngram-1024",
+        LOOM_LLM_PROVIDER="fake",
+        LOOM_DEPLOYMENT="1",
+    )
+    assert "instance_label_missing" not in _codes(
+        collect_problems(dep, HealthState(instance_label="", env={}))
+    )
+
+
+def test_worker_lease_absent_is_info_and_explains_off_by_design(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    web = _settings(
+        monkeypatch,
+        LOOM_EMBEDDING_MODEL="fake-ngram-1024",
+        LOOM_LLM_PROVIDER="fake",
+        LOOM_BACKGROUND_WORKERS="off",
+    )
+    p = _by_code(
+        collect_problems(web, HealthState(worker_lease_held=False, env={})), "workers_lease_absent"
+    )
+    assert p.severity == "info" and p.source == "workers"
+    assert "LOOM_BACKGROUND_WORKERS=off" in p.message
+    assert derive_status(True, [p]) == "ok"
+    auto = _settings(monkeypatch, LOOM_EMBEDDING_MODEL="fake-ngram-1024", LOOM_LLM_PROVIDER="fake")
+    p2 = _by_code(
+        collect_problems(auto, HealthState(worker_lease_held=False, env={})), "workers_lease_absent"
+    )
+    assert "another process" in p2.message
+    assert "workers_lease_absent" not in _codes(
+        collect_problems(auto, HealthState(worker_lease_held=True, env={}))
+    )
+
+
+def test_problems_are_sorted_worst_first_and_serialise(monkeypatch: pytest.MonkeyPatch) -> None:
+    s = _settings(monkeypatch, LOOM_EMBEDDING_MODEL="fake-ngram-1024", LOOM_LLM_PROVIDER="fake")
+    problems = collect_problems(
+        s, HealthState(pending_migrations=("1000_a.sql",), worker_lease_held=False, env={})
+    )
+    assert [p.severity for p in problems] == ["error", "warn", "warn", "info"]
+    d = problems[0].as_dict()
+    assert set(d) == {"code", "severity", "message", "fix", "source"}
+    json.dumps(d)
+
+
+def test_every_fix_is_one_imperative_sentence_naming_a_knob(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    s = _settings(
+        monkeypatch,
+        LOOM_EMBEDDING_MODEL="text-embedding-3-small",
+        LOOM_EMBEDDING_DIM="1024",
+        LOOM_LLM_PROVIDER="openai",
+        LOOM_AUTH_REQUIRED="true",
+        LOOM_JWT_SECRET=DEV_JWT_SECRET,
+        LOOM_BACKGROUND_WORKERS="off",
+    )
+    state = HealthState(
+        probed_dim=1536,
+        provider_status={
+            "degraded": True,
+            "providers": {"openai:chat": {"failing": True, "last_error": "500"}},
+        },
+        pending_migrations=("1000_a.sql",),
+        worker_lease_held=False,
+        instance_label="",
+        env={},
+    )
+    problems = collect_problems(s, state)
+    assert len(problems) >= 8
+    for p in problems:
+        assert p.fix[0].isupper() and p.fix.endswith("."), p.fix
+        assert re.search(
+            r"LOOM_[A-Z_]+|[A-Z]+_API_KEY|`loom [a-z-]+`|loom-<colour>-workers|openssl", p.fix
+        ), p.fix
+
+
+def test_derive_status_ch_down_wins() -> None:
+    assert derive_status(False, []) == "degraded"
+    assert derive_status(True, []) == "ok"
+    assert derive_status(True, [Problem("x", "warn", "m", "Set X.")]) == "ok"
+    assert derive_status(True, [Problem("x", "error", "m", "Set X.")]) == "degraded"
+
+
+# --- /v1/health -------------------------------------------------------------
+
+
+@pytest.fixture
+def health_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    import server.main as main_module
+    from server.settings import settings
+
+    class _StubCH:
+        async def query_one(self, sql: str, params: Any = None) -> dict[str, Any]:
+            return {"one": 1}
+
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _StubCH())
+    # `status` reads the breaker and the boot snapshot;
+    # start from a clean process, whatever earlier tests recorded.
+    from server.observability import provider_health
+
+    provider_health.reset()
+    monkeypatch.setattr(boot, "SKIPPED_PENDING_MIGRATIONS", ())
+    for var in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(settings, "embedding_model", "fake-ngram-1024")
+    monkeypatch.setattr(settings, "embedding_dim", 1024)
+    monkeypatch.setattr(settings, "llm_provider", "fake")
+    monkeypatch.setattr(settings, "require_real_providers", False)
+    monkeypatch.setattr("server.embedding.embedder._probed_dim", None)
+    return TestClient(main_module.app)
+
+
+def test_health_carries_problems_and_stays_ok_on_the_stock_stack(
+    health_client: TestClient,
+) -> None:
+    body = health_client.get("/v1/health").json()
+    codes = {p["code"] for p in body["problems"]}
+    assert {"fake_embedder", "fake_llm"} <= codes
+    errors = [p for p in body["problems"] if p["severity"] == "error"]
+    assert body["status"] == "ok", errors
+    assert not errors, errors
+    for p in body["problems"]:
+        assert set(p) == {"code", "severity", "message", "fix", "source"}
+    # Every problem field is there.
+    for key in (
+        "fake_embedding",
+        "fake_llm",
+        "providers_degraded",
+        "providers",
+        "embedding_dim_mismatch",
+        "llm_provider",
+        "llm_model",
+    ):
+        assert key in body, key
+    assert body["fake_llm"] is True and body["fake_embedding"] is True
+
+
+def test_health_degraded_under_require_real_providers(
+    health_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "require_real_providers", True)
+    r = health_client.get("/v1/health")
+    assert r.status_code == 200  # the HTTP code stays ClickHouse-only
+    body = r.json()
+    assert body["status"] == "degraded"
+    assert {
+        p["severity"] for p in body["problems"] if p["code"] in ("fake_embedder", "fake_llm")
+    } == {"error"}
+
+
+def test_health_degraded_on_dim_mismatch(
+    health_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("server.embedding.embedder._probed_dim", 1536)
+    body = health_client.get("/v1/health").json()
+    assert body["embedding_dim_mismatch"] is True
+    assert body["status"] == "degraded"
+    p = next(p for p in body["problems"] if p["code"] == "embedding_dim_mismatch")
+    assert "LOOM_EMBEDDING_DIM=1536" in p["fix"]
+
+
+def test_health_likely_cause_depends_on_the_embedder_only(
+    health_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fake LLM with a real embedder is not blamed as a missing OpenAI key;
+    calibration probes the embedder, so only the embedder can be the cause."""
+    from server.memory.app import embedder_calibration
+    from server.settings import settings
+
+    monkeypatch.setattr(embedder_calibration, "get_calibration", lambda: None)
+    body = health_client.get("/v1/health").json()
+    assert body["adaptive_thresholds"]["likely_cause"] == "fake embedder"
+
+    monkeypatch.setattr(settings, "embedding_model", "text-embedding-3-small")
+    body = health_client.get("/v1/health").json()
+    assert body["fake_llm"] is True
+    assert body["adaptive_thresholds"]["likely_cause"] == "probe error — check boot logs"
+
+
+# --- loom doctor -----------------------------------------------------------
+
+
+def test_doctor_prints_the_same_problem_list(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.cli.doctor import _cmd_doctor
+    from server.settings import settings
+    from tests.unit.test_cli_doctor import _passing_httpx_client
+
+    monkeypatch.setattr("httpx.Client", _passing_httpx_client)
+    monkeypatch.setattr(settings, "jwt_secret", "test-secret")
+    monkeypatch.setattr(settings, "embedding_model", "fake-ngram-1024")
+    monkeypatch.setattr(settings, "llm_provider", "fake")
+    monkeypatch.setattr(settings, "require_real_providers", False)
+    rc = _cmd_doctor(argparse.Namespace())
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "[WARN]  problem:fake_llm" in out and "Fix: Set LOOM_LLM_PROVIDER=openai" in out
+    assert "[WARN]  problem:fake_embedder" in out
+    # Same list as /v1/health: the doctor's codes are the collector's codes.
+    expected = {p.code for p in collect_problems(settings, HealthState())}
+    printed = set(re.findall(r"\[(?:PASS|WARN|FAIL)\]  problem:(\S+)", out))
+    assert printed == expected
+
+
+def test_doctor_fails_on_an_error_problem(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.cli.doctor import _cmd_doctor
+    from server.settings import settings
+    from tests.unit.test_cli_doctor import _passing_httpx_client
+
+    monkeypatch.setattr("httpx.Client", _passing_httpx_client)
+    monkeypatch.setattr(settings, "jwt_secret", "test-secret")
+    monkeypatch.setattr(settings, "llm_provider", "fake")
+    monkeypatch.setattr(settings, "require_real_providers", True)
+    rc = _cmd_doctor(argparse.Namespace())
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "[FAIL]  problem:fake_llm" in out
+
+
+def test_doctor_json_emits_checks_and_problems(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.cli.doctor import _cmd_doctor
+    from server.settings import settings
+    from tests.unit.test_cli_doctor import _passing_httpx_client
+
+    monkeypatch.setattr("httpx.Client", _passing_httpx_client)
+    monkeypatch.setattr(settings, "jwt_secret", "test-secret")
+    monkeypatch.setattr(settings, "llm_provider", "fake")
+    monkeypatch.setattr(settings, "require_real_providers", False)
+    rc = _cmd_doctor(argparse.Namespace(json=True))
+    body = json.loads(capsys.readouterr().out)
+    assert rc == 0 and body["ok"] is True
+    assert {c["name"] for c in body["checks"]} >= {
+        "python_version",
+        "settings_load",
+        "problem:fake_llm",
+    }
+    fake_llm = next(p for p in body["problems"] if p["code"] == "fake_llm")
+    assert fake_llm["severity"] == "warn" and fake_llm["fix"].startswith("Set LOOM_LLM_PROVIDER")
+
+
+def test_doctor_cli_accepts_json_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    import server.cli as cli
+    from server.cli import app
+
+    seen: dict[str, bool] = {}
+
+    def fake_doctor(args: argparse.Namespace) -> int:
+        seen["json"] = bool(args.json)
+        return 0
+
+    monkeypatch.setattr(app, "_cmd_doctor", fake_doctor)
+    assert cli.main(["doctor", "--json"]) == 0
+    assert seen == {"json": True}

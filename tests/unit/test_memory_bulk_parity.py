@@ -1,0 +1,342 @@
+"""Unit tests for memory.bulk_set parity with the point write path."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any
+
+import pytest
+
+from server.core.hashing import sha256_value
+from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry
+from server.memory.app import bulk_set as _bulk_set_mod
+from server.memory.app import session_summary as _session_summary_mod
+from server.memory.app.extract import handler as mem_extract
+from tests.unit.memory_rows import projection_row
+
+_ORIGINAL_CREATED_AT = datetime(2025, 1, 2, 3, 4, 5)
+
+
+class _StubCH:
+    def __init__(self, lookup_rows: list[dict[str, Any]] | None = None) -> None:
+        # The live rows the batched lookup returns, as the full projection has them.
+        self.lookup_rows = [
+            projection_row(
+                org="test", namespace="personal", agent="cursor", user_id="u", session_id="s", **r
+            )
+            for r in (lookup_rows or [])
+        ]
+        self.insert_calls: list[tuple[str, list[dict[str, Any]], dict[str, Any]]] = []
+
+    async def query_all(
+        self, sql: str, params: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
+        if "FROM loom.memory" in sql:
+            return self.lookup_rows
+        return []
+
+    async def insert(
+        self,
+        table: str,
+        rows: list[dict[str, Any]],
+        settings: dict[str, Any] | None = None,
+    ) -> None:
+        self.insert_calls.append((table, rows, settings or {}))
+
+    def rows_for(self, table: str) -> list[dict[str, Any]]:
+        return [r for t, rows, _ in self.insert_calls for r in rows if t == table]
+
+
+class _BatchEmbedder:
+    """Distinct vector per input text, so batch alignment is observable."""
+
+    model_name = "fake-test"
+    dim = 3
+
+    def __init__(self) -> None:
+        self.batches: list[list[str]] = []
+
+    async def embed_many(self, texts: list[str]) -> list[list[float]]:
+        self.batches.append(list(texts))
+        return [[float(i + 1)] * 3 for i in range(len(texts))]
+
+
+def _wire_stubs(
+    monkeypatch: pytest.MonkeyPatch,
+    ch: _StubCH,
+    embedder: _BatchEmbedder,
+    captured_embedding_rows: list[dict[str, Any]],
+) -> None:
+    monkeypatch.setattr(_bulk_set_mod, "get_client", lambda: ch)
+    monkeypatch.setattr(_session_summary_mod, "get_client", lambda: ch)
+    monkeypatch.setattr(_bulk_set_mod, "get_embedder", lambda: embedder)
+    monkeypatch.setattr(_session_summary_mod, "get_embedder", lambda: embedder)
+
+    async def _find_match(**_: Any) -> None:
+        return None
+
+    async def _note_hit(*_: Any) -> None:
+        return None
+
+    monkeypatch.setattr("server.memory.app.blacklist_guard.find_match", _find_match)
+    monkeypatch.setattr("server.memory.app.blacklist_guard.note_hit", _note_hit)
+
+    async def _resolve_entities_for_write(*_: Any, **__: Any) -> dict[str, str]:
+        return {}
+
+    monkeypatch.setattr(
+        "server.memory.app.entity_resolution.resolve_entities_for_write",
+        _resolve_entities_for_write,
+    )
+
+    async def _insert_embedding_rows(rows: list[dict[str, Any]], *, ch: Any) -> None:
+        captured_embedding_rows.extend(rows)
+
+    monkeypatch.setattr(
+        "server.memory.store.insert_embedding_rows",
+        _insert_embedding_rows,
+    )
+
+    async def _noop_projection(*_: Any, **__: Any) -> None:
+        return None
+
+    monkeypatch.setattr(_bulk_set_mod, "write_entity_vectors", _noop_projection)
+    monkeypatch.setattr(_bulk_set_mod, "write_entity_edges", _noop_projection)
+    monkeypatch.setattr(_bulk_set_mod, "write_entity_triples", _noop_projection)
+    monkeypatch.setattr(_bulk_set_mod, "_write_derived_facts", _noop_projection)
+
+
+def _bulk_input(entries: list[_BulkSetEntry]) -> MemoryBulkSetInput:
+    return MemoryBulkSetInput(
+        org="test",
+        namespace="personal",
+        agent="cursor",
+        user_id="u",
+        session_id="s",
+        entries=entries,
+    )
+
+
+@pytest.mark.asyncio
+async def test_bulk_set_embeds_key_text_in_the_same_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ch = _StubCH()
+    embedder = _BatchEmbedder()
+    captured: list[dict[str, Any]] = []
+    _wire_stubs(monkeypatch, ch, embedder, captured)
+
+    out = await mem_extract.handle_memory_bulk_set(
+        _bulk_input(
+            [
+                _BulkSetEntry(memory_key="deploy_window", value="Tue/Thu only."),
+                _BulkSetEntry(memory_key="user_dog_name", value="Dog is Biscuit."),
+            ]
+        )
+    )
+    assert [r.memory_key for r in out.written] == ["deploy_window", "user_dog_name"]
+    assert out.skipped_pinned == []
+
+    assert len(embedder.batches) == 1
+    batch = embedder.batches[0]
+    assert len(batch) == 4
+    assert batch[2:] == ["deploy window", "user dog name"]
+
+    assert [r["memory_key_embedding"] for r in captured] == [
+        [3.0, 3.0, 3.0],
+        [4.0, 4.0, 4.0],
+    ]
+    assert all(r["memory_key_embedding_dim"] == 3 for r in captured)
+    assert [r["embedding"] for r in captured] == [
+        [1.0, 1.0, 1.0],
+        [2.0, 2.0, 2.0],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_bulk_set_skips_entries_targeting_pinned_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ch = _StubCH(
+        lookup_rows=[
+            {
+                "memory_key": "user_favorite_color",
+                "memory_id": "11111111-1111-1111-1111-111111111111",
+                "content_sha256": "0" * 64,
+                "pinned": 1,
+                "created_at": _ORIGINAL_CREATED_AT,
+            }
+        ]
+    )
+    embedder = _BatchEmbedder()
+    captured: list[dict[str, Any]] = []
+    _wire_stubs(monkeypatch, ch, embedder, captured)
+
+    out = await mem_extract.handle_memory_bulk_set(
+        _bulk_input(
+            [
+                _BulkSetEntry(memory_key="user_favorite_color", value="Favorite color is green."),
+                _BulkSetEntry(memory_key="user_dog_name", value="Dog is Biscuit."),
+            ]
+        )
+    )
+    assert out.skipped_pinned == ["user_favorite_color"]
+    by_key = {r.memory_key: r.version for r in out.written}
+    assert by_key["user_favorite_color"] == 0
+    assert by_key["user_dog_name"] > 0
+
+    mem_rows = ch.rows_for("loom.memory")
+    assert [r["memory_key"] for r in mem_rows] == ["user_dog_name"]
+    assert [r["memory_key"] for r in captured] == ["user_dog_name"]
+
+
+@pytest.mark.asyncio
+async def test_bulk_set_byte_identical_pinned_reingest_is_unchanged_not_conflict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    value = "Favorite color is blue."
+    ch = _StubCH(
+        lookup_rows=[
+            {
+                "memory_key": "user_favorite_color",
+                "memory_id": "11111111-1111-1111-1111-111111111111",
+                "content_sha256": sha256_value(value),
+                "pinned": 1,
+                "created_at": _ORIGINAL_CREATED_AT,
+            }
+        ]
+    )
+    embedder = _BatchEmbedder()
+    captured: list[dict[str, Any]] = []
+    _wire_stubs(monkeypatch, ch, embedder, captured)
+
+    out = await mem_extract.handle_memory_bulk_set(
+        _bulk_input([_BulkSetEntry(memory_key="user_favorite_color", value=value)])
+    )
+    assert out.skipped_pinned == []
+    assert [r.version for r in out.written] == [0]
+    assert ch.rows_for("loom.memory") == []
+
+
+@pytest.mark.asyncio
+async def test_bulk_set_overwrite_carries_created_at_forward(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ch = _StubCH(
+        lookup_rows=[
+            {
+                "memory_key": "user_dog_name",
+                "memory_id": "22222222-2222-2222-2222-222222222222",
+                "content_sha256": "0" * 64,
+                "pinned": 0,
+                "created_at": _ORIGINAL_CREATED_AT,
+            }
+        ]
+    )
+    embedder = _BatchEmbedder()
+    captured: list[dict[str, Any]] = []
+    _wire_stubs(monkeypatch, ch, embedder, captured)
+
+    await mem_extract.handle_memory_bulk_set(
+        _bulk_input([_BulkSetEntry(memory_key="user_dog_name", value="Dog is Bowie.")])
+    )
+    mem_rows = ch.rows_for("loom.memory")
+    assert len(mem_rows) == 1
+    assert mem_rows[0]["created_at"] == _ORIGINAL_CREATED_AT
+    assert mem_rows[0]["memory_id"] == "22222222-2222-2222-2222-222222222222"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("existing_first", [True, False])
+async def test_bulk_set_mixed_existing_and_new_keys_share_one_column_set(
+    monkeypatch: pytest.MonkeyPatch,
+    existing_first: bool,
+) -> None:
+    """A batch mixing existing-key and new-key entries must produce rows with
+    identical key sets, in either ordering."""
+    ch = _StubCH(
+        lookup_rows=[
+            {
+                "memory_key": "user_favorite_color",
+                "memory_id": "33333333-3333-3333-3333-333333333333",
+                "content_sha256": "0" * 64,
+                "pinned": 0,
+                "created_at": _ORIGINAL_CREATED_AT,
+            }
+        ]
+    )
+    embedder = _BatchEmbedder()
+    captured: list[dict[str, Any]] = []
+    _wire_stubs(monkeypatch, ch, embedder, captured)
+
+    entries = [
+        _BulkSetEntry(memory_key="user_favorite_color", value="Favorite color is green."),
+        _BulkSetEntry(memory_key="user_dog_name", value="Dog is Biscuit."),
+    ]
+    if not existing_first:
+        entries.reverse()
+
+    await mem_extract.handle_memory_bulk_set(_bulk_input(entries))
+
+    mem_rows = ch.rows_for("loom.memory")
+    assert len(mem_rows) == 2
+    columns = list(mem_rows[0].keys())
+    assert all(set(r.keys()) == set(columns) for r in mem_rows)
+    _ = [[r[c] for c in columns] for r in mem_rows]
+
+    by_key = {r["memory_key"]: r for r in mem_rows}
+    existing = by_key["user_favorite_color"]
+    assert existing["memory_id"] == "33333333-3333-3333-3333-333333333333"
+    assert existing["created_at"] == _ORIGINAL_CREATED_AT
+    fresh = by_key["user_dog_name"]
+    assert fresh["memory_id"] and fresh["memory_id"] != existing["memory_id"]
+    assert fresh["created_at"] != _ORIGINAL_CREATED_AT
+
+
+@pytest.mark.asyncio
+async def test_bulk_set_revision_carries_the_live_rows_usage_and_resets_its_verdicts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bulk revision is built by `build_revision_row` from the live row the
+    batched lookup read: recall / evidence counts and lineage survive, the
+    old value's verdict and attestation do not; a first write in the same
+    batch takes the DDL defaults, and both rows carry one full column set."""
+    ch = _StubCH(
+        lookup_rows=[
+            {
+                "memory_key": "user_favorite_color",
+                "memory_id": "44444444-4444-4444-4444-444444444444",
+                "content_sha256": "0" * 64,
+                "created_at": _ORIGINAL_CREATED_AT,
+                "recall_count": 7,
+                "evidence_count": 5,
+                "last_recalled_at": _ORIGINAL_CREATED_AT,
+                "cross_promoted_from_namespace": "team",
+                "status": "superseded",
+                "superseded_by": "other",
+                "verified_by": "human:bob",
+                "verified_sha256": "0" * 64,
+            }
+        ]
+    )
+    _wire_stubs(monkeypatch, ch, _BatchEmbedder(), [])
+    await mem_extract.handle_memory_bulk_set(
+        _bulk_input(
+            [
+                _BulkSetEntry(memory_key="user_favorite_color", value="Favorite color is teal."),
+                _BulkSetEntry(memory_key="user_dog_name", value="Dog is Biscuit."),
+            ]
+        )
+    )
+    by_key = {r["memory_key"]: r for r in ch.rows_for("loom.memory")}
+    rev, first = by_key["user_favorite_color"], by_key["user_dog_name"]
+    from server.memory.store import MEMORY_PERSISTED_COLS
+
+    assert set(rev) == set(first) == set(MEMORY_PERSISTED_COLS)
+    assert (rev["recall_count"], rev["evidence_count"]) == (7, 5)
+    assert rev["last_recalled_at"] == _ORIGINAL_CREATED_AT
+    assert rev["cross_promoted_from_namespace"] == "team"
+    assert rev["status"] == "active" and rev["superseded_by"] == ""
+    # the attestation rides the revision: over the old bytes, so it reads stale
+    assert (rev["verified_by"], rev["verified_sha256"]) == ("human:bob", "0" * 64)
+    assert (first["recall_count"], first["evidence_count"], first["verified_by"]) == (0, 1, "")

@@ -1,0 +1,304 @@
+# Search and ask
+
+`memory.search` returns ranked hits for the agent to read. `memory.ask` runs the same
+retrieval and has an LLM write an answer grounded in those memories, citing their keys.
+Both abstain when memory does not support an answer, and say why in `abstain_code`. This
+page owns the abstain codes. The ranking model is in
+[retrieval and ranking](../../concepts/retrieval-and-ranking.md); the query path is in
+[memory architecture](../../architecture/memory-architecture.md).
+
+Over MCP, agents use the `loom_search` tool, which searches memory, profile, knowledge
+and conversations in one call. `memory.search` is not an MCP tool of its own. See
+[unified search](../unified-search.md).
+
+## The read operations
+
+| Operation                 | Returns                                                                           |
+| ------------------------- | --------------------------------------------------------------------------------- |
+| `memory.search`           | Ranked hits with scores, abstain and risk.                                        |
+| `memory.ask`              | A synthesised, cited answer, or an abstain.                                       |
+| `memory.search_trace`     | The same pool as `memory.search`, with a per-hit scoring breakdown.               |
+| `memory.search_trace_log` | Past searches of the namespace: keys and scores returned, abstain, risk, latency. |
+| `memory.get`              | One row by exact key.                                                             |
+| `memory.bulk_get`         | Up to 1,000 keys in one round trip; `missing` lists misses.                       |
+| `memory.list`             | Keys and types under the identity, by recency or score; at most 1,000 per call.   |
+| `memory.timeline`         | Rows about an entity, tag set or key prefix, in time order.                       |
+| `memory.related`          | Rows that share entities with a known key, ranked by overlap.                     |
+| `memory.recall`           | The raw conversation turns behind the facts. See [extraction](./extraction.md).   |
+| `memory.brief`            | Orientation on a task: an answer, its grounding, unknowns, what to read next.     |
+
+All are viewer ops. Reads default to `agent="*"` (every author in the namespace):
+membership is the read boundary, and `agent` records authorship. Pass `agent` only to
+narrow to one author.
+
+## `memory.search`
+
+### What a hit carries
+
+| Field                           | Meaning                                                                                             |
+| ------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `memory_key`, `content_excerpt` | The row and the text it matched on.                                                                 |
+| `similarity`                    | Cosine to the query in [0, 1]. Threshold on this; no boost is added to it.                          |
+| `rank_score`                    | The fused score the list is sorted by. Under `rrf` it is a reciprocal-rank sum (about 0.03).        |
+| `below_threshold`               | Under the similarity floor but kept (`floor_mode="readmit"`).                                       |
+| `source`                        | `fact` (memory embeddings), `chunk` (a passage of a long value) or `summary` (a session digest).    |
+| `parent_memory_key`             | For a chunk, the memory it belongs to.                                                              |
+| `status`, `superseded_by`       | Lifecycle state; a superseded row served on request names its successor.                            |
+| `source_class`, `verified`      | How the content entered memory, and whether a live attestation stands.                              |
+| `valid_at`, `created_at`        | Validity time and record time.                                                                      |
+| `score_components`              | The main ranking terms (`explain=true` for more; `foreign=1.0` marks a hit from another namespace). |
+| `namespace`                     | The source namespace on a cross-namespace search.                                                   |
+
+The response adds `abstain`, `abstain_code`, `retrieval_risk`, `candidates_total`,
+`namespaces_searched`, `pending_extraction`, `degraded` and `next`.
+
+### Modes and recipes
+
+`search_mode` picks the fusion:
+
+| Mode          | Ranks by                                         |
+| ------------- | ------------------------------------------------ |
+| `semantic`    | Cosine only. The server default.                 |
+| `rrf`         | Reciprocal-rank fusion of lexical and semantic.  |
+| `lexical`     | Token overlap only (identifiers, exact phrases). |
+| `hybrid`      | `alpha` × lexical + (1 − `alpha`) × cosine.      |
+| `bm25_hybrid` | IDF-weighted BM25 fused with cosine.             |
+| `graph`       | Entity-edge expansion plus triple-match boosts.  |
+| `related`     | Facet overlap (tags and `entity_filter`).        |
+| `temporal`    | Date-aware ordering.                             |
+
+A request that sets neither `search_mode` nor `recipe` gets the namespace's
+`retrieval_defaults.search_mode`, else `LOOM_MEMORY_SEARCH_DEFAULT_MODE` (`semantic`).
+The Python SDK's `search` always sends `search_mode` (default `rrf`), so the server
+default applies to HTTP and MCP callers that leave it out.
+
+`recipe` is a named preset. It fills only fields the caller left unset, so
+`{"recipe": "quality", "hyde": false}` runs without HyDE:
+
+| Recipe     | Sets                                                       |
+| ---------- | ---------------------------------------------------------- |
+| `fast`     | `semantic`, no HyDE, no unmatched candidates.              |
+| `balanced` | `rrf`, no HyDE.                                            |
+| `quality`  | `bm25_hybrid`, HyDE allowed, at least 50 extra candidates. |
+| `verbatim` | `lexical`, `alpha` 0.85.                                   |
+| `code`     | `bm25_hybrid`, `alpha` 0.75.                               |
+| `temporal` | `temporal`.                                                |
+| `graph`    | `graph`.                                                   |
+
+`retrieval_budget` (`fast`, `standard`, `deep`) sets the cost. `standard` runs cheap
+recall first and adds the LLM, graph and rerank legs only when the planner or a
+weak-result fallback calls for them.
+
+### Filters and scope
+
+| Field                                                          | Effect                                                                                                                                   |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory_type`                                                  | One type. Unset: every searchable type except `reflection`, which only an explicit filter returns.                                       |
+| `tags` / `tags_soft`                                           | OR filter on tags; with `tags_soft`, a boost (`tag_boost`) instead.                                                                      |
+| `category` / `category_soft`                                   | The same for a registered category.                                                                                                      |
+| `demote_tags`                                                  | Sinks matching rows to the bottom without dropping them.                                                                                 |
+| `entity_filter`                                                | Rows naming these entities.                                                                                                              |
+| `user_id`, `session_id`, `run_id`                              | Narrow to one end user, session or run.                                                                                                  |
+| `read_scope`                                                   | `own_user` or `own_session`. A token's `read_scope` claim is a ceiling a request can only narrow.                                        |
+| `namespace_scope`                                              | `this` (default) or `all_mine` (every namespace the caller belongs to).                                                                  |
+| `exclude_keys`                                                 | Up to 200 keys the caller already holds, removed before the window is cut.                                                               |
+| `include_duplicates`, `include_superseded`, `include_proposed` | Serve rows the default hides.                                                                                                            |
+| `as_of`, `as_of_basis`                                         | Point-in-time replay: `valid_time` (default) or `knowledge_time`. See [validity time](./writing.md#validity-time-valid_at-and-valid_to). |
+| `observation_date`                                             | `YYYY-MM-DD` anchor for relative dates in the query ("last week").                                                                       |
+| `top_k`                                                        | Window size, default 5, at most 500.                                                                                                     |
+| `bodies`, `body_budget_tokens`                                 | How much of each value rides the hit (`full`, `excerpt`, `none`, `unit`, `source`).                                                      |
+| `render="reader"`                                              | Also return the hits as `memory.ask` reads them (`reader_block`).                                                                        |
+
+### Ranking terms beyond relevance
+
+Each has a request field and a deployment default. `personalization="none"` turns every
+user-derived term off for one request.
+
+| Term          | Control                                                                                                                                                                                                                                                                                                                                                         |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Reinforcement | Use lifts a row, decaying with a half-life (`LOOM_MEMORY_SEARCH_REINFORCEMENT_WEIGHT` 0.15, `…_HALF_LIFE_DAYS` 90). Use comes from `run.complete(memories_used=…)`, `memory.outcome_run`, `memory.outcome` and the keys `memory.ask` cites; the `usage_fold` worker folds it. A `harm` event takes back earned boost but never ranks a row below its relevance. |
+| Confidence    | `confidence_weight` (default 0.1) × the row's `confidence`.                                                                                                                                                                                                                                                                                                     |
+| Metadata      | Soft tags and categories, `demote_tags`.                                                                                                                                                                                                                                                                                                                        |
+| Key match     | Rows whose key covers the question's content words, as a tie-break (`LOOM_MEMORY_SEARCH_KEY_MATCH_MODE`).                                                                                                                                                                                                                                                       |
+| Provenance    | `LOOM_MEMORY_SEARCH_TRUST_WEIGHT` (default 0, off): a bounded term for source class and attestation.                                                                                                                                                                                                                                                            |
+| Recency       | `recency_pool_weight` re-ranks a "latest" / "most recent" query by date.                                                                                                                                                                                                                                                                                        |
+| Reranker      | `rerank`, or the namespace's `rerank_endpoint`: `builtin:cohere[:model]`, `builtin:openai[:model]` or your own URL. On timeout it keeps the input order and says so in `degraded`; it never drops a candidate.                                                                                                                                                  |
+
+### Similarity floor and abstain
+
+With `LOOM_ADAPTIVE_THRESHOLDS` on (the default), a boot probe derives the search gates
+from the live embedder's score distribution; `calibration.get` shows a namespace's
+calibration. The scalar settings (`LOOM_MEMORY_SEARCH_MIN_SIMILARITY` 0.22,
+`LOOM_MEMORY_SEARCH_ABSTAIN_THRESHOLD` 0.30) apply when adaptivity is off or the embedder
+is fake; then re-bench after an embedder change.
+
+A namespace (`retrieval_defaults`) or request may set `min_similarity` and `floor_mode`:
+`readmit` keeps sub-floor hits labelled `below_threshold`, `ids_only` returns them
+without bodies, `drop` removes them.
+
+When the best hit is not good enough, the response says `abstain=true`:
+
+| `abstain_code`              | Meaning                                              |
+| --------------------------- | ---------------------------------------------------- |
+| `no_match`                  | Nothing in scope matched.                            |
+| `below_threshold`           | The best hit is under the similarity floor.          |
+| `low_calibrated_confidence` | The calibrated confidence of the top hit is too low. |
+| `entity_absent`             | The entity the question is about is not in memory.   |
+| `page_expired`              | A `page=` handle named a parked list that is gone.   |
+
+`retrieval_risk` grades the answer `low`, `medium`, `high` or `abstain`. Treat an abstain
+as "Loom does not know". Branch on `abstain_code`, never on the free-text
+`abstain_reason`. If `pending_extraction > 0`, a deferred `memory.set_from_messages` for
+this scope has not run yet, so a thin result is not evidence of absence.
+
+### Paging
+
+`candidates_total` is the size of the fused pool. With `paging=true` (the `loom_search`
+tool always asks), a larger pool is parked and `next_page` returns a handle to pass as
+`page=`.
+
+### Example
+
+```python
+from loom import Agent
+
+async with Agent(org="acme", namespace="support", agent="triage-bot") as agent:
+    hits = await agent.memory.search(
+        "when can we deploy to production?",
+        tags=["deploy"],
+        top_k=5,
+    )
+    if hits.abstain:
+        print("memory does not know:", hits.abstain_code)
+    else:
+        for hit in hits:
+            print(hit.memory_key, round(hit.similarity, 3), hit.content_excerpt)
+```
+
+The SDK returns a `MemorySearchResult`: a list of `MemorySearchHit` with the envelope
+(`abstain`, `abstain_code`, `retrieval_risk`, `pending_extraction`, `degraded`, `next`)
+as attributes. Over HTTP it is `POST /v1/memory.search`; from a terminal,
+`loom memory-search --namespace support --query "deploy window"`.
+
+## `memory.search_trace`
+
+`memory.search_trace` takes the same fields as `memory.search` and returns, per hit, the
+cosine `distance` and `similarity`, `entity_boost`, `rank_score` and `rank`. Use it when a
+hit you expected ranks below one you did not. `explain=true` on a normal search returns a
+lighter `score_components` map.
+
+With `LOOM_SEARCH_TRACE_LOG_ENABLED=true`, every search appends a row to
+`loom.search_trace_log` (keys and scores returned, abstain, risk, latency, run id,
+calling op), kept 180 days and read with `memory.search_trace_log`. The query text is
+stored only when the namespace consents to text capture. A non-admin sees only its own
+rows. `run.get` uses this log to report which keys a run recalled.
+
+## `memory.ask`
+
+`memory.ask` retrieves as `memory.search` does (default `top_k` 15) and writes an answer,
+citing keys in `memory_keys` and sessions in `cited_sessions`. `source` says how it
+answered:
+
+| `source`         | Meaning                                           |
+| ---------------- | ------------------------------------------------- |
+| `synthesized`    | An LLM answer grounded in the retrieved memories. |
+| `retrieval_only` | `allow_synthesis=false`: hits only, no LLM call.  |
+| `abstained`      | Retrieval did not support an answer.              |
+| `record`         | Answered from typed records.                      |
+| `precedent`      | Answered from a recorded decision precedent.      |
+
+Superseded rows leave synthesis and sentences restating a retired value are masked
+(`superseded_dropped`, `stale_sentences_masked`); `include_superseded=true` keeps them as
+former values. A question whose premise no memory records is answered with that fact
+first (per request `presupposition_rule`). Cited keys get a `used_cited` usage event, so
+ranking follows use.
+
+Behaviour, each a setting in the
+[MemoryAsk section](../../reference/configuration.md#memoryask):
+
+| Setting                                       | Behaviour                                                                     |
+| --------------------------------------------- | ----------------------------------------------------------------------------- |
+| `LOOM_MEMORY_ASK_EXCLUDE_UNVERIFIED_EXTERNAL` | Unattested `external` rows stay out of synthesis; they still surface as hits. |
+
+Knowledge documents are searched too and cited as `[knowledge:<source>#<chunk>]` (per
+request `knowledge=false` opts out).
+
+`recent_messages` (up to 40 turns, never stored) lets a follow-up resolve its referents.
+`max_answer_chars` bounds the answer. Synthesis needs a real LLM provider; the stock fake
+provider's answer text is not meaningful.
+
+```bash
+curl -sX POST http://localhost:7777/v1/memory.ask \
+  -H "Authorization: Bearer $LOOM_API_KEY" -H 'Content-Type: application/json' \
+  -d '{"org":"dev","namespace":"local","agent":"ops-bot",
+       "query":"Can we deploy to production on a Friday?"}' \
+  | jq '{answer, source, abstain, memory_keys}'
+```
+
+## `memory.timeline` and `memory.related`
+
+`memory.timeline` returns rows in time order by `coalesce(valid_at, created_at)`, newest
+first unless `order="asc"`. It needs one of `entity`, `tags` or `memory_key_prefix`;
+`since`, `until` and `top_k` (default 50) window it, and `total_matching` says whether
+there is more.
+
+`memory.related` finds rows that share entities with a known `memory_key`, ranked by the
+number shared (`min_overlap`, default 1). It depends on entity extraction
+(`LOOM_ENTITY_EXTRACT_ENABLED`, on by default). A source row with no entities answers
+`results=[]` with `reason="source_has_no_entities"`. For multi-hop walks use the
+[entity graph](../entity-graph.md).
+
+## After changing the embedding model
+
+Search reads only vectors of the live `LOOM_EMBEDDING_MODEL`. Rows embedded by another
+model are invisible until re-embedded:
+
+```bash
+loom reembed --dry-run          # count off-model rows
+loom reembed                    # re-embed them with the live embedder
+loom reembed --namespace NS     # one namespace
+loom reembed --resume TOKEN     # continue after the last `resume:` line
+loom reembed --delete-old       # drop old-model vectors once verified
+```
+
+`loom reembed` regenerates vectors from stored content and keeps metadata. Adaptive
+thresholds recalibrate at boot; `loom recalibrate` does it at once (the `recalibration`
+worker otherwise runs weekly).
+
+## Settings
+
+| Setting                                      | Default    | Effect                                                       |
+| -------------------------------------------- | ---------- | ------------------------------------------------------------ |
+| `LOOM_MEMORY_SEARCH_DEFAULT_MODE`            | `semantic` | Mode for a request that sets neither mode nor recipe.        |
+| `LOOM_MEMORY_SEARCH_DEFAULT_NAMESPACE_SCOPE` | `this`     | `all_mine` searches every namespace the caller belongs to.   |
+| `LOOM_ADAPTIVE_THRESHOLDS`                   | true       | Derive similarity gates from the live embedder.              |
+| `LOOM_MEMORY_SEARCH_MIN_SIMILARITY`          | 0.22       | Scalar floor when adaptivity is off or the embedder is fake. |
+| `LOOM_MEMORY_SEARCH_ABSTAIN_THRESHOLD`       | 0.30       | Scalar abstain gate under the same conditions.               |
+| `LOOM_MEMORY_SEARCH_REINFORCEMENT_WEIGHT`    | 0.15       | Weight of the decayed-use term. 0 disables.                  |
+| `LOOM_MEMORY_SEARCH_TRUST_WEIGHT`            | 0          | Provenance term. 0 disables.                                 |
+| `LOOM_SEARCH_TRACE_LOG_ENABLED`              | false      | Record each search in `loom.search_trace_log`.               |
+
+Per namespace, `namespace.register` sets `retrieval_defaults` (`search_mode`, `top_k`,
+`bodies`, `min_similarity`, `floor_mode`, `chunk_max_share`, `recency_pool_weight`,
+`reinforcement_weight`, …) and `rerank_endpoint`. See the
+[configuration reference](../../reference/configuration.md#memorysearch).
+
+## Limits
+
+- **Fake providers make recall meaningless.** Judge ranking and `memory.ask` only with
+  real providers.
+- **Writes are eventually consistent.** Deferred extraction reports `pending_extraction`.
+- **Hidden by default:** duplicates (the canonical takes the slot), superseded rows,
+  proposals, `reflection` rows, expired rows, and `high` sensitivity rows (never embedded,
+  readable by key only).
+- **Degraded providers are reported** in `degraded` (a reranker timeout, a skipped HyDE
+  call).
+- **Off-model vectors are invisible** until `loom reembed` runs.
+
+## Related
+
+- [Retrieval and ranking](../../concepts/retrieval-and-ranking.md)
+- [Unified search](../unified-search.md): `loom_search` and `context.pack`.
+- [Writing memory](./writing.md)
+- [Runs](../runs.md): reporting which memories a task relied on.
+- [Performance tuning](../../guides/performance-tuning.md)

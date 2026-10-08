@@ -1,0 +1,280 @@
+# Claude Code plugin
+
+The `loom` plugin for Claude Code does three things in one install:
+
+- **Mounts the Loom tools** over MCP: memory, working memory, `context.pack`, the code
+  index, the duplicate check.
+- **Captures the session** through lifecycle hooks: tool calls, chat turns, a run record,
+  a working-memory note, a session brief and the session's facts. The hooks make no model
+  call, and the agent has nothing to remember to do.
+- **Steers the agent to the code index** inside a Loom-indexed repository. Whole-file
+  reads and tree-wide greps are redirected to `code.*` operations, and an edit gets the
+  file's rules before it and its blast radius after it.
+
+Source: `integrations/claude-code-plugin/`, Node ESM scripts with no dependencies. The
+Codex build runs the same scripts; see [codex.md](codex.md).
+
+## Requirements
+
+- A reachable Loom server ([quickstart](../../getting-started/quickstart.md)).
+- Node.js 18 or newer on the system `PATH` of the machine running Claude Code. The hooks
+  use the global `fetch` and `AbortSignal.timeout`, and Claude Code launches them through
+  `/bin/sh`, so a Node that only a login-shell version manager puts on `PATH` does not
+  count. If a hook reports `node: not found`, run the `loom-status` skill; it diagnoses
+  read-only and offers to install Node, running the installer only when you say yes.
+- A **writer** token for the namespace the session writes to. A viewer token lets the
+  tools read, but the server refuses every capture.
+
+## Install
+
+The install steps are in [connect a coding agent](../../getting-started/connect-a-coding-agent.md).
+In short:
+
+```bash
+claude plugin marketplace add ClickHouse/loom        # or a path to a local clone
+claude plugin install loom@loom \
+  --config server_url=https://loom.example.com \
+  --config token=<writer JWT>
+```
+
+Install either this plugin or `loom-code-skill`, not both; the plugin already ships the
+`loom-code` skill. Update with `claude plugin update loom@loom`: hooks ship with the
+plugin, not the server.
+
+| Option        | Default                                        | Meaning                                                                               |
+| ------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `server_url`  | `$LOOM_BASE_URL`, else `http://localhost:7777` | Loom base URL, no trailing slash                                                      |
+| `token`       | empty                                          | a writer JWT, stored as a sensitive value                                             |
+| `toolset`     | `coding`                                       | the MCP listing (`?toolset=`), e.g. `coding+tracker`; every op stays callable by name |
+| `local_first` | `false`                                        | `true` stands the code shunt down (same as `LOOM_CODE_LOCAL_FIRST=on`)                |
+
+Every option is optional; Claude Code asks once, and an empty answer falls back to the
+[lookups below](#configuration).
+
+- **Install token.** The MCP header helper cannot see install options, so the first hook
+  of a session copies the token and URL into `~/.loom/config.json` (0600). It does so only
+  when no other token exists (`LOOM_API_KEY`, `config.json`, `~/.loom/token`).
+- **No credential at all.** On a server with `LOOM_SELF_SIGNUP=open`, the first session
+  signs the machine up: token to `~/.loom/config.json`, a claim code to
+  `~/.loom/claim-<namespace>.txt`, and the primer says how to claim the namespace at
+  `/me`. `LOOM_AUTO_SIGNUP=off` disables this. Otherwise the primer says how to get a token.
+- **One MCP entry only.** Do not add a user-scope `loom` entry as well: every tool would
+  be listed twice, and that copy carries no code scope.
+
+## Configuration
+
+**Where the hooks find the server and the identity.** Environment first, then the install
+option, then `~/.loom/config.json`, then the token's claims, then the defaults
+(`lib/loom-client.mjs`: `resolveServerUrl`, `resolveToken`, `resolveScope`):
+
+| What      | Lookup order                                                                                             |
+| --------- | -------------------------------------------------------------------------------------------------------- |
+| server    | `LOOM_BASE_URL` → `server_url` option → `config.json` `url` → `http://localhost:7777`                    |
+| token     | `LOOM_API_KEY` → `token` option → `config.json` `token` → `~/.loom/token` (moved by `LOOM_API_KEY_FILE`) |
+| org       | `LOOM_ORG` → `config.json` `org` → the token's `org` claim → `default`                                   |
+| namespace | `LOOM_NAMESPACE` → `config.json` `namespace` → the token's first non-wildcard namespace → `coding`       |
+| agent     | `LOOM_AGENT` → `config.json` `agent` → `claude-code`                                                     |
+
+A remote server needs only one file (`LOOM_CONFIG_FILE` moves it):
+
+```json
+{ "url": "https://loom.example.com", "token": "<writer JWT>", "namespace": "my-team" }
+```
+
+**Project scoping.** The project is the basename of the git toplevel
+(`LOOM_PROJECT_NAME` overrides it). With the default `LOOM_PROJECT_SCOPE=tag`, every
+project writes to one namespace and each row carries a `project:<name>` tag.
+`LOOM_PROJECT_SCOPE=namespace` makes the project name the namespace instead. Rows also
+carry `repo:<id>`, a hash of the normalised `origin` URL (`LOOM_REPO_REMOTE` overrides
+the remote), so two clones of different repositories with the same directory name do
+not share memory.
+
+## The MCP entry and its header helper
+
+The plugin's `.mcp.json` points at `<server_url>/mcp?toolset=<toolset>` and gets its
+headers from `bin/loom-mcp-headers.mjs`, which Claude Code runs in the project
+directory:
+
+- `Authorization: Bearer <token>`, from the same lookup as the hooks except the install
+  option (see above). With no token, the helper performs the same first-session sign-up
+  as the SessionStart hook, because Claude Code connects the MCP entry while that hook is
+  still running.
+- `X-Loom-Code-Scope: <org>/<namespace>`, the code namespace this checkout resolves to.
+  The server applies it to every `code.*` call that names no namespace, so the model does
+  not have to pass one. `LOOM_MCP_CODE_SCOPE=off` disables it.
+
+The checkout's repository is found from its remotes (`origin`, then `upstream`, then the
+rest) through `code.repos`. A GitHub fork with no index of its own resolves to its
+parent's index when you can read it. `LOOM_CODE_REPO=<owner>/<name>` or a bare name (or
+the `code_repo` option, or `code_repo` in `~/.loom/config.json`) is the fallback candidate
+after the remotes: it serves a session outside any git checkout, or a checkout with no
+index, and gives it that repository's index and scope header. The helper's own lookup is bounded at 2.5 s; a miss costs only the header.
+See [code index overview](../code-index/overview.md) and the
+[MCP reference](../../reference/mcp.md) for how the server uses the scope.
+
+## What the hooks do
+
+The wiring is `hooks/hooks.json`; `hooks/HOOKS.md` has per-hook notes.
+
+| Event                                             | Script                      | Effect                                                                                                                                                                                                                                               | Off switch                                                                     |
+| ------------------------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| SessionStart                                      | `loom-session-start.mjs`    | one budgeted `context.pack` primer (working-memory note, pins, profile, memories, decisions, procedures, recent runs), the code map for an indexed checkout, a line naming the project's saved session briefs, and a task-inbox line (`task.counts`) | `LOOM_INJECT_CONTEXT=false`, `LOOM_CODE_MAP=false`, `LOOM_TASK_INBOX_LINE=off` |
+| UserPromptSubmit                                  | `loom-prompt-pack.mjs`      | up to three `code.search` pointers for the prompt, only when the index does not abstain                                                                                                                                                              | opt-in: `LOOM_PROMPT_PACK=on`                                                  |
+| UserPromptSubmit                                  | `loom-prompt-recall.mjs`    | one bounded `context.pack` recall for the prompt (memories, decisions, procedures), injected only when memory does not abstain                                                                                                                       | `LOOM_PROMPT_RECALL=first` (default) / `on` / `off`                            |
+| UserPromptSubmit                                  | `loom-run.mjs`              | opens the session's run (`run.begin`, `run_id = cc-<session_id>`, goal = the first prompt)                                                                                                                                                           | `LOOM_RUN_LEDGER=off`                                                          |
+| PreToolUse (Read, Grep, Bash)                     | `loom-code-shunt.mjs`       | the code shunt and the tracker shunt ([next section](#the-code-shunt))                                                                                                                                                                               | `LOOM_CODE_SHUNT=off`, `LOOM_TRACKER_SHUNT=off`                                |
+| PreToolUse (Edit, Write, MultiEdit, NotebookEdit) | `loom-file-context.mjs`     | what Loom knows about the file about to change (`memory.for_file`): your rules and the repository's shared rules; once per file per 30 min                                                                                                           | `LOOM_FILE_CONTEXT=off`                                                        |
+| PostToolUse (Loom tools)                          | `loom-mentor-hint.mjs`      | lifts a result's `hint` into context, once per hint code per session                                                                                                                                                                                 | `LOOM_MENTOR_HINTS=off`                                                        |
+| PostToolUse (Edit, Write, MultiEdit)              | `loom-blast-radius.mjs`     | one line from `code.impact`: callers, tests reaching the change, co-change files not yet touched                                                                                                                                                     | `LOOM_BLAST_RADIUS=off`                                                        |
+| PostToolUse, PostToolUseFailure (any tool)        | `loom-capture.mjs`          | one episodic observation per tool call (`observe.record`); a failed call is typed `error`                                                                                                                                                            | none                                                                           |
+| Stop, SessionEnd                                  | `loom-conversation.mjs`     | appends new chat turns to the conversation plane (`conversation.append`)                                                                                                                                                                             | `LOOM_CAPTURE_CONVERSATIONS=false`                                             |
+| Stop                                              | `loom-usage.mjs`            | posts the session's token usage to `cost.record_turns`                                                                                                                                                                                               | `LOOM_USAGE=off`                                                               |
+| Stop                                              | `loom-test-gate.mjs`        | for changes this session made, blocks "done" once with the tests `code.test_gate` says the change obliges                                                                                                                                            | `LOOM_TEST_GATE=off`                                                           |
+| Stop                                              | `loom-validate-gate.mjs`    | blocks once when `namespace.validate` finds errors or warnings on the memory keys this session wrote                                                                                                                                                 | `LOOM_VALIDATE_GATE=off`                                                       |
+| Stop                                              | `loom-namespace-health.mjs` | on the first Stop, one line when `namespace.audit` finds a critical misuse of the namespace, pointing at the `loom-optimize` skill                                                                                                                   | `LOOM_NAMESPACE_HEALTH=off`                                                    |
+| Stop, PreCompact                                  | `loom-working-memory.mjs`   | refreshes the working-memory note (`session:<project>`): goal, git status, files edited, last reply                                                                                                                                                  | `LOOM_WORKING_MEMORY=off`                                                      |
+| Stop, PreCompact, SessionEnd                      | `loom-capture.mjs`          | crystallises the session (`observe.crystallize`)                                                                                                                                                                                                     | none                                                                           |
+| PreCompact, SessionEnd                            | `loom-session-brief.mjs`    | revises the branch's session brief (`session.brief_save`, key `auto/<project>/<branch>`)                                                                                                                                                             | `LOOM_SESSION_BRIEF=off`                                                       |
+| SessionEnd                                        | `loom-run.mjs`              | closes the run (`run.complete`, `outcome: none`, the last reply as the final response)                                                                                                                                                               | `LOOM_RUN_LEDGER=off`                                                          |
+| SessionEnd                                        | `loom-session-memory.mjs`   | hands the session's turns to `memory.set_from_messages(defer=true)`, which extracts facts and writes the session summary                                                                                                                             | `LOOM_SESSION_MEMORY=off`                                                      |
+
+**Why the run closes with `outcome: none`.** The hook knows the session ended, not
+whether it succeeded, and it never guesses which memories the agent relied on. An agent
+that knows its outcome calls `run.complete` itself.
+
+**What is stored where.**
+
+- Conversation turns are stored only when the namespace has conversation logging on
+  (off for a new namespace; `conversation.set_logging`). `conversation.append` succeeds
+  even when it drops a turn. See [conversations and sessions](../conversations-and-sessions.md).
+- Raw observations become durable memories only when the server runs the
+  `observe_extract` worker (`LOOM_OBSERVE_EXTRACT_ENABLED=true`, which needs LLM and
+  embedder credentials; see [configuration](../../reference/configuration.md#extraction)).
+- Session memory is independent of logging: `memory.set_from_messages` writes facts and
+  a summary, not the transcript.
+
+**Safety.** A hook never blocks the agent on the network.
+
+- Writes are fire-and-forget; slow ones (conversation, session memory, session brief) go
+  to a detached flusher (`hooks/loom-flush.mjs`) that outlives the hook.
+- Every request aborts after 5 × the `/v1/health` round trip, clamped to 3–8 s and cached
+  six hours per server. `LOOM_HOOK_TIMEOUT_MS` and `LOOM_HOOK_EXIT_MS` override it.
+- Errors are swallowed. Only the primer waits for a body; if it fails, the session starts
+  without it. With no token or no server, every hook exits 0.
+
+**SessionEnd budget.** Claude Code shares about 1.5 s across all SessionEnd hooks. The
+plugin's five entries each declare `timeout: 10` so the last one is not cancelled.
+
+### Tuning knobs
+
+Beyond the off switches in the table:
+
+| Variable                       | Default                   | Effect                                                                                     |
+| ------------------------------ | ------------------------- | ------------------------------------------------------------------------------------------ |
+| `LOOM_CONTEXT_TOKEN_BUDGET`    | `1200`                    | token budget of the SessionStart primer                                                    |
+| `LOOM_CODE_MAP_TOKEN_BUDGET`   | `0`                       | token budget of the code map in the primer; `0` leaves the map out                         |
+| `LOOM_CONTEXT_RUNS`            | `false`                   | include recent runs in the primer; `LOOM_CONTEXT_RUNS_LIMIT` (8) bounds them               |
+| `LOOM_PROMPT_RECALL_MIN_CONF`  | `0.5`                     | minimum `retrieval_confidence` before the prompt recall injects anything                   |
+| `LOOM_PROMPT_RECALL_MAX_CHARS` | `1200`                    | cap on the injected recall                                                                 |
+| `LOOM_PROMPT_PACK_TOP_K`       | `3`                       | pointers per prompt (`LOOM_PROMPT_PACK=off` turns the pack off)                            |
+| `LOOM_FILE_CONTEXT_TTL_MIN`    | `30`                      | minutes before the same file's context is fetched again                                    |
+| `LOOM_BLAST_DEPTH`             | `1`                       | `code.impact` depth for the blast-radius line                                              |
+| `LOOM_TEST_GATE_DEPTH`         | `2`                       | hops the test gate follows (1–3)                                                           |
+| `LOOM_OBSERVE_DEDUPE_S`        | `60`                      | a repeated read in this window is not observed again; `0` disables                         |
+| `LOOM_OBSERVE_SKIP_TOOLS`      | a built-in list           | comma-separated tool names (with `*` globs) that produce no observation                    |
+| `LOOM_PLUGIN_SCRATCHPAD`       | unset                     | `1` appends each turn's one-line conclusion to the run's `scratchpad` working-memory block |
+| `LOOM_SESSION_BRIEF_KEY`       | `auto/<project>/<branch>` | the key the session brief is saved under                                                   |
+
+`integrations/claude-code-plugin/README.md` documents the remaining knobs.
+
+## The code shunt
+
+Inside an indexed checkout, `loom-code-shunt.mjs` denies bulk reads and names the op to
+call instead: an identifier goes to `code.symbol`, a literal or regex to `code.grep`,
+words to `code.search`. The index answers with the enclosing unit and its callers, not a
+whole file.
+
+| Tool call                                                                     | Denied when                                                                           |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `Read` of a whole file                                                        | the file is indexed, unmodified, and longer than `LOOM_SHUNT_MAX_LINES` (800)         |
+| `Read` with `offset` / `limit`, or a `sed -n` / `head` / `tail` / `awk` slice | the span exceeds `LOOM_SHUNT_READ_CAP` (0 = off); at most twice per file per session  |
+| `Grep` over a directory; `rg`, `grep -r`, `cat` in Bash                       | the scope is inside the indexed tree                                                  |
+| a grep for one symbol name in one file                                        | once per symbol per session, with the exact `code.symbol` call                        |
+| `gh issue list --search`, `gh search issues`                                  | once per query, answered by `tracker.duplicate_check` with the closest reported items |
+
+Everything else passes: targeted reads, single-file greps, pipelines, files you modified
+or have not committed, unindexed repositories. The same command passes on the next try
+after a symbol or tracker-shunt denial.
+
+Staleness does not turn the shunt off: an unmodified file is answered as of its indexed
+commit, and the deny text names the commit. To search your working tree instead, set
+`local_first` / `LOOM_CODE_LOCAL_FIRST=on`; the shunt stands down and the primer skips the
+code map.
+
+Repository detection is cached ten minutes. A lookup that does not answer within
+`LOOM_SHUNT_RESOLVE_TIMEOUT_MS` (8 s) is retried after a minute rather than cached as
+"not indexed". Decisions are logged to `$TMPDIR/loom-shunt.log` (`LOOM_SHUNT_LOG=off`
+disables) and reported to the server as `code.outcome` rows (`LOOM_SHUNT_REPORT=off`
+disables). `LOOM_SHUNT_GREP=off` and `LOOM_SHUNT_BASH=off` exempt the Grep tool and the
+Bash tool respectively.
+
+`claude --bare` skips hooks, so none of this runs there; the
+[grep shim](grep-shim.md) covers that case. The operations are described in
+[code index operations](../code-index/operations.md).
+
+## Skills
+
+| Skill                      | Loads when                                                               | Does                                                                                                                                                                                                       |
+| -------------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loom-code`                | about to grep, glob or open files in an indexed repository               | which `code.*` op replaces the reflex and how to read its answer                                                                                                                                           |
+| `loom-memory`              | a fact is stated, decided or corrected; the end of a substantial task    | what is durable memory and what is scratchpad, how to write a fact a later session can trust, the end-of-task review                                                                                       |
+| `loom-mentor`              | a hint names a plane or op you do not know; "what can Loom do"           | the situation → plane → op map and what each hint code means                                                                                                                                               |
+| `loom-optimize`            | "optimize my namespace", "memory search is bad", a namespace-health line | `namespace.audit`, a plan the owner approves, `memory.move` with redirects ([guide](../../guides/optimize-namespace.md))                                                                                   |
+| `loom-session`             | "save this session", "resume", "where was I on this branch"              | lists the saved briefs, restores the one the user picks (the brief with the client's compaction summary, or with `--transcript` every recorded turn as well), or saves one; it never loads a brief unasked |
+| `loom-status`              | a tool says unauthenticated, the primer is missing, "is Loom working?"   | checks the Node runtime (installs it only on your yes), runs the client check, names the one fix                                                                                                           |
+| `improve-loom-for-my-repo` | the end of a session in which the code tools missed                      | turns the session's misses into reproducible findings for maintainers                                                                                                                                      |
+
+`loom-session` runs `bin/loom-brief.mjs` (`list`, `get [N | KEY] [--transcript]`,
+`save`); nothing in it runs on its own.
+
+## Checking it works
+
+- After a few tool calls, the dashboard (`/me`) shows the session's observations and,
+  with logging on, its conversation. `run.get` on `cc-<session_id>` replays the run.
+- `/loom:loom-status` runs `bin/loom-client-status.mjs` from the plugin: the server it
+  would call, whether the token is accepted and can write the namespace, and capture
+  batches that never reached the server. It needs nothing but the plugin.
+- `loom doctor --client` (the operator CLI, from a source checkout or the server image)
+  adds the Claude Code and Codex wiring checks.
+
+## Troubleshooting
+
+Start with `/loom:loom-status`; it names the cause in one line.
+
+| Symptom                                    | Cause                                              | Fix                                                            |
+| ------------------------------------------ | -------------------------------------------------- | -------------------------------------------------------------- |
+| `/bin/sh: node: not found`                 | no Node 18+ on the system `PATH`                   | run the `loom-status` skill, then restart Claude Code          |
+| no primer, nothing captured                | server unreachable, or no token found              | `loom-status`; check `~/.loom/config.json`                     |
+| tools answer, captures do not              | the token is viewer-only on the write namespace    | mint a writer token                                            |
+| Sessions view empty                        | conversation logging is off for the namespace      | turn it on in the dashboard or with `conversation.set_logging` |
+| a hook added in a new release never fires  | the installed plugin is older than the server      | `claude plugin update loom@loom`                               |
+| every tool listed twice                    | a user-scope `loom` MCP entry beside the plugin    | `claude mcp remove loom`                                       |
+| reads denied in a repo you work on locally | the checkout is indexed and the file is unmodified | `--config local_first=true` or `LOOM_CODE_LOCAL_FIRST=on`      |
+| `Hook cancelled` at exit                   | SessionEnd hooks ran past the client's budget      | update the plugin (its entries declare `timeout: 10`)          |
+
+## Other clients
+
+`hooks/hooks.generic.json` maps the same lifecycle events to the same scripts for any
+client that runs a command with the hook payload as JSON on stdin; replace
+`${LOOM_PLUGIN_DIR}` with the plugin directory's absolute path. The scripts probe several
+common payload field names, and read the client name from their third argument
+(`… PostToolUse codex`) or `LOOM_CLIENT`; unnamed, they assume Claude Code. For a client
+that can only export a transcript, see
+[transcript capture hooks](index.md#transcript-capture-hooks).
+
+## Related
+
+- [Codex plugin](codex.md): the same scripts with Codex wiring.
+- [MCP clients](mcp-clients.md): connecting without the plugin.
+- [Agent integration guide](../../guides/agent-integration.md).
+- [Operations reference](../../reference/operations.md): every op the hooks call.

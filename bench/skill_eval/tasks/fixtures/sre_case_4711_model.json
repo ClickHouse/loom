@@ -1,0 +1,2647 @@
+{
+ "case": "4711",
+ "model": "canonical",
+ "nodes": [
+  {
+   "id": "N-000",
+   "component": "dns-sidecar",
+   "kind": "mitigation",
+   "statement": "dns-sidecar restarted because the upstream resolver pool shrank to 3 members after the node drain at 08:00Z; observed 185 times; confidence 0.71.",
+   "evidence": [
+    "E-19",
+    "E-04",
+    "E-02"
+   ],
+   "first_seen": "2026-09-19T08:00:00Z",
+   "metrics": {
+    "p99_ms": 4309,
+    "error_rate": 0.0174,
+    "restarts": 5
+   }
+  },
+  {
+   "id": "N-001",
+   "component": "api-gateway",
+   "kind": "symptom",
+   "statement": "api-gateway timed out because the upstream resolver pool shrank to 2 members after the node drain at 08:01Z; observed 353 times; confidence 0.29.",
+   "evidence": [
+    "E-23",
+    "E-24",
+    "E-14"
+   ],
+   "first_seen": "2026-09-19T08:01:00Z",
+   "metrics": {
+    "p99_ms": 2297,
+    "error_rate": 0.0356,
+    "restarts": 6
+   }
+  },
+  {
+   "id": "N-002",
+   "component": "checkout-svc",
+   "kind": "mitigation",
+   "statement": "checkout-svc returned SERVFAIL because the upstream resolver pool shrank to 2 members after the node drain at 08:02Z; observed 121 times; confidence 0.39.",
+   "evidence": [
+    "E-17",
+    "E-17",
+    "E-25"
+   ],
+   "first_seen": "2026-09-19T08:02:00Z",
+   "metrics": {
+    "p99_ms": 3740,
+    "error_rate": 0.0583,
+    "restarts": 7
+   }
+  },
+  {
+   "id": "N-003",
+   "component": "coredns",
+   "kind": "symptom",
+   "statement": "coredns dropped connections because the upstream resolver pool shrank to 1 members after the node drain at 08:03Z; observed 138 times; confidence 0.70.",
+   "evidence": [
+    "E-21",
+    "E-25",
+    "E-17"
+   ],
+   "first_seen": "2026-09-19T08:03:00Z",
+   "metrics": {
+    "p99_ms": 4524,
+    "error_rate": 0.0402,
+    "restarts": 3
+   }
+  },
+  {
+   "id": "N-004",
+   "component": "envoy",
+   "kind": "mechanism",
+   "statement": "envoy saturated because the upstream resolver pool shrank to 3 members after the node drain at 08:04Z; observed 324 times; confidence 0.23.",
+   "evidence": [
+    "E-01",
+    "E-11",
+    "E-03"
+   ],
+   "first_seen": "2026-09-19T08:04:00Z",
+   "metrics": {
+    "p99_ms": 5347,
+    "error_rate": 0.1796,
+    "restarts": 9
+   }
+  },
+  {
+   "id": "N-005",
+   "component": "kube-proxy",
+   "kind": "cause",
+   "statement": "kube-proxy was rescheduled because the upstream resolver pool shrank to 2 members after the node drain at 08:05Z; observed 123 times; confidence 0.04.",
+   "evidence": [
+    "E-30",
+    "E-12",
+    "E-08"
+   ],
+   "first_seen": "2026-09-19T08:05:00Z",
+   "metrics": {
+    "p99_ms": 4732,
+    "error_rate": 0.1334,
+    "restarts": 5
+   }
+  },
+  {
+   "id": "N-006",
+   "component": "payments-db",
+   "kind": "symptom",
+   "statement": "payments-db exceeded its p99 budget because the upstream resolver pool shrank to 3 members after the node drain at 08:06Z; observed 325 times; confidence 0.23.",
+   "evidence": [
+    "E-12",
+    "E-06",
+    "E-16"
+   ],
+   "first_seen": "2026-09-19T08:06:00Z",
+   "metrics": {
+    "p99_ms": 3141,
+    "error_rate": 0.051,
+    "restarts": 0
+   }
+  },
+  {
+   "id": "N-007",
+   "component": "redis-cache",
+   "kind": "symptom",
+   "statement": "redis-cache logged NXDOMAIN because the upstream resolver pool shrank to 3 members after the node drain at 08:07Z; observed 272 times; confidence 0.78.",
+   "evidence": [
+    "E-17",
+    "E-06",
+    "E-09"
+   ],
+   "first_seen": "2026-09-19T08:07:00Z",
+   "metrics": {
+    "p99_ms": 1665,
+    "error_rate": 0.1566,
+    "restarts": 7
+   }
+  },
+  {
+   "id": "N-008",
+   "component": "node-exporter",
+   "kind": "mechanism",
+   "statement": "node-exporter re-resolved upstream because the upstream resolver pool shrank to 2 members after the node drain at 08:08Z; observed 282 times; confidence 0.96.",
+   "evidence": [
+    "E-22",
+    "E-09",
+    "E-20"
+   ],
+   "first_seen": "2026-09-19T08:08:00Z",
+   "metrics": {
+    "p99_ms": 3237,
+    "error_rate": 0.009,
+    "restarts": 3
+   }
+  },
+  {
+   "id": "N-009",
+   "component": "ingress-nginx",
+   "kind": "mitigation",
+   "statement": "ingress-nginx hit the conntrack table limit because the upstream resolver pool shrank to 3 members after the node drain at 08:09Z; observed 194 times; confidence 0.79.",
+   "evidence": [
+    "E-22",
+    "E-17",
+    "E-09"
+   ],
+   "first_seen": "2026-09-19T08:09:00Z",
+   "metrics": {
+    "p99_ms": 4618,
+    "error_rate": 0.1248,
+    "restarts": 12
+   }
+  },
+  {
+   "id": "N-010",
+   "component": "dns-sidecar",
+   "kind": "symptom",
+   "statement": "dns-sidecar restarted because the upstream resolver pool shrank to 1 members after the node drain at 08:10Z; observed 192 times; confidence 0.88.",
+   "evidence": [
+    "E-12",
+    "E-16",
+    "E-15"
+   ],
+   "first_seen": "2026-09-19T08:10:00Z",
+   "metrics": {
+    "p99_ms": 5183,
+    "error_rate": 0.1137,
+    "restarts": 11
+   }
+  },
+  {
+   "id": "N-011",
+   "component": "api-gateway",
+   "kind": "mechanism",
+   "statement": "api-gateway timed out because the upstream resolver pool shrank to 1 members after the node drain at 08:11Z; observed 387 times; confidence 0.43.",
+   "evidence": [
+    "E-28",
+    "E-04",
+    "E-28"
+   ],
+   "first_seen": "2026-09-19T08:11:00Z",
+   "metrics": {
+    "p99_ms": 347,
+    "error_rate": 0.0916,
+    "restarts": 1
+   }
+  },
+  {
+   "id": "N-012",
+   "component": "checkout-svc",
+   "kind": "mechanism",
+   "statement": "checkout-svc returned SERVFAIL because the upstream resolver pool shrank to 1 members after the node drain at 08:12Z; observed 53 times; confidence 0.56.",
+   "evidence": [
+    "E-19",
+    "E-24",
+    "E-16"
+   ],
+   "first_seen": "2026-09-19T08:12:00Z",
+   "metrics": {
+    "p99_ms": 1864,
+    "error_rate": 0.15,
+    "restarts": 8
+   }
+  },
+  {
+   "id": "N-013",
+   "component": "coredns",
+   "kind": "cause",
+   "statement": "coredns dropped connections because the upstream resolver pool shrank to 1 members after the node drain at 08:13Z; observed 226 times; confidence 0.29.",
+   "evidence": [
+    "E-30",
+    "E-25",
+    "E-09"
+   ],
+   "first_seen": "2026-09-19T08:13:00Z",
+   "metrics": {
+    "p99_ms": 3070,
+    "error_rate": 0.0833,
+    "restarts": 0
+   }
+  },
+  {
+   "id": "N-014",
+   "component": "envoy",
+   "kind": "mechanism",
+   "statement": "envoy saturated because the upstream resolver pool shrank to 2 members after the node drain at 08:14Z; observed 199 times; confidence 0.15.",
+   "evidence": [
+    "E-11",
+    "E-02",
+    "E-17"
+   ],
+   "first_seen": "2026-09-19T08:14:00Z",
+   "metrics": {
+    "p99_ms": 2214,
+    "error_rate": 0.1214,
+    "restarts": 11
+   }
+  },
+  {
+   "id": "N-015",
+   "component": "kube-proxy",
+   "kind": "cause",
+   "statement": "kube-proxy was rescheduled because the upstream resolver pool shrank to 3 members after the node drain at 08:15Z; observed 199 times; confidence 0.34.",
+   "evidence": [
+    "E-25",
+    "E-16",
+    "E-24"
+   ],
+   "first_seen": "2026-09-19T08:15:00Z",
+   "metrics": {
+    "p99_ms": 4651,
+    "error_rate": 0.0632,
+    "restarts": 9
+   }
+  },
+  {
+   "id": "N-016",
+   "component": "payments-db",
+   "kind": "mechanism",
+   "statement": "payments-db exceeded its p99 budget because the upstream resolver pool shrank to 2 members after the node drain at 08:16Z; observed 97 times; confidence 0.16.",
+   "evidence": [
+    "E-13",
+    "E-22",
+    "E-12"
+   ],
+   "first_seen": "2026-09-19T08:16:00Z",
+   "metrics": {
+    "p99_ms": 4485,
+    "error_rate": 0.0399,
+    "restarts": 2
+   }
+  },
+  {
+   "id": "N-017",
+   "component": "redis-cache",
+   "kind": "symptom",
+   "statement": "redis-cache logged NXDOMAIN because the upstream resolver pool shrank to 1 members after the node drain at 08:17Z; observed 248 times; confidence 0.49.",
+   "evidence": [
+    "E-09",
+    "E-17",
+    "E-28"
+   ],
+   "first_seen": "2026-09-19T08:17:00Z",
+   "metrics": {
+    "p99_ms": 1603,
+    "error_rate": 0.107,
+    "restarts": 0
+   }
+  },
+  {
+   "id": "N-018",
+   "component": "node-exporter",
+   "kind": "mechanism",
+   "statement": "node-exporter re-resolved upstream because the upstream resolver pool shrank to 3 members after the node drain at 08:18Z; observed 171 times; confidence 0.42.",
+   "evidence": [
+    "E-16",
+    "E-03",
+    "E-04"
+   ],
+   "first_seen": "2026-09-19T08:18:00Z",
+   "metrics": {
+    "p99_ms": 992,
+    "error_rate": 0.0649,
+    "restarts": 3
+   }
+  },
+  {
+   "id": "N-019",
+   "component": "ingress-nginx",
+   "kind": "mitigation",
+   "statement": "ingress-nginx hit the conntrack table limit because the upstream resolver pool shrank to 1 members after the node drain at 08:19Z; observed 129 times; confidence 0.86.",
+   "evidence": [
+    "E-27",
+    "E-02",
+    "E-12"
+   ],
+   "first_seen": "2026-09-19T08:19:00Z",
+   "metrics": {
+    "p99_ms": 1876,
+    "error_rate": 0.1729,
+    "restarts": 11
+   }
+  },
+  {
+   "id": "N-020",
+   "component": "dns-sidecar",
+   "kind": "mechanism",
+   "statement": "dns-sidecar restarted because the upstream resolver pool shrank to 3 members after the node drain at 08:20Z; observed 220 times; confidence 0.56.",
+   "evidence": [
+    "E-25",
+    "E-19",
+    "E-12"
+   ],
+   "first_seen": "2026-09-19T08:20:00Z",
+   "metrics": {
+    "p99_ms": 1225,
+    "error_rate": 0.0145,
+    "restarts": 4
+   }
+  },
+  {
+   "id": "N-021",
+   "component": "api-gateway",
+   "kind": "mitigation",
+   "statement": "api-gateway timed out because the upstream resolver pool shrank to 2 members after the node drain at 08:21Z; observed 218 times; confidence 0.29.",
+   "evidence": [
+    "E-03",
+    "E-30",
+    "E-29"
+   ],
+   "first_seen": "2026-09-19T08:21:00Z",
+   "metrics": {
+    "p99_ms": 2008,
+    "error_rate": 0.1382,
+    "restarts": 12
+   }
+  },
+  {
+   "id": "N-022",
+   "component": "checkout-svc",
+   "kind": "symptom",
+   "statement": "checkout-svc returned SERVFAIL because the upstream resolver pool shrank to 2 members after the node drain at 08:22Z; observed 146 times; confidence 0.67.",
+   "evidence": [
+    "E-09",
+    "E-25",
+    "E-14"
+   ],
+   "first_seen": "2026-09-19T08:22:00Z",
+   "metrics": {
+    "p99_ms": 2529,
+    "error_rate": 0.1258,
+    "restarts": 6
+   }
+  },
+  {
+   "id": "N-023",
+   "component": "coredns",
+   "kind": "mechanism",
+   "statement": "coredns dropped connections because the upstream resolver pool shrank to 2 members after the node drain at 08:23Z; observed 230 times; confidence 0.02.",
+   "evidence": [
+    "E-22",
+    "E-28",
+    "E-08"
+   ],
+   "first_seen": "2026-09-19T08:23:00Z",
+   "metrics": {
+    "p99_ms": 5214,
+    "error_rate": 0.1913,
+    "restarts": 7
+   }
+  },
+  {
+   "id": "N-024",
+   "component": "envoy",
+   "kind": "cause",
+   "statement": "envoy saturated because the upstream resolver pool shrank to 2 members after the node drain at 08:24Z; observed 90 times; confidence 0.94.",
+   "evidence": [
+    "E-20",
+    "E-19",
+    "E-02"
+   ],
+   "first_seen": "2026-09-19T08:24:00Z",
+   "metrics": {
+    "p99_ms": 5865,
+    "error_rate": 0.0359,
+    "restarts": 6
+   }
+  },
+  {
+   "id": "N-025",
+   "component": "kube-proxy",
+   "kind": "cause",
+   "statement": "kube-proxy was rescheduled because the upstream resolver pool shrank to 1 members after the node drain at 08:25Z; observed 70 times; confidence 0.46.",
+   "evidence": [
+    "E-26",
+    "E-02",
+    "E-14"
+   ],
+   "first_seen": "2026-09-19T08:25:00Z",
+   "metrics": {
+    "p99_ms": 5462,
+    "error_rate": 0.186,
+    "restarts": 9
+   }
+  },
+  {
+   "id": "N-026",
+   "component": "payments-db",
+   "kind": "symptom",
+   "statement": "payments-db exceeded its p99 budget because the upstream resolver pool shrank to 1 members after the node drain at 08:26Z; observed 98 times; confidence 0.67.",
+   "evidence": [
+    "E-01",
+    "E-14",
+    "E-30"
+   ],
+   "first_seen": "2026-09-19T08:26:00Z",
+   "metrics": {
+    "p99_ms": 5607,
+    "error_rate": 0.1876,
+    "restarts": 1
+   }
+  },
+  {
+   "id": "N-027",
+   "component": "redis-cache",
+   "kind": "mitigation",
+   "statement": "redis-cache logged NXDOMAIN because the upstream resolver pool shrank to 1 members after the node drain at 08:27Z; observed 153 times; confidence 0.85.",
+   "evidence": [
+    "E-28",
+    "E-08",
+    "E-15"
+   ],
+   "first_seen": "2026-09-19T08:27:00Z",
+   "metrics": {
+    "p99_ms": 1061,
+    "error_rate": 0.1385,
+    "restarts": 10
+   }
+  },
+  {
+   "id": "N-028",
+   "component": "node-exporter",
+   "kind": "mechanism",
+   "statement": "node-exporter re-resolved upstream because the upstream resolver pool shrank to 3 members after the node drain at 08:28Z; observed 261 times; confidence 0.65.",
+   "evidence": [
+    "E-24",
+    "E-24",
+    "E-24"
+   ],
+   "first_seen": "2026-09-19T08:28:00Z",
+   "metrics": {
+    "p99_ms": 519,
+    "error_rate": 0.1141,
+    "restarts": 11
+   }
+  },
+  {
+   "id": "N-029",
+   "component": "ingress-nginx",
+   "kind": "mechanism",
+   "statement": "ingress-nginx hit the conntrack table limit because the upstream resolver pool shrank to 1 members after the node drain at 08:29Z; observed 361 times; confidence 0.71.",
+   "evidence": [
+    "E-26",
+    "E-13",
+    "E-16"
+   ],
+   "first_seen": "2026-09-19T08:29:00Z",
+   "metrics": {
+    "p99_ms": 3818,
+    "error_rate": 0.1506,
+    "restarts": 3
+   }
+  },
+  {
+   "id": "N-030",
+   "component": "dns-sidecar",
+   "kind": "mechanism",
+   "statement": "dns-sidecar restarted because the upstream resolver pool shrank to 3 members after the node drain at 08:30Z; observed 68 times; confidence 0.90.",
+   "evidence": [
+    "E-30",
+    "E-14",
+    "E-05"
+   ],
+   "first_seen": "2026-09-19T08:30:00Z",
+   "metrics": {
+    "p99_ms": 5808,
+    "error_rate": 0.0439,
+    "restarts": 5
+   }
+  },
+  {
+   "id": "N-031",
+   "component": "api-gateway",
+   "kind": "cause",
+   "statement": "api-gateway timed out because the upstream resolver pool shrank to 1 members after the node drain at 08:31Z; observed 290 times; confidence 0.86.",
+   "evidence": [
+    "E-14",
+    "E-04",
+    "E-05"
+   ],
+   "first_seen": "2026-09-19T08:31:00Z",
+   "metrics": {
+    "p99_ms": 3499,
+    "error_rate": 0.1422,
+    "restarts": 6
+   }
+  },
+  {
+   "id": "N-032",
+   "component": "checkout-svc",
+   "kind": "symptom",
+   "statement": "checkout-svc returned SERVFAIL because the upstream resolver pool shrank to 1 members after the node drain at 08:32Z; observed 318 times; confidence 0.73.",
+   "evidence": [
+    "E-04",
+    "E-11",
+    "E-12"
+   ],
+   "first_seen": "2026-09-19T08:32:00Z",
+   "metrics": {
+    "p99_ms": 5131,
+    "error_rate": 0.1035,
+    "restarts": 3
+   }
+  },
+  {
+   "id": "N-033",
+   "component": "coredns",
+   "kind": "mechanism",
+   "statement": "coredns dropped connections because the upstream resolver pool shrank to 3 members after the node drain at 08:33Z; observed 183 times; confidence 0.20.",
+   "evidence": [
+    "E-27",
+    "E-24",
+    "E-14"
+   ],
+   "first_seen": "2026-09-19T08:33:00Z",
+   "metrics": {
+    "p99_ms": 4800,
+    "error_rate": 0.0132,
+    "restarts": 12
+   }
+  },
+  {
+   "id": "N-034",
+   "component": "envoy",
+   "kind": "mechanism",
+   "statement": "envoy saturated because the upstream resolver pool shrank to 3 members after the node drain at 08:34Z; observed 174 times; confidence 0.23.",
+   "evidence": [
+    "E-14",
+    "E-02",
+    "E-26"
+   ],
+   "first_seen": "2026-09-19T08:34:00Z",
+   "metrics": {
+    "p99_ms": 482,
+    "error_rate": 0.0237,
+    "restarts": 6
+   }
+  },
+  {
+   "id": "N-035",
+   "component": "kube-proxy",
+   "kind": "symptom",
+   "statement": "kube-proxy was rescheduled because the upstream resolver pool shrank to 2 members after the node drain at 08:35Z; observed 74 times; confidence 0.99.",
+   "evidence": [
+    "E-14",
+    "E-11",
+    "E-27"
+   ],
+   "first_seen": "2026-09-19T08:35:00Z",
+   "metrics": {
+    "p99_ms": 2466,
+    "error_rate": 0.0065,
+    "restarts": 0
+   }
+  },
+  {
+   "id": "N-036",
+   "component": "payments-db",
+   "kind": "mitigation",
+   "statement": "payments-db exceeded its p99 budget because the upstream resolver pool shrank to 2 members after the node drain at 08:36Z; observed 143 times; confidence 0.14.",
+   "evidence": [
+    "E-23",
+    "E-19",
+    "E-14"
+   ],
+   "first_seen": "2026-09-19T08:36:00Z",
+   "metrics": {
+    "p99_ms": 5107,
+    "error_rate": 0.1076,
+    "restarts": 11
+   }
+  },
+  {
+   "id": "N-037",
+   "component": "redis-cache",
+   "kind": "symptom",
+   "statement": "redis-cache logged NXDOMAIN because the upstream resolver pool shrank to 1 members after the node drain at 08:37Z; observed 373 times; confidence 0.17.",
+   "evidence": [
+    "E-22",
+    "E-01",
+    "E-29"
+   ],
+   "first_seen": "2026-09-19T08:37:00Z",
+   "metrics": {
+    "p99_ms": 4231,
+    "error_rate": 0.0013,
+    "restarts": 5
+   }
+  },
+  {
+   "id": "N-038",
+   "component": "node-exporter",
+   "kind": "symptom",
+   "statement": "node-exporter re-resolved upstream because the upstream resolver pool shrank to 3 members after the node drain at 08:38Z; observed 201 times; confidence 0.79.",
+   "evidence": [
+    "E-07",
+    "E-09",
+    "E-06"
+   ],
+   "first_seen": "2026-09-19T08:38:00Z",
+   "metrics": {
+    "p99_ms": 2532,
+    "error_rate": 0.0569,
+    "restarts": 7
+   }
+  },
+  {
+   "id": "N-039",
+   "component": "ingress-nginx",
+   "kind": "cause",
+   "statement": "ingress-nginx hit the conntrack table limit because the upstream resolver pool shrank to 3 members after the node drain at 08:39Z; observed 192 times; confidence 0.20.",
+   "evidence": [
+    "E-29",
+    "E-28",
+    "E-04"
+   ],
+   "first_seen": "2026-09-19T08:39:00Z",
+   "metrics": {
+    "p99_ms": 5753,
+    "error_rate": 0.1156,
+    "restarts": 11
+   }
+  },
+  {
+   "id": "N-040",
+   "component": "dns-sidecar",
+   "kind": "symptom",
+   "statement": "dns-sidecar restarted because the upstream resolver pool shrank to 2 members after the node drain at 08:40Z; observed 40 times; confidence 0.15.",
+   "evidence": [
+    "E-05",
+    "E-28",
+    "E-03"
+   ],
+   "first_seen": "2026-09-19T08:40:00Z",
+   "metrics": {
+    "p99_ms": 5414,
+    "error_rate": 0.1417,
+    "restarts": 1
+   }
+  },
+  {
+   "id": "N-041",
+   "component": "api-gateway",
+   "kind": "cause",
+   "statement": "api-gateway timed out because the upstream resolver pool shrank to 3 members after the node drain at 08:41Z; observed 319 times; confidence 0.48.",
+   "evidence": [
+    "E-14",
+    "E-01",
+    "E-03"
+   ],
+   "first_seen": "2026-09-19T08:41:00Z",
+   "metrics": {
+    "p99_ms": 1657,
+    "error_rate": 0.0186,
+    "restarts": 11
+   }
+  },
+  {
+   "id": "N-042",
+   "component": "checkout-svc",
+   "kind": "mechanism",
+   "statement": "checkout-svc returned SERVFAIL because the upstream resolver pool shrank to 3 members after the node drain at 08:42Z; observed 94 times; confidence 0.31.",
+   "evidence": [
+    "E-06",
+    "E-04",
+    "E-27"
+   ],
+   "first_seen": "2026-09-19T08:42:00Z",
+   "metrics": {
+    "p99_ms": 1264,
+    "error_rate": 0.1722,
+    "restarts": 5
+   }
+  },
+  {
+   "id": "N-043",
+   "component": "coredns",
+   "kind": "mitigation",
+   "statement": "coredns dropped connections because the upstream resolver pool shrank to 2 members after the node drain at 08:43Z; observed 173 times; confidence 0.80.",
+   "evidence": [
+    "E-26",
+    "E-27",
+    "E-08"
+   ],
+   "first_seen": "2026-09-19T08:43:00Z",
+   "metrics": {
+    "p99_ms": 287,
+    "error_rate": 0.1935,
+    "restarts": 3
+   }
+  },
+  {
+   "id": "N-044",
+   "component": "envoy",
+   "kind": "symptom",
+   "statement": "envoy saturated because the upstream resolver pool shrank to 1 members after the node drain at 08:44Z; observed 67 times; confidence 0.27.",
+   "evidence": [
+    "E-08",
+    "E-24",
+    "E-29"
+   ],
+   "first_seen": "2026-09-19T08:44:00Z",
+   "metrics": {
+    "p99_ms": 1982,
+    "error_rate": 0.0293,
+    "restarts": 6
+   }
+  },
+  {
+   "id": "N-045",
+   "component": "kube-proxy",
+   "kind": "mechanism",
+   "statement": "kube-proxy was rescheduled because the upstream resolver pool shrank to 1 members after the node drain at 08:45Z; observed 304 times; confidence 0.97.",
+   "evidence": [
+    "E-19",
+    "E-07",
+    "E-16"
+   ],
+   "first_seen": "2026-09-19T08:45:00Z",
+   "metrics": {
+    "p99_ms": 4494,
+    "error_rate": 0.1597,
+    "restarts": 6
+   }
+  },
+  {
+   "id": "N-046",
+   "component": "payments-db",
+   "kind": "mechanism",
+   "statement": "payments-db exceeded its p99 budget because the upstream resolver pool shrank to 3 members after the node drain at 08:46Z; observed 69 times; confidence 0.60.",
+   "evidence": [
+    "E-22",
+    "E-16",
+    "E-11"
+   ],
+   "first_seen": "2026-09-19T08:46:00Z",
+   "metrics": {
+    "p99_ms": 4743,
+    "error_rate": 0.1766,
+    "restarts": 6
+   }
+  },
+  {
+   "id": "N-047",
+   "component": "redis-cache",
+   "kind": "cause",
+   "statement": "redis-cache logged NXDOMAIN because the upstream resolver pool shrank to 2 members after the node drain at 08:47Z; observed 278 times; confidence 0.53.",
+   "evidence": [
+    "E-12",
+    "E-15",
+    "E-23"
+   ],
+   "first_seen": "2026-09-19T08:47:00Z",
+   "metrics": {
+    "p99_ms": 667,
+    "error_rate": 0.0741,
+    "restarts": 7
+   }
+  },
+  {
+   "id": "N-048",
+   "component": "node-exporter",
+   "kind": "symptom",
+   "statement": "node-exporter re-resolved upstream because the upstream resolver pool shrank to 2 members after the node drain at 08:48Z; observed 228 times; confidence 0.23.",
+   "evidence": [
+    "E-14",
+    "E-27",
+    "E-04"
+   ],
+   "first_seen": "2026-09-19T08:48:00Z",
+   "metrics": {
+    "p99_ms": 5209,
+    "error_rate": 0.0439,
+    "restarts": 9
+   }
+  },
+  {
+   "id": "N-049",
+   "component": "ingress-nginx",
+   "kind": "cause",
+   "statement": "ingress-nginx hit the conntrack table limit because the upstream resolver pool shrank to 3 members after the node drain at 08:49Z; observed 215 times; confidence 0.07.",
+   "evidence": [
+    "E-15",
+    "E-21",
+    "E-26"
+   ],
+   "first_seen": "2026-09-19T08:49:00Z",
+   "metrics": {
+    "p99_ms": 2216,
+    "error_rate": 0.1028,
+    "restarts": 12
+   }
+  },
+  {
+   "id": "N-050",
+   "component": "dns-sidecar",
+   "kind": "mechanism",
+   "statement": "dns-sidecar restarted because the upstream resolver pool shrank to 1 members after the node drain at 08:50Z; observed 301 times; confidence 0.96.",
+   "evidence": [
+    "E-25",
+    "E-05",
+    "E-05"
+   ],
+   "first_seen": "2026-09-19T08:50:00Z",
+   "metrics": {
+    "p99_ms": 756,
+    "error_rate": 0.1843,
+    "restarts": 0
+   }
+  },
+  {
+   "id": "N-051",
+   "component": "api-gateway",
+   "kind": "mitigation",
+   "statement": "api-gateway timed out because the upstream resolver pool shrank to 3 members after the node drain at 08:51Z; observed 170 times; confidence 0.99.",
+   "evidence": [
+    "E-21",
+    "E-29",
+    "E-13"
+   ],
+   "first_seen": "2026-09-19T08:51:00Z",
+   "metrics": {
+    "p99_ms": 5538,
+    "error_rate": 0.0567,
+    "restarts": 9
+   }
+  },
+  {
+   "id": "N-052",
+   "component": "checkout-svc",
+   "kind": "mitigation",
+   "statement": "checkout-svc returned SERVFAIL because the upstream resolver pool shrank to 1 members after the node drain at 08:52Z; observed 28 times; confidence 0.13.",
+   "evidence": [
+    "E-08",
+    "E-25",
+    "E-05"
+   ],
+   "first_seen": "2026-09-19T08:52:00Z",
+   "metrics": {
+    "p99_ms": 1407,
+    "error_rate": 0.1987,
+    "restarts": 2
+   }
+  },
+  {
+   "id": "N-053",
+   "component": "coredns",
+   "kind": "cause",
+   "statement": "coredns dropped connections because the upstream resolver pool shrank to 2 members after the node drain at 08:53Z; observed 125 times; confidence 0.71.",
+   "evidence": [
+    "E-14",
+    "E-24",
+    "E-03"
+   ],
+   "first_seen": "2026-09-19T08:53:00Z",
+   "metrics": {
+    "p99_ms": 2506,
+    "error_rate": 0.1668,
+    "restarts": 10
+   }
+  },
+  {
+   "id": "N-054",
+   "component": "envoy",
+   "kind": "mitigation",
+   "statement": "envoy saturated because the upstream resolver pool shrank to 2 members after the node drain at 08:54Z; observed 193 times; confidence 0.71.",
+   "evidence": [
+    "E-07",
+    "E-12",
+    "E-25"
+   ],
+   "first_seen": "2026-09-19T08:54:00Z",
+   "metrics": {
+    "p99_ms": 1687,
+    "error_rate": 0.0365,
+    "restarts": 11
+   }
+  },
+  {
+   "id": "N-055",
+   "component": "kube-proxy",
+   "kind": "mechanism",
+   "statement": "kube-proxy was rescheduled because the upstream resolver pool shrank to 2 members after the node drain at 08:55Z; observed 380 times; confidence 0.43.",
+   "evidence": [
+    "E-30",
+    "E-09",
+    "E-15"
+   ],
+   "first_seen": "2026-09-19T08:55:00Z",
+   "metrics": {
+    "p99_ms": 4535,
+    "error_rate": 0.0295,
+    "restarts": 12
+   }
+  },
+  {
+   "id": "N-056",
+   "component": "payments-db",
+   "kind": "mitigation",
+   "statement": "payments-db exceeded its p99 budget because the upstream resolver pool shrank to 2 members after the node drain at 08:56Z; observed 293 times; confidence 0.67.",
+   "evidence": [
+    "E-08",
+    "E-27",
+    "E-19"
+   ],
+   "first_seen": "2026-09-19T08:56:00Z",
+   "metrics": {
+    "p99_ms": 1343,
+    "error_rate": 0.1979,
+    "restarts": 7
+   }
+  },
+  {
+   "id": "N-057",
+   "component": "redis-cache",
+   "kind": "mechanism",
+   "statement": "redis-cache logged NXDOMAIN because the upstream resolver pool shrank to 1 members after the node drain at 08:57Z; observed 211 times; confidence 0.50.",
+   "evidence": [
+    "E-13",
+    "E-23",
+    "E-14"
+   ],
+   "first_seen": "2026-09-19T08:57:00Z",
+   "metrics": {
+    "p99_ms": 2533,
+    "error_rate": 0.0353,
+    "restarts": 12
+   }
+  },
+  {
+   "id": "N-058",
+   "component": "node-exporter",
+   "kind": "cause",
+   "statement": "node-exporter re-resolved upstream because the upstream resolver pool shrank to 2 members after the node drain at 08:58Z; observed 320 times; confidence 0.44.",
+   "evidence": [
+    "E-30",
+    "E-29",
+    "E-07"
+   ],
+   "first_seen": "2026-09-19T08:58:00Z",
+   "metrics": {
+    "p99_ms": 591,
+    "error_rate": 0.0708,
+    "restarts": 5
+   }
+  },
+  {
+   "id": "N-059",
+   "component": "ingress-nginx",
+   "kind": "symptom",
+   "statement": "ingress-nginx hit the conntrack table limit because the upstream resolver pool shrank to 1 members after the node drain at 08:59Z; observed 43 times; confidence 0.83.",
+   "evidence": [
+    "E-24",
+    "E-19",
+    "E-10"
+   ],
+   "first_seen": "2026-09-19T08:59:00Z",
+   "metrics": {
+    "p99_ms": 3393,
+    "error_rate": 0.091,
+    "restarts": 9
+   }
+  },
+  {
+   "id": "N-060",
+   "component": "dns-sidecar",
+   "kind": "mechanism",
+   "statement": "dns-sidecar restarted because the upstream resolver pool shrank to 2 members after the node drain at 08:00Z; observed 189 times; confidence 0.40.",
+   "evidence": [
+    "E-10",
+    "E-28",
+    "E-27"
+   ],
+   "first_seen": "2026-09-19T08:00:00Z",
+   "metrics": {
+    "p99_ms": 4700,
+    "error_rate": 0.1487,
+    "restarts": 10
+   }
+  },
+  {
+   "id": "N-061",
+   "component": "api-gateway",
+   "kind": "symptom",
+   "statement": "api-gateway timed out because the upstream resolver pool shrank to 2 members after the node drain at 08:01Z; observed 357 times; confidence 1.00.",
+   "evidence": [
+    "E-18",
+    "E-23",
+    "E-04"
+   ],
+   "first_seen": "2026-09-19T08:01:00Z",
+   "metrics": {
+    "p99_ms": 3446,
+    "error_rate": 0.1092,
+    "restarts": 6
+   }
+  },
+  {
+   "id": "N-062",
+   "component": "checkout-svc",
+   "kind": "symptom",
+   "statement": "checkout-svc returned SERVFAIL because the upstream resolver pool shrank to 2 members after the node drain at 08:02Z; observed 238 times; confidence 0.87.",
+   "evidence": [
+    "E-19",
+    "E-07",
+    "E-16"
+   ],
+   "first_seen": "2026-09-19T08:02:00Z",
+   "metrics": {
+    "p99_ms": 967,
+    "error_rate": 0.1276,
+    "restarts": 3
+   }
+  },
+  {
+   "id": "N-063",
+   "component": "coredns",
+   "kind": "symptom",
+   "statement": "coredns dropped connections because the upstream resolver pool shrank to 2 members after the node drain at 08:03Z; observed 280 times; confidence 0.10.",
+   "evidence": [
+    "E-26",
+    "E-23",
+    "E-27"
+   ],
+   "first_seen": "2026-09-19T08:03:00Z",
+   "metrics": {
+    "p99_ms": 3879,
+    "error_rate": 0.177,
+    "restarts": 8
+   }
+  },
+  {
+   "id": "N-064",
+   "component": "envoy",
+   "kind": "mechanism",
+   "statement": "envoy saturated because the upstream resolver pool shrank to 3 members after the node drain at 08:04Z; observed 64 times; confidence 0.77.",
+   "evidence": [
+    "E-18",
+    "E-10",
+    "E-26"
+   ],
+   "first_seen": "2026-09-19T08:04:00Z",
+   "metrics": {
+    "p99_ms": 1398,
+    "error_rate": 0.0595,
+    "restarts": 2
+   }
+  },
+  {
+   "id": "N-065",
+   "component": "kube-proxy",
+   "kind": "symptom",
+   "statement": "kube-proxy was rescheduled because the upstream resolver pool shrank to 2 members after the node drain at 08:05Z; observed 40 times; confidence 0.84.",
+   "evidence": [
+    "E-08",
+    "E-10",
+    "E-18"
+   ],
+   "first_seen": "2026-09-19T08:05:00Z",
+   "metrics": {
+    "p99_ms": 5012,
+    "error_rate": 0.0671,
+    "restarts": 6
+   }
+  },
+  {
+   "id": "N-066",
+   "component": "payments-db",
+   "kind": "mechanism",
+   "statement": "payments-db exceeded its p99 budget because the upstream resolver pool shrank to 3 members after the node drain at 08:06Z; observed 227 times; confidence 0.79.",
+   "evidence": [
+    "E-11",
+    "E-09",
+    "E-09"
+   ],
+   "first_seen": "2026-09-19T08:06:00Z",
+   "metrics": {
+    "p99_ms": 4147,
+    "error_rate": 0.1754,
+    "restarts": 2
+   }
+  },
+  {
+   "id": "N-067",
+   "component": "redis-cache",
+   "kind": "mitigation",
+   "statement": "redis-cache logged NXDOMAIN because the upstream resolver pool shrank to 3 members after the node drain at 08:07Z; observed 210 times; confidence 0.30.",
+   "evidence": [
+    "E-17",
+    "E-21",
+    "E-14"
+   ],
+   "first_seen": "2026-09-19T08:07:00Z",
+   "metrics": {
+    "p99_ms": 2551,
+    "error_rate": 0.1207,
+    "restarts": 6
+   }
+  },
+  {
+   "id": "N-068",
+   "component": "node-exporter",
+   "kind": "mitigation",
+   "statement": "node-exporter re-resolved upstream because the upstream resolver pool shrank to 1 members after the node drain at 08:08Z; observed 32 times; confidence 0.37.",
+   "evidence": [
+    "E-16",
+    "E-24",
+    "E-21"
+   ],
+   "first_seen": "2026-09-19T08:08:00Z",
+   "metrics": {
+    "p99_ms": 4041,
+    "error_rate": 0.1339,
+    "restarts": 3
+   }
+  },
+  {
+   "id": "N-069",
+   "component": "ingress-nginx",
+   "kind": "cause",
+   "statement": "ingress-nginx hit the conntrack table limit because the upstream resolver pool shrank to 3 members after the node drain at 08:09Z; observed 57 times; confidence 0.14.",
+   "evidence": [
+    "E-08",
+    "E-29",
+    "E-26"
+   ],
+   "first_seen": "2026-09-19T08:09:00Z",
+   "metrics": {
+    "p99_ms": 1139,
+    "error_rate": 0.1466,
+    "restarts": 0
+   }
+  },
+  {
+   "id": "N-070",
+   "component": "dns-sidecar",
+   "kind": "cause",
+   "statement": "dns-sidecar restarted because the upstream resolver pool shrank to 2 members after the node drain at 08:10Z; observed 15 times; confidence 0.17.",
+   "evidence": [
+    "E-19",
+    "E-14",
+    "E-18"
+   ],
+   "first_seen": "2026-09-19T08:10:00Z",
+   "metrics": {
+    "p99_ms": 5679,
+    "error_rate": 0.1329,
+    "restarts": 12
+   }
+  },
+  {
+   "id": "N-071",
+   "component": "api-gateway",
+   "kind": "cause",
+   "statement": "api-gateway timed out because the upstream resolver pool shrank to 3 members after the node drain at 08:11Z; observed 383 times; confidence 0.78.",
+   "evidence": [
+    "E-16",
+    "E-24",
+    "E-29"
+   ],
+   "first_seen": "2026-09-19T08:11:00Z",
+   "metrics": {
+    "p99_ms": 3188,
+    "error_rate": 0.1929,
+    "restarts": 5
+   }
+  },
+  {
+   "id": "N-072",
+   "component": "checkout-svc",
+   "kind": "cause",
+   "statement": "checkout-svc returned SERVFAIL because the upstream resolver pool shrank to 3 members after the node drain at 08:12Z; observed 107 times; confidence 0.54.",
+   "evidence": [
+    "E-05",
+    "E-19",
+    "E-07"
+   ],
+   "first_seen": "2026-09-19T08:12:00Z",
+   "metrics": {
+    "p99_ms": 5881,
+    "error_rate": 0.0587,
+    "restarts": 3
+   }
+  },
+  {
+   "id": "N-073",
+   "component": "coredns",
+   "kind": "mitigation",
+   "statement": "coredns dropped connections because the upstream resolver pool shrank to 2 members after the node drain at 08:13Z; observed 215 times; confidence 0.03.",
+   "evidence": [
+    "E-14",
+    "E-17",
+    "E-26"
+   ],
+   "first_seen": "2026-09-19T08:13:00Z",
+   "metrics": {
+    "p99_ms": 605,
+    "error_rate": 0.0253,
+    "restarts": 6
+   }
+  },
+  {
+   "id": "N-074",
+   "component": "envoy",
+   "kind": "mitigation",
+   "statement": "envoy saturated because the upstream resolver pool shrank to 2 members after the node drain at 08:14Z; observed 176 times; confidence 0.13.",
+   "evidence": [
+    "E-10",
+    "E-02",
+    "E-22"
+   ],
+   "first_seen": "2026-09-19T08:14:00Z",
+   "metrics": {
+    "p99_ms": 4240,
+    "error_rate": 0.193,
+    "restarts": 7
+   }
+  },
+  {
+   "id": "N-075",
+   "component": "kube-proxy",
+   "kind": "mitigation",
+   "statement": "kube-proxy was rescheduled because the upstream resolver pool shrank to 3 members after the node drain at 08:15Z; observed 332 times; confidence 0.17.",
+   "evidence": [
+    "E-03",
+    "E-12",
+    "E-21"
+   ],
+   "first_seen": "2026-09-19T08:15:00Z",
+   "metrics": {
+    "p99_ms": 405,
+    "error_rate": 0.1929,
+    "restarts": 8
+   }
+  },
+  {
+   "id": "N-076",
+   "component": "payments-db",
+   "kind": "mitigation",
+   "statement": "payments-db exceeded its p99 budget because the upstream resolver pool shrank to 1 members after the node drain at 08:16Z; observed 396 times; confidence 0.04.",
+   "evidence": [
+    "E-05",
+    "E-21",
+    "E-15"
+   ],
+   "first_seen": "2026-09-19T08:16:00Z",
+   "metrics": {
+    "p99_ms": 1664,
+    "error_rate": 0.0253,
+    "restarts": 5
+   }
+  },
+  {
+   "id": "N-077",
+   "component": "redis-cache",
+   "kind": "mechanism",
+   "statement": "redis-cache logged NXDOMAIN because the upstream resolver pool shrank to 2 members after the node drain at 08:17Z; observed 298 times; confidence 0.34.",
+   "evidence": [
+    "E-19",
+    "E-11",
+    "E-24"
+   ],
+   "first_seen": "2026-09-19T08:17:00Z",
+   "metrics": {
+    "p99_ms": 1484,
+    "error_rate": 0.1317,
+    "restarts": 8
+   }
+  },
+  {
+   "id": "N-078",
+   "component": "node-exporter",
+   "kind": "symptom",
+   "statement": "node-exporter re-resolved upstream because the upstream resolver pool shrank to 3 members after the node drain at 08:18Z; observed 309 times; confidence 0.63.",
+   "evidence": [
+    "E-22",
+    "E-26",
+    "E-16"
+   ],
+   "first_seen": "2026-09-19T08:18:00Z",
+   "metrics": {
+    "p99_ms": 1437,
+    "error_rate": 0.1255,
+    "restarts": 7
+   }
+  },
+  {
+   "id": "N-079",
+   "component": "ingress-nginx",
+   "kind": "cause",
+   "statement": "ingress-nginx hit the conntrack table limit because the upstream resolver pool shrank to 3 members after the node drain at 08:19Z; observed 330 times; confidence 0.85.",
+   "evidence": [
+    "E-23",
+    "E-19",
+    "E-27"
+   ],
+   "first_seen": "2026-09-19T08:19:00Z",
+   "metrics": {
+    "p99_ms": 2667,
+    "error_rate": 0.1352,
+    "restarts": 7
+   }
+  },
+  {
+   "id": "N-080",
+   "component": "dns-sidecar",
+   "kind": "mitigation",
+   "statement": "dns-sidecar restarted because the upstream resolver pool shrank to 3 members after the node drain at 08:20Z; observed 281 times; confidence 0.09.",
+   "evidence": [
+    "E-28",
+    "E-26",
+    "E-20"
+   ],
+   "first_seen": "2026-09-19T08:20:00Z",
+   "metrics": {
+    "p99_ms": 4129,
+    "error_rate": 0.1327,
+    "restarts": 10
+   }
+  },
+  {
+   "id": "N-081",
+   "component": "api-gateway",
+   "kind": "mechanism",
+   "statement": "api-gateway timed out because the upstream resolver pool shrank to 3 members after the node drain at 08:21Z; observed 153 times; confidence 0.90.",
+   "evidence": [
+    "E-27",
+    "E-16",
+    "E-23"
+   ],
+   "first_seen": "2026-09-19T08:21:00Z",
+   "metrics": {
+    "p99_ms": 2353,
+    "error_rate": 0.0514,
+    "restarts": 3
+   }
+  },
+  {
+   "id": "N-082",
+   "component": "checkout-svc",
+   "kind": "mitigation",
+   "statement": "checkout-svc returned SERVFAIL because the upstream resolver pool shrank to 3 members after the node drain at 08:22Z; observed 78 times; confidence 0.35.",
+   "evidence": [
+    "E-25",
+    "E-01",
+    "E-28"
+   ],
+   "first_seen": "2026-09-19T08:22:00Z",
+   "metrics": {
+    "p99_ms": 1532,
+    "error_rate": 0.0142,
+    "restarts": 10
+   }
+  },
+  {
+   "id": "N-083",
+   "component": "coredns",
+   "kind": "mechanism",
+   "statement": "coredns dropped connections because the upstream resolver pool shrank to 1 members after the node drain at 08:23Z; observed 243 times; confidence 0.75.",
+   "evidence": [
+    "E-08",
+    "E-08",
+    "E-22"
+   ],
+   "first_seen": "2026-09-19T08:23:00Z",
+   "metrics": {
+    "p99_ms": 2964,
+    "error_rate": 0.022,
+    "restarts": 6
+   }
+  },
+  {
+   "id": "N-084",
+   "component": "envoy",
+   "kind": "mechanism",
+   "statement": "envoy saturated because the upstream resolver pool shrank to 3 members after the node drain at 08:24Z; observed 227 times; confidence 0.01.",
+   "evidence": [
+    "E-17",
+    "E-12",
+    "E-19"
+   ],
+   "first_seen": "2026-09-19T08:24:00Z",
+   "metrics": {
+    "p99_ms": 342,
+    "error_rate": 0.149,
+    "restarts": 9
+   }
+  },
+  {
+   "id": "N-085",
+   "component": "kube-proxy",
+   "kind": "cause",
+   "statement": "kube-proxy was rescheduled because the upstream resolver pool shrank to 1 members after the node drain at 08:25Z; observed 241 times; confidence 0.84.",
+   "evidence": [
+    "E-24",
+    "E-10",
+    "E-19"
+   ],
+   "first_seen": "2026-09-19T08:25:00Z",
+   "metrics": {
+    "p99_ms": 1862,
+    "error_rate": 0.1885,
+    "restarts": 9
+   }
+  },
+  {
+   "id": "N-086",
+   "component": "payments-db",
+   "kind": "symptom",
+   "statement": "payments-db exceeded its p99 budget because the upstream resolver pool shrank to 1 members after the node drain at 08:26Z; observed 327 times; confidence 0.77.",
+   "evidence": [
+    "E-26",
+    "E-05",
+    "E-26"
+   ],
+   "first_seen": "2026-09-19T08:26:00Z",
+   "metrics": {
+    "p99_ms": 782,
+    "error_rate": 0.1252,
+    "restarts": 8
+   }
+  },
+  {
+   "id": "N-087",
+   "component": "redis-cache",
+   "kind": "mitigation",
+   "statement": "redis-cache logged NXDOMAIN because the upstream resolver pool shrank to 3 members after the node drain at 08:27Z; observed 183 times; confidence 0.05.",
+   "evidence": [
+    "E-03",
+    "E-08",
+    "E-11"
+   ],
+   "first_seen": "2026-09-19T08:27:00Z",
+   "metrics": {
+    "p99_ms": 3551,
+    "error_rate": 0.0178,
+    "restarts": 11
+   }
+  },
+  {
+   "id": "N-088",
+   "component": "node-exporter",
+   "kind": "cause",
+   "statement": "node-exporter re-resolved upstream because the upstream resolver pool shrank to 3 members after the node drain at 08:28Z; observed 45 times; confidence 0.07.",
+   "evidence": [
+    "E-04",
+    "E-05",
+    "E-06"
+   ],
+   "first_seen": "2026-09-19T08:28:00Z",
+   "metrics": {
+    "p99_ms": 3296,
+    "error_rate": 0.1058,
+    "restarts": 0
+   }
+  },
+  {
+   "id": "N-089",
+   "component": "ingress-nginx",
+   "kind": "mechanism",
+   "statement": "ingress-nginx hit the conntrack table limit because the upstream resolver pool shrank to 1 members after the node drain at 08:29Z; observed 234 times; confidence 0.74.",
+   "evidence": [
+    "E-08",
+    "E-07",
+    "E-13"
+   ],
+   "first_seen": "2026-09-19T08:29:00Z",
+   "metrics": {
+    "p99_ms": 4582,
+    "error_rate": 0.0433,
+    "restarts": 9
+   }
+  },
+  {
+   "id": "N-090",
+   "component": "dns-sidecar",
+   "kind": "mitigation",
+   "statement": "dns-sidecar restarted because the upstream resolver pool shrank to 2 members after the node drain at 08:30Z; observed 267 times; confidence 0.30.",
+   "evidence": [
+    "E-16",
+    "E-13",
+    "E-30"
+   ],
+   "first_seen": "2026-09-19T08:30:00Z",
+   "metrics": {
+    "p99_ms": 995,
+    "error_rate": 0.111,
+    "restarts": 6
+   }
+  },
+  {
+   "id": "N-091",
+   "component": "api-gateway",
+   "kind": "cause",
+   "statement": "api-gateway timed out because the upstream resolver pool shrank to 3 members after the node drain at 08:31Z; observed 10 times; confidence 0.70.",
+   "evidence": [
+    "E-28",
+    "E-16",
+    "E-12"
+   ],
+   "first_seen": "2026-09-19T08:31:00Z",
+   "metrics": {
+    "p99_ms": 4174,
+    "error_rate": 0.03,
+    "restarts": 9
+   }
+  },
+  {
+   "id": "N-092",
+   "component": "checkout-svc",
+   "kind": "mechanism",
+   "statement": "checkout-svc returned SERVFAIL because the upstream resolver pool shrank to 2 members after the node drain at 08:32Z; observed 317 times; confidence 0.99.",
+   "evidence": [
+    "E-12",
+    "E-16",
+    "E-30"
+   ],
+   "first_seen": "2026-09-19T08:32:00Z",
+   "metrics": {
+    "p99_ms": 4928,
+    "error_rate": 0.057,
+    "restarts": 8
+   }
+  },
+  {
+   "id": "N-093",
+   "component": "coredns",
+   "kind": "cause",
+   "statement": "coredns dropped connections because the upstream resolver pool shrank to 3 members after the node drain at 08:33Z; observed 369 times; confidence 0.40.",
+   "evidence": [
+    "E-06",
+    "E-07",
+    "E-27"
+   ],
+   "first_seen": "2026-09-19T08:33:00Z",
+   "metrics": {
+    "p99_ms": 278,
+    "error_rate": 0.1508,
+    "restarts": 12
+   }
+  },
+  {
+   "id": "N-094",
+   "component": "envoy",
+   "kind": "cause",
+   "statement": "envoy saturated because the upstream resolver pool shrank to 2 members after the node drain at 08:34Z; observed 300 times; confidence 0.35.",
+   "evidence": [
+    "E-04",
+    "E-23",
+    "E-10"
+   ],
+   "first_seen": "2026-09-19T08:34:00Z",
+   "metrics": {
+    "p99_ms": 4089,
+    "error_rate": 0.1593,
+    "restarts": 9
+   }
+  },
+  {
+   "id": "N-095",
+   "component": "kube-proxy",
+   "kind": "cause",
+   "statement": "kube-proxy was rescheduled because the upstream resolver pool shrank to 1 members after the node drain at 08:35Z; observed 275 times; confidence 0.12.",
+   "evidence": [
+    "E-09",
+    "E-25",
+    "E-26"
+   ],
+   "first_seen": "2026-09-19T08:35:00Z",
+   "metrics": {
+    "p99_ms": 4127,
+    "error_rate": 0.0462,
+    "restarts": 11
+   }
+  },
+  {
+   "id": "N-096",
+   "component": "payments-db",
+   "kind": "cause",
+   "statement": "payments-db exceeded its p99 budget because the upstream resolver pool shrank to 2 members after the node drain at 08:36Z; observed 146 times; confidence 0.55.",
+   "evidence": [
+    "E-20",
+    "E-12",
+    "E-10"
+   ],
+   "first_seen": "2026-09-19T08:36:00Z",
+   "metrics": {
+    "p99_ms": 1882,
+    "error_rate": 0.1201,
+    "restarts": 11
+   }
+  },
+  {
+   "id": "N-097",
+   "component": "redis-cache",
+   "kind": "symptom",
+   "statement": "redis-cache logged NXDOMAIN because the upstream resolver pool shrank to 1 members after the node drain at 08:37Z; observed 222 times; confidence 0.74.",
+   "evidence": [
+    "E-07",
+    "E-09",
+    "E-18"
+   ],
+   "first_seen": "2026-09-19T08:37:00Z",
+   "metrics": {
+    "p99_ms": 4899,
+    "error_rate": 0.0353,
+    "restarts": 2
+   }
+  },
+  {
+   "id": "N-098",
+   "component": "node-exporter",
+   "kind": "cause",
+   "statement": "node-exporter re-resolved upstream because the upstream resolver pool shrank to 3 members after the node drain at 08:38Z; observed 351 times; confidence 0.60.",
+   "evidence": [
+    "E-24",
+    "E-08",
+    "E-19"
+   ],
+   "first_seen": "2026-09-19T08:38:00Z",
+   "metrics": {
+    "p99_ms": 1682,
+    "error_rate": 0.1883,
+    "restarts": 12
+   }
+  },
+  {
+   "id": "N-099",
+   "component": "ingress-nginx",
+   "kind": "symptom",
+   "statement": "ingress-nginx hit the conntrack table limit because the upstream resolver pool shrank to 3 members after the node drain at 08:39Z; observed 84 times; confidence 0.72.",
+   "evidence": [
+    "E-22",
+    "E-21",
+    "E-15"
+   ],
+   "first_seen": "2026-09-19T08:39:00Z",
+   "metrics": {
+    "p99_ms": 5811,
+    "error_rate": 0.1637,
+    "restarts": 0
+   }
+  },
+  {
+   "id": "N-100",
+   "component": "dns-sidecar",
+   "kind": "mechanism",
+   "statement": "dns-sidecar restarted because the upstream resolver pool shrank to 3 members after the node drain at 08:40Z; observed 145 times; confidence 0.63.",
+   "evidence": [
+    "E-28",
+    "E-11",
+    "E-20"
+   ],
+   "first_seen": "2026-09-19T08:40:00Z",
+   "metrics": {
+    "p99_ms": 5622,
+    "error_rate": 0.073,
+    "restarts": 1
+   }
+  },
+  {
+   "id": "N-101",
+   "component": "api-gateway",
+   "kind": "cause",
+   "statement": "api-gateway timed out because the upstream resolver pool shrank to 1 members after the node drain at 08:41Z; observed 74 times; confidence 0.39.",
+   "evidence": [
+    "E-04",
+    "E-17",
+    "E-04"
+   ],
+   "first_seen": "2026-09-19T08:41:00Z",
+   "metrics": {
+    "p99_ms": 1268,
+    "error_rate": 0.0392,
+    "restarts": 0
+   }
+  },
+  {
+   "id": "N-102",
+   "component": "checkout-svc",
+   "kind": "cause",
+   "statement": "checkout-svc returned SERVFAIL because the upstream resolver pool shrank to 3 members after the node drain at 08:42Z; observed 316 times; confidence 0.90.",
+   "evidence": [
+    "E-10",
+    "E-17",
+    "E-09"
+   ],
+   "first_seen": "2026-09-19T08:42:00Z",
+   "metrics": {
+    "p99_ms": 5602,
+    "error_rate": 0.1919,
+    "restarts": 4
+   }
+  },
+  {
+   "id": "N-103",
+   "component": "coredns",
+   "kind": "mitigation",
+   "statement": "coredns dropped connections because the upstream resolver pool shrank to 3 members after the node drain at 08:43Z; observed 362 times; confidence 0.70.",
+   "evidence": [
+    "E-05",
+    "E-29",
+    "E-01"
+   ],
+   "first_seen": "2026-09-19T08:43:00Z",
+   "metrics": {
+    "p99_ms": 2056,
+    "error_rate": 0.1104,
+    "restarts": 4
+   }
+  },
+  {
+   "id": "N-104",
+   "component": "envoy",
+   "kind": "mitigation",
+   "statement": "envoy saturated because the upstream resolver pool shrank to 1 members after the node drain at 08:44Z; observed 26 times; confidence 0.13.",
+   "evidence": [
+    "E-17",
+    "E-08",
+    "E-12"
+   ],
+   "first_seen": "2026-09-19T08:44:00Z",
+   "metrics": {
+    "p99_ms": 5719,
+    "error_rate": 0.0698,
+    "restarts": 2
+   }
+  },
+  {
+   "id": "N-105",
+   "component": "kube-proxy",
+   "kind": "cause",
+   "statement": "kube-proxy was rescheduled because the upstream resolver pool shrank to 2 members after the node drain at 08:45Z; observed 332 times; confidence 0.38.",
+   "evidence": [
+    "E-20",
+    "E-30",
+    "E-12"
+   ],
+   "first_seen": "2026-09-19T08:45:00Z",
+   "metrics": {
+    "p99_ms": 853,
+    "error_rate": 0.166,
+    "restarts": 11
+   }
+  },
+  {
+   "id": "N-106",
+   "component": "payments-db",
+   "kind": "mechanism",
+   "statement": "payments-db exceeded its p99 budget because the upstream resolver pool shrank to 3 members after the node drain at 08:46Z; observed 88 times; confidence 0.44.",
+   "evidence": [
+    "E-07",
+    "E-25",
+    "E-04"
+   ],
+   "first_seen": "2026-09-19T08:46:00Z",
+   "metrics": {
+    "p99_ms": 1202,
+    "error_rate": 0.033,
+    "restarts": 2
+   }
+  },
+  {
+   "id": "N-107",
+   "component": "redis-cache",
+   "kind": "symptom",
+   "statement": "redis-cache logged NXDOMAIN because the upstream resolver pool shrank to 2 members after the node drain at 08:47Z; observed 278 times; confidence 0.47.",
+   "evidence": [
+    "E-15",
+    "E-01",
+    "E-26"
+   ],
+   "first_seen": "2026-09-19T08:47:00Z",
+   "metrics": {
+    "p99_ms": 5143,
+    "error_rate": 0.0522,
+    "restarts": 8
+   }
+  },
+  {
+   "id": "N-108",
+   "component": "node-exporter",
+   "kind": "mechanism",
+   "statement": "node-exporter re-resolved upstream because the upstream resolver pool shrank to 2 members after the node drain at 08:48Z; observed 85 times; confidence 0.79.",
+   "evidence": [
+    "E-12",
+    "E-01",
+    "E-18"
+   ],
+   "first_seen": "2026-09-19T08:48:00Z",
+   "metrics": {
+    "p99_ms": 1439,
+    "error_rate": 0.0062,
+    "restarts": 12
+   }
+  },
+  {
+   "id": "N-109",
+   "component": "ingress-nginx",
+   "kind": "symptom",
+   "statement": "ingress-nginx hit the conntrack table limit because the upstream resolver pool shrank to 1 members after the node drain at 08:49Z; observed 211 times; confidence 0.69.",
+   "evidence": [
+    "E-07",
+    "E-13",
+    "E-28"
+   ],
+   "first_seen": "2026-09-19T08:49:00Z",
+   "metrics": {
+    "p99_ms": 3222,
+    "error_rate": 0.1719,
+    "restarts": 4
+   }
+  },
+  {
+   "id": "N-110",
+   "component": "dns-sidecar",
+   "kind": "mitigation",
+   "statement": "dns-sidecar restarted because the upstream resolver pool shrank to 1 members after the node drain at 08:50Z; observed 289 times; confidence 0.56.",
+   "evidence": [
+    "E-02",
+    "E-14",
+    "E-10"
+   ],
+   "first_seen": "2026-09-19T08:50:00Z",
+   "metrics": {
+    "p99_ms": 562,
+    "error_rate": 0.0879,
+    "restarts": 11
+   }
+  },
+  {
+   "id": "N-111",
+   "component": "api-gateway",
+   "kind": "cause",
+   "statement": "api-gateway timed out because the upstream resolver pool shrank to 1 members after the node drain at 08:51Z; observed 399 times; confidence 0.24.",
+   "evidence": [
+    "E-30",
+    "E-06",
+    "E-06"
+   ],
+   "first_seen": "2026-09-19T08:51:00Z",
+   "metrics": {
+    "p99_ms": 1450,
+    "error_rate": 0.0857,
+    "restarts": 12
+   }
+  },
+  {
+   "id": "N-112",
+   "component": "checkout-svc",
+   "kind": "mitigation",
+   "statement": "checkout-svc returned SERVFAIL because the upstream resolver pool shrank to 3 members after the node drain at 08:52Z; observed 223 times; confidence 0.18.",
+   "evidence": [
+    "E-22",
+    "E-12",
+    "E-14"
+   ],
+   "first_seen": "2026-09-19T08:52:00Z",
+   "metrics": {
+    "p99_ms": 5888,
+    "error_rate": 0.0121,
+    "restarts": 5
+   }
+  },
+  {
+   "id": "N-113",
+   "component": "coredns",
+   "kind": "symptom",
+   "statement": "coredns dropped connections because the upstream resolver pool shrank to 1 members after the node drain at 08:53Z; observed 16 times; confidence 0.05.",
+   "evidence": [
+    "E-02",
+    "E-13",
+    "E-10"
+   ],
+   "first_seen": "2026-09-19T08:53:00Z",
+   "metrics": {
+    "p99_ms": 5247,
+    "error_rate": 0.0386,
+    "restarts": 8
+   }
+  },
+  {
+   "id": "N-114",
+   "component": "envoy",
+   "kind": "mechanism",
+   "statement": "envoy saturated because the upstream resolver pool shrank to 2 members after the node drain at 08:54Z; observed 216 times; confidence 0.59.",
+   "evidence": [
+    "E-07",
+    "E-15",
+    "E-02"
+   ],
+   "first_seen": "2026-09-19T08:54:00Z",
+   "metrics": {
+    "p99_ms": 1367,
+    "error_rate": 0.0364,
+    "restarts": 0
+   }
+  }
+ ],
+ "edges": [
+  {
+   "from": "N-000",
+   "to": "N-001",
+   "relation": "mitigates",
+   "weight": 0.459
+  },
+  {
+   "from": "N-000",
+   "to": "N-002",
+   "relation": "causes",
+   "weight": 0.506
+  },
+  {
+   "from": "N-001",
+   "to": "N-003",
+   "relation": "mitigates",
+   "weight": 0.183
+  },
+  {
+   "from": "N-001",
+   "to": "N-004",
+   "relation": "precedes",
+   "weight": 0.505
+  },
+  {
+   "from": "N-004",
+   "to": "N-005",
+   "relation": "causes",
+   "weight": 0.111
+  },
+  {
+   "from": "N-005",
+   "to": "N-006",
+   "relation": "mitigates",
+   "weight": 0.558
+  },
+  {
+   "from": "N-003",
+   "to": "N-007",
+   "relation": "precedes",
+   "weight": 0.508
+  },
+  {
+   "from": "N-001",
+   "to": "N-008",
+   "relation": "precedes",
+   "weight": 0.384
+  },
+  {
+   "from": "N-005",
+   "to": "N-009",
+   "relation": "precedes",
+   "weight": 0.41
+  },
+  {
+   "from": "N-001",
+   "to": "N-010",
+   "relation": "precedes",
+   "weight": 0.719
+  },
+  {
+   "from": "N-010",
+   "to": "N-011",
+   "relation": "mitigates",
+   "weight": 0.185
+  },
+  {
+   "from": "N-002",
+   "to": "N-012",
+   "relation": "causes",
+   "weight": 0.488
+  },
+  {
+   "from": "N-008",
+   "to": "N-013",
+   "relation": "precedes",
+   "weight": 0.966
+  },
+  {
+   "from": "N-012",
+   "to": "N-014",
+   "relation": "correlates",
+   "weight": 0.479
+  },
+  {
+   "from": "N-010",
+   "to": "N-015",
+   "relation": "mitigates",
+   "weight": 0.838
+  },
+  {
+   "from": "N-011",
+   "to": "N-016",
+   "relation": "causes",
+   "weight": 0.034
+  },
+  {
+   "from": "N-014",
+   "to": "N-017",
+   "relation": "precedes",
+   "weight": 0.201
+  },
+  {
+   "from": "N-007",
+   "to": "N-018",
+   "relation": "mitigates",
+   "weight": 0.277
+  },
+  {
+   "from": "N-014",
+   "to": "N-019",
+   "relation": "correlates",
+   "weight": 0.548
+  },
+  {
+   "from": "N-001",
+   "to": "N-020",
+   "relation": "precedes",
+   "weight": 0.938
+  },
+  {
+   "from": "N-014",
+   "to": "N-021",
+   "relation": "correlates",
+   "weight": 0.862
+  },
+  {
+   "from": "N-016",
+   "to": "N-022",
+   "relation": "correlates",
+   "weight": 0.814
+  },
+  {
+   "from": "N-003",
+   "to": "N-023",
+   "relation": "correlates",
+   "weight": 0.017
+  },
+  {
+   "from": "N-016",
+   "to": "N-024",
+   "relation": "mitigates",
+   "weight": 0.089
+  },
+  {
+   "from": "N-002",
+   "to": "N-025",
+   "relation": "precedes",
+   "weight": 0.481
+  },
+  {
+   "from": "N-019",
+   "to": "N-026",
+   "relation": "mitigates",
+   "weight": 0.05
+  },
+  {
+   "from": "N-023",
+   "to": "N-027",
+   "relation": "precedes",
+   "weight": 0.044
+  },
+  {
+   "from": "N-015",
+   "to": "N-028",
+   "relation": "precedes",
+   "weight": 0.504
+  },
+  {
+   "from": "N-004",
+   "to": "N-029",
+   "relation": "causes",
+   "weight": 0.837
+  },
+  {
+   "from": "N-009",
+   "to": "N-030",
+   "relation": "mitigates",
+   "weight": 0.709
+  },
+  {
+   "from": "N-029",
+   "to": "N-031",
+   "relation": "correlates",
+   "weight": 0.52
+  },
+  {
+   "from": "N-026",
+   "to": "N-032",
+   "relation": "precedes",
+   "weight": 0.29
+  },
+  {
+   "from": "N-011",
+   "to": "N-033",
+   "relation": "causes",
+   "weight": 0.441
+  },
+  {
+   "from": "N-012",
+   "to": "N-034",
+   "relation": "mitigates",
+   "weight": 0.39
+  },
+  {
+   "from": "N-009",
+   "to": "N-035",
+   "relation": "mitigates",
+   "weight": 0.382
+  },
+  {
+   "from": "N-001",
+   "to": "N-036",
+   "relation": "mitigates",
+   "weight": 0.037
+  },
+  {
+   "from": "N-025",
+   "to": "N-037",
+   "relation": "causes",
+   "weight": 0.401
+  },
+  {
+   "from": "N-004",
+   "to": "N-038",
+   "relation": "causes",
+   "weight": 0.576
+  },
+  {
+   "from": "N-024",
+   "to": "N-039",
+   "relation": "mitigates",
+   "weight": 0.569
+  },
+  {
+   "from": "N-023",
+   "to": "N-040",
+   "relation": "correlates",
+   "weight": 0.503
+  },
+  {
+   "from": "N-004",
+   "to": "N-041",
+   "relation": "mitigates",
+   "weight": 0.04
+  },
+  {
+   "from": "N-000",
+   "to": "N-042",
+   "relation": "mitigates",
+   "weight": 0.793
+  },
+  {
+   "from": "N-022",
+   "to": "N-043",
+   "relation": "correlates",
+   "weight": 0.179
+  },
+  {
+   "from": "N-041",
+   "to": "N-044",
+   "relation": "causes",
+   "weight": 0.887
+  },
+  {
+   "from": "N-023",
+   "to": "N-045",
+   "relation": "mitigates",
+   "weight": 0.845
+  },
+  {
+   "from": "N-019",
+   "to": "N-046",
+   "relation": "mitigates",
+   "weight": 0.568
+  },
+  {
+   "from": "N-042",
+   "to": "N-047",
+   "relation": "correlates",
+   "weight": 0.065
+  },
+  {
+   "from": "N-018",
+   "to": "N-048",
+   "relation": "causes",
+   "weight": 0.186
+  },
+  {
+   "from": "N-019",
+   "to": "N-049",
+   "relation": "mitigates",
+   "weight": 0.4
+  },
+  {
+   "from": "N-021",
+   "to": "N-050",
+   "relation": "precedes",
+   "weight": 0.646
+  },
+  {
+   "from": "N-023",
+   "to": "N-051",
+   "relation": "precedes",
+   "weight": 0.861
+  },
+  {
+   "from": "N-050",
+   "to": "N-052",
+   "relation": "mitigates",
+   "weight": 0.268
+  },
+  {
+   "from": "N-003",
+   "to": "N-053",
+   "relation": "mitigates",
+   "weight": 0.897
+  },
+  {
+   "from": "N-040",
+   "to": "N-054",
+   "relation": "precedes",
+   "weight": 0.635
+  },
+  {
+   "from": "N-018",
+   "to": "N-055",
+   "relation": "correlates",
+   "weight": 0.386
+  },
+  {
+   "from": "N-029",
+   "to": "N-056",
+   "relation": "precedes",
+   "weight": 0.18
+  },
+  {
+   "from": "N-007",
+   "to": "N-057",
+   "relation": "precedes",
+   "weight": 0.66
+  },
+  {
+   "from": "N-051",
+   "to": "N-058",
+   "relation": "mitigates",
+   "weight": 0.938
+  },
+  {
+   "from": "N-030",
+   "to": "N-059",
+   "relation": "mitigates",
+   "weight": 0.13
+  },
+  {
+   "from": "N-044",
+   "to": "N-060",
+   "relation": "correlates",
+   "weight": 0.34
+  },
+  {
+   "from": "N-006",
+   "to": "N-061",
+   "relation": "mitigates",
+   "weight": 0.538
+  },
+  {
+   "from": "N-057",
+   "to": "N-062",
+   "relation": "precedes",
+   "weight": 0.609
+  },
+  {
+   "from": "N-056",
+   "to": "N-063",
+   "relation": "correlates",
+   "weight": 0.997
+  },
+  {
+   "from": "N-036",
+   "to": "N-064",
+   "relation": "mitigates",
+   "weight": 0.196
+  },
+  {
+   "from": "N-046",
+   "to": "N-065",
+   "relation": "mitigates",
+   "weight": 0.868
+  },
+  {
+   "from": "N-050",
+   "to": "N-066",
+   "relation": "precedes",
+   "weight": 0.897
+  },
+  {
+   "from": "N-028",
+   "to": "N-067",
+   "relation": "causes",
+   "weight": 0.394
+  },
+  {
+   "from": "N-025",
+   "to": "N-068",
+   "relation": "causes",
+   "weight": 0.489
+  },
+  {
+   "from": "N-062",
+   "to": "N-069",
+   "relation": "mitigates",
+   "weight": 0.256
+  },
+  {
+   "from": "N-053",
+   "to": "N-070",
+   "relation": "precedes",
+   "weight": 0.776
+  },
+  {
+   "from": "N-060",
+   "to": "N-071",
+   "relation": "precedes",
+   "weight": 0.297
+  },
+  {
+   "from": "N-014",
+   "to": "N-072",
+   "relation": "causes",
+   "weight": 0.8
+  },
+  {
+   "from": "N-053",
+   "to": "N-073",
+   "relation": "causes",
+   "weight": 0.433
+  },
+  {
+   "from": "N-032",
+   "to": "N-074",
+   "relation": "mitigates",
+   "weight": 0.251
+  },
+  {
+   "from": "N-005",
+   "to": "N-075",
+   "relation": "causes",
+   "weight": 0.96
+  },
+  {
+   "from": "N-056",
+   "to": "N-076",
+   "relation": "correlates",
+   "weight": 0.646
+  },
+  {
+   "from": "N-025",
+   "to": "N-077",
+   "relation": "causes",
+   "weight": 0.086
+  },
+  {
+   "from": "N-035",
+   "to": "N-078",
+   "relation": "causes",
+   "weight": 0.501
+  },
+  {
+   "from": "N-030",
+   "to": "N-079",
+   "relation": "causes",
+   "weight": 0.864
+  },
+  {
+   "from": "N-030",
+   "to": "N-080",
+   "relation": "precedes",
+   "weight": 0.08
+  },
+  {
+   "from": "N-055",
+   "to": "N-081",
+   "relation": "causes",
+   "weight": 0.246
+  },
+  {
+   "from": "N-007",
+   "to": "N-082",
+   "relation": "causes",
+   "weight": 0.181
+  },
+  {
+   "from": "N-009",
+   "to": "N-083",
+   "relation": "mitigates",
+   "weight": 0.999
+  },
+  {
+   "from": "N-028",
+   "to": "N-084",
+   "relation": "mitigates",
+   "weight": 0.93
+  },
+  {
+   "from": "N-000",
+   "to": "N-085",
+   "relation": "precedes",
+   "weight": 0.039
+  },
+  {
+   "from": "N-001",
+   "to": "N-086",
+   "relation": "correlates",
+   "weight": 0.422
+  },
+  {
+   "from": "N-003",
+   "to": "N-087",
+   "relation": "mitigates",
+   "weight": 0.734
+  },
+  {
+   "from": "N-023",
+   "to": "N-088",
+   "relation": "mitigates",
+   "weight": 0.63
+  },
+  {
+   "from": "N-054",
+   "to": "N-089",
+   "relation": "mitigates",
+   "weight": 0.694
+  },
+  {
+   "from": "N-039",
+   "to": "N-090",
+   "relation": "causes",
+   "weight": 0.436
+  },
+  {
+   "from": "N-014",
+   "to": "N-091",
+   "relation": "precedes",
+   "weight": 0.688
+  },
+  {
+   "from": "N-018",
+   "to": "N-092",
+   "relation": "causes",
+   "weight": 0.28
+  },
+  {
+   "from": "N-084",
+   "to": "N-093",
+   "relation": "correlates",
+   "weight": 0.523
+  },
+  {
+   "from": "N-032",
+   "to": "N-094",
+   "relation": "correlates",
+   "weight": 0.002
+  },
+  {
+   "from": "N-048",
+   "to": "N-095",
+   "relation": "causes",
+   "weight": 0.256
+  },
+  {
+   "from": "N-085",
+   "to": "N-096",
+   "relation": "precedes",
+   "weight": 0.129
+  },
+  {
+   "from": "N-076",
+   "to": "N-097",
+   "relation": "mitigates",
+   "weight": 0.349
+  },
+  {
+   "from": "N-049",
+   "to": "N-098",
+   "relation": "causes",
+   "weight": 0.012
+  },
+  {
+   "from": "N-098",
+   "to": "N-099",
+   "relation": "precedes",
+   "weight": 0.355
+  },
+  {
+   "from": "N-042",
+   "to": "N-100",
+   "relation": "mitigates",
+   "weight": 0.649
+  },
+  {
+   "from": "N-000",
+   "to": "N-101",
+   "relation": "correlates",
+   "weight": 0.924
+  },
+  {
+   "from": "N-064",
+   "to": "N-102",
+   "relation": "correlates",
+   "weight": 0.175
+  },
+  {
+   "from": "N-064",
+   "to": "N-103",
+   "relation": "correlates",
+   "weight": 0.037
+  },
+  {
+   "from": "N-013",
+   "to": "N-104",
+   "relation": "correlates",
+   "weight": 0.944
+  },
+  {
+   "from": "N-021",
+   "to": "N-105",
+   "relation": "precedes",
+   "weight": 0.207
+  },
+  {
+   "from": "N-100",
+   "to": "N-106",
+   "relation": "correlates",
+   "weight": 0.94
+  },
+  {
+   "from": "N-054",
+   "to": "N-107",
+   "relation": "causes",
+   "weight": 0.303
+  },
+  {
+   "from": "N-071",
+   "to": "N-108",
+   "relation": "precedes",
+   "weight": 0.356
+  },
+  {
+   "from": "N-009",
+   "to": "N-109",
+   "relation": "mitigates",
+   "weight": 0.071
+  },
+  {
+   "from": "N-108",
+   "to": "N-110",
+   "relation": "precedes",
+   "weight": 0.458
+  },
+  {
+   "from": "N-038",
+   "to": "N-111",
+   "relation": "causes",
+   "weight": 0.822
+  },
+  {
+   "from": "N-109",
+   "to": "N-112",
+   "relation": "causes",
+   "weight": 0.609
+  },
+  {
+   "from": "N-007",
+   "to": "N-113",
+   "relation": "precedes",
+   "weight": 0.089
+  },
+  {
+   "from": "N-039",
+   "to": "N-114",
+   "relation": "causes",
+   "weight": 0.654
+  }
+ ]
+}

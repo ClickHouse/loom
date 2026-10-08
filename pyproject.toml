@@ -1,0 +1,291 @@
+[project]
+name = "clickhouse-loom-server"
+version = "1.0.0"
+description = "Loom server (control plane). Shared-production agent memory + knowledge plane on ClickHouse. Distributed as a Docker image (ghcr.io/clickhouse/loom) — `pip install` is for local dev / Docker-image build only; do NOT run the server from pip in production."
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+readme = "README.md"
+authors = [{ name = "ClickHouse, Inc." }]
+urls = { Repository = "https://github.com/ClickHouse/loom" }
+# PEP 541: PyPI rejects uploads whose primary classifier is "Private ::
+# Do Not Upload". Loom's server is a shared-production data plane,
+# deployed multi-user / multi-agent against ClickHouse Cloud or self-
+# hosted OSS ClickHouse — not something developers pip-install on a
+# laptop. The Docker image at ghcr.io/clickhouse/loom is the canonical
+# server artefact. The SDK (`clickhouse-loom` at sdk/python/) is what's
+# published to PyPI for application developers.
+classifiers = ["Private :: Do Not Upload"]
+
+dependencies = [
+  "fastapi>=0.118",
+  "uvicorn[standard]>=0.30",
+  "pydantic>=2.9",
+  "pydantic-settings>=2.5",
+  "clickhouse-connect>=1.0",
+  "aiohttp>=3.10",           # clickhouse-connect's async client requires it
+  "httpx[http2]>=0.27",
+  "tenacity>=9.0",
+  "pyjwt[crypto]>=2.10",
+  # OpenTelemetry: ship spans + logs to HyperDX / ClickStack's OTLP
+  # collector. ClickStack is the OTel consumer in the Loom stack
+  # (docs/features/integrations/clickstack.md); this wires the producer side.
+  "opentelemetry-api>=1.27",
+  "opentelemetry-sdk>=1.27",
+  "opentelemetry-exporter-otlp-proto-http>=1.27",
+  "opentelemetry-instrumentation-fastapi>=0.48b0",
+  "opentelemetry-instrumentation-httpx>=0.48b0",
+  # Logs API + the SDK's logging.Handler bridge that auto-attaches
+  # trace_id/span_id from the active span. Logs land alongside traces
+  # in HyperDX, correlated by trace_id so a single click jumps from
+  # one to the other.
+  "opentelemetry-instrumentation-logging>=0.48b0",
+  # Password hashing for email+password sign-in. argon2id is the
+  # modern OWASP-preferred KDF; argon2-cffi is the canonical Python
+  # binding. Used by server.auth.passwords (hash / verify / rehash).
+  "argon2-cffi>=23.1",
+
+  # English Porter (Snowball) stemmer for verb canonicalization in
+  # entity_triples. Pure-Python, no model download. Used by
+  # `canonicalize_verb` in server.memory.app.retrieval; the
+  # stemmer collapses inflected forms (visited/visiting/visits → visit)
+  # so triple-store matches across write/query verb tense.
+  "snowballstemmer>=2.2",
+  # lemmagen3 (the English lemmatizer) is the `[lemma]` extra below, not a
+  # core dep: it ships no wheel and compiles against Python.h, and a host
+  # that only wants the `loom` CLI (`loom up`) may have no build toolchain.
+]
+
+[project.optional-dependencies]
+# Lemmagen3 English lemmatizer — covers irregular morphology Snowball misses
+# (went/go, mice/mouse, children/child). Matches ClickHouse's
+# lemmatize('en', ...) byte-for-byte: deploy/lemmagen3/en.bin, which ClickHouse
+# loads, is the model this wheel ships. The Docker image installs it (Dockerfile EXTRAS) and so
+# does `[dev]`; `server/memory/domain/lemmatize.py` imports it lazily and falls
+# open to the plain tokens when it is absent, so a host running only the CLI
+# never compiles it. A host-run *server* without it writes
+# unlemmatized `content_excerpt_lemma` — install `.[lemma]` for `make server`.
+lemma = [
+  "lemmagen3>=3.3",
+]
+dev = [
+  "lemmagen3>=3.3",             # the server's own lexical leg; tests exercise it
+  "pytest>=8.0",
+  "pytest-asyncio>=0.24",
+  "pytest-httpx>=0.32",
+  "pytest-rerunfailures>=15.0",
+  "pytest-cov>=5.0",
+  # Unit tests run in a random order; a failing order is
+  # reproduced with the seed CI prints: `pytest -p randomly --randomly-seed=N`.
+  "pytest-randomly>=3.15",
+  # The ratchets count mypy errors and ruff findings per file; a new release
+  # moves those counts with no code change, so both are pinned.
+  "mypy==2.3.1",
+  "types-PyYAML>=6.0",
+  "ruff==0.16.9",
+  "build>=1.0",
+]
+# Operator CLI extras — needed only by `dev/loom_ingest.py` for
+# PDF text extraction and S3-source fetching. Not server deps. Users
+# who don't ingest PDFs or pull from S3 don't need either; the CLI
+# lazy-imports them with an actionable error message when missing.
+ingest = [
+  "pypdf>=4.0",
+  "boto3>=1.34",
+  "trafilatura>=2.0",
+]
+# Code intelligence plane: tree-sitter parses C++ for
+# the fast tier, numpy runs the weekly PageRank. Needed only when the code
+# workers / `loom code` CLI are used — all imports are lazy, the server
+# boots without these while the workers stay disabled.
+code = [
+  "tree-sitter>=0.23",
+  "tree-sitter-cpp>=0.23",
+  "tree-sitter-python>=0.23",
+  "tree-sitter-bash>=0.23",
+  # TypeScript (+ tsx), JavaScript and Rust
+  "tree-sitter-typescript>=0.23",
+  "tree-sitter-javascript>=0.23",
+  "tree-sitter-rust>=0.23",
+  # Go and Java (lane parsers + SQL islands)
+  "tree-sitter-go>=0.23",
+  "tree-sitter-java>=0.23",
+  "numpy>=1.26",
+]
+# scripts/scip_harness only (protobuf parse of scip-clang output). Never a
+# server dep — the server ingests the normalized JSON delta.
+scip = [
+  "protobuf>=7.35.1",
+]
+# Local CPU embedder extras. Needed only when LOOM_EMBEDDING_MODEL=local*
+# is selected — the operator evaluates Loom without a hosted embedding
+# provider. fastembed pulls in onnxruntime (~80MB wheel)
+# and downloads the model itself on first call (~50MB for bge-small).
+# Lazy-imported by server/embedding/local.py with an actionable error
+# message when missing.
+local-embedder = [
+  "fastembed>=0.4",
+]
+
+[project.scripts]
+# `loom` CLI — bundled INSIDE the Docker image for operator use.
+# Not exposed via PyPI (root pyproject is Private :: Do Not Upload).
+# Operators run it via `docker exec loom-server loom mint-token ...` or
+# the equivalent on whatever orchestrator hosts the container. From a clone,
+# `pip install -e .` puts it on the host too — no compiler needed:
+# lemmagen3 is in the `[lemma]` extra.
+#   loom up            # boot the local stack + print how to connect
+#   loom serve         # boot the control plane (the image runs uvicorn directly)
+#   loom migrate       # apply schema migrations
+#   loom mint-token    # issue a JWT (operator's path; needs LOOM_JWT_SECRET)
+loom = "server.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# Server-only wheel. The SDK has its own pyproject at sdk/python/
+# (published to PyPI as `clickhouse-loom`); this root pyproject builds
+# the server wheel that the Dockerfile installs into the image.
+packages = ["server"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+# pytest-asyncio 0.23+ defaults to a fresh event loop per fixture and
+# per test, which breaks the integration tests' module-scope async
+# fixtures (they connect a CH client at module scope and reuse it
+# across tests). The fixture's awaitables bind to loop A, then test 2
+# runs on loop B and tries to await them — "Future attached to a
+# different loop". Setting both scopes to "session" gives every test
+# and fixture in the process one shared loop. The integration tests talk to the control plane over HTTP
+# (separate process), so in-process loop sharing has no contention
+# risk.
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]
+# A mark that is not registered here or by a plugin is an error, not a
+# silent no-op: a typo in a tier marker would otherwise leave the test in the
+# default tier. tests/README.md says which CI job runs each tier.
+strict_markers = true
+markers = [
+  "slow: takes more than a few seconds; runs in the integration job, never in unit",
+  "destructive: stops merges, drops or rewrites shared objects; needs a disposable ClickHouse",
+  "provider: calls a real LLM or embedding provider; skips without its key",
+  "recovery: kills, restarts or resumes a worker, saga or migration mid-flight",
+]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+files = ["server", "sdk/python/loom"]
+exclude = ["tests/"]
+
+# Optional packages imported lazily with a fallback, present in some
+# environments and not others: lemmagen3 comes with `[dev]` and `[lemma]`,
+# fastembed with `[local-embedder]`, and tiktoken is undeclared (the
+# embedders approximate token counts without it). mypy's error for them
+# would differ by environment; their call sites are typed through local
+# Protocols.
+[[tool.mypy.overrides]]
+module = ["fastembed", "fastembed.*", "lemmagen3", "tiktoken", "tiktoken.*"]
+ignore_missing_imports = true
+
+# The SDK's framework adapters: langgraph and strands are optional, so each adapter
+# subclasses the real base class when it imports and a structural twin otherwise.
+# Without the framework the base is Any, which strict mode refuses to subclass.
+[[tool.mypy.overrides]]
+module = ["langgraph", "langgraph.*", "strands", "strands.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["loom.integrations.*"]
+disallow_subclassing_any = false
+
+[tool.coverage.run]
+# Coverage is measured over the unit suite in CI (the `unit` job). Integration
+# tests run the server out-of-process so they don't contribute to in-process
+# coverage; treat this as a unit-coverage floor, not a total.
+source = ["server", "sdk/python/loom"]
+omit = ["*/tests/*", "*/__pycache__/*"]
+
+[tool.coverage.report]
+show_missing = true
+# Keep precision modest — this is a regression guard, not a vanity metric.
+precision = 0
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# The SDK supports Python 3.11 (sdk/python/pyproject.toml requires-python), so
+# its lint rules must not rewrite it to newer syntax. The wheel smoke test runs
+# on that floor too.
+per-file-target-version = { "sdk/python/**" = "py311", "scripts/gates/sdk_wheel_smoke.py" = "py311" }
+# Generated protobuf bindings keep their generated form.
+extend-exclude = ["scripts/scip_harness/vendor"]
+
+[tool.ruff.format]
+# Formatting is `ruff format`; these paths keep their bytes.
+exclude = [
+  # Inputs whose exact bytes and line numbers tests assert on.
+  "tests/fixtures/**",
+  "scripts/scip_harness/vendor/**",
+  # Generated by scripts/codegen/sdk_py_gen.py and sdk_py_client_gen.py; their --check compares bytes.
+  "sdk/python/loom/ops.py",
+  "sdk/python/loom/client.py",
+  # Extractor modules: their code tokens are the code index's version stamp
+  # and a formatter may rewrite string quotes, which would re-index every
+  # repository. Kept in step with extractor_stamp.EXTRACTOR_MODULES by
+  # tests/unit/test_format_excludes_extractor_modules.py.
+  "server/code/domain/extract/call_guards.py",
+  "server/code/domain/extract/callee_outline.py",
+  "server/code/domain/extract/chunker.py",
+  "server/code/domain/extract/context_text.py",
+  "server/code/domain/extract/cpp_receivers.py",
+  "server/code/domain/extract/crossref.py",
+  "server/code/domain/extract/edges_treesitter.py",
+  "server/code/domain/extract/lang_bash.py",
+  "server/code/domain/extract/lang_python.py",
+  "server/code/domain/extract/py_layouts.py",
+  "server/code/domain/extract/py_library_methods.py",
+  "server/code/domain/extract/py_members.py",
+  "server/code/domain/extract/py_receivers.py",
+  "server/code/domain/extract/registration.py",
+  "server/code/domain/extract/tokenize.py",
+  "server/code/domain/extract/treesitter.py",
+  "server/code/domain/extract/ts_config.py",
+  "server/code/domain/extract/ts_receivers.py",
+  "server/code/domain/extract/ts_reexports.py",
+  "server/code/domain/extract/ts_workspace.py",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC", "BLE", "RUF100"]
+# PLR0915 runs from scripts/gates/function_length_gate.py, not from this config:
+# its noqa comments are used there.
+external = ["PLR0915"]
+
+# Tests get more slack on line length — assertions, SQL string literals,
+# and JSON fixtures often run long and reflowing them harms readability.
+# Production code keeps the 100-char rule.
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["E501"]
+# Generated by scripts/codegen/sdk_py_gen.py and sdk_py_client_gen.py: their file-level noqa is the generator's, not ours to prune.
+"sdk/python/loom/ops.py" = ["RUF100"]
+"sdk/python/loom/client.py" = ["RUF100"]
+# Bench scripts are short-lived runners (one-shot, asyncio.run from
+# main). ASYNC230/240 catch blocking IO inside async funcs — meant
+# for library code where it stalls the event loop. Bench scripts
+# don't have loop contention to worry about.
+"bench/**/*.py" = ["ASYNC230", "ASYNC240"]
+# These two modules carry the LLM extraction / query-enrichment prompts:
+# multi-line few-shot JSON examples plus inline graph SQL. The long lines ARE the string content;
+# reflowing them either changes what the model sees or splits SQL awkwardly,
+# and `# noqa` can't target a line inside a triple-quoted literal. Same
+# rationale as the tests exemption above.
+"server/memory/app/extract/*.py" = ["E501"]
+# Holds the extraction LLM prompt literals (few-shot JSON examples). Same
+# rationale: the long lines ARE the string content.
+"server/memory/domain/extraction_prompts.py" = ["E501"]
+"server/memory/app/retrieval/*.py" = ["E501"]
+# Holds the search-pipeline LLM prompt literals.
+"server/memory/domain/search_prompts.py" = ["E501"]

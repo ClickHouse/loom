@@ -1,0 +1,102 @@
+"""Learnings review queue — human-in-the-loop promotion of seeder
+candidates into the institutional shared zone."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
+
+LearningStatus = Literal["pending", "promoted", "rejected"]
+ReviewDecision = Literal["promote", "reject"]
+
+
+class LearningsListInput(BaseModel):
+    org: str
+    namespace: str
+    status: LearningStatus | None = None  # None = pending
+    # At most this many candidates, 1-500, newest proposal first.
+    limit: int = Field(default=50, ge=1, le=500)
+    source_kind: str | None = None  # None = all seeders
+
+
+class _LearningEntry(BaseModel):
+    candidate_id: str
+    memory_key: str
+    memory_type: str
+    proposed_value: Any
+    supporter_count: int
+    confidence_avg: float
+    supporters: list[str]
+    rationale: str
+    source_kind: str = "memory_supporters"
+    status: LearningStatus
+    proposed_at: datetime
+    decided_at: datetime | None = None
+    decided_by: str = ""
+    decision_reason: str = ""
+
+
+class LearningsListOutput(BaseModel):
+    # Candidates with the requested status in `namespace`, newest proposal first.
+    rows: list[_LearningEntry]
+
+
+PromotionDestination = Literal["memory", "knowledge", "both"]
+
+
+class LearningsReviewInput(BaseModel):
+    org: str
+    namespace: str
+    # The queued candidate to decide; one unknown in `namespace` answers 404.
+    candidate_id: str
+    # `promote` writes it to `destination` and marks it promoted; `reject` only marks
+    # it rejected.
+    decision: ReviewDecision
+    # Why; stored as `decision_reason` and carried into the promoted row's provenance.
+    reason: str = ""
+    # On 'promote': 'memory' → loom.shared, 'knowledge' → knowledge.upsert,
+    # 'both' → both in sequence.
+    destination: PromotionDestination = "memory"
+    # Captured into the audit subject + shared.promoted_by.
+    approver: str = "learnings-reviewer"
+
+
+class LearningsReviewOutput(BaseModel):
+    # The candidate, echoed.
+    candidate_id: str
+    # The status the candidate holds after this call.
+    new_status: LearningStatus
+    # True when this call wrote the memory destination: `loom.shared` for a
+    # supporters candidate, a namespace memory row for a seeder one.
+    promoted_to_shared: bool = False
+    # True when this call upserted the candidate as a knowledge document.
+    promoted_to_knowledge: bool = False
+    # source_uri the knowledge doc was upserted under (for later knowledge.delete).
+    knowledge_source_uri: str = ""
+    # When this call ran (UTC), also on a repeat that changed nothing.
+    decided_at: datetime
+
+
+# Per-namespace pending/promoted/rejected counts + approve-ratio for the
+# Health view's Extraction Quality panel.
+class LearningsQualityInput(BaseModel):
+    org: str
+    namespace: str | None = None  # None = org-wide rollup
+    # Only candidates from this producer; the default counts the conversation
+    # seeder, None counts every producer.
+    source_kind: str | None = "conversation_seeder"
+
+
+class LearningsQualityRow(BaseModel):
+    namespace: str
+    pending: int
+    promoted: int
+    rejected: int
+    approve_ratio: float  # promoted / (promoted + rejected); 0 when no decisions
+
+
+class LearningsQualityOutput(BaseModel):
+    # One row per namespace the caller may see, most pending first; empty without access.
+    rows: list[LearningsQualityRow]

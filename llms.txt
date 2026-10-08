@@ -1,0 +1,141 @@
+# Loom
+
+> Loom is a memory, knowledge and code-intelligence data plane for AI agents, built on one ClickHouse database and served over MCP, HTTP and Python/TypeScript SDKs.
+
+Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-agent.md (the fastest path). Every operation's fields are in docs/reference/operations/.
+
+## Getting started
+
+- [Connect a coding agent](docs/getting-started/connect-a-coding-agent.md): This page connects Claude Code, Codex, Cursor or another MCP client to a running Loom server.
+- [Evaluate Loom](docs/getting-started/evaluate.md): Evaluate the decision you need to make, not every harness in the repository.
+- [Your first agent](docs/getting-started/first-agent.md): This tutorial builds a small agent with the Python SDK.
+- [Configure models and API keys](docs/getting-started/models-and-keys.md): Your coding agent, Loom's internal LLM and Loom's embedding model are separate choices.
+- [Overview](docs/getting-started/overview.md): Loom is a server that stores memory, documents, conversations, an entity graph and a code index for AI agents, as rows in one ClickHouse database.
+- [Quickstart](docs/getting-started/quickstart.md): This page boots Loom on a laptop and saves a first memory over HTTP, Python and MCP.
+
+## Operations
+
+- [Backup and recovery](docs/operations/backup-and-recovery.md): A Loom backup is a ClickHouse backup plus the blob volume.
+- [Code index operations](docs/operations/code-index-operations.md): The code index runs only when an operator enables its workers and configures repositories.
+- [Deployment](docs/operations/deployment.md): Loom is one server image plus ClickHouse.
+- [Maintenance](docs/operations/maintenance.md): Every command here is a `loom` subcommand; run it inside the container that has the deployment's environment (`docker exec loom-server loom …`, or `loom-workers` in a split deployment).
+- [Monitoring](docs/operations/monitoring.md): This page says what to watch.
+- [Read-replicas: more Looms on the same brain](docs/operations/read-replicas.md): A read-replica is another Loom on the same ClickHouse service as your main Loom.
+- [Troubleshooting](docs/operations/troubleshooting.md): Each entry gives a symptom, the check that confirms its cause, and the fix.
+- [Upgrades](docs/operations/upgrades.md): An upgrade replaces the image and applies the migrations the new build carries.
+
+## Features
+
+- [Code index freshness](docs/features/code-index/freshness.md): The index trails the repository: it indexes merged commits on a configured branch, pass by pass, and each tier advances its own watermark.
+- [History, PRs and releases](docs/features/code-index/history-and-prs.md): These ops need merged-PR history; the `code_pr_history` worker is off by default (`LOOM_CODE_PR_HISTORY_ENABLED`).
+- [Code operations](docs/features/code-index/operations.md): This page maps questions to `code.*` ops.
+- [Code index](docs/features/code-index/overview.md): The code workers are off by default; a deployment turns them on per repository (repositories).
+- [Adding repositories](docs/features/code-index/repositories.md): A fresh install indexes no repository.
+- [Conversations and sessions](docs/features/conversations-and-sessions.md): Loom keeps three kinds of session state, each in its own plane:
+- [The dashboard](docs/features/dashboard.md): The dashboard is a React single-page app the Loom server serves at `/me`.
+- [Entity graph](docs/features/entity-graph.md): Entity communities are off by default (`LOOM_ENTITY_COMMUNITIES_ENABLED`).
+- [Claude Code plugin](docs/features/integrations/claude-code.md): The `loom` plugin for Claude Code does three things in one install:
+- [ClickStack and HyperDX](docs/features/integrations/clickstack.md): Loom always emits OpenTelemetry; the HyperDX sources, dashboards and the erasure step need configuring.
+- [Codex plugin](docs/features/integrations/codex.md): The Codex plugin gives Codex the same Loom integration as Claude Code: MCP tools, hooks that capture the session and load a primer, and the code shunt.
+- [Cursor](docs/features/integrations/cursor.md): Cursor gets Loom in two independent pieces:
+- [Agent frameworks and orchestrators](docs/features/integrations/frameworks.md): The SDKs ship adapters that present Loom through a framework's own memory interface.
+- [The grep shim](docs/features/integrations/grep-shim.md): Needs Node 18 or later, a viewer token, and a repository in the code index.
+- [Integrations](docs/features/integrations/index.md): Loom on a bare ClickHouse service is a complete deployment.
+- [Langfuse](docs/features/integrations/langfuse.md): Needs `LOOM_LANGFUSE_URL` and `LOOM_LANGFUSE_ADMIN_TOKEN`; nothing is sent until both are set.
+- [Connecting an MCP client](docs/features/integrations/mcp-clients.md): Loom serves its operations as MCP tools at `<loom>/mcp`.
+- [OKF bundles](docs/features/integrations/okf.md): A namespace can be rendered as an OKF (Open Knowledge Format) v0.2 bundle: one Markdown file per memory with YAML frontmatter, an `index.md` per directory listing each concept with a one-line description, and a `log.md` of changes.
+- [Knowledge documents](docs/features/knowledge.md): A knowledge document is text an agent looks things up in: a runbook, a specification, a README.
+- [Conflicts and refusal](docs/features/memory/conflicts-and-refusal.md): Every memory write is judged against the facts the namespace already holds.
+- [Extraction from transcripts](docs/features/memory/extraction.md): `memory.set_from_messages` takes a transcript and the server decides what in it is durable.
+- [History and provenance](docs/features/memory/history-and-provenance.md): Every write to memory makes a new version; nothing is edited in place.
+- [Procedures and learnings](docs/features/memory/procedures-and-learnings.md): This page covers what an agent learns from doing, as opposed to facts it is told: procedures ("how to do X", a graph of steps learned from reported runs), reflections (lessons written at the end of a run) and learnings (a review queue of…
+- [Retention and erasure](docs/features/memory/retention-and-erasure.md): Loom deletes no memory unless its writer, the namespace owner or the operator asks.
+- [Search and ask](docs/features/memory/search-and-ask.md): `memory.search` returns ranked hits for the agent to read.
+- [Working memory and profiles](docs/features/memory/working-memory-and-profiles.md): Two planes hold text an agent is given every time instead of finding it by search:
+- [Writing memory](docs/features/memory/writing.md): A memory is one claim stored under a key in a namespace.
+- [Namespaces and sharing](docs/features/namespaces-and-sharing.md): A namespace is the unit of isolation and sharing inside an org.
+- [Audit log](docs/features/observability/audit.md): Audit rows, the `audit_verifier` worker and the checkpoint chain are on by default.
+- [Cost and usage](docs/features/observability/cost-and-usage.md): Loom records every upstream dollar it spends on embedding and LLM calls against the operation that spent it, in the per-operation ledger `loom.agent_events`.
+- [Telemetry](docs/features/observability/telemetry.md): Loom reports on itself in three layers:
+- [Runs](docs/features/runs.md): A run is one execution of a task, such as "triage issue 1234".
+- [Tasks, decisions and policies](docs/features/tasks-and-decisions.md): Three planes sit beside memory for coordination between agents.
+- [Tracker plane](docs/features/tracker/overview.md): Nothing serves until `LOOM_TRACKER_ORG` is set and a source is registered.
+- [Tracker record contract](docs/features/tracker/record-contract.md): The `tracker.*` ops, and the tracker legs of `code.*` and `loom_search`, read a team's issues, pull requests and incidents live from the team's own ClickHouse with a read-only credential.
+- [Unified search and context packs](docs/features/unified-search.md): `loom_search` searches memory, profile, knowledge and past conversations across the caller's namespaces in one round trip.
+
+## Reference
+
+- [CLI reference](docs/reference/cli.md): `loom` is the one command-line entry point for running, maintaining and connecting to a Loom deployment.
+- [Configuration reference](docs/reference/configuration.md): Every setting is an environment variable `LOOM_<FIELD>` read once at startup into `server.settings.settings`.
+- [Environment variables reference](docs/reference/environment.md): Almost everything Loom is configured with is a settings field: the environment variable `LOOM_<FIELD>` of a field on `server.settings.Settings`, listed with its default and meaning in the generated [configuration…
+- [Errors reference](docs/reference/errors.md): Every refusal Loom makes carries a stable, upper-case `code`.
+- [HTTP API reference](docs/reference/http-api.md): Every Loom operation is one HTTP endpoint, `POST /v1/<operation>`, generated from the operation registry in `server/operations/` (`server/transport/http.py`, `build_router`).
+- [Reference](docs/reference/index.md): Reference pages say what exists and what each option means.
+- [MCP reference](docs/reference/mcp.md): Loom serves its operations as MCP tools at `<loom>/mcp`.
+- [Operations reference](docs/reference/operations.md): An operation (op) is one named unit of work on the Loom wire, such as `memory.set` or `code.search`.
+- [Python SDK reference](docs/reference/python-sdk.md): The Python SDK (`clickhouse-loom`, source in `sdk/python/loom/`) is an async client over the HTTP API.
+- [Schema reference](docs/reference/schema.md): Loom keeps all of its state in one ClickHouse database, `loom`.
+- [TypeScript SDK reference](docs/reference/typescript-sdk.md): The TypeScript SDK (`@clickhouse/loom`, source in `sdk/typescript/src/`) is a typed client over the HTTP API.
+- [Workers reference](docs/reference/workers.md): A worker is a supervised background loop: one pass function run on an interval by the worker supervisor.
+
+## Concepts
+
+- [Identities and namespaces](docs/concepts/identities-and-namespaces.md): Loom answers two questions on every call: whose row is this (the identity tuple, plus two columns the server stamps), and may this caller touch it (the token, the namespace's grants and its classification).
+- [Memory](docs/concepts/memory.md): A memory is one claim an agent should find again: "deploys happen on Tuesdays", "the payments team owns the billing service".
+- [Retrieval and ranking](docs/concepts/retrieval-and-ranking.md): This page explains how `memory.search` finds rows.
+
+## Guides
+
+- [Integrate Loom into an agent](docs/guides/agent-integration.md): This guide covers what an agent sends to Loom and how it reads the answers: the client surface, the identity, what to write, and how to read.
+- [Debug a request](docs/guides/debugging.md): Loom tags everything one request does with the same id, so tracing a request is a join.
+- [Customize the extraction pipeline](docs/guides/extraction-pipeline.md): `memory.set_from_messages` runs its transcript through an ordered list of steps that share one state.
+- [Headless bots](docs/guides/headless-bots.md): A headless bot runs with no person to paste a token, notice a silent failure or say "remember this".
+- [Import ClickGap memory](docs/guides/importing-clickgap-memory.md): `loom import-clickgap` loads one SQLite export shape, a ClickGap `lessons` store, into a Loom namespace; skip this page unless you have such an export.
+- [Store an investigation agent's memory](docs/guides/investigation-agent-memory.md): An investigation agent produces several kinds of state, and Loom has a plane for each.
+- [Optimize a namespace from its audit](docs/guides/optimize-namespace.md): A writer that uses `memory.set` as an object store (JSON blobs under hash keys, leases as memories, documents as claims) leaves every table consistent and recall useless.
+- [Tune Loom's performance](docs/guides/performance-tuning.md): Every lever on this page is a setting or a request field.
+- [Tokens and grants](docs/guides/tokens-and-grants.md): Every call carries one JWT.
+- [Trace and resume long agent runs](docs/guides/trace-and-resume.md): A long run (process 300 files, crawl a repository, work through a plan) can stop part way: a crash, a full context window, a deploy, a pause.
+
+## Architecture
+
+- [ClickHouse](docs/architecture/clickhouse.md): All durable Loom state lives in one ClickHouse database, `loom`.
+- [Code index architecture](docs/architecture/code-index-architecture.md): This page is the inside view of the code index: how files become chunks, symbols and edges, and how the two tiers stay current.
+- [Failure and recovery](docs/architecture/failure-and-recovery.md): The primary write and every access decision fail closed.
+- [LLM and embedding architecture](docs/architecture/llm-architecture.md): Loom has two pluggable providers: an embedder (`server/embedding/`) that turns text into vectors, and an LLM client (`server/llm/`) that completes prompts.
+- [Memory architecture](docs/architecture/memory-architecture.md): The memory plane stores facts in `loom.memory`, makes them searchable through `loom.memory_embeddings`, and derives evidence, chunks, graph rows and statistics from them.
+- [Provider reconfiguration](docs/architecture/provider-reconfiguration.md): Loom stores dashboard model configuration as encrypted, versioned rows in `loom.provider_configuration`.
+- [Security](docs/architecture/security.md): Loom separates tenants by columns: every row carries the identity tuple, and every read filters on it.
+- [Server layout](docs/architecture/server-layout.md): `server/` is organised by domain.
+- [System overview](docs/architecture/system-overview.md): Loom is a Python server (a FastAPI application plus a supervisor of background workers) and one ClickHouse database.
+
+## Benchmarks
+
+- [Adding a benchmark case, dataset or suite](docs/benchmarks/adding-a-case.md): The committed sets are small (set sizes), so a new case is the cheapest way to improve the suite.
+- [Benchmark coverage](docs/benchmarks/coverage.md): This matrix shows which parts of Loom's memory, knowledge and code flows have a reproducible public measurement.
+- [Benchmark methodology](docs/benchmarks/methodology.md): This page covers what the harnesses compute, how a delta is judged against noise, when two numbers compare, and where the numbers are biased.
+- [Benchmarks overview](docs/benchmarks/overview.md): Ranking levers, similarity gates, cache thresholds and extraction prompts change behaviour that a unit test cannot judge.
+- [Benchmark results](docs/benchmarks/results.md): This page lists only numbers that a committed file reproduces.
+- [Running the benchmarks](docs/benchmarks/running.md): Run every command from the repository root with the checkout's interpreter and the root first on `PYTHONPATH`:
+- [Skill eval](docs/benchmarks/skill-eval.md): The skill eval grades the `loom-memory` skill by the namespace an agent leaves behind.
+
+## Development
+
+- [Add a ClickHouse table or column](docs/development/adding-a-table.md): Loom's durable state is ClickHouse tables in the `loom` database.
+- [Add a background worker](docs/development/adding-a-worker.md): A worker is a row in `server/workers/registry.py` (`_WORKERS`) plus a module with one pass function.
+- [Add an operation](docs/development/adding-an-operation.md): An operation is declared once, in the registry.
+- [Add language support to the code index](docs/development/adding-language-support.md): The code index reads a repository in two tiers:
+- [Code generation](docs/development/code-generation.md): Several files in the repository are derived from the code: the SDKs' operation tables and wire types, the reference pages, the Codex plugin's copies, the op reach manifest, the schema dump.
+- [Documentation style guide](docs/development/documentation-style.md): How to place a new page in the right section, write it in the house style, and pass the documentation checks on the first push.
+- [Extend Loom](docs/development/extending-loom.md): Loom has one registry per kind of thing: operations, workers, settings, providers, language lanes, extraction steps and tracker sources.
+- [Local development](docs/development/local-development.md): This page sets up a checkout for working on Loom's code.
+- [Migrations](docs/development/migrations.md): This page holds the rules for writing a migration.
+- [Release process](docs/development/release-process.md): Loom follows SemVer.
+- [Repository guide](docs/development/repository-guide.md): What every top-level directory holds, where a concern lives inside `server/`, the order to read the code in, and the conventions a pull request fails without.
+- [Testing](docs/development/testing.md): Which suite a test belongs in, what each suite needs to run, how tests skip when their environment is missing, which gates CI enforces, and how to regenerate what they pin.
+
+## Optional
+
+- [Glossary](docs/glossary.md): Loom's terms, alphabetically, each defined once.
+- [Frequently asked questions](docs/faq.md): Short answers to the first questions people ask.
+- [Changelog](CHANGELOG.md): All notable changes to Loom (the server, its web app and its coding-agent plugins).

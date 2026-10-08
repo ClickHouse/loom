@@ -1,0 +1,76 @@
+# Unit-suite branch-coverage floors for the modules where an untested branch
+# is a security, integrity or lifecycle risk. Each floor sits one point under
+# the measured value; `python -m tests.inventory.coverage_floors` says when one
+# can be raised. Lowering a floor needs its reason in the PR.
+
+[floors."server/auth/"]
+branch = 84.0
+reason = "token verification, grants, revocation, login and signup: every refusal path is a security boundary"
+
+[floors."server/transport/"]
+branch = 86.0
+reason = "HTTP and MCP identity stamping, role gates, body limits and error mapping"
+
+[floors."server/memory/store/"]
+branch = 79.0
+reason = "ReplacingMergeTree write paths: a missed column zeroes it for every FINAL reader"
+
+[floors."server/erasure/store/"]
+branch = 84.0
+reason = "erasure census and residue: a missed substrate leaves erased content readable"
+
+[floors."server/erasure/app/saga"]
+branch = 89.0
+reason = "the erasure saga's step order, resume and fail-closed verdicts"
+
+[floors."server/erasure/app/backends.py"]
+branch = 57.0
+reason = "federated erasure backends fail closed; the unit suite covers the refusal paths, integration the live ones"
+
+[floors."server/core/schema/migrate.py"]
+branch = 85.0
+reason = "migration ledger checksums and ordering on every deploy"
+
+[floors."server/core/schema/migrate_lease.py"]
+branch = 90.0
+reason = "the concurrent-migration lease: two replicas must never apply one migration twice"
+
+[floors."server/identity/domain/read_scope.py"]
+branch = 99.0
+reason = "per-token read narrowing (own_user, own_session): any untested branch is a cross-user read"
+
+[floors."server/memory/domain/provenance.py"]
+branch = 87.0
+reason = "actor and source_class stamping on every write"
+
+[floors."server/core/idempotency.py"]
+branch = 34.0
+reason = "idempotent replay is scoped per caller and runs after auth; mostly exercised by integration tests, so the unit floor is low"
+
+[floors."server/memory/app/blacklist_guard.py"]
+branch = 89.0
+reason = "the Refuse operation: a matching write must be rejected"
+
+[floors."server/core/ch.py"]
+branch = 90.0
+reason = "client settings, retries, reconnect and query attribution for every statement"
+
+[floors."server/workers/supervisor.py"]
+branch = 81.0
+reason = "worker lease, deadline, crash recovery and graceful shutdown"
+
+[floors."server/workers/registry.py"]
+branch = 99.0
+reason = "which workers boot under which settings profile"
+
+[floors."server/operations/"]
+branch = 96.0
+reason = "the wire-op registry every transport derives from"
+
+[floors."server/observability/audit.py"]
+branch = 41.0
+reason = "per-row content hashing of every memory write; the hash chain is exercised by integration tests"
+
+[floors."server/core/ratelimit.py"]
+branch = 91.0
+reason = "per-actor and per-class rate limits in front of every op"

@@ -1,0 +1,15 @@
+[project]
+name = "srcpkg"
+version = "0.1.0"
+
+[project.scripts]
+srcpkg-cli = "srcpkg.cli:main"
+
+[project.entry-points."srcpkg.plugins"]
+echo = "srcpkg.plugins.echo:EchoPlugin"
+
+[tool.setuptools]
+package-dir = {"" = "lib"}
+
+[tool.pytest.ini_options]
+pythonpath = ["tests/support"]

@@ -1,0 +1,135 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["views", "relationJoins", "metrics"]
+}
+
+datasource db {
+  provider          = "postgresql"
+  url               = env("DATABASE_URL")
+  directUrl         = env("DIRECT_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
+}
+
+// Necessary for Next auth
+model Account {
+  id                       String  @id @default(cuid())
+  userId                   String  @map("user_id")
+  type                     String
+  provider                 String
+  providerAccountId        String
+  refresh_token            String? // @db.Text
+  access_token             String? // @db.Text
+  expires_at               Int?
+  expires_in               Int?
+  ext_expires_in           Int?
+  token_type               String?
+  scope                    String?
+  id_token                 String? // @db.Text
+  session_state            String?
+  refresh_token_expires_in Int?
+  created_at               Int? // GitLab
+  user                     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id")
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model User {
+  id                        String                      @id @default(cuid())
+  name                      String?
+  email                     String?                     @unique
+  emailVerified             DateTime?                   @map("email_verified")
+  password                  String?
+  sessionsExpiredAt         DateTime?                   @map("sessions_expired_at")
+  image                     String?
+  admin                     Boolean                     @default(false)
+  v4BetaEnabled             Boolean                     @default(false) @map("v4_beta_enabled")
+  accounts                  Account[]
+  sessions                  Session[]
+  organizationMemberships   OrganizationMembership[]
+  projectMemberships        ProjectMembership[]
+  invitations               MembershipInvitation[]
+  createdAt                 DateTime                    @default(now()) @map("created_at")
+  updatedAt                 DateTime                    @default(now()) @updatedAt @map("updated_at")
+  featureFlags              String[]                    @default([]) @map("feature_flags")
+  annotatedLockedItem       AnnotationQueueItem[]       @relation("LockedByUser")
+  annotatedCompletedItem    AnnotationQueueItem[]       @relation("AnnotatorUser")
+  dashboardWidgetsCreated   DashboardWidget[]           @relation("CreatedByUser")
+  dashboardWidgetsUpdated   DashboardWidget[]           @relation("UpdatedByUser")
+  dashboardCreated          Dashboard[]                 @relation("CreatedByUser")
+  dashboardUpdated          Dashboard[]                 @relation("UpdatedByUser")
+  tableViewPresetCreated    TableViewPreset[]           @relation("CreatedByUser")
+  tableViewPresetUpdated    TableViewPreset[]           @relation("UpdatedByUser")
+  monitorsCreated           Monitor[]                   @relation("CreatedByUser")
+  monitorsUpdated           Monitor[]                   @relation("UpdatedByUser")
+  annotationQueueAssignment AnnotationQueueAssignment[]
+  surveys                   Survey[]
+  commentReactions          CommentReaction[]
+  notificationPreferences   NotificationPreference[]
+  defaultViews              DefaultView[]               @relation("DefaultViewUser")
+  inAppAgentConversations   InAppAgentConversation[]    @relation("InAppAgentConversationCreatedByUser")
+  inAppAgentRuns            InAppAgentRun[]             @relation("InAppAgentRunTriggeredByUser")
+  apiKeysCreated            ApiKey[]                    @relation("ApiKeyCreatedByUser")
+  evaluatorsCreated         Evaluator[]                 @relation("EvaluatorCreatedByUser")
+  evaluatorVersionsCreated  EvaluatorVersion[]          @relation("EvaluatorVersionCreatedByUser")
+  evaluationRulesCreated    EvaluationRule[]            @relation("EvaluationRuleCreatedByUser")
+
+  @@map("users")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+model Organization {
+  id                               String                   @id @default(cuid())
+  name                             String
+  createdAt                        DateTime                 @default(now()) @map("created_at")
+  updatedAt                        DateTime                 @default(now()) @updatedAt @map("updated_at")
+  cloudConfig                      Json?                    @map("cloud_config") // Langfuse Cloud, for zod schema see @/src/features/organizations/utils/cloudConfigSchema
+  metadata                         Json?
+  cloudBillingCycleAnchor          DateTime?                @default(now()) @map("cloud_billing_cycle_anchor")
+  cloudBillingCycleUpdatedAt       DateTime?                @map("cloud_billing_cycle_updated_at")
+  cloudCurrentCycleUsage           Int?                     @map("cloud_current_cycle_usage")
+  cloudFreeTierUsageThresholdState String?                  @map("cloud_free_tier_usage_threshold_state")
+  aiFeaturesEnabled                Boolean                  @default(false) @map("ai_features_enabled")
+  aiTelemetryEnabled               Boolean                  @default(true) @map("ai_telemetry_enabled")
+  featureFlagOrgDefaults           String[]                 @default([]) @map("feature_flag_org_defaults")
+  // SFDC Account / Organization ID returned by the Mulesoft org endpoint on
+  // Langfuse Cloud. NULL for self-hosted or pre-integration orgs. A mismatch
+  // between the stored value and a subsequently returned ID indicates an SFDC
+  // side merge — logged as an error but does not throw (no retry loop).
+  sfdcOrgId                        String?                  @map("sfdc_org_id")
+  organizationMemberships          OrganizationMembership[]
+  projects                         Project[]
+  MembershipInvitation             MembershipInvitation[]
+  ApiKey                           ApiKey[]
+  surveys                          Survey[]
+  cloudSpendAlerts                 CloudSpendAlert[]
+  verifiedDomains                  VerifiedDomain[]
+  gatewayConfig                    GatewayConfig?
+  gatewayAiConnections             GatewayAiConnection[]
+
+  @@map("organizations")
+}
+
+enum ApiKeyScope {
+  ORGANIZATION
+  PROJECT
+}

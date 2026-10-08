@@ -1,0 +1,159 @@
+[
+  {
+    "id": "assistant-accepted-db-choice",
+    "messages": [
+      {"role": "user", "content": "Can you help me pick a database for write-heavy time-series?"},
+      {"role": "assistant", "content": "For that workload, ClickHouse is a strong fit."},
+      {"role": "user", "content": "OK, let's go with ClickHouse."}
+    ],
+    "expected": ["chose clickhouse", "write heavy time series"]
+  },
+  {
+    "id": "assistant-recommendation-named-no-acceptance",
+    "_note": "Class A1 cure: a concrete name the assistant surfaced MUST become a memory even with no explicit acceptance (the user only says 'cool, thanks'). A later question asks 'what was that app you mentioned?'. The named app must survive as its own fact.",
+    "messages": [
+      {"role": "user", "content": "Any good apps for tracking my water intake?"},
+      {"role": "assistant", "content": "A solid one is WaterMinder — it lets you set daily goals and sends reminders."},
+      {"role": "user", "content": "cool, thanks"}
+    ],
+    "expected": ["waterminder", "water intake"]
+  },
+  {
+    "id": "assistant-recommendation-enumeration",
+    "_note": "Class A1 cure: when the assistant names MULTIPLE concrete items, EACH must become its own retrievable fact — never collapsed into 'suggested some apps'. A later question may ask about any single one.",
+    "messages": [
+      {"role": "user", "content": "What are some apps for tracking water intake?"},
+      {"role": "assistant", "content": "Two solid ones are WaterMinder and Hydro Coach — both let you set daily goals and send reminders."}
+    ],
+    "expected": ["waterminder", "hydro coach"]
+  },
+  {
+    "id": "multi-clause-two-quantified-purchases",
+    "_note": "Class A1 secondary-clause cure: one user turn carries TWO distinct quantified clauses; the SECONDARY clause ($32 dripper) must survive as its own fact, not be dropped after the first amount. Total/count questions depend on every quantified clause becoming a separate fact.",
+    "messages": [
+      {"role": "user", "content": "I picked up a 1.5 kg bag of dark-roast beans for $18, and the same shop had a ceramic pour-over dripper I grabbed for $32."}
+    ],
+    "expected": ["dark roast beans", "18", "pour over dripper", "32"]
+  },
+  {
+    "id": "dated-trip",
+    "messages": [
+      {"role": "user", "content": "I flew American Airlines on Valentine's day to surprise my partner."}
+    ],
+    "expected": ["american airlines", "2024 02 14", "valentine"]
+  },
+  {
+    "id": "derived-purchase-occurrence",
+    "_note": "Derived-record emission (amount+category+date side-channel) cannot be asserted by this harness (it reads memory.list, not loom.derived_facts) — requires a live-LLM gate with a derived-plane read. The amount and the literal date surviving in the fact value ARE asserted.",
+    "messages": [
+      {"role": "user", "content": "I bought a Breville espresso machine on May 11, 2024 for $400."}
+    ],
+    "expected": ["breville espresso machine", "400", "2024 05 11"]
+  },
+  {
+    "id": "derived-money-raised-occurrence",
+    "_note": "Sum-of-amounts cure: money raised/earned/donated at an event is a summable USD occurrence (predicate=raise, unit=USD), the operand for 'how much did I raise in total' questions. Derived-row emission requires live LLM + a derived-plane read; the amount and date surviving in the fact value ARE asserted here.",
+    "messages": [
+      {"role": "user", "content": "I helped run a bake sale on March 2, 2024 and we raised $450 for the school library."}
+    ],
+    "expected": ["bake sale", "450", "2024 03 02"]
+  },
+  {
+    "id": "derived-occasion-attended-occurrence",
+    "_note": "Count-of-events cure: a social occasion attended is a countable 'attend' occurrence (one per occasion), the operand for 'how many parties/gatherings did I attend'. Derived-row emission requires live LLM + a derived-plane read; the occasion and its date surviving in the fact value ARE asserted here.",
+    "messages": [
+      {"role": "user", "content": "I went to Mark's housewarming party on November 17, 2023."}
+    ],
+    "expected": ["housewarming party", "2023 11 17"]
+  },
+  {
+    "id": "derived-money-given-charity-occurrence",
+    "_note": "Sum-of-amounts cure (charity giving direction): money GIVEN/DONATED to a charity is a summable USD occurrence (predicate in the inflow class: donate/give/contribute/raise; category 'charity' so separate gifts group). The $ amount MUST become numeric_value, not null, or the SUM cannot compute. Derived-row emission needs a live-LLM gate; the amount, beneficiary, and date surviving in the fact value ARE asserted here.",
+    "messages": [
+      {"role": "user", "content": "Last month I donated $120 to the local food bank, and earlier this year I gave $80 to a wildlife charity."}
+    ],
+    "expected": ["food bank", "120", "wildlife charity", "80"]
+  },
+  {
+    "id": "derived-dinner-party-attended-occurrence",
+    "_note": "Count-of-events cure (dinner-gathering shape): dinner parties / potlucks / feasts the user ATTENDED are countable 'attend' occurrences under the shared 'dinner party' category, the operand for 'how many dinner parties did I attend'. A dinner the user is HOSTING is NOT an occurrence. Derived-row emission needs a live-LLM gate; the two attended occasions surviving as distinct facts ARE asserted here.",
+    "messages": [
+      {"role": "user", "content": "I'm planning a dinner party I'll host next month, but I already went to a potluck at Dana's on March 4, 2024 and a dinner feast at Sam's on March 9, 2024."}
+    ],
+    "expected": ["potluck", "2024 03 04", "feast", "2024 03 09"]
+  },
+  {
+    "id": "planned-hosting-not-occurrence",
+    "_note": "NO-occurrence assertion: a PLANNED/intended action that has not happened (a party the user is hosting 'soon', clothing they 'still need to pick up or return') is an intention, not a dated occurrence — it must NOT emit a countable derived record. The matching no-derived-row assertion requires a derived-plane read; the plan surviving as a fact is asserted here.",
+    "messages": [
+      {"role": "user", "content": "I still need to return a pair of boots to the store, and I'm hosting a game night sometime soon."}
+    ],
+    "expected": ["boots", "game night"]
+  },
+  {
+    "id": "derived-appointment-occurrence",
+    "_note": "Visit/appointment occurrence: the dated instance must survive as its own fact. Derived-row emission requires live LLM + a derived-plane read.",
+    "messages": [
+      {"role": "user", "content": "I saw my physiotherapist on 2023-09-02 about my knee."}
+    ],
+    "expected": ["physiotherapist", "2023 09 02", "knee"]
+  },
+  {
+    "id": "derived-start-finish-transition",
+    "_note": "Started/finished transitions are two dated occurrences; both dates must be retrievable. Derived-row emission requires live LLM + a derived-plane read.",
+    "messages": [
+      {"role": "user", "content": "I started the pottery course on June 1, 2025 and finished it on June 29, 2025."}
+    ],
+    "expected": ["pottery", "2025 06 01", "2025 06 29"]
+  },
+  {
+    "id": "stated-total-not-occurrence",
+    "_note": "A stated total is a current-value fact: the count must survive verbatim as the latest value. The matching NO-derived-row assertion (totals are not occurrences) requires a derived-plane read.",
+    "messages": [
+      {"role": "user", "content": "Quick update on the apartment jungle: I now have five houseplants."}
+    ],
+    "expected": ["five houseplants"]
+  },
+  {
+    "id": "state-change-count-both-values-survive",
+    "_note": "A2 ADD-only state-change cure (gate 1): when a turn states a NEW value for an attribute already seen (a count that changed), BOTH the old and new value MUST survive as separate dated facts. The extractor must NOT average ('10' then '15' is not '12'), sum, or drop either. A later 'how many now?' reads the latest-dated value. The harness asserts both values are present; it does NOT (and must not) find an invented consolidated value. The matching 'no \"12\"' negative assertion requires a value-corpus read the operator runs in the live gate.",
+    "messages": [
+      {"role": "user", "content": "Back in August I'd watched 10 episodes of that course."},
+      {"role": "user", "content": "Quick update: I'm now up to 15 episodes of the course."}
+    ],
+    "expected": ["10 episodes", "15 episodes"]
+  },
+  {
+    "id": "state-change-location-both-values-survive",
+    "_note": "A2 ADD-only state-change cure (gate 1, location shape): a location that changed across turns keeps BOTH the prior and the new location as distinct facts; never merge two places into a third nobody stated, never drop the latest. 'Where do they live now?' resolves to the latest-dated value.",
+    "messages": [
+      {"role": "user", "content": "My cousin moved to a downtown apartment."},
+      {"role": "user", "content": "Actually my cousin moved back to the suburbs."}
+    ],
+    "expected": ["downtown", "suburbs"]
+  },
+  {
+    "id": "event-like-fact-resolved-date-in-value",
+    "_note": "B2 event-anchor cure (gate 2): an event-like fact with an explicit date lands the resolved ISO date in the value text so date queries can match. Temporal_anchor population (the structured side-channel) is asserted in the live anchor-read gate; the literal date surviving in the value IS asserted here.",
+    "messages": [
+      {"role": "user", "content": "I had my eye surgery on March 14, 2024 and recovery went smoothly."}
+    ],
+    "expected": ["eye surgery", "2024 03 14"]
+  },
+  {
+    "id": "booking-vs-event-anchors-to-event-date",
+    "_note": "B2 event-vs-mention cure (gate 3): the EVENT date (the flight on March 3) is what the answer needs, NOT the booking/mention day. The flight date must survive in the value; the temporal_anchor must equal the EVENT date, asserted in the live anchor-read gate. A re-mention of a past event must keep the original event date (also an anchor-read assertion).",
+    "messages": [
+      {"role": "user", "content": "I just booked a flight to Denver for March 3, 2024."}
+    ],
+    "expected": ["denver", "2024 03 03"]
+  },
+  {
+    "id": "multi-valued-set-not-collapsed",
+    "_note": "Gate 4: a multi-valued set stated together (three distinct hobbies) must NOT be collapsed into one vague summary ('enjoys several hobbies'). Each item stays individually retrievable — the accumulating-set analogue of the ADD-only non-lossiness rule. A later question may ask about any single item.",
+    "messages": [
+      {"role": "user", "content": "Outside work I do rock climbing, pottery, and trail running."}
+    ],
+    "expected": ["rock climbing", "pottery", "trail running"]
+  }
+]

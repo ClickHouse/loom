@@ -1,0 +1,34 @@
+{
+  "dataset": "musique_ans_dev",
+  "seed": 0,
+  "search_json": {
+    "search_mode": "semantic"
+  },
+  "reader": "gpt-4o-mini",
+  "errors": 0,
+  "n": 200,
+  "recall@2": 0.52,
+  "recall@5": 0.7496,
+  "recall@10": 0.8896,
+  "em": 0.455,
+  "f1": 0.5526,
+  "by_hops": {
+    "2": {
+      "n": 104,
+      "recall@5": 0.8029,
+      "f1": 0.5684
+    },
+    "3": {
+      "n": 57,
+      "recall@5": 0.7661,
+      "f1": 0.5697
+    },
+    "4": {
+      "n": 39,
+      "recall@5": 0.5833,
+      "f1": 0.4855
+    }
+  },
+  "search_ms_p50": 982,
+  "write_ms_p50": 5203
+}

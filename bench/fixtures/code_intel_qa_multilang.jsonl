@@ -1,0 +1,40 @@
+// code_intel_qa_multilang v0 — python / shell / sql / ci lanes over the
+// ClickHouse repo's tests/ and ci/ trees. Same schema and scorer as
+// code_intel_qa.jsonl; run with `--dataset bench/fixtures/code_intel_qa_multilang.jsonl`.
+//
+// GATED as of 2026-09-08 (deploy script step 6b): accepted baseline
+// symbol 0.875 / callers 1.0 / conceptual r@5 0.75 (n=27, measured with the
+// deployment-default reranker); floors sit one notch under it. Stays a
+// separate file so the C++ lane's floors keep their own history.
+//
+// VERIFIED 2026-09-08 against the live index + checkout at d72e85a-era head:
+// symbol qualified names confirmed in code_symbols; the callers gold is the
+// grep-verified complete call-site set (5 files); conceptual gold files
+// grep-confirmed to contain the asked-about mechanism.
+{"id": "mlsd001", "type": "symbol_def", "query": "ClickHouseCluster.wait_zookeeper_to_start", "gold": {"qualified_name": "tests.integration.helpers.cluster::ClickHouseCluster::wait_zookeeper_to_start", "path_prefix": "tests/integration/helpers/"}}
+{"id": "mlsd002", "type": "symbol_def", "query": "get_docker_compose_path", "gold": {"qualified_name": "tests.integration.helpers.cluster::get_docker_compose_path", "path_prefix": "tests/integration/helpers/"}}
+{"id": "mlsd003", "type": "symbol_def", "query": "write_text_atomic", "gold": {"qualified_name": "tests.clickhouse-test::write_text_atomic", "path_prefix": "tests/"}}
+{"id": "mlsd004", "type": "symbol_def", "query": "ClickHouseCluster.copy_file_to_container", "gold": {"qualified_name": "tests.integration.helpers.cluster::ClickHouseCluster::copy_file_to_container", "path_prefix": "tests/integration/helpers/"}}
+{"id": "mlsd005", "type": "symbol_def", "query": "wait_for_query_to_start", "gold": {"qualified_name": "tests.queries.shell_config::wait_for_query_to_start", "path_prefix": "tests/queries/"}}
+{"id": "mlca001", "type": "callers", "query": "who calls ClickHouseCluster.wait_zookeeper_to_start", "gold": {"symbol": "ClickHouseCluster::wait_zookeeper_to_start", "expected_callers": ["tests.integration.helpers.cluster::ClickHouseCluster::start", "tests.integration.test_keeper_memory_soft_limit.test::test_soft_limit_create", "tests.integration.test_keeper_session_refuse_stale_server.test::test_session_refused_on_stale_keeper", "tests.stress.keeper.framework.core.cluster::ClusterBuilder::_build_zookeeper_cluster", "tests.integration.test_keeper_memory_soft_limit_ratio.test::test_soft_limit_hot_reload"]}}
+{"id": "mlco001", "type": "conceptual", "query": "how do integration tests start a zookeeper cluster and wait for it to be ready", "gold": {"paths": ["tests/integration/helpers/cluster"]}}
+{"id": "mlco002", "type": "conceptual", "query": "how does an integration test replace a config file inside a running container", "gold": {"paths": ["tests/integration/helpers/cluster"]}}
+{"id": "mlco003", "type": "conceptual", "query": "how does clickhouse-test schedule tests to run in parallel", "gold": {"paths": ["tests/clickhouse-test"]}}
+{"id": "mlco004", "type": "conceptual", "query": "how does CI decide which jobs to skip for the files changed in a pull request", "gold": {"paths": ["ci/jobs/scripts/workflow_hooks/filter_job"]}}
+{"id": "mlco005", "type": "conceptual", "query": "where do CI workflows define and resolve their secrets", "gold": {"paths": ["ci/praktika/secret", "ci/defs/defs"]}}
+{"id": "mlco006", "type": "conceptual", "query": "how does praktika upload build artifacts to s3", "gold": {"paths": ["ci/praktika/s3"]}}
+{"id": "mlco007", "type": "conceptual", "query": "how do shell based stateless tests locate the clickhouse client and its config", "gold": {"paths": ["tests/queries/shell_config.sh"]}}
+{"id": "mlco008", "type": "conceptual", "query": "sql tests that exercise ARRAY JOIN behavior", "gold": {"paths": ["tests/queries/0_stateless/00008_array_join", "tests/queries/0_stateless/00009_array_join_subquery"]}}
+{"id": "mlco009", "type": "conceptual", "query": "how are minio and other object storage services started for integration tests", "gold": {"paths": ["tests/integration/helpers/cluster"]}}
+{"id": "mlco010", "type": "conceptual", "query": "how does clickhouse-test detect that the server crashed during a test run", "gold": {"paths": ["tests/clickhouse-test"]}}
+{"id": "mlsd006", "type": "symbol_def", "query": "PortPoolManager", "gold": {"qualified_name": "tests.integration.helpers.cluster::PortPoolManager", "path_prefix": "tests/integration/helpers/"}}
+{"id": "mlco011", "type": "conceptual", "query": "how does the integration framework pause and unpause a container", "gold": {"paths": ["tests/integration/helpers/cluster"]}}
+{"id": "mlco012", "type": "conceptual", "query": "how does clickhouse-test compare a test's output against its reference file", "gold": {"paths": ["tests/clickhouse-test"]}}
+{"id": "mlco013", "type": "conceptual", "query": "how does praktika cache job results between CI runs", "gold": {"paths": ["ci/praktika/cache", "ci/praktika/hook_cache"]}}
+{"id": "mlco014", "type": "conceptual", "query": "where are the docker compose definitions for integration test services like azurite", "gold": {"paths": ["tests/integration/compose"]}}
+{"id": "mlsd007", "type": "symbol_def", "query": "PartitionManager", "gold": {"qualified_name": "tests.integration.helpers.network::PartitionManager", "path_prefix": "tests/integration/helpers/"}}
+{"id": "mlsd008", "type": "symbol_def", "query": "ClickHouseInstance.wait_for_log_line", "gold": {"qualified_name": "tests.integration.helpers.cluster::ClickHouseInstance::wait_for_log_line", "path_prefix": "tests/integration/helpers/"}}
+{"id": "mlco015", "type": "conceptual", "query": "how do integration tests simulate a network partition between nodes", "gold": {"paths": ["tests/integration/helpers/network"]}}
+{"id": "mlco016", "type": "conceptual", "query": "how does a test execute a command inside a running clickhouse container", "gold": {"paths": ["tests/integration/helpers/cluster"]}}
+{"id": "mlco017", "type": "conceptual", "query": "helpers for interacting with keeper in integration tests", "gold": {"paths": ["tests/integration/helpers/keeper_utils"]}}
+{"id": "mlco018", "type": "conceptual", "query": "how does a test wait for a specific line to appear in the server log", "gold": {"paths": ["tests/integration/helpers/cluster"]}}

@@ -1,0 +1,60 @@
+loaded 60 questions from /home/ubuntu/worktrees/bench-release/bench/fixtures/code_intel_qa.jsonl
+  co001 r@5=1.00 ok   how are quotas enforced when a query consumes resour
+  co002 r@5=0.67 MISS where are background merges of parts scheduled and e
+      got: ['MergeTreeBackgroundExecutor.h', 'BackgroundJobsAssignee.cpp', 'StorageMergeTree.cpp', 'MergeTreeBackgroundExecutor.cpp', 'BackgroundWork.cpp']
+  co003 r@5=1.00 ok   how does the SQL parser turn a query string into an 
+  co004 r@5=1.00 ok   how are replicated inserts deduplicated using block 
+  co005 r@5=0.50 MISS where is the memory limit for a query enforced
+      got: ['MemoryTracker.cpp', 'MemoryTrackerUtils.h', 'MemoryTrackerUtils.cpp', 'MemoryTracker.h', 'StreamLocalLimits.h']
+  co006 r@5=1.00 ok   how does asynchronous insert buffering batch rows be
+  co007 r@5=1.00 ok   how does the query result cache decide what is cache
+  co008 r@5=1.00 ok   how are zookeeper session expirations handled for re
+  co009 r@5=1.00 ok   how do skipping indexes prune granules during a read
+  co010 r@5=1.00 ok   where are user setting constraints validated on chan
+  co011 r@5=0.67 MISS how does TTL expire and drop old rows from parts
+      got: ['MergeTreeDataWriter.cpp', 'MergeTreeDataPartTTLInfo.h', 'TTLTransform.cpp', 'MergeTreeDataPartTTLInfo.cpp', 'TTLColumnAlgorithm.cpp']
+  co012 r@5=1.00 ok   how are keeper snapshots serialized to disk
+  co013 r@5=1.00 ok   how does a projection get chosen to answer an aggreg
+  co014 r@5=1.00 ok   where is lz4 compression applied when writing column
+  co015 r@5=1.00 ok   how is a mutation applied to already-written parts
+  co016 r@5=1.00 ok   how does a part get selected for a background merge
+  co017 r@5=0.50 MISS how does aggregation spill to disk when memory runs 
+      got: ['AdaptiveAggregationImpl.h', 'Aggregator.cpp', 'AdaptiveAggregationKernels.cpp', 'Aggregator.h', 'MergingAggregatedMemoryEfficientTransform.h']
+  co018 r@5=1.00 ok   how does the mark cache avoid re-reading marks from 
+  co019 r@5=1.00 ok   how is a distributed query dispatched to remote shar
+  co020 r@5=1.00 ok   how does the query profiler capture stack traces on 
+  co021 r@5=0.50 MISS how are external dictionaries reloaded in the backgr
+      got: ['ExternalDictionariesLoader.cpp', 'ExternalDictionariesLoader.h', 'EmbeddedDictionaries.cpp', 'StorageSystemDictionaries.cpp', 'InterpreterSystemQuery.cpp']
+  co022 r@5=1.00 ok   how are reads from s3 object storage buffered
+  co023 r@5=1.00 ok   where are access rights checked while a query execut
+  co024 r@5=1.00 ok   how are window functions computed over the block str
+  co025 r@5=1.00 ok   how does a quorum insert wait for enough replicas to
+  co026 r@5=1.00 ok   how are asynchronous server metrics collected period
+  co027 r@5=0.00 MISS how does keeper persist its replication log to disk
+      got: ['KeeperLogStore.h', 'KeeperLogStore.cpp', 'KeeperServer.cpp', 'KeeperStateMachine.cpp', 'KeeperSnapshotManager.cpp']
+  co028 r@5=1.00 ok   how does the primary key index narrow which mark ran
+  co029 r@5=1.00 ok   how are inserted rows pushed into dependent material
+  co030 r@5=1.00 ok   how does alter change a column type on old parts wit
+  co031 r@5=1.00 ok   how does PipelineExecutor schedule processors onto w
+  co032 r@5=1.00 ok   how does DistributedSink route inserted blocks to th
+  co033 r@5=1.00 ok   how does WriteBufferFromS3 upload large writes as mu
+  co034 r@5=1.00 ok   where does KeeperStorage apply a committed request t
+  co035 r@5=1.00 ok   how does InterpreterSelectQuery build the query plan
+  co036 r@5=1.00 ok   how does ThreadPool decide when to spawn a new worke
+
+=== code_intel_qa ===
+questions: 60  errors(excluded): 0
+  symbol_def     {'n': 10, 'exact@1': 1.0}
+  callers        {'n': 4, 'f1': 0.931}
+  history        {'n': 0, 'pr_hit': 0.0, 'recall@5': 0.0, 'fired': 0.0}
+  conceptual     {'n': 36, 'recall@5': 0.912, 'recall@10': 0.972, 'mrr': 0.91, 'hit@5': 1.0, 'hit@10': 1.0, 'placebo@5': 0.106, 'placebo@10': 0.144}
+  abstain_probe  {'n': 10, 'recall': 0.6, 'precision': 1.0, 'wrong_abstains_on_answerable': 0}
+  hub            {'n': 0, 'recall@5': 0.0}
+  test_set       {'n': 0, 'hit@5': 0.0, 'precision@5': 0.0, 'recall@10': 0.0}
+tokens/answer: mean 2345  p90 2930
+via(top5, conceptual): {'vector': 99, 'both': 73, 'lexical': 7, 'concept': 1}  code.search p50 2799 ms
+history_* route fire rate over code.search answers: 0.000
+retrieval_work share>0 (conceptual): card_queries=1.000  card_read_shared=1.000  card_top_similarity_milli=1.000  catalogue_penalty_milli=1.000  concept_ms=0.000  concept_queries=1.000  concept_term_files=1.000  concept_terms=1.000  concept_tokens_dropped=1.000  corpus_stats_cached=0.667  corpus_stats_terms_read=0.500  embedding_calls=1.000  history_queries=0.111  hyde_chars=1.000  hyde_ms=1.000  hyde_queries=1.000  lexical_leg_ms=1.000  lexical_queries=1.000  risk_stale_units=0.000  same_path_in_topk=0.944  saturation_moved=0.917  stage_ms_bodies=1.000  stage_ms_card_leg=1.000  stage_ms_concept_leg=1.000  stage_ms_embed=0.000  stage_ms_fan_in=1.000  stage_ms_fusion=1.000  stage_ms_history=0.111  stage_ms_hyde_leg=1.000  stage_ms_lexical=1.000  stage_ms_risk_annotate=0.944  stage_ms_risk_prefetch=1.000  stage_ms_symbol=0.917  stage_ms_vector=1.000  symbol_queries=0.917  vector_queries=1.000  vector_shortlist=1.000
+index revision (answers per as_of.commit): {'a15fab3006f7': 46}  stale 46
+callers edges by tier: {'scip': 13, 'treesitter': 3}
+all gates passed

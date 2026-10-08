@@ -1,0 +1,67 @@
+[
+  {
+    "conversation_id": "01-pet",
+    "conversation": [
+      {"role": "user", "content": "Just got back from the vet. My dog Bowie is seven years old and healthy."},
+      {"role": "assistant", "content": "Good to hear Bowie's doing well."},
+      {"role": "user", "content": "He loves the new Acana lamb kibble — I'll keep buying that."}
+    ],
+    "questions": [
+      {"question": "What is my dog's name?", "gold_keys": ["dog", "bowie", "user_dog"]},
+      {"question": "How old is my dog?", "gold_keys": ["bowie", "seven", "dog_age"]},
+      {"question": "What dog food brand does Bowie like?", "gold_keys": ["acana", "kibble", "dog_food"]}
+    ]
+  },
+  {
+    "conversation_id": "02-deploys",
+    "conversation": [
+      {"role": "user", "content": "We deploy to production on Tuesdays and Thursdays at 10am UTC."},
+      {"role": "assistant", "content": "Got it — Tuesdays and Thursdays for deploys."},
+      {"role": "user", "content": "Alice is the on-call engineer this sprint. Sprint ends Friday."}
+    ],
+    "questions": [
+      {"question": "When do we deploy?", "gold_keys": ["deploy", "tuesday", "thursday", "cadence"]},
+      {"question": "Who is on call?", "gold_keys": ["alice", "on_call", "oncall"]},
+      {"question": "When does the sprint end?", "gold_keys": ["sprint", "friday"]}
+    ]
+  },
+  {
+    "conversation_id": "03-preferences",
+    "conversation": [
+      {"role": "user", "content": "I prefer dark mode in all my editors. Coffee with no sugar."},
+      {"role": "assistant", "content": "Noted: dark mode, no-sugar coffee."},
+      {"role": "user", "content": "Also my IDE is VSCode and I use the Catppuccin theme."}
+    ],
+    "questions": [
+      {"question": "What theme do I prefer?", "gold_keys": ["dark", "catppuccin", "theme"]},
+      {"question": "How do I take coffee?", "gold_keys": ["coffee", "sugar", "no_sugar"]},
+      {"question": "What IDE do I use?", "gold_keys": ["vscode", "ide", "editor"]}
+    ]
+  },
+  {
+    "conversation_id": "04-trip",
+    "conversation": [
+      {"role": "user", "content": "Booked a trip to Kyoto from June 12 to June 19. Staying at Hotel Granvia."},
+      {"role": "assistant", "content": "Kyoto June 12-19, Hotel Granvia."},
+      {"role": "user", "content": "Flight is JAL JL045 departing 9am. My passport expires in 2027."}
+    ],
+    "questions": [
+      {"question": "Where am I traveling?", "gold_keys": ["kyoto", "trip", "japan"]},
+      {"question": "What's my flight number?", "gold_keys": ["jl045", "jal", "flight"]},
+      {"question": "When does my passport expire?", "gold_keys": ["passport", "2027", "expiry"]}
+    ]
+  },
+  {
+    "conversation_id": "05-project",
+    "conversation": [
+      {"role": "user", "content": "The Aurora project ships in Q3. Detector → Validator → Reviewer pipeline."},
+      {"role": "assistant", "content": "Aurora Q3, three-stage pipeline."},
+      {"role": "user", "content": "Riley handles the Detector. I own Validator and Reviewer."}
+    ],
+    "questions": [
+      {"question": "When does Aurora ship?", "gold_keys": ["aurora", "q3", "ship"]},
+      {"question": "Who handles the Detector?", "gold_keys": ["riley", "detector"]},
+      {"question": "What stages does Aurora have?", "gold_keys": ["aurora", "pipeline", "stages"]}
+    ]
+  }
+]

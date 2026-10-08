@@ -1,0 +1,13 @@
+{
+ "window_days": 30,
+ "source": "one deployment's code.ask calls, bench traffic excluded",
+ "calls": 673,
+ "served_from_cache": 20,
+ "cache_share": 0.0297,
+ "fresh_answer_input_tokens_mean": 3351,
+ "fresh_answer_output_tokens_mean": 373,
+ "fresh_answer_p50_ms": 7771,
+ "cached_answer_p50_ms": 385,
+ "tokens_saved_total": 74480,
+ "fresh_answer_model": "gpt-6.1-sol"
+}

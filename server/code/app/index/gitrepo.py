@@ -1,0 +1,830 @@
+"""Async git plumbing against a bare clone (the ingest worker's data source).
+
+All operations shell out to `git` with asyncio subprocesses — no GitPython
+dependency, no working tree. The bare clone is created by `loom code init`
+and fetched by the code_ingest worker each pass. Every helper is read-only
+except fetch().
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import contextlib
+import fnmatch
+import logging
+import os
+import re
+from dataclasses import dataclass
+
+logger = logging.getLogger("loom.code_index.git")
+
+_SHA40 = re.compile(r"[0-9a-f]{40}")
+
+_GIT_TIMEOUT_S = 120.0
+_FETCH_TIMEOUT_S = 3600.0  # first fetch after a shallow clone of a huge repo can exceed 10 min
+
+
+class GitError(RuntimeError):
+    pass
+
+
+# Git C-quotes a path holding non-ASCII bytes ("src/caf\303\251.py") unless told
+# otherwise, and a quoted name reads back as a missing file. Every command names
+# paths verbatim; the path listings below also read NUL-separated records, so a
+# tab or newline in a name survives.
+UNQUOTED_PATHS = ("-c", "core.quotePath=false")
+
+
+def nul_fields(out: str) -> list[str]:
+    """The records of a `-z` listing."""
+    return [f for f in out.split("\0") if f]
+
+
+# An object id, full or abbreviated (git accepts 4+ hex digits): what the range
+# helpers take. Their inputs are stored watermarks and a caller's `commit`.
+_OBJECT_ID = re.compile(r"[0-9a-fA-F]{4,64}")
+
+
+def _object_id(value: str) -> str:
+    """`value` if it is an object id, else GitError before git runs."""
+    if not _OBJECT_ID.fullmatch(value or ""):
+        raise GitError(f"not an object id: {str(value)[:80]!r}")
+    return value
+
+
+def _is_rev(value: str) -> bool:
+    """Whether git can take `value` as a revision argument and not as an
+    option: a value starting with `-` (`--output=<path>` writes a file) is not."""
+    return bool(value) and not value.startswith("-")
+
+
+def _rev(value: str) -> str:
+    """`value` if `_is_rev`, else GitError before git runs."""
+    if not _is_rev(value):
+        raise GitError(f"not a revision: {str(value)[:80]!r}")
+    return value
+
+
+def auth_env(token: str, remote: str = "https://github.com/") -> dict[str, str]:
+    """The environment that authenticates git against `remote` with `token`: the
+    credential rides an `http.<remote>.extraheader` set through GIT_CONFIG_*, so it
+    appears in no argv, no remote URL, no stored config and no
+    `code_index_state.repo_remote`. Empty token = no change. GIT_TERMINAL_PROMPT=0 makes
+    a missing credential a failure, not a hang."""
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    if not token:
+        return env
+    if not remote.startswith(("https://", "http://")):
+        return env
+    host = remote.split("/")[2]
+    username = {
+        "github.com": "x-access-token",
+        "gitlab.com": "oauth2",
+        "bitbucket.org": "x-token-auth",
+    }.get(host.split(":", 1)[0].lower(), "oauth2")
+    basic = base64.b64encode(f"{username}:{token}".encode()).decode()
+    env["GIT_CONFIG_COUNT"] = "1"
+    env["GIT_CONFIG_KEY_0"] = f"http.https://{host}/.extraheader"
+    env["GIT_CONFIG_VALUE_0"] = f"AUTHORIZATION: basic {basic}"
+    return env
+
+
+async def communicate_or_kill(
+    proc: asyncio.subprocess.Process, stdin: bytes | None = None, *, timeout_s: float
+) -> tuple[bytes, bytes]:
+    """`proc.communicate(stdin)` bounded by `timeout_s` (TimeoutError past it). On
+    any exit that is not a normal finish — the timeout, the caller's cancellation (a
+    `code.refresh` whose wait gave up, a dropped fan-out), any error — the child is
+    killed and reaped, so no git process outlives the call that started it."""
+    talk = proc.communicate(stdin) if stdin is not None else proc.communicate()
+    try:
+        return await asyncio.wait_for(talk, timeout=timeout_s)
+    except BaseException:
+        await _kill(proc)
+        raise
+
+
+async def _kill(proc: asyncio.subprocess.Process) -> None:
+    """Kill a child that is still running and wait for it, so it leaves no zombie."""
+    if proc.returncode is None:
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
+        await proc.wait()
+
+
+def _redact(text: str, token: str) -> str:
+    if token and token in text:
+        text = text.replace(token, "<token>")
+    return text
+
+
+async def _git(
+    git_dir: str,
+    *args: str,
+    timeout_s: float = _GIT_TIMEOUT_S,
+    token: str = "",
+    stdin: bytes | None = None,
+) -> str:
+    proc = await asyncio.create_subprocess_exec(
+        "git",
+        *UNQUOTED_PATHS,
+        "--git-dir",
+        git_dir,
+        *args,
+        stdin=asyncio.subprocess.PIPE if stdin is not None else None,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=auth_env(token),
+    )
+    try:
+        out, err = await communicate_or_kill(proc, stdin, timeout_s=timeout_s)
+    except TimeoutError:
+        raise GitError(f"git {' '.join(args[:2])} timed out after {timeout_s}s") from None
+    if proc.returncode != 0:
+        raise GitError(
+            f"git {' '.join(args[:3])} rc={proc.returncode}: "
+            f"{_redact(err.decode('utf-8', 'replace'), token)[:500]}"
+        )
+    return out.decode("utf-8", "replace")
+
+
+async def run(git_dir: str, *args: str, timeout_s: float = _GIT_TIMEOUT_S) -> str:
+    """A read-only git command's stdout (blame_range's blame, rev-list and ref reads).
+    Same runner, timeout and error shape as the module's own readers; no token — the
+    bare mirror is local."""
+    return await _git(git_dir, *args, timeout_s=timeout_s)
+
+
+async def run_bounded(
+    git_dir: str, *args: str, max_bytes: int, timeout_s: float = _GIT_TIMEOUT_S
+) -> tuple[str, bool]:
+    """A read-only git command whose stdout is read up to `max_bytes` and then cut:
+    (text, truncated). A diff of a huge merge must not hold the request or the process's
+    memory hostage. A non-zero exit with nothing read is a GitError; a cut stream is
+    not."""
+    proc = await asyncio.create_subprocess_exec(
+        "git",
+        *UNQUOTED_PATHS,
+        "--git-dir",
+        git_dir,
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+    )
+    assert proc.stdout is not None
+    chunks: list[bytes] = []
+    got = 0
+    truncated = False
+    try:
+        async with asyncio.timeout(timeout_s):
+            while True:
+                piece = await proc.stdout.read(65536)
+                if not piece:
+                    break
+                chunks.append(piece)
+                got += len(piece)
+                if got > max_bytes:
+                    truncated = True
+                    break
+    except TimeoutError:
+        await _kill(proc)
+        raise GitError(f"git {args[0] if args else ''} timed out") from None
+    except BaseException:
+        await _kill(proc)
+        raise
+    if truncated:
+        proc.kill()
+    err = b""
+    try:
+        _out, err = await communicate_or_kill(proc, timeout_s=10.0)
+    except TimeoutError:
+        pass  # killed and reaped; what was read stands
+    if not truncated and proc.returncode not in (0, None) and got == 0:
+        msg = err.decode("utf-8", "replace").strip()[:500]
+        raise GitError(msg or f"git exited {proc.returncode}")
+    text = b"".join(chunks)[:max_bytes].decode("utf-8", "replace")
+    return text, truncated
+
+
+async def grep_paths(
+    git_dir: str,
+    rev: str,
+    literal: str,
+    pathspecs: tuple[str, ...],
+    *,
+    limit: int = 50,
+    timeout_s: float = 20.0,
+) -> list[str]:
+    """Paths at `rev` whose content contains `literal` (fixed string, case sensitive),
+    under `pathspecs` — `git grep -l -F`. Exit 1 with nothing on stderr is git's "no
+    match", not an error."""
+    proc = await asyncio.create_subprocess_exec(
+        "git",
+        "--git-dir",
+        git_dir,
+        "grep",
+        "-l",
+        "-F",
+        "-e",
+        literal,
+        _rev(rev),
+        "--",
+        *pathspecs,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+    )
+    try:
+        out, err = await communicate_or_kill(proc, timeout_s=timeout_s)
+    except TimeoutError:
+        raise GitError(f"git grep {literal[:40]} timed out") from None
+    if proc.returncode == 1 and not err.strip():
+        return []
+    if proc.returncode != 0:
+        raise GitError(f"git grep rc={proc.returncode}: {err.decode('utf-8', 'replace')[:300]}")
+    paths: list[str] = []
+    for ln in out.decode("utf-8", "replace").splitlines():
+        # `<rev>:<path>`
+        paths.append(ln.split(":", 1)[1] if ":" in ln else ln)
+        if len(paths) >= limit:
+            break
+    return paths
+
+
+async def is_ancestor(
+    git_dir: str, ancestor: str, descendant: str, *, timeout_s: float = 20.0
+) -> bool | None:
+    """Whether `ancestor` is reachable from `descendant` — `git merge-base
+    --is-ancestor` (the descendant check behind code.first_build). Exit 0 is yes, 1 is
+    no; anything else (a commit the mirror does not hold, a value that is not a
+    revision) is None, never a guess."""
+    if not (_is_rev(ancestor) and _is_rev(descendant)):
+        return None
+    proc = await asyncio.create_subprocess_exec(
+        "git",
+        "--git-dir",
+        git_dir,
+        "merge-base",
+        "--is-ancestor",
+        ancestor,
+        descendant,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
+        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+    )
+    try:
+        await communicate_or_kill(proc, timeout_s=timeout_s)
+    except TimeoutError:
+        raise GitError("git merge-base --is-ancestor timed out") from None
+    if proc.returncode == 0:
+        return True
+    if proc.returncode == 1:
+        return False
+    return None
+
+
+async def release_containing(git_dir: str, sha: str, *, timeout_s: float = 3.0) -> str:
+    """The first release line (`X.Y`) whose stable or LTS tags contain `sha`, or '' when
+    no release tag does yet. ~21 ms on a mirror with 1,379 tags and a commit-graph."""
+    out = await run(
+        git_dir,
+        "tag",
+        "--contains",
+        _rev(sha),
+        "--list",
+        "v*-stable",
+        "--list",
+        "v*-lts",
+        timeout_s=timeout_s,
+    )
+    lines: list[tuple[int, int]] = []
+    for tag in out.split():
+        m = re.match(r"v(\d+)\.(\d+)\.", tag)
+        if m:
+            lines.append((int(m.group(1)), int(m.group(2))))
+    if not lines:
+        return ""
+    major, minor = min(lines)
+    return f"{major}.{minor}"
+
+
+async def branches_containing(git_dir: str, sha: str, *, timeout_s: float = 20.0) -> list[str]:
+    """The mirror's branch heads that contain `sha` (`git branch --contains`),
+    short names; a sha the mirror does not hold is a GitError."""
+    out = await _git(
+        git_dir,
+        "branch",
+        "--contains",
+        _rev(sha),
+        "--format=%(refname:short)",
+        timeout_s=timeout_s,
+    )
+    return [ln.strip() for ln in out.splitlines() if ln.strip()]
+
+
+async def fetch(git_dir: str, remote: str, branch: str, *, token: str = "") -> None:
+    """Fetch one branch into the bare clone. `token` (the entry's github_token)
+    authenticates a private remote through the environment, never the URL."""
+    await _git(
+        git_dir,
+        "fetch",
+        "--prune",
+        remote,
+        f"+refs/heads/{branch}:refs/heads/{branch}",
+        timeout_s=_FETCH_TIMEOUT_S,
+        token=token,
+    )
+
+
+async def fetch_many(git_dir: str, remote: str, branches: list[str], *, token: str = "") -> None:
+    """Fetch several configured branches of one mirror in ONE negotiation, rather than
+    each configured entry running its own `fetch` of its own branch every pass. Same
+    refspecs and `--prune` as `fetch`, one per branch."""
+    wanted = sorted({b for b in branches if b})
+    if not wanted:
+        return
+    await _git(
+        git_dir,
+        "fetch",
+        "--prune",
+        remote,
+        *(f"+refs/heads/{b}:refs/heads/{b}" for b in wanted),
+        timeout_s=_FETCH_TIMEOUT_S,
+        token=token,
+    )
+
+
+# ---- every branch the ledger's merges land on ------------------------------
+# The configured branch is one of many a PR merges into: the release branches (`25.8`,
+# `26.3`, …) and the backport bot's staging branches (`backport/26.3/118740`, the base
+# of a `Cherry pick #N to 26.3` PR). A merge commit on a branch the mirror does not
+# fetch is unknown to every reader that diffs it (most of them on `backport/*`). The
+# globs below name which remote branches the mirror carries
+# besides the configured ones; the refs are never pruned, so a branch upstream deletes
+# keeps its merges reachable here.
+
+
+def branch_globs(raw: str) -> tuple[str, ...]:
+    """The comma-separated glob list of `code_git_extra_branches`."""
+    return tuple(g.strip() for g in (raw or "").split(",") if g.strip())
+
+
+def match_branches(names: list[str], globs: tuple[str, ...]) -> list[str]:
+    """The branch names (short, no `refs/heads/`) any glob matches — fnmatch
+    with `[..]` classes and `*` across `/`, case-sensitive; sorted, unique."""
+    if not globs:
+        return []
+    out = {n for n in names if n and any(fnmatch.fnmatchcase(n, g) for g in globs)}
+    return sorted(out)
+
+
+def parse_ls_remote_heads(text: str) -> dict[str, str]:
+    """Short branch name -> tip sha from `git ls-remote --heads` output."""
+    tips: dict[str, str] = {}
+    for line in text.splitlines():
+        parts = line.split("\t", 1)
+        if len(parts) == 2 and parts[1].startswith("refs/heads/"):
+            tips[parts[1][len("refs/heads/") :].strip()] = parts[0].strip()
+    return tips
+
+
+async def remote_branches(git_dir: str, remote: str, *, token: str = "") -> dict[str, str]:
+    """Every branch the remote advertises with its tip (one `ls-remote
+    --heads`; ~1 MB for a repository with 16k heads, 0.3 s)."""
+    out = await _git(git_dir, "ls-remote", "--heads", remote, timeout_s=_GIT_TIMEOUT_S, token=token)
+    return parse_ls_remote_heads(out)
+
+
+async def local_branch_shas(git_dir: str) -> dict[str, str]:
+    """Short name -> tip sha of the clone's `refs/heads/*`."""
+    out = await _git(
+        git_dir, "for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads/"
+    )
+    tips: dict[str, str] = {}
+    for ln in out.splitlines():
+        parts = ln.split()
+        if len(parts) == 2:
+            tips[parts[0]] = parts[1]
+    return tips
+
+
+def branches_to_fetch(
+    remote: dict[str, str], local: dict[str, str], globs: tuple[str, ...], *, skip: str = ""
+) -> list[str]:
+    """The glob-matched remote branches whose tip the clone does not hold
+    under the same name — on a warm mirror a handful, so the per-pass fetch
+    negotiates a few refs, not 6.5k (22 s measured for the full list)."""
+    names = match_branches(list(remote), globs)
+    return [b for b in names if b != skip and local.get(b) != remote[b]]
+
+
+async def fetch_branches(git_dir: str, remote: str, branches: list[str], *, token: str = "") -> int:
+    """Fetch `branches` into the bare clone under their own names, in one
+    `git fetch --stdin` (thousands of refspecs never touch argv), WITHOUT
+    `--prune`: a staging branch the bot deletes keeps its merge commit
+    reachable. Returns the number of refspecs sent; no-op on an empty list."""
+    names = [b for b in dict.fromkeys(branches) if b and not b.startswith("-")]
+    if not names:
+        return 0
+    refspecs = "".join(f"+refs/heads/{b}:refs/heads/{b}\n" for b in names).encode()
+    await _git(
+        git_dir,
+        "fetch",
+        "--stdin",
+        remote,
+        timeout_s=_FETCH_TIMEOUT_S,
+        token=token,
+        stdin=refspecs,
+    )
+    return len(names)
+
+
+MERGE_REF_PREFIX = "refs/loom/merges/"
+
+
+async def fetch_shas(git_dir: str, remote: str, shas: list[str], *, token: str = "") -> int:
+    """Fetch commits by sha and pin each under `refs/loom/merges/<sha>`. The backport
+    bot's cherry-pick step merges into a staging branch it then rebases, so the merge
+    commit the ledger recorded is reachable from no branch upstream; GitHub still serves
+    it by sha (40 in 8.5 s measured), and the pin keeps `git gc` from dropping it.
+    Returns the number of shas requested; 0 on an empty list."""
+    wanted = [x for x in dict.fromkeys(s.strip().lower() for s in shas) if _SHA40.fullmatch(x)]
+    if not wanted:
+        return 0
+    refspecs = "".join(f"{x}:{MERGE_REF_PREFIX}{x}\n" for x in wanted).encode()
+    await _git(
+        git_dir,
+        "fetch",
+        "--stdin",
+        remote,
+        timeout_s=_FETCH_TIMEOUT_S,
+        token=token,
+        stdin=refspecs,
+    )
+    return len(wanted)
+
+
+# ---- the heads of open pull requests ---------------------------------------
+# GitHub publishes every pull request's head commit under `refs/pull/N/head`. Without
+# it, a reader given an open PR (its head sha, its diff against the branch) falls back
+# to the merge commit or answers `unknown`. Fetching ALL of them is not an option: a
+# large repository has tens of thousands of such refs — many minutes and gigabytes of
+# fetched packs, then every one of those refs to negotiate on every fetch. The readers
+# want only the open PRs' heads. The mirror carries the heads of the PRs the ledger
+# (`code_gh_items`) holds
+# OPEN, refetched when upstream's tip moved, never pruned — a closed PR's head stays
+# until `gc`.
+
+PULL_HEAD_PREFIX = "refs/pull/"
+_PULL_HEAD_RE = re.compile(r"^refs/pull/(\d+)/head$")
+
+
+def pull_head_ref(pr_number: int) -> str:
+    return f"{PULL_HEAD_PREFIX}{int(pr_number)}/head"
+
+
+def parse_ls_remote_pull_heads(text: str) -> dict[int, str]:
+    """`git ls-remote <remote> 'refs/pull/*/head'` → PR number → tip sha."""
+    tips: dict[int, str] = {}
+    for ln in text.splitlines():
+        parts = ln.split("\t")
+        if len(parts) != 2:
+            continue
+        m = _PULL_HEAD_RE.match(parts[1].strip())
+        if m:
+            tips[int(m.group(1))] = parts[0].strip()
+    return tips
+
+
+async def remote_pull_heads(git_dir: str, remote: str, *, token: str = "") -> dict[int, str]:
+    """Every PR head upstream: PR number → tip sha. One `ls-remote` (5.5 MB / 87,904
+    refs in ~1 s on ClickHouse/ClickHouse)."""
+    out = await _git(
+        git_dir, "ls-remote", remote, f"{PULL_HEAD_PREFIX}*/head", timeout_s=60.0, token=token
+    )
+    return parse_ls_remote_pull_heads(out)
+
+
+async def local_pull_heads(git_dir: str) -> dict[int, str]:
+    """PR number → tip sha of the clone's `refs/pull/*/head`."""
+    out = await _git(git_dir, "for-each-ref", "--format=%(objectname) %(refname)", PULL_HEAD_PREFIX)
+    tips: dict[int, str] = {}
+    for ln in out.splitlines():
+        parts = ln.split()
+        if len(parts) == 2:
+            m = _PULL_HEAD_RE.match(parts[1])
+            if m:
+                tips[int(m.group(1))] = parts[0]
+    return tips
+
+
+def pull_heads_to_fetch(
+    open_prs: list[int], remote: dict[int, str], local: dict[int, str], *, limit: int
+) -> list[int]:
+    """The open PRs whose upstream head the clone does not hold under
+    `refs/pull/N/head`, in the caller's order (newest activity first), at
+    most `limit`. A PR upstream no longer lists is skipped (closed since the
+    ledger row); one whose tip the clone already has is skipped."""
+    out: list[int] = []
+    for n in dict.fromkeys(int(x) for x in open_prs if int(x) > 0):
+        tip = remote.get(n)
+        if tip and local.get(n) != tip:
+            out.append(n)
+            if len(out) >= max(1, limit):
+                break
+    return out
+
+
+async def fetch_pull_heads(
+    git_dir: str, remote: str, numbers: list[int], *, token: str = ""
+) -> int:
+    """Fetch `refs/pull/N/head` for each PR number into the clone under the
+    same ref, one `git fetch --stdin`, no `--prune`. Returns the number of
+    refspecs sent; 0 on an empty list."""
+    wanted = [n for n in dict.fromkeys(int(x) for x in numbers) if n > 0]
+    if not wanted:
+        return 0
+    refspecs = "".join(f"+{pull_head_ref(n)}:{pull_head_ref(n)}\n" for n in wanted).encode()
+    await _git(
+        git_dir,
+        "fetch",
+        "--stdin",
+        remote,
+        timeout_s=_FETCH_TIMEOUT_S,
+        token=token,
+        stdin=refspecs,
+    )
+    return len(wanted)
+
+
+async def pull_head_sha(git_dir: str, pr_number: int) -> str:
+    """The clone's `refs/pull/N/head` tip, '' when the mirror lacks it."""
+    try:
+        out = await _git(git_dir, "rev-parse", "--verify", "-q", pull_head_ref(pr_number))
+        return out.strip()
+    except GitError:
+        return ""
+
+
+async def merge_base(git_dir: str, a: str, b: str) -> str:
+    """`git merge-base a b`, '' when unrelated or unknown."""
+    try:
+        return (await _git(git_dir, "merge-base", _rev(a), _rev(b))).strip()
+    except GitError:
+        return ""
+
+
+async def diff_name_only(
+    git_dir: str, base_sha: str, head_sha: str, *, limit: int = 2000
+) -> list[str]:
+    """Paths the range changes (added, modified, deleted; renames as D+A)."""
+    out = await _git(
+        git_dir,
+        "diff",
+        "--name-only",
+        "-z",
+        "--no-renames",
+        "--end-of-options",
+        _rev(base_sha),
+        _rev(head_sha),
+    )
+    return nul_fields(out)[:limit]
+
+
+async def missing_commits(git_dir: str, shas: list[str]) -> list[str]:
+    """The shas among `shas` the clone does not hold — one `cat-file
+    --batch-check`, read-only, in input order."""
+    wanted = [x for x in dict.fromkeys(s.strip().lower() for s in shas) if _SHA40.fullmatch(x)]
+    if not wanted:
+        return []
+    payload = ("\n".join(wanted) + "\n").encode()
+    out = await _git(git_dir, "cat-file", "--batch-check", stdin=payload)
+    lines = out.splitlines()
+    return [x for i, x in enumerate(wanted) if i >= len(lines) or " missing" in lines[i]]
+
+
+async def head_sha(git_dir: str, branch: str) -> str:
+    return (await _git(git_dir, "rev-parse", f"refs/heads/{branch}")).strip()
+
+
+async def resolve_commit(git_dir: str, rev: str) -> str:
+    """Full sha of `rev` (a sha, abbreviation or ref), or ValueError when the clone does
+    not hold it. Read-only: a pinned backfill resolves the commit it was told to index
+    instead of the branch tip, so two arms indexed hours apart see one tree even though
+    the shared mirror is fetched by the worker in between."""
+    try:
+        out = (await _git(git_dir, "rev-parse", "--verify", f"{_rev(rev)}^{{commit}}")).strip()
+    except Exception as e:
+        raise ValueError(f"{rev!r} is not a commit in {git_dir}: {e}") from e
+    if not re.fullmatch(r"[0-9a-f]{40}", out):
+        raise ValueError(f"{rev!r} did not resolve to a commit sha in {git_dir}: {out!r}")
+    return out
+
+
+async def commits_between(git_dir: str, since_sha: str, until_sha: str, limit: int) -> list[str]:
+    """First-parent commit shas after since_sha up to until_sha, OLDEST
+    first, capped at limit. Empty since_sha means 'just the tip'. Both are
+    object ids (GitError otherwise): they come from stored watermarks."""
+    if not since_sha:
+        return [until_sha]
+    _object_id(since_sha)
+    _object_id(until_sha)
+    out = await _git(
+        git_dir,
+        "rev-list",
+        "--first-parent",
+        "--reverse",
+        f"{since_sha}..{until_sha}",
+    )
+    shas = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    return shas[:limit]
+
+
+async def commit_count_between(git_dir: str, since_sha: str, until_sha: str) -> int:
+    """Number of first-parent commits after since_sha up to until_sha — the
+    "how far behind is this watermark" gauge. Uncapped (rev-list --count),
+    so it is safe for lag display where commits_between's limit would lie.
+    Empty since_sha means everything is pending: returns -1 (unknown). Both
+    are object ids (GitError otherwise): a stored watermark or a caller's
+    commit never reaches git as anything else."""
+    if not since_sha or not until_sha:
+        return -1
+    _object_id(since_sha)
+    _object_id(until_sha)
+    if since_sha == until_sha:
+        return 0
+    out = await _git(
+        git_dir,
+        "rev-list",
+        "--count",
+        "--first-parent",
+        f"{since_sha}..{until_sha}",
+    )
+    return int(out.strip() or "0")
+
+
+@dataclass(frozen=True)
+class DiffEntry:
+    status: str  # A | M | D | T (a rename or copy arrives as D+A or A)
+    path: str
+
+
+async def diff_files(git_dir: str, base_sha: str, head_sha: str) -> list[DiffEntry]:
+    out = await _git(
+        git_dir,
+        "diff",
+        "--name-status",
+        "-z",
+        "--no-renames",
+        "--end-of-options",
+        _rev(base_sha),
+        _rev(head_sha),
+    )
+    return parse_name_status_z(out)
+
+
+def parse_name_status_z(out: str) -> list[DiffEntry]:
+    """`diff --name-status -z` records: a status field, then one path, or two for
+    a rename or copy (old, new). A rename is the old path deleted and the new one
+    added; a copy only adds the new one."""
+    fields = out.split("\0")
+    entries: list[DiffEntry] = []
+    i = 0
+    while i < len(fields) and fields[i]:
+        status = fields[i][:1]
+        if status in ("R", "C"):
+            old, new = fields[i + 1], fields[i + 2]
+            if status == "R":
+                entries.append(DiffEntry(status="D", path=old))
+            entries.append(DiffEntry(status="A", path=new))
+            i += 3
+        else:
+            entries.append(DiffEntry(status=status, path=fields[i + 1]))
+            i += 2
+    return entries
+
+
+async def commit_subject(git_dir: str, sha: str) -> str:
+    return (await _git(git_dir, "log", "-1", "--format=%s", _rev(sha))).strip()
+
+
+async def commit_time(git_dir: str, sha: str) -> int:
+    """Committer time as unix seconds."""
+    return int((await _git(git_dir, "log", "-1", "--format=%ct", _rev(sha))).strip())
+
+
+async def commit_meta_many(git_dir: str, shas: list[str]) -> dict[str, tuple[str, int]]:
+    """sha → (subject, committer unix seconds) for every sha the clone holds, in one
+    `git log --no-walk` rather than two subprocesses per row (870 ms for a page of
+    `code.recent_commits` rows). A sha the clone does not hold is simply absent; nothing
+    raises for it."""
+    wanted = [s for s in shas if re.fullmatch(r"[0-9a-f]{7,40}", s or "")]
+    if not wanted:
+        return {}
+    try:
+        out = await _git(git_dir, "log", "--no-walk=unsorted", "--format=%H%x1f%s%x1f%ct", *wanted)
+    except GitError:
+        # one unknown sha fails the whole call; fall back to per-sha reads for
+        # the ones that resolve
+        out_map: dict[str, tuple[str, int]] = {}
+        for s in wanted:
+            try:
+                one = await _git(git_dir, "log", "-1", "--format=%H%x1f%s%x1f%ct", s)
+            except GitError:
+                continue
+            for line in one.splitlines():
+                parts = line.split("\x1f")
+                if len(parts) == 3 and parts[2].strip().isdigit():
+                    out_map[parts[0]] = (parts[1], int(parts[2]))
+        return out_map
+    meta: dict[str, tuple[str, int]] = {}
+    for line in out.splitlines():
+        parts = line.split("\x1f")
+        if len(parts) == 3 and parts[2].strip().isdigit():
+            meta[parts[0]] = (parts[1], int(parts[2]))
+    # callers hold short or full shas; answer under the spelling they asked with
+    for s in wanted:
+        if s not in meta:
+            full = next((k for k in meta if k.startswith(s)), None)
+            if full:
+                meta[s] = meta[full]
+    return meta
+
+
+async def show_file(git_dir: str, sha: str, path: str) -> bytes | None:
+    """File contents at a commit; None when the path doesn't exist there (or
+    `sha` is not a revision)."""
+    if not _is_rev(sha):
+        return None
+    proc = await asyncio.create_subprocess_exec(
+        "git",
+        "--git-dir",
+        git_dir,
+        "show",
+        f"{sha}:{path}",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        out, _err = await communicate_or_kill(proc, timeout_s=_GIT_TIMEOUT_S)
+    except TimeoutError:
+        raise GitError(f"git show {path} timed out") from None
+    if proc.returncode != 0:
+        return None
+    return out
+
+
+def blob_sha(data: bytes) -> str:
+    """git's identity for file content: sha1("blob <len>\\0" + bytes). What `git
+    ls-tree` prints per path and what `git hash-object` computes — so a row that records
+    it can be compared with a tree listing without reading a single blob."""
+    import hashlib
+
+    h = hashlib.sha1(b"blob %d\0" % len(data))
+    h.update(data)
+    return h.hexdigest()
+
+
+async def ls_tree_blobs(git_dir: str, sha: str) -> dict[str, str]:
+    """path -> blob sha for every blob at a commit: one `git ls-tree -r`,
+    metadata only (no blob is read). ~30k paths in well under a second on
+    the ClickHouse mirror."""
+    out = await _git(
+        git_dir,
+        "ls-tree",
+        "-r",
+        "-z",
+        "--end-of-options",
+        _rev(sha),
+        timeout_s=_FETCH_TIMEOUT_S,
+    )
+    # `<mode> <type> <object>\t<path>`: the default record, whose path -z leaves
+    # verbatim (a --format %(path) is still quoted)
+    blobs: dict[str, str] = {}
+    for record in nul_fields(out):
+        meta, _, path = record.partition("\t")
+        fields = meta.split()
+        if len(fields) == 3 and path:
+            blobs[path] = fields[2]
+    return blobs
+
+
+async def ls_tree(git_dir: str, sha: str, prefixes: tuple[str, ...] = ()) -> list[str]:
+    """All blob paths at a commit, optionally filtered to path prefixes."""
+    out = await _git(
+        git_dir,
+        "ls-tree",
+        "-r",
+        "-z",
+        "--name-only",
+        "--end-of-options",
+        _rev(sha),
+        timeout_s=_FETCH_TIMEOUT_S,
+    )
+    paths = nul_fields(out)
+    if prefixes:
+        paths = [p for p in paths if p.startswith(prefixes)]
+    return paths

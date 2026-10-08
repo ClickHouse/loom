@@ -1,0 +1,19 @@
+{
+  "_comment": "Deterministic hook fixture for the plugin acceptance bench: each row is one Read / Grep the loom-code-shunt PreToolUse hook classifies (integrations/claude-code-plugin/lib/code-shunt.mjs classifyRead / classifyGrep) and the reason the hook must give. `hit` = deny with a redirect to a code.* op; anything else is a pass reason from the closed vocabulary.",
+  "prefixes": ["src/", "base/", "programs/"],
+  "max_lines": 350,
+  "cases": [
+    {"id": "whole_file_big", "tool": "Read", "ctx": {"rel": "src/Compression/CompressionFactory.cpp", "lineCount": 600, "modified": false}, "expect": "hit"},
+    {"id": "whole_file_small", "tool": "Read", "ctx": {"rel": "src/Compression/CompressionInfo.h", "lineCount": 120, "modified": false}, "expect": "under_max_lines"},
+    {"id": "targeted_span", "tool": "Read", "ctx": {"rel": "src/Compression/CompressionFactory.cpp", "lineCount": 600, "modified": false, "offset": 120, "limit": 40}, "expect": "targeted_span"},
+    {"id": "modified_file", "tool": "Read", "ctx": {"rel": "src/Compression/CompressionFactory.cpp", "lineCount": 600, "modified": "modified"}, "expect": "modified"},
+    {"id": "untracked_file", "tool": "Read", "ctx": {"rel": "src/Compression/New.cpp", "lineCount": 900, "modified": "untracked"}, "expect": "untracked"},
+    {"id": "outside_prefixes", "tool": "Read", "ctx": {"rel": "docs/development/style.md", "lineCount": 2000, "modified": false}, "expect": "not_indexed"},
+    {"id": "binary", "tool": "Read", "ctx": {"rel": "src/Assets/logo.png", "lineCount": 5000, "modified": false}, "expect": "binary"},
+    {"id": "grep_tree_identifier", "tool": "Grep", "ctx": {"rel": "src", "isFile": false, "pattern": "CompressionCodecFactory"}, "expect": "tree_content_grep"},
+    {"id": "grep_tree_concept", "tool": "Grep", "ctx": {"rel": "", "isFile": false, "pattern": "empty codec description fallback"}, "expect": "tree_content_grep"},
+    {"id": "grep_single_file", "tool": "Grep", "ctx": {"rel": "src/Compression/CompressionFactory.cpp", "isFile": true, "pattern": "getCodecDesc"}, "expect": "single_file_grep"},
+    {"id": "grep_outside_prefixes", "tool": "Grep", "ctx": {"rel": "docs", "isFile": false, "pattern": "TODO"}, "expect": "not_indexed"},
+    {"id": "grep_outside_repo", "tool": "Grep", "ctx": {"rel": null, "isFile": false, "pattern": "TODO"}, "expect": "not_indexed"}
+  ]
+}

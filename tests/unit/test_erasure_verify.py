@@ -1,0 +1,265 @@
+"""Verified forgetting: the derived substrates get saga
+steps, and the saga's last step is a census that fails on any live row.
+CH-free — a stub client records the SQL and feeds back counts."""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+
+import pytest
+
+from server.erasure.app import saga as h
+from server.erasure.app import saga_steps
+from server.erasure.store import census as erasure_census
+from server.erasure.store import steps_graph as graph_steps
+
+
+class _StubCH:
+    def __init__(self, counts: list[int]) -> None:
+        self.counts = list(counts)
+        self.query_one_calls: list[tuple[str, dict[str, Any]]] = []
+        self.execute_calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def query_one(self, sql, params=None):
+        self.query_one_calls.append((sql, params or {}))
+        return {"n": self.counts.pop(0)} if self.counts else {"n": 0}
+
+    async def execute(self, sql, params=None):
+        self.execute_calls.append((sql, params or {}))
+
+    async def query_all(self, sql, params=None):
+        if "startsWith(t.name, '_provider_rebuild_')" in sql:
+            return []
+        return [
+            {
+                "mutation_id": "mutation_1.txt",
+                "is_done": 1,
+                "parts_to_do": 0,
+                "latest_fail_reason": "",
+            }
+        ]
+
+
+def _tables(ch: _StubCH) -> list[str]:
+    return [sql.split("ALTER TABLE")[1].split()[0] for sql, _ in ch.execute_calls]
+
+
+def test_source_links_tombstone_both_tables_in_namespace_scope() -> None:
+    ch = _StubCH([2, 3])
+    n = asyncio.run(graph_steps.tombstone_source_links_by_namespace("o", "ns", ch=ch))
+    assert n == 5
+    assert _tables(ch) == [
+        "loom.memory_belief_sources",
+        "loom.memory_chunk_sources",
+    ]
+    for sql, params in ch.execute_calls:
+        assert "UPDATE tombstoned_at" in sql and "namespace = {ns:String}" in sql
+        assert "tombstoned_at IS NULL" in sql and params["ns"] == "ns"
+
+
+def test_user_scope_reaches_link_tables_through_parent_keys() -> None:
+    ch = _StubCH([1, 1])
+    asyncio.run(graph_steps.tombstone_source_links_by_user("o", "alice", ch=ch))
+    assert len(ch.execute_calls) == 2
+    for sql, params in ch.execute_calls:
+        assert (
+            "(namespace, memory_key) IN (SELECT namespace, memory_key FROM loom.memory" in sql
+        )  # Key alone collides across namespaces
+        assert "user_id = {uid:String}" in sql and params["uid"] == "alice"
+
+
+def test_graph_links_are_hard_deleted() -> None:
+    ch = _StubCH([4, 0])
+    n = asyncio.run(graph_steps.delete_graph_links_by_namespace("o", "ns", ch=ch))
+    assert n == 4
+    # zero-count table → no mutation issued (idempotent re-run is free)
+    assert _tables(ch) == ["loom.entity_triple_memories"]
+    assert "DELETE" in ch.execute_calls[0][0] and "FINAL" not in ch.query_one_calls[0][0]
+
+
+def test_records_user_scope_reaches_fields_and_conflicts_before_the_parent() -> None:
+    ch = _StubCH([1, 1, 1, 1])
+    asyncio.run(graph_steps.tombstone_records_by_user("o", "alice", ch=ch))
+    assert _tables(ch) == [
+        "loom.memory_record_fields",
+        "loom.memory_record_conflicts",
+        "loom.memory_records",
+        "loom.memory_record_versions",
+    ]
+    assert "record_id IN (SELECT record_id FROM loom.memory_records" in ch.execute_calls[0][0]
+    assert "user_id = {uid:String}" in ch.execute_calls[2][0]
+    # The history mirror is deleted, not tombstoned: its view never sees the
+    # tombstone's ALTER UPDATE, so a tombstoned mirror row would still serve.
+    versions_sql = ch.execute_calls[3][0]
+    assert "DELETE" in versions_sql and "user_id = {uid:String}" in versions_sql
+    assert "FINAL" not in ch.query_one_calls[3][0]
+
+
+def test_records_namespace_scope_deletes_the_version_history() -> None:
+    ch = _StubCH([1, 1, 1, 1])
+    asyncio.run(graph_steps.tombstone_records_by_namespace("o", "ns", ch=ch))
+    assert _tables(ch)[-1] == "loom.memory_record_versions"
+    assert "DELETE" in ch.execute_calls[3][0] and "UPDATE" not in ch.execute_calls[3][0]
+
+
+def test_summaries_and_communities() -> None:
+    ch = _StubCH([1, 1])
+    asyncio.run(graph_steps.tombstone_summaries_by_user("o", "alice", ch=ch))
+    assert _tables(ch) == ["loom.session_summaries", "loom.entity_summaries"]
+    ch = _StubCH([7])
+    n = asyncio.run(graph_steps.delete_entity_communities_by_namespace("o", "ns", ch=ch))
+    assert n == 7 and _tables(ch) == ["loom.entity_communities"]
+
+
+def test_census_covers_every_substrate_and_uses_final_on_soft_deleted_tables() -> None:
+    ch = _StubCH([0] * 60)
+    out = asyncio.run(erasure_census.residue_census("o", "namespace", "ns", ch=ch))
+    assert set(out) == set(erasure_census.census_tables("namespace"))
+    # every namespace-scoped substrate, entity, cache, chunk-link and code table
+    assert len(out) == 52 and sum(out.values()) == 0
+    by_table = {sql.split("FROM ")[1].split()[0]: sql for sql, _ in ch.query_one_calls}
+    assert (
+        " FINAL" in by_table["loom.memory"] and "tombstoned_at IS NULL" in by_table["loom.memory"]
+    )
+    assert " FINAL" not in by_table["loom.memory_versions"]
+    assert " FINAL" not in by_table["loom.memory_record_versions"]
+    # A plain MergeTree with a live predicate never reads FINAL (code 181)
+    assert (
+        " FINAL" not in by_table["loom.conversations"]
+        and "tombstoned_at IS NULL" in by_table["loom.conversations"]
+    )
+    assert " FINAL" in by_table["loom.conversation_threads"]
+    assert " FINAL" not in by_table["loom.search_trace_log"]
+    # The knowledge plane: chunks by the readers' live predicate (plain
+    # MergeTree, no FINAL); documents live or still holding an original.
+    assert (
+        " FINAL" not in by_table["loom.chunks"]
+        and "doc_superseded_at IS NULL" in (by_table["loom.chunks"])
+    )
+    assert " FINAL" in by_table["loom.documents"]
+    assert "blob_erased_at IS NULL" in by_table["loom.documents"]
+    for sql, params in ch.query_one_calls:
+        if "FROM loom.idempotency" in sql:  # no namespace column: counted org-wide
+            assert "namespace" not in sql
+            continue
+        assert "namespace = {ns:String}" in sql and params["ns"] == "ns"
+
+
+def test_census_user_scope_skips_namespace_only_tables() -> None:
+    ch = _StubCH([0] * 40)
+    out = asyncio.run(erasure_census.residue_census("o", "user_id", "alice", ch=ch))
+    # the user scope reaches entity_communities, memory_ask_precedents and
+    # llm_response_cache through the window keys / the owned entities
+    assert "loom.entity_edges" not in out and "loom.entity_triples" not in out
+    assert "loom.search_trace_log" not in out
+    assert {
+        "loom.entity_communities",
+        "loom.memory_ask_precedents",
+        "loom.llm_response_cache",
+    } <= set(out)
+    assert "loom.memory_answers" not in out
+    assert len(out) == 35
+    assert all(params["uid"] == "alice" for _, params in ch.query_one_calls)
+
+
+def test_census_propagates_a_read_error() -> None:
+    class _BrokenCH(_StubCH):
+        async def query_one(self, sql, params=None):
+            raise RuntimeError("Code: 241. MEMORY_LIMIT_EXCEEDED")
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(erasure_census.residue_census("o", "namespace", "ns", ch=_BrokenCH([])))
+
+
+def test_verify_step_fails_closed_on_residue_and_fills_the_holder(monkeypatch) -> None:
+    async def _census(org, scope_type, scope_value, *, ch=None):
+        return {"loom.memory": 0, "loom.memory_belief_sources": 3, "loom.memory_records": 1}
+
+    monkeypatch.setattr(erasure_census, "residue_census", _census)
+    holder: dict[str, Any] = {}
+    with pytest.raises(saga_steps.ErasureResidueError) as ei:
+        asyncio.run(saga_steps._step_verify_residue("o", "namespace", "ns", holder))
+    assert ei.value.count == 4
+    assert "memory_belief_sources" in str(ei.value) and "loom.memory'" not in str(ei.value)
+    assert holder["count"] == 4 and holder["verified_at"] is not None
+    cols = h._verify_columns(holder)
+    assert cols["residue_count"] == 4
+    assert (
+        '"loom.memory_belief_sources": 3' in cols["residue"]
+        and 'loom.memory"' not in cols["residue"]
+    )
+
+
+def test_verify_step_passes_on_zero(monkeypatch) -> None:
+    async def _census(org, scope_type, scope_value, *, ch=None):
+        return {"loom.memory": 0, "loom.memory_versions": 0}
+
+    monkeypatch.setattr(erasure_census, "residue_census", _census)
+    holder: dict[str, Any] = {}
+    assert asyncio.run(saga_steps._step_verify_residue("o", "user_id", "alice", holder)) == 0
+    assert h._verify_columns(holder)["residue_count"] == 0 and h._verify_columns({}) == {}
+
+
+def test_every_saga_step_table_keeps_the_derived_substrates() -> None:
+    """verify.residue runs after the table (the step-order test pins it last);
+    both tables carry the derived-substrate steps."""
+    for table in (saga_steps.USER_STEPS, saga_steps.NAMESPACE_STEPS):
+        names = [name for name, _ in table]
+        assert len(names) == len(set(names)), names
+        assert "verify.residue" not in names
+        assert {
+            "source_links.tombstone",
+            "graph_links.delete",
+            "summaries.tombstone",
+            "records.tombstone",
+        } <= set(names)
+
+
+def test_every_predicate_column_exists_on_its_table() -> None:
+    """The census and the scoped steps are strings; a column that is not on the
+    table (memory_record_conflicts has prior_/incoming_record_id, no record_id)
+    fails every erasure at the verify step. Check them against schema.sql."""
+    import re
+    from pathlib import Path
+
+    schema = (Path(__file__).resolve().parents[2] / "schemas" / "schema.sql").read_text()
+
+    def columns(table: str) -> set[str]:
+        m = re.search(
+            rf"CREATE TABLE IF NOT EXISTS {re.escape(table)}\n\((.*?)\n\)\nENGINE", schema, re.S
+        )
+        assert m, table
+        return set(re.findall(r"^\s+`([a-z_0-9]+)`", m.group(1), re.M))
+
+    def strip_subqueries(pred: str) -> str:
+        """Remove every `(SELECT …)` with its balanced parentheses (the user
+        saga's predicates nest a function call and a UNION inside theirs)."""
+        out: list[str] = []
+        i = 0
+        while i < len(pred):
+            if pred.startswith("(SELECT ", i):
+                depth = 0
+                while i < len(pred):
+                    depth += {"(": 1, ")": -1}.get(pred[i], 0)
+                    i += 1
+                    if depth == 0:
+                        break
+                continue
+            out.append(pred[i])
+            i += 1
+        return "".join(out)
+
+    for sub in erasure_census._CENSUS:
+        table, live, user_pred = sub.table, sub.live, sub.user_pred
+        cols = columns(table)
+        for pred in (live, sub.ns_pred or "namespace = {ns:String}", user_pred or ""):
+            outer = strip_subqueries(pred)
+            for ident in re.findall(r"\b([a-z_]+)\s*(?:=|IS|IN)", outer):
+                assert ident in cols, (
+                    f"{table}: predicate names {ident!r}, columns are {sorted(cols)}"
+                )
+        assert "org" in cols
+    assert "record_id" in columns("loom.memory_record_fields")
+    assert "record_id" not in columns("loom.memory_record_conflicts")
+    assert {"prior_record_id", "incoming_record_id"} <= columns("loom.memory_record_conflicts")

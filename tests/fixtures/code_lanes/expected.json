@@ -1,0 +1,2031 @@
+{
+ "edges": {
+  "cmake/CMakeLists.txt | includes | file": 2,
+  "cmake/lib/CMakeLists.txt | uses_type | target": 1,
+  "cmake/tests/CMakeLists.txt | uses_type | target": 1,
+  "fbs/log.fbs | includes | file": 1,
+  "fbs/log.fbs | uses_type | enum": 1,
+  "fbs/log.fbs | uses_type | struct": 5,
+  "go/app/cmd/main.go | calls | function": 1,
+  "go/app/cmd/main.go | includes | file": 1,
+  "go/constructs/cmd/app/main.go | calls | function": 12,
+  "go/constructs/cmd/app/main.go | calls | method": 1,
+  "go/constructs/cmd/app/main.go | includes | file": 1,
+  "go/constructs/store/store.go | calls | function": 1,
+  "go/constructs/store/store.go | inherits | interface": 5,
+  "go/constructs/store/store.go | inherits | struct": 1,
+  "go/constructs/store/store_test.go | calls | function": 7,
+  "go/mono/svc/main.go | calls | function": 2,
+  "go/mono/svc/main.go | includes | file": 2,
+  "go/sqlc/authors/postgresql/query.sql.go | calls | column": 9,
+  "go/sqlc/authors/postgresql/query.sql.go | calls | table": 4,
+  "helm/mychart/Chart.yaml | includes | file": 1,
+  "helm/mychart/templates/_helpers.tpl | calls | function": 3,
+  "helm/mychart/templates/deployment.yaml | calls | function": 4,
+  "helm/mychart/templates/service.yaml | calls | function": 4,
+  "hosts/Jenkinsfile | includes | file": 1,
+  "java/src/main/java/com/acme/repo/CachedRepository.java | calls | function": 1,
+  "java/src/main/java/com/acme/repo/UserRepository.java | calls | column": 4,
+  "java/src/main/java/com/acme/repo/UserRepository.java | calls | model": 1,
+  "java/src/main/java/com/acme/repo/UserRepository.java | calls | table": 1,
+  "java/src/main/java/com/acme/repo/UserRepository.java | includes | file": 1,
+  "js/constructs/src/cjs.js | calls | function": 1,
+  "js/constructs/src/iife.js | calls | function": 1,
+  "js/synthetic/lib/reply.js | calls | function": 3,
+  "md/design.md | includes | file": 2,
+  "md/design.md | reads | operator": 2,
+  "md/design.md | reads | variable": 1,
+  "md/fences.md | includes | file": 1,
+  "md/fences.md | reads | operator": 1,
+  "md/glossary.md | reads | operator": 1,
+  "md/glossary.md | reads | variable": 1,
+  "prisma/langfuse/packages/shared/prisma/schema.prisma | uses_type | model": 4,
+  "proto/acme/v1/common.proto | uses_type | enum": 1,
+  "proto/acme/v1/common.proto | uses_type | struct": 1,
+  "proto/acme/v1/instances.proto | includes | file": 1,
+  "proto/acme/v1/instances.proto | uses_type | enum": 1,
+  "proto/acme/v1/instances.proto | uses_type | struct": 4,
+  "python/app/repository.py | calls | model": 2,
+  "python/imports/app/forms.py | calls | function": 3,
+  "python/imports/app/forms.py | includes | file": 3,
+  "python/imports/app/main.py | calls | class": 1,
+  "python/imports/app/main.py | calls | function": 7,
+  "python/imports/app/main.py | includes | file": 5,
+  "python/imports/pkg/__init__.py | includes | file": 1,
+  "python/layouts/consumer/use_srcpkg.py | calls | function": 1,
+  "python/layouts/consumer/use_srcpkg.py | includes | file": 1,
+  "python/layouts/legacy/python/legacy/tool.py | calls | function": 1,
+  "python/layouts/notebooks/analysis.ipynb | calls | function": 2,
+  "python/layouts/notebooks/analysis.ipynb | includes | file": 1,
+  "python/layouts/nspkg/app.py | calls | function": 1,
+  "python/layouts/nspkg/app.py | includes | file": 1,
+  "python/layouts/srcpkg/lib/srcpkg/__init__.py | includes | file": 1,
+  "python/layouts/srcpkg/lib/srcpkg/__main__.py | calls | function": 1,
+  "python/layouts/srcpkg/lib/srcpkg/__main__.py | includes | file": 1,
+  "python/layouts/srcpkg/lib/srcpkg/cli.py | calls | function": 2,
+  "python/layouts/srcpkg/lib/srcpkg/cli.py | includes | file": 2,
+  "python/layouts/srcpkg/lib/srcpkg/core.py | calls | function": 1,
+  "python/layouts/srcpkg/tests/test_cli.py | calls | class": 1,
+  "python/layouts/srcpkg/tests/test_cli.py | calls | function": 2,
+  "python/layouts/srcpkg/tests/test_cli.py | fixture_use | fixture": 1,
+  "python/layouts/srcpkg/tests/test_cli.py | includes | file": 3,
+  "python/layouts/vendored/src/app/_vendor/tinylib/helpers.py | calls | function": 1,
+  "python/layouts/vendored/src/app/_vendor/tinylib/helpers.py | includes | file": 1,
+  "python/layouts/vendored/src/app/main.py | calls | function": 1,
+  "python/layouts/vendored/src/app/main.py | includes | file": 2,
+  "python/members/cli/main.py | calls | class": 1,
+  "python/members/cli/main.py | includes | file": 1,
+  "python/members/models.py | calls | class": 1,
+  "python/members/shapes.py | calls | class": 2,
+  "python/members/shapes.py | calls | function": 2,
+  "python/members/shapes.py | includes | file": 1,
+  "python/members/shapes.py | inherits | class": 2,
+  "python/members/shapes.py | overrides | function": 3,
+  "python/members/site/urls.py | includes | file": 2,
+  "python/members/svc/api.py | calls | class": 1,
+  "python/members/svc/api.py | calls | function": 2,
+  "python/members/svc/api.py | includes | file": 1,
+  "python/tests/integration/test_kafka_islands/test.py | calls | table": 5,
+  "python/tests/integration/test_kafka_islands/test.py | calls | view": 1,
+  "python/tests/integration/test_kafka_islands/test.py | fixture_use | fixture": 2,
+  "rust/langfuse/ai-gateway/src/capture/mod.rs | calls | function": 7,
+  "rust/langfuse/ai-gateway/src/capture/mod.rs | includes | file": 2,
+  "rust/langfuse/ai-gateway/src/capture/sse.rs | calls | function": 1,
+  "rust/synthetic/src/lib.rs | inherits | trait": 1,
+  "shell/bats-core/test/cat-formatter.bats | includes | file": 1,
+  "shell/clickhouse/00092_obfuscator.sh | includes | file": 1,
+  "shell/nvm/test/fast/Unit tests/Running 'nvm install --save' works as expected' | calls | function": 1,
+  "shell/scripts/load.sh | includes | file": 2,
+  "sql/clickhouse/00061_merge_tree_alter.sql | calls | column": 72,
+  "sql/clickhouse/00061_merge_tree_alter.sql | calls | table": 47,
+  "sql/dbmate/db/migrate/20240101120000_users.sql | calls | table": 1,
+  "sql/dbt/models/orders.sql | calls | model": 1,
+  "sql/flyway/V1_2__users.sql | calls | column": 1,
+  "sql/flyway/V1_2__users.sql | calls | table": 1,
+  "sql/liquibase/changelog/001.sql | calls | table": 1,
+  "sql/sakila/oracle-sakila-schema.sql | calls | column": 1,
+  "sql/sakila/oracle-sakila-schema.sql | calls | table": 4,
+  "sql/sakila/sql-server-sakila-schema.sql | calls | column": 2,
+  "sql/sakila/sql-server-sakila-schema.sql | calls | table": 5,
+  "sql/sqlc/authors/query.sql | calls | column": 7,
+  "sql/sqlc/authors/query.sql | calls | table": 4,
+  "sql/timescaledb/test/sql/updates/post.v11.sql | includes | file": 1,
+  "sql/views/rollup.sql | calls | column": 3,
+  "sql/views/rollup.sql | calls | table": 4,
+  "sql/views/rollup.sql | calls | view": 1,
+  "tla/Ledger.cfg | calls | operator": 3,
+  "tla/Ledger.cfg | includes | file": 1,
+  "tla/Ledger.tla | calls | constant": 3,
+  "tla/Ledger.tla | calls | operator": 9,
+  "tla/Ledger.tla | calls | variable": 14,
+  "tla/LedgerSmall.tla | includes | file": 1,
+  "ts/constructs/src/classExpr.ts | calls | function": 1,
+  "ts/constructs/src/dyn.ts | calls | class": 1,
+  "ts/constructs/src/dyn.ts | calls | function": 1,
+  "ts/constructs/src/dyn.ts | includes | file": 2,
+  "ts/langfuse/packages/shared/src/features/query/index.ts | includes | file": 1,
+  "ts/langfuse/packages/shared/src/features/query/widgetVersion.ts | calls | function": 3,
+  "ts/langfuse/packages/shared/src/features/query/widgetVersion.ts | uses_type | type": 5,
+  "ts/langfuse/packages/shared/src/server/repositories/daily-metrics.ts | calls | table": 2,
+  "ts/langfuse/packages/shared/src/server/repositories/daily-metrics.ts | includes | file": 1,
+  "ts/langfuse/web/src/components/EnvLabelBadge.tsx | calls | const": 1,
+  "ts/synthetic/web/src/circle.ts | includes | file": 1,
+  "ts/synthetic/web/src/circle.ts | inherits | class": 2,
+  "ts/synthetic/web/src/circle.ts | inherits | interface": 1,
+  "ts/synthetic/web/src/circle.ts | overrides | function": 2,
+  "ts/synthetic/web/src/circle.ts | uses_type | interface": 1,
+  "ts/synthetic/web/src/queryBuilder.ts | calls | class": 1,
+  "ts/synthetic/web/src/queryBuilder.ts | uses_type | class": 1,
+  "ts/synthetic/web/src/shapes.ts | calls | function": 1,
+  "ts/synthetic/web/src/typed.ts | calls | class": 2,
+  "ts/synthetic/web/src/typed.ts | calls | function": 6,
+  "ts/synthetic/web/src/typed.ts | includes | file": 1,
+  "ts/synthetic/web/src/typed.ts | uses_type | class": 4,
+  "ts/synthetic/web/src/usesQuery.ts | includes | file": 2,
+  "ts/synthetic/web/src/wrapped.tsx | calls | function": 3,
+  "ts/synthetic/web/src/wrapped.tsx | includes | file": 1,
+  "vue/app/src/components/common/DataView.vue | calls | function": 1,
+  "vue/app/src/components/common/Typed.vue | calls | function": 1,
+  "vue/app/src/components/common/Typed.vue | uses_type | interface": 1,
+  "vue/app/src/composables/useCampaigns.js | calls | function": 1,
+  "vue/app/src/views/CampaignPage.vue | calls | function": 7,
+  "vue/app/src/views/CampaignPage.vue | includes | file": 2
+ },
+ "files": {
+  "cmake/CMakeLists.txt": {
+   "facets": {},
+   "includes": [
+    "cmake/lib/CMakeLists.txt",
+    "cmake/tests/CMakeLists.txt"
+   ],
+   "lang": "cmake",
+   "symbols": {
+    "option": 1
+   }
+  },
+  "cmake/lib/CMakeLists.txt": {
+   "facets": {
+    "builds": 2
+   },
+   "includes": [],
+   "lang": "cmake",
+   "symbols": {
+    "target": 2
+   }
+  },
+  "cmake/tests/CMakeLists.txt": {
+   "facets": {
+    "builds": 1,
+    "tests": 1
+   },
+   "includes": [],
+   "lang": "cmake",
+   "symbols": {
+    "target": 1
+   }
+  },
+  "fbs/header.fbs": {
+   "facets": {
+    "root_type": 1
+   },
+   "includes": [],
+   "lang": "flatbuffers",
+   "symbols": {
+    "struct": 1
+   }
+  },
+  "fbs/log.fbs": {
+   "facets": {},
+   "includes": [
+    "header.fbs"
+   ],
+   "lang": "flatbuffers",
+   "symbols": {
+    "enum": 1,
+    "function": 1,
+    "service": 1,
+    "struct": 2,
+    "union": 1
+   }
+  },
+  "go/app/cmd/main.go": {
+   "facets": {},
+   "includes": [],
+   "lang": "go",
+   "symbols": {
+    "function": 1
+   }
+  },
+  "go/app/go.mod": {
+   "facets": {},
+   "includes": [],
+   "lang": "config",
+   "symbols": {}
+  },
+  "go/app/internal/repo/repo.go": {
+   "facets": {
+    "function": 1,
+    "statement_kind": 1,
+    "table_read": 1
+   },
+   "includes": [],
+   "lang": "go",
+   "symbols": {
+    "field": 1,
+    "function": 1,
+    "module": 1,
+    "statement": 1,
+    "struct": 1
+   }
+  },
+  "go/constructs/cmd/app/main.go": {
+   "facets": {},
+   "includes": [],
+   "lang": "go",
+   "symbols": {
+    "field": 2,
+    "function": 4,
+    "module": 1,
+    "struct": 1,
+    "type": 1
+   }
+  },
+  "go/constructs/go.mod": {
+   "facets": {},
+   "includes": [],
+   "lang": "config",
+   "symbols": {}
+  },
+  "go/constructs/store/store.go": {
+   "facets": {},
+   "includes": [],
+   "lang": "go",
+   "symbols": {
+    "const": 4,
+    "field": 6,
+    "function": 10,
+    "interface": 3,
+    "method": 3,
+    "module": 1,
+    "struct": 3,
+    "type": 3,
+    "var": 3
+   }
+  },
+  "go/constructs/store/store_other.go": {
+   "facets": {},
+   "includes": [],
+   "lang": "go",
+   "symbols": {
+    "function": 1
+   }
+  },
+  "go/constructs/store/store_test.go": {
+   "facets": {},
+   "includes": [],
+   "lang": "go",
+   "symbols": {
+    "function": 4,
+    "module": 1
+   }
+  },
+  "go/constructs/store/store_windows.go": {
+   "facets": {},
+   "includes": [],
+   "lang": "go",
+   "symbols": {
+    "function": 1
+   }
+  },
+  "go/mono/lib/go.mod": {
+   "facets": {},
+   "includes": [],
+   "lang": "config",
+   "symbols": {}
+  },
+  "go/mono/lib/store/store.go": {
+   "facets": {},
+   "includes": [],
+   "lang": "go",
+   "symbols": {
+    "function": 1,
+    "module": 1
+   }
+  },
+  "go/mono/svc/go.mod": {
+   "facets": {},
+   "includes": [],
+   "lang": "config",
+   "symbols": {}
+  },
+  "go/mono/svc/internal/handler/serve.go": {
+   "facets": {},
+   "includes": [],
+   "lang": "go",
+   "symbols": {
+    "function": 1,
+    "module": 1
+   }
+  },
+  "go/mono/svc/main.go": {
+   "facets": {},
+   "includes": [],
+   "lang": "go",
+   "symbols": {
+    "function": 1,
+    "module": 1
+   }
+  },
+  "go/sqlc/authors/postgresql/query.sql.go": {
+   "facets": {
+    "column_write": 2,
+    "dialect": 4,
+    "statement_kind": 4,
+    "table_read": 2,
+    "table_write": 2
+   },
+   "includes": [],
+   "lang": "go",
+   "symbols": {
+    "const": 4,
+    "field": 2,
+    "function": 4,
+    "statement": 4,
+    "struct": 1
+   }
+  },
+  "helm/mychart/Chart.yaml": {
+   "facets": {},
+   "includes": [
+    "helm/sidecar/Chart.yaml"
+   ],
+   "lang": "config",
+   "symbols": {}
+  },
+  "helm/mychart/templates/NOTES.txt": {
+   "facets": {},
+   "includes": [],
+   "lang": "gotemplate",
+   "symbols": {}
+  },
+  "helm/mychart/templates/_helpers.tpl": {
+   "facets": {},
+   "includes": [],
+   "lang": "gotemplate",
+   "symbols": {
+    "function": 4
+   }
+  },
+  "helm/mychart/templates/deployment.yaml": {
+   "facets": {},
+   "includes": [],
+   "lang": "gotemplate",
+   "symbols": {
+    "type": 1
+   }
+  },
+  "helm/mychart/templates/service.yaml": {
+   "facets": {},
+   "includes": [],
+   "lang": "gotemplate",
+   "symbols": {
+    "type": 2
+   }
+  },
+  "helm/mychart/values.yaml": {
+   "facets": {},
+   "includes": [],
+   "lang": "config",
+   "symbols": {}
+  },
+  "helm/sidecar/Chart.yaml": {
+   "facets": {},
+   "includes": [],
+   "lang": "config",
+   "symbols": {}
+  },
+  "hosts/.github/workflows/codeql-analysis.yml": {
+   "facets": {},
+   "includes": [],
+   "lang": "config",
+   "symbols": {
+    "job": 1
+   }
+  },
+  "hosts/.gitlab-ci.yml": {
+   "facets": {
+    "program": 2
+   },
+   "includes": [],
+   "lang": "config",
+   "symbols": {
+    "job": 1
+   }
+  },
+  "hosts/Dockerfile": {
+   "facets": {
+    "program": 2
+   },
+   "includes": [],
+   "lang": "config",
+   "symbols": {
+    "stage": 3
+   }
+  },
+  "hosts/Jenkinsfile": {
+   "facets": {
+    "program": 2
+   },
+   "includes": [
+    "scripts/package.sh"
+   ],
+   "lang": "config",
+   "symbols": {}
+  },
+  "hosts/Makefile": {
+   "facets": {
+    "program": 1
+   },
+   "includes": [],
+   "lang": "config",
+   "symbols": {
+    "target": 4
+   }
+  },
+  "java/src/main/java/com/acme/model/User.java": {
+   "facets": {},
+   "includes": [],
+   "lang": "java",
+   "symbols": {
+    "record": 1
+   }
+  },
+  "java/src/main/java/com/acme/repo/CachedRepository.java": {
+   "facets": {},
+   "includes": [],
+   "lang": "java",
+   "symbols": {
+    "class": 1,
+    "function": 3
+   }
+  },
+  "java/src/main/java/com/acme/repo/Repository.java": {
+   "facets": {},
+   "includes": [],
+   "lang": "java",
+   "symbols": {
+    "function": 2,
+    "interface": 1
+   }
+  },
+  "java/src/main/java/com/acme/repo/UserRepository.java": {
+   "facets": {
+    "column_read": 2,
+    "column_write": 1,
+    "creates": 1,
+    "dialect": 7,
+    "statement_kind": 7,
+    "table_read": 3,
+    "table_write": 2
+   },
+   "includes": [],
+   "lang": "java",
+   "symbols": {
+    "class": 1,
+    "column": 3,
+    "function": 6,
+    "statement": 7,
+    "table": 1
+   }
+  },
+  "js/constructs/src/cjs.js": {
+   "facets": {},
+   "includes": [],
+   "lang": "javascript",
+   "specifiers": [],
+   "symbols": {
+    "function": 2
+   }
+  },
+  "js/constructs/src/iife.js": {
+   "facets": {},
+   "includes": [],
+   "lang": "javascript",
+   "specifiers": [],
+   "symbols": {
+    "function": 3
+   }
+  },
+  "js/synthetic/lib/reply.js": {
+   "facets": {},
+   "includes": [],
+   "lang": "javascript",
+   "specifiers": [],
+   "symbols": {
+    "const": 1,
+    "function": 4
+   }
+  },
+  "md/design.md": {
+   "facets": {},
+   "includes": [
+    "md/glossary.md",
+    "tla/Ledger.tla"
+   ],
+   "lang": "doc",
+   "symbols": {
+    "section": 4
+   }
+  },
+  "md/fences.md": {
+   "facets": {},
+   "includes": [
+    "md/glossary.md"
+   ],
+   "lang": "doc",
+   "symbols": {
+    "section": 1
+   }
+  },
+  "md/glossary.md": {
+   "facets": {},
+   "includes": [],
+   "lang": "doc",
+   "symbols": {
+    "section": 2
+   }
+  },
+  "prisma/langfuse/packages/shared/prisma/schema.prisma": {
+   "facets": {
+    "creates": 5
+   },
+   "includes": [],
+   "lang": "prisma",
+   "symbols": {
+    "enum": 1,
+    "model": 5
+   }
+  },
+  "proto/acme/v1/common.proto": {
+   "facets": {},
+   "includes": [],
+   "lang": "proto",
+   "symbols": {
+    "enum": 1,
+    "struct": 2
+   }
+  },
+  "proto/acme/v1/instances.proto": {
+   "facets": {},
+   "includes": [
+    "proto/acme/v1/common.proto"
+   ],
+   "lang": "proto",
+   "symbols": {
+    "function": 2,
+    "interface": 1,
+    "struct": 2
+   }
+  },
+  "python/app/repository.py": {
+   "facets": {
+    "column_write": 4,
+    "function": 1,
+    "statement_kind": 4,
+    "table_read": 2,
+    "table_write": 2
+   },
+   "includes": [],
+   "lang": "python",
+   "specifiers": [
+    "sqlalchemy",
+    "sqlalchemy.text"
+   ],
+   "symbols": {
+    "const": 1,
+    "function": 3,
+    "statement": 4
+   }
+  },
+  "python/imports/app/forms.py": {
+   "facets": {},
+   "includes": [
+    "python/imports/pkg/util/text.py",
+    "python/imports/pkg/impl.py",
+    "python/imports/app/local.py"
+   ],
+   "lang": "python",
+   "specifiers": [
+    "typing",
+    "typing.TYPE_CHECKING",
+    "pkg.util.text",
+    "pkg.impl",
+    "pkg.impl.helper",
+    ".local",
+    ".local.sibling",
+    "pkg.impl.Store"
+   ],
+   "symbols": {
+    "function": 2
+   }
+  },
+  "python/imports/app/local.py": {
+   "facets": {},
+   "includes": [],
+   "lang": "python",
+   "specifiers": [],
+   "symbols": {
+    "function": 1
+   }
+  },
+  "python/imports/app/main.py": {
+   "facets": {},
+   "includes": [
+    "python/imports/pkg/util/__init__.py",
+    "python/imports/pkg/util/text.py",
+    "python/imports/pkg/__init__.py",
+    "python/imports/pkg/impl.py",
+    "python/imports/app/local.py"
+   ],
+   "lang": "python",
+   "specifiers": [
+    "json",
+    "pkg.util",
+    "pkg.util.text",
+    "pkg",
+    "pkg.helper",
+    "pkg.impl",
+    "pkg.impl.Store",
+    ".local",
+    ".local.sibling",
+    "pkg.util.text.decode"
+   ],
+   "symbols": {
+    "function": 2
+   }
+  },
+  "python/imports/pkg/__init__.py": {
+   "facets": {},
+   "includes": [
+    "python/imports/pkg/impl.py"
+   ],
+   "lang": "python",
+   "specifiers": [
+    ".impl",
+    ".impl.helper"
+   ],
+   "symbols": {}
+  },
+  "python/imports/pkg/impl.py": {
+   "facets": {
+    "decorator": 1
+   },
+   "includes": [],
+   "lang": "python",
+   "specifiers": [],
+   "symbols": {
+    "class": 1,
+    "function": 3
+   }
+  },
+  "python/imports/pkg/util/__init__.py": {
+   "facets": {},
+   "includes": [],
+   "lang": "python",
+   "specifiers": [],
+   "symbols": {}
+  },
+  "python/imports/pkg/util/text.py": {
+   "facets": {},
+   "includes": [],
+   "lang": "python",
+   "specifiers": [],
+   "symbols": {
+    "function": 2
+   }
+  },
+  "python/layouts/consumer/use_srcpkg.py": {
+   "facets": {},
+   "includes": [
+    "python/layouts/srcpkg/lib/srcpkg/core.py"
+   ],
+   "lang": "python",
+   "specifiers": [
+    "srcpkg.core",
+    "srcpkg.core.run"
+   ],
+   "symbols": {
+    "function": 1
+   }
+  },
+  "python/layouts/legacy/python/legacy/__init__.py": {
+   "facets": {},
+   "includes": [],
+   "lang": "python",
+   "specifiers": [],
+   "symbols": {}
+  },
+  "python/layouts/legacy/python/legacy/tool.py": {
+   "facets": {
+    "entry_point": 2
+   },
+   "includes": [],
+   "lang": "python",
+   "specifiers": [],
+   "symbols": {
+    "function": 1
+   }
+  },
+  "python/layouts/legacy/setup.py": {
+   "facets": {
+    "entry_point": 1
+   },
+   "includes": [],
+   "lang": "python",
+   "specifiers": [
+    "setuptools",
+    "setuptools.find_packages",
+    "setuptools.setup"
+   ],
+   "symbols": {}
+  },
+  "python/layouts/notebooks/analysis.ipynb": {
+   "facets": {
+    "notebook_cell": 2
+   },
+   "includes": [
+    "python/layouts/srcpkg/lib/srcpkg/core.py"
+   ],
+   "lang": "python",
+   "specifiers": [
+    "json",
+    "srcpkg.core",
+    "srcpkg.core.run"
+   ],
+   "symbols": {
+    "function": 1
+   }
+  },
+  "python/layouts/nspkg/app.py": {
+   "facets": {},
+   "includes": [
+    "python/layouts/nspkg/nsroot/company/tools/util.py"
+   ],
+   "lang": "python",
+   "specifiers": [
+    "company.tools.util",
+    "company.tools.util.fmt"
+   ],
+   "symbols": {
+    "function": 1
+   }
+  },
+  "python/layouts/nspkg/nsroot/company/tools/util.py": {
+   "facets": {},
+   "includes": [],
+   "lang": "python",
+   "specifiers": [],
+   "symbols": {
+    "function": 1
+   }
+  },
+  "python/layouts/nspkg/pyproject.toml": {
+   "facets": {},
+   "includes": [],
+   "lang": "config",
+   "symbols": {}
+  },
+  "python/layouts/srcpkg/lib/srcpkg/__init__.py": {
+   "facets": {},
+   "includes": [
+    "python/layouts/srcpkg/lib/srcpkg/core.py"
+   ],
+   "lang": "python",
+   "specifiers": [
+    ".core",
+    ".core.run"
+   ],
+   "symbols": {
+    "const": 1
+   }
+  },
+  "python/layouts/srcpkg/lib/srcpkg/__main__.py": {
+   "facets": {
+    "entry_point": 2
+   },
+   "includes": [
+    "python/layouts/srcpkg/lib/srcpkg/cli.py"
+   ],
+   "lang": "python",
+   "specifiers": [
+    "srcpkg.cli",
+    "srcpkg.cli.main"
+   ],
+   "symbols": {}
+  },
+  "python/layouts/srcpkg/lib/srcpkg/_speed.pyi": {
+   "facets": {},
+   "includes": [],
+   "lang": "python",
+   "specifiers": [],
+   "symbols": {
+    "function": 1
+   }
+  },
+  "python/layouts/srcpkg/lib/srcpkg/cli.py": {
+   "facets": {
+    "entry_point": 1
+   },
+   "includes": [
+    "python/layouts/srcpkg/lib/srcpkg/_speed.pyi",
+    "python/layouts/srcpkg/lib/srcpkg/core.py"
+   ],
+   "lang": "python",
+   "specifiers": [
+    "srcpkg._speed",
+    "srcpkg._speed.fast",
+    "srcpkg.core",
+    "srcpkg.core.run"
+   ],
+   "symbols": {
+    "function": 1
+   }
+  },
+  "python/layouts/srcpkg/lib/srcpkg/core.py": {
+   "facets": {},
+   "includes": [],
+   "lang": "python",
+   "specifiers": [],
+   "symbols": {
+    "function": 2
+   }
+  },
+  "python/layouts/srcpkg/lib/srcpkg/core.pyi": {
+   "facets": {},
+   "includes": [],
+   "lang": "python",
+   "specifiers": [],
+   "symbols": {
+    "function": 2
+   }
+  },
+  "python/layouts/srcpkg/lib/srcpkg/plugins/__init__.py": {
+   "facets": {},
+   "includes": [],
+   "lang": "python",
+   "specifiers": [],
+   "symbols": {}
+  },
+  "python/layouts/srcpkg/lib/srcpkg/plugins/echo.py": {
+   "facets": {
+    "entry_point": 1
+   },
+   "includes": [],
+   "lang": "python",
+   "specifiers": [],
+   "symbols": {
+    "class": 1,
+    "function": 1
+   }
+  },
+  "python/layouts/srcpkg/pyproject.toml": {
+   "facets": {
+    "entry_point": 2
+   },
+   "includes": [],
+   "lang": "config",
+   "symbols": {}
+  },
+  "python/layouts/srcpkg/tests/conftest.py": {
+   "facets": {
+    "decorator": 1
+   },
+   "includes": [],
+   "lang": "python",
+   "specifiers": [
+    "pytest"
+   ],
+   "symbols": {
+    "fixture": 1
+   }
+  },
+  "python/layouts/srcpkg/tests/helpers.py": {
+   "facets": {},
+   "includes": [],
+   "lang": "python",
+   "specifiers": [],
+   "symbols": {
+    "function": 1
+   }
+  },
+  "python/layouts/srcpkg/tests/support/fakes.py": {
+   "facets": {},
+   "includes": [],
+   "lang": "python",
+   "specifiers": [],
+   "symbols": {
+    "class": 1,
+    "function": 1
+   }
+  },
+  "python/layouts/srcpkg/tests/test_cli.py": {
+   "facets": {},
+   "includes": [
+    "python/layouts/srcpkg/tests/support/fakes.py",
+    "python/layouts/srcpkg/tests/helpers.py",
+    "python/layouts/srcpkg/lib/srcpkg/cli.py"
+   ],
+   "lang": "python",
+   "specifiers": [
+    "fakes",
+    "fakes.FakeStream",
+    "helpers",
+    "helpers.make",
+    "srcpkg.cli",
+    "srcpkg.cli.main"
+   ],
+   "symbols": {
+    "function": 1
+   }
+  },
+  "python/layouts/vendored/pyproject.toml": {
+   "facets": {},
+   "includes": [],
+   "lang": "config",
+   "symbols": {}
+  },
+  "python/layouts/vendored/src/app/__init__.py": {
+   "facets": {},
+   "includes": [],
+   "lang": "python",
+   "specifiers": [],
+   "symbols": {}
+  },
+  "python/layouts/vendored/src/app/_vendor/__init__.py": {
+   "facets": {},
+   "includes": [],
+   "lang": "python",
+   "specifiers": [],
+   "symbols": {}
+  },
+  "python/layouts/vendored/src/app/_vendor/tinylib/__init__.py": {
+   "facets": {},
+   "includes": [],
+   "lang": "python",
+   "specifiers": [],
+   "symbols": {
+    "function": 1
+   }
+  },
+  "python/layouts/vendored/src/app/_vendor/tinylib/helpers.py": {
+   "facets": {},
+   "includes": [
+    "python/layouts/vendored/src/app/_vendor/tinylib/__init__.py"
+   ],
+   "lang": "python",
+   "specifiers": [
+    "tinylib"
+   ],
+   "symbols": {
+    "function": 1
+   }
+  },
+  "python/layouts/vendored/src/app/main.py": {
+   "facets": {},
+   "includes": [
+    "python/layouts/vendored/src/app/_vendor/__init__.py",
+    "python/layouts/vendored/src/app/_vendor/tinylib/__init__.py"
+   ],
+   "lang": "python",
+   "specifiers": [
+    "tinylib",
+    "app._vendor",
+    "app._vendor.tinylib",
+    "app._vendor.tinylib.get_url"
+   ],
+   "symbols": {
+    "function": 1
+   }
+  },
+  "python/members/__init__.py": {
+   "facets": {},
+   "includes": [],
+   "lang": "python",
+   "specifiers": [],
+   "symbols": {}
+  },
+  "python/members/cli/__init__.py": {
+   "facets": {},
+   "includes": [],
+   "lang": "python",
+   "specifiers": [],
+   "symbols": {}
+  },
+  "python/members/cli/main.py": {
+   "facets": {
+    "command": 4,
+    "decorator": 4
+   },
+   "includes": [
+    "python/members/models.py"
+   ],
+   "lang": "python",
+   "specifiers": [
+    "argparse",
+    "click",
+    "..models",
+    "..models.Store"
+   ],
+   "symbols": {
+    "function": 4
+   }
+  },
+  "python/members/models.py": {
+   "facets": {
+    "decorator": 1
+   },
+   "includes": [],
+   "lang": "python",
+   "specifiers": [
+    "dataclasses",
+    "dataclasses.dataclass",
+    "dataclasses.field",
+    "enum",
+    "enum.Enum",
+    "typing",
+    "typing.TypeAlias"
+   ],
+   "symbols": {
+    "class": 3,
+    "const": 3,
+    "field": 9,
+    "function": 4,
+    "type": 2
+   }
+  },
+  "python/members/shapes.py": {
+   "facets": {
+    "decorator": 5,
+    "modifier": 1
+   },
+   "includes": [
+    "python/members/models.py"
+   ],
+   "lang": "python",
+   "specifiers": [
+    "abc",
+    "abc.abstractmethod",
+    "typing",
+    "typing.Protocol",
+    ".models",
+    ".models.Point",
+    ".models.Store"
+   ],
+   "symbols": {
+    "class": 4,
+    "field": 1,
+    "function": 10
+   }
+  },
+  "python/members/site/__init__.py": {
+   "facets": {},
+   "includes": [],
+   "lang": "python",
+   "specifiers": [],
+   "symbols": {}
+  },
+  "python/members/site/urls.py": {
+   "facets": {
+    "http_route": 2
+   },
+   "includes": [
+    "python/members/site/__init__.py",
+    "python/members/site/views.py"
+   ],
+   "lang": "python",
+   "specifiers": [
+    "django.urls",
+    "django.urls.include",
+    "django.urls.path",
+    "django.urls.re_path",
+    ".",
+    ".views"
+   ],
+   "symbols": {
+    "const": 1
+   }
+  },
+  "python/members/site/views.py": {
+   "facets": {},
+   "includes": [],
+   "lang": "python",
+   "specifiers": [],
+   "symbols": {
+    "function": 2
+   }
+  },
+  "python/members/svc/__init__.py": {
+   "facets": {},
+   "includes": [],
+   "lang": "python",
+   "specifiers": [],
+   "symbols": {}
+  },
+  "python/members/svc/api.py": {
+   "facets": {
+    "decorator": 4,
+    "http_route": 5,
+    "modifier": 3
+   },
+   "includes": [
+    "python/members/models.py"
+   ],
+   "lang": "python",
+   "specifiers": [
+    "fastapi",
+    "fastapi.APIRouter",
+    "fastapi.FastAPI",
+    "..models",
+    "..models.Point",
+    "..models.Store"
+   ],
+   "symbols": {
+    "const": 3,
+    "function": 4
+   }
+  },
+  "python/members/svc/web.py": {
+   "facets": {
+    "decorator": 2,
+    "http_route": 4,
+    "modifier": 1
+   },
+   "includes": [],
+   "lang": "python",
+   "specifiers": [
+    "aiohttp",
+    "aiohttp.web",
+    "flask",
+    "flask.Blueprint"
+   ],
+   "symbols": {
+    "const": 2,
+    "function": 3
+   }
+  },
+  "python/tests/integration/test_kafka_islands/test.py": {
+   "facets": {
+    "creates": 3,
+    "decorator": 1,
+    "dialect": 10,
+    "engine": 2,
+    "function": 1,
+    "setting": 5,
+    "statement_kind": 10,
+    "system_table": 1,
+    "table_read": 2,
+    "table_write": 5
+   },
+   "includes": [],
+   "lang": "python",
+   "specifiers": [
+    "pytest",
+    "helpers.cluster",
+    "helpers.cluster.ClickHouseCluster"
+   ],
+   "symbols": {
+    "column": 2,
+    "const": 2,
+    "fixture": 1,
+    "function": 2,
+    "statement": 10,
+    "table": 2,
+    "view": 1
+   }
+  },
+  "rust/langfuse/ai-gateway/src/capture/facts.rs": {
+   "facets": {},
+   "includes": [],
+   "lang": "rust",
+   "specifiers": [
+    "serde::Serialize",
+    "serde_json::Map",
+    "serde_json::Value"
+   ],
+   "symbols": {
+    "enum": 1,
+    "struct": 2
+   }
+  },
+  "rust/langfuse/ai-gateway/src/capture/mod.rs": {
+   "facets": {},
+   "includes": [
+    "rust/langfuse/ai-gateway/src/capture/facts.rs",
+    "rust/langfuse/ai-gateway/src/capture/sse.rs"
+   ],
+   "lang": "rust",
+   "specifiers": [
+    "mod facts",
+    "mod openai_responses",
+    "mod sse",
+    "std::time::SystemTime",
+    "std::time::UNIX_EPOCH",
+    "axum::http::HeaderMap",
+    "axum::http::header",
+    "serde_json::Map",
+    "serde_json::Value",
+    "serde_json::json",
+    "tokio::time::Instant",
+    "crate::resolution::IngestionMode",
+    "crate::resolution::MetadataValue",
+    "crate::resolution::ResolvedRequestContext",
+    "crate::telemetry",
+    "facts::ProviderFacts",
+    "facts::InferenceFacts",
+    "facts::RelayOutcome",
+    "openai_responses::OpenAiResponsesCapture"
+   ],
+   "symbols": {
+    "const": 3,
+    "enum": 1,
+    "function": 13,
+    "impl": 3,
+    "struct": 1
+   }
+  },
+  "rust/langfuse/ai-gateway/src/capture/sse.rs": {
+   "facets": {},
+   "includes": [],
+   "lang": "rust",
+   "specifiers": [],
+   "symbols": {
+    "enum": 1,
+    "function": 3,
+    "impl": 1,
+    "struct": 1
+   }
+  },
+  "rust/synthetic/src/lib.rs": {
+   "facets": {},
+   "includes": [],
+   "lang": "rust",
+   "specifiers": [],
+   "symbols": {
+    "function": 4,
+    "impl": 1,
+    "macro": 1,
+    "struct": 1,
+    "trait": 1
+   }
+  },
+  "shell/bats-core/test/cat-formatter.bats": {
+   "facets": {},
+   "includes": [
+    "shell/bats-core/test/test_helper.bash"
+   ],
+   "lang": "shell",
+   "symbols": {
+    "function": 5
+   }
+  },
+  "shell/bats-core/test/test_helper.bash": {
+   "facets": {},
+   "includes": [],
+   "lang": "shell",
+   "symbols": {
+    "function": 1
+   }
+  },
+  "shell/clickhouse/00092_obfuscator.sh": {
+   "facets": {
+    "dialect": 4,
+    "function": 6,
+    "setting": 3,
+    "statement_kind": 4,
+    "tag": 2
+   },
+   "includes": [
+    "shell/shell_config.sh"
+   ],
+   "lang": "shell",
+   "symbols": {}
+  },
+  "shell/lib/common.sh": {
+   "facets": {},
+   "includes": [],
+   "lang": "shell",
+   "symbols": {
+    "function": 1
+   }
+  },
+  "shell/nvm/test/fast/Unit tests/Running 'nvm install --save' works as expected'": {
+   "facets": {},
+   "includes": [],
+   "lang": "shell",
+   "symbols": {
+    "function": 4
+   }
+  },
+  "shell/scripts/load.sh": {
+   "facets": {
+    "dialect": 2,
+    "function": 1,
+    "program": 2,
+    "statement_kind": 2
+   },
+   "includes": [
+    "shell/lib/common.sh",
+    "shell/scripts/notify.sh"
+   ],
+   "lang": "shell",
+   "symbols": {}
+  },
+  "shell/scripts/notify.sh": {
+   "facets": {},
+   "includes": [],
+   "lang": "shell",
+   "symbols": {}
+  },
+  "sql/clickhouse/00061_merge_tree_alter.sql": {
+   "facets": {
+    "column_read": 66,
+    "column_write": 6,
+    "creates": 1,
+    "dialect": 1,
+    "engine": 1,
+    "setting": 1,
+    "statement_kind": 49,
+    "table_read": 31,
+    "table_write": 16,
+    "type": 4
+   },
+   "includes": [],
+   "lang": "sql",
+   "symbols": {
+    "column": 6,
+    "statement": 49,
+    "table": 1
+   }
+  },
+  "sql/clickhouse/00700_to_decimal_or_something_1.sql.j2": {
+   "facets": {
+    "error_code": 6,
+    "statement_kind": 18
+   },
+   "includes": [],
+   "lang": "sql",
+   "symbols": {
+    "statement": 18
+   }
+  },
+  "sql/dbmate/db/migrate/20240101120000_users.sql": {
+   "facets": {
+    "creates": 1,
+    "direction": 2,
+    "migration": 1,
+    "statement_kind": 2,
+    "table_write": 1,
+    "tool": 1
+   },
+   "includes": [],
+   "lang": "sql",
+   "symbols": {
+    "column": 1,
+    "statement": 2,
+    "table": 1
+   }
+  },
+  "sql/dbt/macros/star.sql": {
+   "facets": {
+    "macro_call": 3,
+    "statement_kind": 1
+   },
+   "includes": [],
+   "lang": "sql",
+   "symbols": {
+    "macro": 2,
+    "statement": 1
+   }
+  },
+  "sql/dbt/models/orders.sql": {
+   "facets": {
+    "function": 1,
+    "statement_kind": 1,
+    "table_read": 3
+   },
+   "includes": [],
+   "lang": "sql",
+   "symbols": {
+    "model": 1,
+    "statement": 1
+   }
+  },
+  "sql/dbt/models/staging/stg_orders.sql": {
+   "facets": {
+    "statement_kind": 1,
+    "table_read": 2
+   },
+   "includes": [],
+   "lang": "sql",
+   "symbols": {
+    "model": 1,
+    "statement": 1
+   }
+  },
+  "sql/flyway/V1_2__users.sql": {
+   "facets": {
+    "column_read": 1,
+    "creates": 2,
+    "direction": 2,
+    "migration": 1,
+    "statement_kind": 2,
+    "table_write": 1,
+    "tool": 1
+   },
+   "includes": [],
+   "lang": "sql",
+   "symbols": {
+    "column": 1,
+    "index": 1,
+    "statement": 2,
+    "table": 1
+   }
+  },
+  "sql/goose/migrations/00002_rename_root.sql": {
+   "facets": {
+    "column_write": 2,
+    "direction": 2,
+    "migration": 1,
+    "statement_kind": 2,
+    "table_write": 2,
+    "tool": 1
+   },
+   "includes": [],
+   "lang": "sql",
+   "symbols": {
+    "statement": 2
+   }
+  },
+  "sql/langfuse/packages/shared/clickhouse/migrations/canonical/0001_traces.up.sql": {
+   "facets": {
+    "creates": 1,
+    "dialect": 1,
+    "function": 8,
+    "statement_kind": 1,
+    "type": 5
+   },
+   "includes": [],
+   "lang": "sql",
+   "symbols": {
+    "statement": 1,
+    "table": 1
+   }
+  },
+  "sql/langfuse/packages/shared/clickhouse/migrations/canonical/0002_observations.up.sql": {
+   "facets": {
+    "creates": 1,
+    "dialect": 1,
+    "function": 6,
+    "statement_kind": 2,
+    "type": 5
+   },
+   "includes": [],
+   "lang": "sql",
+   "symbols": {
+    "statement": 2,
+    "table": 1
+   }
+  },
+  "sql/liquibase/changelog/001.sql": {
+   "facets": {
+    "creates": 1,
+    "direction": 1,
+    "statement_kind": 2,
+    "table_write": 1,
+    "tool": 1
+   },
+   "includes": [],
+   "lang": "sql",
+   "symbols": {
+    "changeset": 2,
+    "column": 2,
+    "statement": 2,
+    "table": 1
+   }
+  },
+  "sql/prisma/migrations/20240101120000_init/migration.sql": {
+   "facets": {
+    "creates": 1,
+    "dialect": 1,
+    "direction": 1,
+    "migration": 1,
+    "statement_kind": 1,
+    "tool": 1
+   },
+   "includes": [],
+   "lang": "sql",
+   "symbols": {
+    "column": 1,
+    "statement": 1,
+    "table": 1
+   }
+  },
+  "sql/sakila/mysql-sakila-schema.sql": {
+   "facets": {
+    "column_write": 6,
+    "creates": 6,
+    "dialect": 1,
+    "engine": 2,
+    "function": 7,
+    "statement_kind": 8,
+    "table_write": 9
+   },
+   "includes": [],
+   "lang": "sql",
+   "symbols": {
+    "column": 7,
+    "statement": 8,
+    "table": 3,
+    "trigger": 3
+   }
+  },
+  "sql/sakila/oracle-sakila-schema.sql": {
+   "facets": {
+    "column_read": 1,
+    "creates": 8,
+    "dialect": 1,
+    "function": 5,
+    "statement_kind": 17,
+    "table_write": 4
+   },
+   "includes": [],
+   "lang": "sql",
+   "symbols": {
+    "column": 7,
+    "index": 1,
+    "sequence": 2,
+    "statement": 17,
+    "table": 2,
+    "trigger": 3
+   }
+  },
+  "sql/sakila/sql-server-sakila-schema.sql": {
+   "facets": {
+    "column_read": 2,
+    "creates": 6,
+    "dialect": 1,
+    "function": 14,
+    "statement_kind": 9,
+    "table_write": 6
+   },
+   "includes": [],
+   "lang": "sql",
+   "symbols": {
+    "column": 11,
+    "index": 2,
+    "statement": 9,
+    "table": 4
+   }
+  },
+  "sql/sqitch/deploy/users.sql": {
+   "facets": {
+    "creates": 1,
+    "direction": 3,
+    "statement_kind": 3,
+    "tool": 1
+   },
+   "includes": [],
+   "lang": "sql",
+   "symbols": {
+    "column": 1,
+    "statement": 3,
+    "table": 1
+   }
+  },
+  "sql/sqlc/authors/query.sql": {
+   "facets": {
+    "column_write": 2,
+    "statement_kind": 4,
+    "table_read": 2,
+    "table_write": 2,
+    "tool": 1
+   },
+   "includes": [],
+   "lang": "sql",
+   "symbols": {
+    "query": 4,
+    "statement": 4
+   }
+  },
+  "sql/sqlc/authors/schema.sql": {
+   "facets": {
+    "creates": 1,
+    "dialect": 1,
+    "statement_kind": 1
+   },
+   "includes": [],
+   "lang": "sql",
+   "symbols": {
+    "column": 3,
+    "statement": 1,
+    "table": 1
+   }
+  },
+  "sql/timescaledb/test/sql/updates/post.v11.sql": {
+   "facets": {
+    "dialect": 1,
+    "statement_kind": 1
+   },
+   "includes": [
+    "sql/timescaledb/test/sql/updates/post.v10.sql"
+   ],
+   "lang": "sql",
+   "symbols": {
+    "statement": 1
+   }
+  },
+  "sql/views/rollup.sql": {
+   "facets": {
+    "column_read": 3,
+    "creates": 4,
+    "dialect": 1,
+    "engine": 2,
+    "function": 6,
+    "statement_kind": 5,
+    "table_read": 4,
+    "table_write": 1,
+    "type": 2
+   },
+   "includes": [],
+   "lang": "sql",
+   "symbols": {
+    "column": 6,
+    "statement": 5,
+    "table": 2,
+    "view": 2
+   }
+  },
+  "tla/Ledger.cfg": {
+   "facets": {
+    "checks": 3
+   },
+   "includes": [
+    "Ledger.tla"
+   ],
+   "lang": "tla_config",
+   "symbols": {
+    "model": 1
+   }
+  },
+  "tla/Ledger.tla": {
+   "facets": {},
+   "includes": [],
+   "lang": "tla",
+   "symbols": {
+    "constant": 2,
+    "module": 1,
+    "operator": 12,
+    "variable": 2
+   }
+  },
+  "tla/LedgerSmall.tla": {
+   "facets": {},
+   "includes": [
+    "Ledger.tla"
+   ],
+   "lang": "tla",
+   "symbols": {
+    "module": 1
+   }
+  },
+  "ts/constructs/src/classExpr.ts": {
+   "facets": {},
+   "includes": [],
+   "lang": "typescript",
+   "specifiers": [],
+   "symbols": {
+    "class": 1,
+    "function": 2
+   }
+  },
+  "ts/constructs/src/dyn.ts": {
+   "facets": {},
+   "includes": [
+    "ts/constructs/src/overloads.ts",
+    "ts/constructs/src/classExpr.ts"
+   ],
+   "lang": "typescript",
+   "specifiers": [
+    "./overloads",
+    "./classExpr"
+   ],
+   "symbols": {
+    "function": 1
+   }
+  },
+  "ts/constructs/src/overloads.ts": {
+   "facets": {},
+   "includes": [],
+   "lang": "typescript",
+   "specifiers": [],
+   "symbols": {
+    "function": 2
+   }
+  },
+  "ts/langfuse/packages/shared/package.json": {
+   "facets": {},
+   "includes": [],
+   "lang": "config",
+   "symbols": {}
+  },
+  "ts/langfuse/packages/shared/src/features/query/index.ts": {
+   "facets": {},
+   "includes": [
+    "ts/langfuse/packages/shared/src/features/query/widgetVersion.ts"
+   ],
+   "lang": "typescript",
+   "specifiers": [
+    "./dataModel",
+    "./types",
+    "./validateQuery",
+    "./widgetVersion"
+   ],
+   "symbols": {}
+  },
+  "ts/langfuse/packages/shared/src/features/query/widgetVersion.ts": {
+   "facets": {},
+   "includes": [],
+   "lang": "typescript",
+   "specifiers": [
+    "./dataModel",
+    "./types"
+   ],
+   "symbols": {
+    "function": 5,
+    "type": 2
+   }
+  },
+  "ts/langfuse/packages/shared/src/server/repositories/constants.ts": {
+   "facets": {},
+   "includes": [],
+   "lang": "typescript",
+   "specifiers": [],
+   "symbols": {
+    "const": 3
+   }
+  },
+  "ts/langfuse/packages/shared/src/server/repositories/daily-metrics.ts": {
+   "facets": {
+    "dialect": 2,
+    "function": 14,
+    "statement_kind": 2,
+    "table_read": 3
+   },
+   "includes": [
+    "ts/langfuse/packages/shared/src/server/repositories/constants.ts"
+   ],
+   "lang": "typescript",
+   "specifiers": [
+    "../queries",
+    "./clickhouse",
+    "./constants",
+    "../clickhouse/client"
+   ],
+   "symbols": {
+    "function": 2,
+    "statement": 2
+   }
+  },
+  "ts/langfuse/web/src/__tests__/server/sessionExpiration.servertest.ts": {
+   "facets": {},
+   "includes": [],
+   "lang": "typescript",
+   "specifiers": [
+    "crypto",
+    "vitest",
+    "@/src/features/auth/lib/sessionExpiration",
+    "@langfuse/shared/src/db"
+   ],
+   "symbols": {
+    "function": 2,
+    "suite": 1
+   }
+  },
+  "ts/langfuse/web/src/components/EnvLabelBadge.tsx": {
+   "facets": {},
+   "includes": [],
+   "lang": "typescript",
+   "specifiers": [
+    "@/src/features/organizations/cloudRegions",
+    "@/src/utils/types",
+    "class-variance-authority",
+    "react"
+   ],
+   "symbols": {
+    "const": 1,
+    "field": 3,
+    "function": 1
+   }
+  },
+  "ts/langfuse/web/src/pages/api/public/events.ts": {
+   "facets": {},
+   "includes": [],
+   "lang": "typescript",
+   "specifiers": [
+    "@/src/features/public-api/types/events",
+    "@/src/features/public-api/server/withMiddlewares",
+    "@/src/features/public-api/server/createAuthedProjectAPIRoute",
+    "@langfuse/shared/src/server",
+    "uuid"
+   ],
+   "symbols": {
+    "const": 1,
+    "field": 3,
+    "function": 1
+   }
+  },
+  "ts/langfuse/web/src/server/api/routers/observations.ts": {
+   "facets": {},
+   "includes": [],
+   "lang": "typescript",
+   "specifiers": [
+    "@/src/server/api/trpc",
+    "@langfuse/shared",
+    "@langfuse/shared/src/server",
+    "zod",
+    "@/src/utils/clientSideDomainTypes"
+   ],
+   "symbols": {
+    "const": 1,
+    "function": 1
+   }
+  },
+  "ts/synthetic/web/src/circle.ts": {
+   "facets": {},
+   "includes": [
+    "ts/synthetic/web/src/shapes.ts"
+   ],
+   "lang": "typescript",
+   "specifiers": [
+    "./shapes"
+   ],
+   "symbols": {
+    "class": 4,
+    "function": 4
+   }
+  },
+  "ts/synthetic/web/src/queryBuilder.ts": {
+   "facets": {},
+   "includes": [],
+   "lang": "typescript",
+   "specifiers": [],
+   "symbols": {
+    "class": 1,
+    "function": 3
+   }
+  },
+  "ts/synthetic/web/src/shapes.ts": {
+   "facets": {},
+   "includes": [],
+   "lang": "typescript",
+   "specifiers": [],
+   "symbols": {
+    "class": 1,
+    "function": 3,
+    "interface": 1
+   }
+  },
+  "ts/synthetic/web/src/typed.ts": {
+   "facets": {},
+   "includes": [
+    "ts/synthetic/web/src/queryBuilder.ts"
+   ],
+   "lang": "typescript",
+   "specifiers": [
+    "./queryBuilder"
+   ],
+   "symbols": {
+    "class": 1,
+    "function": 3
+   }
+  },
+  "ts/synthetic/web/src/usesQuery.ts": {
+   "facets": {},
+   "includes": [
+    "ts/langfuse/packages/shared/src/features/query/index.ts"
+   ],
+   "lang": "typescript",
+   "specifiers": [
+    "@langfuse/shared/query",
+    "zod"
+   ],
+   "symbols": {
+    "const": 1,
+    "function": 1
+   }
+  },
+  "ts/synthetic/web/src/wrapped.tsx": {
+   "facets": {},
+   "includes": [
+    "ts/synthetic/web/src/usesQuery.ts"
+   ],
+   "lang": "typescript",
+   "specifiers": [
+    "react",
+    "./usesQuery"
+   ],
+   "symbols": {
+    "const": 1,
+    "function": 3
+   }
+  },
+  "vue/app/src/components/common/DataView.vue": {
+   "facets": {},
+   "includes": [],
+   "lang": "javascript",
+   "specifiers": [
+    "vue"
+   ],
+   "symbols": {
+    "const": 1,
+    "field": 2,
+    "function": 2,
+    "interface": 1
+   }
+  },
+  "vue/app/src/components/common/Typed.vue": {
+   "facets": {},
+   "includes": [],
+   "lang": "typescript",
+   "specifiers": [],
+   "symbols": {
+    "function": 2,
+    "interface": 2
+   }
+  },
+  "vue/app/src/composables/useCampaigns.js": {
+   "facets": {},
+   "includes": [],
+   "lang": "javascript",
+   "specifiers": [
+    "vue"
+   ],
+   "symbols": {
+    "function": 2
+   }
+  },
+  "vue/app/src/views/CampaignPage.vue": {
+   "facets": {},
+   "includes": [
+    "vue/app/src/components/common/DataView.vue",
+    "vue/app/src/composables/useCampaigns.js"
+   ],
+   "lang": "javascript",
+   "specifiers": [
+    "vue",
+    "primevue",
+    "@/components/common/DataView.vue",
+    "@/composables/useCampaigns"
+   ],
+   "symbols": {
+    "function": 5
+   }
+  }
+ },
+ "misses": {
+  "go/constructs/cmd/app/main.go": 1,
+  "go/constructs/store/store.go": 1,
+  "go/sqlc/authors/postgresql/query.sql.go": 4,
+  "java/src/main/java/com/acme/repo/CachedRepository.java": 1,
+  "java/src/main/java/com/acme/repo/UserRepository.java": 6,
+  "python/app/repository.py": 6,
+  "python/imports/app/main.py": 4,
+  "python/imports/pkg/impl.py": 1,
+  "python/layouts/legacy/setup.py": 2,
+  "python/layouts/srcpkg/lib/srcpkg/__main__.py": 1,
+  "python/layouts/srcpkg/tests/test_cli.py": 1,
+  "python/layouts/vendored/src/app/main.py": 1,
+  "python/members/cli/main.py": 8,
+  "python/members/models.py": 1,
+  "python/members/shapes.py": 1,
+  "python/members/site/urls.py": 4,
+  "python/members/svc/api.py": 6,
+  "python/members/svc/web.py": 3,
+  "python/tests/integration/test_kafka_islands/test.py": 15,
+  "rust/langfuse/ai-gateway/src/capture/mod.rs": 20,
+  "rust/langfuse/ai-gateway/src/capture/sse.rs": 8,
+  "shell/bats-core/test/cat-formatter.bats": 5,
+  "shell/nvm/test/fast/Unit tests/Running 'nvm install --save' works as expected'": 3,
+  "ts/constructs/src/dyn.ts": 1,
+  "ts/langfuse/packages/shared/src/features/query/widgetVersion.ts": 1,
+  "ts/langfuse/packages/shared/src/server/repositories/daily-metrics.ts": 5,
+  "ts/langfuse/web/src/__tests__/server/sessionExpiration.servertest.ts": 5,
+  "ts/langfuse/web/src/components/EnvLabelBadge.tsx": 2,
+  "ts/langfuse/web/src/pages/api/public/events.ts": 2,
+  "ts/langfuse/web/src/server/api/routers/observations.ts": 2,
+  "vue/app/src/components/common/DataView.vue": 1,
+  "vue/app/src/components/common/Typed.vue": 1,
+  "vue/app/src/composables/useCampaigns.js": 2,
+  "vue/app/src/views/CampaignPage.vue": 3
+ }
+}

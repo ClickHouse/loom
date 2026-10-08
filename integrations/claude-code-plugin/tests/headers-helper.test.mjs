@@ -1,0 +1,273 @@
+// The plugin's MCP block authenticates from the same places
+// its hooks do. The helper is run the way Claude Code runs it — as a process,
+// stdout is one JSON object — under each token source and under none.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+process.env.LOOM_HOOK_NO_MAIN = "1";
+import { headersFor, checkoutScope } from "../bin/loom-mcp-headers.mjs";
+import { cachePathFor, scopeHeader } from "../lib/repo-scope.mjs";
+import { execSync } from "node:child_process";
+
+const HELPER = fileURLToPath(new URL("../bin/loom-mcp-headers.mjs", import.meta.url));
+
+// Hermetic: every test gets its own TMPDIR (which holds the repository
+// cache), HOME and working directory, never the machine's or another
+// test's, where a live session may have cached a code scope for the
+// checkout the tests run from. The helper runs outside any checkout unless
+// a test hands it one.
+function sandbox() {
+  const mk = (p) => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), p)));
+  return { tmp: mk("loom-headers-tmp-"), home: mk("loom-headers-home-"), cwd: mk("loom-headers-cwd-") };
+}
+
+function run(env, box = sandbox()) {
+  const out = execFileSync(process.execPath, [HELPER], {
+    encoding: "utf8",
+    env: { PATH: process.env.PATH, HOME: box.home, TMPDIR: box.tmp, ...env },
+    cwd: box.cwd,
+    timeout: 5000,
+  });
+  return { ...box, out, parsed: JSON.parse(out) };
+}
+
+/** Run `fn` with this process's TMPDIR pointed at `tmp`, for the in-process
+ *  lookups that write the cache under os.tmpdir(). */
+async function withTmpdir(tmp, fn) {
+  const saved = process.env.TMPDIR;
+  process.env.TMPDIR = tmp;
+  try {
+    return await fn();
+  } finally {
+    if (saved === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = saved;
+  }
+}
+
+test("headersFor: a bearer for a token, an empty object for none", () => {
+  assert.deepEqual(headersFor("abc"), { Authorization: "Bearer abc" });
+  assert.deepEqual(headersFor("  abc "), { Authorization: "Bearer abc" });
+  assert.deepEqual(headersFor(""), {});
+  assert.deepEqual(headersFor("   "), {});
+  assert.deepEqual(headersFor(undefined), {});
+});
+
+test("LOOM_API_KEY wins", () => {
+  const { parsed } = run({ LOOM_API_KEY: "env.tok" });
+  assert.deepEqual(parsed, { Authorization: "Bearer env.tok" });
+});
+
+test("~/.loom/config.json token when the env var is unset", () => {
+  const box = sandbox();
+  fs.mkdirSync(path.join(box.home, ".loom"));
+  fs.writeFileSync(path.join(box.home, ".loom", "config.json"), JSON.stringify({ token: "cfg.tok", url: "https://x" }));
+  assert.deepEqual(run({}, box).parsed, { Authorization: "Bearer cfg.tok" });
+});
+
+test("~/.loom/token file when neither env nor config names one", () => {
+  const box = sandbox();
+  fs.mkdirSync(path.join(box.home, ".loom"));
+  fs.writeFileSync(path.join(box.home, ".loom", "token"), "file.tok\n");
+  assert.deepEqual(run({}, box).parsed, { Authorization: "Bearer file.tok" });
+});
+
+test("no token anywhere and no server to sign up with → {} (the server's 401 challenge is the symptom, not an empty bearer)", () => {
+  const { parsed, out } = run({ LOOM_BASE_URL: "http://127.0.0.1:9" });
+  assert.deepEqual(parsed, {});
+  assert.equal(out.trim().split("\n").length, 1, "exactly one JSON line on stdout");
+});
+
+test("the plugin's .mcp.json uses the helper and a localhost default URL", () => {
+  const block = JSON.parse(fs.readFileSync(fileURLToPath(new URL("../.mcp.json", import.meta.url)), "utf8"));
+  const loom = block.mcpServers.loom;
+  assert.equal(loom.type, "http");
+  assert.equal(loom.url, "${user_config.server_url}/mcp?toolset=${user_config.toolset}"); // the toolset is a setting
+  assert.match(loom.headersHelper, /\$CLAUDE_PLUGIN_ROOT\/bin\/loom-mcp-headers\.mjs/);
+  assert.equal(loom.headers, undefined, "no static header: the helper supplies it");
+});
+
+// ---- the connection names the checkout's code namespace ----
+
+function gitRepo() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-scope-repo-"));
+  execSync("git init -q && git remote add origin git@github.com:ClickHouse/example-private.git", { cwd: dir });
+  return fs.realpathSync(dir);
+}
+
+test("headersFor: the scope header rides beside the bearer, only for an indexed entry", () => {
+  const entry = { indexed: true, org: "clickhouse", namespace: "code-example-private" };
+  assert.deepEqual(headersFor("abc", entry), {
+    Authorization: "Bearer abc",
+    "X-Loom-Code-Scope": "clickhouse/code-example-private",
+  });
+  assert.deepEqual(headersFor("abc", { indexed: false }), { Authorization: "Bearer abc" });
+  assert.deepEqual(headersFor("abc", { indexed: false, unresolved: true }), { Authorization: "Bearer abc" });
+  assert.deepEqual(headersFor("abc", null), { Authorization: "Bearer abc" });
+  assert.deepEqual(scopeHeader({ indexed: true, org: "o" }), {}, "no namespace, no header");
+});
+
+test("the helper reads the shunt's cache for the checkout it runs in", () => {
+  const repo = gitRepo();
+  const box = { ...sandbox(), cwd: repo };
+  fs.writeFileSync(
+    cachePathFor(repo, box.tmp),
+    JSON.stringify({
+      ts: Date.now(),
+      indexed: true,
+      org: "clickhouse",
+      namespace: "code-example-private-26-5",
+    }),
+  );
+  const { parsed } = run({ LOOM_API_KEY: "env.tok" }, box);
+  assert.deepEqual(parsed, {
+    Authorization: "Bearer env.tok",
+    "X-Loom-Code-Scope": "clickhouse/code-example-private-26-5",
+  });
+  // a stale entry is not trusted; the helper's own lookup has no server here → bearer only
+  fs.writeFileSync(
+    cachePathFor(repo, box.tmp),
+    JSON.stringify({
+      ts: Date.now() - 11 * 60 * 1000,
+      indexed: true,
+      org: "clickhouse",
+      namespace: "code-x",
+    }),
+  );
+  assert.deepEqual(run({ LOOM_API_KEY: "env.tok", LOOM_BASE_URL: "http://127.0.0.1:9" }, box).parsed, {
+    Authorization: "Bearer env.tok",
+  });
+  // off switch, and outside a repository: bearer only
+  fs.writeFileSync(
+    cachePathFor(repo, box.tmp),
+    JSON.stringify({ ts: Date.now(), indexed: true, org: "o", namespace: "n" }),
+  );
+  assert.deepEqual(run({ LOOM_API_KEY: "env.tok", LOOM_MCP_CODE_SCOPE: "off" }, box).parsed, {
+    Authorization: "Bearer env.tok",
+  });
+  assert.deepEqual(run({ LOOM_API_KEY: "env.tok" }, { ...box, cwd: sandbox().cwd }).parsed, {
+    Authorization: "Bearer env.tok",
+  });
+});
+
+test("checkoutScope: cache miss → one bounded lookup that also fills the cache", async () => {
+  const { tmp } = sandbox();
+  const repo = gitRepo();
+  const calls = [];
+  const post = async (op, body) => {
+    calls.push([op, body]);
+    if (op === "code.repos")
+      return {
+        repos: [
+          {
+            repo: "ClickHouse/example-private",
+            org: "clickhouse",
+            namespace: "code-example-private",
+            branch: "master",
+          },
+        ],
+      };
+    return { path_prefixes: ["src/"], git_head: "abc", fast_tier_lag: 0 };
+  };
+  const entry = await withTmpdir(tmp, () => checkoutScope(repo, { token: "t", post }));
+  assert.equal(entry.indexed, true);
+  assert.equal(entry.namespace, "code-example-private");
+  assert.equal(calls[0][0], "code.repos");
+  assert.deepEqual(calls[0][1].repos, ["clickhouse/example-private"]);
+  assert.equal(calls[0][1].consumer, "claude-code-mcp-headers");
+  assert.equal(JSON.parse(fs.readFileSync(cachePathFor(repo, tmp), "utf8")).namespace, "code-example-private");
+  // a lookup that does not answer: unresolved, no header, retried later
+  const silent = gitRepo();
+  const none = await withTmpdir(tmp, () => checkoutScope(silent, { token: "t", post: async () => null }));
+  assert.deepEqual({ indexed: none.indexed, unresolved: none.unresolved }, { indexed: false, unresolved: true });
+  assert.deepEqual(scopeHeader(none), {});
+  // no token: nothing is asked
+  assert.equal(
+    await withTmpdir(tmp, () =>
+      checkoutScope(silent, {
+        token: "",
+        post: async () => {
+          throw new Error("must not call");
+        },
+      }),
+    ),
+    null,
+  );
+});
+
+test("checkoutScope outside a checkout: LOOM_CODE_REPO names the repository and the scope header rides", async () => {
+  const { tmp } = sandbox();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "loom-no-checkout-"));
+  const calls = [];
+  const post = async (op, body) => {
+    calls.push([op, body]);
+    if (op === "code.repos")
+      return { repos: [{ repo: "ClickHouse/loom", org: "clickhouse", namespace: "code-loom", branch: "main" }] };
+    return { path_prefixes: [], git_head: "abc", fast_tier_lag: 0 };
+  };
+  const env = { LOOM_CODE_REPO: "ClickHouse/loom" };
+  const entry = await withTmpdir(tmp, () => checkoutScope(outside, { env, token: "t", post }));
+  assert.equal(entry.namespace, "code-loom");
+  assert.deepEqual(calls[0][1].repos, ["clickhouse/loom"]);
+  assert.deepEqual(scopeHeader(entry), { "X-Loom-Code-Scope": "clickhouse/code-loom" });
+  // nothing named and no checkout: no header, no lookup
+  const none = await withTmpdir(tmp, () =>
+    checkoutScope(outside, {
+      env: {},
+      token: "t",
+      post: async () => {
+        throw new Error("must not call");
+      },
+    }),
+  );
+  assert.equal(none, null);
+});
+
+// Claude Code connects the MCP entry while the SessionStart
+// hook is still signing up; the helper signs up (or waits for the hook) and
+// sends the bearer instead of `{}` → 401 → OAuth discovery → 404.
+test("no token, sign-up reachable → the helper signs up and sends the bearer", async () => {
+  const http = await import("node:http");
+  const srv = http.createServer((req, res) => {
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ token: "fresh.tok", namespace: "agent-x", org: "dev", claim_code: "C" }));
+  });
+  await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+  const url = `http://127.0.0.1:${srv.address().port}`;
+  try {
+    const box = sandbox();
+    const { execFile } = await import("node:child_process");
+    const out = await new Promise((resolve, reject) =>
+      execFile(
+        process.execPath,
+        [HELPER],
+        {
+          encoding: "utf8",
+          timeout: 10000,
+          cwd: box.cwd,
+          env: {
+            PATH: process.env.PATH,
+            HOME: box.home,
+            TMPDIR: box.tmp,
+            LOOM_BASE_URL: url,
+            LOOM_MCP_CODE_SCOPE: "off",
+          },
+        },
+        (e, so) => (e ? reject(e) : resolve(so)),
+      ),
+    );
+    assert.deepEqual(JSON.parse(out), { Authorization: "Bearer fresh.tok" });
+    const cfg = JSON.parse(fs.readFileSync(path.join(box.home, ".loom", "config.json"), "utf8"));
+    assert.equal(cfg.token, "fresh.tok");
+  } finally {
+    srv.close();
+  }
+});
+
+test("LOOM_AUTO_SIGNUP=off keeps the helper from signing up", () => {
+  const { parsed } = run({ LOOM_AUTO_SIGNUP: "off" });
+  assert.deepEqual(parsed, {});
+});

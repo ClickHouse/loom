@@ -1,0 +1,60 @@
+"""The generated regions of docs/reference/ match the code they are rendered from."""
+
+from __future__ import annotations
+
+import pytest
+
+from scripts.codegen import docs_reference as gen
+
+PAGES = sorted(p for p in gen.REFERENCE.glob("*.md") if gen.REGION.search(p.read_text()))
+
+
+def test_every_renderer_has_a_page() -> None:
+    names = {m.group("name") for p in PAGES for m in gen.REGION.finditer(p.read_text())}
+    assert names == set(gen.RENDERERS), names ^ set(gen.RENDERERS)
+
+
+@pytest.mark.parametrize("page", PAGES, ids=lambda p: p.name)
+def test_generated_regions_are_current(page) -> None:
+    text = page.read_text(encoding="utf-8")
+    assert gen.render_page(text, {}) == text, (
+        f"docs/reference/{page.name} is stale: run {gen.COMMAND}"
+    )
+
+
+def test_every_operation_has_a_row() -> None:
+    from server.operations import registry
+
+    text = (gen.REFERENCE / "operations.md").read_text(encoding="utf-8")
+    missing = [op.name for op in registry.ALL_OPERATIONS if f"| [`{op.name}`](" not in text]
+    assert not missing, missing
+
+
+def test_every_group_field_page_is_current() -> None:
+    pages = gen.render_group_pages()
+    on_disk = {p.name for p in gen.GROUP_DIR.glob("*.md")}
+    assert on_disk == set(pages), on_disk ^ set(pages)
+    stale = [n for n, text in pages.items() if (gen.GROUP_DIR / n).read_text() != text]
+    assert not stale, f"stale field pages {stale}: run {gen.COMMAND}"
+
+
+def test_llms_txt_is_current() -> None:
+    assert gen.LLMS_TXT.read_text(encoding="utf-8") == gen.render_llms_txt(), (
+        f"llms.txt is stale: run {gen.COMMAND}"
+    )
+
+
+def test_listed_under_all_column_matches_the_mcp_listing(monkeypatch) -> None:
+    from server.operations import registry
+    from server.operations.toolsets import _MCP_HIDDEN_OPS, SYNTHETIC_TOOL_OPS
+    from server.settings import settings
+    from server.transport.mcp_tools import listed_ops
+
+    monkeypatch.setattr(settings, "mcp_code_tools", True)
+    listed = {op.name for op in listed_ops("all")} | (SYNTHETIC_TOOL_OPS - _MCP_HIDDEN_OPS)
+    wrong = [
+        op.name
+        for op in registry.ALL_OPERATIONS
+        if gen._listed_under_all(op) != (op.name in listed)
+    ]
+    assert not wrong, wrong

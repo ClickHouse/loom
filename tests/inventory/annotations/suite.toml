@@ -1,0 +1,95 @@
+# Inventory annotations for the suite area: the tests/ root, the inventory
+# itself, the unit conftest and the shared unit helpers.
+
+[[files]]
+match = "tests/__init__.py"
+owner = "test suite"
+status = "retain"
+notes = "Empty package marker; `tests.inventory` and `tests.unit.*` import through it."
+
+[[files]]
+match = "tests/conftest.py"
+owner = "integration fixtures"
+status = "retain"
+notes = "Integration and analyzer fixtures; the unit conftest shadows both autouse ones."
+
+[[files]]
+match = "tests/README.md"
+owner = "test suite"
+status = "retain"
+
+[[files]]
+match = "tests/inventory/*"
+owner = "test inventory and feature ledger"
+status = "retain"
+
+[[files]]
+match = "tests/unit/conftest.py"
+owner = "unit isolation guards"
+status = "retain"
+tags = ["security"]
+notes = "Autouse guards: settings, auth principal, query tag, env/cwd/threads, module caches, pending tasks."
+
+[[files]]
+match = "tests/unit/test_test_inventory.py"
+owner = "test inventory and feature ledger"
+status = "retain"
+tags = ["negative"]
+
+[[files]]
+match = "tests/unit/ch_fake.py"
+owner = "shared unit fakes"
+status = "retain"
+
+[[files]]
+match = "tests/unit/llm_fake.py"
+owner = "shared unit fakes"
+status = "retain"
+
+[[files]]
+match = "tests/unit/clock_fake.py"
+owner = "shared unit fakes"
+status = "retain"
+
+[[files]]
+match = "tests/unit/principals.py"
+owner = "shared unit fakes"
+status = "retain"
+
+[[files]]
+match = "tests/unit/test_shared_fakes.py"
+owner = "shared unit fakes"
+status = "retain"
+tags = ["fault"]
+
+[[files]]
+match = "tests/unit/test_principals.py"
+owner = "shared unit fakes"
+status = "retain"
+
+[[files]]
+match = "tests/unit/test_clock_fake.py"
+owner = "shared unit fakes"
+status = "retain"
+
+[[files]]
+match = "tests/unit/memory_rows.py"
+owner = "memory write-path builders"
+status = "retain"
+notes = "Rows through the production builders, so a new persisted column reaches every stub."
+
+[[files]]
+match = "tests/unit/schema_ddl.py"
+owner = "schema contract"
+status = "retain"
+notes = "Reads schemas/schema.sql, the fresh-replay shape, not a migration file."
+
+[[files]]
+match = "tests/unit/_tracker_config.py"
+owner = "tracker configuration"
+status = "retain"
+
+[[files]]
+match = "tests/unit/_memory_search_pkg.py"
+owner = "memory search handler"
+status = "retain"

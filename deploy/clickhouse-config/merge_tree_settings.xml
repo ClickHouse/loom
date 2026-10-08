@@ -1,0 +1,29 @@
+<!--
+  MergeTree server defaults for self-hosted / OSS ClickHouse.
+
+  Loom uses CH 25.1+ lightweight UPDATEs on the loom.* tables (knowledge
+  delete/tombstone, memory reject, bulk tombstone). On open-source
+  ClickHouse those require the per-table `enable_block_number_column` and
+  `enable_block_offset_column` MergeTree settings; without them the update
+  paths fail with `Code: 48 NOT_IMPLEMENTED ("Lightweight updates are not
+  supported")`. Setting them as a server default means every table the Loom
+  migrations create picks them up automatically — Loom works on a vanilla
+  OSS ClickHouse out of the box.
+
+  ClickHouse Cloud (SharedMergeTree) supports lightweight updates natively
+  and does not read this config, so this is OSS/self-host only.
+-->
+<clickhouse>
+    <merge_tree>
+        <enable_block_number_column>1</enable_block_number_column>
+        <enable_block_offset_column>1</enable_block_offset_column>
+        <!--
+          Loom's INSERTs carry an insert_deduplication_token per
+          batch so a retry after a dropped socket cannot land a batch twice.
+          Replicated / SharedMergeTree tables (ClickHouse Cloud) keep the last
+          1000 block tokens by default; plain MergeTree keeps none unless this
+          window is set. Same semantics on OSS as on Cloud.
+        -->
+        <non_replicated_deduplication_window>1000</non_replicated_deduplication_window>
+    </merge_tree>
+</clickhouse>

@@ -1,0 +1,765 @@
+"""memory.bulk_set, the batch write path set_from_messages writes through:
+the live-row lookup, identity dedup, entity resolution, conflict verdicts,
+the insert, and the projections and audit that follow it."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from contextvars import ContextVar
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
+
+from server.core.ch import get_client
+from server.core.hashing import hash_text
+from server.core.hashing import sha256_value as _content_sha256
+from server.embedding import get_embedder
+from server.memory.api.models_bulk import (
+    MemoryBulkSetInput,
+    MemoryBulkSetOutput,
+)
+from server.memory.app.bulk_rows import (
+    _BULK_CARRIED_COLS,
+    _bulk_build_rows,
+    _bulk_embed_rows,
+    _BulkWriteState,
+)
+from server.memory.app.bulk_verdicts import BulkVerdictPlan, apply_bulk_verdicts
+from server.memory.app.entity_projections import (
+    _write_derived_facts,
+)
+from server.memory.app.projection_errors import (
+    bulk_projection_payload,
+    bulk_source_resource_id,
+    record_input_projection_failure,
+)
+from server.memory.app.projections import (
+    write_entity_edges,
+    write_entity_triples,
+    write_entity_vectors,
+)
+from server.memory.app.provenance import writer_actor
+
+if TYPE_CHECKING:
+    from server.memory.app.search.clock import StageClock
+
+log = logging.getLogger(__name__)
+
+
+# Per-request override of settings.memory_extract_value_updates, set by
+# handle_memory_set_from_messages from `input.detect_updates`; the bulk write the
+# extraction pipeline makes reads it. The count of links that bulk write made rides back
+# the same way (reset per request, so a path that writes nothing reports 0).
+detect_updates_override: ContextVar[bool | None] = ContextVar(
+    "detect_updates_override", default=None
+)
+last_value_updates_linked: ContextVar[int] = ContextVar("last_value_updates_linked", default=0)
+
+
+def value_updates_enabled(request_value: bool | None = None) -> bool:
+    if request_value is not None:
+        return bool(request_value)
+    ov = detect_updates_override.get()
+    if ov is not None:
+        return bool(ov)
+    from server.settings import settings as _s
+
+    return bool(_s.memory_extract_value_updates)
+
+
+async def _bulk_existing_lookup(ch: Any, input: MemoryBulkSetInput, state: _BulkWriteState) -> None:
+    """Phase 1: one batched read of the live rows under this session's keys —
+    id, content hash, pin, creation time and the carried columns per key — into `state`.
+    Fail-open: on an error `state.existing_lookup_ok` stays False."""
+    try:
+        keys = [entry.memory_key for entry in input.entries]
+        if keys:
+            import server.memory.store as memory_repo
+
+            # Full rows (a revision carries every column forward), with sequential
+            # consistency: the answer decides skip, pin and version per entry.
+            live = await memory_repo.memory_rows_by_identity_keys(
+                [
+                    (input.org, input.namespace, input.agent, input.user_id, input.session_id, k)
+                    for k in keys
+                ],
+                ch=ch,
+                sequential=True,
+            )
+            rows = {ident[5]: r for ident, r in live.items()}
+            state.existing_rows = rows
+            state.existing_ids = {k: str(r.memory_id) for k, r in rows.items() if r.memory_id}
+            state.existing_sha = {
+                k: hash_text(r.content_sha256) for k, r in rows.items() if r.content_sha256
+            }
+            state.existing_pinned = {k: bool(r.pinned) for k, r in rows.items()}
+            state.existing_created = {k: r.created_at for k, r in rows.items() if r.created_at}
+            state.existing_carried = {
+                k: {c: getattr(r, c, None) for c in _BULK_CARRIED_COLS} for k, r in rows.items()
+            }
+            state.existing_lookup_ok = True
+    except Exception as e:  # noqa: BLE001 — writes without prior state
+        log.warning("bulk_set existing-id lookup failed (non-fatal): %s", e)
+
+
+async def _bulk_identity_dupes(ch: Any, input: MemoryBulkSetInput) -> dict[str, tuple[str, str]]:
+    """Phase 2: content hash -> (keeper key, keeper memory_id) of the live rows
+    under this identity (any session, any key) that already hold an entry's
+    exact bytes. Empty when the scope is not `identity` or the read failed."""
+    # Identity-scoped exact dedup. The gate above is session-scoped, so the same fact
+    # re-observed in a later session, or extracted under a key variant, would land as a new
+    # active row (~9% of active rows in real namespaces were exact copies). A live active row
+    # in (org, namespace, agent, user_id) with the same content_sha256, under any key, IS the
+    # fact: the entry reinforces it instead of duplicating it. content_sha256 carries a
+    # bloom-filter index, so this is one cheap read. Both lookups feed a write, so they read
+    # with sequential consistency: on ClickHouse Cloud a row written a second ago by another
+    # replica is not yet visible to a plain read. The keeper may be `conflicted` or
+    # `duplicate` (the reader keeps those live): the same bytes under any live status are
+    # still the same fact. Fail-open: a lookup error writes the entry normally.
+    identity_dupes: dict[str, tuple[str, str]] = {}
+    from server.settings import settings as _settings_dedup
+
+    _dedup_scope = str(_settings_dedup.memory_bulk_dedup_scope)
+    if _dedup_scope == "identity" and input.entries:
+        try:
+            _shas = sorted({_content_sha256(entry.value) for entry in input.entries})
+            _rows = await ch.query_all(
+                """
+                SELECT content_sha256, memory_key,
+                       toString(argMax(memory_id, version)) AS memory_id
+                FROM loom.memory
+                WHERE org = {org:String}
+                  AND namespace = {ns:String}
+                  AND agent = {agent:String}
+                  AND user_id = {uid:String}
+                  AND content_sha256 IN {shas:Array(String)}
+                GROUP BY content_sha256, memory_key
+                HAVING argMax(tombstoned_at IS NULL, version) = 1
+                   AND argMax(status, version) IN ('active', 'duplicate', 'conflicted')
+                ORDER BY content_sha256, memory_key
+                SETTINGS select_sequential_consistency = 1
+                """,
+                params={
+                    "org": input.org,
+                    "ns": input.namespace,
+                    "agent": input.agent,
+                    "uid": input.user_id,
+                    "shas": _shas,
+                },
+            )
+            for _r in _rows:
+                identity_dupes.setdefault(
+                    hash_text(_r["content_sha256"]), (str(_r["memory_key"]), str(_r["memory_id"]))
+                )
+        except Exception as e:  # noqa: BLE001 — a dedup read never blocks an ingest
+            log.warning("bulk_set identity-dedup lookup failed (non-fatal): %s", e)
+    return identity_dupes
+
+
+async def _bulk_resolve_entities(ch: Any, input: MemoryBulkSetInput) -> dict[str, str]:
+    """Phase 3: surface -> canonical entity for every entity and relation end
+    the batch names, in one namespace-local resolution. Empty on failure."""
+    entity_resolution: dict[str, str] = {}
+    try:
+        from server.memory.app.entity_resolution import resolve_entities_for_write
+
+        entity_surfaces: list[str] = []
+        for entry in input.entries:
+            entity_surfaces.extend(str(e) for e in (entry.entities or []) if e)
+            for rel in list(entry.relations or []):
+                if isinstance(rel, (list, tuple)) and len(rel) == 3:
+                    entity_surfaces.extend([str(rel[0]), str(rel[2])])
+        entity_resolution = await resolve_entities_for_write(
+            ch,
+            org=input.org,
+            namespace=input.namespace,
+            entity_texts=entity_surfaces,
+        )
+    except Exception as e:  # noqa: BLE001 — surface forms stay unresolved
+        log.warning("entity canonical resolution failed (non-fatal): %s", e)
+    return entity_resolution
+
+
+def _bulk_log_skips(state: _BulkWriteState) -> None:
+    """Phase 7: one log line per kind of entry the batch did not write."""
+    if state.skipped_unchanged:
+        log.info(
+            "bulk_set: re-ingest skip-gate skipped %d unchanged entr%s",
+            state.skipped_unchanged,
+            "y" if state.skipped_unchanged == 1 else "ies",
+        )
+    if state.skipped_blacklisted:
+        log.warning(
+            "bulk_set: Refuse dropped %d blacklisted entr%s",
+            state.skipped_blacklisted,
+            "y" if state.skipped_blacklisted == 1 else "ies",
+        )
+    if state.skipped_pinned:
+        log.warning(
+            "bulk_set: skipped %d entr%s targeting pinned key(s): %s",
+            len(state.skipped_pinned),
+            "y" if len(state.skipped_pinned) == 1 else "ies",
+            state.skipped_pinned,
+        )
+    if state.skipped_locked:
+        log.warning(
+            "bulk_set: skipped %d entr%s targeting read_only-locked key(s): %s",
+            len(state.skipped_locked),
+            "y" if len(state.skipped_locked) == 1 else "ies",
+            state.skipped_locked,
+        )
+
+
+async def _bulk_verdicts(
+    input: MemoryBulkSetInput,
+    state: _BulkWriteState,
+    emb_idx_of: list[int],
+    value_vectors: list[list[float]],
+    clock: StageClock,
+) -> BulkVerdictPlan:
+    """Phase 8: the conflict verdicts, folded into the rows before the insert;
+    `state.memory_rows` / `state.embedding_rows` become the rows that land."""
+    # Conflict surfacing, the same four verdicts memory.set produces. Runs before the insert
+    # so a merge or a pinned rejection never lands a row; duplicate / conflicted are stamped
+    # on the rows.
+    verdicts = await _bulk_conflict_verdicts(
+        input, state.memory_rows, state.entry_metas, state.pending, value_vectors
+    )
+    clock.mark("verdicts")
+    plan = apply_bulk_verdicts(
+        state.memory_rows, state.embedding_rows, emb_idx_of, state.results, verdicts
+    )
+    state.memory_rows = plan.memory_rows
+    state.embedding_rows = plan.embedding_rows
+    return plan
+
+
+async def _bulk_intra_batch_pairs(
+    ch: Any, input: MemoryBulkSetInput, state: _BulkWriteState
+) -> list[tuple[str, str]]:
+    """Phase 9: under `newest_wins`, stamp the earlier row of each templated
+    pair inside the batch as superseded (before the insert); returns the
+    (older, newer) id pairs for the triple plane's follow step."""
+    # Two statements of one attribute inside the same write ("The capital of Soviet Union is
+    # Moscow" and "… is Russellville" in one chunk) would both land active: the verdicts
+    # compare a row with the store, not with its batch siblings, and the value-update linker
+    # skips same-day pairs. Under `newest_wins` the later row in the batch supersedes the
+    # earlier before the insert; the pair also feeds the triple plane's follow step below.
+    _intra_pairs: list[tuple[str, str]] = []
+    if state.memory_rows:
+        try:
+            from server.memory.app.conflicts import namespace_conflict_policy
+
+            if await namespace_conflict_policy(input.org, input.namespace, ch=ch) == "newest_wins":
+                from datetime import UTC as _UTC
+                from datetime import datetime as _dt
+
+                from server.memory.domain.conflicts import (
+                    intra_batch_supersessions,
+                    stamp_intra_batch_supersessions,
+                )
+
+                _ib = intra_batch_supersessions(
+                    [str(r.get("value") or "") for r in state.memory_rows],
+                    [str(r.get("memory_type") or "") for r in state.memory_rows],
+                )
+                _intra_pairs = stamp_intra_batch_supersessions(
+                    state.memory_rows, state.embedding_rows, _ib, _dt.now(_UTC).replace(tzinfo=None)
+                )
+                if _intra_pairs:
+                    log.info(
+                        "bulk_set: %d templated pair(s) inside the batch; the earlier row of each "
+                        "is superseded before the insert",
+                        len(_intra_pairs),
+                    )
+        except Exception as e:  # noqa: BLE001 — the rows still land; the pair goes to review
+            log.warning("bulk_set: intra-batch supersession skipped (non-fatal): %s", e)
+    return _intra_pairs
+
+
+async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
+    """Phase 10: the two core writes — the memory rows and their embedding
+    rows — gathered, each a committed insert."""
+    import server.memory.store as memory_repo
+
+    # The two core writes are independent rows of two tables and each is a ~260 ms committed
+    # insert on ClickHouse Cloud, so they are gathered, as on the point path (`memory.set`).
+    async def _insert_memory_rows() -> None:
+        # Full version rows (revision or first version), so the typed insert checks them.
+        await memory_repo.insert_memory_versions(state.memory_rows, ch=ch)
+
+    await asyncio.gather(
+        _insert_memory_rows(),
+        memory_repo.insert_embedding_rows(state.embedding_rows, ch=ch),
+    )
+
+
+async def _bulk_post_insert_links(
+    ch: Any, input: MemoryBulkSetInput, state: _BulkWriteState
+) -> list[Any]:
+    """Phase 11, after the insert so the new ids exist: same-key supersession,
+    then value-update linking; returns the value-update links the triple
+    plane follows."""
+    # Same-key supersession: under `newest_wins` the rows just written retire every older
+    # live row sharing their key, from any session. After the insert so the new ids are
+    # visible; fail-open.
+    _n_key_superseded = 0
+    if state.memory_rows:
+        from server.memory.app.key_supersession import supersede_same_key_rows
+
+        _n_key_superseded = await supersede_same_key_rows(
+            org=input.org,
+            namespace=input.namespace,
+            new_rows=state.memory_rows,
+            ch=ch,
+        )
+
+    # Value-update supersession (memory.app.value_updates). Runs after the
+    # insert so the new row's id exists for the cross-link; fail-open; off by
+    # default. Only rows this batch actually wrote (memory_rows) are checked.
+    _n_value_links = 0
+    _value_links: list[Any] = []
+    if state.memory_rows and value_updates_enabled(input.detect_updates):
+        try:
+            from server.memory.app.value_updates import link_value_updates
+            from server.settings import settings
+
+            _report = await link_value_updates(
+                org=input.org,
+                namespace=input.namespace,
+                rows=state.memory_rows,
+                embeddings_by_key={
+                    str(e.get("memory_key") or ""): list(e.get("embedding") or [])
+                    for e in state.embedding_rows
+                },
+                min_cosine=float(settings.memory_extract_value_updates_min_cosine),
+                ch=ch,
+            )
+            _n_value_links = len(_report.links)
+            _value_links = list(_report.links)
+        except Exception as e:  # noqa: BLE001 — never block an ingest
+            log.warning("bulk_set: value-update linking failed (non-fatal): %s", e)
+    last_value_updates_linked.set(_n_value_links)
+    return _value_links
+
+
+async def _bulk_settle_verdicts(
+    ch: Any, input: MemoryBulkSetInput, state: _BulkWriteState, plan: BulkVerdictPlan
+) -> None:
+    """Projection leg: settle the verdicts after the insert — peer conflict
+    marks, refines, the evidence events of merges, identity duplicates and
+    restatements, then the same-key winner repair. Each step fail-open."""
+    if plan.conflict_marks:
+        from server.memory.app.conflicts import mark_peers_conflicted
+
+        for new_id, peer_ids in plan.conflict_marks:
+            try:
+                await mark_peers_conflicted(org=input.org, new_memory_id=new_id, peer_ids=peer_ids)
+            except Exception as e:  # noqa: BLE001 — the rows are in; the link is best-effort
+                log.warning("bulk_set: mark_peers_conflicted failed for %s: %s", new_id, e)
+    if plan.refines:
+        from server.memory.app.conflicts import apply_refines
+
+        for new_id, new_key, refined, relation, new_value in plan.refines:
+            try:
+                await apply_refines(
+                    org=input.org,
+                    namespace=input.namespace,
+                    new_memory_id=new_id,
+                    new_memory_key=new_key,
+                    refined_peers=refined,
+                    ch=ch,
+                    relation=relation,
+                    new_value=new_value,
+                )
+            except Exception as e:  # noqa: BLE001 — the write stands
+                log.warning("bulk_set: apply_refines failed for %s: %s", new_id, e)
+    from server.memory.store.usage import record_usage_event as _record_usage_event
+
+    for existing_id in plan.reinforce_ids:
+        try:
+            await _record_usage_event(
+                memory_id=existing_id,
+                org=input.org,
+                namespace=input.namespace,
+                event_type="evidence",
+                event_count=1,
+                agent=input.agent,
+            )
+        except Exception as e:  # noqa: BLE001 — a usage bump; the write stands
+            log.warning("bulk_set: auto_reinforce bump failed (non-fatal): %s", e)
+    for existing_id in state.identity_dup_ids:
+        try:
+            await _record_usage_event(
+                memory_id=existing_id,
+                org=input.org,
+                namespace=input.namespace,
+                event_type="evidence",
+                event_count=1,
+                agent=input.agent,
+            )
+        except Exception as e:  # noqa: BLE001 — a usage bump; the write stands
+            log.warning("bulk_set: identity-dedup reinforcement failed (non-fatal): %s", e)
+    # The same fact said again under the same key. The usage fold turns the evidence event
+    # into memory_embeddings.reinforcement_count, the search-side boost; the row itself is not
+    # rewritten or re-embedded.
+    for existing_id in state.restated_ids:
+        try:
+            await _record_usage_event(
+                memory_id=existing_id,
+                org=input.org,
+                namespace=input.namespace,
+                event_type="evidence",
+                event_count=1,
+                agent=input.agent,
+            )
+        except Exception as e:  # noqa: BLE001 — a usage bump; the write stands
+            log.warning("bulk_set: restatement reinforcement failed (non-fatal): %s", e)
+
+
+async def _bulk_audit(
+    input: MemoryBulkSetInput, state: _BulkWriteState, plan: BulkVerdictPlan
+) -> None:
+    """Projection leg: the write's one hash-only audit row."""
+    # Every write lands in the hash-chained audit log as hashes, not text: what was written,
+    # by whom, with which verdict.
+    try:
+        await _audit_bulk_write(input, state.memory_rows, plan)
+    except Exception as e:  # noqa: BLE001 — the ledger row is best-effort
+        log.warning("bulk_set: audit row failed (non-fatal): %s", e)
+
+
+def _bulk_record_write_metrics(input: MemoryBulkSetInput, state: _BulkWriteState) -> None:
+    """Phase 12: one `loom.memory.writes` tick per entry outcome."""
+    # Count the write outcomes for this path too: this bulk/extract path inserts into
+    # loom.memory directly and skips blacklisted/pinned entries with a log line rather than
+    # raising, so without these ticks a namespace ingesting steadily through
+    # memory.set_from_messages or the observe worker would read as no traffic on the panel
+    # that answers whether anything new is going in.
+    try:
+        from server.observability.metrics import record_memory_write
+
+        ns = input.namespace
+        # `skipped_unchanged` is a byte-identical restatement, the same shape `merged` means
+        # on the point-write path, so use the same outcome rather than inventing a second name.
+        for outcome, count in (
+            ("created", state.n_created),
+            ("updated", state.n_updated),
+            ("unknown", state.n_unknown),
+            ("blacklisted", state.skipped_blacklisted),
+            ("rejected", len(state.skipped_pinned) + len(state.skipped_locked)),
+            # NOT the point path's `merged` (a canonical-form conflict merge).
+            # This is a byte-identical restatement, so it gets its own label
+            # rather than being indistinguishable in the same series.
+            ("unchanged", state.skipped_unchanged),
+            # The same bytes live under this identity already.
+            ("deduplicated", len(state.identity_duplicates)),
+        ):
+            for _ in range(count):
+                record_memory_write(namespace=ns, outcome=outcome)
+    except Exception:  # noqa: BLE001 — telemetry must not fail an ingest
+        pass
+
+
+async def _bulk_run_projections(
+    ch: Any,
+    input: MemoryBulkSetInput,
+    state: _BulkWriteState,
+    plan: BulkVerdictPlan,
+    embedder: Any,
+    entity_resolution: dict[str, str],
+    entity_embeddings: dict[str, list[float]],
+) -> None:
+    """Phase 13: the post-insert legs — settle verdicts, the audit row and the
+    four graph projections — gathered."""
+
+    # Graph/entity projections (entity_vectors / edges / triples / derived).
+    # Each leg is fail-open + records a replayable projection_failure.
+    def _projection(name: str, write: Any) -> Any:
+        async def _run() -> None:
+            try:
+                await write()
+            except Exception as e:  # noqa: BLE001 — a projection; the write stands
+                log.warning("%s write failed (non-fatal): %s", name, e)
+                await record_input_projection_failure(
+                    input,
+                    projection=name,
+                    error=e,
+                    memory_keys=[r.memory_key for r in state.results],
+                    payload=bulk_projection_payload(input, state.results),
+                    source_operation="memory.bulk_set",
+                    source_resource_id=bulk_source_resource_id(input),
+                )
+
+        return _run
+
+    # The settlement of verdicts (peer conflict marks, reinforcement events), the audit row
+    # and the four graph projections all read this batch's result and write different tables;
+    # none reads another's output, so they are awaited together, each
+    # with its own fail-open handler. Still awaited before the response: rrf search routes
+    # across the entity/graph/temporal planes and may query immediately after ingest, so
+    # backgrounding would starve those planes.
+    _legs = [
+        lambda: _bulk_settle_verdicts(ch, input, state, plan),
+        lambda: _bulk_audit(input, state, plan),
+        _projection(
+            "entity_vectors",
+            lambda: write_entity_vectors(
+                input,
+                state.results,
+                embedder,
+                ch=ch,
+                entity_map=entity_resolution,
+                entity_embeddings=entity_embeddings,
+            ),
+        ),
+        _projection(
+            "entity_edges",
+            lambda: write_entity_edges(input, state.results, ch=ch, entity_map=entity_resolution),
+        ),
+        _projection(
+            "entity_triples",
+            lambda: write_entity_triples(input, state.results, ch=ch, entity_map=entity_resolution),
+        ),
+        _projection(
+            "derived_facts",
+            lambda: _write_derived_facts(input, state.results, ch=ch, entity_map=entity_resolution),
+        ),
+    ]
+    await asyncio.gather(*(leg() for leg in _legs))
+
+
+async def _bulk_follow_row_supersessions(
+    ch: Any,
+    input: MemoryBulkSetInput,
+    plan: BulkVerdictPlan,
+    value_links: list[Any],
+    intra_pairs: list[tuple[str, str]],
+    clock: StageClock,
+) -> None:
+    """Phase 14: the triple plane follows the rows this write retired."""
+    # The triple plane follows the rows this write retired. The predecessor's open triples
+    # close and the successor triple is written under the predecessor's relation name, after
+    # the projections, so a successor the extractor did emit is seen and not repeated.
+    # Fail-open.
+    _pairs: list[tuple[str, str]] = _supersede_pairs(plan)
+    _pairs += [(str(ln.older_id), str(ln.newer_id)) for ln in value_links]
+    _pairs += intra_pairs
+    if _pairs:
+        try:
+            from server.memory.app.entity_projections import follow_row_supersessions
+
+            await follow_row_supersessions(input, _pairs[:64], ch=ch)
+        except Exception as e:  # noqa: BLE001 — the rows are in; the triple plane is best effort
+            log.warning("bulk_set: triples follow rows failed (non-fatal): %s", e)
+    clock.mark("triples_follow_rows")
+
+
+async def handle_memory_bulk_set(
+    input: MemoryBulkSetInput,
+) -> MemoryBulkSetOutput:
+    """One CH insert for all rows; one more for embeddings. Versions are
+    each unique (nanosecond) to preserve LWW semantics."""
+    ch = get_client()
+    embedder = get_embedder()
+    now_utc = datetime.now(UTC)
+    # The write names its phases on the response.
+    from server.memory.app.search.clock import StageClock
+
+    _bulk_work: dict[str, Any] = {}
+    _bulk_clock = StageClock(_bulk_work)
+    state = _BulkWriteState()
+    await _bulk_existing_lookup(ch, input, state)
+
+    identity_dupes = await _bulk_identity_dupes(ch, input)
+
+    _bulk_clock.mark("existing_lookup")
+    entity_resolution = await _bulk_resolve_entities(ch, input)
+
+    _bulk_clock.mark("entity_resolution")
+    await _bulk_build_rows(input, state, identity_dupes, entity_resolution, now_utc)
+
+    emb_idx_of, value_vectors, entity_embeddings = await _bulk_embed_rows(
+        input, state, embedder, entity_resolution, _bulk_clock, now_utc
+    )
+
+    _bulk_log_skips(state)
+
+    plan = await _bulk_verdicts(input, state, emb_idx_of, value_vectors, _bulk_clock)
+
+    _intra_pairs = await _bulk_intra_batch_pairs(ch, input, state)
+
+    await _bulk_insert(ch, state)
+    _bulk_clock.mark("insert")
+
+    _value_links = await _bulk_post_insert_links(ch, input, state)
+
+    _bulk_clock.mark("value_updates")
+
+    _bulk_record_write_metrics(input, state)
+
+    await _bulk_run_projections(
+        ch, input, state, plan, embedder, entity_resolution, entity_embeddings
+    )
+    _bulk_clock.mark("projections")
+    await _bulk_follow_row_supersessions(ch, input, plan, _value_links, _intra_pairs, _bulk_clock)
+    _bulk_clock.finish()
+
+    return MemoryBulkSetOutput(
+        written=state.results,
+        retyped=state.retyped,
+        skipped_pinned=state.skipped_pinned,
+        skipped_locked=state.skipped_locked,
+        # An identity duplicate is a restatement of an existing memory (the point path's
+        # `merged` verdict) reached by the hash instead of the cosine check; it is reported
+        # under both names.
+        merged=[*plan.merged, *[k for k in state.identity_duplicates if k not in plan.merged]],
+        rejected_pinned=plan.rejected_pinned,
+        duplicates=plan.duplicates,
+        conflicted=plan.conflicted,
+        unchecked=plan.unchecked,
+        identity_duplicates=state.identity_duplicates,
+        stage_ms=dict(_bulk_work.get("stage_ms", {})),
+    )
+
+
+def _supersede_pairs(plan: BulkVerdictPlan) -> list[tuple[str, str]]:
+    """(retired peer, new row) pairs of the plan's `supersedes` verdicts, for
+    the triple plane to follow — minus the peers `apply_refines` kept because
+    the new row would truncate them."""
+    from server.memory.app.conflicts import truncating_refinement
+
+    return [
+        (str(getattr(p, "memory_id", "") or ""), str(new_id))
+        for new_id, _new_key, refined, relation, new_value in plan.refines
+        if relation == "supersedes"
+        for p in refined
+        if getattr(p, "memory_id", "")
+        and not truncating_refinement(new_value, str(getattr(p, "value", "") or ""))
+    ]
+
+
+async def _bulk_conflict_verdicts(
+    input: Any,
+    memory_rows: list[dict[str, Any]],
+    entry_metas: list[tuple[Any, ...]],
+    pending: list[tuple[Any, ...]],
+    value_vectors: list[list[float]],
+) -> dict[int, Any]:
+    """check_on_commit for every searchable entry, concurrency-bounded. Keys
+    are indexes into memory_rows; values are ConflictResults. A bulk past the
+    cap checks the first N and writes the rest unchecked (the caller counts
+    them); a check that errors counts as clear — the write must not fail
+    because the check could not run."""
+    import asyncio
+
+    from server.memory.app.conflicts import check_on_commit
+    from server.settings import settings as _settings
+
+    if not pending or not value_vectors:
+        return {}
+    cap = max(int(_settings.bulk_conflict_check_max_entries), 0)
+    sem = asyncio.Semaphore(int(_settings.bulk_conflict_check_concurrency))
+    out: dict[int, Any] = {}
+
+    async def _one(
+        idx: int,
+        vec: list[float],
+        candidate_rows: list[dict[str, Any]] | None = None,
+        resolved_threshold: float | None = None,
+    ) -> None:
+        entry, serialized, _t, _e, _x = entry_metas[idx]
+        async with sem:
+            try:
+                out[idx] = await check_on_commit(
+                    org=input.org,
+                    namespace=input.namespace,
+                    agent=input.agent,
+                    memory_type=entry.memory_type,
+                    memory_key=entry.memory_key,
+                    new_value=serialized,
+                    new_embedding=vec,
+                    new_run_id=str(getattr(input, "run_id", "") or "-"),
+                    new_valid_at=(
+                        getattr(entry, "valid_at", None) or getattr(input, "valid_at", None)
+                    ),
+                    candidate_rows=candidate_rows,
+                    resolved_threshold=resolved_threshold,
+                )
+            except Exception as e:  # noqa: BLE001 — the fact writes unchecked
+                log.warning("bulk_set: conflict check failed for %r: %s", entry.memory_key, e)
+
+    pairs = list(zip(pending, value_vectors, strict=False))[:cap]
+    # The peer statement runs once per batch of facts, not once per fact: the namespace's
+    # vectors are read once per batch. Thresholds resolve once per memory_type. A batch that
+    # failed leaves its facts without an entry and they fall back to the per-fact statement.
+    batch = int(_settings.memory_write_candidate_batch)
+    prefetched: dict[int, list[dict[str, Any]]] = {}
+    floors: dict[str, tuple[float, float]] = {}
+    if batch > 0 and len(pairs) > 1:
+        from server.memory.app import conflicts as _conflicts
+
+        items: list[tuple[str, str, list[float], float]] = []
+        for (idx, _t, _x, _k), vec in pairs:
+            mt = str(entry_metas[idx][0].memory_type)
+            if vec and mt not in floors:
+                try:
+                    floors[mt] = await _conflicts.resolve_conflict_floor(
+                        input.org, input.namespace, mt
+                    )
+                except Exception as e:  # noqa: BLE001 — per-fact path resolves it
+                    log.warning("bulk_set: threshold lookup failed for %r: %s", mt, e)
+            md = floors.get(mt, (0.0, 0.0))[1]
+            items.append((mt, str(entry_metas[idx][0].memory_key), vec if mt in floors else [], md))
+        try:
+            prefetched = await _conflicts.candidate_rows_many(
+                org=input.org, namespace=input.namespace, items=items, batch=batch
+            )
+        except Exception as e:  # noqa: BLE001 — fall back to per-fact statements
+            log.warning("bulk_set: batched candidate lookup failed: %s", e)
+            prefetched = {}
+
+    jobs = []
+    for j, ((idx, _t, _x, _k), vec) in enumerate(pairs):
+        mt = str(entry_metas[idx][0].memory_type)
+        rows = prefetched.get(j)
+        thr = floors.get(mt, (None, None))[0] if rows is not None else None
+        jobs.append(_one(idx, vec, candidate_rows=rows, resolved_threshold=thr))
+    if jobs:
+        await asyncio.gather(*jobs)
+    return out
+
+
+async def _audit_bulk_write(
+    input: Any, memory_rows: list[dict[str, Any]], plan: BulkVerdictPlan
+) -> None:
+    """One hash-chained audit row per bulk write: keys, ids and content hashes
+    (never text — set_from_messages carries raw conversation), the writer and
+    the verdict counts. Best-effort; never fails the write."""
+    from server.observability import audit as _audit
+
+    if not memory_rows and not plan.merged and not plan.rejected_pinned:
+        return
+    try:
+        await _audit.emit(
+            event_type="memory.bulk_set",
+            org=input.org,
+            namespace=input.namespace,
+            actor=writer_actor() or "-",
+            subject={
+                "count": len(memory_rows),
+                "memory_keys": [str(r["memory_key"]) for r in memory_rows][:200],
+                "memory_ids": [str(r["memory_id"]) for r in memory_rows][:200],
+                "content_sha256": [str(r.get("content_sha256") or "") for r in memory_rows][:200],
+                "source_trace": (
+                    str(memory_rows[0].get("source_trace") or "") if memory_rows else ""
+                ),
+                "merged": plan.merged[:50],
+                "rejected_pinned": plan.rejected_pinned[:50],
+                "duplicates": len(plan.duplicates),
+                "conflicted": len(plan.conflicted),
+                "unchecked": plan.unchecked,
+            },
+        )
+    except Exception as e:  # noqa: BLE001 — the write stands; logged
+        log.warning("bulk_set: audit emit failed (non-fatal): %s", e)

@@ -1,0 +1,985 @@
+{
+ "first_then_second_in_one_session": [
+  {
+   "result": {
+    "content": [
+     {
+      "type": "text",
+      "text": "loom_search 'where do I go': 2 memory, 1 profile, 1 knowledge, 2 conversation hits.\n\nProfile hits:\n  - [home_city] (ns=alice) Lives in Berlin\n\nHow to read the memories below: You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below.\n\nMemory hits (2 of 38; next_page serves the rest):\n[2026-09-18 18:42] [fav_place] (semantic) \"mountain\" (#fav_place)\n\nKnowledge hits:\n  - [loom://runbooks/freeze] The freeze starts two days before the cut.\n\nConversation hits:\n  - [thread=4ab6 2026-07-14 11:07:12] which location are you on?\n  - [thread=9c01 2026-07-15 08:00:00] the other thread"
+     }
+    ],
+    "isError": false,
+    "structuredContent": {
+     "memory": {
+      "results": [
+       {
+        "memory_key": "fav_place",
+        "memory_type": "semantic",
+        "content_excerpt": "\"mountain\" (#fav_place)",
+        "rank_score": 0.552,
+        "source": "fact",
+        "created_at": "2026-09-18 18:42:33"
+       },
+       {
+        "memory_key": "chunk:c955:0",
+        "memory_type": "episodic",
+        "content_excerpt": "[user @ 2026-09-18 18:42] [tool_use] tool=mcp__plugin_loom_loom__loom_search ...",
+        "rank_score": 0.446,
+        "source": "chunk"
+       }
+      ],
+      "namespaces_searched": [
+       "alice"
+      ],
+      "next_page": "page/e533e035bf78456a6d5d@0",
+      "abstain": false,
+      "retrieval_confidence": 0.597,
+      "retrieval_risk": "medium"
+     },
+     "knowledge": {
+      "results": [
+       {
+        "source_uri": "loom://runbooks/freeze",
+        "content_excerpt": "The freeze starts two days\nbefore the cut.",
+        "namespace": "team",
+        "similarity": 0.52,
+        "section": "Release > Freeze"
+       }
+      ]
+     },
+     "profile": {
+      "results": [
+       {
+        "label": "home_city",
+        "value": "Lives in\nBerlin",
+        "namespace": "alice",
+        "score": 0.7
+       }
+      ]
+     },
+     "conversations": {
+      "results": [
+       {
+        "thread_id": "4ab6",
+        "role": "user",
+        "content": "which location\nare you on?",
+        "ts": "2026-07-14 11:07:12"
+       },
+       {
+        "thread_id": "9c01",
+        "content_excerpt": "the other thread",
+        "created_at": "2026-07-15 08:00:00",
+        "namespace": "team"
+       }
+      ]
+     }
+    }
+   },
+   "asked": {
+    "org": "acme",
+    "namespace": "alice",
+    "query": "where do I go",
+    "top_k": 5,
+    "tags": [],
+    "namespace_scope": "all_mine",
+    "recipe": "",
+    "bodies": "excerpt",
+    "page": "",
+    "explain": false,
+    "fanout_namespaces": [
+     "team",
+     "alice"
+    ]
+   }
+  },
+  {
+   "result": {
+    "content": [
+     {
+      "type": "text",
+      "text": "loom_search 'where do I go': 2 memory, 1 profile, 1 knowledge, 2 conversation hits.\n\nProfile hits:\n  - [home_city] (ns=alice) Lives in Berlin\n\nReading rule: as given at this session's first search \u2014 the fact row or CURRENT FACTS line beats a digest, trust the most recent, cite each claim with its [memory_key].\n\nMemory hits (2 of 38; next_page serves the rest):\n[2026-09-18 18:42] [fav_place] (semantic) \"mountain\" (#fav_place)\n\nKnowledge hits:\n  - [loom://runbooks/freeze] The freeze starts two days before the cut.\n\nConversation hits:\n  - [thread=4ab6 2026-07-14 11:07:12] which location are you on?\n  - [thread=9c01 2026-07-15 08:00:00] the other thread"
+     }
+    ],
+    "isError": false,
+    "structuredContent": {
+     "memory": {
+      "results": [
+       {
+        "memory_key": "fav_place",
+        "memory_type": "semantic",
+        "content_excerpt": "\"mountain\" (#fav_place)",
+        "rank_score": 0.552,
+        "source": "fact",
+        "created_at": "2026-09-18 18:42:33"
+       },
+       {
+        "memory_key": "chunk:c955:0",
+        "memory_type": "episodic",
+        "content_excerpt": "[user @ 2026-09-18 18:42] [tool_use] tool=mcp__plugin_loom_loom__loom_search ...",
+        "rank_score": 0.446,
+        "source": "chunk"
+       }
+      ],
+      "namespaces_searched": [
+       "alice"
+      ],
+      "next_page": "page/e533e035bf78456a6d5d@0",
+      "abstain": false,
+      "retrieval_confidence": 0.597,
+      "retrieval_risk": "medium"
+     },
+     "knowledge": {
+      "results": [
+       {
+        "source_uri": "loom://runbooks/freeze",
+        "content_excerpt": "The freeze starts two days\nbefore the cut.",
+        "namespace": "team",
+        "similarity": 0.52,
+        "section": "Release > Freeze"
+       }
+      ]
+     },
+     "profile": {
+      "results": [
+       {
+        "label": "home_city",
+        "value": "Lives in\nBerlin",
+        "namespace": "alice",
+        "score": 0.7
+       }
+      ]
+     },
+     "conversations": {
+      "results": [
+       {
+        "thread_id": "4ab6",
+        "role": "user",
+        "content": "which location\nare you on?",
+        "ts": "2026-07-14 11:07:12"
+       },
+       {
+        "thread_id": "9c01",
+        "content_excerpt": "the other thread",
+        "created_at": "2026-07-15 08:00:00",
+        "namespace": "team"
+       }
+      ]
+     }
+    }
+   },
+   "asked": {
+    "org": "acme",
+    "namespace": "alice",
+    "query": "where do I go",
+    "top_k": 5,
+    "tags": [],
+    "namespace_scope": "all_mine",
+    "recipe": "",
+    "bodies": "excerpt",
+    "page": "",
+    "explain": false,
+    "fanout_namespaces": [
+     "team",
+     "alice"
+    ]
+   }
+  }
+ ],
+ "no_session_id": [
+  {
+   "result": {
+    "content": [
+     {
+      "type": "text",
+      "text": "loom_search 'where do I go': 2 memory, 1 profile, 1 knowledge, 2 conversation hits.\n\nProfile hits:\n  - [home_city] (ns=alice) Lives in Berlin\n\nHow to read the memories below: You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below.\n\nMemory hits (2 of 38; next_page serves the rest):\n[2026-09-18 18:42] [fav_place] (semantic) \"mountain\" (#fav_place)\n\nKnowledge hits:\n  - [loom://runbooks/freeze] The freeze starts two days before the cut.\n\nConversation hits:\n  - [thread=4ab6 2026-07-14 11:07:12] which location are you on?\n  - [thread=9c01 2026-07-15 08:00:00] the other thread"
+     }
+    ],
+    "isError": false,
+    "structuredContent": {
+     "memory": {
+      "results": [
+       {
+        "memory_key": "fav_place",
+        "memory_type": "semantic",
+        "content_excerpt": "\"mountain\" (#fav_place)",
+        "rank_score": 0.552,
+        "source": "fact",
+        "created_at": "2026-09-18 18:42:33"
+       },
+       {
+        "memory_key": "chunk:c955:0",
+        "memory_type": "episodic",
+        "content_excerpt": "[user @ 2026-09-18 18:42] [tool_use] tool=mcp__plugin_loom_loom__loom_search ...",
+        "rank_score": 0.446,
+        "source": "chunk"
+       }
+      ],
+      "namespaces_searched": [
+       "alice"
+      ],
+      "next_page": "page/e533e035bf78456a6d5d@0",
+      "abstain": false,
+      "retrieval_confidence": 0.597,
+      "retrieval_risk": "medium"
+     },
+     "knowledge": {
+      "results": [
+       {
+        "source_uri": "loom://runbooks/freeze",
+        "content_excerpt": "The freeze starts two days\nbefore the cut.",
+        "namespace": "team",
+        "similarity": 0.52,
+        "section": "Release > Freeze"
+       }
+      ]
+     },
+     "profile": {
+      "results": [
+       {
+        "label": "home_city",
+        "value": "Lives in\nBerlin",
+        "namespace": "alice",
+        "score": 0.7
+       }
+      ]
+     },
+     "conversations": {
+      "results": [
+       {
+        "thread_id": "4ab6",
+        "role": "user",
+        "content": "which location\nare you on?",
+        "ts": "2026-07-14 11:07:12"
+       },
+       {
+        "thread_id": "9c01",
+        "content_excerpt": "the other thread",
+        "created_at": "2026-07-15 08:00:00",
+        "namespace": "team"
+       }
+      ]
+     }
+    }
+   },
+   "asked": {
+    "org": "acme",
+    "namespace": "alice",
+    "query": "where do I go",
+    "top_k": 5,
+    "tags": [],
+    "namespace_scope": "all_mine",
+    "recipe": "",
+    "bodies": "excerpt",
+    "page": "",
+    "explain": false,
+    "fanout_namespaces": [
+     "team",
+     "alice"
+    ]
+   }
+  }
+ ],
+ "explain": [
+  {
+   "result": {
+    "content": [
+     {
+      "type": "text",
+      "text": "loom_search 'where do I go': 2 memory, 1 profile, 1 knowledge, 2 conversation hits.\n\nProfile hits:\n  - [home_city] (ns=alice) Lives in Berlin\n\nHow to read the memories below: You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below.\n\nMemory hits (2 of 38; next_page serves the rest):\n[2026-09-18 18:42] [fav_place] (semantic) \"mountain\" (#fav_place)\nWhy each was served:\n  [fav_place] why: fact hit from namespace alice; similarity=0.58; rank_score=0.55; mode=semantic, foreign+1.00, semantic+0.58, reinforcement-0.03\n  [chunk:c955:0] why: chunk hit, semantic+0.41, token_density+0.04\n\nKnowledge hits:\n  - [loom://runbooks/freeze] The freeze starts two days before the cut.\n\nConversation hits:\n  - [thread=4ab6 2026-07-14 11:07:12] which location are you on?\n  - [thread=9c01 2026-07-15 08:00:00] the other thread"
+     }
+    ],
+    "isError": false,
+    "structuredContent": {
+     "memory": {
+      "results": [
+       {
+        "memory_key": "fav_place",
+        "memory_type": "semantic",
+        "content_excerpt": "\"mountain\" (#fav_place)",
+        "rank_score": 0.552,
+        "source": "fact",
+        "created_at": "2026-09-18 18:42:33",
+        "why": "fact hit from namespace alice; similarity=0.58; rank_score=0.55; mode=semantic, foreign+1.00, semantic+0.58, reinforcement-0.03"
+       },
+       {
+        "memory_key": "chunk:c955:0",
+        "memory_type": "episodic",
+        "content_excerpt": "[user @ 2026-09-18 18:42] [tool_use] tool=mcp__plugin_loom_loom__loom_search ...",
+        "rank_score": 0.446,
+        "source": "chunk",
+        "why": "chunk hit, semantic+0.41, token_density+0.04"
+       }
+      ],
+      "namespaces_searched": [
+       "alice"
+      ],
+      "next_page": "page/e533e035bf78456a6d5d@0",
+      "abstain": false,
+      "retrieval_confidence": 0.597,
+      "retrieval_risk": "medium"
+     },
+     "knowledge": {
+      "results": [
+       {
+        "source_uri": "loom://runbooks/freeze",
+        "content_excerpt": "The freeze starts two days\nbefore the cut.",
+        "namespace": "team",
+        "similarity": 0.52,
+        "section": "Release > Freeze"
+       }
+      ]
+     },
+     "profile": {
+      "results": [
+       {
+        "label": "home_city",
+        "value": "Lives in\nBerlin",
+        "namespace": "alice",
+        "score": 0.7
+       }
+      ]
+     },
+     "conversations": {
+      "results": [
+       {
+        "thread_id": "4ab6",
+        "role": "user",
+        "content": "which location\nare you on?",
+        "ts": "2026-07-14 11:07:12"
+       },
+       {
+        "thread_id": "9c01",
+        "content_excerpt": "the other thread",
+        "created_at": "2026-07-15 08:00:00",
+        "namespace": "team"
+       }
+      ]
+     }
+    }
+   },
+   "asked": {
+    "org": "acme",
+    "namespace": "alice",
+    "query": "where do I go",
+    "top_k": 5,
+    "tags": [],
+    "namespace_scope": "all_mine",
+    "recipe": "",
+    "bodies": "excerpt",
+    "page": "",
+    "explain": true,
+    "fanout_namespaces": [
+     "team",
+     "alice"
+    ]
+   }
+  }
+ ],
+ "this_namespace_no_bodies_top_2": [
+  {
+   "result": {
+    "content": [
+     {
+      "type": "text",
+      "text": "loom_search 'q': 2 memory, 1 profile, 1 knowledge, 2 conversation hits.\n\nProfile hits:\n  - [home_city] (ns=alice) Lives in Berlin\n\nHow to read the memories below: You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below.\n\nMemory hits (2 of 38; next_page serves the rest):\n[2026-09-18 18:42] [fav_place] (semantic) \"mountain\" (#fav_place)\n\nKnowledge hits:\n  - [loom://runbooks/freeze] The freeze starts two days before the cut.\n\nConversation hits:\n  - [thread=4ab6 2026-07-14 11:07:12] which location are you on?\n  - [thread=9c01 2026-07-15 08:00:00] the other thread"
+     }
+    ],
+    "isError": false,
+    "structuredContent": {
+     "memory": {
+      "results": [
+       {
+        "memory_key": "fav_place",
+        "memory_type": "semantic",
+        "content_excerpt": "\"mountain\" (#fav_place)",
+        "rank_score": 0.552,
+        "source": "fact",
+        "created_at": "2026-09-18 18:42:33",
+        "namespace": "alice"
+       },
+       {
+        "memory_key": "chunk:c955:0",
+        "memory_type": "episodic",
+        "content_excerpt": "[user @ 2026-09-18 18:42] [tool_use] tool=mcp__plugin_loom_loom__loom_search ...",
+        "rank_score": 0.446,
+        "source": "chunk",
+        "namespace": "alice"
+       }
+      ],
+      "namespaces_searched": [
+       "alice"
+      ],
+      "next_page": "page/e533e035bf78456a6d5d@0",
+      "abstain": false,
+      "retrieval_confidence": 0.597,
+      "retrieval_risk": "medium"
+     },
+     "knowledge": {
+      "results": [
+       {
+        "source_uri": "loom://runbooks/freeze",
+        "content_excerpt": "The freeze starts two days\nbefore the cut.",
+        "similarity": 0.52,
+        "section": "Release > Freeze"
+       }
+      ]
+     },
+     "profile": {
+      "results": [
+       {
+        "label": "home_city",
+        "value": "Lives in\nBerlin",
+        "namespace": "alice",
+        "score": 0.7
+       }
+      ]
+     },
+     "conversations": {
+      "results": [
+       {
+        "thread_id": "4ab6",
+        "role": "user",
+        "content": "which location\nare you on?",
+        "ts": "2026-07-14 11:07:12",
+        "namespace": "alice"
+       },
+       {
+        "thread_id": "9c01",
+        "content_excerpt": "the other thread",
+        "created_at": "2026-07-15 08:00:00"
+       }
+      ]
+     }
+    }
+   },
+   "asked": {
+    "org": "acme",
+    "namespace": "team",
+    "query": "q",
+    "top_k": 2,
+    "tags": [],
+    "namespace_scope": "this",
+    "recipe": "",
+    "bodies": "none",
+    "page": "",
+    "explain": false,
+    "fanout_namespaces": []
+   }
+  }
+ ],
+ "out_of_range_arguments_are_clamped": [
+  {
+   "result": {
+    "content": [
+     {
+      "type": "text",
+      "text": "loom_search 'q': 2 memory, 1 profile, 1 knowledge, 2 conversation hits.\n\nProfile hits:\n  - [home_city] (ns=alice) Lives in Berlin\n\nHow to read the memories below: You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below.\n\nMemory hits (2 of 38; next_page serves the rest):\n[2026-09-18 18:42] [fav_place] (semantic) \"mountain\" (#fav_place)\n\nKnowledge hits:\n  - [loom://runbooks/freeze] The freeze starts two days before the cut.\n\nConversation hits:\n  - [thread=4ab6 2026-07-14 11:07:12] which location are you on?\n  - [thread=9c01 2026-07-15 08:00:00] the other thread"
+     }
+    ],
+    "isError": false,
+    "structuredContent": {
+     "memory": {
+      "results": [
+       {
+        "memory_key": "fav_place",
+        "memory_type": "semantic",
+        "content_excerpt": "\"mountain\" (#fav_place)",
+        "rank_score": 0.552,
+        "source": "fact",
+        "created_at": "2026-09-18 18:42:33"
+       },
+       {
+        "memory_key": "chunk:c955:0",
+        "memory_type": "episodic",
+        "content_excerpt": "[user @ 2026-09-18 18:42] [tool_use] tool=mcp__plugin_loom_loom__loom_search ...",
+        "rank_score": 0.446,
+        "source": "chunk"
+       }
+      ],
+      "namespaces_searched": [
+       "alice"
+      ],
+      "next_page": "page/e533e035bf78456a6d5d@0",
+      "abstain": false,
+      "retrieval_confidence": 0.597,
+      "retrieval_risk": "medium"
+     },
+     "knowledge": {
+      "results": [
+       {
+        "source_uri": "loom://runbooks/freeze",
+        "content_excerpt": "The freeze starts two days\nbefore the cut.",
+        "namespace": "team",
+        "similarity": 0.52,
+        "section": "Release > Freeze"
+       }
+      ]
+     },
+     "profile": {
+      "results": [
+       {
+        "label": "home_city",
+        "value": "Lives in\nBerlin",
+        "namespace": "alice",
+        "score": 0.7
+       }
+      ]
+     },
+     "conversations": {
+      "results": [
+       {
+        "thread_id": "4ab6",
+        "role": "user",
+        "content": "which location\nare you on?",
+        "ts": "2026-07-14 11:07:12"
+       },
+       {
+        "thread_id": "9c01",
+        "content_excerpt": "the other thread",
+        "created_at": "2026-07-15 08:00:00",
+        "namespace": "team"
+       }
+      ]
+     }
+    }
+   },
+   "asked": {
+    "org": "acme",
+    "namespace": "alice",
+    "query": "q",
+    "top_k": 100,
+    "tags": [],
+    "namespace_scope": "all_mine",
+    "recipe": "",
+    "bodies": "excerpt",
+    "page": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+    "explain": false,
+    "fanout_namespaces": [
+     "team",
+     "alice"
+    ]
+   }
+  }
+ ],
+ "tags_recipe_page": [
+  {
+   "result": {
+    "content": [
+     {
+      "type": "text",
+      "text": "loom_search 'q': 2 memory, 1 profile, 1 knowledge, 2 conversation hits.\n\nProfile hits:\n  - [home_city] (ns=alice) Lives in Berlin\n\nHow to read the memories below: You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below.\n\nMemory hits (2 of 38; next_page serves the rest):\n[2026-09-18 18:42] [fav_place] (semantic) \"mountain\" (#fav_place)\n\nKnowledge hits:\n  - [loom://runbooks/freeze] The freeze starts two days before the cut.\n\nConversation hits:\n  - [thread=4ab6 2026-07-14 11:07:12] which location are you on?\n  - [thread=9c01 2026-07-15 08:00:00] the other thread"
+     }
+    ],
+    "isError": false,
+    "structuredContent": {
+     "memory": {
+      "results": [
+       {
+        "memory_key": "fav_place",
+        "memory_type": "semantic",
+        "content_excerpt": "\"mountain\" (#fav_place)",
+        "rank_score": 0.552,
+        "source": "fact",
+        "created_at": "2026-09-18 18:42:33"
+       },
+       {
+        "memory_key": "chunk:c955:0",
+        "memory_type": "episodic",
+        "content_excerpt": "[user @ 2026-09-18 18:42] [tool_use] tool=mcp__plugin_loom_loom__loom_search ...",
+        "rank_score": 0.446,
+        "source": "chunk"
+       }
+      ],
+      "namespaces_searched": [
+       "alice"
+      ],
+      "next_page": "page/e533e035bf78456a6d5d@0",
+      "abstain": false,
+      "retrieval_confidence": 0.597,
+      "retrieval_risk": "medium"
+     },
+     "knowledge": {
+      "results": [
+       {
+        "source_uri": "loom://runbooks/freeze",
+        "content_excerpt": "The freeze starts two days\nbefore the cut.",
+        "namespace": "team",
+        "similarity": 0.52,
+        "section": "Release > Freeze"
+       }
+      ]
+     },
+     "profile": {
+      "results": [
+       {
+        "label": "home_city",
+        "value": "Lives in\nBerlin",
+        "namespace": "alice",
+        "score": 0.7
+       }
+      ]
+     },
+     "conversations": {
+      "results": [
+       {
+        "thread_id": "4ab6",
+        "role": "user",
+        "content": "which location\nare you on?",
+        "ts": "2026-07-14 11:07:12"
+       },
+       {
+        "thread_id": "9c01",
+        "content_excerpt": "the other thread",
+        "created_at": "2026-07-15 08:00:00",
+        "namespace": "team"
+       }
+      ]
+     }
+    }
+   },
+   "asked": {
+    "org": "acme",
+    "namespace": "alice",
+    "query": "q",
+    "top_k": 5,
+    "tags": [
+     "a"
+    ],
+    "namespace_scope": "all_mine",
+    "recipe": "fast",
+    "bodies": "excerpt",
+    "page": "h",
+    "explain": false,
+    "fanout_namespaces": [
+     "team",
+     "alice"
+    ]
+   }
+  }
+ ],
+ "tracker_verdict_and_withheld": [
+  {
+   "result": {
+    "content": [
+     {
+      "type": "text",
+      "text": "tracker record (qa-acme): this looks ALREADY REPORTED \u2014 the same defect (1):\n  - #101 Crash in merge https://x/101\n\nloom_search 'crash in merge': 2 memory, 1 profile, 1 knowledge, 2 conversation hits. Withheld 2 memory, 1 conversations hit(s): the tracker verdict answers (explain=true shows them).\n\nProfile hits:\n  - [home_city] (ns=alice) Lives in Berlin\n\nHow to read the memories below: You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below.\n\nMemory hits (2 of 38; next_page serves the rest):\n[2026-09-18 18:42] [fav_place] (semantic) \"mountain\" (#fav_place)\n\nKnowledge hits:\n  - [loom://runbooks/freeze] The freeze starts two days before the cut.\n\nConversation hits:\n  - [thread=4ab6 2026-07-14 11:07:12] which location are you on?\n  - [thread=9c01 2026-07-15 08:00:00] the other thread"
+     }
+    ],
+    "isError": false,
+    "structuredContent": {
+     "tracker": {
+      "verdict": "duplicate_of",
+      "namespaces": [
+       "qa-acme"
+      ],
+      "results": [
+       {
+        "number": 101,
+        "title": "Crash in merge",
+        "url": "https://x/101",
+        "score": 0.9
+       }
+      ]
+     },
+     "memory": {
+      "results": [
+       {
+        "memory_key": "fav_place",
+        "memory_type": "semantic",
+        "content_excerpt": "\"mountain\" (#fav_place)",
+        "rank_score": 0.552,
+        "source": "fact",
+        "created_at": "2026-09-18 18:42:33"
+       },
+       {
+        "memory_key": "chunk:c955:0",
+        "memory_type": "episodic",
+        "content_excerpt": "[user @ 2026-09-18 18:42] [tool_use] tool=mcp__plugin_loom_loom__loom_search ...",
+        "rank_score": 0.446,
+        "source": "chunk"
+       }
+      ],
+      "namespaces_searched": [
+       "alice"
+      ],
+      "next_page": "page/e533e035bf78456a6d5d@0",
+      "abstain": false,
+      "retrieval_confidence": 0.597,
+      "retrieval_risk": "medium"
+     },
+     "knowledge": {
+      "results": [
+       {
+        "source_uri": "loom://runbooks/freeze",
+        "content_excerpt": "The freeze starts two days\nbefore the cut.",
+        "namespace": "team",
+        "similarity": 0.52,
+        "section": "Release > Freeze"
+       }
+      ]
+     },
+     "profile": {
+      "results": [
+       {
+        "label": "home_city",
+        "value": "Lives in\nBerlin",
+        "namespace": "alice",
+        "score": 0.7
+       }
+      ]
+     },
+     "conversations": {
+      "results": [
+       {
+        "thread_id": "4ab6",
+        "role": "user",
+        "content": "which location\nare you on?",
+        "ts": "2026-07-14 11:07:12"
+       },
+       {
+        "thread_id": "9c01",
+        "content_excerpt": "the other thread",
+        "created_at": "2026-07-15 08:00:00",
+        "namespace": "team"
+       }
+      ]
+     },
+     "withheld": {
+      "memory": 2,
+      "conversations": 1,
+      "reason": "tracker_verdict_leads"
+     }
+    }
+   },
+   "asked": {
+    "org": "acme",
+    "namespace": "alice",
+    "query": "crash in merge",
+    "top_k": 5,
+    "tags": [],
+    "namespace_scope": "all_mine",
+    "recipe": "",
+    "bodies": "excerpt",
+    "page": "",
+    "explain": false,
+    "fanout_namespaces": [
+     "team",
+     "alice"
+    ]
+   }
+  }
+ ],
+ "nothing_found": [
+  {
+   "result": {
+    "content": [
+     {
+      "type": "text",
+      "text": "loom_search 'q': 0 memory, 0 profile, 0 knowledge, 0 conversation hits."
+     }
+    ],
+    "isError": false,
+    "structuredContent": {
+     "memory": {
+      "results": []
+     },
+     "knowledge": {
+      "results": []
+     },
+     "profile": {
+      "results": []
+     },
+     "conversations": {
+      "results": []
+     }
+    }
+   },
+   "asked": {
+    "org": "acme",
+    "namespace": "alice",
+    "query": "q",
+    "top_k": 5,
+    "tags": [],
+    "namespace_scope": "all_mine",
+    "recipe": "",
+    "bodies": "excerpt",
+    "page": "",
+    "explain": false,
+    "fanout_namespaces": [
+     "team",
+     "alice"
+    ]
+   }
+  }
+ ],
+ "failed_legs": [
+  {
+   "result": {
+    "content": [
+     {
+      "type": "text",
+      "text": "loom_search 'q': 2 memory, 1 profile, 0 knowledge, 0 conversation hits.\n\nProfile hits:\n  - [home_city] (ns=alice) Lives in Berlin\n\nHow to read the memories below: You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below. You answer a question using ONLY the stored memories provided below.\n\nMemory hits (2 of 38; next_page serves the rest):\n[2026-09-18 18:42] [fav_place] (semantic) \"mountain\" (#fav_place)"
+     }
+    ],
+    "isError": false,
+    "structuredContent": {
+     "memory": {
+      "results": [
+       {
+        "memory_key": "fav_place",
+        "memory_type": "semantic",
+        "content_excerpt": "\"mountain\" (#fav_place)",
+        "rank_score": 0.552,
+        "source": "fact",
+        "created_at": "2026-09-18 18:42:33"
+       },
+       {
+        "memory_key": "chunk:c955:0",
+        "memory_type": "episodic",
+        "content_excerpt": "[user @ 2026-09-18 18:42] [tool_use] tool=mcp__plugin_loom_loom__loom_search ...",
+        "rank_score": 0.446,
+        "source": "chunk"
+       }
+      ],
+      "namespaces_searched": [
+       "alice"
+      ],
+      "next_page": "page/e533e035bf78456a6d5d@0",
+      "abstain": false,
+      "retrieval_confidence": 0.597,
+      "retrieval_risk": "medium"
+     },
+     "knowledge": {
+      "error": "knowledge leg timed out",
+      "results": []
+     },
+     "profile": {
+      "results": [
+       {
+        "label": "home_city",
+        "value": "Lives in\nBerlin",
+        "namespace": "alice",
+        "score": 0.7
+       }
+      ]
+     },
+     "conversations": {
+      "error": "boom",
+      "results": []
+     }
+    }
+   },
+   "asked": {
+    "org": "acme",
+    "namespace": "alice",
+    "query": "q",
+    "top_k": 5,
+    "tags": [],
+    "namespace_scope": "all_mine",
+    "recipe": "",
+    "bodies": "excerpt",
+    "page": "",
+    "explain": false,
+    "fanout_namespaces": [
+     "team",
+     "alice"
+    ]
+   }
+  }
+ ],
+ "plain_hit_lines_without_a_block": [
+  {
+   "result": {
+    "content": [
+     {
+      "type": "text",
+      "text": "loom_search 'q': 2 memory, 1 profile, 1 knowledge, 2 conversation hits.\n\nProfile hits:\n  - [home_city] (ns=alice) Lives in Berlin\n\nMemory hits:\n  - [fav_place] (ns=alice) \"mountain\" (#fav_place) (fact hit from namespace alice; similarity=0.58; rank_score=0.55; mode=semantic)\n  - [chunk:c955:0] (ns=alice) [user @ 2026-09-18 18:42] [tool_use] tool=mcp__plugin_loom_loom__loom_search ... (chunk hit)\n\nKnowledge hits:\n  - [loom://runbooks/freeze] The freeze starts two days before the cut.\n\nConversation hits:\n  - [thread=4ab6 2026-07-14 11:07:12] which location are you on?\n  - [thread=9c01 2026-07-15 08:00:00] the other thread"
+     }
+    ],
+    "isError": false,
+    "structuredContent": {
+     "memory": {
+      "results": [
+       {
+        "memory_key": "fav_place",
+        "memory_type": "semantic",
+        "content_excerpt": "\"mountain\" (#fav_place)",
+        "rank_score": 0.552,
+        "source": "fact",
+        "created_at": "2026-09-18 18:42:33"
+       },
+       {
+        "memory_key": "chunk:c955:0",
+        "memory_type": "episodic",
+        "content_excerpt": "[user @ 2026-09-18 18:42] [tool_use] tool=mcp__plugin_loom_loom__loom_search ...",
+        "rank_score": 0.446,
+        "source": "chunk"
+       }
+      ],
+      "namespaces_searched": [
+       "alice"
+      ],
+      "next_page": "page/e533e035bf78456a6d5d@0",
+      "abstain": false,
+      "retrieval_confidence": 0.597,
+      "retrieval_risk": "medium"
+     },
+     "knowledge": {
+      "results": [
+       {
+        "source_uri": "loom://runbooks/freeze",
+        "content_excerpt": "The freeze starts two days\nbefore the cut.",
+        "namespace": "team",
+        "similarity": 0.52,
+        "section": "Release > Freeze"
+       }
+      ]
+     },
+     "profile": {
+      "results": [
+       {
+        "label": "home_city",
+        "value": "Lives in\nBerlin",
+        "namespace": "alice",
+        "score": 0.7
+       }
+      ]
+     },
+     "conversations": {
+      "results": [
+       {
+        "thread_id": "4ab6",
+        "role": "user",
+        "content": "which location\nare you on?",
+        "ts": "2026-07-14 11:07:12"
+       },
+       {
+        "thread_id": "9c01",
+        "content_excerpt": "the other thread",
+        "created_at": "2026-07-15 08:00:00",
+        "namespace": "team"
+       }
+      ]
+     }
+    }
+   },
+   "asked": {
+    "org": "acme",
+    "namespace": "alice",
+    "query": "q",
+    "top_k": 5,
+    "tags": [],
+    "namespace_scope": "all_mine",
+    "recipe": "",
+    "bodies": "excerpt",
+    "page": "",
+    "explain": false,
+    "fanout_namespaces": [
+     "team",
+     "alice"
+    ]
+   }
+  }
+ ]
+}

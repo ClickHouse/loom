@@ -1,0 +1,578 @@
+"""Unit-suite fixtures: process state a test changes is state it puts back.
+
+The unit job runs under pytest-randomly, so every test must
+be able to run after any other. Two kinds of process-global state leaked
+under file order and only showed up once the order moved: attributes set
+directly on `server.settings.settings`, and the auth principal left in
+`current_auth_var` by a sync test. The fixtures here make the rule
+mechanical: change settings through `settings_override` (or
+`monkeypatch.setattr(settings, ...)`), and the autouse guards fail the test
+that leaves either behind, naming what drifted.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import ipaddress
+import logging
+import os
+import socket
+import sys
+import threading
+import time
+from collections.abc import Callable, Iterator
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+# The unit suite runs as CI does: no dotenv, no LOOM_* or provider keys from
+# the developer's shell. Set before `server.settings` builds its singleton.
+# LOOM_UPDATE_* are the snapshot tests' regenerate switches, not settings.
+_TEST_SWITCH_PREFIX = "LOOM_UPDATE_"
+for _name in [
+    n for n in os.environ if n.startswith("LOOM_") and not n.startswith(_TEST_SWITCH_PREFIX)
+] + [
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+]:
+    os.environ.pop(_name, None)
+os.environ["LOOM_ENV_FILE"] = ""
+
+from server.auth.context import current_auth_var  # noqa: E402
+from server.code.app import common as code_common  # noqa: E402
+from server.settings import settings  # noqa: E402
+
+_REPO = Path(__file__).resolve().parents[2]
+
+
+@pytest.fixture
+def stub_model_command(monkeypatch):
+    """Isolate native CLI business/connection tests from provider policy/CH.
+
+    The real admission lifecycle is tested separately in test_provider_command.
+    These tests deliberately supply clients without configuration tables.
+    """
+    from server.insights.app import provider_command
+
+    @asynccontextmanager
+    async def command():
+        yield
+
+    monkeypatch.setattr(provider_command, "model_command", command)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _load_repo_dotenv() -> None:
+    """Shadows the integration suite's fixture of the same name: a unit test
+    never reads the repo's `.env`."""
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _seed_test_api_key() -> None:
+    """Shadows the integration suite's fixture of the same name: no unit test
+    runs with a minted wildcard-org `LOOM_API_KEY` in its environment."""
+
+
+@pytest.fixture
+def settings_override() -> Iterator[Callable[..., None]]:
+    """Set `settings.<field> = value` for one test and restore on teardown.
+
+        def test_x(settings_override):
+            settings_override(memory_search_min_similarity=0.3)
+
+    Unknown field names are refused so a renamed setting fails loudly here
+    rather than silently testing nothing.
+    """
+    saved: dict[str, Any] = {}
+
+    def _override(**values: Any) -> None:
+        for name, value in values.items():
+            if name not in type(settings).model_fields:
+                raise AttributeError(f"settings has no field {name!r}")
+            if name not in saved:
+                saved[name] = getattr(settings, name)
+            setattr(settings, name, value)
+
+    yield _override
+    for name, value in saved.items():
+        setattr(settings, name, value)
+
+
+@pytest.fixture(autouse=True)
+def _settings_left_as_found() -> Iterator[None]:
+    """Fail a test that leaves a settings field changed.
+
+    Snapshot + compare is ~0.04 ms per test (841 fields). Fixture teardown
+    runs after `monkeypatch` and `settings_override` have restored theirs, so
+    only a bare `settings.x = ...` with no restore trips it. The drift is put
+    back before failing so one leak does not cascade into the tests after it.
+    """
+    before = dict(settings.__dict__)
+    yield
+    after = settings.__dict__
+    drifted = sorted(k for k in before if k in after and after[k] != before[k])
+    for k in drifted:
+        setattr(settings, k, before[k])
+    if drifted:
+        pytest.fail(
+            "test left settings changed: "
+            + ", ".join(drifted)
+            + " — use the settings_override fixture or monkeypatch.setattr(settings, ...)"
+        )
+
+
+# Test files whose own code leaks process state today. Their leak is still put
+# back after each test, but the test does not fail. Delete a line once the
+# file restores what it changes.
+_KNOWN_PROCESS_STATE_LEAKS: frozenset[str] = frozenset()
+# pytest rewrites this for every phase; it is not a test's state.
+_PYTEST_ENV = frozenset({"PYTEST_CURRENT_TEST"})
+# The session loop's default executor threads outlive every test by design.
+_LOOP_THREAD_PREFIX = "asyncio_"
+_THREAD_JOIN_SECONDS = 2.0
+
+
+def _restore_env(before: dict[str, str]) -> list[str]:
+    changed = sorted(
+        k
+        for k in (before.keys() | os.environ.keys()) - _PYTEST_ENV
+        if before.get(k) != os.environ.get(k)
+    )
+    for k in changed:
+        if k in before:
+            os.environ[k] = before[k]
+        else:
+            os.environ.pop(k, None)
+    return changed
+
+
+def _reset_root_logger(level: int, handlers: list[logging.Handler], latch: bool) -> None:
+    """Put back the root logger and the CLI's logging latch.
+
+    `server.cli.code_run._setup_cli_logging` configures the root logger once per
+    process (a stderr handler, level INFO) behind a latch. That is product
+    behaviour a CLI test triggers, not a leak to fail, but a configured root
+    logger would follow every later test. The reset lets the next CLI test
+    configure logging against its own stderr."""
+    root = logging.getLogger()
+    root.handlers[:] = handlers
+    root.setLevel(level)
+    cli = sys.modules.get("server.cli.code_run")
+    if cli is not None:
+        cli._LOGGING_CONFIGURED = latch
+
+
+def _leaked_threads(before: set[threading.Thread]) -> list[str]:
+    """Non-daemon threads the test started that are still running after a
+    bounded join. Daemon threads die with the process; the session loop's
+    executor threads are shared by design."""
+    leaked = [
+        t
+        for t in threading.enumerate()
+        if t not in before and not t.daemon and not t.name.startswith(_LOOP_THREAD_PREFIX)
+    ]
+    deadline = time.monotonic() + _THREAD_JOIN_SECONDS
+    for t in leaked:
+        t.join(timeout=max(0.0, deadline - time.monotonic()))
+    return [t.name for t in leaked if t.is_alive()]
+
+
+# Unit tests never reach the network. A connect to a non-loopback address, or a
+# name lookup of anything but a local name, is refused and recorded, and the
+# test fails at teardown naming the host: the code under test may swallow the
+# refusal (as "tracker unavailable", say), so the raise alone proves nothing.
+_LOCAL_NAMES = frozenset({"", "localhost", "localhost.localdomain", "testserver", "test"})
+_network_attempts: list[str] = []
+_real_connect = socket.socket.connect
+_real_connect_ex = socket.socket.connect_ex
+_real_getaddrinfo = socket.getaddrinfo
+
+
+def _is_local(host: object) -> bool:
+    if not isinstance(host, str) or host in _LOCAL_NAMES:
+        return True
+    try:
+        addr = ipaddress.ip_address(host.split("%", 1)[0])
+    except ValueError:
+        return False
+    return addr.is_loopback or addr.is_unspecified
+
+
+def _refuse_remote(sock: socket.socket, address: Any) -> None:
+    if sock.family == getattr(socket, "AF_UNIX", None):
+        return
+    host = address[0] if isinstance(address, tuple) else address
+    if not _is_local(host):
+        _network_attempts.append(f"connect {host}")
+        raise OSError(f"unit tests may not reach the network (connect {host})")
+
+
+def _guarded_connect(self: socket.socket, address: Any) -> None:
+    _refuse_remote(self, address)
+    _real_connect(self, address)
+
+
+def _guarded_connect_ex(self: socket.socket, address: Any) -> int:
+    _refuse_remote(self, address)
+    return _real_connect_ex(self, address)
+
+
+def _guarded_getaddrinfo(host: Any, *args: Any, **kwargs: Any) -> Any:
+    name = host.decode() if isinstance(host, bytes) else host
+    if not _is_local(name):
+        _network_attempts.append(f"resolve {name}")
+        raise socket.gaierror(socket.EAI_NONAME, f"unit tests may not resolve {name}")
+    return _real_getaddrinfo(host, *args, **kwargs)
+
+
+socket.socket.connect = _guarded_connect  # type: ignore[method-assign]
+socket.socket.connect_ex = _guarded_connect_ex  # type: ignore[method-assign]
+socket.getaddrinfo = _guarded_getaddrinfo
+
+
+@pytest.fixture(autouse=True)
+def _network_left_untouched() -> Iterator[None]:
+    """Fail a test that tried to connect to or resolve a remote host."""
+    _network_attempts.clear()
+    yield
+    if _network_attempts:
+        tried = sorted(set(_network_attempts))
+        _network_attempts.clear()
+        pytest.fail("test tried to reach the network: " + ", ".join(tried))
+
+
+@pytest.fixture(autouse=True)
+def _process_state_left_as_found(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Fail a test that leaves the environment, the working directory,
+    `logging.disable` or a running non-daemon thread behind. Use
+    `monkeypatch.setenv/delenv/chdir` and join what you start. The drift is put
+    back first, so one leak does not cascade into later tests. The root logger
+    is reset without failing (see `_reset_root_logger`).
+
+    `sys.path` is not checked: bench modules insert their directory when first
+    imported, which would blame whichever test imported them first.
+    """
+    env = dict(os.environ)
+    cwd = os.getcwd()
+    root = logging.getLogger()
+    cli = sys.modules.get("server.cli.code_run")
+    log_state = (root.level, list(root.handlers), bool(cli and cli._LOGGING_CONFIGURED))
+    disabled = logging.root.manager.disable
+    threads = set(threading.enumerate())
+    yield
+    _reset_root_logger(*log_state)
+    drift = []
+    changed_env = _restore_env(env)
+    if changed_env:
+        drift.append("environment " + ", ".join(changed_env))
+    if os.getcwd() != cwd:
+        drift.append(f"working directory {os.getcwd()}")
+        os.chdir(cwd)
+    if logging.root.manager.disable != disabled:
+        drift.append(f"logging.disable({logging.root.manager.disable})")
+        logging.disable(disabled)
+    alive = _leaked_threads(threads)
+    if alive:
+        drift.append("running threads " + ", ".join(alive))
+    if drift and request.node.path.relative_to(_REPO).as_posix() not in _KNOWN_PROCESS_STATE_LEAKS:
+        pytest.fail("test left process state changed: " + "; ".join(drift))
+
+
+def _is_test_double(obj: object) -> bool:
+    """A client a test built: a class defined under tests/, or a mock."""
+    module = type(obj).__module__
+    return module.startswith(("tests.", "unittest.mock")) or module.startswith("test_")
+
+
+@pytest.fixture(autouse=True)
+def _provider_clients_left_as_found() -> Iterator[None]:
+    """Put back the LLM and embedder singletons, and empty the embedding cache,
+    after every test. Fail a test that left its own fake cached.
+
+    `get_llm_client()` and `get_embedder()` cache one client per process. A test
+    that assigns a fake to the cache instead of patching the getter serves that
+    fake to every later test, and the embedding LRU would answer a later test's
+    texts with vectors an earlier test's embedder produced. A client the
+    getter built is product state and is dropped quietly; a test double left
+    behind fails the test that left it.
+    """
+    from server.embedding import _cache as embed_cache
+    from server.embedding import embedder
+    from server.llm import client as llm_client
+
+    llm_before = (
+        llm_client._cached,
+        dict(llm_client._override_cache),
+        dict(llm_client._wrapped_cache),
+    )
+    emb_before = (embedder._cached, dict(embedder._secondary))
+    yield
+    left = [
+        name
+        for name, now, before in (
+            ("server.llm.client._cached", llm_client._cached, llm_before[0]),
+            ("server.embedding.embedder._cached", embedder._cached, emb_before[0]),
+        )
+        if now is not before and _is_test_double(now)
+    ]
+    llm_client._cached = llm_before[0]
+    llm_client._override_cache = llm_before[1]
+    llm_client._wrapped_cache = llm_before[2]
+    embedder._cached = emb_before[0]
+    embedder._secondary.clear()
+    embedder._secondary.update(emb_before[1])
+    embed_cache._cache._store.clear()
+    embed_cache._INFLIGHT.clear()
+    if left:
+        pytest.fail(
+            "test left a test double in a provider cache: "
+            + ", ".join(left)
+            + " — patch get_llm_client / get_embedder with monkeypatch instead"
+        )
+
+
+@pytest.fixture(autouse=True)
+def _code_caches_cold() -> Iterator[None]:
+    """Every code-plane process cache (`server.code.app.ttl_cache.TtlCache`) empty before
+    and after each test: a cache a test filled from one fake repo would answer the next
+    test's reads (the ErrorCodes table of a citation, a namespace's probe verdicts, a
+    repository map), an order-dependent failure."""
+    from server.code.app.ttl_cache import clear_all
+
+    clear_all()
+    yield
+    clear_all()
+
+
+@pytest.fixture(autouse=True)
+def _corpus_stats_cache_left_empty() -> Iterator[None]:
+    """The code-search corpus-statistics cache is module state behind a TTL
+    (`code_index.corpus_stats`, keyed by org/namespace/term). Eighteen unit
+    files count the `code_corpus_stats` reads their fake repos serve; a
+    cache warmed by one would answer the next test's tokens without a read.
+    Empty before and after every test."""
+    from server.code.app.index import corpus_stats
+
+    corpus_stats.reset_for_tests()
+    yield
+    corpus_stats.reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def _auth_context_left_as_found() -> Iterator[None]:
+    """Fail a test that leaves a principal in `current_auth_var`.
+
+    A sync test calling `set_current_auth(...)` writes the main thread's
+    context, which every later test inherits: `_actor()` in the lock handler
+    then reports that principal instead of the requested one. The value is
+    reset before failing so the leak stops at the test that caused it.
+    """
+    token = current_auth_var.set(None)
+    yield
+    leaked = current_auth_var.get()
+    current_auth_var.reset(token)
+    if leaked is not None:
+        pytest.fail(
+            f"test left current_auth_var set to {leaked.subject!r}@{leaked.org!r}: "
+            "reset it with set_current_auth(None) in a finally or a fixture"
+        )
+
+
+@pytest.fixture(autouse=True)
+def _query_tag_left_as_found() -> Iterator[None]:
+    """Restore `ch.query_tag_var` after every test.
+
+    A sync test that runs a worker pass calls `set_worker_identity`, which tags
+    the main thread's context `worker.<name>`; every later test inherits it, and
+    the CLI-dispatch test that checks the tag it restores sees the leak (seen
+    under random order in CI). A tag is attribution only, so it is reset here
+    rather than failing the leaking test.
+    """
+    from server.core.ch import query_tag_var
+
+    token = query_tag_var.set("")
+    yield
+    query_tag_var.reset(token)
+
+
+@pytest.fixture(autouse=True)
+def _trace_tasks_left_as_found() -> Iterator[None]:
+    """Drain `code_common._TRACE_TASKS` after every test.
+
+    The set holds the fire-and-forget `code_search_trace` writes of the
+    running loop. A test that schedules one inside `asyncio.run()` and does
+    not await it leaves a task bound to a loop that is now closed; the next
+    test to `gather(*_TRACE_TASKS)` on its own loop then fails with "The future
+    belongs to a different loop" — seen under pytest-randomly seed
+    349018290131. `schedule_code_trace` prunes such tasks itself; this keeps a
+    test that only reads the set from inheriting another test's leftovers.
+    """
+    yield
+    code_common._TRACE_TASKS.clear()
+
+
+@pytest.fixture(autouse=True)
+def _deferred_ledgers_left_empty() -> Iterator[None]:
+    """Stop a test's deferred ledger flushes from landing in a later test.
+
+    Two write paths buffer rows and flush them from the loop later: the
+    usage-event ledger (`memory_repo_usage`, a detached task every 0.5 s)
+    and the drops ledger (`memory.app.drops`, a `call_later` timer). Both
+    resolve the client at fire time through `server.core.ch.get_client`, and the
+    unit suite runs on a session loop, so a `memory.outcome` recorded in one
+    test would flush a `memory_usage_events` row into the fake client of
+    whatever test held the loop half a second later. Each test leaves both
+    buffers empty and the usage flusher stopped;
+    the drops timer that may still fire finds an empty buffer and writes
+    nothing.
+    """
+    yield
+    from server.memory.app import drops
+    from server.memory.store import usage as memory_repo_usage
+
+    memory_repo_usage._reset_for_tests()
+    drops._reset_for_tests()
+    # The write-marks buffer arms a `call_later` timer on the
+    # session loop; leave it disarmed and empty for the next test.
+    from server.core import namespace_write_marks
+
+    namespace_write_marks._reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def _identity_caches_left_cold() -> Iterator[None]:
+    """Leave the search plane's per-namespace caches empty after every test.
+
+    `memory_search._KEY_AXIS_AUTO` remembers the key-axis decision per
+    (org, namespace) for ten minutes, and `_SUMMARY_ENTITY_CACHE` the summary
+    vocabulary per (org, namespaces) for one minute. A cold entry costs the
+    search one extra `query_all` (the probe), which in a stub client with a
+    queued list of returns shifts every later read by one, so whether a test
+    ran cold would depend on the order. Every test starts cold, so a test
+    that wants no probe says so
+    (`memory_search_key_axis="off"` or `key_axis=` on the query) instead of
+    inheriting a neighbour's decision.
+    """
+    yield
+    from server.memory.app.retrieval import key_axis, summaries
+
+    key_axis._KEY_AXIS_AUTO.clear()
+    summaries._SUMMARY_ENTITY_CACHE.clear()
+
+
+@pytest.fixture(autouse=True)
+async def _tasks_left_as_found() -> Any:
+    """Cancel the tasks a test started on the session loop and left pending.
+
+    The unit suite runs every async test on one session loop, so a task a
+    test creates and never awaits keeps running into the tests after it —
+    and resolves `server.core.ch.get_client()` at that moment, which is then the
+    NEXT test's fake client. `memory.ask` starts its knowledge lookup as a
+    task at the top of the call and awaits it only on the synthesis path;
+    an ask that abstains could leave the lookup pending, and its knowledge-chunk
+    SELECT would land in a later test's statement-counting fake. The ask
+    cancels the task on its early returns; this guard is the general rule:
+    whatever a test leaves pending is cancelled and drained before the next
+    test, so a leak stops at the test that caused it instead of failing a
+    bystander. Tasks that existed before the test (session fixtures'
+    servers, the loop's own) are left alone.
+    """
+    before = set(asyncio.all_tasks())
+    yield
+    current = asyncio.current_task()
+    leaked = [t for t in asyncio.all_tasks() - before if t is not current and not t.done()]
+    for t in leaked:
+        t.cancel()
+    if leaked:
+        await asyncio.gather(*leaked, return_exceptions=True)
+
+
+@pytest.fixture(autouse=True)
+def _tracker_contract_not_enforced() -> Iterator[None]:
+    """Before the first tracker read of a process the source's
+    schema is compared with the record contract through the source's own
+    credential. Unit tests fake the upstream one statement at a time, so the
+    gate is off here unless a test turns it on (with monkeypatch); its cache
+    is empty before and after every test."""
+    from server.tracker.app import contract
+    from server.tracker.store.source import contract_reports as reports
+
+    contract._enforce = False
+    reports.reset_for_tests()
+    yield
+    contract._enforce = True
+    reports.reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def _vector_read_state_not_probed() -> Iterator[None]:
+    """`CHClient.connect()` probes the vector read state
+    (replica check, coded columns, patch parts). Unit clients are fakes, so
+    the connect probe is replaced by a no-op here and the module state starts
+    and ends empty — a test that wants a reading sets it
+    (`vector_codes_state.set_coded`, `patch_parts.set_reading`). Set by hand
+    for the reason given above."""
+    from server.core import ch as ch_mod
+    from server.core.vectors import codes_state as vector_codes_state
+    from server.core.vectors import patch_parts
+
+    async def _not_probed(_client: Any) -> None:
+        return None
+
+    before = ch_mod._probe_vector_state
+    ch_mod._probe_vector_state = _not_probed  # type: ignore[assignment]
+    vector_codes_state.reset()
+    patch_parts.reset()
+    yield
+    ch_mod._probe_vector_state = before  # type: ignore[assignment]
+    vector_codes_state.reset()
+    patch_parts.reset()
+
+
+@pytest.fixture(autouse=True)
+def _revocation_snapshot_loaded() -> Iterator[None]:
+    """A unit test models a booted process: the revocation snapshot has been
+    read (and is empty). Tests of the not-yet-loaded state
+    set `_loaded` back to False. Saved and restored by hand, not through
+    `monkeypatch`: requesting it here would set it up before
+    `_settings_left_as_found` and so tear it down after that check."""
+    import server.auth.revocation as rev
+
+    saved = rev._loaded
+    rev._loaded = True
+    yield
+    rev._loaded = saved
+
+
+# The scalar repository the code-plane fixtures model, with its repository-shaped
+# settings (prefixes, release-branch globs, positive controls). The settings configure
+# none by default, so a test that reads the scalar entry, the default code namespace or
+# the repository's own prefixes and controls requests `scalar_code_repo`.
+SCALAR_CODE_REPO: dict[str, Any] = {
+    "code_org": "clickhouse",
+    "code_namespace": "code-clickhouse",
+    "code_repo": "ClickHouse/ClickHouse",
+    "code_git_dir": "var/code_repos/clickhouse.git",
+    "code_git_remote": "https://github.com/ClickHouse/ClickHouse.git",
+    "code_git_branch": "master",
+    "code_path_prefixes": "src/,base/,programs/,tests/,ci/",
+    "code_git_extra_branches": "2[5-9].*",
+    "code_summary_churn_prefixes": "src/",
+    "code_summary_churn_exclude": "base/,contrib/",
+    "code_search_pr_leg_path_prefixes": "src/",
+    "code_coverage_control_symbol": "arrayJoin",
+    "code_setting_control": "max_threads",
+}
+
+
+@pytest.fixture
+def scalar_code_repo(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """Configure `SCALAR_CODE_REPO` as the deployment's scalar code entry for one
+    test; returns the values set."""
+    for name, value in SCALAR_CODE_REPO.items():
+        monkeypatch.setattr(settings, name, value)
+    return dict(SCALAR_CODE_REPO)

@@ -1,0 +1,82 @@
+// @vitest-environment jsdom
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getModelStatus, resetModelConfiguration, retryModelConfiguration, type ModelStatus } from "../api/models";
+import { ModelsSettings } from "./ModelsSettings";
+
+vi.mock("../api/models", async (original) => ({
+  ...(await original<typeof import("../api/models")>()),
+  getModelStatus: vi.fn(),
+  resetModelConfiguration: vi.fn(),
+  retryModelConfiguration: vi.fn(),
+}));
+
+const status: ModelStatus = {
+  version: "1791195706575122049",
+  source: "dashboard",
+  llm_provider: "openai",
+  llm_model: "gpt-test",
+  embedding_provider: "openai",
+  embedding_model: "text-embedding-test",
+  embedding_dimensions: 3072,
+  configured_keys: { openai: true },
+  requires_setup: false,
+  llm_overrides: {},
+  verification_models: null,
+};
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(getModelStatus).mockResolvedValue(status);
+});
+afterEach(cleanup);
+
+describe("Environment configuration reset", () => {
+  it("confirms intent and sends the exact displayed revision", async () => {
+    vi.mocked(resetModelConfiguration).mockImplementation(async () => {
+      vi.mocked(getModelStatus).mockResolvedValue({ ...status, source: "environment", version: "1791195706575122050" });
+      return { config_id: "reset-id", state: "active" };
+    });
+    render(<ModelsSettings />);
+    fireEvent.click(await screen.findByRole("button", { name: "Use environment configuration" }));
+    expect(resetModelConfiguration).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm environment configuration" }));
+    await waitFor(() => expect(resetModelConfiguration).toHaveBeenCalledWith(status.version));
+    await screen.findByText(/server environment/);
+    expect(screen.queryByRole("button", { name: "Use environment configuration" })).toBeNull();
+  });
+
+  it("does not offer reset during an incomplete embedding rebuild", async () => {
+    vi.mocked(getModelStatus).mockResolvedValue({
+      ...status,
+      pending: { config_id: "pending", state: "rebuilding", error_code: "", progress: {} },
+    });
+    render(<ModelsSettings />);
+    await screen.findByText(/Embedding configuration: rebuilding/);
+    expect(screen.queryByRole("button", { name: "Use environment configuration" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry rebuild" })).toBeNull();
+  });
+
+  it("retries the displayed failed job and refreshes its checkpoint status", async () => {
+    const pending = {
+      config_id: "failed-job",
+      state: "failed",
+      error_code: "rebuild_rebuild_failed",
+      progress: { cursor: 42 },
+    };
+    vi.mocked(getModelStatus).mockResolvedValue({ ...status, pending });
+    vi.mocked(retryModelConfiguration).mockImplementation(async (config_id) => {
+      vi.mocked(getModelStatus).mockResolvedValue({
+        ...status,
+        pending: { ...pending, state: "queued", error_code: "" },
+      });
+      return { config_id, state: "queued" };
+    });
+    render(<ModelsSettings />);
+    fireEvent.click(await screen.findByRole("button", { name: "Retry rebuild" }));
+    await waitFor(() => expect(retryModelConfiguration).toHaveBeenCalledWith("failed-job"));
+    await screen.findByText(/Embedding configuration: queued/);
+    expect(screen.getByText("cursor: 42")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Retry rebuild" })).toBeNull();
+  });
+});

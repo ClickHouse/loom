@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Server-side template hook: the FastAPI /me handler substitutes
+         these globals with per-request values. The defaults below keep
+         `npm run dev` working without the server in the loop. -->
+    <script>
+      window.__LOOM_PROXY_AUTH = window.__LOOM_PROXY_AUTH || false;
+      // `npm run dev` has no server templating the real value in, so default to
+      // showing the sign-up tab rather than hiding a feature that may be on.
+      window.__LOOM_SELF_SIGNUP = window.__LOOM_SELF_SIGNUP ?? true;
+    </script>
+    <link rel="icon" type="image/svg+xml" href="%BASE_URL%favicon.svg" />
+    <title>Loom</title>
+  </head>
+  <body class="text-stone-900 dark:text-stone-100 antialiased">
+    <div id="root"></div>
+    <script type="module" src="./src/main.tsx"></script>
+  </body>
+</html>

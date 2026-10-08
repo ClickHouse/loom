@@ -1,0 +1,451 @@
+name: release
+
+# A `v*` tag push builds and verifies the release files and attaches them to a
+# GitHub Release; nothing leaves GitHub. A manual dispatch on the same tag
+# (`gh workflow run release.yml --ref vX.Y.Z`) runs the same jobs and then
+# publishes the verified SDK files to PyPI and npm. Every tag publishes the
+# server image to ghcr.io before making the GitHub Release visible, so the
+# release's one-line installer never points at an image that does not exist.
+# docs/development/release-process.md is the maintainer procedure.
+#
+# Jobs: version (derive and gate the version) -> build -> verify (inspect the
+# exact files) -> docker -> docker-smoke -> github-release -> pypi, npm (dispatch only). A
+# re-run after a partial publish is safe: the release is updated in place,
+# PyPI skips files it already has, npm skips a version it already has, and the
+# image tags are overwritten with the same build.
+#
+# The PyPI and npm jobs are dispatch-only, so a tag's GitHub Release can be
+# checked before the SDKs reach the registries.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+# One release run per tag at a time; a second run waits instead of cancelling
+# a publish halfway.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "22"
+
+jobs:
+  version:
+    name: Version from the tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.parse.outputs.version }}
+      prerelease: ${{ steps.parse.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # A dispatch from a branch would otherwise take the branch name as the
+      # version and publish it.
+      - name: Parse version from tag
+        id: parse
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          case "$REF" in
+            refs/tags/v*) VERSION="${REF#refs/tags/v}" ;;
+            *) echo "::error::run the release on a v* tag, not $REF"; exit 1 ;;
+          esac
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::$VERSION is not a SemVer X.Y.Z[-pre] version"
+            exit 1
+          fi
+          PRERELEASE=false
+          [[ "$VERSION" == *-* ]] && PRERELEASE=true
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "Releasing v$VERSION (prerelease: $PRERELEASE)"
+      # Each changelog's dated entry is the release gate: a tag whose version
+      # has no entry in the root or either SDK changelog ships nothing.
+      - name: Changelogs name this version
+        env:
+          VERSION: ${{ steps.parse.outputs.version }}
+        run: |
+          for f in CHANGELOG.md sdk/python/CHANGELOG.md sdk/typescript/CHANGELOG.md; do
+            grep -qE "^## \[${VERSION//./\\.}\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" "$f" \
+              || { echo "::error file=$f::no dated entry for $VERSION"; exit 1; }
+          done
+      # The server reports its version from server/__init__.py (= pyproject.toml);
+      # a tag that disagrees would ship an image that names another release.
+      - name: Server version names this tag
+        env:
+          VERSION: ${{ steps.parse.outputs.version }}
+        run: |
+          grep -qxF "__version__ = \"$VERSION\"" server/__init__.py \
+            || { echo "::error file=server/__init__.py::__version__ is not $VERSION"; exit 1; }
+
+  build:
+    name: Build the release files
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      # The SDK sources carry the tag's version, so every published file names it.
+      # check-version.mjs compares package.json, package-lock.json (npm version
+      # rewrites both), src/version.ts and the changelog's top entry.
+      - name: Sync SDK versions to the tag
+        run: |
+          python - <<'PY'
+          import os, pathlib, re
+          version = os.environ["VERSION"]
+          p = pathlib.Path("sdk/python/pyproject.toml")
+          p.write_text(re.sub(r'^version = ".*"$', f'version = "{version}"', p.read_text(), count=1, flags=re.M))
+          v = pathlib.Path("sdk/python/loom/_version.py")
+          v.write_text(re.sub(r'__version__ = ".*"', f'__version__ = "{version}"', v.read_text()))
+          PY
+          cd sdk/typescript
+          npm version --no-git-tag-version --allow-same-version "$VERSION"
+          sed -i "s/export const SDK_VERSION = \".*\";/export const SDK_VERSION = \"$VERSION\";/" src/version.ts
+      - name: Build Python sdist + wheel
+        run: |
+          pip install build==1.6.1
+          python -m build sdk/python --outdir release/python
+      - name: npm ci
+        working-directory: sdk/typescript
+        run: npm ci --no-audit --no-fund
+      # Lint, types, version across sources, README examples and unit tests
+      # gate a registry publish.
+      - name: npm run check (before a registry publish)
+        if: github.event_name == 'workflow_dispatch'
+        working-directory: sdk/typescript
+        run: npm run check
+      # ESM + CJS build, dist tests, publint and arethetypeswrong.
+      - name: Build the npm tarball
+        working-directory: sdk/typescript
+        run: |
+          npm run check:dist
+          mkdir -p ../../release/npm
+          npm pack --pack-destination ../../release/npm
+      - name: Zip the coding-agent plugins
+        run: |
+          mkdir -p release/plugins
+          ( cd integrations && zip -qr "../release/plugins/loom-claude-code-plugin-v${VERSION}.zip" claude-code-plugin -x "claude-code-plugin/tests/*" )
+          ( cd integrations && zip -qr "../release/plugins/loom-codex-plugin-v${VERSION}.zip" codex-plugin )
+          zip -q "release/plugins/loom-claude-code-plugin-v${VERSION}.zip" LICENSE NOTICE THIRD_PARTY_NOTICES
+          zip -q "release/plugins/loom-codex-plugin-v${VERSION}.zip" LICENSE NOTICE THIRD_PARTY_NOTICES
+          ls -la release/*
+      - name: Build the source-free Compose installer bundle
+        run: |
+          python scripts/release/build_stack_bundle.py --version "$VERSION"
+          cp install.sh release/stack/install.sh
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-files
+          path: release/
+          if-no-files-found: error
+
+  verify:
+    name: Verify the release files
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-files
+          path: release
+      # Names, embedded versions and contents of exactly the files that are
+      # attached and published: one wheel and one sdist, one npm tarball, two
+      # plugin zips without tests and with the executable bits git records.
+      - name: Files carry this version and the expected contents
+        run: |
+          pip install packaging==26.3
+          python - <<'PY'
+          import json, os, pathlib, subprocess, sys, tarfile, zipfile
+          from packaging.version import Version
+
+          version = os.environ["VERSION"]
+          pyv = str(Version(version))
+          errors = []
+
+          def names(d):
+              return sorted(p.name for p in pathlib.Path("release", d).iterdir())
+
+          py = names("python")
+          want = [f"clickhouse_loom-{pyv}-py3-none-any.whl", f"clickhouse_loom-{pyv}.tar.gz"]
+          if sorted(py) != sorted(want):
+              errors.append(f"python files {py}, expected {want}")
+          else:
+              with zipfile.ZipFile(f"release/python/{want[0]}") as z:
+                  meta = next(n for n in z.namelist() if n.endswith(".dist-info/METADATA"))
+                  text = z.read(meta).decode()
+                  if f"\nVersion: {pyv}\n" not in text or "\nName: clickhouse-loom\n" not in text:
+                      errors.append("wheel METADATA does not name clickhouse-loom " + pyv)
+
+          npm = names("npm")
+          tgz = f"clickhouse-loom-{version}.tgz"
+          if npm != [tgz]:
+              errors.append(f"npm files {npm}, expected [{tgz}]")
+          else:
+              with tarfile.open(f"release/npm/{tgz}") as t:
+                  pkg = json.load(t.extractfile("package/package.json"))
+                  if (pkg["name"], pkg["version"]) != ("@clickhouse/loom", version):
+                      errors.append(f"npm package.json names {pkg['name']}@{pkg['version']}")
+                  if not any(n.startswith("package/dist/") for n in t.getnames()):
+                      errors.append("npm tarball has no dist/")
+
+          for plugin, manifest, excluded in (
+              ("claude-code-plugin", ".claude-plugin/plugin.json", "tests/"),
+              ("codex-plugin", ".codex-plugin/plugin.json", None),
+          ):
+              path = f"release/plugins/loom-{plugin}-v{version}.zip"
+              if not os.path.exists(path):
+                  errors.append(f"missing {path}")
+                  continue
+              with zipfile.ZipFile(path) as z:
+                  info = {i.filename: i for i in z.infolist()}
+              if f"{plugin}/{manifest}" not in info:
+                  errors.append(f"{path} has no {manifest}")
+              for required_notice in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES"):
+                  if required_notice not in info:
+                      errors.append(f"{path} has no {required_notice}")
+              if excluded and any(n.startswith(f"{plugin}/{excluded}") for n in info):
+                  errors.append(f"{path} ships {excluded}")
+              staged = subprocess.run(
+                  ["git", "ls-files", "-s", f"integrations/{plugin}"],
+                  check=True, capture_output=True, text=True,
+              ).stdout.splitlines()
+              for line in staged:
+                  mode, _, _, name = line.split(maxsplit=3)
+                  entry = info.get(name.removeprefix("integrations/"))
+                  if mode == "100755" and entry and not (entry.external_attr >> 16) & 0o111:
+                      errors.append(f"{entry.filename} lost its executable bit")
+          if len(names("plugins")) != 2:
+              errors.append(f"plugin files {names('plugins')}, expected two zips")
+
+          stack = names("stack")
+          expected_stack = ["install.sh", "loom-stack.tar.gz", "loom-stack.tar.gz.sha256"]
+          if stack != expected_stack:
+              errors.append(f"stack files {stack}, expected {expected_stack}")
+          else:
+              archive = pathlib.Path("release/stack/loom-stack.tar.gz")
+              checksum = pathlib.Path("release/stack/loom-stack.tar.gz.sha256").read_text().split()[0]
+              import hashlib
+              if hashlib.sha256(archive.read_bytes()).hexdigest() != checksum:
+                  errors.append("stack bundle sha256 does not match")
+              with tarfile.open(archive) as t:
+                  required = {
+                      "loom-stack/VERSION",
+                      "loom-stack/LICENSE",
+                      "loom-stack/NOTICE",
+                      "loom-stack/THIRD_PARTY_NOTICES",
+                      "loom-stack/compose.yaml",
+                      "loom-stack/env.example",
+                      "loom-stack/lemmagen3/en.bin",
+                      "loom-stack/lemmagen3/LICENSE",
+                      "loom-stack/lemmagen3/README.md",
+                      "loom-stack/clickhouse-config/named_collections.xml",
+                  }
+                  missing = required - set(t.getnames())
+                  if missing:
+                      errors.append(f"stack bundle is missing {sorted(missing)}")
+                  release_version = t.extractfile("loom-stack/VERSION").read().decode().strip()
+                  if release_version != version:
+                      errors.append(f"stack bundle version {release_version}, expected {version}")
+
+          for e in errors:
+              print(f"::error::{e}")
+          sys.exit(1 if errors else 0)
+          PY
+      # The wheel alone in a clean venv: it imports, talks through a mocked
+      # transport, and ships py.typed and the license.
+      - name: Smoke-test the wheel
+        run: |
+          python -m venv /tmp/sdk-smoke
+          /tmp/sdk-smoke/bin/pip install release/python/*.whl
+          /tmp/sdk-smoke/bin/python scripts/gates/sdk_wheel_smoke.py release/python/*.whl
+
+  docker:
+    name: Docker (ghcr.io/clickhouse/loom)
+    needs: [version, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Log in to ghcr.io
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract image tags
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/clickhouse/loom
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+      - name: Build + push (amd64 + arm64)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  docker-smoke:
+    name: Released quickstart (${{ matrix.arch }})
+    needs: [version, docker]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dashboard browser-test dependencies
+        working-directory: frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: Fresh installer stack, compiler indexing and dashboard provider recovery
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: python3 scripts/gates/docker_quickstart_smoke.py --image "ghcr.io/clickhouse/loom:$VERSION"
+
+  github-release:
+    name: GitHub Release (artifacts attached)
+    needs: [version, verify, docker, docker-smoke]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-files
+          path: release
+      # An existing release for the tag is updated and its files replaced, so
+      # a re-run or the later dispatch leaves the published bytes attached.
+      - name: Create or update the release with notes and files
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true # from the commits since the previous tag
+          draft: false
+          prerelease: ${{ needs.version.outputs.prerelease == 'true' }}
+          overwrite_files: true
+          fail_on_unmatched_files: true
+          files: |
+            release/python/*
+            release/npm/*.tgz
+            release/plugins/*.zip
+            release/stack/*
+
+  pypi:
+    name: PyPI (clickhouse-loom)
+    if: github.event_name == 'workflow_dispatch'
+    needs: github-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: pypi
+      url: https://pypi.org/p/clickhouse-loom
+    permissions:
+      id-token: write # trusted publishing (OIDC)
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-files
+          path: release
+      - name: Publish the verified wheel and sdist (trusted publishing)
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: release/python/
+          skip-existing: true
+
+  npm:
+    name: npm (@clickhouse/loom)
+    if: github.event_name == 'workflow_dispatch'
+    needs: [version, github-release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/@clickhouse/loom
+    permissions:
+      id-token: write # npm provenance; trusted publishing once registered on npmjs.com
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      PRERELEASE: ${{ needs.version.outputs.prerelease }}
+    steps:
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-files
+          path: release
+      # A prerelease goes to the `next` dist-tag so `npm install` keeps the
+      # last stable version.
+      - name: Publish the verified tarball (provenance)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }} # fallback while trusted publishing is not registered
+        run: |
+          if npm view "@clickhouse/loom@$VERSION" version >/dev/null 2>&1; then
+            echo "@clickhouse/loom@$VERSION is already published"
+            exit 0
+          fi
+          TAG=latest
+          [ "$PRERELEASE" = true ] && TAG=next
+          npm publish "release/npm/clickhouse-loom-$VERSION.tgz" --provenance --access public --tag "$TAG"

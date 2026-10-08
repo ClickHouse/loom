@@ -1,0 +1,374 @@
+"""namespace.validate — one read-only conformance report for a namespace.
+
+The integrity gauges in `server/observability/otel_probes.py` tell an OPERATOR that
+something is wrong somewhere in the cluster. Nothing told the AGENT that
+just finished writing whether it left its own namespace consistent. This
+handler is that call: the same class of invariants, scoped to one
+(org, namespace), returned with samples the caller can act on.
+
+Thirteen checks, each an independent query over existing tables. No mutation,
+no new storage. A check that fails to run is reported in `skipped` and the
+rest still return — the report closes a task, it must never fail one.
+
+Severity is fixed per check, not per row:
+
+  error   — a storage invariant is violated (two tables disagree about one
+            fact; a vector with no memory; a memory with no vector past the
+            worker's grace). Readers see different truths depending on which
+            table they hit.
+  warning — a lifecycle state that nothing will resolve on its own (a
+            conflict nobody reviewed, a duplicate whose canonical is gone, a
+            fact whose stated validity has ended but is still active, an
+            attestation the content has outrun).
+  info    — a quality signal (an unsourced, low-confidence row: the agent's
+            own inference stored as if it were observed).
+"""
+
+from __future__ import annotations
+
+import functools
+import logging
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
+from typing import Any
+
+from server.core.ch import get_client
+from server.identity.api.models_namespace_catalog import (
+    NamespaceValidateInput,
+    NamespaceValidateOutput,
+    _NamespaceValidateFinding,
+)
+
+log = logging.getLogger(__name__)
+
+
+# Full tenancy identity. Joining loom.memory to loom.memory_embeddings on
+# anything coarser produces a cross product (the gauge measured 16x
+# inflation on (org, namespace, memory_key) alone).
+_IDENT = "org, namespace, agent, user_id, session_id, memory_key"
+_IDENT_JOIN = (
+    "a.org = b.org AND a.namespace = b.namespace AND a.agent = b.agent "
+    "AND a.user_id = b.user_id AND a.session_id = b.session_id "
+    "AND a.memory_key = b.memory_key"
+)
+
+# Every sample query returns `total` (count() OVER (), computed before LIMIT)
+# alongside up to `lim` sample rows. One round-trip per check.
+# A report scoped to the keys one session wrote. With no keys the predicate is a constant
+# `empty([])` ClickHouse folds away, so the unscoped report costs nothing extra; with keys,
+# `memory_key IN` is a secondary-key filter inside the namespace. Every check that reads
+# loom.memory or loom.memory_embeddings carries it.
+_KEYS = "(empty({keys:Array(String)}) OR memory_key IN {keys:Array(String)})"
+_LIVE = (
+    "FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} "
+    f"AND tombstoned_at IS NULL AND {_KEYS}"
+)
+
+# Time cues a fact's text can carry without the extractor having resolved an
+# event date for it. Deliberately narrow (relative phrases, month names,
+# four-digit years): a broad list would report every "then" as a finding.
+_TIME_CUE_RE = (
+    r"\b(yesterday|tomorrow|tonight|recently|last (week|month|year|weekend|night|"
+    r"monday|tuesday|wednesday|thursday|friday|saturday|sunday)|next (week|month|year)|"
+    r"\d+ (days?|weeks?|months?|years?) ago|(in|since|by|on) (january|february|march|"
+    r"april|may|june|july|august|september|october|november|december)\b|"
+    r"\b(19|20)\d\d)\b"
+)
+
+_CHECKS: dict[str, tuple[str, str, str]] = {
+    # name: (severity, detail, sql)
+    "divergent_entities": (
+        "error",
+        "loom.memory and loom.memory_embeddings disagree about a row's entities; "
+        "the graph leg and the vector leg see different facts. Re-emit the row "
+        "(memory.update_by_id) so both tables carry the same entity list.",
+        f"""
+        SELECT count() OVER () AS total, a.memory_key AS memory_key,
+               a.ents AS memory_entities, b.ents AS embedding_entities
+        FROM (SELECT {_IDENT}, arraySort(entities) AS ents {_LIVE}) AS a
+        INNER JOIN (SELECT {_IDENT}, arraySort(entities) AS ents
+                    FROM loom.memory_embeddings FINAL
+                    WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                      AND tombstoned_at IS NULL AND {_KEYS}) AS b
+          ON {_IDENT_JOIN}
+        WHERE a.ents != b.ents
+        ORDER BY memory_key
+        LIMIT {{lim:UInt32}}
+        """,
+    ),
+    "divergent_status": (
+        "error",
+        "loom.memory and loom.memory_embeddings disagree about a row's status "
+        "under the SAME identity (a fact superseded or conflicted in memory "
+        "but still active in the pool memory.search reads, or the reverse): "
+        "the reader is handed a retired fact as current. Run "
+        "`loom reconcile-status --org … --namespace …` to re-emit the mirror rows, "
+        "or memory.reindex to rebuild the embedding table from loom.memory.",
+        f"""
+        WITH m AS (
+            SELECT {_IDENT}, argMax(status, version) AS ms
+            FROM loom.memory
+            WHERE org = {{org:String}} AND namespace = {{ns:String}} AND tombstoned_at IS NULL
+              AND {_KEYS}
+            GROUP BY {_IDENT}),
+        e AS (
+            SELECT {_IDENT}, argMax(status, version) AS es
+            FROM loom.memory_embeddings
+            WHERE org = {{org:String}} AND namespace = {{ns:String}} AND tombstoned_at IS NULL
+              AND {_KEYS}
+            GROUP BY {_IDENT})
+        SELECT count() OVER () AS total, m.memory_key AS memory_key,
+               m.session_id AS session_id, m.ms AS memory_status,
+               e.es AS embedding_status
+        FROM m INNER JOIN e USING ({_IDENT})
+        WHERE m.ms != e.es
+        ORDER BY memory_key, session_id
+        LIMIT {{lim:UInt32}}
+        """,
+    ),
+    "orphan_vectors": (
+        "error",
+        "A vector whose memory row is gone: search can return a hit that "
+        "resolves to nothing. memory.reindex rebuilds the embedding table "
+        "from loom.memory.",
+        f"""
+        SELECT count() OVER () AS total, a.memory_key AS memory_key,
+               a.created_at AS created_at
+        FROM (SELECT {_IDENT}, created_at FROM loom.memory_embeddings FINAL
+              WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                AND tombstoned_at IS NULL AND embedding_dim > 0 AND {_KEYS}) AS a
+        LEFT ANTI JOIN (SELECT {_IDENT} {_LIVE}) AS b
+          ON {_IDENT_JOIN}
+        ORDER BY memory_key
+        LIMIT {{lim:UInt32}}
+        """,
+    ),
+    "unembedded": (
+        "error",
+        "A live memory with no vector past the embedding worker's grace "
+        "window: it is invisible to semantic search. Check the worker "
+        "(embed_last_error on the embedding row) or call memory.reindex.",
+        f"""
+        SELECT count() OVER () AS total, a.memory_key AS memory_key,
+               dateDiff('second', a.created_at, now()) AS age_seconds
+        FROM (SELECT {_IDENT}, created_at {_LIVE}
+              AND created_at < now() - INTERVAL {{grace:UInt32}} SECOND) AS a
+        LEFT ANTI JOIN (SELECT {_IDENT} FROM loom.memory_embeddings FINAL
+                        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                          AND tombstoned_at IS NULL AND embedding_dim > 0 AND {_KEYS}) AS b
+          ON {_IDENT_JOIN}
+        ORDER BY age_seconds DESC
+        LIMIT {{lim:UInt32}}
+        """,
+    ),
+    "conflicted_aging": (
+        "warning",
+        "A write flagged as semantically colliding with an existing fact, "
+        "still unresolved past conflict_age_seconds. Resolve it with "
+        "conflicts.resolve (keep / replace / allow) or in the /me Review queue.",
+        f"""
+        SELECT count() OVER () AS total, memory_key,
+               dateDiff('day', updated_at, now()) AS age_days,
+               length(conflict_with) AS peers
+        {_LIVE} AND status = 'conflicted'
+          AND updated_at < now() - INTERVAL {{age:UInt32}} SECOND
+        ORDER BY updated_at ASC
+        LIMIT {{lim:UInt32}}
+        """,
+    ),
+    "orphan_duplicates": (
+        "warning",
+        "A row marked duplicate whose canonical is no longer a live active "
+        "memory: it defers to nothing and never surfaces. "
+        "memory.resolve_orphan_duplicates re-activates these.",
+        f"""
+        SELECT count() OVER () AS total, a.memory_key AS memory_key,
+               a.duplicate_of AS duplicate_of
+        FROM (SELECT memory_key, duplicate_of {_LIVE} AND status = 'duplicate') AS a
+        LEFT ANTI JOIN (SELECT toString(memory_id) AS mid {_LIVE}
+                        AND status = 'active') AS b
+          ON a.duplicate_of = b.mid
+        ORDER BY memory_key
+        LIMIT {{lim:UInt32}}
+        """,
+    ),
+    "superseded_dangling": (
+        "warning",
+        "A superseded row whose successor is empty or no longer live: the "
+        "supersession chain is broken and knowledge_time replay cannot follow "
+        "it. memory.restore reactivates the row if the successor is gone for good.",
+        f"""
+        SELECT count() OVER () AS total, a.memory_key AS memory_key,
+               a.superseded_by AS superseded_by
+        FROM (SELECT memory_key, superseded_by {_LIVE} AND status = 'superseded') AS a
+        LEFT ANTI JOIN (SELECT toString(memory_id) AS mid {_LIVE}
+                        AND status = 'active') AS b
+          ON a.superseded_by = b.mid
+        ORDER BY memory_key
+        LIMIT {{lim:UInt32}}
+        """,
+    ),
+    "stale_valid_to": (
+        "warning",
+        "An active fact whose own stated validity (valid_to) has ended. It "
+        "is still ranked as current. Write the successor fact, or tombstone "
+        "it, so as-of reads and live reads agree.",
+        f"""
+        SELECT count() OVER () AS total, memory_key, valid_to,
+               dateDiff('day', valid_to, now()) AS days_past
+        {_LIVE} AND status = 'active' AND valid_to IS NOT NULL AND valid_to < now()
+        ORDER BY valid_to ASC
+        LIMIT {{lim:UInt32}}
+        """,
+    ),
+    "expired_live": (
+        "warning",
+        "A row past its expires_at that has not been tombstoned. The "
+        "retention sweep has not run for this namespace, or it is off.",
+        f"""
+        SELECT count() OVER () AS total, memory_key, expires_at
+        {_LIVE} AND expires_at IS NOT NULL AND expires_at < now()
+        ORDER BY expires_at ASC
+        LIMIT {{lim:UInt32}}
+        """,
+    ),
+    "stale_verification": (
+        "warning",
+        "A row someone attested to (verified_by) whose content has changed since "
+        "— or whose attested hash cannot be matched to the row's stored hash. The "
+        "badge no longer holds. Re-verify the current content with memory.verify, "
+        "or revoke it, so readers stop seeing an attestation that is not live.",
+        f"""
+        SELECT count() OVER () AS total, memory_key, verified_by, verified_at,
+               dateDiff('day', verified_at, now()) AS attested_days_ago
+        {_LIVE} AND verified_by != ''
+          AND (verified_sha256 = '' OR content_sha256 IN ('', '0')
+               OR verified_sha256 != content_sha256)
+        ORDER BY verified_at ASC
+        LIMIT {{lim:UInt32}}
+        """,
+    ),
+    "unsourced_low_confidence": (
+        "info",
+        "A live row below confidence_floor with neither source_trace nor "
+        "source_resource_id: an inference stored with nothing behind it. "
+        "Either attach the source it came from or let it expire.",
+        f"""
+        SELECT count() OVER () AS total, memory_key, confidence, agent
+        {_LIVE} AND status = 'active' AND confidence < {{floor:Float32}}
+          AND source_trace = '' AND source_resource_id = ''
+        ORDER BY confidence ASC, memory_key
+        LIMIT {{lim:UInt32}}
+        """,
+    ),
+    "unanchored_time_cue": (
+        "info",
+        "A live fact whose text carries a time cue ('last week', 'recently', "
+        "'in 2019', a month name) but no resolved event date (temporal_anchor): "
+        "every date read against it — timelines, 'how long' intervals — uses the "
+        "session it was said in, and date reads can only report a bound. "
+        "Re-anchor it: memory.update_by_id with valid_at set to the event date, "
+        "or re-ingest with observation_date so the extractor resolves the cue.",
+        f"""
+        SELECT count() OVER () AS total, memory_key, toString(valid_at) AS said_on,
+               substring(JSONExtractString(value), 1, 160) AS text
+        {_LIVE} AND status = 'active' AND temporal_anchor IS NULL
+          AND memory_type IN ('semantic', 'episodic', 'preference')
+          AND match(lower(JSONExtractString(value)), {{cue:String}})
+        ORDER BY valid_at DESC, memory_key
+        LIMIT {{lim:UInt32}}
+        """,
+    ),
+    "unresolved_evidence": (
+        "warning",
+        "Active facts whose extractor-supplied evidence quote does not occur "
+        "in the turns it cites (grounding = 'unresolved'): the "
+        "quote is a paraphrase, so the fact's tie to its source is the model's "
+        "word alone. A rising share means the extraction prompt is producing "
+        "paraphrase where it promises verbatim. Review the sample in /me; "
+        "memory.update_by_id the fact with the real quote, or tombstone it "
+        "via memory.delete when the source does not support it.",
+        f"""
+        SELECT count() OVER () AS total, memory_key, agent, evidence
+        {_LIVE} AND status = 'active' AND grounding = 'unresolved'
+        ORDER BY created_at DESC, memory_key
+        LIMIT {{lim:UInt32}}
+        """,
+    ),
+}
+
+
+def _sample_rows(rows: list[dict[str, Any]], limit: int) -> tuple[int, list[dict[str, Any]]]:
+    """Split the `count() OVER ()` column off the sample rows."""
+    if not rows:
+        return 0, []
+    total = int(rows[0].get("total") or 0)
+    out: list[dict[str, Any]] = []
+    for r in rows[:limit]:
+        clean = {k: v for k, v in r.items() if k != "total"}
+        # Datetimes and arrays serialise as-is through Pydantic; UUID-ish
+        # strings already came back as str. Keep the sample flat.
+        out.append(clean)
+    return total, out
+
+
+async def handle_namespace_validate(input: NamespaceValidateInput) -> NamespaceValidateOutput:
+    ch = get_client()
+    params: dict[str, Any] = {
+        "org": input.org,
+        "ns": input.namespace,
+        "lim": int(input.sample_limit),
+        "age": int(input.conflict_age_seconds),
+        "grace": int(input.embed_grace_seconds),
+        "floor": float(input.confidence_floor),
+        "cue": _TIME_CUE_RE,
+        "keys": [str(k) for k in input.keys],
+    }
+
+    findings: list[_NamespaceValidateFinding] = []
+    skipped: list[str] = []
+
+    async def run(
+        name: str,
+        severity: str,
+        detail: str,
+        query: Callable[[], Awaitable[list[dict[str, Any]]]],
+    ) -> None:
+        try:
+            rows = await query()
+        except Exception as exc:  # noqa: BLE001 — advisory report; one failed check must not sink the rest
+            log.warning("namespace.validate %s skipped: %s", name, exc)
+            skipped.append(f"{name}: {type(exc).__name__}")
+            return
+        total, samples = _sample_rows(rows, input.sample_limit)
+        findings.append(
+            _NamespaceValidateFinding(
+                check=name,
+                severity=severity,  # type: ignore[arg-type]
+                count=total,
+                samples=samples,
+                detail=detail,
+            )
+        )
+
+    # CH client is per-call; checks run sequentially like namespace.summary.
+    for name, (severity, detail, sql) in _CHECKS.items():
+        await run(name, severity, detail, functools.partial(ch.query_all, sql, params=params))
+
+    errors = sum(f.count for f in findings if f.severity == "error")
+    warnings = sum(f.count for f in findings if f.severity == "warning")
+    infos = sum(f.count for f in findings if f.severity == "info")
+    healthy = errors == 0 and (not input.strict or warnings == 0)
+
+    return NamespaceValidateOutput(
+        org=input.org,
+        namespace=input.namespace,
+        healthy=healthy,
+        errors=errors,
+        warnings=warnings,
+        infos=infos,
+        findings=findings,
+        skipped=skipped,
+        keys_scoped=len(input.keys),
+        checked_at=datetime.now(UTC).replace(tzinfo=None),
+    )

@@ -1,0 +1,644 @@
+"""Erasure steps for memory itself and the tables written beside it: the
+memory, embedding, working-memory and shared rows, chunks, versions, derived
+facts, reinforcement, procedure runs, session outcomes, term aggregates, raw
+evidence, the events scrub and the code index of a code namespace."""
+
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable, Sequence
+
+from server.core.datetimes import naive_utc_now
+from server.core.repo_base import _CHClient, _default_client
+from server.erasure.store.mutations import (
+    count_then_mutate,
+    delete_scoped,
+    namespaces_of,
+    purge_mode,
+    run_mutation,
+    tombstone_scoped,
+)
+from server.erasure.store.predicates import NS_EQ, ORG_NS, UID, USER_CHUNKS
+from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
+
+
+async def purge_code_index_by_namespace(
+    org: str,
+    namespace: str | Sequence[str],
+    *,
+    code_tables: Callable[[_CHClient], Awaitable[list[str]]],
+    refresh_views: Callable[[_CHClient], Awaitable[list[str]]],
+    ch: _CHClient | None = None,
+) -> int:
+    """The repository index of a code namespace leaves with the namespace.
+    Every `loom.code_*` table keyed by (org, namespace) — `code_tables` reads
+    them from the live schema, so a newly added table is purged without a code
+    change — through the saga's count-then-mutate: DELETE in every mode (the
+    rows are the repository's index, not a subject's memory; there is no
+    tombstone to keep), lightweight on the two wide content tables, a plain
+    mutation on the rest, each awaited by its tag. A memory namespace pays
+    one keyed count() per table and issues nothing. When rows went,
+    `refresh_views` rebuilds the tables a refreshable view derives from them.
+    Returns rows removed."""
+    ch = ch or _default_client()
+    total = 0
+    for table in await code_tables(ch):
+        total += await count_then_mutate(
+            table,
+            count_where=ORG_NS,
+            mutation="DELETE",
+            mutation_where=ORG_NS,
+            params={"org": org, "ns": namespace},
+            final=False,
+            lightweight=True,
+            ch=ch,
+        )
+    # the tables a refreshable view rebuilds from the ones purged above
+    if total:
+        await refresh_views(ch)
+    return total
+
+
+async def tombstone_memory_by_user(
+    org: str,
+    user_id: str,
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    return await tombstone_scoped(
+        "loom.memory", org=org, scope_where=UID, params={"uid": user_id}, ch=ch
+    )
+
+
+async def tombstone_embeddings_by_user(
+    org: str,
+    user_id: str,
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    return await tombstone_scoped(
+        "loom.memory_embeddings", org=org, scope_where=UID, params={"uid": user_id}, ch=ch
+    )
+
+
+async def tombstone_working_memory_by_user(
+    org: str,
+    user_id: str,
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    return await tombstone_scoped(
+        "loom.working_memory", org=org, scope_where=UID, params={"uid": user_id}, ch=ch
+    )
+
+
+# The `args` entries a request row keeps that name the subject's own rows:
+# the identifier-class keys of event_args.IDENTIFIER_KEYS that address a
+# memory, a thread, a block or a handoff. The other identifier
+# keys (`pattern`, `path`, `name`, `status`, …) are operator- or
+# schema-authored names, not the subject's; the free-text keys are digests
+# already. `user_id` / `session_id` never reach `args` (IDENTITY_KEYS).
+ARGS_SCRUB_KEYS: tuple[str, ...] = (
+    "memory_key",
+    "memory_keys",
+    "memory_id",
+    "memory_ids",
+    "target_key",
+    "from_memory_key",
+    "to_memory_key",
+    "thread_id",
+    "block_key",
+    "handoff_id",
+    "message_id",
+    "record_id",
+    "entity",
+    "subject",
+)
+ERASED = "<erased>"
+_ARGS_SCRUB_IN = ", ".join(f"'{k}'" for k in ARGS_SCRUB_KEYS)
+# One UPDATE: the identity column, the memory_key column (kept '' when it was
+# '' so "no key" stays distinguishable from "a scrubbed key"), and the
+# identifier entries of the args map rewritten in place — the map keeps its
+# keys so `args['_sha256']` and the op-mix classifier (`kind`, `scope`, …)
+# still read; only the values that named the subject's rows are gone.
+EVENTS_SCRUB_MUTATION = (
+    f"UPDATE user_id = '{ERASED}', "
+    f"memory_key = if(memory_key = '', '', '{ERASED}'), "
+    f"args = mapApply((k, v) -> (k, if(k IN ({_ARGS_SCRUB_IN}), '{ERASED}', v)), args)"
+)
+
+
+async def scrub_events_by_user(
+    org: str,
+    user_id: str,
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """Replace user_id with '<erased>' on loom.agent_events, and the
+    `memory_key` column and the identifier entries of `args` that named the
+    subject's rows. Preserves aggregate cost rollups; removes the identity
+    and what it pointed at."""
+    return await count_then_mutate(
+        "loom.agent_events",
+        count_where="org = {org:String} AND user_id = {uid:String}",
+        mutation=EVENTS_SCRUB_MUTATION,
+        mutation_where="org = {org:String} AND user_id = {uid:String}",
+        params={"org": org, "uid": user_id},
+        final=False,
+        ch=ch,
+    )
+
+
+# A shared row promoted from one of the user's memories: an entry of
+# `promoted_from` (`org/namespace/agent/user_id/session_id/memory_key`) whose
+# fourth segment is the user.
+_PROMOTED_FROM_USER = "arrayExists(x -> splitByChar('/', x)[4] = {uid:String}, promoted_from)"
+
+
+async def tombstone_shared_by_user(
+    org: str,
+    user_id: str,
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """Tombstone loom.shared rows whose `promoted_from` includes a
+    source-tuple repr matching this user_id.
+
+    The repr format is `org/namespace/agent/user_id/session_id/memory_key`,
+    so position 4 of the slash-split is the user_id. If ANY entry names the
+    erased user, the shared row is tombstoned — partial-source erasure still
+    requires full removal because the value may carry that user's contribution.
+    """
+    return await tombstone_scoped(
+        "loom.shared", org=org, scope_where=_PROMOTED_FROM_USER, params={"uid": user_id}, ch=ch
+    )
+
+
+async def tombstone_shared_embeddings_by_user(
+    org: str,
+    user_id: str,
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """Tombstone the scope='shared' embedding rows that back any shared
+    memory whose source includes this user_id.
+
+    Shared embeddings don't directly carry user_id (sentinel
+    agent='_shared'), so join against loom.shared on memory_key + the
+    same promoted_from predicate.
+    """
+    return await tombstone_scoped(
+        "loom.memory_embeddings",
+        org=org,
+        scope_where=(
+            "scope = 'shared' AND memory_key IN ("
+            "SELECT memory_key FROM loom.shared FINAL "
+            f"WHERE org = {{org:String}} AND {_PROMOTED_FROM_USER})"
+        ),
+        params={"uid": user_id},
+        ch=ch,
+    )
+
+
+async def tombstone_memory_by_namespace(
+    org: str,
+    namespace: str | Sequence[str],
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    return await tombstone_scoped(
+        "loom.memory", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
+    )
+
+
+async def tombstone_embeddings_by_namespace(
+    org: str,
+    namespace: str | Sequence[str],
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    return await tombstone_scoped(
+        "loom.memory_embeddings", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
+    )
+
+
+async def tombstone_working_memory_by_namespace(
+    org: str,
+    namespace: str | Sequence[str],
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    return await tombstone_scoped(
+        "loom.working_memory", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
+    )
+
+
+async def tombstone_entity_canonical_map_by_namespace(
+    org: str,
+    namespace: str | Sequence[str],
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    return await tombstone_scoped(
+        "loom.entity_canonical_map", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
+    )
+
+
+async def supersede_chunks_by_namespace(
+    org: str,
+    namespace: str | Sequence[str],
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    # A purge deletes every chunk of the scope, superseded ones included: the
+    # supersede below keeps the text in the parts, and the purge census counts
+    # every row.
+    if purge_mode():
+        return await count_then_mutate(
+            "loom.chunks",
+            count_where=ORG_NS,
+            mutation="DELETE",
+            mutation_where=ORG_NS,
+            params={"org": org, "ns": namespace},
+            final=False,
+            ch=ch,
+        )
+    return await count_then_mutate(
+        "loom.chunks",
+        # Live = no `doc_superseded_at` and no supersession row.
+        count_where="org = {org:String} AND namespace = {ns:String} AND " + LIVE_CHUNK_SQL,
+        mutation="UPDATE doc_superseded_at = {now:DateTime}",
+        mutation_where=(
+            "org = {org:String} AND namespace = {ns:String} AND doc_superseded_at IS NULL"
+        ),
+        params={"org": org, "ns": namespace},
+        final=False,
+        ch=ch,
+    )
+
+
+async def delete_derived_facts_by_namespace(
+    org: str,
+    namespace: str | Sequence[str],
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """Hard-delete per-occurrence derived facts for a namespace. derived_facts
+    is plain MergeTree with no soft-delete column, so erasure is an ALTER
+    DELETE, not a tombstone."""
+    return await count_then_mutate(
+        "loom.derived_facts",
+        count_where="org = {org:String} AND namespace = {ns:String}",
+        mutation="DELETE",
+        mutation_where="org = {org:String} AND namespace = {ns:String}",
+        params={"org": org, "ns": namespace},
+        final=False,
+        ch=ch,
+    )
+
+
+async def delete_memory_reinforcement_by_namespace(
+    org: str,
+    namespace: str | Sequence[str],
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """Hard-delete the namespace's folded reinforcement rows.
+    ReplacingMergeTree keyed on identity + memory_key with no soft-delete
+    column, so erasure is an ALTER DELETE."""
+    return await count_then_mutate(
+        "loom.memory_reinforcement",
+        count_where="org = {org:String} AND namespace = {ns:String}",
+        mutation="DELETE",
+        mutation_where="org = {org:String} AND namespace = {ns:String}",
+        params={"org": org, "ns": namespace},
+        final=False,
+        ch=ch,
+    )
+
+
+async def delete_procedure_runs_by_namespace(
+    org: str,
+    namespace: str | Sequence[str],
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """Hard-delete a namespace's procedure run ledger (loom.procedure_runs:
+    agent, session_id, visited node ids and the agent's free-text note per
+    run). Plain MergeTree, no soft-delete column → ALTER DELETE."""
+    return await count_then_mutate(
+        "loom.procedure_runs",
+        count_where="org = {org:String} AND namespace = {ns:String}",
+        mutation="DELETE",
+        mutation_where="org = {org:String} AND namespace = {ns:String}",
+        params={"org": org, "ns": namespace},
+        final=False,
+        ch=ch,
+    )
+
+
+async def delete_query_nodes_by_namespace(
+    org: str,
+    namespace: str | Sequence[str],
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """Hard-delete a namespace's query nodes (loom.query_nodes: the text of
+    every question asked, its embedding and what it returned).
+    AggregatingMergeTree, no soft-delete column → ALTER DELETE."""
+    return await count_then_mutate(
+        "loom.query_nodes",
+        count_where="org = {org:String} AND namespace = {ns:String}",
+        mutation="DELETE",
+        mutation_where="org = {org:String} AND namespace = {ns:String}",
+        params={"org": org, "ns": namespace},
+        final=False,
+        ch=ch,
+    )
+
+
+SESSION_OUTCOME_TABLES = ("loom.session_outcomes_by_user",)
+
+
+async def delete_session_outcomes_by_namespace(
+    org: str,
+    namespace: str | Sequence[str],
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """Hard-delete a namespace's session outcome labels (a judge's one-line
+    reading of each session). RMT with no soft-delete column → ALTER DELETE."""
+    (table,) = SESSION_OUTCOME_TABLES
+    return await count_then_mutate(
+        table,
+        count_where="org = {org:String} AND namespace = {ns:String}",
+        mutation="DELETE",
+        mutation_where="org = {org:String} AND namespace = {ns:String}",
+        params={"org": org, "ns": namespace},
+        final=False,
+        ch=ch,
+    )
+
+
+async def delete_session_outcomes_by_user(
+    org: str, user_id: str, *, ch: _CHClient | None = None
+) -> int:
+    """Hard-delete one user's session outcome labels (the judge's reason
+    reads their session). A row carrying user '-' leaves with its namespace."""
+    return await delete_scoped(
+        SESSION_OUTCOME_TABLES[0], org=org, scope_where=UID, params={"uid": user_id}, ch=ch
+    )
+
+
+# Derived-text aggregates: every distinct term of every memory excerpt and
+# knowledge chunk in a namespace, plus per-row lengths. The words ARE the
+# content, so they sit inside the erasure boundary. Plain AggregatingMergeTree
+# / ReplacingMergeTree with no soft-delete column → ALTER DELETE. No user_id
+# on any of them: namespace scope only.
+TERM_AGGREGATE_TABLES: tuple[str, ...] = (
+    "loom.memory_term_freq",
+    "loom.memory_doc_stats",
+    "loom.chunk_term_freq",
+)
+
+
+async def delete_term_aggregates_by_namespace(
+    org: str,
+    namespace: str | Sequence[str],
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """Hard-delete a namespace's rows from every term-frequency / doc-stats
+    aggregate. Returns the total rows deleted across the tables."""
+    total = 0
+    for table in TERM_AGGREGATE_TABLES:
+        total += await count_then_mutate(
+            table,
+            count_where="org = {org:String} AND namespace = {ns:String}",
+            mutation="DELETE",
+            mutation_where="org = {org:String} AND namespace = {ns:String}",
+            params={"org": org, "ns": namespace},
+            final=False,
+            ch=ch,
+        )
+    return total
+
+
+# Raw transcripts outlive their memories unless erased explicitly: every
+# memory.set_from_messages call persists the caller's messages verbatim in
+# loom.memory_evidence (one row per message, with user_id), and a deferred
+# call parks the whole request JSON in loom.memory_extraction_queue until the
+# extraction_queue worker replays it. Neither table carries tombstoned_at;
+# both are ReplacingMergeTree → ALTER DELETE.
+_RAW_EVIDENCE_TABLES = ("loom.memory_evidence", "loom.memory_extraction_queue")
+
+
+async def delete_raw_evidence_by_user(
+    org: str,
+    user_id: str,
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """Hard-delete a user's raw transcripts (evidence rows + queued
+    extraction requests) across namespaces. Returns rows deleted."""
+    total = 0
+    for table in _RAW_EVIDENCE_TABLES:
+        total += await count_then_mutate(
+            table,
+            count_where="org = {org:String} AND user_id = {uid:String}",
+            mutation="DELETE",
+            mutation_where="org = {org:String} AND user_id = {uid:String}",
+            params={"org": org, "uid": user_id},
+            ch=ch,
+        )
+    return total
+
+
+async def delete_raw_evidence_by_namespace(
+    org: str,
+    namespace: str | Sequence[str],
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """Hard-delete a namespace's raw transcripts (evidence rows + queued
+    extraction requests). Returns rows deleted."""
+    total = 0
+    for table in _RAW_EVIDENCE_TABLES:
+        total += await count_then_mutate(
+            table,
+            count_where="org = {org:String} AND namespace = {ns:String}",
+            mutation="DELETE",
+            mutation_where="org = {org:String} AND namespace = {ns:String}",
+            params={"org": org, "ns": namespace},
+            ch=ch,
+        )
+    return total
+
+
+async def tombstone_memory_chunks_by_user(
+    org: str,
+    user_id: str,
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """Tombstone the verbatim chunks of a user: the chunks stamped with the
+    user, and the chunks whose parent memories' (namespace, key) pairs are the
+    user's, read from loom.memory (tombstoned rows included — the memory step
+    runs first and the chunks must follow it, not escape it)."""
+    return await tombstone_scoped(
+        "loom.memory_chunks", org=org, scope_where=USER_CHUNKS, params={"uid": user_id}, ch=ch
+    )
+
+
+async def tombstone_memory_chunks_by_namespace(
+    org: str,
+    namespace: str | Sequence[str],
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """Tombstone every verbatim memory chunk in a namespace."""
+    return await tombstone_scoped(
+        "loom.memory_chunks", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
+    )
+
+
+async def delete_memory_versions_by_namespace(
+    org: str,
+    namespace: str | Sequence[str],
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """Hard-delete a namespace's version history (loom.memory_versions).
+    The history exists so a rollback can re-insert an old
+    head; after erasure that would resurrect erased content, so the rows go,
+    not a tombstone."""
+    return await count_then_mutate(
+        "loom.memory_versions",
+        count_where="org = {org:String} AND namespace = {ns:String}",
+        mutation="DELETE",
+        mutation_where="org = {org:String} AND namespace = {ns:String}",
+        params={"org": org, "ns": namespace},
+        final=False,
+        ch=ch,
+    )
+
+
+async def delete_memory_versions_by_user(
+    org: str,
+    user_id: str,
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """Hard-delete a user's version history across namespaces (see the
+    namespace variant)."""
+    return await count_then_mutate(
+        "loom.memory_versions",
+        count_where="org = {org:String} AND user_id = {uid:String}",
+        mutation="DELETE",
+        mutation_where="org = {org:String} AND user_id = {uid:String}",
+        params={"org": org, "uid": user_id},
+        final=False,
+        ch=ch,
+    )
+
+
+async def delete_derived_facts_by_user(
+    org: str,
+    user_id: str,
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """Hard-delete a user's per-occurrence derived facts across namespaces."""
+    return await count_then_mutate(
+        "loom.derived_facts",
+        count_where="org = {org:String} AND user_id = {uid:String}",
+        mutation="DELETE",
+        mutation_where="org = {org:String} AND user_id = {uid:String}",
+        params={"org": org, "uid": user_id},
+        final=False,
+        ch=ch,
+    )
+
+
+async def delete_memory_reinforcement_by_user(
+    org: str,
+    user_id: str,
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """Hard-delete a user's folded reinforcement rows across namespaces."""
+    return await count_then_mutate(
+        "loom.memory_reinforcement",
+        count_where="org = {org:String} AND user_id = {uid:String}",
+        mutation="DELETE",
+        mutation_where="org = {org:String} AND user_id = {uid:String}",
+        params={"org": org, "uid": user_id},
+        final=False,
+        ch=ch,
+    )
+
+
+async def tombstone_documents_by_namespace(
+    org: str,
+    namespace: str | Sequence[str],
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """Supersede the namespace's whole-document rows through the read-filtered
+    `superseded_at` column; a purge deletes every row instead. The `IS NULL`
+    guard makes a re-run a no-op."""
+    if purge_mode():
+        return await count_then_mutate(
+            "loom.documents",
+            count_where=ORG_NS,
+            mutation="DELETE",
+            mutation_where=ORG_NS,
+            params={"org": org, "ns": namespace},
+            ch=ch,
+        )
+    live = ORG_NS + " AND superseded_at IS NULL"
+    return await count_then_mutate(
+        "loom.documents",
+        count_where=live,
+        mutation="UPDATE superseded_at = {now:DateTime}",
+        mutation_where=live,
+        params={"org": org, "ns": namespace},
+        ch=ch,
+    )
+
+
+# The documents of the scope that still hold an original on disk. One
+# predicate for the SELECT and the stamp; a list scope binds as an Array, as
+# `count_then_mutate` rewrites it — a list bound to `{ns:String}` is the
+# literal "['a', 'b']" and matches nothing.
+_UNERASED_BLOBS = (
+    "org = {org:String} AND namespace IN {ns:Array(String)}"
+    " AND blob_path != '' AND blob_erased_at IS NULL"
+)
+
+
+async def unerased_blob_paths(
+    org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
+) -> list[str]:
+    """The blob path of every document of the scope whose original is still on disk."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        f"SELECT source_uri, blob_path FROM loom.documents FINAL "
+        f"WHERE {_UNERASED_BLOBS} ORDER BY source_uri",
+        params={"org": org, "ns": namespaces_of(namespace)},
+    )
+    return [str(r.get("blob_path") or "") for r in rows]
+
+
+async def stamp_blobs_erased(
+    org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
+) -> None:
+    """Stamp `blob_erased_at` on the scope's documents whose originals were
+    unlinked: a mutation tagged and awaited like every other saga statement,
+    so a resumed step waits for its own pending stamp."""
+    await run_mutation(
+        "loom.documents",
+        mutation="UPDATE blob_erased_at = {now:DateTime}",
+        where=_UNERASED_BLOBS,
+        params={"org": org, "ns": namespaces_of(namespace), "now": naive_utc_now()},
+        ch=ch,
+    )

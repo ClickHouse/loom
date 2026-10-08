@@ -1,0 +1,72 @@
+// code_intel_qa v0 — starter question set over ClickHouse/ClickHouse.
+// ~30 questions; grow toward ~100 from the queries agents ignored or grepped
+// past (loom.code_search_outcome).
+//
+// VERIFY BEFORE GATING: symbol_def/callers gold was authored from upstream
+// knowledge, not read out of a live index. After the first backfill, run
+// the bench once WITHOUT gates, eyeball mismatches, and correct gold —
+// a wrong gold is a corpus bug, not a retrieval miss (house rule).
+// Done 2026-08-20/21 against the dev index (master@cf7a5ae + merges):
+// symbol/callers grep-verified, conceptual golds tree-verified, 7 stale
+// golds refreshed to 2026 refactors. REPEAT for every new backfill —
+// a staging index built from a later master can go stale the same way.
+{"id": "sd001", "type": "symbol_def", "query": "IColumn::insert", "gold": {"qualified_name": "DB::IColumn::insert", "path_prefix": "src/Columns/"}}
+{"id": "sd002", "type": "symbol_def", "query": "MemoryTracker::allocImpl", "gold": {"qualified_name": "MemoryTracker::allocImpl", "path_prefix": "src/Common/"}}
+{"id": "sd003", "type": "symbol_def", "query": "DB::executeQuery", "gold": {"qualified_name": "DB::executeQuery", "path_prefix": "src/Interpreters/"}}
+{"id": "sd004", "type": "symbol_def", "query": "MergeTreeData::getActiveContainingPart", "gold": {"qualified_name": "DB::MergeTreeData::getActiveContainingPart", "path_prefix": "src/Storages/"}}
+{"id": "sd005", "type": "symbol_def", "query": "DB::parseQuery", "gold": {"qualified_name": "DB::parseQuery", "path_prefix": "src/Parsers/"}}
+{"id": "sd006", "type": "symbol_def", "query": "ReadBuffer::next", "gold": {"qualified_name": "DB::ReadBuffer::next", "path_prefix": "src/IO/"}}
+{"id": "sd007", "type": "symbol_def", "query": "Block::getByName", "gold": {"qualified_name": "DB::Block::getByName", "path_prefix": "src/Core/"}}
+{"id": "sd008", "type": "symbol_def", "query": "StorageReplicatedMergeTree::fetchPart", "gold": {"qualified_name": "DB::StorageReplicatedMergeTree::fetchPart", "path_prefix": "src/Storages/"}}
+{"id": "sd009", "type": "symbol_def", "query": "IProcessor::prepare", "gold": {"qualified_name": "DB::IProcessor::prepare", "path_prefix": "src/Processors/"}}
+{"id": "sd010", "type": "symbol_def", "query": "Field", "gold": {"qualified_name": "DB::Field", "path_prefix": "src/Core/"}}
+{"id": "ca001", "type": "callers", "query": "who calls executeQueryImpl", "gold": {"symbol": "executeQueryImpl", "expected_callers": ["DB::executeQuery"]}}
+{"id": "ca002", "type": "callers", "query": "who calls MergeTreeDataWriter::writeTempPart", "gold": {"symbol": "MergeTreeDataWriter::writeTempPart", "expected_callers": ["DB::MergeTreeSink::writeNewTempPart", "DB::ReplicatedMergeTreeSink::writeNewTempPart"]}}
+{"id": "co001", "type": "conceptual", "query": "how are quotas enforced when a query consumes resources", "gold": {"paths": ["src/Access/EnabledQuota", "src/Access/QuotaCache", "src/Access"]}}
+{"id": "co002", "type": "conceptual", "query": "where are background merges of parts scheduled and executed", "gold": {"paths": ["src/Storages/MergeTree/MergeTreeBackgroundExecutor", "src/Storages/MergeTree/MergeTask", "src/Storages/StorageMergeTree"]}}
+{"id": "co003", "type": "conceptual", "query": "how does the SQL parser turn a query string into an AST", "gold": {"paths": ["src/Parsers/parseQuery.cpp", "src/Parsers"]}}
+{"id": "co004", "type": "conceptual", "query": "how are replicated inserts deduplicated using block ids", "gold": {"paths": ["src/Interpreters/InsertDeduplication", "src/Storages/MergeTree/ReplicatedMergeTreeSink", "src/Storages/MergeTree"]}}
+{"id": "co005", "type": "conceptual", "query": "where is the memory limit for a query enforced", "gold": {"paths": ["src/Common/MemoryTracker", "src/Interpreters/ProcessList"]}}
+{"id": "co006", "type": "conceptual", "query": "how does asynchronous insert buffering batch rows before flushing", "gold": {"paths": ["src/Interpreters/AsynchronousInsertQueue.cpp", "src/Interpreters"]}}
+{"id": "co007", "type": "conceptual", "query": "how does the query result cache decide what is cacheable", "gold": {"paths": ["src/Interpreters/Cache/QueryResultCache", "src/Interpreters/Cache"]}}
+{"id": "co008", "type": "conceptual", "query": "how are zookeeper session expirations handled for replicated tables", "gold": {"paths": ["src/Storages/MergeTree/ReplicatedMergeTreeRestartingThread", "src/Storages/StorageReplicatedMergeTree", "src/Storages/MergeTree"]}}
+{"id": "co009", "type": "conceptual", "query": "how do skipping indexes prune granules during a read", "gold": {"paths": ["src/Storages/MergeTree/MergeTreeDataSelectExecutor", "src/Storages/MergeTree/MergeTreeIndexReader", "src/Storages/MergeTree"]}}
+{"id": "co010", "type": "conceptual", "query": "where are user setting constraints validated on change", "gold": {"paths": ["src/Access/SettingsConstraints.cpp", "src/Access"]}}
+{"id": "co011", "type": "conceptual", "query": "how does TTL expire and drop old rows from parts", "gold": {"paths": ["src/Processors/TTL", "src/Storages/MergeTree", "src/Storages/TTLDescription.cpp"]}}
+{"id": "co012", "type": "conceptual", "query": "how are keeper snapshots serialized to disk", "gold": {"paths": ["src/Coordination/KeeperSnapshotManager.cpp", "src/Coordination"]}}
+{"id": "co013", "type": "conceptual", "query": "how does a projection get chosen to answer an aggregate query", "gold": {"paths": ["src/Processors/QueryPlan/Optimizations", "src/Storages/MergeTree"]}}
+{"id": "co014", "type": "conceptual", "query": "where is lz4 compression applied when writing column data", "gold": {"paths": ["src/Compression/CompressionCodecLZ4.cpp", "src/Compression"]}}
+{"id": "co015", "type": "conceptual", "query": "how is a mutation applied to already-written parts", "gold": {"paths": ["src/Storages/MergeTree/MutateTask.cpp", "src/Storages/MergeTree"]}}
+{"id": "ab001", "type": "abstain_probe", "query": "kubernetes ingress annotation for sticky websocket sessions", "gold": {}}
+{"id": "ab002", "type": "abstain_probe", "query": "react useEffect cleanup for websocket subscriptions", "gold": {}}
+{"id": "ab003", "type": "abstain_probe", "query": "django ORM select_related versus prefetch_related", "gold": {}}
+{"id": "ab004", "type": "abstain_probe", "query": "terraform state locking with dynamodb", "gold": {}}
+{"id": "ab005", "type": "abstain_probe", "query": "how does the swift ui navigation stack restore state", "gold": {}}
+{"id": "co016", "type": "conceptual", "query": "how does a part get selected for a background merge", "gold": {"paths": ["src/Storages/MergeTree/Compaction"]}}
+{"id": "co017", "type": "conceptual", "query": "how does aggregation spill to disk when memory runs out", "gold": {"paths": ["src/Interpreters/AdaptiveAggregation", "src/Interpreters/Aggregator"]}}
+{"id": "co018", "type": "conceptual", "query": "how does the mark cache avoid re-reading marks from disk", "gold": {"paths": ["src/Storages/MarkCache", "src/Storages/MergeTree/MergeTreeMarksLoader"]}}
+{"id": "co019", "type": "conceptual", "query": "how is a distributed query dispatched to remote shards", "gold": {"paths": ["src/Interpreters/ClusterProxy"]}}
+{"id": "co020", "type": "conceptual", "query": "how does the query profiler capture stack traces on a timer", "gold": {"paths": ["src/Common/QueryProfiler"]}}
+{"id": "co021", "type": "conceptual", "query": "how are external dictionaries reloaded in the background", "gold": {"paths": ["src/Interpreters/ExternalDictionariesLoader", "src/Interpreters/ExternalLoader"]}}
+{"id": "co022", "type": "conceptual", "query": "how are reads from s3 object storage buffered", "gold": {"paths": ["src/IO/ReadBufferFromS3"]}}
+{"id": "co023", "type": "conceptual", "query": "where are access rights checked while a query executes", "gold": {"paths": ["src/Access/ContextAccess"]}}
+{"id": "co024", "type": "conceptual", "query": "how are window functions computed over the block stream", "gold": {"paths": ["src/Processors/Transforms/WindowTransform"]}}
+{"id": "co025", "type": "conceptual", "query": "how does a quorum insert wait for enough replicas to confirm", "gold": {"paths": ["src/Storages/MergeTree/ReplicatedMergeTreeSink"]}}
+{"id": "co026", "type": "conceptual", "query": "how are asynchronous server metrics collected periodically", "gold": {"paths": ["src/Common/AsynchronousMetrics"]}}
+{"id": "co027", "type": "conceptual", "query": "how does keeper persist its replication log to disk", "gold": {"paths": ["src/Coordination/Changelog"], "alternates": ["src/Coordination/KeeperLogStore"], "alternates_note": "audit 2026-09-19: KeeperLogStore is the nuraft log store that appends to and persists the Changelog"}}
+{"id": "co028", "type": "conceptual", "query": "how does the primary key index narrow which mark ranges to read", "gold": {"paths": ["src/Storages/MergeTree/MergeTreeDataSelectExecutor"]}}
+{"id": "co029", "type": "conceptual", "query": "how are inserted rows pushed into dependent materialized views", "gold": {"paths": ["src/Interpreters/InsertDependenciesBuilder"]}}
+{"id": "co030", "type": "conceptual", "query": "how does alter change a column type on old parts without rewriting them", "gold": {"paths": ["src/Storages/MergeTree/AlterConversions"]}}
+{"id": "co031", "type": "conceptual", "query": "how does PipelineExecutor schedule processors onto worker threads", "gold": {"paths": ["src/Processors/Executors/Runtime/PipelineExecutor"], "moved": {"src/Processors/Executors/Runtime/V1/": "src/Processors/Executors/Runtime/"}}}
+{"id": "co032", "type": "conceptual", "query": "how does DistributedSink route inserted blocks to the right shards", "gold": {"paths": ["src/Storages/Distributed/DistributedSink", "src/Storages/StorageDistributed"]}}
+{"id": "co033", "type": "conceptual", "query": "how does WriteBufferFromS3 upload large writes as multipart parts", "gold": {"paths": ["src/IO/WriteBufferFromS3"]}}
+{"id": "co034", "type": "conceptual", "query": "where does KeeperStorage apply a committed request to the in-memory tree", "gold": {"paths": ["src/Coordination/KeeperStorage"]}}
+{"id": "co035", "type": "conceptual", "query": "how does InterpreterSelectQuery build the query plan for a select", "gold": {"paths": ["src/Interpreters/InterpreterSelectQuery"]}}
+{"id": "co036", "type": "conceptual", "query": "how does ThreadPool decide when to spawn a new worker thread", "gold": {"paths": ["src/Common/ThreadPool"]}}
+{"id": "ca003", "type": "callers", "query": "who calls MergeTreeDataSelectExecutor::readFromParts", "gold": {"symbol": "MergeTreeDataSelectExecutor::readFromParts", "expected_callers": ["DB::ReadFromMergeTree::deserialize", "DB::QueryPlanOptimizations::optimizeUseAggregateProjections", "DB::QueryPlanOptimizations::optimizeUseNormalProjections", "DB::StorageFromMergeTreeProjection::read", "DB::StorageFromMergeTreeDataPart::read", "DB::MergeTreeDataSelectExecutor::read"]}}
+{"id": "ca004", "type": "callers", "query": "who calls ReplicatedMergeTreeSink::commitPart", "gold": {"symbol": "ReplicatedMergeTreeSink::commitPart", "expected_callers": ["DB::ReplicatedMergeTreeSink::finishDelayed", "DB::ReplicatedMergeTreeSink::writeExistingPart", "DB::ReplicatedMergeTreeSinkPatch::finishDelayed"]}}
+{"id": "ab006", "type": "abstain_probe", "query": "how does postgres vacuum reclaim dead tuples", "gold": {}}
+{"id": "ab007", "type": "abstain_probe", "query": "where is the golang garbage collector write barrier implemented", "gold": {}}
+{"id": "ab008", "type": "abstain_probe", "query": "how does redis implement its single threaded event loop", "gold": {}}
+{"id": "ab009", "type": "abstain_probe", "query": "how does v8 optimize property access with hidden classes", "gold": {}}
+{"id": "ab010", "type": "abstain_probe", "query": "spring boot dependency injection with constructor autowiring", "gold": {}}

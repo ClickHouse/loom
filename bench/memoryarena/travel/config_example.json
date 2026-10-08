@@ -1,0 +1,29 @@
+{
+  "task_name": "travel_planner",
+  "agent": {
+    "model_name": "gpt-5-mini",
+    "backend": "openai",
+    "api_key": "",
+    "base_url": ""
+  },
+  "memory": {
+    "use_step_memory": false,
+    "memory_system_name": "loom-verbatim-unit-this",
+    "server_url": "http://0.0.0.0:8010"
+  },
+  "env": {
+    "env_name": "travel_planner",
+    "env_server_url": "http://0.0.0.0:8001",
+    "env_config": {
+      "judgement_mode": "none"
+    }
+  },
+  "task_specific": {
+    "max_steps": 30
+  },
+  "output": {
+    "output_dir": "results/travel/loom-verbatim-unit-this",
+    "log_dir": "results/travel/logs",
+    "global_csv": ""
+  }
+}

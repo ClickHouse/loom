@@ -1,0 +1,4 @@
+#!/usr/bin/env node
+// loom grep shim: `grep` for an agent's PATH; see ../README.md. A dynamic
+// import keeps this extensionless file loadable as CommonJS on every Node.
+import("../lib/shim.mjs").then((shim) => shim.main("grep"));

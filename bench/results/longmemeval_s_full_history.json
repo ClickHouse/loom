@@ -1,0 +1,918 @@
+{
+ "summary": {
+  "n": 100,
+  "reader_model": "gpt-5",
+  "judge_model": "gpt-4o-2024-08-06",
+  "full_history_accuracy": 0.9,
+  "full_history_context_tokens_mean": 124248,
+  "full_history_reader_prompt_tokens_mean": 103879,
+  "paired_arm": "reader_gpt5_k200",
+  "memory_accuracy": 0.94,
+  "memory_prompt_tokens_mean": 9443,
+  "both_correct": 87,
+  "only_memory_correct": 7,
+  "only_full_history_correct": 3
+ },
+ "rows": [
+  {
+   "question_id": "af082822",
+   "question_type": "temporal-reasoning",
+   "context_tokens_est": 122866,
+   "reader_prompt_tokens": 104846,
+   "reader_completion_tokens": 887,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info:\n- In Session 29 (dated 2022/11/18), you said: \u201cYesterday, I attended a friends and family sale at Nordstrom,\u201d so the sale date was 2022/11/17.\n- Current date provided: 2022/12/01.\n\nStep 2 \u2014 Reason to the answer:\n- From 2022/11/17 to 2022/12/01 is 14 days, which equals 2 weeks.\n\nAnswer: 2 weeks ago."
+  },
+  {
+   "question_id": "1a1907b4",
+   "question_type": "single-session-preference",
+   "context_tokens_est": 127976,
+   "reader_prompt_tokens": 105553,
+   "reader_completion_tokens": 1607,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Relevant info from our past chats\n- You like Hendrick\u2019s gin and summer-friendly, refreshing cocktails.\n- You enjoyed the \u201cPimm\u2019s Cup with a Twist,\u201d preferred muddling cucumber for more flavor/texture.\n- You made Ruby Red Grapefruit simple syrup and liked using it.\n- You planned to serve in Collins glasses and garnish with cucumber, mint, and grapefruit.\n\nStep 2 \u2014 Reasoning toward the best fit\n- For a crowd-pleasing, bright, garden-fresh cocktail that uses your Hendrick\u2019s, muddled cucumber, and grapefruit syrup, a refined Pimm\u2019s Cup with a Twist fits perfectly.\n- It\u2019s easy to batch for a get\u2011together and looks great in Collins glasses with your chosen garnishes.\n\nStep 3 \u2014 Recommended cocktail: Pimm\u2019s Cup with a Twist (Hendrick\u2019s + Ruby Red Grapefruit)\nSingle serve (Collins glass)\n- 1 oz Hendrick\u2019s gin\n- 1.5 oz Pimm\u2019s No. 1\n- 0.75 oz fresh lemon juice\n- 0.5 oz Ruby Red Grapefruit simple syrup\n- 4\u20135 thin cucumber slices (muddled)\n- Top: 3\u20134 oz chilled ginger beer (or sparkling lemonade/club soda for a lighter finish)\n- Garnish: cucumber wheel or ribbon, mint sprig, thin grapefruit slice\nMethod\n1) In a shaker, lightly muddle cucumber with the grapefruit syrup.  \n2) Add Hendrick\u2019s, Pimm\u2019s, lemon juice, ice; shake briefly.  \n3) Strain into an ice-filled Collins; top with ginger beer. Garnish.\n\nEasy batch (about 8 servings; build in a pitcher)\n- 8 oz Hendrick\u2019s gin\n- 12 oz Pimm\u2019s No. 1\n- 6 oz fresh lemon juice\n- 4 oz Ruby Red Grapefruit simple syrup\n- 1 English cucumber, thinly sliced\n- 1\u20131.25 liters ginger beer (add just before serving)\nMethod: Combine spirits, lemon, syrup, and cucumber; chill 2\u20134 hours. When serving, add ice to glasses, pour ~3 oz mix, top with ginger beer, garnish.\n\nPro tips\n- For a drier version, swap half (or all) of the ginger beer for club soda.  \n- Make a zero\u2011proof option: skip spirits, shake 1 oz grapefruit syrup + 0.75 oz lemon with muddled cucumber, top with ginger beer/soda; same garnish.\n\nIf you\u2019d like alternates in the same vibe: Cucumber Gimlet (Hendrick\u2019s, lime, simple, muddled cucumber) or a Gin\u2011Gin Mule (Hendrick\u2019s, lime, mint, ginger beer)."
+  },
+  {
+   "question_id": "gpt4_2655b836",
+   "question_type": "temporal-reasoning",
+   "context_tokens_est": 126803,
+   "reader_prompt_tokens": 104702,
+   "reader_completion_tokens": 647,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1: Extract relevant information\n- You said you got your car serviced for the first time on March 15 (Session 38).\n- You later reported that on 3/22 you had an issue with your car\u2019s GPS system, took it back to the dealership, and they replaced the entire system (Session 21).\n\nStep 2: Reasoning to determine the first issue after service\n- The first post-service date-specific problem you mentioned is the GPS malfunction on 3/22, one week after the first service.\n\nAnswer: A malfunctioning GPS system that required the dealership to replace the entire unit."
+  },
+  {
+   "question_id": "3249768e",
+   "question_type": "single-session-assistant",
+   "context_tokens_est": 124327,
+   "reader_prompt_tokens": 104983,
+   "reader_completion_tokens": 441,
+   "judge_label": "CORRECT",
+   "hypothesis": "Relevant information extracted:\n- In Session 15, you asked: \u201cWhat 5 bottles of liquours, apertifs, digestifs, etc should I buy to be able to make the widest variety of Gin based cocktail\u201d\n- The five bottles I recommended were: 1) Sweet Vermouth, 2) Dry Vermouth, 3) Campari, 4) Elderflower Liqueur, 5) Absinthe.\n\nReasoning:\n- The list is ordered; the fifth item on that list is Absinthe.\n\nAnswer: Absinthe."
+  },
+  {
+   "question_id": "61f8c8f8",
+   "question_type": "multi-session",
+   "context_tokens_est": 128293,
+   "reader_prompt_tokens": 105545,
+   "reader_completion_tokens": 489,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2013 Extract relevant info\n- Recent 5K time: 35 minutes (you said you \u201crecently finished a 5K in 35 minutes\u201d).\n- Previous year\u2019s 5K time: 45 minutes (you said last year it took you 45 minutes).\n\nStep 2 \u2013 Reason to the answer\n- Difference = 45 minutes \u2212 35 minutes = 10 minutes.\n\nAnswer: You finished 10 minutes faster than last year."
+  },
+  {
+   "question_id": "8e9d538c",
+   "question_type": "single-session-user",
+   "context_tokens_est": 120870,
+   "reader_prompt_tokens": 104347,
+   "reader_completion_tokens": 272,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant information:\n- You said: \u201cI have a stash of 17 skeins that I found recently, and I'd love to use them up.\u201d (about worsted weight yarn)\n\nStep 2 \u2014 Reason over the information:\n- The stated number directly indicates how many skeins you found.\n\nAnswer: 17 skeins."
+  },
+  {
+   "question_id": "88432d0a_abs",
+   "question_type": "multi-session",
+   "context_tokens_est": 122297,
+   "reader_prompt_tokens": 104680,
+   "reader_completion_tokens": 754,
+   "judge_label": "WRONG",
+   "hypothesis": "Step 1 \u2014 Extract relevant information:\n- Scanned the provided chat history for any mentions of \u201cegg tarts\u201d or baking them.\n- Found multiple baking references (chocolate cake, whole wheat baguette, cookies, sourdough bread, focaccia), but no mention of egg tarts.\n\nStep 2 \u2014 Reasoning:\n- Since there are no instances in the history indicating you baked egg tarts in the past two weeks, the count based on the provided facts is zero.\n\nAnswer: 0 times."
+  },
+  {
+   "question_id": "311778f1",
+   "question_type": "single-session-user",
+   "context_tokens_est": 129630,
+   "reader_prompt_tokens": 105491,
+   "reader_completion_tokens": 359,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1: Extract relevant information\n- Session 34: You said, \u201cI think I spent 10 hours last month watching documentaries.\u201d\n- Later in the same session, you reaffirmed: \u201cI realized that I spent around 10 hours last month watching documentaries.\u201d\n\nStep 2: Reason to the answer\n- You explicitly stated and then reaffirmed the same figure. Therefore, the total time you reported is 10 hours.\n\nAnswer: 10 hours."
+  },
+  {
+   "question_id": "c5e8278d",
+   "question_type": "single-session-user",
+   "context_tokens_est": 123919,
+   "reader_prompt_tokens": 104962,
+   "reader_completion_tokens": 333,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2013 Extract relevant info:\n- In Session 37, you said: \u201cI just recently changed my last name \u2026 my old name was Johnson, but now it's Winters.\u201d\n\nStep 2 \u2013 Reason to answer:\n- Since you explicitly stated your old name was Johnson, your last name before the change was Johnson.\n\nAnswer: Johnson"
+  },
+  {
+   "question_id": "60036106",
+   "question_type": "multi-session",
+   "context_tokens_est": 123918,
+   "reader_prompt_tokens": 102833,
+   "reader_completion_tokens": 406,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info:\n- Facebook ad campaign reach: about 2,000 people.\n- Instagram influencer collaboration: influencer had 10,000 followers (proxy for audience reached).\n\nStep 2 \u2014 Reason and compute:\n- Total approximate reach = 2,000 + 10,000 = 12,000 people.\n\nAnswer: Approximately 12,000 people."
+  },
+  {
+   "question_id": "76d63226",
+   "question_type": "single-session-user",
+   "context_tokens_est": 123442,
+   "reader_prompt_tokens": 103066,
+   "reader_completion_tokens": 260,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1: Extract relevant information\n- You said: \u201cI actually just set up my new Samsung 55-inch 4K smart TV on Saturday...\u201d\n\nStep 2: Reason over the information\n- The size is explicitly stated as \u201c55-inch.\u201d\n\nAnswer: 55 inches."
+  },
+  {
+   "question_id": "c8c3f81d",
+   "question_type": "single-session-user",
+   "context_tokens_est": 125770,
+   "reader_prompt_tokens": 105519,
+   "reader_completion_tokens": 469,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info:\n- You said: \u201cI\u2019m actually looking for a new pair of Nike running shoes\u2026\u201d (Session 47)\n- You also said: \u201cNike has been my favourite brand so far for running shoes.\u201d (Session 47)\n\nStep 2 \u2014 Reasoning:\n- You explicitly stated your favorite running shoe brand is Nike.\n\nAnswer: Nike"
+  },
+  {
+   "question_id": "982b5123_abs",
+   "question_type": "temporal-reasoning",
+   "context_tokens_est": 126448,
+   "reader_prompt_tokens": 105326,
+   "reader_completion_tokens": 637,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info:\n- You mentioned Airbnb in Haight-Ashbury (San Francisco) and that you booked three months in advance for your best friend\u2019s wedding.\n- I can\u2019t find any mention in our chats of an Airbnb in Sacramento or a booking date for it.\n\nStep 2 \u2014 Reason to answer:\n- Since there\u2019s no reference to a Sacramento Airbnb in the provided history, I don\u2019t have the date you booked it.\n\nIf you share any hint (approximate month, trip purpose, or who you went with), I can narrow it down. Meanwhile, you can quickly find it by:\n- Searching your email for \u201cAirbnb\u201d + \u201cSacramento\u201d (include \u201cReservation confirmed,\u201d \u201cTrip to Sacramento,\u201d or dates).\n- Opening the Airbnb app/website > Profile > Trips > Past (or Upcoming) to see the exact booking date and receipt."
+  },
+  {
+   "question_id": "c4ea545c",
+   "question_type": "knowledge-update",
+   "context_tokens_est": 125473,
+   "reader_prompt_tokens": 103793,
+   "reader_completion_tokens": 306,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1: Extract relevant info from past chats\n- Earlier, you said: \u201cI go to the gym on Tuesdays, Thursdays, and Saturdays.\u201d (3 times per week)\n- Later, you said: \u201cI\u2019ve been consistent with my gym routine \u2014 four times a week, actually.\u201d\n\nStep 2: Reasoning\n- Your stated frequency increased from 3 times/week to 4 times/week.\n\nAnswer: Yes. You now go to the gym more frequently\u2014up from three times per week to four."
+  },
+  {
+   "question_id": "10d9b85a",
+   "question_type": "multi-session",
+   "context_tokens_est": 124682,
+   "reader_prompt_tokens": 104824,
+   "reader_completion_tokens": 709,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1: Extract relevant info from your chats\n- April 10: You attended a lecture on sustainable development at the public library. (Session 30)\n- April 17\u201318: You attended a 2-day workshop covering supervised learning and deep learning. (Session 40)\n\nStep 2: Reason and total the days\n- Lecture: 1 day (Apr 10)\n- Workshop: 2 days (Apr 17 and Apr 18)\n\nTotal days in April spent at workshops/lectures/conferences = 1 + 2 = 3 days.\n\nAnswer: 3 days."
+  },
+  {
+   "question_id": "195a1a1b",
+   "question_type": "single-session-preference",
+   "context_tokens_est": 126328,
+   "reader_prompt_tokens": 104045,
+   "reader_completion_tokens": 1869,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1: Relevant details about you from past chats\n- You prefer a structured evening and like to wind down by 9:30 pm.\n- You\u2019re minimizing social media/procrastination and sleep better with low\u2011stimulus activities.\n- You enjoy yoga, meditation (Headspace, Insight Timer), guided imagery, hiking, and gentle movement.\n- You like creative hobbies (painting with acrylics/fabric stamping, knitting).\n- You make smoothies/cook simple healthy food and are starting a small herb garden and keep succulents.\n- You live in Shimokitazawa (great for short neighborhood strolls).\n- You keep a dream journal and are processing grief\u2014gentle reflection/journaling helps.\n\nStep 2: Suggestions tailored to your evenings (screen\u2011light, wind\u2011down friendly)\nRelax and sleep support\n- 10\u201320 min guided meditation: Headspace \u201cSleep,\u201d Insight Timer body scan, or Yoga Nidra.\n- Guided imagery for comfort/grief (Health Journeys, Insight Timer). Follow with light journaling or gratitude notes.\n- Warm herbal tea (chamomile, lemon balm) and dim lights 60\u201390 min before bed.\n\nLight movement (joint\u2011friendly, calming)\n- 15\u201325 min gentle yoga or restorative poses (legs\u2011up\u2011the\u2011wall, supine twists, supported child\u2019s pose).\n- Easy neighborhood stroll around Shimokitazawa side streets; notice storefronts/gardens for a mindful walk.\n- Light mobility/foam rolling sequence to release desk tension.\n\nCreative unwind (no pressure, short sessions)\n- 30\u201345 min painting block: fabric\u2011stamp your cityscape silhouettes, then drybrush a few window highlights.\n- 20\u201330 min knitting or sketching\u2014great for a calm, screen\u2011free flow state.\n- Curate reference photos or color swatches for your next piece (finish at least 45\u201360 min before bed).\n\nNourish and prep\n- Simple dinner or smoothie prep for tomorrow (pre\u2011portion fruit, soak oats, chop veggies).\n- Harvest/trim your herb pots; quick plant check (dust leaves, rotate pots). Water earlier in the evening if needed.\n\nReflect and organize\n- 10\u201315 min tomorrow\u2011planning: pick your top 1\u20133 priorities, lay out clothes, pack bag.\n- Dream/grief journal: capture themes or emotions from recent dreams; 5\u201310 min is enough.\n\nSocial and community (earlier in the evening)\n- Short call or tea with a friend; or an early evening caf\u00e9 stop (keep caffeine low).\n- On Saturdays (with your dance interest): light choreography review or mobility, then a warm bath and early wind\u2011down.\n\nSample evening flow (adjust times)\n- 7:00 Dinner (light, balanced)\n- 7:30 20\u201325 min stroll or gentle yoga\n- 8:00 Shower; brew herbal tea\n- 8:15 30\u201340 min creative block (painting/knitting), no screens\n- 8:55 Quick tidy + prep for tomorrow\n- 9:10 Guided body scan or Yoga Nidra, then gratitude/dream notes\n- 9:30 Lights low, in bed\n\nTips\n- Protect your last 60\u201390 minutes from screens; use blue\u2011light filters if needed.\n- Keep activities \u201clight and finite\u201d\u2014set a timer so creative work doesn\u2019t run late.\n- If you want one app for evenings: use Insight Timer playlists (Yoga Nidra + sleep music) to automate the wind\u2011down.\n\nIf you\u2019d like, tell me which 2\u20133 categories you want to focus on (movement, creative, reflection), and I\u2019ll craft a weekly evening plan around your 9:30 pm lights\u2011out."
+  },
+  {
+   "question_id": "0bc8ad93",
+   "question_type": "temporal-reasoning",
+   "context_tokens_est": 126179,
+   "reader_prompt_tokens": 104047,
+   "reader_completion_tokens": 2176,
+   "judge_label": "WRONG",
+   "hypothesis": "Step 1 \u2013 Extract relevant info:\n- You said you took a behind-the-scenes tour of the Science Museum \u201cwith a friend who\u2019s a chemistry professor.\u201d (Session 9)\n- Other museum mentions (e.g., \u201cArt in Bloom\u201d exhibit, private viewing at the city gallery, History Museum lecture) did not mention a friend.\n\nStep 2 \u2013 Reason to answer:\n- The only explicit reference to a museum visit two months back in your history that notes companionship says you went with a friend.\n\nAnswer: Yes\u2014you visited with a friend (your friend who\u2019s a chemistry professor)."
+  },
+  {
+   "question_id": "157a136e",
+   "question_type": "multi-session",
+   "context_tokens_est": 125391,
+   "reader_prompt_tokens": 104598,
+   "reader_completion_tokens": 345,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info:\n- Your grandma: recently celebrated her 75th birthday.\n- You: you referenced being 32 (\u201cdo you think 32 is considered young or old?\u201d).\n\nStep 2 \u2014 Reason to get the answer:\n- 75 (grandma) \u2212 32 (you) = 43.\n\nAnswer: Your grandma is 43 years older than you."
+  },
+  {
+   "question_id": "29f2956b",
+   "question_type": "single-session-user",
+   "context_tokens_est": 120303,
+   "reader_prompt_tokens": 101779,
+   "reader_completion_tokens": 395,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info:\n- In Session 12, you said: \u201cBy the way, I\u2019ve been practicing guitar for 30 minutes daily, and it\u2019s been helping me progress nicely.\u201d\n\nStep 2 \u2014 Reasoning:\n- This directly states your daily practice duration.\n\nAnswer: 30 minutes per day."
+  },
+  {
+   "question_id": "726462e0",
+   "question_type": "single-session-user",
+   "context_tokens_est": 122903,
+   "reader_prompt_tokens": 103969,
+   "reader_completion_tokens": 333,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2013 Extract relevant info:\n- In Session 12, you said: \u201cI remember getting a 10% discount on my first purchase from that new clothing brand last month.\u201d\n\nStep 2 \u2013 Reasoning:\n- Since you explicitly stated the amount, the discount on your first purchase was 10%.\n\nAnswer: 10%"
+  },
+  {
+   "question_id": "gpt4_61e13b3c",
+   "question_type": "temporal-reasoning",
+   "context_tokens_est": 123877,
+   "reader_prompt_tokens": 104432,
+   "reader_completion_tokens": 1118,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2013 Extract relevant info\n- Farmers\u2019 Market sale: On 2023/02/26 you said \u201ctoday I sold homemade baked goods,\u201d so the sale date was 2023/02/26.\n- Spring Fling Market: On 2023/03/21 you said it happened \u201cyesterday,\u201d so the event date was 2023/03/20.\n\nStep 2 \u2013 Reason and compute\n- Days between 2023/02/26 and 2023/03/20 = 22 days.\n- 22 days = 3 weeks and 1 day \u2248 3.1 weeks.\n\nAnswer: About 3 weeks (specifically, 3 weeks and 1 day)."
+  },
+  {
+   "question_id": "86f00804",
+   "question_type": "single-session-user",
+   "context_tokens_est": 120828,
+   "reader_prompt_tokens": 101308,
+   "reader_completion_tokens": 430,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2013 Extract relevant info\n- In Session 10 (2023/05/23), you said: \u201cI\u2019m currently devouring \u2018The Seven Husbands of Evelyn Hugo\u2019 and it\u2019s hard to put down!\u201d\n- No later messages indicate you switched to a different book.\n\nStep 2 \u2013 Reasoning\n- Since you explicitly stated what you were currently reading and there\u2019s no update contradicting it, that remains the best answer.\n\nAnswer: The Seven Husbands of Evelyn Hugo."
+  },
+  {
+   "question_id": "5025383b",
+   "question_type": "multi-session",
+   "context_tokens_est": 118852,
+   "reader_prompt_tokens": 101953,
+   "reader_completion_tokens": 430,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1: Extract relevant information\n- You said you\u2019ve \u201cbeen really enjoying editing my photos in Lightroom \u2014 the online communities I\u2019ve joined have been super helpful\u201d (photography).\n- You also said you\u2019ve \u201calready joined a few online communities related to cooking, which led me to engage in discussions about recipe techniques\u201d (cooking).\n\nStep 2: Reason to the answer\n- The two distinct areas tied to your joining online communities are photography and cooking.\n\nAnswer: Photography and cooking."
+  },
+  {
+   "question_id": "d596882b",
+   "question_type": "single-session-assistant",
+   "context_tokens_est": 125694,
+   "reader_prompt_tokens": 104497,
+   "reader_completion_tokens": 524,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info from our past chats:\n- In Session 24, when you asked for vegan/vegetarian options in NYC, I recommended:\n  - By Chloe \u2014 a popular plant-based eatery with multiple locations throughout the city\n  - Candle 79, Superiority Burger, Juice Generation/Pure Green, Peacefood Cafe\n\nStep 2 \u2014 Reasoning:\n- Your prompt mentions \u201cthe vegan eatery \u2026 with multiple locations throughout the city.\u201d Among those, the one explicitly noted as having multiple locations is By Chloe.\n\nAnswer:\n- By Chloe. It\u2019s the plant-based spot I mentioned that has multiple locations around NYC."
+  },
+  {
+   "question_id": "8cf51dda",
+   "question_type": "single-session-assistant",
+   "context_tokens_est": 124134,
+   "reader_prompt_tokens": 104718,
+   "reader_completion_tokens": 503,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant information\nFrom our earlier grant aims page (Session 39), the Objectives were:\n1) Identify molecular subtypes of endometrial cancer using genomic and transcriptomic approaches.\n2) Investigate the clinical and biological significance of these subtypes, including associations with patient outcomes and response to therapy.\n3) Develop biomarkers for early detection and prognosis based on the identified molecular subtypes.\n\nStep 2 \u2014 Reason over the information\nTogether, these objectives progress from discovery (defining subtypes), to translation (linking subtypes to clinical meaning), to application (creating actionable biomarkers for early detection/prognosis).\n\nAnswer\n1) Identify molecular subtypes via genomic/transcriptomic analyses.\n2) Determine their clinical/biological significance (outcomes and therapy response).\n3) Develop early detection and prognostic biomarkers informed by these subtypes."
+  },
+  {
+   "question_id": "d6233ab6",
+   "question_type": "single-session-preference",
+   "context_tokens_est": 123491,
+   "reader_prompt_tokens": 104541,
+   "reader_completion_tokens": 1232,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Relevant information from your past messages\n- You have happy high school memories (you mentioned enjoying debate team and AP economics).\n- You value connection and community (planning dinners, inviting friends, enjoying concerts).\n- You\u2019ve been working on intentional relationships and healthy boundaries (social media break, gratitude journaling, vulnerability work).\n- You keep some awareness of old high school friends\u2019 paths (noted many plan to work after graduating), suggesting some ongoing interest in reconnecting.\n\nStep 2 \u2014 Reasoning and recommendation\n- Given your positive high school memories and current focus on authentic, intentional connection, a reunion is likely to be a net positive: it can be energizing, offer closure where needed, and rekindle friendships/networking (useful if you\u2019re eyeing econ/data-related paths).\n- Potential downsides (comparison stress, small talk fatigue, time/cost) can be managed with clear intentions and boundaries.\n\nHow to decide (quick checklist):\n- Intention: What do you want out of it (reconnect with a few people, see favorite teachers, get closure, light nostalgia)?\n- Emotional readiness: Does the idea feel more exciting than draining? If anxious, would going with a trusted friend/classmate help?\n- Logistics: Reasonable cost/time? If yes, proceed.\n\nIf you go:\n- Set a simple goal (e.g., meaningfully reconnect with 3 people).\n- Bring or meet up with one friendly classmate first to ease in.\n- Prepare a short, confident \u201cwhat I\u2019m up to\u201d update and a few curious questions for others.\n- Give yourself an exit plan/time limit; follow up after with those you enjoyed seeing.\n\nIf you skip:\n- Reach out 1:1 to 2\u20133 people you\u2019d actually love to see.\n- Join/peek into the class group or virtual updates; send a short note to the organizers to be shared if appropriate.\n- Propose a smaller coffee meet-up later\u2014often more meaningful than a big event.\n\nBottom line: Yes\u2014based on your nostalgia and relationship goals, attending is a good idea if it feels more exciting than draining. Go with clear intentions and gentle boundaries; if it doesn\u2019t feel right, create your own smaller reconnection moments instead."
+  },
+  {
+   "question_id": "08e075c7",
+   "question_type": "knowledge-update",
+   "context_tokens_est": 126442,
+   "reader_prompt_tokens": 104207,
+   "reader_completion_tokens": 566,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1: Extract relevant info\n- 2023/06/18: You said you\u2019d been using your Fitbit Charge 3 for 6 months.\n- 2023/09/02: You said you\u2019d been using it for 9 months.\n\nStep 2: Reason over the info\n- The most recent statement (2023/09/02) is 9 months.\n- With the current date at 2023/09/04, that\u2019s still about 9 months.\n\nAnswer: 9 months."
+  },
+  {
+   "question_id": "8fb83627",
+   "question_type": "knowledge-update",
+   "context_tokens_est": 122573,
+   "reader_prompt_tokens": 102855,
+   "reader_completion_tokens": 559,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2013 Extract relevant information\n- 2023/04/20: You said, \u201cI just finished my third issue, and I'm currently on my fourth.\u201d\n- 2023/07/15: You said, \u201cI've finished five issues so far...\u201d and later, \u201cI just finished my fifth issue.\u201d\n\nStep 2 \u2013 Reason over the information\n- The later statements supersede the earlier count. As of the most recent mention, you had completed five issues.\n\nAnswer: 5"
+  },
+  {
+   "question_id": "1c549ce4",
+   "question_type": "multi-session",
+   "context_tokens_est": 124369,
+   "reader_prompt_tokens": 103905,
+   "reader_completion_tokens": 442,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant information:\n- Waterproof car cover cost: $120\n- Detailing spray from Amazon cost: $20\n\nStep 2 \u2014 Calculate total:\n- $120 + $20 = $140\n\nAnswer: $140"
+  },
+  {
+   "question_id": "4100d0a0",
+   "question_type": "single-session-user",
+   "context_tokens_est": 125242,
+   "reader_prompt_tokens": 103615,
+   "reader_completion_tokens": 332,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant information\n- In Session 50, you said: \u201cmy mixed ethnicity \u2014 Irish and Italian.\u201d\n\nStep 2 \u2014 Reason over the information\n- This is a direct statement about your background; no conflicting info appears elsewhere. Therefore, your ethnicity is mixed Irish and Italian.\n\nAnswer: Irish and Italian."
+  },
+  {
+   "question_id": "faba32e5",
+   "question_type": "single-session-user",
+   "context_tokens_est": 127676,
+   "reader_prompt_tokens": 105265,
+   "reader_completion_tokens": 264,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info:\n- In Session 29, you said: \u201cI remember Alex telling me he marinated them in a special sauce for 24 hours before grilling them to perfection.\u201d\n\nStep 2 \u2014 Reasoning:\n- This directly states the marination duration.\n\nAnswer: 24 hours."
+  },
+  {
+   "question_id": "ba61f0b9",
+   "question_type": "knowledge-update",
+   "context_tokens_est": 126142,
+   "reader_prompt_tokens": 105156,
+   "reader_completion_tokens": 318,
+   "judge_label": "WRONG",
+   "hypothesis": "Step 1 \u2013 Extract relevant info:\n- You said Rachel leads a team of 10 people.\n- You said half of them are women.\n\nStep 2 \u2013 Reason to the answer:\n- Half of 10 is 5.\n\nAnswer: 5 women."
+  },
+  {
+   "question_id": "gpt4_f49edff3",
+   "question_type": "temporal-reasoning",
+   "context_tokens_est": 123549,
+   "reader_prompt_tokens": 103306,
+   "reader_completion_tokens": 1166,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info:\n- Friend\u2019s nursery: Session 24 on 2023/02/05 (Sun). User said they helped \u201ctoday,\u201d so date = Feb 5, 2023.\n- Cousin\u2019s baby shower shopping: Session 41 on 2023/02/10 (Fri). User said \u201cI just helped,\u201d so date \u2248 Feb 10, 2023.\n- Customized phone case order: Session 44 on 2023/02/20 (Mon). User said they ordered \u201ctoday,\u201d so date = Feb 20, 2023.\n\nStep 2 \u2014 Reason and order:\n- Feb 5 (nursery) \u2192 Feb 10 (baby shower shopping) \u2192 Feb 20 (phone case order).\n\nAnswer:\n1) Helped my friend prepare the nursery.\n2) Helped my cousin pick out stuff for her baby shower.\n3) Ordered a customized phone case for my friend\u2019s birthday."
+  },
+  {
+   "question_id": "4d6b87c8",
+   "question_type": "knowledge-update",
+   "context_tokens_est": 122584,
+   "reader_prompt_tokens": 101984,
+   "reader_completion_tokens": 605,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2013 Extract relevant information:\n- Session 19: You said your to-watch list had 20 titles.\n- Session 41: You said your to-watch list had 25 titles (\u201ccurrently 25\u201d).\n\nStep 2 \u2013 Reasoning:\n- The later statement (Session 41) supersedes the earlier count. Therefore, the most up-to-date number is 25.\n\nAnswer: 25 titles."
+  },
+  {
+   "question_id": "gpt4_213fd887",
+   "question_type": "temporal-reasoning",
+   "context_tokens_est": 122427,
+   "reader_prompt_tokens": 102373,
+   "reader_completion_tokens": 728,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info:\n- You said you did a charity 5K run for a local children\u2019s hospital \u201cabout a month ago.\u201d (Session 29, dated 2023-05-24)\n- You said you\u2019ve been playing in a recreational volleyball league \u201cfor about 2 months now.\u201d (Session 44, dated 2023-05-24)\n\nStep 2 \u2014 Reasoning:\n- \u201cAbout 2 months now\u201d from May 24 \u2248 late March.\n- \u201cAbout a month ago\u201d from May 24 \u2248 late April.\n- Therefore, the volleyball league started earlier than the 5K.\n\nAnswer:\nYou participated in the volleyball league first."
+  },
+  {
+   "question_id": "gpt4_2487a7cb",
+   "question_type": "temporal-reasoning",
+   "context_tokens_est": 125730,
+   "reader_prompt_tokens": 104734,
+   "reader_completion_tokens": 613,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant information\n- From Session 5 (2023/05/24): You said you \u201cparticipated in a webinar on \u2018Data Analysis using Python\u2019 two months ago.\u201d That places the webinar around late March 2023.\n- From Session 31 (2023/05/24): You said you attended the \u201cEffective Time Management\u201d workshop \u201clast Saturday.\u201d The Saturday before Wed, May 24, 2023 is May 20, 2023.\n\nStep 2 \u2014 Reasoning\n- The webinar occurred around late March 2023.\n- The workshop occurred on May 20, 2023.\n- Late March is earlier than May 20.\n\nAnswer: You attended the \u201cData Analysis using Python\u201d webinar first."
+  },
+  {
+   "question_id": "370a8ff4",
+   "question_type": "temporal-reasoning",
+   "context_tokens_est": 123005,
+   "reader_prompt_tokens": 102336,
+   "reader_completion_tokens": 917,
+   "judge_label": "WRONG",
+   "hypothesis": "Step 1: Extract relevant information\n- Recovery date: You said you \u201cfinally recovered from the flu today\u201d on 2023/01/19 (Session 19).\n- 10th jog date: You said you \u201cwent on my 10th jog outdoors today\u201d on 2023/04/10 (Session 45).\n\nStep 2: Reason and calculate\n- Days between 2023/01/19 and 2023/04/10:\n  - Jan 19\u201331: 12 days\n  - Feb: 28 days\n  - Mar: 31 days\n  - Apr 1\u201310: 10 days\n  - Total = 12 + 28 + 31 + 10 = 81 days\n- Convert to weeks: 81 days = 11 weeks and 4 days (since 11\u00d77 = 77; remainder 4)\n\nAnswer: 11 weeks and 4 days (approximately 11.6 weeks)."
+  },
+  {
+   "question_id": "1e043500",
+   "question_type": "single-session-user",
+   "context_tokens_est": 126608,
+   "reader_prompt_tokens": 104719,
+   "reader_completion_tokens": 268,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2013 Extract relevant information:\n- In Session 14, you said: \u201cI\u2019ve been listening to this one playlist on Spotify that I created, called Summer Vibes...\u201d\n\nStep 2 \u2013 Reason to the answer:\n- Since you explicitly named the playlist you created, the playlist\u2019s name is \u201cSummer Vibes.\u201d"
+  },
+  {
+   "question_id": "7e00a6cb",
+   "question_type": "single-session-assistant",
+   "context_tokens_est": 123494,
+   "reader_prompt_tokens": 103564,
+   "reader_completion_tokens": 541,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Relevant info from our last chat:\n- I recommended several budget-friendly hostels in Amsterdam.\n- One of them was explicitly described as \u201csituated near the famous Red Light District\u201d \u2014 International Budget Hostel.\n\nStep 2 \u2014 Reasoning:\n- Since you asked for the hostel near the Red Light District that I mentioned, the one fitting that description is International Budget Hostel.\n\nAnswer: International Budget Hostel."
+  },
+  {
+   "question_id": "0edc2aef",
+   "question_type": "single-session-preference",
+   "context_tokens_est": 127388,
+   "reader_prompt_tokens": 105515,
+   "reader_completion_tokens": 1694,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1: Extract relevant info from prior chats\n- You value great views (waterline/city skyline) and balconies.\n- You\u2019re interested in special amenities like rooftop pools and, when possible, private hot tubs.\n- You care about room-service breakfast options and the ability to accommodate dietary needs.\n- You\u2019ve liked packages/perks (e.g., spa credits, romantic add\u2011ons).\n- You appreciated eco\u2011friendly options previously.\n\nStep 2: Reason over what fits in Miami\n- Miami offers both oceanfront (South Beach/Mid\u2011Beach) and skyline views (Brickell/Biscayne Bay).\n- Rooftop pools and strong spa programs are common at top properties.\n- A few hotels offer rooms with private outdoor soaking tubs; others offer standout spas instead.\n- To match your preferences, I\u2019ll suggest options by vibe with notes on views, rooftop pools, spa/amenity strength, and likelihood of packages.\n\nSuggested Miami hotels (curated to your preferences)\n- 1 Hotel South Beach (South Beach, oceanfront)\n  - Why: Eco\u2011luxury, stunning ocean views, one of Miami\u2019s best rooftop pools, excellent wellness program, strong room\u2011service program.\n  - Good for: Ocean views + rooftop + eco focus; often has packages (credits, breakfast).\n\n- The Setai, Miami Beach (South Beach, oceanfront)\n  - Why: Ultra\u2011luxury, serene vibe, suites with soaking tubs (not typically on balcony), top service, great in\u2011room dining.\n  - Good for: Quiet luxury + ocean views + spa; romantic stays.\n\n- The Standard Spa, Miami Beach (Biscayne Bay, adults\u2011oriented)\n  - Why: Spa\u2011centric (hydrotherapy, hammam), bayside sunset views, some rooms with outdoor soaking tubs/showers, excellent wellness food.\n  - Good for: Private soaking options + spa immersion + dietary accommodations.\n\n- Faena Hotel Miami Beach (Mid\u2011Beach, oceanfront)\n  - Why: Artful luxury, ocean views, strong dining and in\u2011room service, notable spa; frequent experience\u2011forward packages.\n  - Good for: Statement stay + ocean views + memorable dining.\n\n- W South Beach (South Beach, oceanfront)\n  - Why: Large suites with balconies, ocean views, lively scene, multiple pools, strong room service.\n  - Good for: View\u2011forward suites + social vibe.\n\n- EAST Miami (Brickell, city skyline)\n  - Why: Sleek city views, multiple pools on high floors, famed rooftop bar (Sugar), good for access to dining/Brickell City Centre.\n  - Good for: Skyline views + rooftop energy; city vs. beach.\n\n- Kimpton EPIC Hotel (Brickell, river/bay views)\n  - Why: Rooftop pool deck with skyline views, strong in\u2011room dining, good for quick access to downtown/Brickell restaurants.\n  - Good for: Skyline/water views + rooftop pool.\n\n- The Biltmore Hotel (Coral Gables, historic)\n  - Why: Iconic property, one of the largest pools in the U.S., refined spa, excellent breakfast programs.\n  - Good for: Classic luxury + huge pool + calmer setting.\n\nFor a private outdoor hot tub specifically\n- Check The Standard Spa (select rooms with outdoor tubs) and Hotel Victor South Beach (some rooms historically offered private terrace hot tubs). Availability is limited\u2014confirm directly before booking.\n\nNext steps (to narrow perfectly)\n- Prefer oceanfront beach vibe or city skyline (Brickell)?\n- Must\u2011have: rooftop pool, private outdoor tub, or strongest spa?\n- Budget range and travel dates?\n- Any dietary requirements for room\u2011service breakfast (gluten\u2011free, vegan, etc.)?\n\nShare those, and I\u2019ll shortlist 2\u20133 exact room types and current packages to match."
+  },
+  {
+   "question_id": "gpt4_f420262d",
+   "question_type": "temporal-reasoning",
+   "context_tokens_est": 124042,
+   "reader_prompt_tokens": 104841,
+   "reader_completion_tokens": 1125,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2013 Extract relevant info:\n- On 2023/02/14 (Valentine\u2019s Day), you said: \u201cI\u2019m still recovering from my American Airlines flight from LAX to JFK, which was delayed by 2 hours due to bad weather conditions.\u201d\n\nStep 2 \u2013 Reasoning:\n- Valentine\u2019s Day is February 14.\n- On that date, you referenced an American Airlines flight you had just taken.\n\nAnswer: American Airlines."
+  },
+  {
+   "question_id": "gpt4_468eb064",
+   "question_type": "temporal-reasoning",
+   "context_tokens_est": 124638,
+   "reader_prompt_tokens": 102717,
+   "reader_completion_tokens": 561,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1: Extract relevant information\n- On Tuesday, 2023/04/11 (Session 47), you said: \u201cI catch up with Emma, a freelance writer, over lunch today\u2026\u201d\n\nStep 2: Reasoning to the answer\n- From the current date (2023/04/18, also a Tuesday), \u201clast Tuesday\u201d refers to 2023/04/11. On that day, you had lunch with Emma.\n\nAnswer: You met with Emma, the freelance writer."
+  },
+  {
+   "question_id": "07741c44",
+   "question_type": "knowledge-update",
+   "context_tokens_est": 128913,
+   "reader_prompt_tokens": 104360,
+   "reader_completion_tokens": 364,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant information:\n- You said: \u201cI\u2019ve been keeping them under my bed for storage, and they\u2019re starting to smell.\u201d (Session 7)\n- Later, you planned to organize your closet and store old sneakers in a shoe rack, but that was a future change.\n\nStep 2 \u2014 Reason to the answer:\n- The question asks where you initially keep your old sneakers. The initial storage location you mentioned was under your bed.\n\nAnswer: Under your bed."
+  },
+  {
+   "question_id": "a4996e51",
+   "question_type": "multi-session",
+   "context_tokens_est": 125416,
+   "reader_prompt_tokens": 105377,
+   "reader_completion_tokens": 551,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info\n- You said you usually work 40 hours per week. (Session 20)\n- You also said that during peak campaign seasons you increase your work hours by 10 hours weekly. (Session 44)\n\nStep 2 \u2014 Reason to the answer\n- 40 hours (typical) + 10 hours (peak increase) = 50 hours per week during peak campaign seasons.\n\nAnswer: 50 hours per week."
+  },
+  {
+   "question_id": "9aaed6a3",
+   "question_type": "multi-session",
+   "context_tokens_est": 126063,
+   "reader_prompt_tokens": 103978,
+   "reader_completion_tokens": 662,
+   "judge_label": "CORRECT",
+   "hypothesis": "Relevant information:\n- Your SaveMart membership earns 1% cashback on all purchases. (Session 11)\n- You spent $75 on groceries at SaveMart last Thursday. (Session 16)\n\nReasoning:\n- Cashback = 1% of $75 = 0.01 \u00d7 75 = $0.75\n\nAnswer:\nYou earned $0.75 in cashback."
+  },
+  {
+   "question_id": "0ddfec37_abs",
+   "question_type": "knowledge-update",
+   "context_tokens_est": 124534,
+   "reader_prompt_tokens": 103836,
+   "reader_completion_tokens": 639,
+   "judge_label": "WRONG",
+   "hypothesis": "Step 1 \u2014 Relevant information extracted:\n- You mentioned a signed Mike Trout baseball and said you had 15 autographed baseballs since starting three months ago (Session 22).\n- You later said you\u2019d added 20 autographed baseballs in the past few months (Session 30).\n- There is no mention anywhere of adding any autographed footballs.\n\nStep 2 \u2014 Reasoning:\n- Since only autographed baseballs (not footballs) were reported during the first three months, the count of autographed footballs added in that period is zero.\n\nAnswer: 0"
+  },
+  {
+   "question_id": "gpt4_385a5000",
+   "question_type": "temporal-reasoning",
+   "context_tokens_est": 122668,
+   "reader_prompt_tokens": 102893,
+   "reader_completion_tokens": 405,
+   "judge_label": "CORRECT",
+   "hypothesis": "Relevant information extracted:\n- You started marigold seeds on March 3 (Session 35).\n- You started tomatoes (along with peppers and cucumbers) indoors on February 20 (Session 36).\n\nReasoning:\n- February 20 is earlier than March 3. Therefore, the tomatoes were started before the marigolds.\n\nAnswer: The tomatoes were started first."
+  },
+  {
+   "question_id": "60bf93ed",
+   "question_type": "multi-session",
+   "context_tokens_est": 125519,
+   "reader_prompt_tokens": 103954,
+   "reader_completion_tokens": 516,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info:\n- You bought the backpack on 1/15.\n- It arrived on 1/20.\n\nStep 2 \u2014 Reason to answer:\n- Days from 1/15 to 1/20 = 5 days.\n\nAnswer: 5 days."
+  },
+  {
+   "question_id": "982b5123",
+   "question_type": "temporal-reasoning",
+   "context_tokens_est": 127162,
+   "reader_prompt_tokens": 105564,
+   "reader_completion_tokens": 625,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1: Extract relevant information\n- You said you were in San Francisco exactly two months ago for your best friend\u2019s wedding. (Session 39)\n- You also said you had to book the Airbnb three months in advance. (Session 42)\n\nStep 2: Reason to the answer\n- Booking happened 3 months before the stay.\n- The stay was 2 months ago.\n- Therefore, the booking was 2 + 3 = 5 months ago.\n\nAnswer: 5 months ago."
+  },
+  {
+   "question_id": "f523d9fe",
+   "question_type": "single-session-assistant",
+   "context_tokens_est": 127291,
+   "reader_prompt_tokens": 105754,
+   "reader_completion_tokens": 423,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2013 Extract relevant info:\n- In our Netflix interview (Session 29), you said: \u201cAfter a while Netflix takes down shows\u2026 I will give you an example, \u2018doc martin\u2019 show went down after a while, and now we have access only to the last season.\u201d\n\nStep 2 \u2013 Reason to answer:\n- You explicitly used \u201cDoc Martin\u201d as the example of a show where only the last season was available.\n\nAnswer: Doc Martin."
+  },
+  {
+   "question_id": "gpt4_2f91af09",
+   "question_type": "multi-session",
+   "context_tokens_est": 127003,
+   "reader_prompt_tokens": 104958,
+   "reader_completion_tokens": 1422,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info from our chats\n- You said you\u2019ve written 17 poems in the past two weeks.\n- You said you\u2019ve written five short stories so far.\n- You said you wrote one piece for last week\u2019s writing challenge (\u201cThe Smell of Old Books\u201d).\n\nStep 2 \u2014 Reason to get the total\n- Total pieces = short stories (5) + poems (17) + writing-challenge pieces (1) = 23.\n\nAnswer: 23 pieces in total.\n\nNote: This assumes the writing-challenge piece isn\u2019t already counted among your five short stories. If it is, the total would be 22."
+  },
+  {
+   "question_id": "f8c5f88b",
+   "question_type": "single-session-user",
+   "context_tokens_est": 124298,
+   "reader_prompt_tokens": 103712,
+   "reader_completion_tokens": 339,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant information:\n- In Session 28, you said: \u201cI\u2019m really happy with my new tennis racket, which I got from a sports store downtown.\u201d\n\nStep 2 \u2014 Reason over the information:\n- The question asks where you bought your new tennis racket. Your prior message explicitly states the place.\n\nAnswer: From a sports store downtown."
+  },
+  {
+   "question_id": "7405e8b1",
+   "question_type": "multi-session",
+   "context_tokens_est": 125534,
+   "reader_prompt_tokens": 105245,
+   "reader_completion_tokens": 1839,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info from past chats:\n- You said you \u201crecently tried HelloFresh and got a 40% discount on my first order.\u201d (Session 11)\n- You also said, \u201clast week I got 20% off my UberEats order.\u201d (Session 31)\n- There\u2019s no explicit mention of what discount you received on your first-ever UberEats order.\n\nStep 2 \u2014 Reason to answer:\n- We can confirm your HelloFresh first-order discount was 40%.\n- We do not have a stated discount for your first UberEats order. The only UberEats figure you shared was 20% off on a recent order (not specified as your first).\n- Therefore: If your first UberEats order discount was 20% (or the typical small new-user $-off), then yes\u2014your HelloFresh first-order discount (40%) was higher.\n- Strictly speaking, because your first UberEats order discount wasn\u2019t specified, we can\u2019t say with certainty. But based on the only number you mentioned (20%), HelloFresh\u2019s 40% was higher."
+  },
+  {
+   "question_id": "8550ddae",
+   "question_type": "single-session-user",
+   "context_tokens_est": 123958,
+   "reader_prompt_tokens": 105018,
+   "reader_completion_tokens": 224,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1: Extract relevant information\n- In Session 6, you said: \u201cI tried a lavender gin fizz recipe last weekend, but it didn't quite turn out as expected - I didn't have simple syrup, so I had to improvise with honey and water.\u201d\n\nStep 2: Reason to answer\n- You explicitly stated the cocktail you tried last weekend: a lavender gin fizz.\n\nAnswer: You tried a lavender gin fizz."
+  },
+  {
+   "question_id": "b46e15ed",
+   "question_type": "temporal-reasoning",
+   "context_tokens_est": 125355,
+   "reader_prompt_tokens": 105470,
+   "reader_completion_tokens": 1694,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info\n- 2023/02/14: You said you\u2019d just done the \u201c24-Hour Bike Ride\u201d charity event.\n- 2023/02/15: You said you volunteered at the \u201cBooks for Kids\u201d charity book drive \u201ctoday.\u201d\n- These are consecutive days: Feb 14 and Feb 15, 2023.\n\nStep 2 \u2014 Reason to the answer\n- Current date: 2023/04/18.\n- Time since those consecutive events (ending Feb 15) to Apr 18 is 2 months and 3 days (or 2 months and 4 days from Feb 14).\n- Therefore, in months: 2 months have passed."
+  },
+  {
+   "question_id": "85fa3a3f",
+   "question_type": "multi-session",
+   "context_tokens_est": 123862,
+   "reader_prompt_tokens": 104596,
+   "reader_completion_tokens": 398,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1: Extract relevant costs\n- New stainless steel food bowl: $15\n- Measuring cup: $5\n- Dental chews: $10\n- Flea and tick collar: $20\n\nStep 2: Add them up\n15 + 5 + 10 + 20 = 50\n\nAnswer: $50"
+  },
+  {
+   "question_id": "gpt4_31ff4165",
+   "question_type": "multi-session",
+   "context_tokens_est": 119835,
+   "reader_prompt_tokens": 102429,
+   "reader_completion_tokens": 660,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2013 Extract relevant info from your chats\n- You wear a Fitbit Versa 3 daily and use it for guided breathing and sleep/steps tracking.\n- You rely on your hearing aids (Phonak BTE) daily.\n- You test your blood sugar three times a day with an Accu\u2011Chek Aviva Nano.\n- You do inhalation treatments twice a day with a nebulizer machine.\n\nStep 2 \u2013 Reason over daily use\nAll four items are health-related devices you use as part of your daily routine.\n\nAnswer: 4 devices (Fitbit Versa 3, hearing aids, Accu\u2011Chek Aviva Nano glucose meter, nebulizer machine)."
+  },
+  {
+   "question_id": "cc06de0d",
+   "question_type": "multi-session",
+   "context_tokens_est": 124343,
+   "reader_prompt_tokens": 104735,
+   "reader_completion_tokens": 335,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info\n- Taxi ride cost: $12 (missed the train and took a taxi).\n- Daily train fare: $6.\n\nStep 2 \u2014 Reason to get the answer\n- Difference = $12 \u2212 $6 = $6.\n\nAnswer: The taxi ride was $6 more expensive than the train fare."
+  },
+  {
+   "question_id": "19b5f2b3",
+   "question_type": "single-session-user",
+   "context_tokens_est": 122743,
+   "reader_prompt_tokens": 102122,
+   "reader_completion_tokens": 260,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant information:\n- You said: \u201cI spent two weeks traveling solo around the country\u201d when referring to your Japan trip.\n\nStep 2 \u2014 Reasoning:\n- Since you explicitly stated the duration, your time in Japan was two weeks.\n\nFinal answer: Two weeks."
+  },
+  {
+   "question_id": "a3332713",
+   "question_type": "multi-session",
+   "context_tokens_est": 123597,
+   "reader_prompt_tokens": 103144,
+   "reader_completion_tokens": 592,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info:\n- Brother: $100 graduation gift (gift card to his favorite electronics store, in May).\n- Coworker: $100 baby shower gift (set of baby clothes and toys from Buy Buy Baby).\n\nStep 2 \u2014 Calculate total:\n- $100 + $100 = $200.\n\nAnswer: $200."
+  },
+  {
+   "question_id": "078150f1",
+   "question_type": "multi-session",
+   "context_tokens_est": 122312,
+   "reader_prompt_tokens": 102985,
+   "reader_completion_tokens": 472,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1: Extract relevant info\n- Initial fundraising goal: $200 (you aimed to raise $200 for the children\u2019s hospital).\n- Amount actually raised: $250 (you said you raised $250 in donations).\n\nStep 2: Reason to get the answer\n- Difference = $250 \u2212 $200 = $50.\n\nAnswer: You raised $50 more than your initial goal."
+  },
+  {
+   "question_id": "129d1232",
+   "question_type": "multi-session",
+   "context_tokens_est": 123295,
+   "reader_prompt_tokens": 102765,
+   "reader_completion_tokens": 751,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info:\n- Charity walk: you raised $250 (Session 19).\n- Charity yoga event: raised $600 (Session 42).\n- Bike-a-Thon: your team raised $5,000 (Session 47).\n\nStep 2 \u2014 Reason and total:\n- Total = $250 + $600 + $5,000 = $5,850.\n\nAnswer: $5,850 total (note: this includes the full team amount from the Bike-a-Thon)."
+  },
+  {
+   "question_id": "gpt4_8279ba03",
+   "question_type": "temporal-reasoning",
+   "context_tokens_est": 126719,
+   "reader_prompt_tokens": 104540,
+   "reader_completion_tokens": 491,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info\n- On 2023/03/15 you said: \u201cI just got a smoker today and I'm excited to experiment with different types of wood and meats.\u201d\n- Current date provided is 2023/03/25.\n\nStep 2 \u2014 Reason over the info\n- Ten days before 2023/03/25 is 2023/03/15.\n- On that date, you reported buying a smoker.\n\nAnswer: A smoker."
+  },
+  {
+   "question_id": "cc5ded98",
+   "question_type": "knowledge-update",
+   "context_tokens_est": 118224,
+   "reader_prompt_tokens": 103399,
+   "reader_completion_tokens": 531,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info from past chats\n- Session 3 (2023/05/20): You said, \u201cI\u2019ve been dedicating about an hour each day to coding exercises.\u201d\n- Session 14 (2023/05/29): You said, \u201cI\u2019ve been dedicating about two hours each day to coding exercises,\u201d and later reaffirmed this.\n\nStep 2 \u2014 Reason over the information\n- The later statement (two hours per day, on 2023/05/29) supersedes the earlier one (one hour per day, on 2023/05/20).\n\nAnswer: You dedicate about two hours each day to coding exercises."
+  },
+  {
+   "question_id": "fca762bc",
+   "question_type": "single-session-assistant",
+   "context_tokens_est": 123337,
+   "reader_prompt_tokens": 104345,
+   "reader_completion_tokens": 373,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Relevant information extracted:\n- In our earlier chat about language learning apps, the options mentioned were: Duolingo, Rosetta Stone, Babbel, Memrise, and Lingodeer.\n- One of these was noted for using mnemonics to help learners memorize words, phrases, and grammar.\n\nStep 2 \u2014 Reasoning to identify the app:\n- Among those apps, Memrise is specifically known for its mnemonic \u201cmems\u201d and spaced-repetition approach to help with vocabulary retention.\n\nAnswer: Memrise."
+  },
+  {
+   "question_id": "gpt4_21adecb5",
+   "question_type": "temporal-reasoning",
+   "context_tokens_est": 126936,
+   "reader_prompt_tokens": 105134,
+   "reader_completion_tokens": 992,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant information:\n- Undergraduate completion: User said \u201cI just completed my undergraduate degree\u201d on 2022/11/17, so completion \u2248 November 2022.\n- Master\u2019s thesis submission: User said \u201cI just submitted my master\u2019s thesis today\u201d on 2023/05/15, so submission = May 15, 2023.\n\nStep 2 \u2014 Reason to the answer:\n- From November 2022 to May 2023 is six calendar months (Nov\u2192Dec\u2192Jan\u2192Feb\u2192Mar\u2192Apr\u2192May).\n- By exact days (Nov 17 to May 15) it\u2019s just under six months (~5 months, 28 days).\n\nAnswer: Approximately 6 months."
+  },
+  {
+   "question_id": "1cea1afa",
+   "question_type": "knowledge-update",
+   "context_tokens_est": 125239,
+   "reader_prompt_tokens": 105143,
+   "reader_completion_tokens": 484,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info from the chats:\n- You said you \u201cjust reached 500 followers last week\u201d (Session 8).\n- Later, you said you \u201cjust checked and I'm now at 600 followers\u201d (Session 46).\n\nStep 2 \u2014 Reasoning:\n- The most recent update is 600 followers (later than the 500 figure).\n- There\u2019s no newer count mentioned after that.\n\nAnswer: 600 followers."
+  },
+  {
+   "question_id": "gpt4_1916e0ea",
+   "question_type": "temporal-reasoning",
+   "context_tokens_est": 125897,
+   "reader_prompt_tokens": 105316,
+   "reader_completion_tokens": 1076,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant information\n- Cancellation reference: On 2023/01/05 (Session 5), you said you had cancelled your monthly FarmFresh subscription.\n- Instacart order: On 2023/02/28 (Session 52), you said you \u201cjust did an online grocery order from Instacart \u2026 today.\u201d\n\nStep 2 \u2014 Reason to find the difference\n- Dates: from 2023-01-05 to 2023-02-28.\n- 2023 is not a leap year.\n- Day-of-year for 2023-01-05 = 5; for 2023-02-28 = 31 (Jan) + 28 (Feb) = 59.\n- Difference: 59 \u2212 5 = 54 days.\n\nAnswer: 54 days."
+  },
+  {
+   "question_id": "edced276_abs",
+   "question_type": "multi-session",
+   "context_tokens_est": 122913,
+   "reader_prompt_tokens": 103305,
+   "reader_completion_tokens": 851,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info from the chats\n- Hawaii: You mentioned you \u201cjust got back from an amazing island-hopping trip to Hawaii with my family,\u201d but no duration (number of days) was stated.\n- Seattle: There is no mention in the provided chats of a trip to Seattle or its duration.\n\nStep 2 \u2014 Reason over the information\n- Since the number of days for Hawaii is not given and there is no record of a Seattle trip in the provided history, the total days spent traveling in Hawaii and Seattle cannot be computed.\n\nAnswer: I don\u2019t have enough information to calculate the total. Please share how many days you spent in Hawaii and in Seattle."
+  },
+  {
+   "question_id": "f4f1d8a4",
+   "question_type": "single-session-user",
+   "context_tokens_est": 126609,
+   "reader_prompt_tokens": 103632,
+   "reader_completion_tokens": 205,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant information:\n- In Session 51, you said: \u201cI actually got my new stand mixer as a birthday gift from my sister last month...\u201d\n\nStep 2 \u2014 Reason to answer:\n- Since you explicitly stated it was a birthday gift from your sister, she is the giver.\n\nAnswer: Your sister."
+  },
+  {
+   "question_id": "4f54b7c9",
+   "question_type": "multi-session",
+   "context_tokens_est": 115708,
+   "reader_prompt_tokens": 98423,
+   "reader_completion_tokens": 403,
+   "judge_label": "WRONG",
+   "hypothesis": "Step 1 \u2014 Extract relevant information:\n- You mentioned inheriting your grandmother\u2019s vintage diamond necklace.\n- You also have an antique music box from your great-aunt.\n- And a set of depression-era glassware from your mom.\n\nStep 2 \u2014 Reasoning:\n- These are three heirloom/antique items passed down from family members.\n\nAnswer: 3"
+  },
+  {
+   "question_id": "c9f37c46",
+   "question_type": "temporal-reasoning",
+   "context_tokens_est": 121705,
+   "reader_prompt_tokens": 103831,
+   "reader_completion_tokens": 734,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info\n- You said you\u2019ve been watching stand-up regularly for about 3 months.\n- You attended an open mic night \u201clast month.\u201d\n\nStep 2 \u2014 Reason to answer\n- If you had been watching for ~3 months as of now, then one month earlier (when you attended the open mic) you had been watching for roughly 2 months.\n\nAnswer: About two months."
+  },
+  {
+   "question_id": "0db4c65d",
+   "question_type": "temporal-reasoning",
+   "context_tokens_est": 120173,
+   "reader_prompt_tokens": 102288,
+   "reader_completion_tokens": 1138,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1: Extract relevant dates from the chats\n- Finished reading The Seven Husbands of Evelyn Hugo: 2022/12/28 (Session 29: \u201cI just finished reading this \u2026 today.\u201d Dated 2022/12/28)\n- Attended the book reading event: 2023/01/15 (Session 40: \u201cI just attended \u2026 today.\u201d Dated 2023/01/15)\n\nStep 2: Calculate days elapsed between 2022/12/28 and 2023/01/15\n- From Dec 28 to Dec 31: 3 days (29, 30, 31)\n- From Jan 1 to Jan 15: 15 days\n- Total: 3 + 15 = 18 days\n\nAnswer: 18 days."
+  },
+  {
+   "question_id": "gpt4_d9af6064",
+   "question_type": "temporal-reasoning",
+   "context_tokens_est": 125565,
+   "reader_prompt_tokens": 103103,
+   "reader_completion_tokens": 477,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2013 Extract relevant info:\n- You said you \u201crecently got a new router on January 15th,\u201d and it improved your Wi\u2011Fi signal.\n- You said you \u201cfinally set up my smart thermostat on 2/10 (February 10).\u201d\n\nStep 2 \u2013 Reasoning:\n- January 15 comes before February 10.\n- Therefore, you set up the new router first."
+  },
+  {
+   "question_id": "gpt4_7abb270c",
+   "question_type": "temporal-reasoning",
+   "context_tokens_est": 121048,
+   "reader_prompt_tokens": 100673,
+   "reader_completion_tokens": 3174,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant visits and dates\n- Science Museum (\u201cSpace Exploration\u201d exhibition) \u2014 visited \u201ctoday\u201d on 2023/01/15 (Session 7).\n- Museum of Contemporary Art (lecture series by Dr. Maria Rodriguez) \u2014 \u201cjust came back\u201d on 2023/01/22 (Session 11).\n- Metropolitan Museum of Art (\u201cAncient Egyptian Artifacts\u201d) \u2014 visited \u201ctoday\u201d on 2023/02/10 (Session 15).\n- Museum of History (conservation lab tour) \u2014 visited \u201ctoday\u201d on 2023/02/15 (Session 20).\n- Modern Art Museum (\u201cThe Evolution of Abstract Expressionism\u201d guided tour) \u2014 visited \u201ctoday\u201d on 2023/02/20 (Session 34).\n- Natural History Museum (\u201cDinosaur Fossils\u201d exhibition) \u2014 visited \u201ctoday\u201d on 2023/03/04 (Session 47).\n\nStep 2 \u2014 Order from earliest to latest\n1) Science Museum \u2014 2023/01/15\n2) Museum of Contemporary Art \u2014 2023/01/22\n3) Metropolitan Museum of Art \u2014 2023/02/10\n4) Museum of History \u2014 2023/02/15\n5) Modern Art Museum \u2014 2023/02/20\n6) Natural History Museum \u2014 2023/03/04"
+  },
+  {
+   "question_id": "b86304ba",
+   "question_type": "single-session-user",
+   "context_tokens_est": 117261,
+   "reader_prompt_tokens": 101768,
+   "reader_completion_tokens": 626,
+   "judge_label": "CORRECT",
+   "hypothesis": "Relevant information extracted:\n- You mentioned a flea market art find (a painting of a sunset).\n- You realized it\u2019s worth triple what you paid for it.\n- You didn\u2019t specify the exact amount you paid.\n\nReasoning:\n- Since the current value is \u201ctriple what I paid,\u201d its worth can only be expressed as a multiple of your purchase price.\n\nAnswer:\n- The painting is worth three times the amount you paid. In other words, if you paid $X, it\u2019s worth about $3X."
+  },
+  {
+   "question_id": "73d42213",
+   "question_type": "multi-session",
+   "context_tokens_est": 123801,
+   "reader_prompt_tokens": 102906,
+   "reader_completion_tokens": 640,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1: Extract relevant facts\n- You said: \u201cI left home at 7 AM on Monday for my doctor\u2019s appointment.\u201d (Session 6)\n- You also said: \u201cIt took me two hours to get to the clinic last time.\u201d (Session 45)\n\nStep 2: Reason over the facts\n- Departure time: 7:00 AM\n- Travel time: 2 hours\n- Arrival time = 7:00 AM + 2 hours = 9:00 AM\n\nAnswer: You reached the clinic at 9:00 AM on Monday."
+  },
+  {
+   "question_id": "gpt4_2f8be40d",
+   "question_type": "multi-session",
+   "context_tokens_est": 124906,
+   "reader_prompt_tokens": 102824,
+   "reader_completion_tokens": 1847,
+   "judge_label": "WRONG",
+   "hypothesis": "Step 1 \u2014 Extract relevant mentions of weddings you attended this year\n- You \u201cjust got back\u201d from your college roommate Emily\u2019s rooftop garden wedding in the city. (Session 7)\n- You attended your cousin Rachel\u2019s vineyard wedding in August. (Session 10)\n- You were the maid of honor at your sister\u2019s wedding. (Session 25)\n- You just attended your friend Jen\u2019s rustic barn wedding last weekend. (Session 42)\n\nStep 2 \u2014 Reason and count\n- These are four distinct weddings (roommate, cousin Rachel, sister, and friend Jen).\n- One additional mention of a \u201ccousin\u2019s wedding last month\u201d appears (Session 16), but it likely refers to the same cousin wedding already specified in August; to avoid double-counting, we count it once.\n\nAnswer: 4 weddings this year."
+  },
+  {
+   "question_id": "gpt4_93f6379c",
+   "question_type": "temporal-reasoning",
+   "context_tokens_est": 127850,
+   "reader_prompt_tokens": 103568,
+   "reader_completion_tokens": 366,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info\n- Session 2: You said you \u201cjust joined a new book club group called \u2018Page Turners\u2019 last week.\u201d\n- Session 11: You said you\u2019ve been engaging with \u201cMarketing Professionals\u201d on LinkedIn \u201csince I joined it yesterday.\u201d\n\nStep 2 \u2014 Reasoning\n- \u201cLast week\u201d is earlier than \u201cyesterday,\u201d so the group joined last week was joined first.\n\nFinal Answer\n- You joined \u201cPage Turners\u201d first."
+  },
+  {
+   "question_id": "8464fc84",
+   "question_type": "single-session-assistant",
+   "context_tokens_est": 123515,
+   "reader_prompt_tokens": 103805,
+   "reader_completion_tokens": 420,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Relevant information from our past chats:\n- When you asked for restaurants near the Vatican, I listed several spots, including \u201cRoscioli,\u201d described as a famous deli serving the best cured meats, cheeses, and traditional Roman cuisine.\n\nStep 2 \u2014 Reasoning to the answer:\n- Of the places mentioned, the one specifically noted as a famous deli known for cured meats and cheeses is Roscioli.\n\nAnswer: Roscioli."
+  },
+  {
+   "question_id": "gpt4_af6db32f",
+   "question_type": "temporal-reasoning",
+   "context_tokens_est": 126468,
+   "reader_prompt_tokens": 105812,
+   "reader_completion_tokens": 734,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant information:\n- Session 36 (dated 2023/02/12): You said you watched the Super Bowl \u201ctoday.\u201d\n- Current date given: 2023/03/01.\n\nStep 2 \u2014 Reason to get the answer:\n- Days between 2023/02/12 and 2023/03/01 = 17 days.\n\nAnswer: 17 days ago."
+  },
+  {
+   "question_id": "8aef76bc",
+   "question_type": "single-session-assistant",
+   "context_tokens_est": 124752,
+   "reader_prompt_tokens": 104728,
+   "reader_completion_tokens": 467,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info:\n- In our earlier DIY list, the \u201cNewspaper Flower Vase\u201d said: \u201cSeal the vase with Mod Podge or another sealant to make it water-resistant.\u201d\n\nStep 2 \u2014 Reason to answer:\n- The specific sealant I recommended was Mod Podge (with the note that any comparable sealant would also work)."
+  },
+  {
+   "question_id": "0ddfec37",
+   "question_type": "knowledge-update",
+   "context_tokens_est": 121159,
+   "reader_prompt_tokens": 102226,
+   "reader_completion_tokens": 565,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info:\n- Session 19: You said, \u201cthat\u2019s 15 autographed baseballs since I started collecting three months ago.\u201d\n- Session 33: You later said you\u2019d added 20 autographed baseballs \u201cin the past few months\u201d (not necessarily limited to the first three months).\n\nStep 2 \u2014 Reasoning:\n- The question asks specifically about the first three months. The explicit count for that period is 15 from Session 19.\n\nAnswer: 15 autographed baseballs."
+  },
+  {
+   "question_id": "e9327a54",
+   "question_type": "single-session-assistant",
+   "context_tokens_est": 122311,
+   "reader_prompt_tokens": 103322,
+   "reader_completion_tokens": 526,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info from our past chats:\n- In Session 11, I recommended dessert spots in Orlando and listed:\n  - \u201cThe Sugar Factory\u201d at ICON Park, noted for specialty drinks and giant milkshakes.\n  - Other spots (Wondermade, Gideon\u2019s Bakehouse, Voodoo Doughnut, etc.) but none were described as having giant milkshakes.\n\nStep 2 \u2014 Reasoning:\n- Your description\u2014\u201cunique dessert shop with the giant milkshakes\u201d\u2014matches the one we discussed that explicitly features giant milkshakes: The Sugar Factory.\n\nAnswer:\n- The Sugar Factory at ICON Park (International Drive)."
+  },
+  {
+   "question_id": "80ec1f4f_abs",
+   "question_type": "multi-session",
+   "context_tokens_est": 123980,
+   "reader_prompt_tokens": 102990,
+   "reader_completion_tokens": 686,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info\n- You mentioned visiting:\n  - The Art Cube on 15 February.\n  - A guided workshop at the Modern Art Museum in January.\n  - The Natural History Museum on 8 February.\n- No visits to any museum or gallery were mentioned as occurring in December.\n\nStep 2 \u2014 Reason to the answer\n- Since all stated museum/gallery visits were in January or February, and none were in December, the count for December is zero.\n\nAnswer: 0"
+  },
+  {
+   "question_id": "099778bb",
+   "question_type": "multi-session",
+   "context_tokens_est": 129647,
+   "reader_prompt_tokens": 106154,
+   "reader_completion_tokens": 357,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2013 Extract relevant facts from your history:\n- Total leadership positions in your company: 100 (you noted this in a later conversation).\n- Leadership positions held by women: 20 (you mentioned learning this at a workshop).\n\nStep 2 \u2013 Calculate the percentage:\n- Percentage = (women-held positions / total positions) \u00d7 100\n- Percentage = (20 / 100) \u00d7 100 = 20%\n\nAnswer: 20%"
+  },
+  {
+   "question_id": "72e3ee87",
+   "question_type": "knowledge-update",
+   "context_tokens_est": 124304,
+   "reader_prompt_tokens": 103600,
+   "reader_completion_tokens": 420,
+   "judge_label": "CORRECT",
+   "hypothesis": "Relevant information extracted:\n- Session 20: You said you were on episode 10 of the Crash Course Science series.\n- Session 43: You said, \u201cI just completed 50 episodes\u201d of the Crash Course Science series.\n\nReasoning:\n- The most recent statement about your progress is in Session 43, where you reported completing 50 episodes. That supersedes the earlier \u201con episode 10\u201d status.\n\nAnswer: 50 episodes."
+  },
+  {
+   "question_id": "852ce960",
+   "question_type": "knowledge-update",
+   "context_tokens_est": 124799,
+   "reader_prompt_tokens": 103513,
+   "reader_completion_tokens": 1136,
+   "judge_label": "WRONG",
+   "hypothesis": "Step 1 \u2014 Extract relevant info from past chats:\n- Session 3 (2023/08/11): You said, \u201cI\u2019m actually buying a $325,000 house, and I got pre-approved for $350,000 from Wells Fargo.\u201d\n- Session 37 (2023/11/29): You referenced being \u201cpre-approved for $400,000 from Wells Fargo,\u201d but that wasn\u2019t tied to the earlier home purchase thread and appeared later as a separate mention.\n\nStep 2 \u2014 Reasoning:\n- Your question asks about the amount you were pre-approved for \u201cwhen I got my mortgage from Wells Fargo,\u201d which aligns with the specific home-buying discussion in Session 3. In that context, the pre-approval tied to that mortgage process was $350,000.\n\nAnswer: $350,000."
+  },
+  {
+   "question_id": "gpt4_74aed68e",
+   "question_type": "temporal-reasoning",
+   "context_tokens_est": 125713,
+   "reader_prompt_tokens": 104673,
+   "reader_completion_tokens": 1119,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2013 Extract relevant info from past chats\n- You replaced your spark plugs \u201ctoday\u201d on 2023/02/14 (Tue). [Session 4]\n- You participated in the \u201cTurbocharged Tuesdays\u201d event \u201ctoday\u201d on 2023/03/15 (Wed). [Session 37]\n\nStep 2 \u2013 Reasoning and calculation\n- Days between 2023/02/14 and 2023/03/15:\n  - From 2023/02/14 to 2023/03/14 = 28 days\n  - Add one more day to 2023/03/15 = +1 day\n  - Total = 29 days\n\nAnswer: 29 days."
+  },
+  {
+   "question_id": "a08a253f",
+   "question_type": "multi-session",
+   "context_tokens_est": 121996,
+   "reader_prompt_tokens": 100995,
+   "reader_completion_tokens": 273,
+   "judge_label": "WRONG",
+   "hypothesis": "Step 1 \u2014 Extract relevant information:\n- You said you attend Zumba classes on Tuesdays and Thursdays at 6:30 pm.\n- You also attend a weightlifting class on Saturdays at 10 am.\n\nStep 2 \u2014 Reasoning:\n- That\u2019s three separate days each week (Tuesday, Thursday, Saturday).\n\nAnswer: 3 days a week."
+  },
+  {
+   "question_id": "3ba21379",
+   "question_type": "knowledge-update",
+   "context_tokens_est": 122816,
+   "reader_prompt_tokens": 102906,
+   "reader_completion_tokens": 525,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2013 Extract relevant info:\n- You initially worked on a Ford Mustang Shelby GT350R model (Session 8).\n- Later you said you \u201cwrapped up a model and switched to a Ford F-150 pickup truck\u201d and asked multiple questions about decals, weathering, underside detailing, rust, and blending effects specifically for the F-150 (Session 10).\n\nStep 2 \u2013 Reasoning:\n- Since you stated you wrapped up the Mustang and switched to the F-150, and all subsequent modeling questions focused on the F-150, your current project is the F-150.\n\nAnswer: A Ford F-150 pickup truck model."
+  },
+  {
+   "question_id": "edced276",
+   "question_type": "multi-session",
+   "context_tokens_est": 123167,
+   "reader_prompt_tokens": 103804,
+   "reader_completion_tokens": 622,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info\n- New York City: You said you \u201cgot back from a solo trip to New York City for five days.\u201d\n- Hawaii: You mentioned your family trip required planning \u201cfor the 10-day\u201d (in context of the island-hopping Hawaii trip).\n\nStep 2 \u2014 Reason and compute\n- NYC: 5 days\n- Hawaii: 10 days\n- Total = 5 + 10 = 15 days\n\nAnswer: 15 days total."
+  },
+  {
+   "question_id": "2698e78f_abs",
+   "question_type": "knowledge-update",
+   "context_tokens_est": 123012,
+   "reader_prompt_tokens": 105419,
+   "reader_completion_tokens": 749,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant information:\n- Across the chats, you mention therapy with Dr. Smith.\n  - Session 3: You said your therapy with Dr. Smith is every two weeks.\n  - Session 27: You said you see Dr. Smith every week.\n- There is no mention anywhere of a Dr. Johnson.\n\nStep 2 \u2014 Reasoning:\n- Since Dr. Johnson is not mentioned in the history, there\u2019s no recorded frequency for visits with Dr. Johnson.\n- If you meant Dr. Smith, the frequency changed from biweekly (earlier) to weekly (later).\n\nAnswer:\nThere\u2019s no information in the chats about Dr. Johnson, so I can\u2019t determine how often you see them. If you meant Dr. Smith, you initially went every two weeks and later weekly."
+  },
+  {
+   "question_id": "1f2b8d4f",
+   "question_type": "multi-session",
+   "context_tokens_est": 124284,
+   "reader_prompt_tokens": 103233,
+   "reader_completion_tokens": 395,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info:\n- You said you bought luxury boots for $800.\n- You later found a similar pair at a budget store for $50.\n\nStep 2 \u2014 Compute the difference:\n- $800 \u2212 $50 = $750\n\nAnswer: The budget pair is $750 cheaper than your luxury boots."
+  },
+  {
+   "question_id": "a1eacc2a",
+   "question_type": "knowledge-update",
+   "context_tokens_est": 126448,
+   "reader_prompt_tokens": 103964,
+   "reader_completion_tokens": 269,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info:\n- In Session 29, you said: \u201cI\u2019ve even managed to complete 7 short stories since I started.\u201d\n\nStep 2 \u2014 Reason:\n- The question asks how many short stories you\u2019ve written since you started writing regularly. That statement directly answers it.\n\nAnswer: 7 short stories."
+  },
+  {
+   "question_id": "3e321797",
+   "question_type": "single-session-assistant",
+   "context_tokens_est": 126890,
+   "reader_prompt_tokens": 105681,
+   "reader_completion_tokens": 359,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info:\n- In our earlier list of remedies, the tomato + lemon juice tip said: \u201cApply tomato juice mixed with lemon juice on your under-eye area and wash off after 10 minutes with cold water.\u201d\n\nStep 2 \u2014 Reason to answer:\n- Therefore, the recommended duration to leave the mixture on is 10 minutes before rinsing.\n\nFinal answer:\nLeave it on for about 10 minutes, then rinse off with cold water."
+  },
+  {
+   "question_id": "5809eb10",
+   "question_type": "single-session-assistant",
+   "context_tokens_est": 125115,
+   "reader_prompt_tokens": 103491,
+   "reader_completion_tokens": 330,
+   "judge_label": "CORRECT",
+   "hypothesis": "Relevant information extracted:\n- From the case summary background: \u201cThe construction of the house began in 2014, and the contract was signed between the parties in 2015.\u201d\n\nReasoning:\n- The question asks specifically for the year construction began. The background clearly states it began in 2014.\n\nAnswer:\n2014"
+  },
+  {
+   "question_id": "gpt4_2f56ae70",
+   "question_type": "temporal-reasoning",
+   "context_tokens_est": 121986,
+   "reader_prompt_tokens": 102996,
+   "reader_completion_tokens": 880,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Extract relevant info:\n- You said you\u2019ve been using Netflix, Hulu, and Amazon Prime for the past 6 months.\n- You started a free trial of Disney+ last month.\n- You\u2019ve been using Apple TV+ for a few months now.\n\nStep 2 \u2014 Reasoning:\n- \u201cLast month\u201d (Disney+) is more recent than \u201ca few months\u201d (Apple TV+) and \u201cpast 6 months\u201d (Netflix, Hulu, Amazon Prime).\n\nFinal answer: Disney+."
+  },
+  {
+   "question_id": "6ade9755",
+   "question_type": "single-session-user",
+   "context_tokens_est": 123588,
+   "reader_prompt_tokens": 103209,
+   "reader_completion_tokens": 375,
+   "judge_label": "CORRECT",
+   "hypothesis": "Step 1 \u2014 Relevant information extracted\n- You mentioned \u201cSerenity Yoga\u201d when asking for healthy brunch spots nearby, implying it\u2019s your studio.\n- You also said you use the Down Dog app for your home practice and vinyasa flow classes.\n\nStep 2 \u2014 Reasoning to answer\n- The question asks where you take yoga classes. Your in-person studio is Serenity Yoga; you also practice at home via Down Dog.\n\nAnswer\n- You take yoga classes at Serenity Yoga, and you also practice at home using the Down Dog app."
+  },
+  {
+   "question_id": "gpt4_7f6b06db",
+   "question_type": "temporal-reasoning",
+   "context_tokens_est": 120626,
+   "reader_prompt_tokens": 102870,
+   "reader_completion_tokens": 1571,
+   "judge_label": "WRONG",
+   "hypothesis": "Step 1 \u2014 Extract relevant trip mentions with dates\n- 2023/04/20: \u201cI just got back from a road trip with friends to Big Sur and Monterey today.\u201d\n- 2023/05/10: \u201cI just got back from a day hike to Muir Woods National Monument with my family today.\u201d\n- 2023/05/15: \u201cI just got back from a solo camping trip to Yosemite National Park today.\u201d\n\nStep 2 \u2014 Reason about order (earliest \u2192 latest)\n- Apr 20 (Big Sur & Monterey) \u2192 May 10 (Muir Woods) \u2192 May 15 (Yosemite).\n\nAnswer\n- Big Sur & Monterey road trip \u2192 Muir Woods day hike \u2192 Yosemite solo camping trip."
+  }
+ ]
+}

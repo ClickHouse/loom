@@ -1,0 +1,450 @@
+[
+ {
+  "case": "dup120850_t",
+  "split": "held",
+  "kind": "title_only",
+  "draft": "Add custom logic to validate QueryCache results",
+  "true": 108713,
+  "legs": {
+   "vector": 42
+  },
+  "in_pool": false,
+  "pick_rank": null,
+  "reason": "best leg rank 42; outside the 60-per-namespace pool (100/150 per namespace measured worse: held-out title-only 29/48)",
+  "reach": "reachable in principle, net loss"
+ },
+ {
+  "case": "dup117550_t",
+  "split": "held",
+  "kind": "title_only",
+  "draft": "RFC: Ordered `groupArray` for Event Sequences",
+  "true": 34156,
+  "legs": {
+   "vector": 40
+  },
+  "in_pool": false,
+  "pick_rank": null,
+  "reason": "best leg rank 40; outside the 60-per-namespace pool (100/150 per namespace measured worse: held-out title-only 29/48)",
+  "reach": "reachable in principle, net loss"
+ },
+ {
+  "case": "dup107170_tb",
+  "split": "held",
+  "kind": "title_body",
+  "draft": "Segmentation fault (STID: 0883-49e8)",
+  "true": 107167,
+  "legs": {},
+  "in_pool": false,
+  "pick_rank": null,
+  "reason": "in no leg's top 50: no shared words, embedding neighbourhood or fingerprint",
+  "reach": "unreachable"
+ },
+ {
+  "case": "dup107170_t",
+  "split": "held",
+  "kind": "title_only",
+  "draft": "Segmentation fault (STID: 0883-49e8)",
+  "true": 107167,
+  "legs": {},
+  "in_pool": false,
+  "pick_rank": null,
+  "reason": "in no leg's top 50: no shared words, embedding neighbourhood or fingerprint",
+  "reach": "unreachable"
+ },
+ {
+  "case": "dup106646_t",
+  "split": "held",
+  "kind": "title_only",
+  "draft": "std::bad_alloc on macOS 26.5.1.882 after repeated partitioned and ordered window",
+  "true": 105868,
+  "legs": {
+   "lexical": 24
+  },
+  "in_pool": true,
+  "pick_rank": null,
+  "reason": "in the pool (best leg rank 24); the model did not pick it",
+  "reach": "judgement"
+ },
+ {
+  "case": "dup106403_t",
+  "split": "dev",
+  "kind": "title_only",
+  "draft": "NUMBER_OF_COLUMNS_DOESNT_MATCH when querying Distributed table with two ALIAS co",
+  "true": 81631,
+  "legs": {
+   "vector": 31
+  },
+  "in_pool": false,
+  "pick_rank": null,
+  "reason": "best leg rank 31; outside the 60-per-namespace pool (100/150 per namespace measured worse: held-out title-only 29/48)",
+  "reach": "reachable in principle, net loss"
+ },
+ {
+  "case": "dup102815_t",
+  "split": "dev",
+  "kind": "title_only",
+  "draft": "AllTests",
+  "true": 102542,
+  "legs": {
+   "vector": 9
+  },
+  "in_pool": true,
+  "pick_rank": null,
+  "reason": "in the pool (best leg rank 9); the model did not pick it",
+  "reach": "judgement"
+ },
+ {
+  "case": "dup102057_t",
+  "split": "dev",
+  "kind": "title_only",
+  "draft": "Native parquet reader: Too many bytes in mask",
+  "true": 99019,
+  "legs": {
+   "lexical": 14,
+   "vector": 2
+  },
+  "in_pool": true,
+  "pick_rank": null,
+  "reason": "in the pool (best leg rank 2); the model did not pick it",
+  "reach": "judgement"
+ },
+ {
+  "case": "dup101613_t",
+  "split": "dev",
+  "kind": "title_only",
+  "draft": "MemorySanitizer: use-of-uninitialized-value (STID: 2410-543a)",
+  "true": 101232,
+  "legs": {
+   "lexical": 5,
+   "vector": 3
+  },
+  "in_pool": true,
+  "pick_rank": null,
+  "reason": "in the pool (best leg rank 3); the model did not pick it",
+  "reach": "judgement"
+ },
+ {
+  "case": "dup99800_t",
+  "split": "held",
+  "kind": "title_only",
+  "draft": "[CI crash] Mutation command processing failure in MergeTree background task",
+  "true": 91015,
+  "legs": {},
+  "in_pool": false,
+  "pick_rank": null,
+  "reason": "in no leg's top 50: no shared words, embedding neighbourhood or fingerprint",
+  "reach": "unreachable"
+ },
+ {
+  "case": "dup99650_para",
+  "split": "held",
+  "kind": "paraphrase",
+  "draft": "CI crash: the vertical merge fails while preparing, row count mismatch inside th",
+  "true": 99578,
+  "legs": {
+   "vector": 30
+  },
+  "in_pool": true,
+  "pick_rank": null,
+  "reason": "in the pool (best leg rank 30); the model did not pick it",
+  "reach": "judgement"
+ },
+ {
+  "case": "dup97814_t",
+  "split": "held",
+  "kind": "title_only",
+  "draft": "Clickhouse-format endpoint in ClickHouse",
+  "true": 84972,
+  "legs": {},
+  "in_pool": false,
+  "pick_rank": null,
+  "reason": "in no leg's top 50: no shared words, embedding neighbourhood or fingerprint",
+  "reach": "unreachable"
+ },
+ {
+  "case": "dup96443_t",
+  "split": "dev",
+  "kind": "title_only",
+  "draft": "AMBIGUOUS_COLUMN_NAME with enable_join_runtime_filters=1",
+  "true": 96228,
+  "legs": {
+   "vector": 33
+  },
+  "in_pool": false,
+  "pick_rank": null,
+  "reason": "best leg rank 33; outside the 60-per-namespace pool (100/150 per namespace measured worse: held-out title-only 29/48)",
+  "reach": "reachable in principle, net loss"
+ },
+ {
+  "case": "dup94740_t",
+  "split": "held",
+  "kind": "title_only",
+  "draft": "Segmentation fault (STID: 2881-3dbd)",
+  "true": 94739,
+  "legs": {},
+  "in_pool": false,
+  "pick_rank": null,
+  "reason": "in no leg's top 50: no shared words, embedding neighbourhood or fingerprint",
+  "reach": "unreachable"
+ },
+ {
+  "case": "dup94213_t",
+  "split": "dev",
+  "kind": "title_only",
+  "draft": "Implement zero-copy Block::slice() logic",
+  "true": 40222,
+  "legs": {
+   "vector": 15
+  },
+  "in_pool": true,
+  "pick_rank": null,
+  "reason": "in the pool (best leg rank 15); the model did not pick it",
+  "reach": "judgement"
+ },
+ {
+  "case": "dup88996_t",
+  "split": "held",
+  "kind": "title_only",
+  "draft": "A case-insensitive filesystem on Mac OS leads to problems",
+  "true": 82851,
+  "legs": {},
+  "in_pool": false,
+  "pick_rank": null,
+  "reason": "in no leg's top 50: no shared words, embedding neighbourhood or fingerprint",
+  "reach": "unreachable"
+ },
+ {
+  "case": "dup88276_t",
+  "split": "held",
+  "kind": "title_only",
+  "draft": "ALIAS statement in query does not return correct cols for distributed table",
+  "true": 86227,
+  "legs": {
+   "vector": 39
+  },
+  "in_pool": false,
+  "pick_rank": null,
+  "reason": "best leg rank 39; outside the 60-per-namespace pool (100/150 per namespace measured worse: held-out title-only 29/48)",
+  "reach": "reachable in principle, net loss"
+ },
+ {
+  "case": "dup87244_tb",
+  "split": "held",
+  "kind": "title_body",
+  "draft": "Test `test_userspace_page_cache/test.py::test_size_adjustment` is flaky",
+  "true": 72458,
+  "legs": {
+   "lexical": 21,
+   "vector": 40
+  },
+  "in_pool": true,
+  "pick_rank": null,
+  "reason": "in the pool (best leg rank 21); the model did not pick it",
+  "reach": "judgement"
+ },
+ {
+  "case": "dup87244_t",
+  "split": "held",
+  "kind": "title_only",
+  "draft": "Test `test_userspace_page_cache/test.py::test_size_adjustment` is flaky",
+  "true": 72458,
+  "legs": {
+   "lexical": 17
+  },
+  "in_pool": true,
+  "pick_rank": null,
+  "reason": "in the pool (best leg rank 17); the model did not pick it",
+  "reach": "judgement"
+ },
+ {
+  "case": "dup87244_para",
+  "split": "held",
+  "kind": "paraphrase",
+  "draft": "Integration test test_size_adjustment in test_userspace_page_cache fails intermi",
+  "true": 72458,
+  "legs": {
+   "lexical": 26
+  },
+  "in_pool": true,
+  "pick_rank": null,
+  "reason": "in the pool (best leg rank 26); the model did not pick it",
+  "reach": "judgement"
+ },
+ {
+  "case": "dup86656_t",
+  "split": "held",
+  "kind": "title_only",
+  "draft": "Slow CREATE TABLE on Cluster in ClickHouse v25.9.1.898",
+  "true": 86434,
+  "legs": {},
+  "in_pool": false,
+  "pick_rank": null,
+  "reason": "in no leg; only an issue link reaches it (links leg measured: held-out 31\u219229, +0.7 s)",
+  "reach": "reachable only via links, net loss"
+ },
+ {
+  "case": "dup86622_t",
+  "split": "held",
+  "kind": "title_only",
+  "draft": "CREATE {TABLE | DATABASE} ON CLUSTER 100x slower in 25.8",
+  "true": 86434,
+  "legs": {},
+  "in_pool": false,
+  "pick_rank": null,
+  "reason": "in no leg's top 50: no shared words, embedding neighbourhood or fingerprint",
+  "reach": "unreachable"
+ },
+ {
+  "case": "dup86622_para",
+  "split": "held",
+  "kind": "paraphrase",
+  "draft": "After upgrading to 25.8, creating a table or database ON CLUSTER takes about 100",
+  "true": 86434,
+  "legs": {},
+  "in_pool": false,
+  "pick_rank": null,
+  "reason": "in no leg's top 50: no shared words, embedding neighbourhood or fingerprint",
+  "reach": "unreachable"
+ },
+ {
+  "case": "dup83768_t",
+  "split": "held",
+  "kind": "title_only",
+  "draft": "Inconsistent AST formatting with EXCEPT",
+  "true": 83618,
+  "legs": {},
+  "in_pool": false,
+  "pick_rank": null,
+  "reason": "in no leg's top 50: no shared words, embedding neighbourhood or fingerprint",
+  "reach": "unreachable"
+ },
+ {
+  "case": "dup80316_t",
+  "split": "held",
+  "kind": "title_only",
+  "draft": "IN clause with CTE and replicated table with 1 shard fails",
+  "true": 41426,
+  "legs": {
+   "vector": 19
+  },
+  "in_pool": true,
+  "pick_rank": null,
+  "reason": "in the pool (best leg rank 19); the model did not pick it",
+  "reach": "judgement"
+ },
+ {
+  "case": "dup80022_t",
+  "split": "held",
+  "kind": "title_only",
+  "draft": "Logical error: 'begin <= end'.",
+  "true": 78161,
+  "legs": {},
+  "in_pool": false,
+  "pick_rank": null,
+  "reason": "in no leg's top 50: no shared words, embedding neighbourhood or fingerprint",
+  "reach": "unreachable"
+ },
+ {
+  "case": "dup78922_t",
+  "split": "held",
+  "kind": "title_only",
+  "draft": "Logical error: 'Inconsistent AST formatting: the query",
+  "true": 78639,
+  "legs": {
+   "lexical": 7,
+   "vector": 7
+  },
+  "in_pool": true,
+  "pick_rank": null,
+  "reason": "in the pool (best leg rank 7); the model did not pick it",
+  "reach": "judgement"
+ },
+ {
+  "case": "dup77559_t",
+  "split": "dev",
+  "kind": "title_only",
+  "draft": "WITH Clause avoid re-executed",
+  "true": 53449,
+  "legs": {},
+  "in_pool": false,
+  "pick_rank": null,
+  "reason": "in no leg; only an issue link reaches it (links leg measured: held-out 31\u219229, +0.7 s)",
+  "reach": "reachable only via links, net loss"
+ },
+ {
+  "case": "dup75985_t",
+  "split": "dev",
+  "kind": "title_only",
+  "draft": "Illegal instruction Illegal operand on architecture: x86_64",
+  "true": 75969,
+  "legs": {},
+  "in_pool": false,
+  "pick_rank": null,
+  "reason": "in no leg's top 50: no shared words, embedding neighbourhood or fingerprint",
+  "reach": "unreachable"
+ },
+ {
+  "case": "dup69519_t",
+  "split": "dev",
+  "kind": "title_only",
+  "draft": "Race condition in test `01171_mv_select_insert_isolation_long.sh` and system.par",
+  "true": 49076,
+  "legs": {},
+  "in_pool": false,
+  "pick_rank": null,
+  "reason": "in no leg's top 50: no shared words, embedding neighbourhood or fingerprint",
+  "reach": "unreachable"
+ },
+ {
+  "case": "dup60051_t",
+  "split": "dev",
+  "kind": "title_only",
+  "draft": "group by returning more rows than expected",
+  "true": 16922,
+  "legs": {},
+  "in_pool": false,
+  "pick_rank": null,
+  "reason": "in no leg's top 50: no shared words, embedding neighbourhood or fingerprint",
+  "reach": "unreachable"
+ },
+ {
+  "case": "dup45153_t",
+  "split": "dev",
+  "kind": "title_only",
+  "draft": "One of cluster servers can't make any mutation query",
+  "true": 37037,
+  "legs": {},
+  "in_pool": false,
+  "pick_rank": null,
+  "reason": "in no leg's top 50: no shared words, embedding neighbourhood or fingerprint",
+  "reach": "unreachable"
+ },
+ {
+  "case": "dup41887_tb",
+  "split": "dev",
+  "kind": "title_body",
+  "draft": "Reclaimable memory management and dynamic spilling thresholds",
+  "true": 38422,
+  "legs": {
+   "vector": 50
+  },
+  "in_pool": false,
+  "pick_rank": null,
+  "reason": "best leg rank 50; outside the 60-per-namespace pool (100/150 per namespace measured worse: held-out title-only 29/48)",
+  "reach": "reachable in principle, net loss"
+ },
+ {
+  "case": "dup19280_t",
+  "split": "held",
+  "kind": "title_only",
+  "draft": "The efficiency of view query is not as expected",
+  "true": 18561,
+  "legs": {
+   "vector": 24
+  },
+  "in_pool": true,
+  "pick_rank": null,
+  "reason": "in the pool (best leg rank 24); the model did not pick it",
+  "reach": "judgement"
+ }
+]

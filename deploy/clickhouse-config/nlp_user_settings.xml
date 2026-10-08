@@ -1,0 +1,36 @@
+<!--
+  Experimental NLP and AI SQL functions for ad-hoc queries on the dev/OSS
+  stack. Loom itself sets these flags per statement where it needs them
+  (migrations, the lemmatize probe, the in-database re-embed).
+
+  allow_experimental_nlp_functions  lemmatize(), synonyms()
+  allow_experimental_ai_functions   aiGenerate, aiClassify, aiExtract,
+                                    aiTranslate
+
+  An AI function takes a named collection's name as a string first
+  argument, e.g. SELECT aiClassify('openai_default', text, ['a', 'b']).
+  See named_collections.xml.template.
+-->
+<clickhouse>
+    <profiles>
+        <default>
+            <!-- The pinned OSS server predates the vector-read condition-cache
+                 fix (ClickHouse #112086). Keep it off so cached conditions do
+                 not suppress matching rows. This does not disable the file cache. -->
+            <use_query_condition_cache>0</use_query_condition_cache>
+            <allow_experimental_nlp_functions>1</allow_experimental_nlp_functions>
+            <allow_experimental_ai_functions>1</allow_experimental_ai_functions>
+        </default>
+    </profiles>
+    <!--
+      The loom user resolves named collections by name. It never needs to
+      read their secrets, so show_named_collections_secrets stays off.
+    -->
+    <users>
+        <loom>
+            <access_management>1</access_management>
+            <named_collection_control>1</named_collection_control>
+            <show_named_collections>1</show_named_collections>
+        </loom>
+    </users>
+</clickhouse>

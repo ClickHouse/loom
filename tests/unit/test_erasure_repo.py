@@ -1,0 +1,362 @@
+"""Unit tests for the erasure store: the mutation runner, the steps and the census."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+from server.erasure.store import ledger as erasure_ledger
+from server.erasure.store import mutations as erasure_mutations
+from server.erasure.store import steps_graph as graph_steps
+from server.erasure.store import steps_memory as memory_steps
+
+
+class StubCH:
+    def __init__(self) -> None:
+        self.query_one_calls: list[tuple[str, dict[str, Any]]] = []
+        self.query_one_returns: list[dict[str, Any] | None] = []
+        self.execute_calls: list[tuple[str, dict[str, Any]]] = []
+        self.insert_calls: list[tuple[str, list[dict[str, Any]], dict[str, Any]]] = []
+
+    async def query_one(self, sql, params=None):
+        self.query_one_calls.append((sql, params or {}))
+        return self.query_one_returns.pop(0) if self.query_one_returns else None
+
+    async def execute(self, sql, params=None):
+        self.execute_calls.append((sql, params or {}))
+
+    async def query_all(self, sql, params=None):
+        # system.mutations poll: the mutation is done.
+        return [
+            {
+                "mutation_id": "mutation_1.txt",
+                "is_done": 1,
+                "parts_to_do": 0,
+                "latest_fail_reason": "",
+            }
+        ]
+
+    async def insert(self, table, rows, settings=None):
+        self.insert_calls.append((table, rows, settings or {}))
+
+
+@pytest.mark.asyncio
+async def test_count_then_mutate_zero_count_short_circuits() -> None:
+    """Idempotent re-run: when there's nothing to tombstone, the
+    ALTER UPDATE doesn't fire."""
+    ch = StubCH()
+    ch.query_one_returns.append({"n": 0})
+    n = await erasure_mutations.count_then_mutate(
+        "loom.memory",
+        count_where="org = {org:String}",
+        mutation="UPDATE tombstoned_at = {now:DateTime}",
+        mutation_where="org = {org:String}",
+        params={"org": "clickhouse"},
+        ch=ch,
+    )
+    assert n == 0
+    assert ch.execute_calls == []
+
+
+@pytest.mark.asyncio
+async def test_count_then_mutate_runs_alter_when_rows_present() -> None:
+    """Happy path: count returns N>0, the mutation runs once with
+    mutations_sync=2."""
+    ch = StubCH()
+    ch.query_one_returns.append({"n": 5})
+    n = await erasure_mutations.count_then_mutate(
+        "loom.memory",
+        count_where="org = {org:String}",
+        mutation="UPDATE tombstoned_at = {now:DateTime}",
+        mutation_where="org = {org:String}",
+        params={"org": "clickhouse"},
+        ch=ch,
+    )
+    assert n == 5
+    sql, params = ch.execute_calls[0]
+    assert "ALTER TABLE loom.memory" in sql
+    assert "mutations_sync = 0" in sql
+    assert "now" in params  # auto-populated
+
+
+@pytest.mark.asyncio
+async def test_tombstone_memory_by_user_filters_by_uid() -> None:
+    ch = StubCH()
+    ch.query_one_returns.append({"n": 3})
+    await memory_steps.tombstone_memory_by_user("clickhouse", "alice", ch=ch)
+    sel_sql, sel_params = ch.query_one_calls[0]
+    assert "FROM loom.memory FINAL" in sel_sql
+    assert "user_id = {uid:String}" in sel_sql
+    assert sel_params["uid"] == "alice"
+
+
+@pytest.mark.asyncio
+async def test_scrub_events_by_user_no_final_clause() -> None:
+    """agent_events is MergeTree (append-only) — must NOT use FINAL on
+    the count, that would be a syntax error."""
+    ch = StubCH()
+    ch.query_one_returns.append({"n": 7})
+    await memory_steps.scrub_events_by_user("clickhouse", "alice", ch=ch)
+    sel_sql, _ = ch.query_one_calls[0]
+    assert "FROM loom.agent_events" in sel_sql
+    assert "FINAL" not in sel_sql
+    mut_sql, _ = ch.execute_calls[0]
+    assert "UPDATE user_id = '<erased>'" in mut_sql
+
+
+@pytest.mark.asyncio
+async def test_supersede_chunks_no_final() -> None:
+    """chunks is a plain MergeTree — FINAL would be wrong. The repo
+    helper threads `final=False` for these cases."""
+    ch = StubCH()
+    ch.query_one_returns.append({"n": 2})
+    await memory_steps.supersede_chunks_by_namespace("clickhouse", "ns", ch=ch)
+    sel_sql, _ = ch.query_one_calls[0]
+    assert "FROM loom.chunks" in sel_sql
+    assert "FROM loom.chunks FINAL" not in sel_sql
+
+
+@pytest.mark.asyncio
+async def test_tombstone_entity_canonical_map_by_namespace() -> None:
+    ch = StubCH()
+    ch.query_one_returns.append({"n": 2})
+
+    await memory_steps.tombstone_entity_canonical_map_by_namespace(
+        "clickhouse",
+        "ns",
+        ch=ch,
+    )
+
+    sel_sql, sel_params = ch.query_one_calls[0]
+    assert "FROM loom.entity_canonical_map FINAL" in sel_sql
+    assert "namespace = {ns:String}" in sel_sql
+    assert sel_params["ns"] == "ns"
+    mut_sql, _ = ch.execute_calls[0]
+    assert "ALTER TABLE loom.entity_canonical_map" in mut_sql
+    assert "UPDATE tombstoned_at = {now:DateTime}" in mut_sql
+
+
+@pytest.mark.asyncio
+async def test_delete_derived_facts_by_namespace_hard_delete_no_final() -> None:
+    """derived_facts is a plain MergeTree with no
+    soft-delete column: erasure must be an ALTER DELETE (not a tombstone) and
+    must NOT use FINAL on the count (syntax-wasteful on non-Replacing)."""
+    ch = StubCH()
+    ch.query_one_returns.append({"n": 4})
+    await memory_steps.delete_derived_facts_by_namespace("clickhouse", "ns", ch=ch)
+    sel_sql, sel_params = ch.query_one_calls[0]
+    assert "FROM loom.derived_facts" in sel_sql
+    assert "FROM loom.derived_facts FINAL" not in sel_sql
+    assert "namespace = {ns:String}" in sel_sql
+    assert sel_params["ns"] == "ns"
+    mut_sql, _ = ch.execute_calls[0]
+    assert "ALTER TABLE loom.derived_facts" in mut_sql
+    # hard delete, NOT a tombstone update
+    assert "DELETE" in mut_sql
+    assert "tombstoned_at" not in mut_sql
+
+
+@pytest.mark.asyncio
+async def test_delete_derived_facts_by_user_filters_by_uid() -> None:
+    ch = StubCH()
+    ch.query_one_returns.append({"n": 2})
+    await memory_steps.delete_derived_facts_by_user("clickhouse", "alice", ch=ch)
+    sel_sql, sel_params = ch.query_one_calls[0]
+    assert "FROM loom.derived_facts" in sel_sql
+    assert "FINAL" not in sel_sql
+    assert "user_id = {uid:String}" in sel_sql
+    assert sel_params["uid"] == "alice"
+    mut_sql, _ = ch.execute_calls[0]
+    assert "ALTER TABLE loom.derived_facts" in mut_sql
+    assert "DELETE" in mut_sql
+
+
+@pytest.mark.asyncio
+async def test_delete_derived_facts_zero_count_short_circuits() -> None:
+    """Idempotent re-run: nothing to delete → no ALTER fires."""
+    ch = StubCH()
+    ch.query_one_returns.append({"n": 0})
+    n = await memory_steps.delete_derived_facts_by_namespace("clickhouse", "ns", ch=ch)
+    assert n == 0
+    assert ch.execute_calls == []
+
+
+@pytest.mark.asyncio
+async def test_tombstone_working_memory_by_user() -> None:
+    ch = StubCH()
+    ch.query_one_returns.append({"n": 1})
+
+    await memory_steps.tombstone_working_memory_by_user("clickhouse", "alice", ch=ch)
+
+    sel_sql, sel_params = ch.query_one_calls[0]
+    assert "FROM loom.working_memory FINAL" in sel_sql
+    assert "user_id = {uid:String}" in sel_sql
+    assert sel_params["uid"] == "alice"
+    mut_sql, _ = ch.execute_calls[0]
+    assert "ALTER TABLE loom.working_memory" in mut_sql
+    assert "UPDATE tombstoned_at = {now:DateTime}" in mut_sql
+
+
+@pytest.mark.asyncio
+async def test_tombstone_working_memory_by_namespace() -> None:
+    ch = StubCH()
+    ch.query_one_returns.append({"n": 1})
+
+    await memory_steps.tombstone_working_memory_by_namespace(
+        "clickhouse",
+        "ns",
+        ch=ch,
+    )
+
+    sel_sql, sel_params = ch.query_one_calls[0]
+    assert "FROM loom.working_memory FINAL" in sel_sql
+    assert "namespace = {ns:String}" in sel_sql
+    assert sel_params["ns"] == "ns"
+    mut_sql, _ = ch.execute_calls[0]
+    assert "ALTER TABLE loom.working_memory" in mut_sql
+    assert "UPDATE tombstoned_at = {now:DateTime}" in mut_sql
+
+
+@pytest.mark.asyncio
+async def test_insert_request_checkpoint_writes_to_erasure_requests() -> None:
+    ch = StubCH()
+    await erasure_ledger.insert_request_checkpoint(
+        {"id": "x", "status": "completed"},
+        ch=ch,
+    )
+    table, rows, _ = ch.insert_calls[0]
+    assert table == "loom.erasure_requests"
+    assert rows[0]["id"] == "x"
+
+
+# ----------------------------------------------------------------------
+# GDPR cascade — shared rows promoted from an erased user
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tombstone_shared_by_user_uses_arrayexists_on_promoted_from() -> None:
+    """Shared rows store source provenance in promoted_from as
+    `org/namespace/agent/user_id/session_id/memory_key` strings. The
+    user-erasure cascade must find any shared row whose array contains
+    a tuple naming the erased user — checked via arrayExists +
+    splitByChar('/', x)[4]."""
+    ch = StubCH()
+    ch.query_one_returns.append({"n": 2})
+    n = await memory_steps.tombstone_shared_by_user("clickhouse", "alice", ch=ch)
+    assert n == 2
+    sel_sql, sel_params = ch.query_one_calls[0]
+    assert "FROM loom.shared FINAL" in sel_sql
+    assert "arrayExists" in sel_sql
+    assert "splitByChar('/', x)[4]" in sel_sql
+    assert sel_params["uid"] == "alice"
+    assert sel_params["org"] == "clickhouse"
+    # ALTER UPDATE fires
+    mut_sql, _ = ch.execute_calls[0]
+    assert "ALTER TABLE loom.shared" in mut_sql
+    assert "UPDATE tombstoned_at" in mut_sql
+    assert "mutations_sync = 0" in mut_sql
+
+
+@pytest.mark.asyncio
+async def test_tombstone_shared_by_user_zero_count_short_circuits() -> None:
+    """No matching shared rows → no ALTER fires."""
+    ch = StubCH()
+    ch.query_one_returns.append({"n": 0})
+    n = await memory_steps.tombstone_shared_by_user("clickhouse", "bob", ch=ch)
+    assert n == 0
+    assert ch.execute_calls == []
+
+
+@pytest.mark.asyncio
+async def test_tombstone_shared_embeddings_by_user_joins_via_subquery() -> None:
+    """Shared embeddings don't carry user_id directly (sentinel
+    agent='_shared'); the cascade must JOIN against loom.shared via
+    a memory_key IN (subquery) filter."""
+    ch = StubCH()
+    ch.query_one_returns.append({"n": 2})
+    await memory_steps.tombstone_shared_embeddings_by_user(
+        "clickhouse",
+        "alice",
+        ch=ch,
+    )
+    sel_sql, _ = ch.query_one_calls[0]
+    assert "FROM loom.memory_embeddings FINAL" in sel_sql
+    assert "scope = 'shared'" in sel_sql
+    assert "memory_key IN (" in sel_sql
+    assert "FROM loom.shared FINAL" in sel_sql
+    assert "splitByChar('/', x)[4]" in sel_sql
+
+
+@pytest.mark.asyncio
+async def test_consolidated_dependents_of_an_erased_user_are_tombstoned_in_both_tables() -> None:
+    """A topic memory synthesised from an erased user's rows lives under
+    another identity and carries the content verbatim (tag `src:<key>`); the
+    per-user tombstone never reaches it. The step retires any summary whose
+    sources overlap the erased keys, on loom.memory AND loom.memory_embeddings."""
+    ch = StubCH()
+    ch.query_one_returns.extend([{"n": 2}, {"n": 2}])
+    n = await graph_steps.tombstone_consolidated_dependents_by_user("o", "alice", ch=ch)
+    assert n == 4
+    tables = [sql.split("ALTER TABLE ")[1].split()[0] for sql, _ in ch.execute_calls]
+    assert tables == ["loom.memory", "loom.memory_embeddings"]
+    for sql, params in ch.execute_calls:
+        assert "has(tags, 'consolidated')" in sql
+        assert "hasAny(tags, (SELECT groupArray(concat('src:', memory_key)) FROM loom.memory" in sql
+        assert "user_id = {uid:String}" in sql and params["uid"] == "alice"
+        assert "UPDATE tombstoned_at = {now:DateTime}" in sql
+
+
+@pytest.mark.asyncio
+async def test_purge_of_a_wide_table_is_a_lightweight_delete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """In purge mode `memory_embeddings` gets `DELETE FROM`
+    (a `_row_exists` mask, no part rewrite, no HNSW rebuild); a narrow table
+    keeps the `ALTER TABLE … DELETE`."""
+    with erasure_mutations.purge_scope(True):
+        ch = StubCH()
+        ch.query_one_returns.append({"n": 3})
+        await erasure_mutations.count_then_mutate(
+            "loom.memory_embeddings",
+            count_where="org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL",
+            mutation="UPDATE tombstoned_at = {now:DateTime}",
+            mutation_where="org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL",
+            params={"org": "o", "ns": "bench-1"},
+            ch=ch,
+        )
+        sql, params = ch.execute_calls[0]
+        assert sql.lstrip().startswith("DELETE FROM loom.memory_embeddings")
+        assert "lightweight_deletes_sync = 0" in sql
+        assert "tombstoned_at IS NULL" not in sql  # purge removes tombstoned rows too
+        assert params["erasure_mutation_tag"].startswith("erasure:")
+
+        ch = StubCH()
+        ch.query_one_returns.append({"n": 3})
+        await erasure_mutations.count_then_mutate(
+            "loom.memory",
+            count_where="org = {org:String} AND tombstoned_at IS NULL",
+            mutation="UPDATE tombstoned_at = {now:DateTime}",
+            mutation_where="org = {org:String} AND tombstoned_at IS NULL",
+            params={"org": "o"},
+            ch=ch,
+        )
+        assert "ALTER TABLE loom.memory" in ch.execute_calls[0][0]
+        assert "DELETE" in ch.execute_calls[0][0]
+
+
+@pytest.mark.asyncio
+async def test_tombstone_outside_purge_is_untouched_by_the_wide_table_delete() -> None:
+    ch = StubCH()
+    ch.query_one_returns.append({"n": 2})
+    await erasure_mutations.count_then_mutate(
+        "loom.memory_embeddings",
+        count_where="org = {org:String} AND tombstoned_at IS NULL",
+        mutation="UPDATE tombstoned_at = {now:DateTime}",
+        mutation_where="org = {org:String} AND tombstoned_at IS NULL",
+        params={"org": "o"},
+        ch=ch,
+    )
+    assert "ALTER TABLE loom.memory_embeddings" in ch.execute_calls[0][0]
+    assert "UPDATE tombstoned_at" in ch.execute_calls[0][0]

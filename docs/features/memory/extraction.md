@@ -1,0 +1,224 @@
+# Extraction from transcripts
+
+`memory.set_from_messages` takes a transcript and the server decides what in it is
+durable. Use it when the caller cannot decide inline what to save: raw API consumers,
+batch importers, and coding-agent hooks that capture a session at its end. A caller that
+already knows the fact should call `memory.set` ([writing](./writing.md)). Extraction
+writes through `memory.bulk_set`, so every extracted fact meets the same blacklist, lock,
+pin and conflict checks. It needs a real LLM provider; the stock fake provider extracts
+nothing.
+
+## What a call does
+
+```mermaid
+flowchart LR
+  A["messages + last_messages"] --> B["evidence rows<br/>(loom.memory_evidence)"]
+  A --> C["loom.fetch_namespace_categories"]
+  C --> D["loom.fetch_existing_memories"]
+  D --> E["loom.llm_extract"]
+  E --> F["drop steps<br/>(echoes, narration, non-durable)"]
+  F --> G["loom.hash_dedup"]
+  G --> H["loom.bulk_write<br/>(memory.bulk_set)"]
+  H --> I["written[] with per-row verdicts"]
+```
+
+1. The turns are stored as evidence first (`loom.memory_evidence`), so a fact can be
+   traced to its sentence (`memory.evidence`) and the raw wording stays searchable
+   (`memory.recall`).
+2. The default pipeline runs these steps in order:
+
+   | Step                              | What it does                                                                                       |
+   | --------------------------------- | -------------------------------------------------------------------------------------------------- |
+   | `loom.fetch_namespace_categories` | Loads the namespace's categories, so extracted tags use that taxonomy.                             |
+   | `loom.fetch_existing_memories`    | Shows the extractor the nearest existing memories, so it does not repeat them.                     |
+   | `loom.llm_extract`                | The extraction call; long transcripts are split into segments, one call each.                      |
+   | `loom.drop_recall_echoes`         | Drops facts that restate a memory the session was served (`recalled_keys`) or named.               |
+   | `loom.drop_session_echoes`        | Drops facts that restate what the session's own Loom calls wrote, asked or got (`session_values`). |
+   | `loom.drop_activity_narration`    | Drops narration of tool activity with no outcome ("User read lines 1-1000 of X").                  |
+   | `loom.drop_non_durable`           | Coding captures only: drops status snapshots, housekeeping, first-person plans, in-batch repeats.  |
+   | `loom.verify_durable`             | Coding captures only: a model pass that drops what every verifier calls non-durable. Fails open.   |
+   | `loom.hash_dedup`                 | Drops facts whose canonical content hash is already stored.                                        |
+   | `loom.bulk_write`                 | Writes through `memory.bulk_set`, with verdicts and one hash-only audit row per write.             |
+
+3. The handler then links each memory to its evidence, drafts a session digest and
+   projects entities.
+
+`pipeline_steps` reorders or skips steps, or names an in-process step an operator
+registered (at most 16; an HTTP `hook.*` step is refused). See the
+[extraction pipeline guide](../../guides/extraction-pipeline.md).
+
+**Keys** are minted from a fact's subject and attribute, never its value. A later
+session that states the same attribute lands on the same key and revises the row. When
+the user asks to forget something, the matching rows are retired and named in
+`forgotten` / `forgotten_keys`.
+
+**Coding captures** are requests whose `extra_tags` carry `source:claude-code`,
+`source:codex` or `source:cursor` (the plugins tag every capture), or a trajectory replay
+from the observe plane. Only these run `loom.drop_non_durable` and `loom.verify_durable`.
+The rules in `server/memory/domain/durable_facts.py` match sentence shape, not topic words: what
+a release changed is kept; whether its CI was green at the time is dropped.
+
+## Echoes: `recalled_keys` and `session_values`
+
+Most junk in session captures is the session repeating what Loom already told it. Two
+fields let the pipeline drop it:
+
+| Field            | Limit | Content                                                                                                                         |
+| ---------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `recalled_keys`  | 200   | Keys the session's Loom tools served. A fact whose key carries a served key's subject words is an echo.                         |
+| `session_values` | 100   | Text the session's Loom calls carried (values written, queries, results). Not in the MCP schema. A fact quoting one is an echo. |
+
+The Claude Code and Codex plugins send both at `SessionEnd`. A custom client should too;
+otherwise a session that asked "what do I drink?" writes the answer back as a new fact.
+See [Claude Code](../integrations/claude-code.md).
+
+## Fact quality on the read side
+
+A deterministic classifier (`server/memory/domain/fact_quality.py`) runs on agent-facing reads
+(`loom_search`'s memory section and `context.pack`'s memories, through the
+`quality_filter` field of `memory.search`). It leaves out trajectory steps, session
+narration, generic tool hints, code locations the code index answers exactly, probe or
+placeholder writes, one-moment status, and restatements of a higher-ranked fact. Nothing
+is deleted.
+
+To clean stored rows, `loom demote-activity-narration` demotes (confidence × 0.25) or
+labels them through `memory.apply`. It is a dry run without `--apply`;
+`--classifier fact_quality` applies every junk class; keys an agent read by name in the
+last `--days` are left alone. It never deletes.
+
+## Inline or deferred
+
+| Mode                 | Call                           | Returns                                      | Use when                                                                   |
+| -------------------- | ------------------------------ | -------------------------------------------- | -------------------------------------------------------------------------- |
+| Inline (default)     | `defer=false`                  | `written[]` with each row's key and verdict  | You need the keys back: typed-record extraction, tests, polling backfills. |
+| Deferred             | `defer=true`                   | `deferred=true`, `queue_id`, empty `written` | The agent's hot path. Stored in `loom.memory_extraction_queue`.            |
+| Deferred by operator | `LOOM_EXTRACTION_DEFER_AGENTS` | as deferred, `deferred_by="allowlist"`       | Force named agents (or `*` = every service account) onto the queue.        |
+
+The `extraction_queue` worker replays a deferred request through the same handler. A
+failed replay retries until `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS`, then becomes `failed`
+with `last_error`. `memory.extraction_status` reports batches by `queue_id` or `status`
+(`pending`, `running`, `done`, `failed`). Until a batch runs, `memory.search` and
+`memory.ask` report `pending_extraction`. With the worker off, deferred saves stay
+`pending`.
+
+## Operations
+
+| Op                         | Role   | Does                                                                         |
+| -------------------------- | ------ | ---------------------------------------------------------------------------- |
+| `memory.set_from_messages` | writer | Extract facts (or one typed record) from `messages` and write them.          |
+| `memory.extraction_status` | viewer | State of deferred batches. HTTP and SDK only.                                |
+| `memory.recall`            | viewer | Search the raw turns behind the namespace's memories by text, time and role. |
+| `memory.evidence`          | viewer | The source turns one memory was extracted from, with the supporting span.    |
+| `observe.record`           | writer | Record one tool observation into the episodic plane; no model call.          |
+| `observe.crystallize`      | writer | Mark a session's observations ready for the `observe_extract` worker.        |
+
+Field lists: [operations reference](../../reference/operations.md#memory) and
+[observe](../../reference/operations.md#observe).
+
+### Request fields
+
+| Field                          | Effect                                                                                                                     |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `messages`                     | 1–400 turns: `role`, `content`, optional `timestamp` (anchors facts to the turn) and `name` (speaker).                     |
+| `last_messages`                | Up to 20 earlier turns, shown for context and not re-extracted.                                                            |
+| `observation_date`             | `YYYY-MM-DD` anchor for relative dates. Unset: `LOOM_MEMORY_EXTRACT_OBSERVATION_DATE_DEFAULT` (`request_time`, today UTC). |
+| `extra_tags`                   | Added to every extracted fact. `source:<client>` marks a coding capture.                                                   |
+| `extraction_instructions`      | A prompt suffix (up to 4,096 characters).                                                                                  |
+| `record_schema` + `memory_key` | Extract one typed record ([typed records](./writing.md#typed-records)). Never deferred by the allowlist.                   |
+| `valid_at`                     | Fallback validity time for facts the extractor did not anchor.                                                             |
+| `recalled_keys`                | Keys the session was served ([echoes](#echoes-recalled_keys-and-session_values)).                                          |
+| `defer`                        | Queue instead of extracting inline.                                                                                        |
+
+### Response fields
+
+- `written[]`: key, version, `conflict_verdict`, `peers`.
+- `tokens_in`, `tokens_out`, `cached_tokens_in`: cost attribution.
+- `segments`, `segmenter` (`whole` or `size`).
+- `forgotten`, `forgotten_keys`, `evidence_ids`.
+- `stage_ms`: wall time per stage (`step.<step_id>`, `bulk.<phase>`).
+- `observation_date_source`: `caller`, `request_time` or empty.
+- `stubbed_fields`: typed-record fields written as null after validation retries.
+- `pipeline_errors`: fail-open steps that were skipped, such as `unknown_step:<id>`.
+
+## Example
+
+Inline, with the Python SDK:
+
+```python
+from loom import Agent
+
+async with Agent(org="acme", namespace="support", agent="triage-bot") as bot:
+    out = await bot.memory.set_from_messages(
+        [
+            {"role": "user", "content": "I moved to Lisbon last month, please bill me in EUR."},
+            {"role": "assistant", "content": "Noted, invoices will be in EUR."},
+        ],
+        user_id="u-42",
+        observation_date="<YYYY-MM-DD>",  # the day the conversation happened
+    )
+    for row in out["written"]:
+        print(row["memory_key"], row["conflict_verdict"])
+```
+
+Deferred, over HTTP, as a session-end hook sends it:
+
+```bash
+curl -sX POST http://localhost:7777/v1/memory.set_from_messages \
+  -H "Authorization: Bearer $LOOM_API_KEY" -H "Content-Type: application/json" \
+  -d '{"org":"acme","namespace":"support","agent":"triage-bot","user_id":"u-42",
+       "messages":[{"role":"user","content":"Our on-call rotation changes to weekly."}],
+       "recalled_keys":["team/oncall/rotation"],
+       "defer":true}'
+# → {"deferred": true, "queue_id": "...", "written": [], ...}
+```
+
+The SDK's `set_from_messages` does not expose `recalled_keys`, `session_values` or
+`pipeline_steps`; send those over HTTP or MCP.
+
+## Settings
+
+See the [Extraction section](../../reference/configuration.md#extraction) unless noted.
+
+| Setting                                                   | Effect                                                                                         |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `LOOM_LLM_PROVIDER`, `LOOM_LLM_MODEL`                     | The extraction model. Run `make bench-quick` before changing it.                               |
+| `LOOM_MEMORY_EXTRACT_VERIFY_MODELS`                       | The models `loom.verify_durable` asks; a model whose provider key is missing is skipped.       |
+| `LOOM_MEMORY_EXTRACT_VERIFY_TIMEOUT_S`                    | Per verifier call; a timeout keeps every fact.                                                 |
+| `LOOM_MEMORY_EXTRACT_SIZE_SEGMENT_*`                      | When a long session is split into fixed windows, and their size.                               |
+| `LOOM_MEMORY_EXTRACT_COVERAGE_SWEEP_*`                    | A second reading of turns the first pass cited nowhere (one more call).                        |
+| `LOOM_MEMORY_EXTRACT_VALUE_UPDATES`                       | Off by default: supersede an older memory when a fresh one restates it with a different value. |
+| `LOOM_EXTRACTION_QUEUE_*`, `LOOM_EXTRACTION_DEFER_AGENTS` | The deferred queue: cadence, lease, attempts, concurrency, forced deferral.                    |
+| `LOOM_OBSERVE_EXTRACT_*`                                  | The observe plane's distillation worker (off by default; makes model calls).                   |
+| `LOOM_MEMORY_CHUNKS_MAX_PER_CALL`                         | Verbatim chunks one call writes ([Chunking](../../reference/configuration.md#chunking)).       |
+
+## Workers
+
+| Worker             | Role                                                             | Default |
+| ------------------ | ---------------------------------------------------------------- | ------- |
+| `extraction_queue` | Replays deferred requests.                                       | on      |
+| `observe_extract`  | Distils `observe.record` observations through the same pipeline. | off     |
+| `entity_extractor` | Fills `entities` on rows written without them.                   | on      |
+| `embedding_worker` | Embeds rows whose inline embedding failed.                       | on      |
+
+Cadences and switches: [workers reference](../../reference/workers.md).
+
+## Limits
+
+- **Extraction failure is fail-closed.** An error from `loom.llm_extract` answers 502
+  `EXTRACTION_FAILED` and writes nothing. Every other step fails open and is named in
+  `pipeline_errors`.
+- **Drops are counted, not returned.** Parse, judge, truncation and chunk-cap losses go to
+  `loom.memory_drops` (kept 30 days); `loom drops --namespace NS [--hours 24]` sums them.
+- **At most 400 messages and 20 `last_messages` per call.** Split longer imports.
+- **Custom pipelines are global and sequential.** No per-namespace pipeline, branching or
+  step retry.
+- **Re-extracting a namespace** into a fresh one is
+  `loom reextract --org ORG --namespace SRC --into DST`; the source is only read.
+
+## Related
+
+- [Writing memory](./writing.md)
+- [Conflicts and refusal](./conflicts-and-refusal.md): the verdicts in `written[]`.
+- [Extraction pipeline guide](../../guides/extraction-pipeline.md)
+- [Conversations and sessions](../conversations-and-sessions.md)
+- [Memory architecture](../../architecture/memory-architecture.md)

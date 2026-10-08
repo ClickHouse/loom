@@ -1,0 +1,34 @@
+"""The per-namespace conversation-logging switch on the namespace directory row."""
+
+from __future__ import annotations
+
+from server.core.datetimes import naive_utc_now_seconds
+from server.identity.store import namespaces as namespaces_repo
+
+
+async def set_conversation_logging(org: str, namespace: str, enabled: bool) -> None:
+    """Write a new `loom.namespaces` version row, the same shape as
+    namespace.delete: the live row copied forward with the switch flipped, so
+    FINAL readers see it at once without a synchronous mutation. A namespace
+    written to but never registered has no row, so one is created: a mutation
+    there would match nothing and the toggle would report On for a namespace
+    that never records."""
+    from server.core.ch import get_client
+
+    ch = get_client()
+    existing = await namespaces_repo.fetch_row(org, namespace, ch=ch)
+    now = naive_utc_now_seconds()
+    row = (
+        dict(existing)
+        if existing is not None
+        else {
+            "org": org,
+            "namespace": namespace,
+            "active": True,
+            "visibility": "private",
+            "created_at": now,
+        }
+    )
+    row["conversation_logging_enabled"] = enabled
+    row["updated_at"] = now
+    await ch.insert("loom.namespaces", [row])

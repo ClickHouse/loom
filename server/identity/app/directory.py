@@ -1,0 +1,40 @@
+"""The identity domain's answers to the authorization gate's namespace
+questions (`server.auth.directory.NamespaceDirectory`): the classification
+cache, the code-plane repo config and the kind directory, read at call time."""
+
+from __future__ import annotations
+
+from server.code.domain.index import repos
+from server.code.domain.index.repos import RepoConfig
+from server.identity.app import namespace_classification, namespace_kinds
+
+
+class IdentityDirectory:
+    async def is_restricted(self, org: str, namespace: str) -> bool:
+        return await namespace_classification.is_restricted(org, namespace)
+
+    async def restricted_set(self, org: str) -> frozenset[str]:
+        return await namespace_classification.restricted_set(org)
+
+    def is_restricted_cached(self, org: str, namespace: str) -> bool:
+        return namespace_classification.is_restricted_cached(org, namespace)
+
+    def config_classification(self, org: str, namespace: str) -> str:
+        return namespace_classification.config_classification(org, namespace)
+
+    def code_entry(self, org: str, namespace: str) -> RepoConfig | None:
+        return repos.repo_for_namespace(org, namespace)
+
+    def restricted_code_namespaces(self, org: str) -> set[str]:
+        return {
+            cfg.namespace
+            for cfg in repos.configured_repos()
+            if cfg.org == org and cfg.classification == "restricted"
+        }
+
+    async def fanout_namespaces(self, org: str, namespaces: list[str]) -> list[str]:
+        """Unknown kinds stay: the kind directory can only narrow, never widen."""
+        keep = namespace_kinds.fanout_kinds()
+        if not namespaces or not keep:
+            return namespaces
+        return namespace_kinds.keep_kinds(namespaces, await namespace_kinds.kind_map(org), keep)

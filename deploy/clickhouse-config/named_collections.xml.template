@@ -1,0 +1,32 @@
+<!--
+  Named collections for ClickHouse SQL functions that need provider config.
+  `make` and `loom up` copy this file to named_collections.xml (gitignored)
+  when it is missing; dev/docker-compose.dev.yml mounts that copy into
+  config.d. As shipped it defines no collection, so the stack starts
+  without a provider key.
+
+  Loom's own code needs none of these: the in-database mode of `loom reembed`
+  takes the collection name the operator gives it.
+
+  To enable one, uncomment it in your copy. The key is read with from_env,
+  never written here: pass OPENAI_API_KEY into the ClickHouse container's
+  environment. When it is unset, ClickHouse logs "Env variable is not
+  set: OPENAI_API_KEY" at start, and every call fails with "AI named
+  collection 'openai_default' must have 'api_key'" instead of sending a
+  placeholder key to the provider.
+
+  Use: SELECT aiClassify('openai_default', text, ['positive', 'negative'])
+  Docs: https://clickhouse.com/docs/sql-reference/functions/ai-functions
+-->
+<clickhouse>
+    <!--
+    <named_collections>
+        <openai_default>
+            <provider>openai</provider>
+            <model>gpt-4o-mini</model>
+            <endpoint>https://api.openai.com/v1/chat/completions</endpoint>
+            <api_key from_env="OPENAI_API_KEY"/>
+        </openai_default>
+    </named_collections>
+    -->
+</clickhouse>

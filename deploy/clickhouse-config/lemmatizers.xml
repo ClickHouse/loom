@@ -1,0 +1,18 @@
+<!--
+  Registers the English Lemmagen3 model (deploy/lemmagen3/en.bin, mounted
+  at the path below) for ClickHouse's lemmatize('en', ...).
+
+  Read by the migration runner's NLP probe (SELECT lemmatize('en', 'tests'))
+  and by ad-hoc SQL. The stored content_excerpt_lemma column is written by
+  the server with the lemmagen3 Python package, whose en.bin is the same
+  file, so lemmas computed in SQL and in Python agree.
+  Provenance and license: deploy/lemmagen3/README.md.
+-->
+<clickhouse>
+    <lemmatizers>
+        <lemmatizer>
+            <lang>en</lang>
+            <path>/var/lib/clickhouse/lemmagen3/en.bin</path>
+        </lemmatizer>
+    </lemmatizers>
+</clickhouse>

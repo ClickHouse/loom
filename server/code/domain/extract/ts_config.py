@@ -1,0 +1,198 @@
+"""tsconfig / jsconfig module resolution for the TypeScript lane.
+
+The compiler resolves a bare specifier through `compilerOptions.paths`
+(one `*` per pattern, longest matching prefix wins, the mapped targets tried
+in order, each relative to `baseUrl` or, without one, to the config that
+defines the pattern) and, with `baseUrl` set, resolves any bare specifier
+under it before `node_modules`. `extends` composes a chain of configs; the
+child's options win and each `paths` table stays relative to the file that
+wrote it. This module is pure: the caller hands it the texts of the configs
+the namespace holds; it never touches the file system.
+"""
+from __future__ import annotations
+
+import json
+import posixpath
+import re
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any
+
+CONFIG_NAMES = ("tsconfig.json", "jsconfig.json")
+_COMMENT_RE = re.compile(r"//[^\n]*|/\*.*?\*/", re.S)
+_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
+_MAX_EXTENDS = 8
+
+
+def parse_jsonc(text: str) -> dict[str, Any]:
+    """tsconfig is JSON with comments and trailing commas; a file that still
+    does not parse is an empty config, never an ingest failure."""
+    stripped = _TRAILING_COMMA_RE.sub(r"\1", _COMMENT_RE.sub("", text or ""))
+    try:
+        data = json.loads(stripped)
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+@dataclass
+class PathsTable:
+    """One config's `paths` with the directory its targets are relative to."""
+    base: str  # baseUrl resolved against the config dir, or the config dir
+    patterns: dict[str, list[str]] = field(default_factory=dict)
+
+
+@dataclass
+class ResolvedConfig:
+    dir: str
+    base_url: str | None = None  # resolved, repository-relative
+    tables: list[PathsTable] = field(default_factory=list)  # child first
+
+
+def config_dir_for(from_path: str, config_paths: set[str]) -> str | None:
+    """The config governing `from_path`: the nearest ancestor directory that
+    holds a tsconfig.json (or, failing that, a jsconfig.json). '' is the
+    repository root; None when no config governs the file."""
+    parts = posixpath.dirname(from_path).split("/") if posixpath.dirname(from_path) else []
+    for depth in range(len(parts), -1, -1):
+        d = "/".join(parts[:depth])
+        if config_path_in(d, config_paths) is not None:
+            return d
+    return None
+
+
+def config_path_in(d: str, config_paths: set[str]) -> str | None:
+    for name in CONFIG_NAMES:
+        p = posixpath.join(d, name) if d else name
+        if p in config_paths:
+            return p
+    return None
+
+
+def extends_candidates(config_path: str, spec: str, package_dirs: list[str]) -> list[str]:
+    """Where an `extends` value may live: relative to the extending config
+    (with `.json` appended when absent), or inside a workspace package
+    (`@repo/typescript-config/base.json` -> `<pkg dir>/base.json`, the
+    package's `tsconfig.json` when only the name is given)."""
+    here = posixpath.dirname(config_path)
+    if spec.startswith("."):
+        stem = posixpath.normpath(posixpath.join(here, spec)) if here else posixpath.normpath(spec)
+        if stem.startswith(".."):
+            return []
+        if stem.endswith(".json"):
+            return [stem]
+        return [stem + ".json", posixpath.join(stem, "tsconfig.json")]
+    parts = spec.split("/")
+    sub = "/".join(parts[2:] if spec.startswith("@") else parts[1:])
+    out: list[str] = []
+    for d in package_dirs:
+        out.append(posixpath.join(d, sub) if sub else posixpath.join(d, "tsconfig.json"))
+        if sub and not sub.endswith(".json"):
+            out.append(posixpath.join(d, sub + ".json"))
+    return out
+
+
+def next_extends(
+    config_path: str, text: str, package_dirs_for: Callable[[str], list[str]], present: set[str],
+) -> str | None:
+    """The config `config_path` extends, when the namespace holds it."""
+    ext = parse_jsonc(text).get("extends")
+    specs = ext if isinstance(ext, list) else [ext] if isinstance(ext, str) else []
+    for spec in specs:
+        if not isinstance(spec, str):
+            continue
+        cands = extends_candidates(config_path, spec, package_dirs_for(spec))
+        hit = next((c for c in cands if c in present), None)
+        if hit is not None:
+            return hit
+    return None
+
+
+def resolve_config(
+    config_path: str, texts: dict[str, str], package_dirs_for: Callable[[str], list[str]],
+    present: set[str],
+) -> ResolvedConfig:
+    """Compose the `extends` chain from `config_path` down to its roots.
+    `texts` maps a config path to its text (missing = unreadable, chain
+    ends); `package_dirs_for(spec)` names the workspace directories a
+    package specifier may live in. The child's `baseUrl` wins; every `paths`
+    table keeps its own base (the compiler resolves each relative to the
+    file that wrote it)."""
+    out = ResolvedConfig(dir=posixpath.dirname(config_path))
+    seen: set[str] = set()
+    cur: str | None = config_path
+    while cur is not None and cur not in seen and len(seen) < _MAX_EXTENDS:
+        seen.add(cur)
+        text = texts.get(cur, "")
+        cfg = parse_jsonc(text)
+        raw_opts = cfg.get("compilerOptions")
+        opts: dict[str, Any] = raw_opts if isinstance(raw_opts, dict) else {}
+        here = posixpath.dirname(cur)
+        raw_base = opts.get("baseUrl")
+        base_url = raw_base if isinstance(raw_base, str) else None
+        resolved_base = _join(here, base_url) if base_url is not None else None
+        if out.base_url is None and resolved_base is not None:
+            out.base_url = resolved_base
+        raw_paths = opts.get("paths")
+        paths: dict[str, Any] = raw_paths if isinstance(raw_paths, dict) else {}
+        if paths:
+            table = PathsTable(base=resolved_base if resolved_base is not None else here)
+            for pat, targets in paths.items():
+                if isinstance(pat, str) and isinstance(targets, list):
+                    table.patterns[pat] = [t for t in targets if isinstance(t, str)]
+            out.tables.append(table)
+        cur = next_extends(cur, text, package_dirs_for, present)
+    return out
+
+
+def _join(here: str, rel: str) -> str:
+    joined = posixpath.normpath(posixpath.join(here, rel)) if here else posixpath.normpath(rel)
+    return "" if joined == "." else joined
+
+
+def _match(pattern: str, spec: str) -> str | None:
+    """The `*` binding when `pattern` matches `spec`; '' for an exact,
+    star-less match; None otherwise."""
+    if "*" not in pattern:
+        return "" if pattern == spec else None
+    head, _, tail = pattern.partition("*")
+    if spec.startswith(head) and spec.endswith(tail) and len(spec) >= len(head) + len(tail):
+        return spec[len(head): len(spec) - len(tail)]
+    return None
+
+
+def paths_candidates(spec: str, cfg: ResolvedConfig) -> list[str]:
+    """The repository stems a bare specifier maps to, in the compiler's
+    order: the longest-prefix `paths` pattern of the nearest table that
+    matches, its targets in order (the `*` substituted); then `baseUrl` +
+    the specifier. Relative specifiers map to nothing here."""
+    if spec.startswith((".", "/")) or not spec:
+        return []
+    out: list[str] = []
+    for table in cfg.tables:
+        best: tuple[int, str, str] | None = None
+        for pat in table.patterns:
+            bound = _match(pat, spec)
+            if bound is None:
+                continue
+            prefix_len = len(pat.partition("*")[0]) if "*" in pat else len(pat) + 1
+            if best is None or prefix_len > best[0]:
+                best = (prefix_len, pat, bound)
+        if best is None:
+            continue
+        for target in table.patterns[best[1]]:
+            stem = _join(table.base, target.replace("*", best[2], 1))
+            if stem and stem not in out:
+                out.append(stem)
+        return out  # the nearest table with a matching pattern decides
+    if cfg.base_url is not None:
+        stem = _join(cfg.base_url, spec)
+        if stem:
+            out.append(stem)
+    return out
+
+
+__all__ = [
+    "CONFIG_NAMES", "PathsTable", "ResolvedConfig", "config_dir_for", "config_path_in",
+    "extends_candidates", "next_extends", "parse_jsonc", "paths_candidates", "resolve_config",
+]

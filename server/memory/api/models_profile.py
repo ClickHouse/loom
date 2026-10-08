@@ -1,0 +1,127 @@
+"""profile.* — named, char-limited, agent-editable always-loaded sections.
+
+Set/append/replace are thin shims over memory.set/get pinning
+memory_type='profile'. They exist so MCP exposes named tools agents can
+discover by intent ("rewrite my persona" → profile.replace) rather than
+knowing memory.set with memory_type='profile' is the right call. Reads
+(get/list) aren't shimmed — they ride the existing memory ops.
+"""
+
+from __future__ import annotations
+
+from typing import Literal
+
+from pydantic import BaseModel
+
+from server.memory.api.models_common import _Identity
+
+# Matches the SDK constant.
+DEFAULT_CHAR_LIMIT = 8192
+
+# --------------------------------------------------------------------
+# Inputs / outputs
+# --------------------------------------------------------------------
+
+
+class ProfileSetInput(_Identity):
+    # The section's name (its memory key), e.g. `persona`; setting it again replaces its text.
+    label: str
+    # The section's whole new text.
+    value: str
+    # The section's size cap, measured on the JSON-encoded value; a longer value is a 422.
+    char_limit: int = DEFAULT_CHAR_LIMIT
+    # Where the section came from. A worker that folds facts with an LLM
+    # writes "profile.fold:<label>" so provenance classes the row `derived`;
+    # a client writing a persona leaves it empty (`asserted`).
+    source_trace: str = ""
+    # Write only if the section's current content hash equals this (409 otherwise);
+    # empty = no check.
+    if_match_sha256: str = ""
+
+
+class ProfileAppendInput(_Identity):
+    # The section to append to; a missing section is created with the default size cap.
+    label: str
+    # Text added at the end of the section.
+    addition: str
+    # Put between the existing text and `addition`; unused when the section is new.
+    separator: str = "\n"
+
+
+class ProfileReplaceInput(_Identity):
+    # The section to edit; a missing section is a 404.
+    label: str
+    # Text to find; every occurrence is replaced, and absent text is a 422.
+    old: str
+    # Replacement text; empty deletes the occurrences of `old`.
+    new: str
+
+
+class ProfileRenderInput(_Identity):
+    """Render every section in (org, namespace) into one prompt fragment.
+
+    Default scope reads sections from EVERY agent in the namespace (so a
+    persona authored under agent='loom-ui' is visible when rendering under
+    agent='claude-desktop'); scope='this_agent' restricts to the caller's
+    own sections.
+    """
+
+    format: str = "xml"  # "xml" | "markdown"
+    labels: list[str] | None = None  # if set, render only these labels in this order
+    scope: str = "namespace"  # "namespace" (default; fan-out) | "this_agent"
+    # How far the render reaches across USERS (same grammar as
+    # memory.search.read_scope, the token's claim is the ceiling). Under
+    # own_user / own_session only this user's (session's) sections and the
+    # namespace-level ones (user_id '-') render; another user's LLM-folded
+    # profile never does. "namespace" = every row (the default).
+    read_scope: Literal["namespace", "own_user", "own_session"] = "namespace"
+
+
+class ProfileRenderOutput(BaseModel):
+    # The sections as one prompt fragment in the chosen `format`; empty when there are none.
+    rendered: str
+    # How many sections were rendered.
+    section_count: int
+    # Length of `rendered` in characters, markup included.
+    total_chars: int
+    # The rendered sections' labels, in render order.
+    labels: list[str] = []
+
+
+class ProfileMutationOutput(BaseModel):
+    # Version of the memory row this write created.
+    version: int
+    # Id of the memory row the section is stored in.
+    memory_id: str = ""
+    # Content hash of the section after the write; pass it as `if_match_sha256` next time.
+    content_sha256: str = ""
+    namespace: str = ""
+    # The section that was written.
+    label: str = ""
+    # The section's size cap after the write.
+    char_limit: int | None = None
+    # Length of the JSON-encoded value after the write, the size `char_limit` caps;
+    # the gap is the headroom left.
+    value_length: int = 0
+
+
+class ProfileActivityInput(_Identity):
+    """Recent profile reads per agent — "which AI client read my profile, when?"."""
+
+    lookback_days: int = 7  # capped at 30 server-side to bound the partition scan
+
+
+class ProfileActivityEntry(BaseModel):
+    agent: str
+    last_activated_at: str  # ISO-8601 UTC
+    event_count: int
+    # Which read paths this agent used — loom_activate (a
+    # typed "use loom"), profile.render (the SDK), context.pack (the
+    # plugin's session start), mcp.initialize (the MCP handshake).
+    operations: list[str] = []
+
+
+class ProfileActivityOutput(BaseModel):
+    # Agents that read the profile in the window (at most 20), most recent first;
+    # the dashboard's own reads are left out.
+    entries: list[ProfileActivityEntry] = []

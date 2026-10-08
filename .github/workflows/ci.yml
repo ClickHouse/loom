@@ -1,0 +1,484 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A new push to a pull request cancels its superseded run. Every push to main
+# runs to completion in its own group, so a failure on one merge commit is
+# never hidden by the next one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Every job only reads the repository; none needs a write scope.
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "22"
+  # The Python jobs install the exact versions in uv.lock with this uv.
+  UV_VERSION: "0.12.19"
+
+jobs:
+  lint:
+    name: ruff + mypy-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        id: python
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install Loom from uv.lock (dev, code extras)
+        run: |
+          uv sync --locked --python "${{ steps.python.outputs.python-path }}" --extra dev --extra code
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - name: ruff
+        run: ruff check server sdk/python tests scripts
+      - name: ruff format
+        run: ruff format --check .
+      # The Python SDK's op table, TypedDicts and per-op client are generated
+      # from the registry; a server change that alters a wire shape
+      # must regenerate them in the same PR.
+      - name: generated loom/ops.py and loom/client.py are current
+        run: |
+          python scripts/codegen/sdk_py_gen.py --check
+          python scripts/codegen/sdk_py_client_gen.py --check
+      # The Codex plugin's hook scripts, library and skills are copies of the
+      # Claude Code plugin's; a change to one must be synced. The check compares
+      # bytes and the executable bit.
+      - name: codex plugin copies are current (bytes and executable bit)
+        run: python scripts/codegen/agent_plugin_sync.py --check
+      # docs/reference/ (configuration and the generated tables) and
+      # server/operations/reach_manifest.py are generated too; the unit suite
+      # checks them, this step fails faster.
+      - name: docs reference and reach manifest are current
+        run: |
+          python scripts/codegen/settings_reference.py --check
+          python scripts/codegen/docs_reference.py --check
+          python scripts/codegen/op_reach_census.py --check
+      # The SDK ships py.typed: it is type-checked strictly
+      # on its own, apart from the server's ratchet below.
+      - name: mypy --strict on the Python SDK
+        run: mypy --strict sdk/python/loom
+      # mypy is gated as a RATCHET, not all-or-nothing: the codebase carries
+      # pre-existing strict-mypy errors frozen as a baseline in
+      # scripts/gates/mypy_baseline.json. This step fails only on NEW errors past that
+      # baseline; lower the baseline as the debt is paid down.
+      - name: mypy-gate
+        run: python scripts/gates/mypy_gate.py
+      # Function-length ratchet: ruff PLR0915 against a
+      # committed per-file baseline that only shrinks — no file may gain an
+      # oversized function; today's inventory is tolerated until split.
+      - name: function-length-gate
+        run: python scripts/gates/function_length_gate.py
+      # Content-based, not filename-based: .gitignore only stops the next file
+      # with a name you already thought of.
+      - name: no committed secrets
+        run: python scripts/gates/check_no_secrets.py
+
+  unit:
+    name: pytest unit + coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # No ClickHouse service: unit tests skip cleanly when env config is absent.
+    # The clickhouse binary is installed for clickhouse-local / -format checks.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        id: python
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install Loom from uv.lock (dev, code extras)
+        run: |
+          uv sync --locked --python "${{ steps.python.outputs.python-path }}" --extra dev --extra code
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - name: Fetch origin/main for the migration-number check
+        run: git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
+      # The clickhouse binary (as clickhouse-local and clickhouse-format) for the
+      # unit tests that run production SQL locally, such as the pending-grant
+      # checks. Taken from the image dev/ci_start_clickhouse.sh pins, so the
+      # parser and engine match the integration job's server.
+      - name: Install the pinned clickhouse binary
+        run: |
+          id=$(docker create clickhouse/clickhouse-server:26.5.1.882)
+          sudo docker cp -L "$id:/usr/bin/clickhouse" /usr/local/bin/clickhouse
+          docker rm "$id" >/dev/null
+          sudo ln -sf clickhouse /usr/local/bin/clickhouse-format
+          clickhouse local --query "SELECT version()"
+      # Random order (pytest-randomly): a test that depends on
+      # the one before it fails here rather than on a peer's laptop. The seed
+      # is printed first thing; reproduce a failure locally with
+      # `pytest tests/unit -p randomly --randomly-seed=<seed>`.
+      - name: pytest unit + coverage (random order)
+        run: |
+          SEED="${{ github.run_id }}${{ github.run_attempt }}"
+          echo "pytest-randomly seed: $SEED"
+          pytest tests/unit -q -p randomly --randomly-seed="$SEED" \
+            --cov=server --cov=sdk/python/loom --cov-branch \
+            --cov-report=term-missing --cov-report=xml \
+            --cov-report=json:coverage.json \
+            --cov-fail-under=40
+      # Per-module branch floors for the auth, write-path, erasure, migration
+      # and supervisor modules (tests/inventory/coverage_floors.toml).
+      - name: branch-coverage floors
+        run: python -m tests.inventory.coverage_floors coverage.json
+      # The published benchmark harnesses' scoring and dataset readers.
+      - name: pytest bench harnesses
+        run: pytest bench -q -p randomly --randomly-seed="${{ github.run_id }}${{ github.run_attempt }}"
+      # The generic ingest script's dry run goes through this checkout's CLI.
+      - name: generic integration sample
+        run: PYTHON=python bash integrations/generic/test.sh
+      - name: Upload coverage xml
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-xml
+          path: coverage.xml
+
+  schema-check:
+    name: schema.sql in sync with migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      LOOM_CH_HOST: localhost
+      LOOM_CH_PORT: "8123"
+      LOOM_CH_USER: loom
+      LOOM_CH_PASSWORD: loomdev
+      LOOM_CH_DATABASE: loom
+      LOOM_CH_SECURE: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        id: python
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install Loom from uv.lock (no extras)
+        run: |
+          uv sync --locked --python "${{ steps.python.outputs.python-path }}"
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - name: Start ClickHouse (loom config + lemmagen dictionary)
+        run: bash dev/ci_start_clickhouse.sh
+      - name: Apply every migration to fresh ClickHouse
+        run: python -m server.core.schema.migrate
+      # The ledger reader the deploy preflight relies on:
+      # after applying everything, ledger ⊆ repo files, no checksum drift,
+      # nothing pending — or the strict dry-run exits 1.
+      - name: Ledger is a subset of the repo (strict dry-run)
+        run: python -m server.core.schema.migrate --dry-run --strict
+      - name: Verify schemas/schema.sql matches what migrations produce
+        run: make schema-check
+
+  ts-typecheck:
+    name: tsc (frontend)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install + build frontend (build runs tsc -b internally)
+        working-directory: frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+      # The index chunk stays under budget and carries
+      # no surface that opens on a click (a flow dialog, the search body, a view).
+      - name: bundle budget (index chunk)
+        working-directory: frontend
+        run: npm run budget
+
+  format:
+    name: format (biome, prettier, taplo, shfmt)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: install shfmt v3.10.0
+        run: |
+          curl -sSfL -o /usr/local/bin/shfmt https://github.com/mvdan/sh/releases/download/v3.10.0/shfmt_v3.10.0_linux_amd64
+          echo "1f57a384d59542f8fac5f503da1f3ea44242f46dff969569e80b524d64b71dbc  /usr/local/bin/shfmt" | sha256sum -c -
+          chmod +x /usr/local/bin/shfmt
+      - name: biome
+        run: npx --yes @biomejs/biome@2.5.14 format .
+      - name: prettier
+        run: npx --yes prettier@3.9.9 --check --log-level warn "**/*.{md,yml,yaml}"
+      - name: taplo
+        run: npx --yes @taplo/cli@0.7.0 format --check
+      - name: shfmt
+        run: git ls-files '*.sh' ':!tests/fixtures' | xargs shfmt -d
+
+  agent-plugins:
+    name: coding-agent plugins (node --test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      # The hook scripts have no dependencies and run under any Node >= 18;
+      # their tests are node:test files beside them.
+      - name: node --test (hook scripts shared by the Claude Code and Codex plugins)
+        run: node --test integrations/claude-code-plugin/tests/*.test.mjs
+      - name: node --test (grep shim)
+        run: node --test integrations/grep-shim/tests/*.test.mjs
+      - name: Cursor hook sample
+        run: bash integrations/cursor/test.sh
+      - name: every hook, helper and shim script parses
+        run: for f in integrations/{claude-code-plugin,codex-plugin}/{hooks,lib,bin}/*.mjs integrations/grep-shim/bin/* integrations/grep-shim/lib/*.mjs; do node --check "$f"; done
+      # The shim is installed by putting grep-shim/bin on PATH, so each entry
+      # point must resolve to an executable file. The plugins' executable bits
+      # are compared source-to-copy by the plugin sync check in the lint job.
+      - name: grep shim entry points are executable
+        run: for f in integrations/grep-shim/bin/*; do test -x "$f" || { echo "::error file=$f::not executable"; exit 1; }; done
+  frontend-tests:
+    name: frontend tests (vitest + axe + playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: npm ci
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+      # Unit tests on the landing rule, formatters, navigation and hooks;
+      # component tests; axe-core over the components that render in
+      # isolation. jsdom, no browser.
+      - name: vitest (unit + component + axe)
+        working-directory: frontend
+        run: npm run test
+      - name: Install Chromium for Playwright
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      # The Graph smoke against the production build with every /v1/* call
+      # answered from fixtures: no read before a gesture, one read per deep
+      # link, zero layout-shift entries over 200 hovers, an unmoved canvas,
+      # Walk walks, Back returns.
+      - name: playwright (Graph smoke + layout-shift assertion)
+        working-directory: frontend
+        run: npx playwright test
+      - name: Upload screenshots and traces
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: frontend-e2e
+          path: |
+            frontend/e2e-screenshots
+            frontend/test-results
+          if-no-files-found: ignore
+
+  integration:
+    name: pytest integration (ClickHouse service)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      LOOM_CH_HOST: localhost
+      LOOM_CH_PORT: "8123"
+      LOOM_CH_USER: loom
+      LOOM_CH_PASSWORD: loomdev
+      LOOM_CH_DATABASE: loom
+      LOOM_CH_SECURE: "false"
+      LOOM_AUTH_REQUIRED: "false"
+      LOOM_JWT_SECRET: ci-only-jwt-secret
+      LOOM_BASE_URL: http://localhost:7777
+      LOOM_EMBEDDING_MODEL: fake-ngram-1024
+      LOOM_LLM_PROVIDER: fake
+      # GH Actions runners are noisy enough that the default per-op
+      # budgets (e.g. memory.set p99=30ms) fire violations on most
+      # runs. Multiply by 10x — same knob docs/operations/deployment.md recommends
+      # for CH Cloud over WAN. Per-op overrides at runtime go through
+      # POST /v1/admin/budget.set, not env vars.
+      LOOM_LATENCY_BUDGET_MULTIPLIER: "10"
+      # A pure web replica: tests that exercise a worker call its `run_pass`
+      # in-process against their own namespace. A live supervisor's workers
+      # have no namespace filter and would drain those tests' rows.
+      LOOM_BACKGROUND_WORKERS: "off"
+      # A process outside the compose deployment must say who
+      # launched it, or it refuses to boot.
+      LOOM_INSTANCE_LABEL: "ci:integration"
+      # The deployment's default code namespace, which bare code.* calls resolve to.
+      LOOM_CODE_ORG: ci
+      LOOM_CODE_NAMESPACE: code-ci
+      LOOM_CODE_REPO: example/ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        id: python
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install Loom from uv.lock (dev, code extras)
+        run: |
+          uv sync --locked --python "${{ steps.python.outputs.python-path }}" --extra dev --extra code
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - name: Start ClickHouse (loom config + lemmagen dictionary)
+        run: bash dev/ci_start_clickhouse.sh
+      - name: Apply migrations
+        run: python -m server.core.schema.migrate
+      # Provider staging tests create private, UUID-owned copies and run before
+      # the web process starts, against this job's disposable migrated database.
+      - name: Provider rebuild storage and recovery
+        env:
+          LOOM_PROVIDER_STAGING_LIVE_TEST: "1"
+        run: >-
+          pytest -q
+          tests/integration/test_provider_cache_live_ch.py
+          tests/integration/test_provider_coordination_live_ch.py
+          tests/integration/test_provider_cleanup_live_ch.py
+          tests/integration/test_provider_inventory_live_ch.py
+          tests/integration/test_provider_large_page_live_ch.py
+          tests/integration/test_provider_prefix_live_ch.py
+          tests/integration/test_provider_prepared_live_ch.py
+          tests/integration/test_provider_publish_live_ch.py
+          tests/integration/test_provider_source_policy_live_ch.py
+          tests/integration/test_provider_staging_live_ch.py
+          tests/integration/test_provider_views_live_ch.py
+      - name: Boot control plane
+        run: |
+          nohup uvicorn server.main:app --host 0.0.0.0 --port 7777 --timeout-graceful-shutdown 10 > server.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -fsS http://localhost:7777/v1/health && exit 0
+            sleep 1
+          done
+          echo "control plane never became healthy"
+          tail -100 server.log
+          exit 1
+      # The whole directory on every pull request; no test is slow enough to
+      # justify a separate merge-only tier.
+      - name: pytest
+        run: pytest tests/integration -q
+      # The statement corpus: every builder's shapes through
+      # EXPLAIN QUERY TREE on the migrated service, and shapes.txt in step
+      # with the builders. ~10 s; a rejection here is a statement that would
+      # fail on a deployed server.
+      - name: analyzer statement corpus
+        run: pytest tests/analyzer -q
+      - name: Upload server log on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: server-log
+          path: server.log
+
+  sdk-typescript:
+    name: typescript sdk (generated types in sync, lint, tsc, vitest, dist)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        id: python
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install Loom from uv.lock (no extras)
+        run: |
+          uv sync --locked --python "${{ steps.python.outputs.python-path }}"
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      # The SDK's operation table and wire types are generated from the
+      # server's registry; a server change that alters a
+      # request or response shape must regenerate them in the same PR.
+      - name: generated ops.ts is current
+        run: python scripts/codegen/sdk_ts_gen.py --check
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: sdk/typescript/package-lock.json
+      - name: npm ci
+        working-directory: sdk/typescript
+        run: npm ci --no-audit --no-fund
+      # biome lint + format, tsc --noEmit, version consistency, the README's
+      # ts examples type-checked against src, vitest.
+      - name: lint + type-check + version + README examples + unit tests
+        working-directory: sdk/typescript
+        run: npm run check
+      # ESM + CJS build, the dist tests over the exact export
+      # list, publint and arethetypeswrong — the package must resolve for
+      # CommonJS consumers and bundlers before it is ever published.
+      - name: build + dist tests + publint + attw
+        working-directory: sdk/typescript
+        run: npm run check:dist
+
+  sdk-python-package:
+    name: python sdk wheel (py ${{ matrix.python }}${{ matrix.lowest && ', lowest deps' || '' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Every other job runs the SDK inside the server's 3.12 environment, whose
+    # dependencies and interpreter hide what a clean install on the SDK's floor
+    # lacks. This one installs the built wheel alone, with only its declared
+    # deps, on the floor and the newest Python; the lowest-deps legs pin each
+    # declared dep to its lower bound.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python: "3.11"
+          - python: "3.12"
+          - python: "3.14"
+          - python: "3.11"
+            lowest: true
+          - python: "3.14"
+            lowest: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install uv
+        run: pip install uv
+      - name: Build wheel + sdist
+        run: uv build sdk/python --out-dir dist
+      - name: Install the wheel into a clean venv
+        env:
+          RESOLUTION: ${{ matrix.lowest && 'lowest-direct' || 'highest' }}
+        run: |
+          WHEEL=$(ls dist/*.whl)
+          uv venv --python "$(which python)" /tmp/sdk-venv
+          # The wheel's Requires-Dist lines, passed as direct requirements so
+          # lowest-direct lowers them (a wheel's own deps count as transitive).
+          unzip -p "$WHEEL" '*.dist-info/METADATA' | sed -n 's/^Requires-Dist: //p' > /tmp/sdk-deps.txt
+          uv pip install --python /tmp/sdk-venv/bin/python --resolution "$RESOLUTION" \
+            "$WHEEL" -r /tmp/sdk-deps.txt
+          uv pip list --python /tmp/sdk-venv/bin/python
+      - name: Smoke-test the installed wheel
+        run: /tmp/sdk-venv/bin/python scripts/gates/sdk_wheel_smoke.py dist/*.whl

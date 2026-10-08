@@ -1,0 +1,411 @@
+"""Unit tests for conversation.get — single-thread fetch with optional messages.
+
+Boundaries we stub:
+  - conversation_repo.fetch_thread       (thread metadata point lookup)
+  - conversation_repo.count_thread_msgs  (msg_count for the thread)
+  - conversation_repo.list_thread        (messages slice when included)
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+import pytest
+
+
+def _thread(
+    *,
+    thread_id: str = "t-1",
+    title: str = "Q1 incident response",
+    metadata: str = '{"owner":"alice"}',
+    agent: str = "reviewer",
+) -> dict:
+    return {
+        "thread_id": thread_id,
+        "title": title,
+        "metadata": metadata,
+        "run_id": "run-7",
+        "user_id": "alice",
+        "agent": agent,
+        "created_at": datetime(2026, 5, 18, 12, 0, 0),
+        "updated_at": datetime(2026, 5, 18, 12, 5, 0),
+    }
+
+
+def _msg(*, msg_id: str, role: str, content: str, ts: datetime):
+    from server.knowledge.store.conversations import MessageRow
+
+    return MessageRow(
+        org="clickhouse",
+        namespace="finance",
+        agent="reviewer",
+        thread_id="t-1",
+        msg_id=msg_id,
+        role=role,
+        content=content,
+        reasoning="",
+        user_id="alice",
+        run_id="run-7",
+        metadata="{}",
+        tokens=0,
+        ts=ts,
+    )
+
+
+@pytest.mark.asyncio
+async def test_thread_missing_returns_found_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.knowledge.api.models_conversations import ConversationGetInput
+    from server.knowledge.app.conversations import handle_conversation_get
+    from server.knowledge.store import conversations as conversation_repo
+
+    async def fake_fetch_thread(*a, **kw):
+        return None
+
+    async def fake_count(*a, **kw):
+        return 0
+
+    list_called = {"v": False}
+
+    async def fake_list_thread(*a, **kw):
+        list_called["v"] = True
+        return []
+
+    monkeypatch.setattr(conversation_repo, "fetch_thread", fake_fetch_thread)
+    monkeypatch.setattr(conversation_repo, "count_thread_msgs", fake_count)
+    monkeypatch.setattr(conversation_repo, "list_thread", fake_list_thread)
+
+    out = await handle_conversation_get(
+        ConversationGetInput(
+            org="clickhouse",
+            namespace="finance",
+            agent="reviewer",
+            thread_id="ghost",
+        )
+    )
+    # No metadata row AND no messages → genuinely absent.
+    assert out.found is False
+    assert out.thread_id == "ghost"
+    assert out.msg_count == 0
+    assert out.messages == []
+    # Missing thread → skip message fetch entirely.
+    assert list_called["v"] is False
+
+
+@pytest.mark.asyncio
+async def test_append_only_thread_is_openable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A thread built purely by conversation.append (no conversation.create,
+    so no metadata row) must still open: the thread LIST is derived from
+    messages, so message presence alone means the thread exists."""
+    from server.knowledge.api.models_conversations import ConversationGetInput
+    from server.knowledge.app.conversations import handle_conversation_get
+    from server.knowledge.store import conversations as conversation_repo
+
+    async def fake_fetch_thread(*a, **kw):
+        return None  # never created → no metadata row
+
+    async def fake_count(*a, **kw):
+        return 4
+
+    async def fake_list_thread(*a, **kw):
+        return [
+            _msg(msg_id="m1", role="user", content="hi", ts=datetime(2026, 6, 1, 9, 0)),
+            _msg(msg_id="m2", role="assistant", content="hello", ts=datetime(2026, 6, 1, 9, 1)),
+        ]
+
+    monkeypatch.setattr(conversation_repo, "fetch_thread", fake_fetch_thread)
+    monkeypatch.setattr(conversation_repo, "count_thread_msgs", fake_count)
+    monkeypatch.setattr(conversation_repo, "list_thread", fake_list_thread)
+
+    out = await handle_conversation_get(
+        ConversationGetInput(
+            org="clickhouse",
+            namespace="finance",
+            agent="claude",
+            thread_id="alice-first-chat",
+            include_messages=True,
+        )
+    )
+    assert out.found is True
+    assert out.msg_count == 4
+    assert out.title == ""  # no metadata row → empty, not an error
+    assert out.agent == "claude"  # falls back to the requested agent
+    assert [m.msg_id for m in out.messages] == ["m1", "m2"]
+
+
+@pytest.mark.asyncio
+async def test_thread_found_without_messages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.knowledge.api.models_conversations import ConversationGetInput
+    from server.knowledge.app.conversations import handle_conversation_get
+    from server.knowledge.store import conversations as conversation_repo
+
+    async def fake_fetch_thread(*a, **kw):
+        return _thread()
+
+    async def fake_count(*a, **kw):
+        return 42
+
+    list_called = {"v": False}
+
+    async def fake_list_thread(*a, **kw):
+        list_called["v"] = True
+        return []
+
+    monkeypatch.setattr(conversation_repo, "fetch_thread", fake_fetch_thread)
+    monkeypatch.setattr(conversation_repo, "count_thread_msgs", fake_count)
+    monkeypatch.setattr(conversation_repo, "list_thread", fake_list_thread)
+
+    out = await handle_conversation_get(
+        ConversationGetInput(
+            org="clickhouse",
+            namespace="finance",
+            agent="reviewer",
+            thread_id="t-1",
+            # include_messages defaults to False.
+        )
+    )
+    assert out.found is True
+    assert out.title == "Q1 incident response"
+    assert out.metadata == {"owner": "alice"}
+    assert out.agent == "reviewer"
+    assert out.run_id == "run-7"
+    assert out.user_id == "alice"
+    assert out.msg_count == 42
+    assert out.messages == []
+    # No message slice → no list_thread call.
+    assert list_called["v"] is False
+
+
+@pytest.mark.asyncio
+async def test_thread_found_with_messages_paginated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """include_messages=True with limit/offset slices the result."""
+    from server.knowledge.api.models_conversations import ConversationGetInput
+    from server.knowledge.app.conversations import handle_conversation_get
+    from server.knowledge.store import conversations as conversation_repo
+
+    async def fake_fetch_thread(*a, **kw):
+        return _thread()
+
+    async def fake_count(*a, **kw):
+        return 5
+
+    captured = {}
+
+    async def fake_list_thread(
+        org,
+        ns,
+        agent,
+        thread_id,
+        *,
+        run_id=None,
+        after=None,
+        limit=500,
+        order="asc",
+        ch=None,
+    ):
+        captured["limit"] = limit
+        captured["order"] = order
+        # Return 5 rows; handler should slice [offset:] then take limit.
+        return [
+            _msg(
+                msg_id=f"m-{i}",
+                role="user",
+                content=f"msg-{i}",
+                ts=datetime(2026, 5, 18, 12, i, 0),
+            )
+            for i in range(5)
+        ]
+
+    monkeypatch.setattr(conversation_repo, "fetch_thread", fake_fetch_thread)
+    monkeypatch.setattr(conversation_repo, "count_thread_msgs", fake_count)
+    monkeypatch.setattr(conversation_repo, "list_thread", fake_list_thread)
+
+    out = await handle_conversation_get(
+        ConversationGetInput(
+            org="clickhouse",
+            namespace="finance",
+            agent="reviewer",
+            thread_id="t-1",
+            include_messages=True,
+            limit=2,
+            offset=1,
+        )
+    )
+    assert out.found is True
+    assert out.msg_count == 5
+    # Handler asks for offset + limit = 3 rows, then drops the first.
+    assert captured["limit"] == 3
+    assert captured["order"] == "asc"
+    assert [m.msg_id for m in out.messages] == ["m-1", "m-2"]
+
+
+@pytest.mark.asyncio
+async def test_order_desc_pages_from_the_tail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """order="desc": the repository is asked for the newest rows and the page
+    is counted from the tail, so offset 0 / limit N is the last N turns,
+    newest first — one call instead of fetch-everything-and-slice."""
+    from server.knowledge.api.models_conversations import ConversationGetInput
+    from server.knowledge.app.conversations import handle_conversation_get
+    from server.knowledge.store import conversations as conversation_repo
+
+    async def fake_fetch_thread(*a, **kw):
+        return _thread()
+
+    async def fake_count(*a, **kw):
+        return 5
+
+    captured = {}
+
+    async def fake_list_thread(org, ns, agent, thread_id, *, limit=500, order="asc", **kw):
+        captured["limit"] = limit
+        captured["order"] = order
+        # The repository honours the order: newest first when asked.
+        return [
+            _msg(
+                msg_id=f"m-{i}", role="user", content=f"msg-{i}", ts=datetime(2026, 5, 18, 12, i, 0)
+            )
+            for i in (4, 3, 2, 1, 0)
+        ][:limit]
+
+    monkeypatch.setattr(conversation_repo, "fetch_thread", fake_fetch_thread)
+    monkeypatch.setattr(conversation_repo, "count_thread_msgs", fake_count)
+    monkeypatch.setattr(conversation_repo, "list_thread", fake_list_thread)
+
+    out = await handle_conversation_get(
+        ConversationGetInput(
+            org="clickhouse",
+            namespace="finance",
+            agent="reviewer",
+            thread_id="t-1",
+            include_messages=True,
+            limit=2,
+            order="desc",
+        )
+    )
+    assert captured == {"limit": 2, "order": "desc"}
+    assert [m.msg_id for m in out.messages] == ["m-4", "m-3"]
+
+    # offset counts from the tail too: skip the newest, take the next two.
+    out = await handle_conversation_get(
+        ConversationGetInput(
+            org="clickhouse",
+            namespace="finance",
+            agent="reviewer",
+            thread_id="t-1",
+            include_messages=True,
+            limit=2,
+            offset=1,
+            order="desc",
+        )
+    )
+    assert captured == {"limit": 3, "order": "desc"}
+    assert [m.msg_id for m in out.messages] == ["m-3", "m-2"]
+
+
+def test_order_rejects_anything_but_asc_or_desc() -> None:
+    from pydantic import ValidationError
+
+    from server.knowledge.api.models_conversations import ConversationGetInput
+
+    with pytest.raises(ValidationError):
+        ConversationGetInput(org="o", namespace="n", agent="a", thread_id="t", order="newest")  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_reads_run_with_sequential_consistency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A get that follows the caller's own append must see the turn, and
+    the count and the slice must agree: every read runs inside the
+    sequential-reads scope (otherwise a client on a multi-replica service can
+    see msg_count=1 with zero messages for seconds)."""
+    from server.core.ch import sequential_reads_active
+    from server.knowledge.api.models_conversations import ConversationGetInput
+    from server.knowledge.app.conversations import handle_conversation_get
+    from server.knowledge.store import conversations as conversation_repo
+
+    seen: list[tuple[str, bool]] = []
+
+    async def fake_fetch_thread(*a, **kw):
+        seen.append(("fetch_thread", sequential_reads_active()))
+        return _thread()
+
+    async def fake_count(*a, **kw):
+        seen.append(("count", sequential_reads_active()))
+        return 1
+
+    async def fake_list_thread(*a, **kw):
+        seen.append(("list", sequential_reads_active()))
+        return [
+            _msg(msg_id="m-0", role="assistant", content="x", ts=datetime(2026, 5, 18, 12, 0, 0))
+        ]
+
+    monkeypatch.setattr(conversation_repo, "fetch_thread", fake_fetch_thread)
+    monkeypatch.setattr(conversation_repo, "count_thread_msgs", fake_count)
+    monkeypatch.setattr(conversation_repo, "list_thread", fake_list_thread)
+
+    assert sequential_reads_active() is False
+    out = await handle_conversation_get(
+        ConversationGetInput(
+            org="clickhouse",
+            namespace="finance",
+            agent="reviewer",
+            thread_id="t-1",
+            include_messages=True,
+        )
+    )
+    assert out.msg_count == 1 and len(out.messages) == 1
+    assert seen == [("fetch_thread", True), ("count", True), ("list", True)]
+    # …and nothing leaks out of the handler.
+    assert sequential_reads_active() is False
+
+
+@pytest.mark.asyncio
+async def test_thread_with_malformed_metadata_does_not_500(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A thread row with invalid JSON metadata should still surface
+    (metadata = {}). Forward-compat against legacy / hand-edited rows."""
+    from server.knowledge.api.models_conversations import ConversationGetInput
+    from server.knowledge.app.conversations import handle_conversation_get
+    from server.knowledge.store import conversations as conversation_repo
+
+    async def fake_fetch_thread(*a, **kw):
+        return _thread(metadata="this is not json")
+
+    async def fake_count(*a, **kw):
+        return 0
+
+    monkeypatch.setattr(conversation_repo, "fetch_thread", fake_fetch_thread)
+    monkeypatch.setattr(conversation_repo, "count_thread_msgs", fake_count)
+
+    out = await handle_conversation_get(
+        ConversationGetInput(
+            org="clickhouse",
+            namespace="finance",
+            agent="reviewer",
+            thread_id="t-1",
+        )
+    )
+    assert out.found is True
+    assert out.metadata == {}  # safely defaults rather than raising
+
+
+@pytest.mark.asyncio
+async def test_operation_registered_with_viewer_role() -> None:
+    from server.knowledge.api.ops_conversations import OPERATIONS
+    from server.operations.base import Role
+
+    op = next(o for o in OPERATIONS if o.name == "conversation.get")
+    assert op.required_role == Role.VIEWER
+    assert op.idempotent is True
+    assert op.audit is False

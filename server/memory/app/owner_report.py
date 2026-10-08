@@ -1,0 +1,115 @@
+"""The owner's view of their memory.
+
+The owner of a memory should be able to see how it is stored, who reads it and what it is
+worth. Loom already has every table that answers this — `loom.memory` (rows carry
+`user_id`), `loom.memory_exposures` (one row per read, the returned keys, the token and
+agent that read them) and `loom.memory_usage_totals` (recall / used / harm counts per
+memory) — but they are keyed for an operator. This module turns them the other way round:
+given a user, what do they own, who read it, how was it used.
+
+Pure SQL over existing tables; no new column, no model call. The caller's
+identity is bound by `identity/domain/read_scope` before this runs, so `user_id`
+here is already the owner the token may see.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+_ROWS_SQL = """
+SELECT namespace, memory_type, count() AS n
+FROM loom.memory FINAL
+WHERE org = {org:String} AND user_id = {uid:String}
+  AND status = 'active' AND tombstoned_at IS NULL__NS__
+GROUP BY namespace, memory_type
+ORDER BY namespace, memory_type
+"""
+
+_READS_SQL = """
+SELECT e.namespace AS namespace, e.agent AS agent, e.actor AS actor,
+       count() AS calls, uniq(k) AS distinct_keys, max(e.ts) AS last_read
+FROM loom.memory_exposures AS e
+ARRAY JOIN e.returned_keys AS k
+WHERE e.org = {org:String}
+  AND e.ts > now() - INTERVAL {hours:UInt32} HOUR__NS_E__
+  AND (e.namespace, k) IN (
+      SELECT namespace, memory_key FROM loom.memory FINAL
+      WHERE org = {org:String} AND user_id = {uid:String}
+        AND status = 'active' AND tombstoned_at IS NULL__NS__
+  )
+GROUP BY e.namespace, e.agent, e.actor
+ORDER BY calls DESC, distinct_keys DESC
+LIMIT {lim:UInt32}
+"""
+
+_USAGE_SQL = """
+SELECT m.namespace AS namespace,
+       sum(u.recall_count) AS recalls, sum(u.used_count) AS used,
+       sum(u.harm_count) AS harm, max(u.last_recalled_at) AS last_recalled
+FROM loom.memory_usage_totals AS u
+INNER JOIN (
+    SELECT memory_id, namespace FROM loom.memory FINAL
+    WHERE org = {org:String} AND user_id = {uid:String}
+      AND status = 'active' AND tombstoned_at IS NULL__NS__
+) AS m ON u.memory_id = m.memory_id
+GROUP BY m.namespace
+ORDER BY m.namespace
+"""
+
+
+def _scope(namespaces: list[str] | None, alias: str = "") -> tuple[str, dict[str, Any]]:
+    """The namespace predicate, or nothing when the caller may read every
+    namespace of the org ('*' in the token's claim)."""
+    if not namespaces or "*" in namespaces:
+        return "", {}
+    col = f"{alias}namespace" if alias else "namespace"
+    return f" AND {col} IN {{nss:Array(String)}}", {"nss": sorted(set(namespaces))}
+
+
+def build_queries(
+    *, org: str, user_id: str, namespaces: list[str] | None, since_hours: int, limit: int
+) -> tuple[list[tuple[str, dict[str, Any]]], dict[str, Any]]:
+    """The three statements and their shared parameters. Pure."""
+    ns, ns_params = _scope(namespaces)
+    ns_e, _ = _scope(namespaces, alias="e.")
+    params: dict[str, Any] = {
+        "org": org,
+        "uid": user_id,
+        "hours": max(1, int(since_hours)),
+        "lim": max(1, int(limit)),
+        **ns_params,
+    }
+    return (
+        [
+            (_ROWS_SQL.replace("__NS__", ns), params),
+            (_READS_SQL.replace("__NS__", ns).replace("__NS_E__", ns_e), params),
+            (_USAGE_SQL.replace("__NS__", ns), params),
+        ],
+        params,
+    )
+
+
+async def owner_report(
+    *,
+    org: str,
+    user_id: str,
+    namespaces: list[str] | None,
+    since_hours: int = 720,
+    limit: int = 50,
+    ch: Any | None = None,
+) -> dict[str, Any]:
+    """{rows: [...], reads: [...], usage: [...]} for one owner. Each list is a
+    list of plain dicts; empty lists when the user owns nothing."""
+    from server.core.ch import get_client
+
+    ch = ch or get_client()
+    (rows_q, reads_q, usage_q), _ = build_queries(
+        org=org, user_id=user_id, namespaces=namespaces, since_hours=since_hours, limit=limit
+    )
+    rows = [dict(r) for r in await ch.query_all(rows_q[0], rows_q[1])]
+    reads = [dict(r) for r in await ch.query_all(reads_q[0], reads_q[1])]
+    usage = [dict(r) for r in await ch.query_all(usage_q[0], usage_q[1])]
+    return {"rows": rows, "reads": reads, "usage": usage}
+
+
+__all__ = ["build_queries", "owner_report"]

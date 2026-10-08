@@ -1,0 +1,183 @@
+{
+  "_about": "Source of truth for the HyperDX dashboard 'Loom — Code Plane'. Provision with the ClickStack MCP (clickstack_save_dashboard, then clickstack_save_alert per tile that carries an `alert`). Each tile lists the source it queries and the exact SQL; run it through clickstack_query_tile before saving. Metric and attribute names are those emitted by server/observability/metrics.py, server/code/app/common.py and server/workers/status.py; grep for the name before renaming anything here. Agent dimension: `loom.code.consumer` (the caller's self-declared consumer tag), `loom.agent` (SDK Agent name, '-' when unset), `enduser.id` (token principal, also Langfuse userId); outcomes carry `source`.",
+  "name": "Loom — Code Plane",
+  "tiles": [
+    {
+      "id": "index_age",
+      "title": "Fast-tier watermark age by namespace (s) — informational, see lag",
+      "chart": "line",
+      "source": "metrics",
+      "sql": "SELECT toStartOfInterval(TimeUnix, INTERVAL 5 MINUTE) AS t, Attributes['loom.namespace'] AS ns, max(Value) AS age_s FROM default.otel_metrics_gauge WHERE MetricName = 'loom.code.index_age_seconds' AND TimeUnix > now() - INTERVAL 24 HOUR GROUP BY t, ns ORDER BY t"
+    },
+    {
+      "id": "compiler_age",
+      "title": "Compiler-tier watermark age by namespace (s) — informational, see lag",
+      "chart": "line",
+      "source": "metrics",
+      "sql": "SELECT toStartOfInterval(TimeUnix, INTERVAL 15 MINUTE) AS t, concat(Attributes['loom.namespace'], ' ', MetricName) AS series, max(Value) AS age_s FROM default.otel_metrics_gauge WHERE MetricName IN ('loom.code.scip_age_seconds', 'loom.code.scip_py_age_seconds') AND TimeUnix > now() - INTERVAL 3 DAY GROUP BY t, series ORDER BY t"
+    },
+    {
+      "id": "index_lag",
+      "title": "Fast-tier lag: commits between branch tip and index, by namespace",
+      "chart": "line",
+      "source": "metrics",
+      "sql": "SELECT toStartOfInterval(TimeUnix, INTERVAL 5 MINUTE) AS t, Attributes['loom.namespace'] AS ns, max(Value) AS lag_commits FROM default.otel_metrics_gauge WHERE MetricName = 'loom.code.index_lag_commits' AND TimeUnix > now() - INTERVAL 24 HOUR GROUP BY t, ns ORDER BY t",
+      "alert": {
+        "name": "code index stale",
+        "condition": "max(Value) > 20 for 15m",
+        "why": "The ingest poller indexes up to 20 commits per 120 s pass; more than 20 behind for 15 min means the poller or the fetch is wedged. Age-based alerting would be wrong here: a release branch with no new commits is current however old its last one."
+      }
+    },
+    {
+      "id": "scip_lag",
+      "title": "Compiler-tier lag: commits between fast tier and each compiler tier, by namespace and tier",
+      "chart": "line",
+      "source": "metrics",
+      "sql": "SELECT toStartOfInterval(TimeUnix, INTERVAL 15 MINUTE) AS t, concat(Attributes['loom.namespace'], ' ', Attributes['tier']) AS series, max(Value) AS lag_commits FROM default.otel_metrics_gauge WHERE MetricName = 'loom.code.scip_lag_commits' AND TimeUnix > now() - INTERVAL 3 DAY GROUP BY t, series ORDER BY t",
+      "alert": {
+        "name": "compiler tier stale",
+        "condition": "max(Value) > 200 for 2h",
+        "why": "A compiler-tier producer runs about every 30 min and indexes up to 200 translation units per pass; more than 200 commits behind for 2 h means the cron, the fetch or the tier's producer is wedged (a stalled submodule fetch, for example). Override and caller answers silently degrade to the parser tier meanwhile."
+      }
+    },
+    {
+      "id": "tier_lag_seconds",
+      "title": "Tier lag (s): age of the oldest commit each tier has not reached, by namespace and tier",
+      "chart": "line",
+      "source": "metrics",
+      "sql": "SELECT toStartOfInterval(TimeUnix, INTERVAL 5 MINUTE) AS t, concat(Attributes['loom.namespace'], ' ', Attributes['tier']) AS series, max(Value) AS lag_s FROM default.otel_metrics_gauge WHERE MetricName = 'loom.code.tier_lag_seconds' AND TimeUnix > now() - INTERVAL 24 HOUR GROUP BY t, series ORDER BY t",
+      "alert": {
+        "name": "code tier lag",
+        "condition": "min(Value) > 1800 for 10m",
+        "why": "A consumer that waits for commit_coverage.ready on a new merge waits on the slowest tier. This gauge is the age of the oldest commit a tier has not reached, measured from the watermark rows and the mirror, never from a producer's log: a watermark that stops while git_head moves grows it without bound, while the producer can keep logging that it is current. min over the window keeps a normal cycle (commit lands just after a pass) from paging; 30 min is the default. Tier `fast` is the ingest poller against the fetched tip; the others are compiler tiers against git_head. Keep the threshold above the slowest tier's normal cycle (producer interval plus run time)."
+      }
+    },
+    {
+      "id": "stale_files",
+      "title": "Stale files: indexed paths whose chunks predate their last change, by namespace",
+      "chart": "line",
+      "source": "metrics",
+      "sql": "SELECT toStartOfInterval(TimeUnix, INTERVAL 5 MINUTE) AS t, Attributes['loom.namespace'] AS ns, max(Value) AS stale_files FROM default.otel_metrics_gauge WHERE MetricName = 'loom.code.stale_files' AND TimeUnix > now() - INTERVAL 24 HOUR GROUP BY t, ns ORDER BY t",
+      "alert": {
+        "name": "code index content drift",
+        "condition": "max(Value) > 200 for 3h",
+        "why": "Watermarks count commits walked, not rows refreshed: every lag gauge can read 0 while a large share of function rows carry stale line numbers. The ingest worker reconciles hourly and heals up to 200 paths per pass, so a count above 200 for 3 h means drift is outpacing repair (or the heal is failing) and positional answers (code.symbol lines, code.enclosing, grep shim) are wrong for those files."
+      }
+    },
+    {
+      "id": "pr_cursor_age",
+      "title": "PR-history cursor age (s)",
+      "chart": "line",
+      "source": "metrics",
+      "sql": "SELECT toStartOfInterval(TimeUnix, INTERVAL 15 MINUTE) AS t, Attributes['loom.namespace'] AS ns, max(Value) AS age_s FROM default.otel_metrics_gauge WHERE MetricName = 'loom.code.pr_cursor_age_seconds' AND TimeUnix > now() - INTERVAL 7 DAY GROUP BY t, ns ORDER BY t"
+    },
+    {
+      "id": "files_errored",
+      "title": "Files the indexer could not process",
+      "chart": "number",
+      "source": "metrics",
+      "sql": "SELECT Attributes['loom.namespace'] AS ns, argMax(Value, TimeUnix) AS files_errored FROM default.otel_metrics_gauge WHERE MetricName = 'loom.code.files_errored' AND TimeUnix > now() - INTERVAL 1 HOUR GROUP BY ns"
+    },
+    {
+      "id": "ops_rate",
+      "title": "Code ops per 5 min, by operation",
+      "chart": "line",
+      "source": "traces",
+      "sql": "SELECT toStartOfInterval(Timestamp, INTERVAL 5 MINUTE) AS t, SpanAttributes['loom.operation'] AS op, count() AS calls FROM default.otel_traces WHERE ParentSpanId = '' AND SpanAttributes['loom.operation'] LIKE 'code.%' AND Timestamp > now() - INTERVAL 24 HOUR GROUP BY t, op ORDER BY t"
+    },
+    {
+      "id": "agents",
+      "title": "Who is calling: per consumer/agent calls, p95 and abstain rate",
+      "chart": "table",
+      "source": "traces",
+      "sql": "SELECT coalesce(nullIf(SpanAttributes['loom.code.consumer'], ''), nullIf(SpanAttributes['loom.agent'], '-'), SpanAttributes['enduser.id']) AS who, SpanAttributes['loom.operation'] AS op, count() AS calls, round(quantile(0.95)(Duration / 1e6)) AS p95_ms, round(countIf(SpanAttributes['loom.code.abstain'] = 'true') / count(), 3) AS abstain_rate FROM default.otel_traces WHERE ParentSpanId = '' AND SpanAttributes['loom.operation'] LIKE 'code.%' AND Timestamp > now() - INTERVAL 24 HOUR GROUP BY who, op ORDER BY calls DESC LIMIT 40"
+    },
+    {
+      "id": "ops_latency",
+      "title": "p50 / p95 per code op (ms) — compare with budget_p99_ms in server/code/api/ops.py",
+      "chart": "table",
+      "source": "traces",
+      "sql": "SELECT SpanAttributes['loom.operation'] AS op, count() AS calls, round(quantile(0.5)(Duration / 1e6)) AS p50_ms, round(quantile(0.95)(Duration / 1e6)) AS p95_ms, round(quantile(0.99)(Duration / 1e6)) AS p99_ms FROM default.otel_traces WHERE ParentSpanId = '' AND SpanAttributes['loom.operation'] LIKE 'code.%' AND Timestamp > now() - INTERVAL 24 HOUR GROUP BY op ORDER BY calls DESC"
+    },
+    {
+      "id": "ops_waterfall",
+      "title": "Where code.callers spends its time (child spans, p95 ms)",
+      "chart": "table",
+      "source": "traces",
+      "sql": "SELECT SpanName, count() AS n, round(quantile(0.95)(Duration / 1e6)) AS p95_ms FROM default.otel_traces WHERE SpanName LIKE 'code.%' AND ParentSpanId != '' AND Timestamp > now() - INTERVAL 24 HOUR GROUP BY SpanName ORDER BY p95_ms DESC"
+    },
+    {
+      "id": "errors",
+      "title": "Failed code requests by op and status",
+      "chart": "line",
+      "source": "traces",
+      "sql": "SELECT toStartOfInterval(Timestamp, INTERVAL 15 MINUTE) AS t, SpanAttributes['loom.operation'] AS op, SpanAttributes['http.status_code'] AS status, count() AS n FROM default.otel_traces WHERE ParentSpanId = '' AND SpanAttributes['loom.operation'] LIKE 'code.%' AND toUInt16OrZero(SpanAttributes['http.status_code']) >= 400 AND Timestamp > now() - INTERVAL 24 HOUR GROUP BY t, op, status ORDER BY t"
+    },
+    {
+      "id": "stale_share",
+      "title": "Share of code answers served from a stale index",
+      "chart": "line",
+      "source": "traces",
+      "sql": "SELECT toStartOfInterval(Timestamp, INTERVAL 30 MINUTE) AS t, round(countIf(SpanAttributes['loom.code.stale'] = 'true') / count(), 3) AS stale_share, count() AS answers FROM default.otel_traces WHERE ParentSpanId = '' AND SpanAttributes['loom.operation'] LIKE 'code.%' AND mapContains(SpanAttributes, 'loom.code.stale') AND Timestamp > now() - INTERVAL 24 HOUR GROUP BY t ORDER BY t"
+    },
+    {
+      "id": "abstain_rate",
+      "title": "Abstain / ambiguous rate by op (loom.code_search_trace)",
+      "chart": "line",
+      "source": "sql",
+      "sql": "SELECT toStartOfInterval(ts, INTERVAL 1 HOUR) AS t, op, round(countIf(abstain = 1) / count(), 3) AS abstain_rate, count() AS calls FROM loom.code_search_trace WHERE ts > now() - INTERVAL 7 DAY AND consumer NOT IN ('bench', 'bench-shunt', 'clickgap-replay') GROUP BY t, op ORDER BY t"
+    },
+    {
+      "id": "code_search_quality",
+      "title": "code.search top cosine similarity, mean per 30 min",
+      "chart": "line",
+      "source": "metrics",
+      "sql": "SELECT t, round(sum(dSum) / greatest(sum(dCount), 1), 4) AS mean_top_similarity, sum(dCount) AS searches FROM (SELECT toStartOfInterval(TimeUnix, INTERVAL 30 MINUTE) AS t, if(AggregationTemporality = 1, toFloat64(Sum), if(toFloat64(Sum) < lagInFrame(toFloat64(Sum), 1, toFloat64(Sum)) OVER w, toFloat64(Sum), toFloat64(Sum) - lagInFrame(toFloat64(Sum), 1, toFloat64(Sum)) OVER w)) AS dSum, if(AggregationTemporality = 1, toFloat64(Count), if(toFloat64(Count) < lagInFrame(toFloat64(Count), 1, toFloat64(Count)) OVER w, toFloat64(Count), toFloat64(Count) - lagInFrame(toFloat64(Count), 1, toFloat64(Count)) OVER w)) AS dCount FROM default.otel_metrics_histogram WHERE MetricName = 'loom.search.top_similarity' AND Attributes['loom.operation'] = 'code.search' AND TimeUnix > now() - INTERVAL 24 HOUR WINDOW w AS (PARTITION BY ResourceAttributes, Attributes, StartTimeUnix ORDER BY TimeUnix)) GROUP BY t HAVING searches > 0 ORDER BY t",
+      "alert": {
+        "name": "code retrieval quality collapse",
+        "condition": "mean_top_similarity < 0.30 over 30m with searches >= 20",
+        "why": "0.30 is the code abstain threshold; a mean below it means most searches are abstaining or returning noise. Latency and errors stay green. Threshold differs from memory (0.35) because code cosines run lower."
+      }
+    },
+    {
+      "id": "worker_passes",
+      "title": "Worker passes by outcome",
+      "chart": "line",
+      "source": "metrics",
+      "sql": "SELECT t, series, sum(d) AS passes FROM (SELECT toStartOfInterval(TimeUnix, INTERVAL 15 MINUTE) AS t, concat(Attributes['worker'], ' ', Attributes['outcome']) AS series, if(AggregationTemporality = 1, toFloat64(Value), if(toFloat64(Value) < lagInFrame(toFloat64(Value), 1, toFloat64(Value)) OVER w, toFloat64(Value), toFloat64(Value) - lagInFrame(toFloat64(Value), 1, toFloat64(Value)) OVER w)) AS d FROM default.otel_metrics_sum WHERE MetricName = 'loom.worker.passes' AND Attributes['worker'] LIKE 'code_%' AND TimeUnix > now() - INTERVAL 24 HOUR WINDOW w AS (PARTITION BY ResourceAttributes, Attributes, StartTimeUnix ORDER BY TimeUnix)) GROUP BY t, series ORDER BY t"
+    },
+    {
+      "id": "worker_failure_streak",
+      "title": "Consecutive worker failures",
+      "chart": "number",
+      "source": "metrics",
+      "sql": "SELECT Attributes['worker'] AS worker, argMax(Value, TimeUnix) AS consecutive_failures FROM default.otel_metrics_gauge WHERE MetricName = 'loom.worker.consecutive_failures' AND TimeUnix > now() - INTERVAL 1 HOUR GROUP BY worker ORDER BY consecutive_failures DESC",
+      "alert": {
+        "name": "code worker failing",
+        "condition": "max(Value) >= 3 for 10m",
+        "why": "The supervisor only logs a DEGRADED line at three failures; this is the same signal as a page. Covers ingest, pr_history, scip apply/delta, summary, embed recovery."
+      }
+    },
+    {
+      "id": "shunt_savings",
+      "title": "Token shunt: hits, passes and tokens saved per day",
+      "chart": "bar",
+      "source": "sql",
+      "sql": "SELECT toDate(ts) AS d, countIf(action = 'shunt_hit') AS hits, countIf(action = 'shunt_pass') AS passes, sum(tokens_saved) AS tokens_saved FROM loom.code_search_outcome WHERE action IN ('shunt_hit', 'shunt_pass') AND ts > now() - INTERVAL 30 DAY GROUP BY d ORDER BY d"
+    },
+    {
+      "id": "outcome_loop",
+      "title": "Feedback loop: outcomes per traced answer, by consumer",
+      "chart": "table",
+      "source": "sql",
+      "sql": "SELECT t.consumer, count(DISTINCT t.trace_run_id) AS answers, count(DISTINCT o.trace_run_id) AS with_outcome, round(count(DISTINCT o.trace_run_id) / count(DISTINCT t.trace_run_id), 3) AS outcome_rate FROM loom.code_search_trace t LEFT JOIN loom.code_search_outcome o ON o.trace_run_id = t.trace_run_id WHERE t.ts > now() - INTERVAL 7 DAY GROUP BY t.consumer ORDER BY answers DESC"
+    },
+    {
+      "id": "llm_spend",
+      "title": "Code-plane LLM spend (USD) by stage",
+      "chart": "line",
+      "source": "traces",
+      "sql": "SELECT toStartOfInterval(Timestamp, INTERVAL 1 HOUR) AS t, SpanName AS stage, round(sum(toFloat64OrZero(SpanAttributes['gen_ai.usage.cost'])), 4) AS usd FROM default.otel_traces WHERE SpanName IN ('llm.code_answer', 'llm.code_describe', 'llm.code_summary', 'llm.code_query_expand', 'llm.inline_rerank') AND Timestamp > now() - INTERVAL 7 DAY GROUP BY t, stage ORDER BY t"
+    }
+  ]
+}

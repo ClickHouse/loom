@@ -1,0 +1,106 @@
+{
+  "real": [
+    "A column with the wrong type gets a `CAST`.",
+    "A missing column gets a default.",
+    "A sample of eight write-only workflows (11,382 rows) was ingested for measurement.",
+    "A test confirms that applying these drafts makes a failing schema pass.",
+    "Check runs every validation (public host, read-only user, schema) and writes nothing.",
+    "Columns where a default would make the data wrong (IDs, titles, the ends of a link) are marked `MUST map`.",
+    "Cut 69 added inp_ms on every ui.vitals row, an INP column and flag in deploy-delta.",
+    "If a finding is security-classified, call `task.create` into inbox `security-triage` with kind `security_finding`, disclosure `confidential`, `idempotency_key` set to the finding id, and the whole evidence in the brief.",
+    "Linking a database to a repository: Register from the UI: open the repository card and click *Register a tracker source…*.",
+    "Loom decides the fixed set of tables and columns its queries read.",
+    "Loom leads or ties on seven write-only workflows and trails on CI failure analyses by two queries.",
+    "Post upstream gaps into `public-findings` with disclosure `public_ok`.",
+    "Task inbox trust policy is owner-set mode only.",
+    "The answer has status `triage`; record the returned `task_id` on the finding.",
+    "The fix is on Loom's side: a short skill file with the trigger, the eight tool names and the stop rules, and the long substitution tables moved to a reference file the model opens only when it needs them.",
+    "The issue with docker logs was identified as a runaway writer due to excessive logging.",
+    "They get the same access as the code: readers of the repository can read them, maintainers add them, and docs on a restricted repository stay restricted.",
+    "User built a Postgres vector-table side-by-side eval from a sample dump.",
+    "User graded the pandas oracle with precision 0.897 and recall 0.720 (two days ago, on 2026-09-23).",
+    "User identified that 22,730 rows in the staging table hold raw unquoted text due to a builder bug.",
+    "User mentioned the URL for Codex should be '$LOOM_URL/mcp?toolset=core,coding,tracker,tasks'.",
+    "User noted a logger storm in the four LOCAL ClickHouse containers after the disk-full event.",
+    "User plans to close the known gaps in the Python index and build compiler-tier oracles for additional Python repos.",
+    "User restored 803 of 825 rows byte-identical to what the agent wrote.",
+    "User restored all 825 old keys in the team-alerts namespace, allowing the agent's exact-key reads to work again.",
+    "User rewrote the memory-plane skill text so a new agent gets the recipe on day one instead of after an audit.",
+    "User wants to simplify the installation process for the Codex plugin, similar to the Claude Code plugin, without needing to set environment variables.",
+    "User's team-alerts namespace was reshaped to store claims as plain-text rows under readable keys, with knowledge documents and typed records for PR reviews and service catalogues.",
+    "User's settings page is now live with three tabs instead of one long scroll.",
+    "User's task queue UI has columns for Triage, To do, In progress, Blocked, Deferred, Done, Closed.",
+    "You decide how your data maps onto them, by creating views in your own ClickHouse."
+  ],
+  "junk_by_class": {
+    "tool_state": [
+      "The working memory section contains bookmarks from earlier sessions, including QA work on Delta Lake writes on master with 34 uncommitted files and the last reply stating test 05223 passed in 2.49 s.",
+      "The mentor section contains a hint: you have 7 indexed repos but have made 0 code.* calls, suggesting code.search, code.symbol, code.callers, and code.grep.",
+      "There are 25 versions across 5 memory ids.",
+      "User's default namespace has 2,578 memories: 2,058 episodic, 519 semantic, and 1 procedural.",
+      "User's top entities in the default namespace are `claude-code`, `command`, `bash`, and `loom`.",
+      "User's default namespace has 3 distinct agents, last active on 2026-09-25."
+    ],
+    "code_lookup": [
+      "A saved fact: MergeTreeData::renameTempPartAndAdd is defined at src/Storages/MergeTree/MergeTreeData.cpp:7137 (from 2026-09-20).",
+      "User found the tracker duplicate check implemented at server/tracker/api/tracker.py:742-755.",
+      "User identified the handler for tracker.duplicate_check as handle_tracker_duplicate_check(input: Any) at server/tracker/app/dupcheck.py:75-112.",
+      "User found 17 call sites for tracker.duplicate_check, with one in production code at server/transport/tracker_leg.py:146.",
+      "User reviewed the outline of server/clients/qa_intel.py, which includes error handling, credentials, budgets, client queries, and lifecycle methods."
+    ],
+    "not_found_now": [
+      "User confirmed that the list came back empty, so they are checking with a search before deleting anything.",
+      "User noted that no 'test/scratch/' keys exist, so there's nothing to delete with memory.delete.",
+      "User confirmed that the working memory block 'scratch' doesn't exist.",
+      "User found that the knowledge doc 'scratch runbook' does not exist in the namespace's knowledge list.",
+      "User confirmed that the final check with memory.list for prefix 'test/scratch/' returns no entries."
+    ],
+    "result_listing": [
+      "User ran the command 'gh issue list --repo acme/app --search \"Bad cast ColumnNullable\" --limit 3' and received 3 open issues with no hook message.",
+      "User received 3 open issues from the command: #1893, #1624, and #1537."
+    ],
+    "first_person_plan": [
+      "Doing that now as the next plugin revision.",
+      "Once #85 merges, I rebase #86 onto main and take it out of draft."
+    ],
+    "status": [
+      "Round 10 is live on c0cf54838.",
+      "Cut 49 is PR #45 and green locally.",
+      "The CI log for cut 50 is not retrievable yet.",
+      "The three round-11 cuts (#41 ui.vitals, #45 deploy-delta page vitals, #44 route budgets) are in CI with a watcher.",
+      "User is running the new route-budget suite locally to see which routes miss.",
+      "Cut 51 is all green."
+    ],
+    "peer": [
+      "User received a cross-session delivery notice about a dropped message.",
+      "Build-25 reported an incident regarding memory.set failures due to ClickHouse errors.",
+      "Build-25 claimed the lease regarding a GitHub issue search.",
+      "Build-25 confirmed no collision with the lease.",
+      "The other Claude session working on #85 knows this is stacked on it."
+    ],
+    "vague": [
+      "The diagnosis pattern for the memory.set failures was recorded in memory.",
+      "A migration rule regarding text indexes and TTL was recorded in memory.",
+      "User's findings include insights on the performance of the UI and API, including the impact of specific changes and the need for ongoing monitoring.",
+      "User referenced specific files and code sections relevant to the performance evaluation and improvements.",
+      "User's measurements include various performance metrics and benchmarks for the UI and API calls.",
+      "User acknowledged the goal to evaluate loom's performance and improve the codebase where it is losing."
+    ],
+    "housekeeping": [
+      "User cleaned up the disk, increasing free space from 0 bytes to 329 GB.",
+      "User removed two host Go module caches totaling 58 GB.",
+      "User removed 199 stale git worktrees out of 241, taking up 22 GB.",
+      "User removed scratchpads of sessions idle for over a day, totaling about 26 GB.",
+      "User removed various caches, including pnpm, uv, npm, Go build cache, mypy and ruff caches, and 13 orphaned docker volumes.",
+      "User left 42 worktrees with local changes or unpushed commits."
+    ],
+    "trivia": [
+      "The pipeline clone tip is ef0add7b2598.",
+      "There are 1,800 PRs in history.",
+      "The fast tier watermark is ef0add7b2598.",
+      "The compiler tier for C++ has a watermark of 36291fd88786.",
+      "The compiler tier for Python has a watermark of 2026-09-18T1.",
+      "The coverage by language shows TypeScript with 4,849 files and SQL with 537 files."
+    ]
+  }
+}

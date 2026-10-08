@@ -1,0 +1,91 @@
+# Inventory annotations for the code area. See tests/inventory/README.md.
+
+# ---- ownership by feature -------------------------------------------------
+
+[[files]]
+match = "tests/unit/test_code_search_*.py"
+owner = "code.search: legs, fusion, rerank, deadlines, provenance"
+
+[[files]]
+match = "tests/unit/test_code_scip_*.py"
+owner = "compiler tier: SCIP upload, apply and the delta workers"
+
+[[files]]
+match = "tests/unit/test_scip_*.py"
+owner = "compiler tier: SCIP harness, locks and cron scripts"
+
+[[files]]
+match = "tests/unit/test_code_ingest_*.py"
+owner = "code ingest: passes, budgets, rounds and dependents"
+
+[[files]]
+match = "tests/unit/test_code_extractor_stamp.py"
+owner = "extractor version stamp and the paced heal"
+tags = ["recovery"]
+
+[[files]]
+match = "tests/unit/test_code_lang_*.py"
+owner = "code index language lanes"
+
+[[files]]
+match = "tests/unit/test_code_go_*.py"
+owner = "code index Go lane"
+
+[[files]]
+match = "tests/unit/test_code_py_*.py"
+owner = "code index Python lane"
+
+# ---- files whose name does not state what they exercise --------------------
+
+[[files]]
+match = "tests/unit/test_code_repo_access.py"
+owner = "code repository access and tracker binding"
+covers = ["op:code.repo.set_access", "op:code.repo.set_source"]
+tags = ["security", "negative"]
+
+[[files]]
+match = "tests/unit/test_code_examples.py"
+owner = "code.examples"
+tags = ["positive", "negative", "boundary"]
+
+[[files]]
+match = "tests/unit/test_code_map.py"
+owner = "code.map"
+tags = ["boundary", "fault"]
+
+[[files]]
+match = "tests/unit/test_code_scip_ingest.py"
+tags = ["negative", "boundary", "security"]
+
+[[files]]
+match = "tests/unit/test_code_tombstone_file.py"
+owner = "code ingest: a deleted file retires every row"
+tags = ["fault", "recovery"]
+
+[[files]]
+match = "tests/unit/test_gitrepo_*.py"
+owner = "git readers of the code index"
+tags = ["security", "boundary"]
+
+[[files]]
+match = "tests/unit/test_code_scip_go_delta_paths.py"
+tags = ["security", "boundary"]
+
+[[files]]
+match = "tests/unit/test_commit_coverage_memo_bounds.py"
+owner = "code.index_status per-commit coverage"
+tags = ["boundary"]
+
+# ---- flake history (fixed; kept so a recurrence is recognised) -------------
+
+[[files]]
+match = "tests/unit/test_code_search_stage_wall.py"
+flake = "upper-bound on a real sleep could fail on a loaded runner; now an injected clock"
+
+[[files]]
+match = "tests/unit/test_scip_entry_lock.py"
+flake = "fixed 0.3 s sleep raced the shell flock's spawn; now polls until held"
+
+[[files]]
+match = "tests/unit/test_cli_code_telemetry.py"
+flake = "left the root logger at INFO and library loggers at WARNING for later tests"

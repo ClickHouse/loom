@@ -1,0 +1,93 @@
+"""The namespace facts the authorization gate reads.
+
+The gate is platform code; what it decides on belongs to the domains: which
+namespaces of an org are restricted (the directory rows and the code-plane
+repo config), which are configured code-plane entries, and what kind each
+one is. The identity domain answers through a `NamespaceDirectory`; the
+composition root (`server/wiring.py`) hands it in with `use_directory`
+before the process serves.
+
+A process nobody wired has no directory: every lookup raises
+`DirectoryNotWired`, a `ClassificationUnavailable`, so each gate that denies
+on an unreadable directory denies on it too.
+"""
+
+from __future__ import annotations
+
+from typing import Protocol
+
+
+class ClassificationUnavailable(RuntimeError):
+    """The restricted set for an org could not be read and no snapshot exists."""
+
+
+class DirectoryNotWired(ClassificationUnavailable):
+    """No `NamespaceDirectory` was handed in: this process cannot tell a
+    restricted namespace from any other."""
+
+
+class CodeEntry(Protocol):
+    """A configured code-plane entry, as far as authorization reads it."""
+
+    @property
+    def classification(self) -> str: ...
+
+    @property
+    def org_readable(self) -> bool: ...
+
+
+class NamespaceDirectory(Protocol):
+    async def is_restricted(self, org: str, namespace: str) -> bool:
+        """Raises `ClassificationUnavailable` when the directory cannot be
+        read and no snapshot exists."""
+        ...
+
+    async def restricted_set(self, org: str) -> frozenset[str]:
+        """Namespaces the directory rows restrict; raises like `is_restricted`."""
+        ...
+
+    def is_restricted_cached(self, org: str, namespace: str) -> bool:
+        """The repo config plus the org's cached snapshot, stale or not; no
+        I/O, False with no snapshot. For writers that run after the gate."""
+        ...
+
+    def config_classification(self, org: str, namespace: str) -> str:
+        """The repo config's classification, `standard` off the code plane. No I/O."""
+        ...
+
+    def code_entry(self, org: str, namespace: str) -> CodeEntry | None:
+        """The configured code-plane entry for (org, namespace). No I/O."""
+        ...
+
+    def restricted_code_namespaces(self, org: str) -> set[str]:
+        """The configured code-plane entries of `org` classified restricted. No I/O."""
+        ...
+
+    async def fanout_namespaces(self, org: str, namespaces: list[str]) -> list[str]:
+        """`namespaces` in order, narrowed to the kinds a fan-out spans."""
+        ...
+
+
+_directory: NamespaceDirectory | None = None
+
+
+def use_directory(directory: NamespaceDirectory | None) -> None:
+    """Hand in the process's directory (None takes it away again)."""
+    global _directory
+    _directory = directory
+
+
+def directory() -> NamespaceDirectory:
+    if _directory is None:
+        raise DirectoryNotWired("no namespace directory is wired into this process")
+    return _directory
+
+
+__all__ = [
+    "ClassificationUnavailable",
+    "CodeEntry",
+    "DirectoryNotWired",
+    "NamespaceDirectory",
+    "directory",
+    "use_directory",
+]

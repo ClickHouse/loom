@@ -1,0 +1,22 @@
+{
+ "code_ask_llm_model": "gpt-6.1-sol",
+ "code_bisect_llm_rerank_model": "gpt-6-luna",
+ "code_search_concept_expand_model": "cards:5",
+ "code_search_hyde_model": "gpt-6-luna",
+ "code_summary_model": "(llm_model: gpt-6-luna)",
+ "embedding_dim": "3072",
+ "embedding_model": "text-embedding-3-large",
+ "llm_fallback_model": "(off)",
+ "llm_model": "gpt-6-luna",
+ "llm_provider": "openai",
+ "memory_ask_mid_model": "(off)",
+ "memory_ask_synth_model": "claude-opus-5-5",
+ "memory_ask_synth_model_cheap": "gpt-6-luna",
+ "memory_extract_verify_models": "claude-opus-5-5",
+ "profile_consolidation_model": "(llm_model: gpt-6-luna)",
+ "reflection_distill_model": "(llm_model: gpt-6-luna)",
+ "retrieval_judge_model": "gpt-6.1-sol",
+ "session_brief_llm_model": "gpt-6-luna",
+ "tracker_dupcheck_judge_model": "(llm_model: gpt-6-luna)",
+ "tracker_dupcheck_rerank_model": "gpt-6-luna"
+}

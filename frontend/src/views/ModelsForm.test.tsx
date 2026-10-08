@@ -1,0 +1,123 @@
+// @vitest-environment jsdom
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ModelStatus } from "../api/models";
+import { initialModelConfiguration, ModelsForm } from "./ModelsForm";
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+const status: ModelStatus = {
+  version: "1791195706575122049",
+  source: "environment",
+  llm_provider: "fake",
+  llm_model: "fake-echo-1",
+  embedding_provider: "fake",
+  embedding_model: "fake-ngram-3072",
+  embedding_dimensions: 3072,
+  configured_keys: {},
+  requires_setup: true,
+  llm_overrides: {},
+  verification_models: null,
+};
+
+describe("Models & keys", () => {
+  it("submits a compatible endpoint with its own embedding key", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ModelsForm
+        status={status}
+        onValidate={vi.fn().mockResolvedValue({ ready: true, checks: [] })}
+        onSave={onSave}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("Embedding provider"), { target: { value: "compatible" } });
+    fireEvent.change(screen.getByLabelText("Embedding model"), { target: { value: "vendor/custom-embedding" } });
+    fireEvent.change(screen.getByLabelText("Embedding API base URL"), {
+      target: { value: "https://embedding.example/v1" },
+    });
+    fireEvent.change(screen.getByLabelText("Custom embedding provider API key"), {
+      target: { value: "custom-test-key" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Test & apply" }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect(onSave.mock.calls[0][0].embedding).toMatchObject({
+      provider: "compatible",
+      base_url: "https://embedding.example/v1",
+      model: "vendor/custom-embedding",
+    });
+    expect(onSave.mock.calls[0][0].keys).toEqual({ compatible: "custom-test-key" });
+  });
+
+  it("offers only hosted embedding providers", () => {
+    render(<ModelsForm status={status} onValidate={vi.fn()} onSave={vi.fn()} />);
+    const select = screen.getByLabelText("Embedding provider") as HTMLSelectElement;
+    expect(Array.from(select.options, (option) => option.value)).toEqual(["openai", "gemini", "compatible"]);
+  });
+
+  it("keeps configured models even when a key needs attention", () => {
+    const config = initialModelConfiguration({
+      ...status,
+      llm_provider: "anthropic",
+      llm_model: "claude-custom",
+      embedding_provider: "gemini",
+      embedding_model: "gemini-custom",
+      embedding_dimensions: 768,
+    });
+    expect(config.llm.model).toBe("claude-custom");
+    expect(config.embedding).toEqual({ provider: "gemini", model: "gemini-custom", dimensions: 768 });
+    expect(config.expected_version).toBe(status.version);
+  });
+
+  it("does not save failed validation and rechecks changed inputs", async () => {
+    const onSave = vi.fn();
+    const onValidate = vi.fn().mockResolvedValue({ ready: false, checks: [] });
+    render(<ModelsForm status={status} onValidate={onValidate} onSave={onSave} />);
+    const save = screen.getByRole("button", { name: "Test & apply" }) as HTMLButtonElement;
+    fireEvent.click(save);
+    await waitFor(() => expect(save.disabled).toBe(false));
+    expect(onSave).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("LLM model"), { target: { value: "gpt-other" } });
+    onValidate.mockResolvedValue({ ready: true, checks: [] });
+    fireEvent.click(save);
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect(onValidate).toHaveBeenCalledTimes(2);
+    expect(onSave.mock.calls[0][0].llm.model).toBe("gpt-other");
+  });
+
+  it("sends keys only in the submission and clears them after save", async () => {
+    const storageWrite = vi.fn();
+    vi.stubGlobal("localStorage", { setItem: storageWrite });
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ModelsForm
+        status={status}
+        onValidate={vi.fn().mockResolvedValue({ ready: true, checks: [] })}
+        onSave={onSave}
+      />,
+    );
+    const key = screen.getByLabelText("OpenAI API key") as HTMLInputElement;
+    expect(key.type).toBe("password");
+    fireEvent.change(key, { target: { value: "test-secret-value" } });
+    fireEvent.click(screen.getByRole("button", { name: "Test & apply" }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect(onSave.mock.calls[0][0].keys).toEqual({ openai: "test-secret-value" });
+    await waitFor(() => expect(key.value).toBe(""));
+    expect(storageWrite).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("does not show raw exceptions that could include credentials", async () => {
+    render(
+      <ModelsForm
+        status={status}
+        onValidate={vi.fn().mockRejectedValue(new Error("test-secret-value"))}
+        onSave={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Test & apply" }));
+    await screen.findByText(/Configuration was not applied/);
+    expect(screen.queryByText(/test-secret-value/)).toBeNull();
+  });
+});

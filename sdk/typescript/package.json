@@ -1,0 +1,90 @@
+{
+  "name": "@clickhouse/loom",
+  "version": "1.0.0",
+  "description": "TypeScript SDK for Loom — shared-production agent memory, knowledge, conflict and observability plane on ClickHouse. Typed over every wire operation the server declares, with retries, rate-limit pacing, idempotency keys and an Agent identity binding.",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./integrations/strands": {
+      "import": {
+        "types": "./dist/integrations/strands.d.mts",
+        "default": "./dist/integrations/strands.mjs"
+      },
+      "require": {
+        "types": "./dist/integrations/strands.d.cts",
+        "default": "./dist/integrations/strands.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "examples"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "type-check": "tsc --noEmit",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:dist": "vitest run -c vitest.dist.config.ts",
+    "test:integ": "vitest run -c vitest.integ.config.ts",
+    "check:version": "node scripts/check-version.mjs",
+    "check:readme": "node scripts/check-readme.mjs",
+    "check:package": "publint --strict && attw --pack . --profile node16",
+    "check": "npm run lint && npm run type-check && npm run check:version && npm run check:readme && npm run test",
+    "check:dist": "npm run build && npm run test:dist && npm run check:package",
+    "prepublishOnly": "npm run check && npm run check:dist",
+    "docs": "typedoc"
+  },
+  "keywords": [
+    "loom",
+    "clickhouse",
+    "agent",
+    "memory",
+    "llm",
+    "ai",
+    "mcp",
+    "sdk"
+  ],
+  "author": "ClickHouse, Inc.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ClickHouse/loom.git",
+    "directory": "sdk/typescript"
+  },
+  "bugs": {
+    "url": "https://github.com/ClickHouse/loom/issues"
+  },
+  "homepage": "https://github.com/ClickHouse/loom/tree/main/sdk/typescript#readme",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.5",
+    "@biomejs/biome": "^2.5.14",
+    "@types/node": "^22.0.0",
+    "publint": "^0.3.24",
+    "tsdown": "^0.23.0",
+    "typedoc": "^0.28.20",
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.11"
+  }
+}

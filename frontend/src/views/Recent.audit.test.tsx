@@ -1,0 +1,245 @@
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { MemoryListEntry, MyNamespaceEntry, NamespaceAuditResult, WhoAmI } from "../api";
+import { useStore } from "../lib/state";
+import { resetNamespaceRoleCache } from "../lib/namespaceRole";
+import { Recent } from "./Recent";
+
+// The Memories view carries a "Usage audit" panel. One click runs `namespace.audit` for
+// the current org/namespace over the chosen window; the findings render critical →
+// warning → info with the code humanised, a severity badge, count, share and the first
+// sample (a key sample opens that memory in the inspector). Nothing runs on mount.
+
+const entry = (memory_key: string): MemoryListEntry => ({
+  memory_key,
+  memory_type: "semantic",
+  confidence: 1,
+  version: 1,
+  created_at: "2026-09-18T09:00:00Z",
+  expires_at: null,
+  pinned: false,
+  tags: [],
+  agent: "claude-desktop",
+  value: `value of ${memory_key}`,
+});
+
+const AUDIT: NamespaceAuditResult = {
+  org: "dev",
+  namespace: "team-alerts",
+  computed_at: "2026-09-19T08:00:00Z",
+  window_seconds: 7 * 86_400,
+  summary: {
+    live_rows: 786,
+    live_bytes: 21_000_000,
+    excerpt_bytes: 900_000,
+    version_rows: 3_100,
+    version_bytes: 51_000_000,
+    unembedded_rows: 179,
+    gets: 6606,
+    searches: 52,
+    sets: 910,
+    get_search_ratio: 127.0,
+  },
+  findings: [
+    // Deliberately out of order: the panel sorts by severity.
+    {
+      code: "version_churn",
+      severity: "info",
+      count: 3100,
+      share: 0.9,
+      bytes: 51_000_000,
+      samples: [{ memory_key: "sre/case/1", versions: 41 }],
+      detail: "Version rows outnumber live rows 4×.",
+      remedy: "Write less often; memory.update on change.",
+    },
+    {
+      code: "oversized_values",
+      severity: "warning",
+      count: 3,
+      share: 0.02,
+      bytes: 3_000_000,
+      samples: [{ memory_key: "sre/case/1/notes", value_chars: 40_000 }],
+      detail: "Three values past the advisory.",
+      remedy: "knowledge.upsert for documents.",
+    },
+    {
+      code: "exact_key_store",
+      severity: "critical",
+      count: 6606,
+      share: 0.992,
+      bytes: 0,
+      samples: [
+        { memory_key: "sre/lease/main", reads: 116 },
+        { memory_key: "sre/index/cases", reads: 40 },
+      ],
+      detail: "6606 gets against 52 searches.",
+      remedy: "Use memory.search for recall; keep leases out of memory.",
+    },
+  ],
+  skipped: ["hand_rolled_index_rows: 24,000 rows exceed the 20k scan cap"],
+  healthy: false,
+  criticals: 1,
+  warnings: 1,
+  infos: 1,
+};
+
+vi.mock("../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api")>();
+  return {
+    ...actual,
+    listMemories: vi.fn(async () => ({ entries: [entry("coffee_pref"), entry("tea_pref")], total: 2, today: 2 })),
+    bulkGetMemories: vi.fn(async () => ({ results: {}, missing: [] })),
+    listConflicts: vi.fn(async () => ({ rows: [] })),
+    conflictKeys: vi.fn(async (): Promise<string[]> => []),
+    listMine: vi.fn(async () => []),
+    isAuthDisabled: () => false,
+    auditNamespace: vi.fn(async () => AUDIT),
+  };
+});
+import { auditNamespace, listMemories } from "../api";
+
+const row = (namespace: string, role: MyNamespaceEntry["role"]): MyNamespaceEntry => ({
+  namespace,
+  role,
+  status: "active",
+  visibility: "private",
+  description: "",
+  joined_at: null,
+  is_new: false,
+});
+
+const owner: WhoAmI = {
+  authenticated: true,
+  subject: "o@example.com",
+  org: "dev",
+  roles: ["USER"],
+  namespaces: ["team-alerts"],
+};
+
+async function openMemories() {
+  render(<Recent />);
+  await waitFor(() => expect(listMemories).toHaveBeenCalled());
+  await screen.findByText("coffee_pref");
+}
+
+describe("Memories: usage audit panel", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetNamespaceRoleCache();
+    useStore.setState({
+      authed: true,
+      whoami: owner,
+      myNamespaces: [row("team-alerts", "admin")],
+      identity: { org: "dev", namespace: "team-alerts", agent: "loom-ui" },
+      view: "memories",
+      inspectedMemoryKey: null,
+    });
+  });
+  afterEach(() => {
+    cleanup();
+    useStore.setState({ whoami: null, myNamespaces: null, identity: null, inspectedMemoryKey: null });
+  });
+
+  it("runs on a click, not on mount, with the window and five samples; findings sort critical → warning → info", async () => {
+    await openMemories();
+    const panel = screen.getByTestId("usage-audit");
+    expect(within(panel).getByRole("heading", { name: "Usage audit" })).toBeInTheDocument();
+    expect(auditNamespace).not.toHaveBeenCalled();
+
+    await userEvent.selectOptions(within(panel).getByLabelText("Audit window"), String(30 * 86_400));
+    await userEvent.click(within(panel).getByRole("button", { name: /Run audit/ }));
+
+    await waitFor(() => expect(auditNamespace).toHaveBeenCalledTimes(1));
+    const [scope, opts] = vi.mocked(auditNamespace).mock.calls[0];
+    expect(scope).toEqual({ org: "dev", namespace: "team-alerts" });
+    expect(opts).toMatchObject({ windowSeconds: 30 * 86_400, sampleLimit: 5 });
+
+    // Summary line.
+    const summary = await screen.findByTestId("audit-summary");
+    expect(summary).toHaveTextContent("Needs attention");
+    expect(summary).toHaveTextContent("1 critical, 1 warning, 1 info");
+    expect(summary).toHaveTextContent("live 786 rows");
+    expect(summary).toHaveTextContent("gets 6,606 / searches 52 / sets 910");
+    expect(summary).toHaveTextContent("ratio 127");
+
+    // Sorted by severity, humanised codes, share as a percentage.
+    const rows = screen.getAllByTestId("audit-finding");
+    expect(rows.map((r) => r.getAttribute("data-severity"))).toEqual(["critical", "warning", "info"]);
+    expect(rows.map((r) => r.getAttribute("data-code"))).toEqual([
+      "exact_key_store",
+      "oversized_values",
+      "version_churn",
+    ]);
+    expect(within(rows[0]).getByText("Exact-key store")).toBeInTheDocument();
+    expect(within(rows[0]).getByText("99%")).toBeInTheDocument();
+    expect(within(rows[0]).getByText("6,606")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("Oversized values")).toBeInTheDocument();
+
+    // The skipped check is a muted note; the remedy points at the recipe.
+    expect(screen.getByTestId("audit-skipped")).toHaveTextContent(
+      "hand_rolled_index_rows: 24,000 rows exceed the 20k scan cap",
+    );
+    expect(panel).toHaveTextContent("run loom-optimize with your agent");
+    expect(panel).toHaveTextContent("docs/guides/optimize-namespace.md");
+    // Never an "optimize now" control (the agent applies).
+    expect(within(panel).queryByRole("button", { name: /optimi[sz]e/i })).toBeNull();
+  });
+
+  it("a key sample opens that memory; the expandable row shows detail, remedy and every sample", async () => {
+    await openMemories();
+    await userEvent.click(screen.getByRole("button", { name: /Run audit/ }));
+    const rows = await screen.findAllByTestId("audit-finding");
+
+    await userEvent.click(within(rows[0]).getByRole("button", { name: "Open memory sre/lease/main" }));
+    expect(useStore.getState().inspectedMemoryKey).toBe("sre/lease/main");
+
+    expect(screen.queryByTestId("audit-finding-detail")).toBeNull();
+    const toggle = within(rows[0]).getByRole("button", { name: "Show details for Exact-key store" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(toggle);
+    const detail = await screen.findByTestId("audit-finding-detail");
+    expect(detail).toHaveTextContent("6606 gets against 52 searches.");
+    expect(detail).toHaveTextContent("Remedy: Use memory.search for recall; keep leases out of memory.");
+    expect(within(detail).getByRole("button", { name: "Open memory sre/lease/main" })).toBeInTheDocument();
+    expect(within(detail).getByRole("button", { name: "Open memory sre/index/cases" })).toBeInTheDocument();
+    expect(detail).toHaveTextContent("reads 116");
+    expect(within(rows[0]).getByRole("button", { name: "Hide details for Exact-key store" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+  });
+
+  it("no findings → the empty copy; a healthy summary", async () => {
+    vi.mocked(auditNamespace).mockResolvedValueOnce({
+      ...AUDIT,
+      findings: [],
+      skipped: [],
+      healthy: true,
+      criticals: 0,
+      warnings: 0,
+      infos: 0,
+    });
+    await openMemories();
+    await userEvent.click(screen.getByRole("button", { name: /Run audit/ }));
+    expect(await screen.findByText("Nothing to flag in this window.")).toBeInTheDocument();
+    expect(screen.getByTestId("audit-summary")).toHaveTextContent("Healthy");
+    expect(screen.queryAllByTestId("audit-finding")).toHaveLength(0);
+    expect(screen.queryByTestId("audit-skipped")).toBeNull();
+  });
+
+  it("a failed audit is an inline error, and the button offers another run", async () => {
+    vi.mocked(auditNamespace).mockRejectedValueOnce(new Error("upstream timed out"));
+    await openMemories();
+    await userEvent.click(screen.getByRole("button", { name: /Run audit/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Audit failed");
+    expect(screen.getByRole("button", { name: /Run audit/ })).toBeEnabled();
+  });
+
+  it("an unknown role on the namespace shows no panel and sends nothing", async () => {
+    useStore.setState({ myNamespaces: [] });
+    await openMemories();
+    expect(screen.queryByTestId("usage-audit")).toBeNull();
+    expect(auditNamespace).not.toHaveBeenCalled();
+  });
+});

@@ -1,0 +1,7 @@
+# Blank issues stay enabled: `loom report --open` opens a blank issue with the
+# report's header filled in.
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/ClickHouse/loom/security/policy
+    about: Do not open an issue. Email security@clickhouse.com as SECURITY.md describes.

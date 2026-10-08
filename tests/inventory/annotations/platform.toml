@@ -1,0 +1,10 @@
+# Inventory annotations for the platform area. See tests/inventory/README.md.
+
+# Both read every file under schemas/migrations, so every migration counts as covered.
+[[files]]
+match = "tests/unit/test_migrations_additive.py"
+covers = ["migration:*"]
+
+[[files]]
+match = "tests/unit/test_migration_numeric_order.py"
+covers = ["migration:*"]

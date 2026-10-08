@@ -1,0 +1,143 @@
+import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "../lib/errors";
+import { axeViolations } from "../test/axe";
+import { DOCS_QUICKSTART_URL, DOCS_TOKENS_URL, TokenGate } from "./TokenGate";
+
+// The gate says why it is showing, tells a stranger how to get in, and every field is
+// labelled.
+
+vi.mock("../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api")>();
+  return {
+    ...actual,
+    loginWithPassword: vi.fn(),
+    selfSignup: vi.fn(),
+    setToken: vi.fn(),
+  };
+});
+import { loginWithPassword, selfSignup } from "../api";
+
+describe("TokenGate", () => {
+  afterEach(() => vi.clearAllMocks());
+
+  it("tells a returning user their session expired, and says nothing on a first visit", () => {
+    const { unmount } = render(<TokenGate onLogin={() => undefined} reason="expired" />);
+    expect(screen.getByRole("status")).toHaveTextContent("Your session expired — sign in again.");
+    unmount();
+    render(<TokenGate onLogin={() => undefined} reason={null} />);
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByText(/session expired/)).not.toBeInTheDocument();
+  });
+
+  it("labels every input on both tabs and passes axe", async () => {
+    const { container } = render(<TokenGate onLogin={() => undefined} />);
+    expect(screen.getByLabelText("Email or namespace")).toBeInstanceOf(HTMLInputElement);
+    expect(screen.getByLabelText("Password")).toBeInstanceOf(HTMLInputElement);
+    expect(screen.getByLabelText("Email or namespace")).toHaveAccessibleDescription(
+      "The email you signed up with, or the name you picked at sign-up.",
+    );
+    expect(await axeViolations(container)).toEqual([]);
+
+    await userEvent.click(screen.getByRole("tab", { name: /Sign up/ }));
+    expect(screen.getByLabelText("Pick a name")).toBeInstanceOf(HTMLInputElement);
+    expect(screen.getByLabelText("Email")).toBeInstanceOf(HTMLInputElement);
+    expect(screen.getByLabelText("Password")).toBeInstanceOf(HTMLInputElement);
+    expect(await axeViolations(container)).toEqual([]);
+  });
+
+  it("tells an operator how to get in, with links to the repo docs", () => {
+    render(<TokenGate onLogin={() => undefined} />);
+    expect(screen.getByText(/Running this yourself\?/)).toBeInTheDocument();
+    expect(screen.getByText("loom mint-token …")).toBeInTheDocument();
+    expect(screen.getByText("LOOM_AUTH_REQUIRED=false")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Tokens and grants" })).toHaveAttribute("href", DOCS_TOKENS_URL);
+    expect(screen.getByRole("link", { name: "Quickstart" })).toHaveAttribute("href", DOCS_QUICKSTART_URL);
+    expect(DOCS_TOKENS_URL).toMatch(
+      /^https:\/\/github\.com\/ClickHouse\/loom\/blob\/main\/docs\/guides\/tokens-and-grants\.md$/,
+    );
+  });
+
+  it("shows a wrong password as a sentence with the request id, never as JSON", async () => {
+    vi.mocked(loginWithPassword).mockRejectedValueOnce(
+      new ApiError({ status: 401, code: "AUTH_INVALID", message: "Invalid email or password.", requestId: "req-42" }),
+    );
+    render(<TokenGate onLogin={() => undefined} />);
+    await userEvent.type(screen.getByLabelText("Email or namespace"), "alice@example.com");
+    await userEvent.type(screen.getByLabelText("Password"), "wrong-password");
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Sign-in rejected: Invalid email or password.");
+    expect(alert).toHaveTextContent("request id req-42");
+    expect(alert.textContent).not.toContain("{");
+    expect(alert.textContent).not.toContain("401");
+  });
+
+  it("sends one login when Enter is pressed again while the first is in flight", async () => {
+    vi.mocked(loginWithPassword).mockReturnValue(new Promise(() => undefined));
+    render(<TokenGate onLogin={() => undefined} />);
+    await userEvent.type(screen.getByLabelText("Email or namespace"), "alice@example.com");
+    await userEvent.type(screen.getByLabelText("Password"), "a-password");
+    const password = screen.getByLabelText("Password");
+    fireEvent.keyDown(password, { key: "Enter" });
+    fireEvent.keyDown(password, { key: "Enter" });
+    expect(loginWithPassword).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends one self-signup when Enter is pressed again while the first is in flight", async () => {
+    vi.mocked(selfSignup).mockReturnValue(new Promise(() => undefined));
+    render(<TokenGate onLogin={() => undefined} />);
+    await userEvent.click(screen.getByRole("tab", { name: /Sign up/ }));
+    await userEvent.type(screen.getByLabelText("Pick a name"), "alice");
+    await userEvent.type(screen.getByLabelText("Email"), "alice@example.com");
+    await userEvent.type(screen.getByLabelText("Password"), "a-long-password");
+    const password = screen.getByLabelText("Password");
+    fireEvent.keyDown(password, { key: "Enter" });
+    fireEvent.keyDown(password, { key: "Enter" });
+    expect(selfSignup).toHaveBeenCalledTimes(1);
+  });
+
+  // The auth calls skip request() (no token yet, no call budget) but not its timeout: a hung
+  // server must end in a sentence, not a spinner. The mocks run the real calls over a fetch
+  // that sees the bounded signal and fails the way AbortSignal.timeout fails.
+  describe("under a hung server", () => {
+    async function timingOutFetch() {
+      const actual = await vi.importActual<typeof import("../api")>("../api");
+      vi.mocked(loginWithPassword).mockImplementation(actual.loginWithPassword);
+      vi.mocked(selfSignup).mockImplementation(actual.selfSignup);
+      const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+        init?.signal instanceof AbortSignal
+          ? Promise.reject(new DOMException("signal timed out", "TimeoutError"))
+          : new Promise<Response>(() => undefined),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      return fetchMock;
+    }
+    afterEach(() => vi.unstubAllGlobals());
+
+    it("ends a sign-in in an error", async () => {
+      const fetchMock = await timingOutFetch();
+      render(<TokenGate onLogin={() => undefined} />);
+      await userEvent.type(screen.getByLabelText("Email or namespace"), "alice@example.com");
+      await userEvent.type(screen.getByLabelText("Password"), "a-password");
+      await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("signal timed out");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0][0]).toBe("/v1/auth/login");
+    });
+
+    it("ends a self-signup in an error", async () => {
+      const fetchMock = await timingOutFetch();
+      render(<TokenGate onLogin={() => undefined} />);
+      await userEvent.click(screen.getByRole("tab", { name: /Sign up/ }));
+      await userEvent.type(screen.getByLabelText("Pick a name"), "alice");
+      await userEvent.type(screen.getByLabelText("Email"), "alice@example.com");
+      await userEvent.type(screen.getByLabelText("Password"), "a-long-password");
+      fireEvent.keyDown(screen.getByLabelText("Password"), { key: "Enter" });
+      expect(await screen.findByRole("alert")).toHaveTextContent("signal timed out");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0][0]).toBe("/v1/auth/self-signup");
+    });
+  });
+});

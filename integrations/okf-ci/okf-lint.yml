@@ -1,0 +1,94 @@
+# Copy into the repository that holds Loom OKF bundles as
+# .github/workflows/okf-lint.yml. It runs `loom okf-lint`, the offline compile
+# gate for an OKF bundle, on every push and pull request:
+#   exit 2  a critical finding fails the job
+#   exit 1  warnings only: the job passes and keeps the JSON report
+#   exit 0  clean
+#   other   the lint did not run: the job fails
+# Before the first run set LOOM_REF to a 40-character Loom commit SHA; the job
+# refuses anything else, because the rules are versioned with Loom and a
+# moving ref changes what a green check means. Loom's dependencies install
+# from its own uv.lock (--frozen), so one LOOM_REF is one set of rules and
+# one set of packages. Set OKF_ROOT when the bundle is not at the repository
+# root. README.md next to this file has the checks and the local command.
+name: okf-lint
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  okf-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      OKF_ROOT: .
+      LOOM_REF: "" # a 40-character commit SHA of LOOM_REPO
+      LOOM_REPO: ClickHouse/loom
+    steps:
+      - name: Require a pinned Loom
+        run: |
+          if ! [[ "$LOOM_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::LOOM_REF must be a 40-character Loom commit SHA (got '$LOOM_REF')"
+            exit 2
+          fi
+
+      - name: Checkout the bundle repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Checkout Loom at LOOM_REF
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ env.LOOM_REPO }}
+          ref: ${{ env.LOOM_REF }}
+          path: .okf-lint-loom
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.2"
+          enable-cache: false
+
+      - name: Lint the bundle
+        run: |
+          test -f "$OKF_ROOT/index.md" || { echo "::error::no index.md under OKF_ROOT=$OKF_ROOT"; exit 2; }
+          set +e
+          uv run --project .okf-lint-loom --frozen --python 3.12 --quiet \
+            loom okf-lint "$OKF_ROOT" --json > okf-lint.json
+          code=$?
+          set -e
+          case "$code" in
+            0 | 1 | 2) ;;
+            *) echo "::error::okf-lint did not run (exit $code)"; exit 1 ;;
+          esac
+          python3 - <<'PY'
+          import json
+          d = json.load(open("okf-lint.json"))
+          print(f"okf-lint: {d['concepts']} concepts, {d['evidence_files']} evidence files, "
+                f"{d['critical']} critical, {d['warnings']} warnings; counts={d['counts']}")
+          rank = {"critical": 0, "warning": 1, "info": 2}
+          rows = sorted(d["findings"], key=lambda f: (rank.get(f["severity"], 3), f["id"], f["path"]))
+          for f in rows[:40]:
+              print(f"  [{f['severity']}] [{f['id']}] {f['path']}: {f['msg']}")
+          if len(rows) > 40:
+              print(f"  ... {len(rows) - 40} more in the okf-lint artifact")
+          PY
+          if [ "$code" -eq 2 ]; then
+            echo "::error::okf-lint: critical findings; the bundle is not a well-formed projection"
+            exit 2
+          fi
+
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: okf-lint
+          path: okf-lint.json
+          if-no-files-found: ignore

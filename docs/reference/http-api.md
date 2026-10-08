@@ -1,0 +1,350 @@
+# HTTP API reference
+
+Every Loom operation is one HTTP endpoint, `POST /v1/<operation>`, generated
+from the operation registry in `server/operations/`
+(`server/transport/http.py`, `build_router`). The
+[Python](./python-sdk.md) and [TypeScript](./typescript-sdk.md) SDKs and the
+[MCP transport](./mcp.md) wrap the same surface and run the same gates, so any
+stack can reach all of Loom with HTTP and JSON. The list of operations is the
+generated [operations reference](./operations.md).
+
+Every server also serves its API reference in the browser, without a token:
+`<server>/docs` (Swagger UI) and `<server>/redoc` list every operation with its request
+and response schema, and `<server>/v1/api/openapi.json` is the OpenAPI document behind
+them. The spec declares no authentication scheme, so the Swagger page has no token field:
+its **Try it out** runs calls only on a server with auth off (the stock local stack). With
+auth on, call the API with `curl`, an SDK or MCP.
+
+## Routes
+
+### Operations and discovery
+
+| Method and path                                | Auth            | What it is                                                                                                                                                                                                        |
+| ---------------------------------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /v1/<operation>`                         | bearer          | One registry operation (`memory.set`, `memory.search`, `code.search`, `tracker.item`, …). The body is the op's input model; a 200 carries its output model.                                                       |
+| `GET /v1/operations`                           | none            | Every op: `name`, `path`, `mcp_tool`, `idempotent`, `budget_p99_ms`, `shape_budgets_p99_ms`, `required_role`.                                                                                                     |
+| `GET /v1/api/openapi.json`                     | none            | An OpenAPI document with the input and output JSON Schema of every op, pinned to `v1` for code generation.                                                                                                        |
+| `GET /openapi.json`, `GET /docs`, `GET /redoc` | none            | The framework's own unversioned copy of the same OpenAPI document and its two browsable renderings. Pin code generation to `/v1/api/openapi.json` instead.                                                        |
+| `POST /v1/ops.capabilities`                    | bearer (viewer) | The deployment's catalogue: `build_commit`, `schema_version`, `consumer_field` and, per op, `required_role`, `budget_p99_ms`, `idempotent`, `audit`, `request_fields`, `response_fields`, `mcp_tier`, `toolsets`. |
+| `GET /v1/whoami`                               | bearer          | The verified token: `subject`, `org`, `namespaces`, `roles`, `is_service_account`, `kid`, `exp`, `iat`; `{"authenticated": false}` without one.                                                                   |
+
+### Health and keys
+
+| Method and path                 | Auth | What it is                                                                                                                                                                                                       |
+| ------------------------------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /v1/health`                | none | Liveness: 200 when ClickHouse answers, 503 when it does not; the body carries subsystem state and the problem list. `?include=workers,langfuse,events,embedding_cache,llm_cache,otel` adds per-subsystem checks. |
+| `GET /v1/.well-known/jwks.json` | none | Public signing keys when `LOOM_JWT_ALGORITHM=RS256`; `{"keys": []}` under HS256.                                                                                                                                 |
+
+The health body, its problem codes and how to use it as a readiness check are
+in [Monitoring](../operations/monitoring.md).
+
+### Streams and downloads
+
+Two routes are `GET`-shaped because a browser or an event-stream client needs
+a plain URL rather than a JSON body. Neither is a registry op.
+
+| Method and path              | Auth            | What it is                                                                                                                                                                                                                                         |
+| ---------------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /v1/knowledge.download` | bearer (viewer) | `?org=&namespace=&source_uri=` (plus `inline=true` for an inline `Content-Disposition`) streams a knowledge document's original upload, or its stored text as Markdown when no original was kept; `X-Loom-Download-Source: blob\|text` says which. |
+| `GET /v1/task/watch`         | bearer          | Server-sent events over the task inbox: a wake-up hint that an inbox (`inbox=`) or a task you posted (`posted_by_me=1`) moved. Reconnect with `Last-Event-ID` to resume; bounded by `max_seconds` (≤ 600).                                         |
+
+See [Task inbox](../features/tasks-and-decisions.md) for the watch stream.
+
+### MCP, sign-in and OAuth
+
+| Method and path                                                                                   | Auth   | What it is                                                                                                                                  |
+| ------------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /mcp`, `DELETE /mcp`                                                                        | bearer | The MCP endpoint (JSON-RPC over streamable HTTP); see [MCP](./mcp.md).                                                                      |
+| `POST /v1/auth/login`                                                                             | none   | Dashboard sign-in with a password; answers a token.                                                                                         |
+| `POST /v1/auth/self-signup`                                                                       | none   | A person claims a namespace. Off unless `LOOM_SELF_SIGNUP=open`; closed when sign-in is delegated to an OIDC provider.                      |
+| `POST /v1/auth/agent-signup`                                                                      | none   | A bot signs itself up: an `agent-<slug>` namespace, a writer token, and a claim code a person later uses to take ownership. Same gates.     |
+| `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource`                | none   | OAuth 2.1 discovery, served only with `LOOM_OAUTH_ENABLED=true`.                                                                            |
+| `POST /oauth/register`, `GET`/`POST /oauth/authorize`, `GET /oauth/callback`, `POST /oauth/token` | none   | Dynamic client registration, browser sign-in, the OIDC provider's return (`/oauth/callback`) and token exchange; see [MCP](./mcp.md#oauth). |
+
+### Dashboard routes
+
+These routes serve the dashboard; they are not an integration surface. They are not registry
+ops and can change in any release.
+
+| Method and path                                                                 | Auth   | What it is                                                                                       |
+| ------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------ |
+| `GET /me`, `/me/{path}`, `/me/assets/*`, `/me/favicon.svg`                      | none   | The dashboard single-page app and its assets, served from `frontend/dist/` (503 when not built). |
+| `GET /v1/me/service_accounts`, `POST /v1/me/service_accounts.create`, `.revoke` | bearer | The caller's service accounts and their tokens.                                                  |
+| `POST /v1/me/setup/mcp_config`                                                  | bearer | A per-client MCP configuration block with a fresh token, for **Settings → Tokens**.              |
+| `POST /v1/me/set-default-namespace`                                             | bearer | Set the caller's default workspace.                                                              |
+| `GET /v1/me/sharing-summary`                                                    | bearer | Memory sharing across the namespaces the caller can read, as one dashboard payload.              |
+
+### Operator routes
+
+Every `/v1/admin/*` route (`server/insights/app/admin_routes.py`, `admin_router`) runs
+`require_admin` first: an `admin` token, or none when the deployment runs with
+auth off. An admin acts inside its own org; crossing orgs (minting a token for
+another org, for example) needs `platform_admin`.
+
+| Method and path                    | What it is                                                                                                        |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `POST /v1/admin/token.mint`        | Mint a token over HTTP (the server-side twin of `loom mint-token`).                                               |
+| `POST /v1/admin/namespace.adopt`   | Give a namespace that holds data but no registry row an owner.                                                    |
+| `POST /v1/admin/claim_release`     | Release a self-signup claim: revoke its grants, clear the owner, deactivate it (`org_admin` or `platform_admin`). |
+| `GET /v1/admin/schema.status`      | The gap between the migrations this build carries and what the database has applied.                              |
+| `GET /v1/admin/workers.status`     | Every worker's switch, interval and latest pass; see [Workers](./workers.md#seeing-what-the-workers-did).         |
+| `POST /v1/admin/audit.summary`     | `audit_log` aggregated by event type over a window.                                                               |
+| `POST /v1/admin/events.tail`       | Recent `loom.agent_events` rows, for live debugging.                                                              |
+| `POST /v1/admin/budget.violations` | Recent latency-budget violations, aggregated.                                                                     |
+| `POST /v1/admin/budget.set`        | Install or clear a per-operation (or per-consumer) latency-budget override.                                       |
+| `POST /v1/admin/ratelimit.set`     | Install or clear a per-namespace or per-org rate-limit override (in memory; see [Rate limits](#rate-limits)).     |
+| `POST /v1/admin/consumers`         | Per-consumer calls, error rate, p50 latency, spend and outcome feedback over a window.                            |
+| `POST /v1/admin/fleet.cost`        | The top tenants by attributed cost over a window.                                                                 |
+| `POST /v1/admin/prompts.evaluate`  | A should-promote verdict for one prompt version.                                                                  |
+
+Monitoring use of these routes is in [Monitoring](../operations/monitoring.md),
+and tokens in [Tokens and grants](../guides/tokens-and-grants.md).
+
+There is no inbound webhook route: GitHub and tracker data are pulled by
+workers, and task-inbox webhooks are outbound (`task_webhook_deliver`). There
+is no `/metrics` scrape endpoint either; metrics leave over OpenTelemetry (see
+[Telemetry](../features/observability/telemetry.md)).
+
+## Request
+
+```bash
+curl -sX POST "$LOOM/v1/memory.set" \
+  -H "Authorization: Bearer $LOOM_API_KEY" -H "Content-Type: application/json" \
+  -d '{"org":"acme","namespace":"support","agent":"assistant",
+       "memory_key":"deploy_window","value":"Deploys run Tue and Thu only; never Friday."}'
+```
+
+- **Auth.** `Authorization: Bearer <jwt>`. Required unless the deployment runs
+  with `LOOM_AUTH_REQUIRED=false` or `LOOM_IDENTITY_PROVIDER=single-user`.
+  Tokens come from `loom mint-token`, the dashboard, a sign-up route or OAuth;
+  see [Tokens and grants](../guides/tokens-and-grants.md).
+- **Identity.** `org`, `namespace` and `agent` travel in the body; `user_id`
+  and `session_id` default to `"-"`. The token decides which of them the caller
+  may address. `code.*` and `tracker.*` ops default `org` and `namespace` to the
+  deployment's code or tracker plane when the body omits them.
+- **`consumer`.** Any body may carry `consumer`, a short tag for the product or
+  module calling; it is stored on the request and audit ledgers. A token minted
+  with a consumer overrides it. See
+  [The consumer tag](http-api.md#the-consumer-tag).
+- **Body size.** A body above `LOOM_MAX_REQUEST_BYTES` (32 MiB by default) is
+  refused with `413 PAYLOAD_TOO_LARGE` before it is parsed
+  (`server/transport/body_limit.py`).
+
+Discover field names from `/v1/api/openapi.json`, or once at start-up from
+`ops.capabilities` (`request_fields[op]`), rather than hard-coding them.
+
+### Gate order
+
+A request passes these gates in order, and the first that refuses answers:
+
+```mermaid
+flowchart LR
+  A["token"] --> B["JSON parse"] --> C["misspelled write field"] --> D["input validation"]
+  D --> E["role + namespace authz"] --> F["history policy"] --> G["rate limit"]
+  G --> H["idempotency replay"] --> I["handler"]
+```
+
+MCP `tools/call` runs the same sequence. Consequences worth knowing:
+
+- A deployment that requires a token answers an anonymous request 401 whatever
+  its body holds, and the anonymous check runs before the rate limiter, so an
+  unauthenticated caller can never drain a tenant's bucket.
+- An empty `org` or `namespace` is treated as absent: a code or tracker op takes
+  its plane's default, any other op the token's own org, and a namespace with
+  no org to pair it with is `400 IDENTITY_INCOMPLETE`.
+- An idempotent replay is looked up only after authorization and policy admit
+  the call, so a stored answer never reaches another principal.
+- A rate limiter or traffic classifier that fails lets the request through and
+  logs the failure: an outage of that machinery degrades fairness, not
+  availability.
+
+[System overview](../architecture/system-overview.md) walks through what
+each gate and the handler do.
+
+## Headers
+
+| Direction | Header                                        | Meaning                                                                                                                                         |
+| --------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| request   | `Authorization: Bearer <jwt>`                 | The token.                                                                                                                                      |
+| request   | `Idempotency-Key: <string>`                   | Replay key for an idempotent op; see [Idempotency](#idempotency).                                                                               |
+| request   | `X-Request-Id`                                | Your request id; echoed back and stamped on every ledger row and ClickHouse query of the call. A fresh UUID when absent.                        |
+| request   | `X-Loom-On-Behalf-Of: <subject>`              | Act as another subject. Honoured only for a token whose subject is in `LOOM_TRUSTED_CALLERS`; the real caller is recorded as `impersonated_by`. |
+| request   | `X-Loom-Run-Id: <run_id>`                     | Label the call's ledger rows with a run without filtering the read. A body `run_id` on a read filters to that run's rows instead.               |
+| response  | `X-Request-Id`                                | Quote it in a bug report; the SDK errors carry it as `request_id` / `requestId`.                                                                |
+| response  | `X-Schema-Version`                            | The data-plane schema version.                                                                                                                  |
+| response  | `Server-Timing`                               | Handler time (`app`), plus ClickHouse time, statement count and bytes read (`ch`).                                                              |
+| response  | `X-RateLimit-Limit` / `-Remaining` / `-Reset` | Token-bucket state for the call's namespace and op class.                                                                                       |
+| response  | `Retry-After`                                 | Seconds to wait, on `429 RATE_LIMITED`, `503 OVERLOADED` and `503 AUTH_UNAVAILABLE`.                                                            |
+| response  | `X-Loom-Traffic-Class`                        | The traffic class the call ran as and where it came from, `<class>;source=<source>`.                                                            |
+| response  | `X-Idempotent-Replay: true`                   | The body is a stored replay, not a fresh execution.                                                                                             |
+| response  | `X-Loom-Ignored-Args`                         | Body keys the op does not read (see below).                                                                                                     |
+| response  | `X-Loom-Hint` / `X-Loom-Hint-Code`            | Advice about how the caller uses Loom, when one applies to this call. The body is unchanged; the SDKs log it once per distinct text.            |
+| response  | `X-Trace-Id`                                  | The OpenTelemetry trace id of the call, when tracing is on.                                                                                     |
+
+A browser client on another origin sees only the response headers the CORS
+policy exposes when `LOOM_CORS_ORIGINS` is set: `X-Request-Id`,
+`X-Schema-Version`, `Server-Timing`, the three `X-RateLimit-*` headers,
+`X-Loom-Traffic-Class` and `Retry-After` (`server/main.py`).
+
+## Unknown and removed fields
+
+Input models ignore keys they have no field for, so Loom names them instead of
+dropping them silently (`server/transport/arg_check.py`):
+
+- A successful response carries `ignored_args` (the unread top-level keys) and,
+  when one is a near miss for a real field, `did_you_mean`
+  (`{"namepsace": "namespace"}`). The identity keys (`org`, `namespace`,
+  `agent`, `user_id`, `session_id`, `run_id`), `consumer`, `traffic_class`,
+  `explain` and the idempotency keys are never reported.
+- An op that **changes state** (role `writer` or higher, or a viewer op that
+  is audited or records state: any op the catalogue does not mark read-only)
+  refuses a near-miss key with `422 UNKNOWN_ARGUMENT` and writes nothing: the
+  write it would have made is not the one asked for.
+- A field removed from the wire is treated as unknown: served, and named in
+  `ignored_args`, so an older client keeps running without the feature.
+
+Operations and fields can change between releases. Nothing keeps a registry of removed
+fields: `ignored_args` is how a client finds out that the server no longer reads something it
+sends, and the catalogue below is how it checks what the server serves before relying on it.
+
+## Discovering what a deployment serves
+
+Read the catalogue once at start-up rather than probing routes and reading
+404s or 422s.
+
+| Source                                        | Carries                                                                                                |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `POST /v1/ops.capabilities` (any token, `{}`) | `build_commit`, `schema_version` and every operation                                                   |
+| `GET /v1/operations` (no token)               | every operation's name, path, MCP tool, idempotency, required role and latency budgets                 |
+| `GET /v1/api/openapi.json` (no token)         | the full JSON Schemas of every request and response                                                    |
+| `POST /v1/code.index_status`                  | the code plane's own catalogue and index state, with each code op's `maturity`, `reach` and `toolsets` |
+
+`ops.capabilities` answers `build_commit`, `schema_version`, `consumer_field`
+(the request field that carries the consumer tag) and `ops`, one entry per
+operation with its `name` and (`server/operations/capabilities.py`,
+`capability_snapshot`; `server/insights/api/models_ops.py`, `OpCapability`):
+
+| Field                               | Meaning                                                                                                     |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `path`, `mcp_tool`                  | the HTTP path and the MCP tool name                                                                         |
+| `required_role`                     | minimum role, `VIEWER` to `PLATFORM_ADMIN`                                                                  |
+| `budget_p99_ms`                     | the declared latency budget; per-shape budgets are on `GET /v1/operations` (`shape_budgets_p99_ms`)         |
+| `idempotent`, `audit`               | safe to retry with an `Idempotency-Key`; whether success writes an audit row                                |
+| `request_fields`, `response_fields` | the input and output fields, sorted                                                                         |
+| `mcp_tier`, `toolsets`              | `core`, `code`, `extended` or `hidden` on the MCP surface, and the `?toolset=` listings that include the op |
+
+Both SDKs wrap this: `probe(...)` compares your needs with the catalogue and
+names what is missing, and `capabilities()` pairs it with what the token may
+call ([Python](./python-sdk.md#calling-operations),
+[TypeScript](./typescript-sdk.md#probe-before-you-rely)). Between two builds,
+`scripts/codegen/wire_changelog.py <rev_a> <rev_b>` lists the operations and fields that
+changed ([code generation](../development/code-generation.md#wire-changelog)).
+
+## The consumer tag
+
+Every operation accepts `consumer`, an identifier of up to 64 characters for the
+client or product making the call (`qa-agent`, `support-bot`, a benchmark name).
+It is a column on `loom.agent_events` and `loom.audit_log`, so a consumer's
+calls, errors, latency, spend and outcome feedback are one `GROUP BY`; operators
+read it through `POST /v1/admin/consumers`.
+
+- A call without one is recorded under the token's subject class
+  (`service-account`, `user` or `anonymous`).
+- `loom mint-token --consumer NAME` binds the tag to a credential: every request
+  under that token is attributed to `NAME` whatever its body says, and its
+  ledger rows record the source as `claimed` rather than `self-reported`.
+- Latency budgets can be set per consumer as well as per operation
+  (`POST /v1/admin/budget.set` with `consumer`, or
+  `LOOM_LATENCY_BUDGET_OVERRIDES_BY_CONSUMER`).
+- Both SDKs take `consumer` at construction and stamp it on every body that
+  does not name its own.
+
+## Client and server versions
+
+The server does not gate on client versions: an SDK or plugin of any version calls what the
+server serves, and the catalogue above says what that is. The SDKs name themselves in
+`User-Agent` and `X-Loom-SDK` (`loom-py/<version>`, `loom-ts/<version>`) for proxy logs; the
+server does not read them, so attribute calls with the [consumer tag](#the-consumer-tag).
+An op an SDK has no method for is still reachable by name (`call` in Python, `callRaw` in
+TypeScript). The Claude Code and Codex plugins run on the client machine, so a server deploy
+does not change them; update them through the client's plugin manager
+(`claude plugin update loom@loom`).
+
+## Idempotency
+
+Ops the registry marks idempotent (`GET /v1/operations` says which) accept an
+`Idempotency-Key` header (`server/core/idempotency.py`):
+
+- The first successful response is stored in `loom.idempotency` for 24 hours,
+  keyed by the caller's org and subject, the op and the key.
+- A retry with the same key and the same body gets the stored body with
+  `X-Idempotent-Replay: true`. The same key with a different body is
+  `409 IDEMPOTENT_CONFLICT`.
+- "The same body" is the op's validated input, so a key sent over HTTP replays
+  over MCP (as the `_idempotency_key` argument) and back.
+- The header is ignored on ops that are not idempotent.
+- The cache is best-effort: two identical requests racing on different
+  replicas can both execute. That is why only ops that are already safe to
+  repeat take a key; the key removes duplicate work, it is not a lock.
+
+The TypeScript SDK sends a fresh key with every idempotent op; the Python
+SDK sends one with every request, and the server ignores it where the op is
+not idempotent. Pass your own key to make a retry across processes replay.
+
+## Pagination
+
+Three shapes; each op's schema says which it takes.
+
+| Shape  | Request                     | Response                                            | Ops                                                                                                                        |
+| ------ | --------------------------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| cursor | `limit`, `cursor`           | `next_cursor` (empty when done), `has_more` on some | `knowledge.list`, `conversation.list`, `audit.list`, `memory.recall`, `memory.export_evidence`, `code.search`, `code.grep` |
+| offset | `limit`, `offset`           | `total` / `truncated`, or `next_offset`             | `memory.list`, `memory.recall`, `conversation.get`, `context.fetch`, `code.impact`, `code.context_packs`                   |
+| handle | `paging: true`, then `page` | `next_page`, `page_offset`, `candidates_total`      | `memory.search`: the next page is served from the ranked list the first call parked, without retrieving again              |
+
+Cursors are opaque; pass them back unchanged. The TypeScript SDK's
+`paginate` walks a cursor-paginated op for you.
+
+## Rate limits
+
+Every call that names a namespace draws from token buckets keyed by namespace
+and **op class**: `memory`, `memory.read` (exact-key reads such as
+`memory.get`), `knowledge.search`, `knowledge.add`, `code` and `default`
+(`server/core/ratelimit.py`, `DEFAULT_LIMITS`). Three tiers must all admit it:
+
+| Tier      | Key                            | Default (burst / per second)                                                                                                    |
+| --------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| namespace | (namespace, op class)          | `memory` 100 / 17, `memory.read` 300 / 50, `knowledge.search` 20 / 3, `knowledge.add` 10 / 2, `code` 60 / 10, `default` 50 / 10 |
+| org       | (verified token org, op class) | 3 × the namespace limit, so a tenant with many namespaces cannot sustain many times one namespace's budget                      |
+| actor     | (namespace, token subject)     | `LOOM_RATELIMIT_ACTOR_FRACTION` × the namespace limit; the default 1.0 creates no actor bucket                                  |
+
+- The limits are deployment-wide targets: each process holds
+  `limit / LOOM_REPLICA_COUNT`, further divided by `LOOM_WEB_WORKERS` unless the
+  web workers share one bucket file (`LOOM_RATELIMIT_SHARED`).
+- Traffic class `bench` draws from its own bucket sized by
+  `LOOM_RATELIMIT_CLASS_FRACTIONS` (default `{"bench": 0.5}`), so a benchmark
+  never spends production's budget.
+- `POST /v1/admin/ratelimit.set` installs a per-namespace or per-org override
+  for one op class on the process that serves it. It lives in memory only and
+  is lost on restart; `clear: true` removes it.
+- An empty bucket answers `429 RATE_LIMITED` with `Retry-After`, the
+  `X-RateLimit-*` headers and `detail.retry_after_s`. Both SDKs pace on these
+  headers and wait out a 429 for up to 15 s per call by default.
+
+Rate-limit tuning for a deployment is in
+[Performance tuning](../guides/performance-tuning.md).
+
+## Errors
+
+A non-2xx response carries one envelope, `{"detail": {"code", "message", …}}`.
+Match on `code`, never on the message. The envelope, retry rules, a
+common-errors table with fixes, and the generated list of every code the server
+answers with (including `SCHEMA_PENDING`, `OVERLOADED` and `BACKEND_TIMEOUT`,
+the three faults a caller should retry or wait out) are in the
+[errors reference](./errors.md).
+
+## Related
+
+- [Operations reference](./operations.md): every op with its role and kind.
+- [Errors reference](./errors.md).
+- [MCP](./mcp.md): the same ops as MCP tools.
+- [Adding an operation](../development/adding-an-operation.md): declaring an op and regenerating the derived files.

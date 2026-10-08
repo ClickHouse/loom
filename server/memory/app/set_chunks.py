@@ -1,0 +1,438 @@
+"""Verbatim chunks for a long `memory.set` value.
+
+`memory.set` embeds the first `EXCERPT_LIMIT` characters of a value, so the rest of a long
+value (an investigation note, an evidence dump, a report stored as one memory) would be
+findable only through that head. A searchable value whose text runs past the excerpt is
+therefore also written to `loom.memory_chunks` in the 800/100 geometry
+`memory.set_from_messages` uses, with `parent_memory_key` set to the memory key so the
+search's chunk plane lifts the parent fact.
+
+Chunk rows are keyed `(org, namespace, session_id, chunk_index,
+content_sha256)`; a key's chunks share the deterministic session id
+`memory.set:<memory_key>` so a re-set of the key replaces its own chunks:
+unchanged chunks collapse under ReplacingMergeTree, chunks that no longer
+exist are tombstoned (a replacing row with `tombstoned_at` set), new ones are
+inserted. `memory.delete` tombstones the key's whole set.
+
+Imports only the chunker and leaf services; `server.memory.app.handlers` imports
+this module lazily, at the call site.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+from datetime import UTC, datetime
+from typing import Any
+
+from server.core.datetimes import naive_utc_now
+from server.memory.app.chunk_projection import chunk_text_with_truncation
+
+log = logging.getLogger(__name__)
+
+# The session id (and `source_url`) a key's chunks are written under. Both
+# derive from the key alone so a later write for the same key finds them by
+# primary key and a reader can tell a memory.set chunk from a conversation one.
+SESSION_PREFIX = "memory.set:"
+
+# Fallback for `settings.memory_set_chunk_max_chunks` when the setting is
+# unreadable: 48 chunks at 800/100 is ~34 KB of text.
+_MAX_CHUNKS_FALLBACK = 48
+
+# Every persisted column of loom.memory_chunks a tombstone must carry forward
+# so the replacing row, once merged, is the only copy and loses nothing.
+_CHUNK_COLUMNS = (
+    "agent",
+    "user_id",
+    "session_id",
+    "run_id",
+    "chunk_index",
+    "content_sha256",
+    "content",
+    "embedding",
+    "embedding_model",
+    "embedding_dim",
+    "parent_memory_key",
+    "line_start",
+    "line_end",
+    "modality",
+    "caption",
+    "source_url",
+    "source_local_path",
+)
+
+
+def set_chunk_session_id(memory_key: str) -> str:
+    """The deterministic `session_id` of a key's memory.set chunks."""
+    return f"{SESSION_PREFIX}{memory_key}"
+
+
+def human_text(value: Any, memory_type: str = "") -> str:
+    """The text of a value as a reader would see it: a string as itself, a
+    dict/list as indented JSON (one key or item per line, so the chunker's
+    line and paragraph boundaries fall between fields, not inside them),
+    anything else as compact JSON. A procedure chunks its text only
+    (situation, name, steps), never its graph and counters."""
+    if value is None:
+        return ""
+    if memory_type == "procedural":
+        from server.memory.domain.embed_text import procedural_text_source
+
+        text = procedural_text_source(memory_type, value)
+        if text:
+            return text
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict | list):
+        return json.dumps(value, ensure_ascii=False, indent=1)
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _max_chunks() -> int:
+    from server.settings import settings
+
+    value = settings.memory_set_chunk_max_chunks
+    return value if value > 0 else _MAX_CHUNKS_FALLBACK
+
+
+def _sha_text(value: Any) -> str:
+    """`content_sha256` is a FixedString(64): the driver hands it back as
+    bytes, and a bytes/str mismatch would keep every old chunk alive."""
+    if isinstance(value, bytes | bytearray):
+        return bytes(value).decode("utf-8", "replace")
+    return str(value or "")
+
+
+async def _live_chunks(
+    ch: Any, *, org: str, namespace: str, memory_key: str, user_id: str
+) -> list[dict[str, Any]]:
+    """The key's live memory.set chunks that belong to `user_id`: a primary-key
+    read under FINAL so a chunk already tombstoned by an earlier write is not
+    tombstoned twice. Every user holding the key shares its chunk session, so
+    the read keeps to the writer's own chunks and the legacy ones stamped '-'
+    (written before chunks carried a user; they may be the writer's) — never
+    another user's."""
+    rows: list[dict[str, Any]] = await ch.query_all(
+        f"""
+        SELECT {", ".join(_CHUNK_COLUMNS)}, created_at
+        FROM loom.memory_chunks FINAL
+        WHERE org = {{org:String}}
+          AND namespace = {{ns:String}}
+          AND session_id = {{sid:String}}
+          AND parent_memory_key = {{key:String}}
+          AND user_id IN ('-', {{uid:String}})
+          AND tombstoned_at IS NULL
+        ORDER BY chunk_index ASC
+        """,
+        params={
+            "org": org,
+            "ns": namespace,
+            "sid": set_chunk_session_id(memory_key),
+            "key": memory_key,
+            "uid": user_id or "-",
+        },
+    )
+    return rows
+
+
+async def tombstone_set_chunks(
+    *,
+    org: str,
+    namespace: str,
+    memory_key: str,
+    user_id: str,
+    ch: Any = None,
+    keep: set[tuple[int, str]] | frozenset[tuple[int, str]] = frozenset(),
+    now: datetime | None = None,
+) -> int:
+    """Tombstone `user_id`'s live memory.set chunks of the key (and the legacy
+    '-' ones) except those in `keep` (`(chunk_index, content_sha256)` pairs the
+    caller is about to re-insert live). Each tombstone is a replacing row
+    (`_tombstone_row`). Returns the number of tombstones written."""
+    if ch is None:
+        from server.core.ch import get_client
+
+        ch = get_client()
+    rows = await _live_chunks(
+        ch, org=org, namespace=namespace, memory_key=memory_key, user_id=user_id
+    )
+    stamp = (now or datetime.now(UTC)).replace(tzinfo=None)
+    tombstones: list[dict[str, Any]] = []
+    for r in rows:
+        sha = _sha_text(r.get("content_sha256"))
+        if (int(r.get("chunk_index") or 0), sha) in keep:
+            continue
+        tombstones.append(_tombstone_row(r, org=org, namespace=namespace, stamp=stamp))
+    if tombstones:
+        await _insert_tombstones(ch, tombstones)
+    return len(tombstones)
+
+
+def _tombstone_row(
+    r: dict[str, Any], *, org: str, namespace: str, stamp: datetime
+) -> dict[str, Any]:
+    """The replacing row that retires live chunk row `r`: every persisted
+    column carried forward and `tombstoned_at` set to `stamp`. The version
+    column `created_at` is also the monthly partition key, so it keeps `r`'s
+    value: a tombstone in a later month's partition would never merge with the
+    row it retires, and every read without FINAL (and every merged part) would
+    keep the retired chunk. Inserted after `r` with an equal version, the
+    tombstone wins the merge and FINAL (the later insert of a tie).
+    `stamp` stands in only when `r` carries no `created_at`."""
+    row = {c: r.get(c) for c in _CHUNK_COLUMNS}
+    row.update(
+        {
+            "org": org,
+            "namespace": namespace,
+            "content_sha256": _sha_text(r.get("content_sha256")),
+            "chunk_index": int(r.get("chunk_index") or 0),
+            "embedding": list(r.get("embedding") or []),
+            "embedding_dim": int(r.get("embedding_dim") or 0),
+            "line_start": int(r.get("line_start") or 0),
+            "line_end": int(r.get("line_end") or 0),
+            "run_id": str(r.get("run_id") or "-"),
+            "user_id": str(r.get("user_id") or "-"),
+            "created_at": r.get("created_at") or stamp,
+            "tombstoned_at": stamp,
+        }
+    )
+    return row
+
+
+async def _insert_tombstones(ch: Any, tombstones: list[dict[str, Any]]) -> None:
+    # Synchronous: the caller's next search must not lift the parent
+    # through a chunk of the value it just replaced or deleted.
+    await ch.insert(
+        "loom.memory_chunks",
+        tombstones,
+        settings={"async_insert": 0, "wait_for_async_insert": 1},
+    )
+
+
+async def tombstone_set_chunks_fail_open(
+    *, org: str, namespace: str, memory_key: str, user_id: str, ch: Any = None
+) -> int:
+    """`tombstone_set_chunks` for memory.delete: the fact's tombstone is the
+    record of the delete; a chunk failure is logged, never raised."""
+    try:
+        return await tombstone_set_chunks(
+            org=org, namespace=namespace, memory_key=memory_key, user_id=user_id, ch=ch
+        )
+    except Exception as e:  # noqa: BLE001 — the delete stands
+        log.warning("memory.delete: chunk tombstones failed for %s (non-fatal): %s", memory_key, e)
+        return 0
+
+
+async def tombstone_row_chunks_fail_open(row: Any, *, ch: Any = None) -> int:
+    """`tombstone_set_chunks_fail_open` for the memory row a delete or move
+    retires: its key, under its own user."""
+    return await tombstone_set_chunks_fail_open(
+        org=row.org,
+        namespace=row.namespace,
+        memory_key=row.memory_key,
+        user_id=str(row.user_id or "-"),
+        ch=ch,
+    )
+
+
+async def _embed_chunks(embedder: Any, chunks: list[str]) -> list[list[float]]:
+    """One batched request when the embedder can batch, serial otherwise (the
+    local embedder has no `embed_many`); a chunk whose embedding fails is
+    dropped from the write, not the whole value."""
+    embed_many = getattr(embedder, "embed_many", None)
+    if embed_many is not None:
+        try:
+            vectors = await embed_many(chunks)
+            if len(vectors) != len(chunks):
+                raise RuntimeError(
+                    f"embed_many returned {len(vectors)} vectors for {len(chunks)} chunks"
+                )
+            return [[float(x) for x in v] for v in vectors]
+        except Exception as e:  # noqa: BLE001 — falls back to serial embeds
+            log.warning("memory.set chunks: batch embed failed; falling back serial: %s", e)
+    serial: list[list[float]] = []
+    for i, chunk in enumerate(chunks):
+        try:
+            serial.append([float(x) for x in await embedder.embed(chunk)])
+        except Exception as e:  # noqa: BLE001 — that chunk stays unembedded
+            log.warning("memory.set chunks: embed failed for chunk %d: %s", i, e)
+            serial.append([])
+    return serial
+
+
+def plan_set_chunks(
+    value: Any, memory_type: str, *, limit: int | None = None
+) -> tuple[list[tuple[str, int, int]], int]:
+    """The `(chunk, line_start, line_end)` passages `write_set_chunks` would
+    write for a value, and the trailing characters the chunk cap leaves out;
+    `([], 0)` when the value is short or the type is not searchable. Pure: no
+    embedding, no read, no write."""
+    from server.memory.domain.memory_types import is_searchable_type
+
+    if limit is None:
+        # The handler's excerpt limit: what the row's own vector already covers.
+        from server.memory.domain.excerpt import EXCERPT_LIMIT
+
+        limit = EXCERPT_LIMIT
+    if not is_searchable_type(memory_type):
+        return [], 0
+    text = human_text(value, memory_type)
+    if len(text) <= limit:
+        return [], 0
+    return chunk_text_with_truncation(text, max_chunks=_max_chunks())
+
+
+async def set_chunks_current(
+    ch: Any,
+    *,
+    org: str,
+    namespace: str,
+    memory_key: str,
+    chunks: list[tuple[str, int, int]],
+    user_id: str = "-",
+) -> bool:
+    """True when `user_id`'s live memory.set chunks of the key are exactly
+    `chunks` (same index, same content hash): a rewrite would re-embed them for
+    nothing."""
+    live = await _live_chunks(
+        ch, org=org, namespace=namespace, memory_key=memory_key, user_id=user_id
+    )
+    have = {(int(r.get("chunk_index") or 0), _sha_text(r.get("content_sha256"))) for r in live}
+    want = {(i, _chunk_sha(c)) for i, (c, _, _) in enumerate(chunks)}
+    return bool(want) and have == want
+
+
+def _chunk_sha(chunk: str) -> str:
+    return hashlib.sha256(chunk.encode("utf-8")).hexdigest()
+
+
+async def write_set_chunks(
+    input: Any,
+    *,
+    memory_type: str | None = None,
+    limit: int | None = None,
+    ch: Any = None,
+    embedder: Any = None,
+) -> int:
+    """Write the verbatim chunks of a long memory.set value; the number of
+    chunk rows written (0 when the value is short, the type is not
+    searchable, or the setting is off).
+
+    Called AFTER the fact row and its embedding are in: the chunks are a
+    second way to find the row, never a condition of writing it. The text
+    chunked is the human text of the value (`human_text`), not the JSON the
+    row stores, so a chunk reads like the passage it came from.
+    """
+    if memory_type is None:
+        memory_type = str(getattr(input, "memory_type", "") or "")
+    cap = _max_chunks()
+    chunks, truncated_chars = plan_set_chunks(input.value, memory_type, limit=limit)
+    if truncated_chars:
+        from server.memory.app.drops import record_drop
+
+        log.warning(
+            "memory.set chunks: value exceeded the %d-chunk cap; %d trailing chars "
+            "not chunked for %s/%s key=%s",
+            cap,
+            truncated_chars,
+            input.org,
+            input.namespace,
+            input.memory_key,
+        )
+        record_drop(
+            input.org,
+            input.namespace,
+            "chunk.split",
+            "truncated",
+            item=f"{SESSION_PREFIX}{input.memory_key} chars={truncated_chars}",
+            n=1,
+        )
+    if not chunks:
+        return 0
+    if ch is None:
+        from server.core.ch import get_client
+
+        ch = get_client()
+    if embedder is None:
+        from server.embedding import get_embedder
+
+        embedder = get_embedder()
+
+    vectors = await _embed_chunks(embedder, [c for c, _, _ in chunks])
+    session_id = set_chunk_session_id(input.memory_key)
+    run_id = str(getattr(input, "run_id", "") or "-")
+    now = naive_utc_now()
+    rows: list[dict[str, Any]] = []
+    for i, ((chunk, line_start, line_end), vec) in enumerate(zip(chunks, vectors, strict=True)):
+        if not vec:
+            continue
+        rows.append(
+            {
+                "org": input.org,
+                "namespace": input.namespace,
+                "agent": getattr(input, "agent", "") or "",
+                "user_id": str(getattr(input, "user_id", "") or "-"),
+                "session_id": session_id,
+                "run_id": run_id,
+                "chunk_index": i,
+                "content_sha256": _chunk_sha(chunk),
+                "content": chunk,
+                "embedding": vec,
+                "embedding_model": embedder.model_name,
+                "embedding_dim": len(vec),
+                "parent_memory_key": input.memory_key,
+                "line_start": int(line_start),
+                "line_end": int(line_end),
+                "source_url": session_id,
+                "created_at": now,
+                "tombstoned_at": None,
+            }
+        )
+    # The previous value's chunks that this value does not re-assert go
+    # first, so the window in which both values are findable is the insert's.
+    keep = {(int(r["chunk_index"]), str(r["content_sha256"])) for r in rows}
+    await tombstone_set_chunks(
+        org=input.org,
+        namespace=input.namespace,
+        memory_key=input.memory_key,
+        user_id=str(getattr(input, "user_id", "") or "-"),
+        ch=ch,
+        keep=keep,
+        now=now,
+    )
+    if not rows:
+        return 0
+    # Synchronous for the reason the fact insert is: the chunk plane is read
+    # on the default search path, and a query landing before the chunks embed
+    # must not find the head of the value and miss its body.
+    await ch.insert(
+        "loom.memory_chunks",
+        rows,
+        settings={"async_insert": 0, "wait_for_async_insert": 1},
+    )
+    return len(rows)
+
+
+async def write_set_chunks_fail_open(
+    input: Any,
+    *,
+    memory_type: str | None = None,
+    limit: int | None = None,
+    ch: Any = None,
+    embedder: Any = None,
+) -> int:
+    """`write_set_chunks` for the memory.set write path: the fact row is
+    already in, so a chunk failure is logged and the write answers with
+    `chunks_written=0`, never an error."""
+    try:
+        return await write_set_chunks(
+            input, memory_type=memory_type, limit=limit, ch=ch, embedder=embedder
+        )
+    except Exception as e:  # noqa: BLE001 — the fact row is written
+        log.warning(
+            "memory.set: verbatim chunks not written for %s (non-fatal): %s",
+            getattr(input, "memory_key", ""),
+            e,
+        )
+        return 0

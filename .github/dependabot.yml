@@ -1,0 +1,12 @@
+# Keeps the workflows' commit-pinned actions current. Actions only: the
+# Python and npm dependencies move through their lockfiles by hand.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+    groups:
+      actions:
+        patterns: ["*"]

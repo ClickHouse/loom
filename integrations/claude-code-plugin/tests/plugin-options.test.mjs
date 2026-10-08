@@ -1,0 +1,112 @@
+// Install-time options reach the hooks as env and are written
+// once to ~/.loom/config.json for the header helper.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { applyPluginOptions, planMaterialize } from "../lib/plugin-options.mjs";
+
+function tmp() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "loom-opts-"));
+}
+
+test("planMaterialize: only when the option is the sole token source", () => {
+  assert.equal(planMaterialize({}, { configExists: false, tokenFileExists: false }).write, false);
+  assert.equal(
+    planMaterialize(
+      { CLAUDE_PLUGIN_OPTION_TOKEN: "t", LOOM_API_KEY: "e" },
+      { configExists: false, tokenFileExists: false },
+    ).reason,
+    "LOOM_API_KEY set",
+  );
+  assert.equal(
+    planMaterialize(
+      { CLAUDE_PLUGIN_OPTION_TOKEN: "t" },
+      { configExists: true, configToken: "c", tokenFileExists: false },
+    ).reason,
+    "config has a token",
+  );
+  assert.equal(
+    planMaterialize({ CLAUDE_PLUGIN_OPTION_TOKEN: "t" }, { configExists: false, tokenFileExists: true }).reason,
+    "token file exists",
+  );
+  const p = planMaterialize(
+    { CLAUDE_PLUGIN_OPTION_TOKEN: "t", CLAUDE_PLUGIN_OPTION_SERVER_URL: "https://h/" },
+    { configExists: false, tokenFileExists: false },
+  );
+  assert.deepEqual(p, { write: true, url: "https://h", reason: "no config" });
+  // LOOM_BASE_URL outranks the option for the url, as in resolveServerUrl
+  assert.equal(
+    planMaterialize(
+      { CLAUDE_PLUGIN_OPTION_TOKEN: "t", LOOM_BASE_URL: "https://env", CLAUDE_PLUGIN_OPTION_SERVER_URL: "https://opt" },
+      { configExists: false, tokenFileExists: false },
+    ).url,
+    "https://env",
+  );
+});
+
+test("applyPluginOptions writes token + url once, 0600, merging other keys", () => {
+  const dir = tmp();
+  const configPath = path.join(dir, ".loom", "config.json");
+  const tokenPath = path.join(dir, ".loom", "token");
+  const env = { CLAUDE_PLUGIN_OPTION_TOKEN: "opt.tok", CLAUDE_PLUGIN_OPTION_SERVER_URL: "https://loom.test/" };
+  const r1 = applyPluginOptions(env, { configPath, tokenPath });
+  assert.equal(r1.write, true);
+  const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  assert.deepEqual(written, { token: "opt.tok", url: "https://loom.test" });
+  assert.equal(fs.statSync(configPath).mode & 0o777, 0o600);
+  // second run: the config now has a token → nothing written
+  assert.equal(applyPluginOptions(env, { configPath, tokenPath }).reason, "config has a token");
+  // a config with other keys but no token is merged, its own url kept
+  fs.writeFileSync(configPath, JSON.stringify({ namespace: "keep", url: "https://mine" }));
+  const r3 = applyPluginOptions(env, { configPath, tokenPath });
+  assert.equal(r3.write, true);
+  assert.deepEqual(JSON.parse(fs.readFileSync(configPath, "utf8")), {
+    namespace: "keep",
+    url: "https://mine",
+    token: "opt.tok",
+  });
+  // a token file present → not written
+  fs.unlinkSync(configPath);
+  fs.writeFileSync(tokenPath, "file.tok\n");
+  assert.equal(applyPluginOptions(env, { configPath, tokenPath }).reason, "token file exists");
+  assert.equal(fs.existsSync(configPath), false);
+});
+
+test("resolvers: the option ranks after the env var and before the files", async () => {
+  const dir = tmp();
+  fs.mkdirSync(path.join(dir, ".loom"));
+  fs.writeFileSync(path.join(dir, ".loom", "config.json"), JSON.stringify({ token: "cfg.tok", url: "https://cfg" }));
+  const saved = { ...process.env };
+  try {
+    process.env.LOOM_CONFIG_FILE = path.join(dir, ".loom", "config.json");
+    delete process.env.LOOM_API_KEY;
+    delete process.env.LOOM_BASE_URL;
+    process.env.CLAUDE_PLUGIN_OPTION_TOKEN = "opt.tok";
+    process.env.CLAUDE_PLUGIN_OPTION_SERVER_URL = "https://opt/";
+    const m = await import(`../lib/loom-client.mjs?t=${Date.now()}`);
+    assert.equal(m.resolveToken(), "opt.tok");
+    assert.equal(m.resolveServerUrl(), "https://opt");
+    process.env.LOOM_API_KEY = "env.tok";
+    process.env.LOOM_BASE_URL = "https://env";
+    assert.equal(m.resolveToken(), "env.tok");
+    assert.equal(m.resolveServerUrl(), "https://env");
+  } finally {
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+    Object.assign(process.env, saved);
+  }
+});
+
+test("the manifest declares the options and the MCP url takes the server and toolset ones", () => {
+  const m = JSON.parse(fs.readFileSync(new URL("../.claude-plugin/plugin.json", import.meta.url), "utf8"));
+  assert.equal(m.userConfig.server_url.default, "${LOOM_BASE_URL:-http://localhost:7777}");
+  assert.equal(m.userConfig.token.sensitive, true);
+  assert.equal(m.userConfig.token.required, undefined);
+  // The listing is a setting; `coding` unless the user asks for a union
+  assert.equal(m.userConfig.toolset.default, "coding");
+  assert.match(m.userConfig.toolset.description, /coding\+tracker/);
+  const mcp = JSON.parse(fs.readFileSync(new URL("../.mcp.json", import.meta.url), "utf8"));
+  assert.equal(mcp.mcpServers.loom.url, "${user_config.server_url}/mcp?toolset=${user_config.toolset}");
+  assert.match(mcp.mcpServers.loom.headersHelper, /loom-mcp-headers\.mjs/);
+});

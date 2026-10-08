@@ -1,0 +1,254 @@
+{
+  "_comment": "Generic coding-agent lesson corpus + QA set for bench/coding_agent_qa.py. No external dataset text, no product/vendor names. Lessons are pre-extracted (caller-decided saves), mirroring the bug_triage corpus shape. Each lesson is a memory row keyed by `memory_key`; questions carry `gold_keys` (the lesson keys that SHOULD rank at small-k) + `question_type` from the taxonomy + an optional `fix_reuse` block for the fix-reuse metric. Extend by appending lessons + questions; keep gold_keys pointing at real lesson keys.",
+  "lessons": [
+    {
+      "memory_key": "lesson_null_deref_parser",
+      "memory_type": "lesson",
+      "value": {
+        "text": "Null-pointer crash in the config parser when a section header had no body. Fixed by guarding the section-body lookup with an empty-check before indexing.",
+        "files": ["src/config/parser.py"],
+        "fix": "Added `if not body: continue` before the dict index in parse_section().",
+        "error": "AttributeError: 'NoneType' object has no attribute 'strip'"
+      },
+      "tags": ["bug-fix", "parser", "null-deref"]
+    },
+    {
+      "memory_key": "lesson_oom_batch_loader",
+      "memory_type": "lesson",
+      "value": {
+        "text": "Batch loader OOM-killed under fan-out because it materialized the full result set in memory. Fixed by streaming rows with a server-side cursor and a bounded buffer of 1000.",
+        "files": ["src/ingest/batch_loader.py"],
+        "fix": "Switched from fetchall() to a chunked cursor with buffer cap 1000.",
+        "error": "MemoryError / OOM-kill under high fan-out"
+      },
+      "tags": ["bug-fix", "perf-leak", "memory"]
+    },
+    {
+      "memory_key": "lesson_ci_flaky_timeout",
+      "memory_type": "lesson",
+      "value": {
+        "text": "Integration test test_search_roundtrip was flaky because it asserted on results before the async write had committed. Fixed by polling an eventually-consistent helper instead of a fixed sleep.",
+        "files": ["tests/integration/test_search.py"],
+        "fix": "Replaced time.sleep(2) with an _eventually() poll loop, 10x500ms.",
+        "error": "Intermittent AssertionError: expected 1 result, got 0"
+      },
+      "tags": ["flaky-test", "ci", "async"]
+    },
+    {
+      "memory_key": "lesson_docker_build_arch",
+      "memory_type": "lesson",
+      "value": {
+        "text": "CI Docker build failed on arm64 runners because the base image only published amd64 tags. Fixed by pinning a multi-arch base image and adding a platform matrix to the build workflow.",
+        "files": [".github/workflows/ci.yml", "Dockerfile"],
+        "fix": "Pinned multi-arch base + added platforms: [amd64, arm64] to the build job.",
+        "error": "exec format error / no matching manifest for linux/arm64"
+      },
+      "tags": ["infra-fix", "ci", "docker"]
+    },
+    {
+      "memory_key": "lesson_migration_default_backfill",
+      "memory_type": "lesson",
+      "value": {
+        "text": "Adding a NOT NULL column without a default broke deploys because existing rows had no value. Fixed by splitting the migration: add nullable, backfill in batches, then add the NOT NULL constraint.",
+        "files": ["schemas/migrations/082_add_priority.sql"],
+        "fix": "Three-step migration: nullable add -> batched backfill -> set NOT NULL.",
+        "error": "ERROR: column \"priority\" contains null values"
+      },
+      "tags": ["schema-migration", "deploy", "backfill"]
+    },
+    {
+      "memory_key": "lesson_refactor_auth_middleware",
+      "memory_type": "lesson",
+      "value": {
+        "text": "Token validation logic was duplicated across three handlers. Refactored it into a single auth middleware so JWT scope checks live in one place.",
+        "files": ["src/auth/middleware.py", "src/handlers/upload.py"],
+        "fix": "Extracted validate_scope() into auth/middleware.py; handlers call the middleware.",
+        "error": ""
+      },
+      "tags": ["refactor", "auth", "dedup"]
+    },
+    {
+      "memory_key": "lesson_async_runtime_preference",
+      "memory_type": "preference",
+      "value": {
+        "text": "Team convention: we standardize on asyncio for all async code. Do not introduce a second event-loop runtime. New blocking IO must be wrapped, not run on a different runtime.",
+        "files": [],
+        "fix": "",
+        "error": ""
+      },
+      "tags": ["team-convention", "preference", "async"]
+    },
+    {
+      "memory_key": "lesson_formatting_preference",
+      "memory_type": "preference",
+      "value": {
+        "text": "Team convention: ruff is the only formatter and linter. No black, no isort as a separate tool. Line length is 100.",
+        "files": ["pyproject.toml"],
+        "fix": "",
+        "error": ""
+      },
+      "tags": ["team-convention", "preference", "lint"]
+    },
+    {
+      "memory_key": "lesson_release_v2_3_shipped",
+      "memory_type": "lesson",
+      "value": {
+        "text": "Release v2.3 shipped on 2026-04-08. It included the streaming batch loader fix, the multi-arch CI build, and the auth-middleware refactor.",
+        "files": [],
+        "fix": "Tag v2.3 cut from main after the three landings merged.",
+        "error": ""
+      },
+      "tags": ["release", "temporal", "changelog"]
+    },
+    {
+      "memory_key": "lesson_incident_cache_root_cause",
+      "memory_type": "lesson",
+      "value": {
+        "text": "Root cause of the stale-cache incident: the cache key omitted the tenant id, so two tenants collided. Identified during session on 2026-03-30.",
+        "files": ["src/cache/keys.py"],
+        "fix": "",
+        "error": "Cross-tenant data leak via shared cache entry"
+      },
+      "tags": ["multi-session-causal", "incident", "cache"]
+    },
+    {
+      "memory_key": "lesson_incident_cache_fix",
+      "memory_type": "lesson",
+      "value": {
+        "text": "Fix for the stale-cache incident: cache key now includes tenant id and namespace. Landed 2026-03-31.",
+        "files": ["src/cache/keys.py"],
+        "fix": "build_cache_key() now prefixes (tenant, namespace) into the key.",
+        "error": ""
+      },
+      "tags": ["multi-session-causal", "incident", "cache"]
+    },
+    {
+      "memory_key": "lesson_incident_cache_postmortem",
+      "memory_type": "lesson",
+      "value": {
+        "text": "Post-mortem of the stale-cache incident: added a contract test asserting cache keys are tenant-scoped, plus a lint rule forbidding raw cache.set without a key builder. Action items closed 2026-04-02.",
+        "files": ["tests/contract/test_cache_keys.py"],
+        "fix": "",
+        "error": ""
+      },
+      "tags": ["multi-session-causal", "incident", "postmortem"]
+    },
+    {
+      "memory_key": "lesson_connection_pool_leak",
+      "memory_type": "lesson",
+      "value": {
+        "text": "Connection pool exhaustion under sustained load because connections acquired in a request handler were never returned on the exception path. Fixed by wrapping acquisition in a context manager.",
+        "files": ["src/db/pool.py"],
+        "fix": "Wrapped pool.acquire() in `async with` so release runs on every exit path.",
+        "error": "TimeoutError: pool exhausted, all 20 connections in use"
+      },
+      "tags": ["perf-leak", "bug-fix", "resource-leak"]
+    }
+  ],
+  "questions": [
+    {
+      "question": "Where did we land the fix for the config parser null-pointer crash?",
+      "question_type": "bug-fix-landing",
+      "gold_keys": ["lesson_null_deref_parser"]
+    },
+    {
+      "question": "How did we resolve the CI Docker build failing on arm64 runners?",
+      "question_type": "infra-fix",
+      "gold_keys": ["lesson_docker_build_arch"]
+    },
+    {
+      "question": "Which file holds the JWT scope validation after we deduplicated it?",
+      "question_type": "refactor-location",
+      "gold_keys": ["lesson_refactor_auth_middleware"]
+    },
+    {
+      "question": "Why was test_search_roundtrip flaky and how was it stabilized?",
+      "question_type": "flaky-test",
+      "gold_keys": ["lesson_ci_flaky_timeout"]
+    },
+    {
+      "question": "What caused the batch loader to get OOM-killed under fan-out?",
+      "question_type": "perf-leak",
+      "gold_keys": ["lesson_oom_batch_loader"]
+    },
+    {
+      "question": "How should we add a NOT NULL column to a table that already has rows?",
+      "question_type": "schema-migration",
+      "gold_keys": ["lesson_migration_default_backfill"]
+    },
+    {
+      "question": "What was the root cause of the stale-cache incident, where was it fixed, and what did the post-mortem add?",
+      "question_type": "multi-session-causal",
+      "gold_keys": [
+        "lesson_incident_cache_root_cause",
+        "lesson_incident_cache_fix",
+        "lesson_incident_cache_postmortem"
+      ]
+    },
+    {
+      "question": "What shipped on 2026-04-08?",
+      "question_type": "temporal",
+      "gold_keys": ["lesson_release_v2_3_shipped"]
+    },
+    {
+      "question": "Which async runtime do we prefer for new async code?",
+      "question_type": "team-convention-preference",
+      "gold_keys": ["lesson_async_runtime_preference"]
+    },
+    {
+      "question": "What formatter and linter does the team use?",
+      "question_type": "team-convention-preference",
+      "gold_keys": ["lesson_formatting_preference"]
+    },
+    {
+      "question": "How did we fix the connection pool exhaustion under load?",
+      "question_type": "perf-leak",
+      "gold_keys": ["lesson_connection_pool_leak"]
+    },
+    {
+      "question": "A section header with an empty body is crashing the parser with an AttributeError on NoneType. Have we seen this before and how was it fixed?",
+      "question_type": "bug-fix-landing",
+      "gold_keys": ["lesson_null_deref_parser"],
+      "fix_reuse": {
+        "prior_fix_key": "lesson_null_deref_parser",
+        "note": "New bug is the same null-deref class; retrieval should surface the prior guard fix at small-k so the agent can reapply it."
+      }
+    },
+    {
+      "question": "Our request handler is timing out with 'pool exhausted, all connections in use' under sustained traffic. Is there a known fix?",
+      "question_type": "perf-leak",
+      "gold_keys": ["lesson_connection_pool_leak"],
+      "fix_reuse": {
+        "prior_fix_key": "lesson_connection_pool_leak",
+        "note": "Same resource-leak class; the prior context-manager fix should be retrievable to reapply on the new handler."
+      }
+    },
+    {
+      "question": "The new arm64 build job is dying with 'exec format error'. Did we hit this and patch it?",
+      "question_type": "infra-fix",
+      "gold_keys": ["lesson_docker_build_arch"],
+      "fix_reuse": {
+        "prior_fix_key": "lesson_docker_build_arch",
+        "note": "Same multi-arch manifest gap; the prior multi-arch base pin should resurface so the agent reapplies it."
+      }
+    },
+    {
+      "question": "Another integration test asserts on a result right after an async write and fails intermittently. How did we fix the last one like this?",
+      "question_type": "flaky-test",
+      "gold_keys": ["lesson_ci_flaky_timeout"],
+      "fix_reuse": {
+        "prior_fix_key": "lesson_ci_flaky_timeout",
+        "note": "Same read-before-commit flake class; the prior eventually-poll fix should surface for reuse."
+      }
+    },
+    {
+      "question": "We need to add a NOT NULL column to a populated table for the next release and the migration is failing with 'contains null values'. Have we solved this shape before?",
+      "question_type": "schema-migration",
+      "gold_keys": ["lesson_migration_default_backfill"],
+      "fix_reuse": {
+        "prior_fix_key": "lesson_migration_default_backfill",
+        "note": "Same NOT-NULL-on-existing-rows migration class; the prior three-step pattern should surface for reuse."
+      }
+    }
+  ]
+}

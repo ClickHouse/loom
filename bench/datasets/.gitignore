@@ -1,0 +1,8 @@
+# Keep only the small in-repo synthetic dataset. External corpora
+# (LongMemEval, LoCoMo, etc.) are downloaded by the user, not
+# committed.
+*
+!.gitignore
+!synthetic_memory_qa.json
+# Relevance sets labelled by use (bench/relied_on_set.py) are built from a
+# deployment's own traces and stay on that deployment.

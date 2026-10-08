@@ -1,0 +1,6 @@
+stages: [test]
+unit:
+  stage: test
+  script:
+    - make test
+    - shellcheck scripts/*.sh

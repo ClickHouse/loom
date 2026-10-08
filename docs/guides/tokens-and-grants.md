@@ -1,0 +1,385 @@
+# Tokens and grants
+
+Every call carries one JWT. The token fixes the caller (`sub`), the org, the namespaces it may
+read and the roles it holds. The rest of the identity tuple (`agent`, `user_id`,
+`session_id`) travels per call. Rows in `loom.namespace_grants` add per-namespace roles on top
+of the token. This guide holds the procedures;
+[identities and namespaces](../concepts/identities-and-namespaces.md) explains the model and
+[security](../architecture/security.md) the verification.
+
+## Mint a token
+
+| Path                                               | Who                                  | Produces                                                                                                                                                                                                    |
+| -------------------------------------------------- | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loom mint-token`                                  | an operator holding the signing key  | any token (the CLI signs locally)                                                                                                                                                                           |
+| `POST /v1/admin/token.mint`                        | an `admin` token                     | a token inside the caller's own org, no role above the caller's and no `*` read the caller lacks; body fields `subject`, `namespaces`, `roles`, `ns_roles`, `consumer`, `ttl_seconds`, `is_service_account` |
+| `POST /v1/me/service_accounts.create`              | any signed-in person (the dashboard) | a scoped service-account token over a subset of the person's own namespaces, each role capped at their live grant                                                                                           |
+| `POST /v1/auth/login`, OAuth                       | a person                             | a user token for their own subject                                                                                                                                                                          |
+| `POST /v1/auth/self-signup`                        | anyone, when `LOOM_SELF_SIGNUP=open` | a writer token on the namespace the caller claims                                                                                                                                                           |
+| `POST /v1/auth/agent-signup` (`loom init --agent`) | a bot, when `LOOM_SELF_SIGNUP=open`  | a service-account writer token on `agent-<slug>` plus a one-time claim code ([headless bots](headless-bots.md))                                                                                             |
+
+```bash
+loom mint-token --subject my-bot --org acme --namespaces support --roles writer --ttl-days 30 --save
+# /home/you/.loom/token
+```
+
+`loom` ships with the server package and the Docker image, not with the SDK; in a container
+run `docker exec <server-container> loom mint-token ...`. Minting needs the signing key,
+`LOOM_JWT_SECRET`. A fresh clone gets a development secret from `.env.example`.
+`loom mint-token` and `loom doctor` warn while it is in use, and a deployment with auth on
+refuses to start with it (except the `make dev` stack).
+
+| Flag                       | Default      | Meaning                                                                                                                                                                         |
+| -------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--subject`                | _(required)_ | The principal (`sub`), recorded on every ledger row.                                                                                                                            |
+| `--org`                    | _(required)_ | The org. `*` is a cross-org wildcard.                                                                                                                                           |
+| `--namespaces`             | none         | Readable namespaces, space- or comma-separated; `*` reads every namespace of the org. Exclusive with `--namespace-role`.                                                        |
+| `--roles`                  | `writer`     | `viewer`, `writer` and/or `admin`, applied to every namespace the token names.                                                                                                  |
+| `--namespace-role NS=ROLE` | none         | Repeatable. Makes a **scoped** token: exactly these namespaces, in this order (the read priority), each with its own role (`ns_roles` claim).                                   |
+| `--ttl-days N`             | none         | Lifetime. Without it the token has no `exp` and lives until revoked; use a TTL for anything that leaves your machine, and re-mint on a schedule.                                |
+| `--read-scope`             | none         | `namespace`, `own_user` or `own_session`: the widest read the token may make ([read scope](#read-scope)).                                                                       |
+| `--read-user-id USER_ID`   | none         | Pin every read to one end user; a request naming another user is refused.                                                                                                       |
+| `--traffic-class`          | none         | `production`, `interactive` or `bench`: the rate buckets, ClickHouse priority, LLM-tier policy and cost column the token's calls use. Omitted, the namespace row decides.       |
+| `--consumer NAME`          | none         | Bind the consumer tag: every call is attributed to `NAME` whatever its body says.                                                                                               |
+| `--service-account`        | on           | Mark the token as a service account (`sa: true`).                                                                                                                               |
+| `--user-token`             | off          | Mint a user token instead.                                                                                                                                                      |
+| `--save [PATH]`            | off          | Write the token to `PATH` (default `~/.loom/token`, mode `0600`, `~/.loom` created `0700`) and print the path. The SDKs, the CLI importers and the plugin hooks read that file. |
+| `--json`                   | off          | Print a JSON summary (with `jti`) instead of the bare token.                                                                                                                    |
+
+Without `--save` stdout is the bare token, so `TOKEN=$(loom mint-token …)` works. The
+[CLI reference](../reference/cli.md) lists every flag as the parser defines it.
+
+## Read the claims
+
+| Claim                        | Meaning                                                                                                                                                    |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sub`                        | The principal. Service-account subjects created from the dashboard start with `sa:`.                                                                       |
+| `org`                        | The org; `*` reaches every org.                                                                                                                            |
+| `namespaces`                 | The readable set, in order; `["*"]` reads every namespace of the org.                                                                                      |
+| `roles`                      | The flat role list, applied to every readable namespace.                                                                                                   |
+| `ns_roles`                   | Scoped tokens only: namespace → role. Authoritative: it replaces `roles` and the grant lookup for those namespaces.                                        |
+| `ns_write`                   | Optional writable subset of `namespaces`, set through `mint_token(write_namespaces=…)` in `server/auth/jwt.py`; no CLI flag. Absent = writes follow reads. |
+| `read_scope`, `read_user_id` | The read ceiling and the pinned end user.                                                                                                                  |
+| `traffic_class`, `consumer`  | Bound traffic class and consumer tag.                                                                                                                      |
+| `sa`                         | `true` for a service account, `false` for a user token.                                                                                                    |
+| `jti`                        | The token's id: stamped on the audit and exposure ledgers as `token_id`, and the handle `loom revoke-token --jti` takes. Not a secret.                     |
+| `exp`                        | Expiry, when minted with a TTL.                                                                                                                            |
+| `iss`, `aud`, `iat`          | `LOOM_JWT_ISSUER` (`loom`), `LOOM_JWT_AUDIENCE` (`loom-platform`), issued-at.                                                                              |
+
+The JWT header's `kid` names the signing key. `GET /v1/whoami` shows what the server
+verified for a token: the first thing to check when a call is refused.
+
+> **Warning: wildcards are wide.** `org="*"` or `namespaces=["*"]` reads everything below
+> it. Mint them only for operator tooling. They never count for a
+> [restricted namespace](#restricted-namespaces-classificationrestricted).
+
+### Signing keys
+
+| Setting                     | Meaning                                                                                                                                                   |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LOOM_JWT_ALGORITHM`        | `HS256` (default, shared secret) or `RS256` (private keys sign, public keys verify).                                                                      |
+| `LOOM_JWT_SECRET`           | The HS256 secret when no key map is set. Always the key stored credentials are sealed with, key map or not ([Security](../architecture/security.md)).     |
+| `LOOM_JWT_SECRETS_JSON`     | `{kid: secret}` (under RS256, `{kid: PEM private key}`); a token verifies with the key its `kid` names. Empty = `{LOOM_JWT_ACTIVE_KID: LOOM_JWT_SECRET}`. |
+| `LOOM_JWT_ACTIVE_KID`       | The `kid` that signs new tokens (default `default`).                                                                                                      |
+| `LOOM_JWT_PUBLIC_KEYS_JSON` | RS256: `{kid: PEM public key}`, served at `/v1/.well-known/jwks.json`.                                                                                    |
+| `LOOM_JWT_TRUSTED_ISSUERS`  | Extra accepted `iss` values, for a gateway minting Loom-shaped tokens.                                                                                    |
+| `LOOM_JWT_LEEWAY_SECONDS`   | Clock-skew tolerance on `iat` / `exp` (default 30).                                                                                                       |
+
+Verification accepts only `HS256` and `RS256`; `alg=none` is rejected. The
+[configuration reference](../reference/configuration.md#auth) lists every auth setting.
+
+## Choose roles
+
+Roles are ordered; a higher role satisfies every check for a lower one. Each op declares its
+`required_role` (`GET /v1/operations`, and the [operations reference](../reference/operations.md)).
+
+| Role             | Grants                                                                                                                                                 |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `viewer`         | Read.                                                                                                                                                  |
+| `writer`         | Read and write memory, knowledge and the other data planes.                                                                                            |
+| `admin`          | Administer the namespace: grants, configuration, policy, restore into it. Not org-wide visibility.                                                     |
+| `org_admin`      | Org-wide views (for example `cost.summary` without a namespace). A recognised gate with no in-product assignment path.                                 |
+| `platform_admin` | Cross-org operator views. Conferred at login to the handles in `LOOM_PLATFORM_ADMINS`, and to its emails only when an IdP verified them; never minted. |
+
+Tokens and grants carry only `viewer`, `writer` or `admin`.
+
+## Namespace access
+
+**Membership is the read boundary.** A token that can read a namespace reads every row in
+it, whichever agent wrote it; `agent` is authorship, and passing it on a read only narrows.
+A call on `(org, namespace)` is allowed when:
+
+1. the namespace is not restricted (otherwise see
+   [restricted namespaces](#restricted-namespaces-classificationrestricted));
+2. for a **scoped** token (`ns_roles`): its role for that namespace reaches the op's role.
+   Nothing else widens it, except that a viewer grant lets it read a code namespace;
+3. for a **flat** token: the token covers the namespace (`namespaces` for reads, `ns_write`
+   for writes) and a role in `roles` reaches the op's role, or a live grant on the
+   namespace does.
+
+A scoped token called without `org` and `namespace` in the body answers
+400 `IDENTITY_INCOMPLETE`: its authority is per namespace. The exceptions are ops that read
+no namespace (`namespace.browse`, `grants.pending_for_me`, `code.repos`, …) and ops
+addressed by a row id: those pass on the token's best namespace role, inside the token's
+own org only. A scoped token's `namespaces` order is the search order across tiers.
+
+A token can read a shared namespace and write only its own:
+
+```
+namespaces = ["team-shared", "agent-private"]
+ns_write   = ["agent-private"]
+```
+
+### Read scope
+
+`read_scope` bounds how far one read reaches inside a namespace. `memory.search`,
+`memory.search_trace`, `memory.ask`, `memory.recall`, `context.pack` and `profile.render`
+take it in the body; a token's `read_scope` claim is a ceiling the body can narrow but not
+widen.
+
+| `read_scope`          | A read returns                                        |
+| --------------------- | ----------------------------------------------------- |
+| `namespace` (default) | every row of the namespace                            |
+| `own_user`            | rows written under the `user_id` the request names    |
+| `own_session`         | rows written under the `session_id` the request names |
+
+Mint `own_user` (with `--read-user-id` where one token serves one end user) for an agent
+that serves many users through one credential, so one user's prompt cannot pull another
+user's memories:
+
+```bash
+loom mint-token --subject support-bot --org acme --namespaces support --roles writer \
+  --read-scope own_user --ttl-days 30 --save
+```
+
+A scoped read without the `user_id` / `session_id` it binds to is 400
+`IDENTITY_INCOMPLETE`, never silently widened.
+
+## Give and take away grants
+
+`loom.namespace_grants` holds one row per `(org, namespace, subject)`: a role on one
+namespace above what the token carries. Grants only add.
+
+| Op                      | Role   | Does                                                                                                                     |
+| ----------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `grants.create`         | admin  | Give `subject` a `role`. Below the subject's current role it answers 409 `GRANT_WOULD_DOWNGRADE` unless `replace: true`. |
+| `grants.revoke`         | admin  | Remove it; on a restricted namespace the grants of tokens the subject minted there go too.                               |
+| `grants.list`           | viewer | The namespace's grants.                                                                                                  |
+| `grants.approve`        | admin  | Activate a pending join request.                                                                                         |
+| `grants.pending_for_me` | viewer | Requests waiting on the caller's approval.                                                                               |
+
+```bash
+curl -s "$LOOM_BASE_URL/v1/grants.create" -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"org":"acme","namespace":"team-shared","subject":"sa:triage","role":"viewer"}'
+```
+
+- **Registering is owning.** `namespace.register` makes the caller the namespace's `admin`.
+  With self-signup (`LOOM_IDENTITY_PROVIDER=trust-network`) the first principal to claim a
+  name owns it; `loom claim-release --org <org> --namespace <ns>` revokes its grants,
+  clears the owner and deactivates it. The name stays reserved (its memories are kept, and
+  whoever claimed it next would own them); erasing the namespace removes the data but not
+  the reservation.
+- **Service accounts inherit.** An `sa:` subject with no grant of its own on a namespace
+  uses its creator's grant there, so a token minted from the dashboard follows the person
+  who made it, including into namespaces they join later. Restricted namespaces are the
+  exception.
+- **Pending grants do nothing** until approved.
+
+## Let people join a namespace
+
+A namespace's directory row (`namespace.register`) says who may join it:
+
+| Field               | Values                                             |
+| ------------------- | -------------------------------------------------- |
+| `visibility`        | `private` (default) or `public`                    |
+| `join_policy`       | `open`, `approval`, `closed`, or `inherit` (unset) |
+| `requires_approval` | `true` / `false`                                   |
+
+`inherit` resolves to `open` for a public namespace that does not require approval, and to
+`approval` otherwise. `namespace.join` takes a `role` (default `writer`; ask for `viewer` to
+be admitted at once on an open namespace) and decides:
+
+| Policy     | `viewer` join  | `writer` / `admin` join |
+| ---------- | -------------- | ----------------------- |
+| `open`     | active at once | pending                 |
+| `approval` | pending        | pending                 |
+| `closed`   | refused        | refused                 |
+
+`namespace.leave`, `namespace.cancel_request`, `namespace.browse` and `namespace.list_mine`
+complete the self-service surface.
+
+**Code namespaces** (`kind=code`, one per indexed repository and branch) have readers
+(`viewer`) and maintainers (`admin`). `visibility=public` makes one joinable, not readable:
+reading needs a grant or a token that names it.
+
+- `LOOM_CODE_ORG_READABLE=true` (or `"org_readable": true` on an entry of
+  `LOOM_CODE_REPOS_JSON`) lets every authenticated principal of the org read every code
+  namespace with the token it holds.
+- Refreshing (`writer`) and administering (`admin`) always come from grants.
+- An unowned code namespace is adopted with `POST /v1/admin/namespace.adopt` (or
+  `loom namespaces-adopt`).
+
+See [code index repositories](../features/code-index/repositories.md).
+
+## Restricted namespaces (`classification=restricted`)
+
+Everything above widens access. `classification` narrows it: a namespace whose
+`loom.namespaces.classification` is `restricted`, or whose `LOOM_CODE_REPOS_JSON` entry says
+`"classification": "restricted"` (either input restricts), switches every default off. A
+read or write passes only when **all** hold:
+
+1. the token belongs to the namespace's org (`org="*"` does not count);
+2. the token names the namespace literally, in `namespaces` or `ns_roles`
+   (`namespaces=["*"]` does not count);
+3. the token's own role there reaches the op's role;
+4. a live **direct** grant for the token's own subject reaches it (a service account does
+   not inherit its creator's grant).
+
+No org-readable rule, `visibility=public`, `org_admin` or `platform_admin` bypasses this. A
+refusal is the generic "cannot access" message, so it does not reveal whether the namespace
+exists. If the classification cannot be read, access is denied.
+
+- Search fan-out, context packs and org-wide rollups skip the restricted namespaces the
+  caller cannot read, and `code.repos` hides them.
+- Each admitted request writes a `namespace.restricted_access` audit row
+  (`LOOM_RESTRICTED_AUDIT_INLINE` commits it before answering). Code search traces keep
+  only the query digest.
+- A restricted namespace cannot be made public; its directory row changes only for a caller
+  who passes the four checks at `admin`.
+- `POST /v1/admin/token.mint` mints a restricted namespace only for a caller holding a
+  direct grant there at or above the requested role (pass `ns_roles` for per-namespace
+  roles). It never mints a role above the caller's own, nor `namespaces=["*"]` for a caller
+  without org-wide access (a platform admin is exempt).
+- `LOOM_RESTRICTED_SERVE=false` refuses every restricted read while ingest continues.
+
+> **Warning:** `loom mint-token` signs locally and is not checked against grants. Whoever
+> holds the signing key can mint any token; the direct-grant check at request time is what
+> still protects a restricted namespace.
+
+**To give a reader access, do both:** a direct grant on the subject, and a token that names
+the namespace.
+
+```bash
+# as an admin of the namespace
+curl -s "$LOOM_BASE_URL/v1/grants.create" -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"org":"acme","namespace":"incidents-private","subject":"sa:triage","role":"viewer"}'
+# as the operator
+loom mint-token --subject sa:triage --org acme --namespaces team-shared,incidents-private \
+  --roles viewer --ttl-days 30
+```
+
+A person who holds a direct grant can also add the namespace to a token minted from the
+dashboard: the mint names it in the claim and writes a direct grant for the token's own
+`sa:` subject (`viewer` on a repository index, else the token's role capped at `writer`).
+That grant is revoked with the token, and when the person's own grant is revoked.
+
+## Add history policy
+
+Enforcement is off unless `LOOM_POLICY_MODE` turns it on. `policy.set`, `policy.delete` and
+`policy.decisions` are served over HTTP and the SDKs, not over MCP.
+
+A policy rule restricts what a caller may do based on its own recent history in
+`loom.agent_events`, evaluated at call time after the role check. Rules are per
+`(org, namespace)` and can only take permission away.
+
+- `effect: "forbid"` denies when the condition holds (`count_within 1h memory.set gte 200`
+  is a durable, cross-replica per-agent rate limit).
+- `effect: "require"` denies when it does not hold (`formerly within 1h memory.get` before
+  a `memory.delete`; `args_equal: {"memory_key": "$args.memory_key"}` requires the same
+  key, and `out_<field>` names what an earlier call returned).
+
+Leaves are `formerly`, `count_within`, `not_since` and `breadth_within` (how many distinct
+memory keys the verified subject was shown in the window, as a `value` or a `fraction` of
+the namespace), combined with `all`, `any` and `not`. Each leaf reads only the caller's own
+events, keyed by `agent` (default), `session` or `user`; windows are `<n>s|m|h|d`, capped by
+`LOOM_POLICY_MAX_WINDOW_SECONDS` (default one day).
+
+| `LOOM_POLICY_MODE` | Effect                                                                                     |
+| ------------------ | ------------------------------------------------------------------------------------------ |
+| `off` (default)    | No rule is evaluated and nothing is recorded, whatever a rule's own `mode` says.           |
+| `shadow`           | Each decision is recorded in `loom.policy_decisions`; nothing is blocked.                  |
+| `enforce`          | A denial answers 403 `POLICY_FORBIDDEN` with `decision`, `determining_rules` and `errors`. |
+
+Under `shadow` or `enforce`, a rule's own `mode` (`inherit`, `shadow`, `enforce`) overrides
+the deployment's. Under enforcement, a rule that cannot be evaluated denies a write and allows
+a read. Start in `shadow`, read `policy.decisions`, then enforce.
+
+```bash
+curl -s "$LOOM_BASE_URL/v1/policy.set" -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" -d '{
+  "org": "acme", "namespace": "team", "policy_id": "get-before-delete", "effect": "require",
+  "actions": ["memory.delete"],
+  "condition": {"op": "formerly", "within": "1h", "operation": "memory.get",
+                "args_equal": {"memory_key": "$args.memory_key"}}}'
+```
+
+`policy.check` evaluates a hypothetical call without blocking (any role); `policy.list`,
+`policy.delete` and `policy.decisions` complete the surface. `policy.set` and
+`policy.delete` need `admin`, are audited, and report `widening` when a change loosens a
+rule (which also writes a `policy.widened` audit row).
+
+## Pick an identity mode, gateway or IdP
+
+`LOOM_IDENTITY_PROVIDER` (`single-user`, `trust-network` or `gateway`) picks how people get
+tokens; unset, it is inferred from `LOOM_AUTH_REQUIRED` and `LOOM_SELF_SIGNUP` at boot. The
+modes are described in
+[identities and namespaces](../concepts/identities-and-namespaces.md) and their settings in
+[deployment](../operations/deployment.md#identity-modes).
+
+**People through an IdP.** `LOOM_OAUTH_ENABLED=true` serves an OAuth 2.1 authorization
+server for MCP one-click connect (`/.well-known` discovery, `/oauth/{register,authorize,token}`;
+`LOOM_OAUTH_ISSUER` is the public base URL). `LOOM_OAUTH_LOGIN_PROVIDER=oidc` sends the
+sign-in to an external IdP (`LOOM_OIDC_ISSUER`, `LOOM_OIDC_CLIENT_ID`,
+`LOOM_OIDC_CLIENT_SECRET`); Loom maps the verified email to an account and still mints its
+own token. `LOOM_OIDC_JIT_PROVISION=true` creates a personal namespace in `LOOM_OIDC_JIT_ORG`
+for a first sign-in with no account (`LOOM_OIDC_JIT_EMAIL_DOMAINS` restricts it); off, such
+a sign-in is refused.
+
+**An aggregator acting for its users.** A subject listed in `LOOM_TRUSTED_CALLERS` may send
+`X-Loom-On-Behalf-Of: <subject>`: the call runs as that subject and every ledger row records
+the real caller in `impersonated_by`. Empty disables the header.
+
+## Revoke and rotate
+
+**One token or one subject.** `loom revoke-token` writes `loom.revoked_tokens` (it needs the
+configured ClickHouse, `LOOM_CH_*`). Verification checks a token's `jti` and its `sub`
+against the set.
+
+```bash
+loom revoke-token --jti <jti>                                    # exactly one token
+loom revoke-token --subject my-bot --reason "laptop lost"        # every token for my-bot, in every org
+loom revoke-token --subject my-bot --issued-before <ISO-8601>    # only tokens issued before that instant
+loom revoke-token --jti <jti> --expires-at <token exp, ISO-8601> # let the row lapse with the token
+loom revoke-token --list                                         # unexpired revocations
+```
+
+`--issued-before` keeps a token re-minted after a leak working. Without `--expires-at` the
+row is kept for ten years. Revoking a service account from the dashboard
+(`/v1/me/service_accounts.revoke`) revokes its subject the same way, along with the grants
+the token held.
+
+Every process that verifies tokens keeps its own copy of the set, loaded at start-up and
+refreshed every `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` (default 30 s), so a revocation
+reaches every replica within that window. Until a process has loaded the set once it
+refuses tokens with 503 `AUTH_UNAVAILABLE` instead of admitting a revoked one; after that, a
+ClickHouse outage keeps the last good copy.
+
+**Every token of a key.** To rotate the signing key:
+
+1. Add the new key to `LOOM_JWT_SECRETS_JSON` under a new `kid`, keeping the old one.
+2. Point `LOOM_JWT_ACTIVE_KID` at the new `kid` and restart; new tokens are signed with it,
+   old tokens still verify by their header `kid`.
+3. Re-mint the tokens you want to keep.
+4. Remove the old `kid` from the map to stop its tokens verifying.
+
+With read-replicas, each step applies to every replica too; see
+[Keeping a replica in step](../operations/read-replicas.md#keeping-a-replica-in-step).
+
+## Related
+
+- [Identities and namespaces](../concepts/identities-and-namespaces.md)
+- [Namespaces and sharing](../features/namespaces-and-sharing.md)
+- [Security architecture](../architecture/security.md)
+- [Audit](../features/observability/audit.md)

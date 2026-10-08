@@ -1,0 +1,28 @@
+name: Feature request
+description: A workflow the current ops, SDKs, CLI or plugins do not cover.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you are trying to do
+      description: The agent workflow, integration or question Loom does not answer today. A snippet of code you wish worked is ideal.
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What you tried
+      description: The existing ops, SDK calls or CLI commands that came close, and where they fell short.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed shape
+      description: Optional. An op's input and output, an SDK method, a setting or a schema change. A change to storage, the identity tuple, auth or a new external dependency needs a design note in the pull request.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Optional. Other ways to get there, inside Loom or with another tool.

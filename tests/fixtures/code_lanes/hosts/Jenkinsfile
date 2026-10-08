@@ -1,0 +1,13 @@
+pipeline {
+  stages {
+    stage('Build') {
+      steps {
+        sh 'make build'
+        sh '''
+          ./scripts/package.sh --release
+          docker push example/app
+        '''
+      }
+    }
+  }
+}

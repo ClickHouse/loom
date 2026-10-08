@@ -1,0 +1,93 @@
+{
+  "dataset": "PerLTQA en_v2",
+  "characters": [
+    "Zhang Xiaohong",
+    "Wang Xiaoming",
+    "Liang Xin",
+    "Cao Lili",
+    "Xu Jia"
+  ],
+  "sections": [
+    "profile",
+    "social_relationship",
+    "events",
+    "dialogues"
+  ],
+  "top_k": 5,
+  "namespace_json": {
+    "default_conflict_policy": "newest_wins"
+  },
+  "ask_json": {},
+  "search_json": {},
+  "judge_model": "gpt-4o-mini",
+  "record_conversations": false,
+  "defer": false,
+  "ingest_counts": {},
+  "build_ms": {},
+  "overall": {
+    "n": 193,
+    "errors": 0,
+    "anchor_map": 0.4857,
+    "ref_recall_at_k": 0.5907,
+    "ref_recall_kin_at_k": 0.7306,
+    "cited_ref": 0.7772,
+    "correctness": 0.8187,
+    "judged": 193,
+    "abstain_rate": 0.0,
+    "ask_ms_p50": 1644,
+    "search_ms_p50": 824
+  },
+  "profile": {
+    "n": 43,
+    "errors": 0,
+    "anchor_map": 0.6744,
+    "ref_recall_at_k": 0.8372,
+    "ref_recall_kin_at_k": 0.8372,
+    "cited_ref": 0.9535,
+    "correctness": 0.9535,
+    "judged": 43,
+    "abstain_rate": 0.0,
+    "ask_ms_p50": 1414,
+    "search_ms_p50": 820
+  },
+  "social_relationship": {
+    "n": 50,
+    "errors": 0,
+    "anchor_map": 0.61,
+    "ref_recall_at_k": 0.54,
+    "ref_recall_kin_at_k": 0.54,
+    "cited_ref": 0.7,
+    "correctness": 0.88,
+    "judged": 50,
+    "abstain_rate": 0.0,
+    "ask_ms_p50": 1468.5,
+    "search_ms_p50": 803.5
+  },
+  "events": {
+    "n": 50,
+    "errors": 0,
+    "anchor_map": 0.4295,
+    "ref_recall_at_k": 0.82,
+    "ref_recall_kin_at_k": 0.86,
+    "cited_ref": 0.88,
+    "correctness": 0.92,
+    "judged": 50,
+    "abstain_rate": 0.0,
+    "ask_ms_p50": 1888.0,
+    "search_ms_p50": 788.5
+  },
+  "dialogues": {
+    "n": 50,
+    "errors": 0,
+    "anchor_map": 0.2555,
+    "ref_recall_at_k": 0.2,
+    "ref_recall_kin_at_k": 0.7,
+    "cited_ref": 0.6,
+    "correctness": 0.54,
+    "judged": 50,
+    "abstain_rate": 0.0,
+    "ask_ms_p50": 2023.0,
+    "search_ms_p50": 940.5
+  },
+  "retries": {}
+}

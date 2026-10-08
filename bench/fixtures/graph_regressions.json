@@ -1,0 +1,22 @@
+[
+  {
+    "id": "employment-window",
+    "messages": [
+      {"role": "user", "content": "I worked at Acme from 2022 until 2024, then joined Globex."}
+    ],
+    "expected_triples": [
+      {"subject": "user", "relation": "worked_at", "object": "acme"},
+      {"subject": "user", "relation": "joined", "object": "globex"}
+    ],
+    "as_of": "2023-01-01"
+  },
+  {
+    "id": "pet-ownership",
+    "messages": [
+      {"role": "user", "content": "My dog Bowie weighs 32 pounds."}
+    ],
+    "expected_triples": [
+      {"subject": "user", "relation": "owns", "object": "bowie"}
+    ]
+  }
+]

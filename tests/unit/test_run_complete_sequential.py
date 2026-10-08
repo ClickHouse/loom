@@ -1,0 +1,67 @@
+"""Run.complete reads the run with sequential consistency,
+and the run.begin ledger row is labelled with the run it opened."""
+
+from __future__ import annotations
+
+import pytest
+
+from server.core.ch import sequential_reads_active
+from server.core.errors import NotFoundError
+from server.observability.run_context import current_ledger_run, set_ledger_run
+from server.tasks.api.models_run import RunBeginInput, RunCompleteInput
+from server.tasks.app import run as run_handlers
+
+
+class _Client:
+    """A client whose only visible behaviour is the consistency of its reads."""
+
+    def __init__(self) -> None:
+        self.sequential_reads: list[bool] = []
+
+    async def query_one(self, sql: str, params=None):
+        self.sequential_reads.append(sequential_reads_active())
+        return None
+
+    async def insert(self, *a, **k):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_complete_reads_the_run_with_sequential_consistency(monkeypatch):
+    client = _Client()
+    monkeypatch.setattr(run_handlers, "get_client", lambda: client)
+    with pytest.raises(NotFoundError):
+        await run_handlers.handle_run_complete(
+            RunCompleteInput(org="o", namespace="n", run_id="r1", status="completed")
+        )
+    assert client.sequential_reads == [True], (
+        "the point read that decides NOT_FOUND must see the begin's synchronous insert"
+    )
+    assert sequential_reads_active() is False, "the consistency window closes with the read"
+
+
+@pytest.mark.asyncio
+async def test_begin_labels_its_ledger_row_with_the_run_id(monkeypatch):
+    client = _Client()
+    monkeypatch.setattr(run_handlers, "get_client", lambda: client)
+    set_ledger_run("")
+    out = await run_handlers.handle_run_begin(
+        RunBeginInput(org="o", namespace="n", agent="a", goal="triage")
+    )
+    assert out.run_id
+    assert current_ledger_run() == out.run_id
+    # the begin's own existence check is not the consistency-sensitive read
+    # (a retry of the same run_id): it keeps the default read
+    assert client.sequential_reads == [False]
+
+
+@pytest.mark.asyncio
+async def test_begin_with_a_client_run_id_labels_that_id(monkeypatch):
+    client = _Client()
+    monkeypatch.setattr(run_handlers, "get_client", lambda: client)
+    set_ledger_run("ambient-header-run")
+    out = await run_handlers.handle_run_begin(
+        RunBeginInput(org="o", namespace="n", agent="a", goal="g", run_id="client-chosen")
+    )
+    assert out.run_id == "client-chosen"
+    assert current_ledger_run() == "client-chosen"

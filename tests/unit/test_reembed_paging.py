@@ -1,0 +1,85 @@
+"""`loom reembed` pages each table in sort-key order, `batch` rows at a
+time, and prints a resume token after every page; `--resume <token>`
+skips the finished tables and continues after that row."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+from server.memory.app import reembed as rb
+
+
+class _Emb:
+    model_name, dim = "m2", 2
+
+    async def embed_many(self, texts: list[str]) -> list[list[float]]:
+        return [[0.1, 0.2] for _ in texts]
+
+
+def key(r: dict[str, Any]) -> tuple[str, ...]:
+    return (r["org"], r["namespace"], r["embedding_model"], r["thread_id"], r["msg_id"])
+
+
+class _CH:
+    """conversation_embeddings rows keyed (org, namespace, model, thread_id, msg_id);
+    answers the keyset page read the way ClickHouse would."""
+
+    def __init__(self, n: int) -> None:
+        self.rows = [
+            {
+                "org": "o",
+                "namespace": "ns",
+                "embedding_model": "m1",
+                "thread_id": "t",
+                "msg_id": f"{i:03d}",
+                "content_excerpt": f"c{i}",
+                "embedding": [0.0],
+                "embedding_dim": 1,
+            }
+            for i in range(n)
+        ]
+        self.pages: list[dict[str, Any]] = []
+        self.inserted: list[str] = []
+
+    async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[dict]:
+        if "system.columns" in sql:
+            return [{"name": c} for c in self.rows[0]]
+        p = dict(params or {})
+        self.pages.append(p)
+        after = tuple(p[f"k{i}"] for i in range(5)) if "k0" in p else None
+        assert ("ORDER BY org, namespace, embedding_model, thread_id, msg_id" in sql) and (
+            (after is None) == ("> ({k0:String}" not in sql)
+        )
+        left = sorted((r for r in self.rows if after is None or key(r) > after), key=key)
+        return [{**r, "_k": key(r)} for r in left[: p["page"]]]
+
+    async def query_one(self, sql: str, params: Any = None) -> dict:
+        return {"n": len(self.rows)}
+
+    async def insert(self, table: str, rows: list[dict], settings: Any = None) -> None:
+        assert all("_k" not in r for r in rows)
+        self.inserted.extend(r["msg_id"] for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_pages_are_bounded_by_the_batch_and_a_token_resumes_after_its_row() -> None:
+    ch, lines = _CH(5), []
+    n = await rb.reembed_table(ch, _Emb(), "conversation_embeddings", batch=2, log=lines.append)
+    assert n == 5 and ch.inserted == ["000", "001", "002", "003", "004"]
+    assert [p["page"] for p in ch.pages] == [2, 2, 2]  # never more than a batch in memory
+    token = next(line for line in lines if "3/5" in line or "4/5" in line).rsplit("resume: ", 1)[1]
+    table, key = rb.decode_resume(token)
+    assert table == "conversation_embeddings" and key[-1] == "003"
+
+    ch2 = _CH(5)
+    written = await rb.reembed_all(ch2, _Emb(), batch=2, resume=token, log=lambda *_: None)
+    assert ch2.inserted == ["004"] and written == {"conversation_embeddings": 1}
+
+
+def test_a_bad_token_is_refused() -> None:
+    with pytest.raises(ValueError):
+        rb.decode_resume("not-a-token")
+    with pytest.raises(ValueError):
+        rb.decode_resume(rb.encode_resume("memory_embeddings", ["only-one"]))

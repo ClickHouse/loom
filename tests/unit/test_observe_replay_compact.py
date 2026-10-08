@@ -1,0 +1,101 @@
+"""A replayed observation is a line, not a payload."""
+
+from __future__ import annotations
+
+import inspect
+from types import SimpleNamespace
+
+import pytest
+
+from server.memory.app import chunk_projection as chunk_projection
+from server.memory.app import observe_replay as replay
+from server.memory.workers import observe_extract as ox
+
+NARRATIVE = (
+    "[tool_use] tool=mcp__plugin_loom_loom__loom_code_symbol\n"
+    'input: {"name":"StorageSharedMergeTree::mergeSelectingTask","namespace":"code-example-private",'
+    '"include_body":true,"token_budget":2500}\n'
+    'output: {"definitions":[{"unit_id":"84ad0bfe5df4b1a1f66c907d13c7460f","path":"src/Storages/'
+    'StorageSharedMergeTree.cpp","start_line":2635,"end_line":2720,"body":"void StorageSharedMergeTree::'
+    "mergeSelectingTask()\\n{\\n    auto component_guard = ..."
+)
+
+
+def test_compact_keeps_head_error_paths_and_short_plain_payloads() -> None:
+    out = replay.compact_narrative(NARRATIVE, ["src/Storages/StorageSharedMergeTree.cpp"])
+    assert out == (
+        "[tool_use] tool=mcp__plugin_loom_loom__loom_code_symbol\n"
+        "paths: src/Storages/StorageSharedMergeTree.cpp"
+    )
+    # a shell command and its one-line result are the session's own words: kept
+    assert replay.compact_narrative(
+        "[command_run] tool=Bash\ninput: pytest -q\noutput: 1 failed"
+    ) == ("[command_run] tool=Bash\ninput: pytest -q\noutput: 1 failed")
+    with_error = '[tool_error] tool=Bash\ninput: {"command":"make"}\nerror: exit 2: missing header\noutput: ...'
+    assert (
+        replay.compact_narrative(with_error)
+        == "[tool_error] tool=Bash\nerror: exit 2: missing header\noutput: ..."
+    )
+    # a pretty-printed JSON payload's continuation lines go with it; a long plain one is dropped too
+    multi = (
+        '[tool_use] tool=Read\ninput: {\n  "file_path": "a.cpp"\n}\noutput: '
+        + "x" * 300
+        + "\nmore\npaths: a.cpp"
+    )
+    assert replay.compact_narrative(multi) == "[tool_use] tool=Read\npaths: a.cpp"
+    assert replay.compact_narrative("") == ""
+
+
+def test_observation_narrative_compacts_the_payloads() -> None:
+    row = SimpleNamespace(
+        value={
+            "narrative": NARRATIVE,
+            "kind": "tool_use",
+            "tool_name": "x",
+            "file_paths": ["src/a.cpp"],
+        }
+    )
+    text = replay._observation_narrative(row)
+    assert "input:" not in text and "output:" not in text and "paths: src/a.cpp" in text
+    # no narrative: the structured fallback is unchanged
+    assert replay._observation_narrative(
+        SimpleNamespace(value={"kind": "tool_use", "tool_name": "Read"})
+    ) == ("[tool_use] tool=Read")
+
+
+def test_replay_turns_carry_the_compact_line() -> None:
+    # Only an observation that carries a result replays; an error does.
+    obs = [SimpleNamespace(value={"narrative": NARRATIVE, "error": "exit 1"}, created_at=None)]
+    turns = replay.replay_messages(obs, agent="claude-code")
+    assert len(turns) == 1 and turns[0].role == "user"
+    assert turns[0].content.startswith("[tool_use] tool=") and "output:" not in turns[0].content
+
+
+@pytest.mark.asyncio
+async def test_chunk_layer_is_a_no_op_while_suppressed(monkeypatch: pytest.MonkeyPatch) -> None:
+    called = []
+
+    class _Boom:
+        def __getattr__(self, name):  # any client use would be a bug under suppression
+            called.append(name)
+            raise AssertionError("chunk writer touched the client while suppressed")
+
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _Boom())
+    inp = SimpleNamespace(org="o", namespace="n", run_id="-")
+    msgs = [{"role": "user", "content": "x" * 3000}]
+    assert not chunk_projection.chunk_layer_suppressed()
+    with chunk_projection.suppress_chunk_layer():
+        assert chunk_projection.chunk_layer_suppressed()
+        await chunk_projection.write_memory_chunks(inp, msgs)
+    assert not chunk_projection.chunk_layer_suppressed()
+    assert called == []
+
+
+def test_the_worker_replays_under_suppression() -> None:
+    # The replay runs in `_extract_replay`, which `_distill_session` calls.
+    assert "_extract_replay(" in inspect.getsource(ox._distill_session)
+    src = inspect.getsource(replay._extract_replay)
+    assert "with suppress_chunk_layer():" in src
+    assert src.index("with suppress_chunk_layer():") < src.index(
+        "handle_memory_set_from_messages(extract_in)"
+    )

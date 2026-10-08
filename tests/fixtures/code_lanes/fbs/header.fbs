@@ -1,0 +1,9 @@
+namespace ledger.proto;
+
+/// Every message starts with this.
+table Header {
+  version: uint16;
+  request_id: uint64;
+}
+
+root_type Header;

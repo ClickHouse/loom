@@ -1,0 +1,138 @@
+"""Handlers for memory.proposals and memory.proposal_decide."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from server.core.ch import get_client
+from server.memory.api.models_proposals import (
+    MemoryProposal,
+    MemoryProposalDecideInput,
+    MemoryProposalDecideOutput,
+    MemoryProposalDecision,
+    MemoryProposalsInput,
+    MemoryProposalsOutput,
+)
+
+log = logging.getLogger(__name__)
+
+# A listing reads at most this many proposals before `only` / `limit` — the
+# graded counts are one statement over them; a namespace holding more on
+# trial than this is a queue nobody is deciding, not a page.
+_SCAN_CAP = 2000
+
+
+async def handle_memory_proposals(input: MemoryProposalsInput) -> MemoryProposalsOutput:
+    from server.memory.app import proposals as _p
+
+    ch = get_client()
+    where = [
+        "org = {org:String}",
+        "namespace = {ns:String}",
+        "tombstoned_at IS NULL",
+        "status = 'proposed'",
+    ]
+    params: dict[str, Any] = {"org": input.org, "ns": input.namespace, "cap": _SCAN_CAP}
+    if input.prefix:
+        where.append("startsWith(memory_key, {p:String})")
+        params["p"] = input.prefix
+    if input.tags:
+        where.append("hasAny(tags, {tags:Array(String)})")
+        params["tags"] = list(input.tags)
+    rows = await ch.query_all(
+        f"""
+        SELECT memory_key, toString(memory_id) AS mid, agent, memory_type,
+               substring(value, 1, 400) AS preview, tags, toString(created_at) AS created,
+               conflict_with
+        FROM loom.memory FINAL
+        WHERE {" AND ".join(where)}
+        ORDER BY created_at DESC
+        LIMIT {{cap:UInt32}}
+        """,
+        params=params,
+    )
+    policy = await _p.policy_for(input.org, input.namespace, ch=ch)
+    keys = [str(r["memory_key"]) for r in rows]
+    counts = await _p.graded_counts(ch, input.org, input.namespace, keys)
+    usage = await _usage_counts(ch, input.org, input.namespace, [str(r["mid"]) for r in rows])
+    out: list[MemoryProposal] = []
+    for r in rows:
+        key, mid = str(r["memory_key"]), str(r["mid"])
+        c = counts.get(key, _p.GradedCounts())
+        ready = _p.policy_verdict(policy, c) or ""
+        if input.only == "ready" and not ready:
+            continue
+        used, harm = usage.get(mid, (0, 0))
+        out.append(
+            MemoryProposal(
+                memory_key=key,
+                memory_id=mid,
+                agent=str(r.get("agent") or ""),
+                memory_type=str(r.get("memory_type") or ""),
+                value_preview=str(r.get("preview") or ""),
+                tags=[str(t) for t in (r.get("tags") or [])],
+                created_at=str(r.get("created") or ""),
+                graded_passes=c.passes,
+                graded_fails=c.fails,
+                last_graded_at=c.last_graded_at,
+                used_count=used,
+                harm_count=harm,
+                ready=ready,
+                conflict_with=[str(x) for x in (r.get("conflict_with") or []) if x],
+            )
+        )
+    return MemoryProposalsOutput(
+        proposals=out[: input.limit],
+        total=len(rows),
+        policy=policy,
+    )
+
+
+async def _usage_counts(
+    ch: Any, org: str, namespace: str, memory_ids: list[str]
+) -> dict[str, tuple[int, int]]:
+    """(used, harm) per memory id from the usage totals; {} when unreadable
+    (the listing never fails on a counter)."""
+    if not memory_ids:
+        return {}
+    try:
+        rows = await ch.query_all(
+            """
+            SELECT toString(memory_id) AS mid, sum(used_count) AS used, sum(harm_count) AS harm
+            FROM loom.memory_usage_totals
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND memory_id IN {ids:Array(UUID)}
+            GROUP BY memory_id
+            """,
+            params={"org": org, "ns": namespace, "ids": memory_ids},
+        )
+    except Exception as e:  # noqa: BLE001 — proposals list without usage
+        log.warning("memory.proposals: usage counts unreadable for %s: %s", namespace, e)
+        return {}
+    return {str(r["mid"]): (int(r.get("used") or 0), int(r.get("harm") or 0)) for r in rows}
+
+
+async def handle_memory_proposal_decide(
+    input: MemoryProposalDecideInput,
+) -> MemoryProposalDecideOutput:
+    from server.memory.app import proposals as _p
+    from server.memory.app.provenance import writer_actor
+
+    results = await _p.decide(
+        input.org,
+        input.namespace,
+        list(input.memory_keys),
+        input.decision,
+        actor=writer_actor() or "-",
+        reason=input.reason,
+    )
+    return MemoryProposalDecideOutput(
+        decided=sum(1 for r in results if r.decided),
+        results=[
+            MemoryProposalDecision(
+                memory_key=r.memory_key, decided=r.decided, status=r.status, reason=r.reason
+            )
+            for r in results
+        ],
+    )

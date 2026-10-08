@@ -1,0 +1,111 @@
+#!/usr/bin/env node
+// A plugin-only client's status check. No Loom checkout, Python or SDK needed.
+import { readdirSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { decodeTokenClaims, requestJson, resolveScope, resolveServerUrl, resolveToken } from "../lib/loom-client.mjs";
+
+const FLUSH_RE = /^loom-flush-\d{13}-\d+\.json$/;
+const WRITER_ROLES = new Set(["writer", "admin", "jwt", "org_admin", "platform_admin"]);
+
+function staleFlushCount(directory, now) {
+  try {
+    return readdirSync(directory).filter((name) => {
+      if (!FLUSH_RE.test(name)) return false;
+      try {
+        return now - statSync(join(directory, name)).mtimeMs > 600_000;
+      } catch {
+        return false;
+      }
+    }).length;
+  } catch {
+    return 0;
+  }
+}
+
+export async function clientStatus({
+  serverUrl,
+  token,
+  scope,
+  fetchImpl = fetch,
+  now = Date.now(),
+  tempDirectory = tmpdir(),
+} = {}) {
+  const checks = [];
+  const add = (name, grade, detail) => checks.push({ name, grade, detail });
+  const health = await requestJson(`${serverUrl}/v1/health`, { method: "GET", timeoutMs: 5000, fetchImpl });
+  if (health.status === 200) {
+    add("server", "PASS", `${serverUrl} answers; build ${health.body?.build_commit || "unknown"}`);
+  } else {
+    add(
+      "server",
+      "FAIL",
+      health.status
+        ? `${serverUrl} answered HTTP ${health.status}`
+        : `cannot reach ${serverUrl}: ${health.error || "network error"}`,
+    );
+  }
+
+  const claims = decodeTokenClaims(token);
+  const validJwt = Boolean(token && token.split(".").length === 3 && Object.keys(claims).length);
+  if (!validJwt) {
+    add("token", "FAIL", token ? "token is not a readable JWT" : "no Loom token resolved");
+  } else if (typeof claims.exp === "number" && claims.exp * 1000 <= now) {
+    add("token", "FAIL", "token has expired");
+  } else {
+    add("token", "PASS", `${claims.sub || "unknown subject"} @ ${claims.org || "unknown org"}`);
+  }
+
+  if (health.status === 200 && checks.at(-1)?.grade === "PASS") {
+    const auth = await requestJson(`${serverUrl}/v1/namespace.list_mine`, {
+      body: { org: scope.org },
+      token,
+      timeoutMs: 10000,
+      fetchImpl,
+    });
+    if (auth.status === 200 && Array.isArray(auth.body?.rows)) {
+      const rows = auth.body.rows;
+      add("auth", "PASS", `token accepted; ${rows.length} namespace(s) listed`);
+      const row = rows.find((item) => item.namespace === scope.namespace && item.status !== "pending");
+      if (row && WRITER_ROLES.has(row.role)) {
+        add("namespace", "PASS", `${scope.namespace} has ${row.role} grant for hook writes`);
+      } else {
+        add("namespace", "FAIL", `${scope.namespace} has no listed writer grant`);
+      }
+    } else if (auth.status === 401 || auth.status === 403) {
+      add("auth", "FAIL", `server rejected token (HTTP ${auth.status})`);
+    } else {
+      add(
+        "auth",
+        "WARN",
+        auth.status
+          ? `namespace.list_mine answered HTTP ${auth.status}`
+          : `namespace.list_mine unreachable: ${auth.error || "network error"}`,
+      );
+    }
+  } else {
+    add("auth", "WARN", "skipped until server and token pass");
+  }
+
+  const stranded = staleFlushCount(tempDirectory, now);
+  add(
+    "flush",
+    stranded ? "WARN" : "PASS",
+    stranded ? `${stranded} capture job(s) older than ten minutes in ${tempDirectory}` : "no stale capture jobs",
+  );
+  const required = ["server", "token", "auth", "namespace"];
+  return {
+    ok: required.every((name) => checks.some((check) => check.name === name && check.grade === "PASS")),
+    checks,
+  };
+}
+
+if (process.env.LOOM_HOOK_NO_MAIN !== "1") {
+  const result = await clientStatus({
+    serverUrl: resolveServerUrl(),
+    token: resolveToken(),
+    scope: resolveScope(process.cwd()),
+  });
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  if (!result.ok) process.exitCode = 1;
+}

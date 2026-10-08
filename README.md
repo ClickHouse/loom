@@ -1,0 +1,182 @@
+<h1 align="center">Loom</h1>
+
+<p align="center">
+  <b>Shared memory and code intelligence for AI agents.</b><br>
+  Persistent context, grounded retrieval and multi-agent coordination—built on ClickHouse.
+</p>
+
+<p align="center">
+  <a href="#measured-results">Benchmarks</a> ·
+  <a href="#get-started">Get started</a> ·
+  <a href="#why-loom">Capabilities</a> ·
+  <a href="#integrations">Integrations</a> ·
+  <a href="./docs/index.md">Documentation</a>
+</p>
+
+![Loom dashboard showing shared agent memories, a pinned fact and flagged conflicts](./docs/images/dashboard-memories.png)
+
+Loom gives your agents a shared place to remember decisions, find relevant code and
+documents, and hand work to each other. Context persists across tools and sessions,
+so the next agent can build on what the previous one learned.
+
+Connect Claude Code, Codex, Cursor or your own agents through MCP, HTTP, Python or
+TypeScript. Self-host with Docker; agent context and index data live in ClickHouse.
+The dashboard brings memories, repositories, tasks and runs into one place.
+
+## Measured results
+
+| Evaluation                     | With Loom | Without Loom | Efficiency gain                    | Scope                              |
+| ------------------------------ | --------- | ------------ | ---------------------------------- | ---------------------------------- |
+| Coding-agent answer quality    | **0.84**  | 0.78         | **20% lower** model cost           | 24 questions × 3 paired runs       |
+| Coding-agent file localization | **96.4%** | 91.4%        | **21% lower** model cost           | 36 questions × 10 paired runs      |
+| Memory vs full-history answers | **94%**   | 90%          | **91% fewer** reader prompt tokens | 100 paired LongMemEval-S questions |
+
+Both coding setups use Claude Code (`claude-sonnet-5`) on the ClickHouse codebase;
+cost is the whole session's model bill, excluding hosting and indexing. Answer quality
+measures coverage of a verified answer's key points, with a contradiction penalty.
+File localization counts the right file among three named files.
+
+The memory row compares retrieved memories with full conversation history using
+the same `gpt-5` reader. Token savings exclude memory construction; the 94% vs 90%
+accuracy difference is descriptive, not statistically established.
+
+**Separately, Loom's `memory.ask` configuration scored 96.6% answer accuracy on all
+500 LongMemEval-S questions.** This is a product evaluation with its own configured
+answer models, not the fixed-reader comparison above.
+
+Results are specific to the tested workloads.
+
+[Protocols and reproducible artifacts](./docs/benchmarks/results.md) ·
+[detailed results](#benchmark-details) ·
+[evaluate on your workload](./docs/getting-started/evaluate.md)
+
+## Get started
+
+### 1. Choose your Docker setup
+
+- **Personal use—the default:** no login, localhost-only access and a `dev/local`
+  namespace. One person can connect multiple agents.
+- **Team use:** authenticated accounts and namespace access controls.
+  [Start in multi-user mode from the first boot](./docs/getting-started/quickstart.md#start-in-multi-user-mode).
+
+Both modes support the same Loom features, including configured LLMs and embeddings.
+Single-user is not a reduced-feature edition. You can also
+[switch an existing installation without deleting its data](./docs/getting-started/quickstart.md#2-open-the-dashboard);
+grant new accounts access to the existing namespaces.
+
+For the default personal installation, with Docker installed:
+
+```bash
+curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh | sh
+```
+
+The installer starts Loom and ClickHouse, applies migrations and prints the dashboard URL:
+**http://localhost:7777/me**. The image includes the server, workers, dashboard and
+Python, TypeScript and Go compiler indexers; TypeScript dependencies are prepared
+automatically. [Quickstart and pinned releases](./docs/getting-started/quickstart.md)
+
+Keep single-user mode localhost-only. For shared access, follow the
+[team deployment guide](./docs/operations/deployment.md#identity-modes), including TLS.
+
+### 2. Configure models and API keys
+
+**The stock installation boots without keys using fake providers.** Storage, the
+dashboard and structural code indexing work, but these defaults do not provide useful
+semantic search or AI-generated answers.
+
+| Component  | Configure for real use                             | Without configuration                                                  |
+| ---------- | -------------------------------------------------- | ---------------------------------------------------------------------- |
+| Embeddings | Provider, embedding model, dimensions and API key. | `fake-ngram-3072`: character-overlap matching, not semantic retrieval. |
+| LLM        | Provider, model and API key.                       | `fake-echo-1`: no meaningful extraction, summaries or answers.         |
+
+Open **Settings → Models & keys**, choose both providers and models, enter their
+keys, then click **Test & apply**. No Docker restart is needed; changing the embedding
+space rebuilds the existing index.
+
+**One OpenAI API key can serve both roles.** Claude needs a separate embedding provider.
+OpenAI, Gemini and OpenAI-compatible embedding endpoints are supported. Your agent's
+CLI login or subscription does not supply Loom's provider keys.
+
+Prefer environment configuration? A key alone in `.env` does not replace the pinned
+fake models. Follow [models and API keys](./docs/getting-started/models-and-keys.md) for
+provider recipes and health checks.
+
+### 3. Connect your agents
+
+Open **Settings → Tokens → New token** for client setup instructions, then
+[connect your coding agent](./docs/getting-started/connect-a-coding-agent.md) or
+[build an agent with the SDK](./docs/getting-started/first-agent.md).
+Tokens are optional in single-user mode and required in multi-user mode.
+
+## Why Loom
+
+- **Memory that carries forward.** Share decisions and findings across agents and
+  sessions. Version history, pinned facts and conflict review make corrections
+  traceable. [Memory](./docs/concepts/memory.md)
+- **Code intelligence with evidence.** Find definitions, callers, change impact and
+  relevant tests; connect code to commits, pull requests and issues. Results identify
+  their revision, source location and completeness. [Code index](./docs/features/code-index/overview.md)
+- **Grounded retrieval.** Search permitted memories, documents, conversations and
+  tracker records. Answers cite their sources; low-confidence retrieval can abstain.
+  [Retrieval](./docs/concepts/retrieval-and-ranking.md)
+- **Multi-agent handoffs.** Share findings and assign work through durable task inboxes
+  with leases, retries, review rules and outcomes. Your agents execute the workflow;
+  Loom preserves the handoffs. [Task queues](./docs/features/tasks-and-decisions.md)
+- **Control over agent data.** Manage namespace access, provenance, retention, audit
+  records and verified erasure. Context remains queryable in ClickHouse.
+  [Security](./docs/architecture/security.md)
+
+A research agent can post a task, a coding agent can claim it, and a reviewer can
+inspect the outcome—all using shared findings. Two or more agents can coordinate in
+either deployment mode.
+
+[Conversations](./docs/features/conversations-and-sessions.md) preserve searchable
+dialogue when recording is enabled; session briefs help resume work.
+[Runs](./docs/features/runs.md) record goals, outcomes, memories used and model costs
+when supplied.
+
+## Integrations
+
+| Integration                                                                                                                           | What it connects                                                              |
+| ------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| [Claude Code, Codex, Cursor and other MCP clients](./docs/features/integrations/index.md)                                             | Memory and code intelligence in your existing agent workflow.                 |
+| [Python](./docs/reference/python-sdk.md), [TypeScript](./docs/reference/typescript-sdk.md) and [HTTP](./docs/reference/operations.md) | Your own agents and applications.                                             |
+| [Langfuse](./docs/features/integrations/langfuse.md)                                                                                  | Request traces, model costs, retrieval scores and prompt-version attribution. |
+| [ClickStack / HyperDX](./docs/features/integrations/clickstack.md)                                                                    | OpenTelemetry traces, logs and metrics in ClickHouse.                         |
+
+Langfuse and ClickStack are optional integrations, not bundled services in the Docker stack.
+
+## Benchmark details
+
+### Detailed retrieval, reader and code-search results
+
+| Evaluation                                            | Result                                                                                             |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| LongMemEval-S evidence retrieval (500 questions)      | **98.6%** of questions with at least one supporting session in the first 30 memories.              |
+| LongMemEval-S fixed `gpt-5` reader (500 questions)    | **92.0%** answer accuracy from the top 200 memories.                                               |
+| LoCoMo (all 10 conversations)                         | **89.6%** answer accuracy; **90.8%** correct abstentions on adversarial questions.                 |
+| MemoryAgentBench fact-question sample (500 questions) | **99.0%** SubEM; **95.7%** token-overlap F1 on generated answers.                                  |
+| Conceptual code search (36 questions)                 | Gold-file recall **91.2%** at 5 / **97.2%** at 10; MRR **0.91**.                                   |
+| SWE-bench Verified file localization (200 issues)     | Issues with a changed file in the first 10: **82%** vs **57%** for BM25; **76.5%** in the first 5. |
+| Tracker duplicate detection (104 pairs)               | Recorded older duplicate ranked first **87.5%** of the time.                                       |
+
+These measure different tasks, not one aggregate score. SWE-bench measures
+file localization, not issue resolution. The [results ledger](./docs/benchmarks/results.md)
+includes scoring definitions, small-sample evaluations, weaker and negative findings,
+and the full protocols, models and artifacts.
+
+[Methodology](./docs/benchmarks/methodology.md) ·
+[coverage and known gaps](./docs/benchmarks/coverage.md) ·
+[run the benchmarks](./docs/benchmarks/running.md)
+
+## Documentation and contributing
+
+For shared agent context, code intelligence and permissioned retrieval, start with the
+[documentation](./docs/index.md). For deployment requirements and when Loom is a good fit,
+see the [fit guide](./docs/getting-started/overview.md#when-loom-fits).
+
+[Deployment](./docs/operations/deployment.md) · [FAQ](./docs/faq.md) ·
+[Contributing](./CONTRIBUTING.md) · [Security reporting](./SECURITY.md) ·
+[`llms.txt`](./llms.txt)
+
+Apache-2.0 · [License](./LICENSE) · [Notice](./NOTICE)

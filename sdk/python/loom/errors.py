@@ -1,0 +1,199 @@
+"""SDK exception hierarchy mirroring server error codes."""
+
+from __future__ import annotations
+
+from typing import Any
+
+
+class LoomError(Exception):
+    """Base class for all SDK errors.
+
+    `code` is the server's `detail.code`; `request_id` is the `X-Request-Id`
+    the server echoed (or the one this SDK sent), so a failure can be found
+    in the server's ledger. `status` is the HTTP status, 0 when the request
+    never got a response. `detail` is the server's `detail` object — `code`,
+    `message` and whatever the error adds (`errors`, `table`,
+    `retry_after_s`, …); `{}` when the response carried none.
+    """
+
+    code: str = "INTERNAL_ERROR"
+    request_id: str = ""
+    status: int = 0
+    detail: dict[str, Any]
+
+    def __init__(self, *args: object) -> None:
+        super().__init__(*args)
+        self.detail = {}
+
+
+class ValidationError(LoomError):
+    code = "VALIDATION_FAILED"
+
+
+class AuthInvalid(LoomError):
+    code = "AUTH_INVALID"
+
+
+class AuthInsufficient(LoomError):
+    code = "AUTH_INSUFFICIENT"
+
+
+class NotFound(LoomError):
+    code = "RESOURCE_NOT_FOUND"
+
+
+class BackendUnavailable(LoomError):
+    code = "BACKEND_UNAVAILABLE"
+
+
+#: The wait assumed when the server names none (or one past the cap).
+DEFAULT_RETRY_AFTER_S = 1.0
+
+
+class RateLimited(BackendUnavailable):
+    """Rate-limited by the server.
+
+    Subclasses BackendUnavailable so callers catching the broader class still
+    match. Carries `retry_after_s` (from the server's Retry-After header) so
+    retry layers can honor the server's hint.
+    """
+
+    code = "RATE_LIMITED"
+    retry_after_s: float = DEFAULT_RETRY_AFTER_S
+
+    def __init__(self, message: str = "", retry_after_s: float = DEFAULT_RETRY_AFTER_S) -> None:
+        super().__init__(message or f"rate-limited; retry-after={retry_after_s:g}s")
+        self.retry_after_s = retry_after_s
+
+
+class Overloaded(BackendUnavailable):
+    """503 OVERLOADED — every pooled ClickHouse connection of the serving
+    process was busy for longer than its slot wait. Retry
+    after `retry_after_s`; a client that spreads its calls or lowers its
+    concurrency stops seeing it."""
+
+    code = "OVERLOADED"
+    retry_after_s: float = DEFAULT_RETRY_AFTER_S
+
+    def __init__(self, message: str = "", retry_after_s: float = DEFAULT_RETRY_AFTER_S) -> None:
+        super().__init__(message or f"server overloaded; retry-after={retry_after_s:g}s")
+        self.retry_after_s = retry_after_s
+
+
+class BackendTimeout(BackendUnavailable):
+    """504 BACKEND_TIMEOUT — a ClickHouse statement behind the call ran past
+    its class deadline and was not retried."""
+
+    code = "BACKEND_TIMEOUT"
+
+
+class SchemaPending(BackendUnavailable):
+    """503 SCHEMA_PENDING — the call needed a table that a migration the
+    server's build carries has not yet been applied to its ClickHouse.
+    `detail` names `table` and `migration`; retry once the
+    service has migrated."""
+
+    code = "SCHEMA_PENDING"
+
+
+#: `code` of a `BackendUnavailable` for a request that got no complete
+#: response: the server could not be reached, or its answer was cut off.
+NETWORK_ERROR_CODE = "NETWORK"
+#: `code` of a `LoomError` for a 2xx whose body is not a JSON object — a proxy
+#: or gateway page, most often. Not retried: the server may have acted.
+INVALID_RESPONSE_CODE = "INVALID_RESPONSE"
+
+
+class IdempotentConflict(LoomError):
+    """An Idempotency-Key was reused with a different request body."""
+
+    code = "IDEMPOTENT_CONFLICT"
+
+
+class PreconditionFailed(LoomError):
+    """An if_match_sha256 precondition didn't match the live row's hash.
+
+    Carries the server's current hash in `.current_sha256` so a caller can
+    re-read and retry without an extra get round-trip.
+    """
+
+    code = "PRECONDITION_FAILED"
+    current_sha256: str = ""
+
+    def __init__(self, message: str = "", current_sha256: str = "") -> None:
+        super().__init__(message)
+        self.current_sha256 = current_sha256
+
+
+ERROR_CODES: dict[str, type[LoomError]] = {
+    "VALIDATION_FAILED": ValidationError,
+    "AUTH_INVALID": AuthInvalid,
+    "AUTH_INSUFFICIENT": AuthInsufficient,
+    "RESOURCE_NOT_FOUND": NotFound,
+    "RATE_LIMITED": RateLimited,
+    "BACKEND_UNAVAILABLE": BackendUnavailable,
+    "OVERLOADED": Overloaded,
+    "BACKEND_TIMEOUT": BackendTimeout,
+    "SCHEMA_PENDING": SchemaPending,
+    "IDEMPOTENT_CONFLICT": IdempotentConflict,
+    "PRECONDITION_FAILED": PreconditionFailed,
+}
+
+
+# HTTP status → error class when the body carries no `detail.code` (a route the
+# server does not have answers FastAPI's plain `{"detail": "Not Found"}`; a
+# proxy may answer text). Mirrors the TypeScript SDK's `errorFromResponse`.
+_STATUS_CLASSES: dict[int, type[LoomError]] = {
+    400: ValidationError,
+    401: AuthInvalid,
+    403: AuthInsufficient,
+    404: NotFound,
+    409: PreconditionFailed,
+    412: PreconditionFailed,
+    422: ValidationError,
+}
+
+
+def from_response(
+    payload: object,
+    status: int | None = None,
+    *,
+    request_id: str = "",
+    retry_after_s: float | None = None,
+) -> LoomError:
+    """The exception for a server error body: a known `detail.code` picks the
+    class, else the HTTP `status` does (the table above; any other 5xx is
+    `BackendUnavailable`), so a handler-specific code such as
+    `PINNED_CONFLICT` or a proxy's error page still raises a class a caller
+    can catch. A 429 is always `RateLimited`, a 5xx always a
+    `BackendUnavailable`. `.code` keeps the server's code; `.detail` its
+    detail object; `retry_after_s` lands on the classes that carry it."""
+    detail = payload.get("detail") if isinstance(payload, dict) else None
+    code = ""
+    if isinstance(detail, dict):
+        code = str(detail.get("code") or "")
+        message = str(detail.get("message", ""))
+    elif isinstance(detail, str):
+        message = detail
+    else:
+        message = str(payload)[:500]
+    status = int(status or 0)
+    cls = ERROR_CODES.get(code) or _STATUS_CLASSES.get(status, LoomError)
+    if status == 429:
+        cls = RateLimited
+    elif status >= 500 and not issubclass(cls, BackendUnavailable):
+        cls = BackendUnavailable
+    code = code or cls.code
+    err = cls(f"[{code}] {message}" if message else code)
+    err.code = code
+    err.status = status
+    err.request_id = request_id
+    if isinstance(detail, dict):
+        err.detail = dict(detail)
+    elif message:
+        err.detail = {"message": message}
+    if retry_after_s is not None and hasattr(err, "retry_after_s"):
+        err.retry_after_s = float(retry_after_s)
+    if "current_sha256" in err.detail and hasattr(err, "current_sha256"):
+        err.current_sha256 = str(err.detail["current_sha256"])
+    return err

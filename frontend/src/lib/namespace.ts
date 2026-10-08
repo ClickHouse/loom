@@ -1,0 +1,183 @@
+import type { MyNamespaceEntry } from "../api";
+import type { View } from "./state";
+
+/**
+ * Which namespace the dashboard lands on.
+ *
+ * The JWT `namespaces` claim is an access list, not a preference: its
+ * first entry is whatever the token minter wrote first (a bot corpus
+ * such as a public shared namespace, or the wildcard `*`). Landing
+ * there showed people someone else's memories, and `*` became a
+ * literal namespace name that every query then read as
+ * `WHERE namespace = '*'` — an empty dashboard with no error.
+ *
+ * Order, first match wins:
+ *   1. the saved pick, if the user can still reach it;
+ *   2. a namespace the user administers — `namespace.list_mine` carries
+ *      no owner field, so `role === "admin"` is the owner signal; the
+ *      server's auto-claimed `personal-*` row first, then the oldest
+ *      admin grant (the one the user created first);
+ *   3. the first claim that names a real namespace;
+ *   4. nothing — the caller lands on Setup and opens the picker; it never
+ *      invents a name.
+ *
+ * Code indexes and tracker namespaces (`kind` code / qa) are reference data,
+ * never a memory identity and never the landing *default* while a memory namespace is
+ * reachable; a claim on one is still reachable — a saved pick of `code-clickhouse` is
+ * honoured, because the Explorer's Patterns mode lives there. `*` is never a namespace
+ * name.
+ *
+ * A token that names ONLY code and/or QA namespaces — a QA team, a reviewer, a code-index
+ * service account — is a real persona, not a misconfiguration. On bare `/me` it lands on
+ * Repositories (`landingTarget`) with the picker on its first reachable code or tracker
+ * namespace (code before qa, alphabetical within); only a token that reaches nothing
+ * lands on Setup. An explicit path always wins (`deepLinkNamespace`): a deep link keeps
+ * its view, and when the default-namespace chain finds no namespace the view takes the
+ * first reachable namespace of the kind it needs — a memory view a memory one (none → its
+ * own empty state), every other view a code or QA one.
+ */
+export const WILDCARD_NAMESPACE = "*";
+
+/** A name the dashboard may switch into: a real namespace, whatever its kind. */
+function isReachableNamespace(m: Pick<MyNamespaceEntry, "namespace">): boolean {
+  return m.namespace !== WILDCARD_NAMESPACE && m.namespace !== "";
+}
+
+/** A reference-data kind: a code index or a tracker namespace. */
+export function isReferenceKind(kind: MyNamespaceEntry["kind"] | string | null | undefined): boolean {
+  // the tracker registry still writes kind "qa" for a tracker namespace
+  return kind === "code" || kind === "tracker" || kind === "qa";
+}
+
+/** A namespace that may be the memory landing default: reachable and a
+ *  memory identity — a code index or a tracker namespace never is. */
+export function isSelectableNamespace(m: Pick<MyNamespaceEntry, "namespace" | "kind">): boolean {
+  return isReachableNamespace(m) && !isReferenceKind(m.kind);
+}
+
+/** The server's `kind` for `namespace`, from the list_mine rows the app
+ *  holds; undefined when the rows do not name it (or were never loaded). */
+export function kindOf(
+  namespace: string,
+  mine: readonly MyNamespaceEntry[] | null,
+): MyNamespaceEntry["kind"] | undefined {
+  return mine?.find((m) => m.namespace === namespace)?.kind;
+}
+
+/** True when `namespace` is a name a memory view may read from: non-empty
+ *  and not a code or tracker namespace. An unknown kind (no list_mine row, or
+ *  list_mine failed) reads as memory. */
+export function isMemoryNamespace(namespace: string, mine: readonly MyNamespaceEntry[] | null): boolean {
+  return namespace !== "" && namespace !== WILDCARD_NAMESPACE && !isReferenceKind(kindOf(namespace, mine));
+}
+
+/** Views that read the memory plane of the picked namespace. Everything else —
+ *  Repositories, Graph, Discover, Setup, the admin views — reads the org, the code plane
+ *  or the tracker plane and works on a code or tracker namespace. */
+const MEMORY_VIEWS: ReadonlySet<View> = new Set<View>([
+  "memories",
+  "recall",
+  "profile",
+  "knowledge",
+  "sharing",
+  "sessions",
+  "runs",
+  // An inbox is owned by a memory namespace.
+  "tasks",
+]);
+
+export function needsMemoryNamespace(view: View): boolean {
+  return MEMORY_VIEWS.has(view);
+}
+
+/** The set the picker may switch into: real claims plus list_mine rows. */
+export function reachableNamespaces(claims: readonly string[], mine: readonly MyNamespaceEntry[]): Set<string> {
+  const allowed = new Set(claims.filter((ns) => ns !== WILDCARD_NAMESPACE && ns !== ""));
+  for (const m of mine) {
+    if (isReachableNamespace(m)) allowed.add(m.namespace);
+  }
+  return allowed;
+}
+
+/** The auto-claimed personal namespace (`personal-<subject>`), the one row a
+ *  brand-new account has before it creates or joins anything. */
+export function isPersonalNamespace(ns: string): boolean {
+  return ns.startsWith("personal-");
+}
+
+function ownNamespace(mine: readonly MyNamespaceEntry[]): string | null {
+  const admin = mine.filter(
+    (m) => m.role === "admin" && (m.status ?? "active") === "active" && isSelectableNamespace(m),
+  );
+  if (admin.length === 0) return null;
+  const personal = admin.find((m) => isPersonalNamespace(m.namespace));
+  if (personal) return personal.namespace;
+  const byOldestGrant = [...admin].sort(
+    (a, b) => (a.joined_at ? Date.parse(a.joined_at) : Infinity) - (b.joined_at ? Date.parse(b.joined_at) : Infinity),
+  );
+  return byOldestGrant[0].namespace;
+}
+
+export function landingNamespace(
+  saved: string | null,
+  claims: readonly string[],
+  mine: readonly MyNamespaceEntry[],
+): string | null {
+  const allowed = reachableNamespaces(claims, mine);
+  if (saved && allowed.has(saved)) return saved;
+  const own = ownNamespace(mine);
+  if (own) return own;
+  // The first real claim — never a code index or a tracker namespace by default.
+  const reference = new Set(mine.filter((m) => !isSelectableNamespace(m)).map((m) => m.namespace));
+  const firstClaim = claims.find((ns) => allowed.has(ns) && !reference.has(ns));
+  return firstClaim ?? null;
+}
+
+/** The reachable code and tracker namespaces, in the order the dashboard offers
+ *  them as a landing: code indexes first, then tracker namespaces, alphabetical
+ * within each. The kind comes from list_mine — grant rows and claim-only rows alike carry
+ *  it — so a claim with no row is not here. */
+export function referenceNamespaces(claims: readonly string[], mine: readonly MyNamespaceEntry[]): string[] {
+  const allowed = reachableNamespaces(claims, mine);
+  const rank = (kind: MyNamespaceEntry["kind"]) => (kind === "code" ? 0 : 1);
+  return mine
+    .filter((m) => allowed.has(m.namespace) && isReferenceKind(m.kind) && (m.status ?? "active") === "active")
+    .sort((a, b) => rank(a.kind) - rank(b.kind) || a.namespace.localeCompare(b.namespace))
+    .map((m) => m.namespace)
+    .filter((ns, i, all) => all.indexOf(ns) === i);
+}
+
+/** Where bare `/me` lands. `view` is null when the default-namespace chain found a memory
+ *  namespace — the caller keeps its own default view for that case. */
+interface LandingTarget {
+  view: "code" | "setup" | null;
+  namespace: string | null;
+}
+
+export function landingTarget(
+  saved: string | null,
+  claims: readonly string[],
+  mine: readonly MyNamespaceEntry[],
+): LandingTarget {
+  const ns = landingNamespace(saved, claims, mine);
+  if (ns) return { view: isReferenceKind(kindOf(ns, mine)) ? "code" : null, namespace: ns };
+  const reference = referenceNamespaces(claims, mine);
+  if (reference.length > 0) return { view: "code", namespace: reference[0] };
+  return { view: "setup", namespace: null };
+}
+
+/** The namespace a deep link opens on: the default-namespace chain when it finds one;
+ *  otherwise the first reachable code or tracker namespace for a view that does not need
+ *  the memory plane, and nothing for one that does — that view renders its own empty
+ *  state. The view itself is never changed by the namespace rule. */
+export function deepLinkNamespace(
+  view: View,
+  saved: string | null,
+  claims: readonly string[],
+  mine: readonly MyNamespaceEntry[],
+): string | null {
+  const ns = landingNamespace(saved, claims, mine);
+  if (ns) return ns;
+  if (needsMemoryNamespace(view)) return null;
+  return referenceNamespaces(claims, mine)[0] ?? null;
+}

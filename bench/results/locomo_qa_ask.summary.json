@@ -1,0 +1,403 @@
+{
+ "dataset": "bench/datasets/locomo10.json",
+ "conversations": 10,
+ "questions": 1986,
+ "reader": "ask",
+ "reader_model": "loom:memory.ask",
+ "reader_prompt": "",
+ "judge_model": "gpt-4.1",
+ "search_mode": "",
+ "top_k": 10,
+ "embedding_model": "",
+ "extraction_instructions": false,
+ "ingest_json": "",
+ "search_json": "",
+ "ingest_concurrency": 1,
+ "policies": [
+  "default"
+ ],
+ "write_path": {
+  "conversations_ingested": 0,
+  "sessions": 0,
+  "memories_written": 0,
+  "extraction_tokens_in": 0,
+  "extraction_tokens_out": 0,
+  "extraction_model": "",
+  "ingest_errors": 0,
+  "ingest_seconds": 0
+ },
+ "judge_agreement": null,
+ "judge_protocol": {
+  "scale": "binary CORRECT/WRONG against the gold answer",
+  "adversarial": "abstain scores CORRECT; any assertion scores WRONG",
+  "reader_model": "gpt-4.1-mini",
+  "judge_model": "gpt-4.1",
+  "comparable_published_column": "categories 1-4 (papers exclude adversarial)"
+ },
+ "read_path": {
+  "reader_judge_calls": 1986,
+  "reader_judge_tokens_in": 799374,
+  "reader_judge_tokens_out": 13886,
+  "reader_judge_tokens_per_question": 409.5,
+  "search_p50_ms": 2482,
+  "search_p95_ms": 6031,
+  "answer_p50_ms": null,
+  "total_p50_ms": 2480,
+  "total_p95_ms": 6031,
+  "search_seconds_total": 5757.9
+ },
+ "footprint": {
+  "token_estimate": "chars/4 (memory.health footprint.value_tokens_est)",
+  "conversations_measured": 10,
+  "memories_per_conversation_mean": 264.6,
+  "memory_tokens_per_conversation_mean": 6650,
+  "per_namespace": {
+   "conv-26": {
+    "memories": 217,
+    "tokens_est": 6104,
+    "error": 0
+   },
+   "conv-30": {
+    "memories": 166,
+    "tokens_est": 3877,
+    "error": 0
+   },
+   "conv-41": {
+    "memories": 294,
+    "tokens_est": 7796,
+    "error": 0
+   },
+   "conv-42": {
+    "memories": 278,
+    "tokens_est": 6914,
+    "error": 0
+   },
+   "conv-43": {
+    "memories": 298,
+    "tokens_est": 7486,
+    "error": 0
+   },
+   "conv-44": {
+    "memories": 223,
+    "tokens_est": 5549,
+    "error": 0
+   },
+   "conv-47": {
+    "memories": 357,
+    "tokens_est": 8645,
+    "error": 0
+   },
+   "conv-48": {
+    "memories": 339,
+    "tokens_est": 8804,
+    "error": 0
+   },
+   "conv-49": {
+    "memories": 238,
+    "tokens_est": 5318,
+    "error": 0
+   },
+   "conv-50": {
+    "memories": 236,
+    "tokens_est": 6008,
+    "error": 0
+   }
+  }
+ },
+ "operation_latency_per_query_s": 2.9,
+ "construction_share": 0.0,
+ "repeats": {
+  "questions_repeated": 0,
+  "unstable": 0,
+  "unstable_rate": null,
+  "agreement_mean": null,
+  "flip_rate": null,
+  "window_identical_rate": null,
+  "flip_rate_identical_window": null,
+  "flip_rate_changed_window": null,
+  "run_accuracy_comparable": {
+   "runs": 0,
+   "accuracies": [],
+   "mean": null,
+   "sd": null
+  },
+  "run_accuracy_all": {
+   "runs": 0,
+   "accuracies": [],
+   "mean": null,
+   "sd": null
+  }
+ },
+ "recall": {
+  "recall_at_5": 85.26,
+  "recall_at_10": 90.57,
+  "zero_recall_at_5": 208,
+  "zero_recall_at_5_correct": 167,
+  "zero_recall_at_10": 126,
+  "zero_recall_at_10_correct": 101
+ },
+ "papers_table": {
+  "f1_over_questions": 10.53,
+  "bleu1_over_questions": 6.37,
+  "f1_over_categories": 8.3,
+  "bleu1_over_categories": 4.94,
+  "f1_simplified_over_questions": 23.65,
+  "context_tokens_mean": 4211,
+  "scored": 1540
+ },
+ "by_category": {
+  "temporal": {
+   "n": 321,
+   "correct": 281,
+   "errors": 0,
+   "abstained": 0,
+   "accuracy": 87.54,
+   "abstain_rate": 0.0,
+   "plane_mix": {
+    "chunk": 0.075,
+    "digest": 0.122,
+    "fact": 0.802
+   },
+   "f1": 9.36,
+   "bleu1": 5.49,
+   "f1_simplified": 19.09,
+   "bleu1_simplified": 12.16,
+   "context_tokens_mean": 3287
+  },
+  "open_domain": {
+   "n": 96,
+   "correct": 69,
+   "errors": 0,
+   "abstained": 0,
+   "accuracy": 71.88,
+   "abstain_rate": 0.0,
+   "plane_mix": {
+    "chunk": 0.173,
+    "digest": 0.068,
+    "fact": 0.759
+   },
+   "f1": 3.62,
+   "bleu1": 1.94,
+   "f1_simplified": 20.54,
+   "bleu1_simplified": 14.6,
+   "context_tokens_mean": 4159
+  },
+  "multi_hop": {
+   "n": 282,
+   "correct": 248,
+   "errors": 0,
+   "abstained": 0,
+   "accuracy": 87.94,
+   "abstain_rate": 0.0,
+   "plane_mix": {
+    "chunk": 0.105,
+    "digest": 0.111,
+    "fact": 0.784
+   },
+   "f1": 7.41,
+   "bleu1": 4.5,
+   "f1_simplified": 17.79,
+   "bleu1_simplified": 12.32,
+   "context_tokens_mean": 7394
+  },
+  "single_hop": {
+   "n": 841,
+   "correct": 782,
+   "errors": 0,
+   "abstained": 0,
+   "accuracy": 92.98,
+   "abstain_rate": 0.0,
+   "plane_mix": {
+    "chunk": 0.162,
+    "digest": 0.101,
+    "fact": 0.737
+   },
+   "f1": 12.82,
+   "bleu1": 7.84,
+   "f1_simplified": 27.72,
+   "bleu1_simplified": 18.9,
+   "context_tokens_mean": 3503
+  },
+  "adversarial": {
+   "n": 446,
+   "correct": 405,
+   "errors": 0,
+   "abstained": 0,
+   "accuracy": 90.81,
+   "abstain_rate": 0.0,
+   "plane_mix": {
+    "chunk": 0.208,
+    "digest": 0.087,
+    "fact": 0.704
+   },
+   "f1": null,
+   "bleu1": null,
+   "f1_simplified": null,
+   "bleu1_simplified": null,
+   "context_tokens_mean": null
+  }
+ },
+ "by_evidence_sessions": {
+  "1": {
+   "n": 1211,
+   "correct": 1102,
+   "coverage_n": 1198,
+   "gold_in_window": 1131,
+   "miss_unretrieved": 15,
+   "miss_retrieved": 94,
+   "accuracy": 91.0,
+   "gold_in_window_pct": 94.41
+  },
+  "2": {
+   "n": 203,
+   "correct": 168,
+   "coverage_n": 202,
+   "gold_in_window": 144,
+   "miss_unretrieved": 16,
+   "miss_retrieved": 19,
+   "accuracy": 82.76,
+   "gold_in_window_pct": 71.29
+  },
+  "3+": {
+   "n": 126,
+   "correct": 110,
+   "coverage_n": 125,
+   "gold_in_window": 38,
+   "miss_unretrieved": 8,
+   "miss_retrieved": 7,
+   "accuracy": 87.3,
+   "gold_in_window_pct": 30.4
+  }
+ },
+ "by_evidence_gap": {
+  "1-5": {
+   "n": 272,
+   "correct": 244,
+   "accuracy": 89.71,
+   "source_recall_5": 91.3,
+   "source_recall_10": 94.1,
+   "recall_coverage": 271
+  },
+  "6-10": {
+   "n": 230,
+   "correct": 212,
+   "accuracy": 92.17,
+   "source_recall_5": 88.9,
+   "source_recall_10": 92.6,
+   "recall_coverage": 230
+  },
+  "11-15": {
+   "n": 282,
+   "correct": 261,
+   "accuracy": 92.55,
+   "source_recall_5": 88.9,
+   "source_recall_10": 94.5,
+   "recall_coverage": 275
+  },
+  "16-20": {
+   "n": 273,
+   "correct": 240,
+   "accuracy": 87.91,
+   "source_recall_5": 79.8,
+   "source_recall_10": 87.3,
+   "recall_coverage": 273
+  },
+  "21-25": {
+   "n": 223,
+   "correct": 200,
+   "accuracy": 89.69,
+   "source_recall_5": 84.8,
+   "source_recall_10": 90.5,
+   "recall_coverage": 220
+  },
+  "26+": {
+   "n": 219,
+   "correct": 186,
+   "accuracy": 84.93,
+   "source_recall_5": 77.7,
+   "source_recall_10": 84.1,
+   "recall_coverage": 219
+  }
+ },
+ "temporal_by_kind": {
+  "date": {
+   "n": 234,
+   "correct": 210,
+   "typed_match": 152,
+   "format_miss": 9,
+   "lenient": 67,
+   "accuracy": 89.74
+  },
+  "year": {
+   "n": 17,
+   "correct": 17,
+   "typed_match": 2,
+   "format_miss": 0,
+   "lenient": 15,
+   "accuracy": 100.0
+  },
+  "duration": {
+   "n": 23,
+   "correct": 15,
+   "typed_match": 12,
+   "format_miss": 0,
+   "lenient": 3,
+   "accuracy": 65.22
+  },
+  "other": {
+   "n": 47,
+   "correct": 39,
+   "typed_match": 0,
+   "format_miss": 0,
+   "lenient": 0,
+   "accuracy": 82.98
+  }
+ },
+ "abstain": {
+  "abstained": 0,
+  "adversarial_abstained": 0,
+  "answerable_abstained": 0,
+  "answerable": 1540,
+  "abstain_precision": null,
+  "false_abstain_rate": 0.0
+ },
+ "by_evidence_speaker": {
+  "adversarial": {
+   "n": 446,
+   "accuracy": 90.81
+  },
+  "adversarial_speaker_swap": {
+   "n": 332,
+   "accuracy": 90.96
+  },
+  "adversarial_content_swap": {
+   "n": 107,
+   "accuracy": 91.59
+  },
+  "adversarial_unclassified": 7,
+  "answerable_named_speaker": {
+   "n": 1292,
+   "accuracy": 91.1
+  },
+  "answerable_other_speaker": {
+   "n": 39,
+   "accuracy": 61.54
+  }
+ },
+ "overall_comparable": 89.61,
+ "overall_all": 89.88,
+ "judged": 1986,
+ "errors": 0,
+ "namespaces": {
+  "conv-26": "locomo-full-conv-26-f99d33",
+  "conv-30": "locomo-full-conv-30-509bd2",
+  "conv-41": "locomo-full-conv-41-8b1262",
+  "conv-42": "locomo-full-conv-42-f4aef8",
+  "conv-43": "locomo-full-conv-43-a13c59",
+  "conv-44": "locomo-full-conv-44-eecc8b",
+  "conv-47": "locomo-full-conv-47-fb9a42",
+  "conv-48": "locomo-full-conv-48-1931b1",
+  "conv-49": "locomo-full-conv-49-9cdd47",
+  "conv-50": "locomo-full-conv-50-0c0271"
+ }
+}

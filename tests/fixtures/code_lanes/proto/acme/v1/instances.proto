@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package acme.v1;
+
+import "google/protobuf/timestamp.proto";
+import "acme/v1/common.proto";
+
+option go_package = "example.com/acme/api/v1;acmev1";
+
+// InstanceService manages instances.
+service InstanceService {
+  // Get returns one instance.
+  rpc GetInstance(GetInstanceRequest) returns (Instance);
+  rpc WatchInstances(WatchInstancesRequest) returns (stream Instance) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+}
+
+message GetInstanceRequest {
+  oneof identifier {
+    string id = 1;
+    string name = 2;
+  }
+}
+
+message WatchInstancesRequest {
+  repeated Status statuses = 1;
+  google.protobuf.Timestamp since = 2;
+  reserved 3;
+}

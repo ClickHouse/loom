@@ -1,0 +1,212 @@
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { MemoryDetail, MemoryMoveResult, MyNamespaceEntry, WhoAmI } from "../api";
+import { useStore } from "../lib/state";
+import { resetNamespaceRoleCache } from "../lib/namespaceRole";
+import { MemoryInspector } from "./MemoryInspector";
+
+// The inspector renames a key through `memory.move` — a dry run first, shown as a
+// preview, then the real move, which toasts and re-reads the row. A `status='duplicate'`
+// row whose payload carries `canonical_key` wears a "redirects to <key>" badge.
+
+const LIVE: MemoryDetail = {
+  found: true,
+  value: "oat milk, no sugar",
+  memory_type: "preference",
+  confidence: 1,
+  version: 3,
+  pinned: false,
+  created_at: "2026-09-18T09:00:00Z",
+  updated_at: "2026-09-18T09:00:00Z",
+  tags: ["coffee"],
+  status: "active",
+  agent: "claude-desktop",
+};
+
+const REDIRECTED: MemoryDetail = {
+  ...LIVE,
+  status: "duplicate",
+  canonical_key: "prefs/coffee",
+};
+
+const MOVED: MemoryMoveResult = {
+  from_key: "coffee_pref",
+  to_key: "prefs/coffee",
+  redirected: true,
+  memory_id: "m-2",
+  version: 4,
+  content_sha256: "abc",
+  advisories: [],
+  dry_run: false,
+  memory_type: "",
+  value_preview: "",
+};
+
+// The toast store has no viewport in this render; assert the call.
+vi.mock("./Toast", () => ({ toast: vi.fn(), toastError: vi.fn(), ToastViewport: () => null }));
+
+vi.mock("../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api")>();
+  return {
+    ...actual,
+    getMemory: vi.fn(async () => LIVE),
+    moveMemory: vi.fn(
+      async (_id: unknown, fromKey: string, toKey: string, opts: { dryRun?: boolean; keepRedirect?: boolean } = {}) =>
+        opts.dryRun
+          ? {
+              ...MOVED,
+              from_key: fromKey,
+              to_key: toKey,
+              redirected: false,
+              memory_id: "",
+              version: 0,
+              content_sha256: "",
+              dry_run: true,
+              memory_type: "preference",
+              value_preview: "oat milk, no sugar",
+            }
+          : { ...MOVED, from_key: fromKey, to_key: toKey, redirected: opts.keepRedirect !== false },
+    ),
+    memoryHistory: vi.fn(async () => ({ rows: [] })),
+    memoryRelated: vi.fn(async () => ({ rows: [] })),
+    memoryLineage: vi.fn(async () => ({ steps: [] })),
+    getProvenance: vi.fn(async () => ({ found: false })),
+    listMemories: vi.fn(async () => ({ entries: [], total: 0 })),
+    conflictKeys: vi.fn(async (): Promise<string[]> => []),
+    listMine: vi.fn(async () => []),
+  };
+});
+import { getMemory, moveMemory } from "../api";
+import { toast } from "./Toast";
+
+const row = (namespace: string, role: MyNamespaceEntry["role"]): MyNamespaceEntry => ({
+  namespace,
+  role,
+  status: "active",
+  visibility: "private",
+  description: "",
+  joined_at: null,
+  is_new: false,
+});
+
+const person: WhoAmI = {
+  authenticated: true,
+  subject: "o@example.com",
+  org: "dev",
+  roles: ["USER"],
+  namespaces: ["team-alerts"],
+};
+const identity = { org: "dev", namespace: "team-alerts", agent: "loom-ui" };
+
+function seed(role: MyNamespaceEntry["role"]) {
+  useStore.setState({
+    authed: true,
+    whoami: person,
+    myNamespaces: [row("team-alerts", role)],
+    identity,
+    inspectedMemoryKey: "coffee_pref",
+  });
+}
+
+async function open(onChanged = () => {}) {
+  render(<MemoryInspector identity={identity} memoryKey="coffee_pref" onClose={() => {}} onChanged={onChanged} />);
+  await waitFor(() => expect(getMemory).toHaveBeenCalled());
+  await screen.findByText("oat milk, no sugar");
+}
+
+describe("MemoryInspector rename with redirect", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetNamespaceRoleCache();
+    vi.mocked(getMemory).mockResolvedValue(LIVE);
+  });
+  afterEach(() => {
+    cleanup();
+    useStore.setState({ whoami: null, myNamespaces: null, identity: null, inspectedMemoryKey: null });
+  });
+
+  it("previews with dry_run first, then moves for real, toasts and re-reads the row", async () => {
+    seed("writer");
+    const onChanged = vi.fn();
+    await open(onChanged);
+
+    expect(screen.queryByTestId("rename-form")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Rename (keep redirect)" }));
+    const form = screen.getByTestId("rename-form");
+
+    const input = within(form).getByLabelText("New key");
+    expect(input).toHaveValue("coffee_pref");
+    expect(within(form).getByRole("checkbox", { name: "Keep old key readable (redirect)" })).toBeChecked();
+    // The prefilled key is the current one — nothing to move yet.
+    expect(within(form).getByRole("button", { name: "Preview" })).toBeDisabled();
+    expect(within(form).getByRole("button", { name: "Rename" })).toBeDisabled();
+
+    await userEvent.clear(input);
+    await userEvent.type(input, "prefs/coffee");
+    await userEvent.click(within(form).getByRole("button", { name: "Preview" }));
+
+    await waitFor(() => expect(moveMemory).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(moveMemory).mock.calls[0].slice(1)).toEqual([
+      "coffee_pref",
+      "prefs/coffee",
+      { keepRedirect: true, dryRun: true },
+    ]);
+    const preview = await screen.findByTestId("rename-preview");
+    expect(preview).toHaveTextContent(
+      "Would write prefs/coffee as preference and leave coffee_pref redirecting to it.",
+    );
+    expect(preview).toHaveTextContent("oat milk, no sugar");
+
+    vi.mocked(getMemory).mockResolvedValue(REDIRECTED);
+    await userEvent.click(within(form).getByRole("button", { name: "Rename" }));
+    await waitFor(() => expect(moveMemory).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(moveMemory).mock.calls[1].slice(1)).toEqual([
+      "coffee_pref",
+      "prefs/coffee",
+      { keepRedirect: true, dryRun: false },
+    ]);
+    // The form closes, the list is told, the row is re-read and now wears the badge.
+    await waitFor(() => expect(screen.queryByTestId("rename-form")).toBeNull());
+    expect(onChanged).toHaveBeenCalled();
+    await waitFor(() => expect(getMemory).toHaveBeenCalledTimes(2));
+    const badge = await screen.findByTestId("redirect-badge");
+    expect(badge).toHaveTextContent("redirects to prefs/coffee");
+    expect(toast).toHaveBeenCalledWith("Renamed to prefs/coffee — the old key redirects to it", "ok");
+  });
+
+  it("unticking the redirect sends keep_redirect false and follows the new key", async () => {
+    seed("admin");
+    await open();
+    await userEvent.click(screen.getByRole("button", { name: "Rename (keep redirect)" }));
+    const form = screen.getByTestId("rename-form");
+    await userEvent.click(within(form).getByRole("checkbox", { name: "Keep old key readable (redirect)" }));
+    expect(form).toHaveTextContent("The old key is deleted");
+    const input = within(form).getByLabelText("New key");
+    await userEvent.clear(input);
+    await userEvent.type(input, "prefs/coffee");
+    await userEvent.click(within(form).getByRole("button", { name: "Rename" }));
+    await waitFor(() => expect(moveMemory).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(moveMemory).mock.calls[0][3]).toEqual({ keepRedirect: false, dryRun: false });
+    await waitFor(() => expect(useStore.getState().inspectedMemoryKey).toBe("prefs/coffee"));
+  });
+
+  it("a duplicate row with canonical_key wears the redirect badge; clicking it opens the canonical", async () => {
+    vi.mocked(getMemory).mockResolvedValue(REDIRECTED);
+    seed("viewer");
+    await open();
+    const badge = screen.getByTestId("redirect-badge");
+    expect(badge).toHaveTextContent("redirects to prefs/coffee");
+    expect(badge).toHaveAccessibleName("Redirects to prefs/coffee; open it");
+    await userEvent.click(badge);
+    expect(useStore.getState().inspectedMemoryKey).toBe("prefs/coffee");
+  });
+
+  it("a live row has no badge, and a viewer is not offered the rename", async () => {
+    seed("viewer");
+    await open();
+    expect(screen.queryByTestId("redirect-badge")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Rename (keep redirect)" })).toBeNull();
+    expect(moveMemory).not.toHaveBeenCalled();
+  });
+});

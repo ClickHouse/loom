@@ -1,0 +1,215 @@
+# Conversations and sessions
+
+Loom keeps three kinds of session state, each in its own plane:
+
+| Plane              | Holds                                                                      | Embedded, searched                                 | Written by                                                                  |
+| ------------------ | -------------------------------------------------------------------------- | -------------------------------------------------- | --------------------------------------------------------------------------- |
+| Conversation plane | The verbatim turns of a thread (`loom.conversations`)                      | User and assistant turns, by `conversation.search` | `conversation.append`, the plugins' capture hooks, `loom ingest-transcript` |
+| Session briefs     | The condensed, resumable state of one line of work (`loom.session_briefs`) | No                                                 | `session.brief_save`, the coding plugins at compaction and session end      |
+| Memory             | Durable facts extracted from what was said                                 | Yes, by `memory.search`                            | `memory.set`, `memory.set_from_messages`                                    |
+
+Storing a turn does not create a memory; to turn a conversation into facts, post it to
+[`memory.set_from_messages`](./memory/extraction.md). An owner can switch transcript recording off without losing
+extracted memory, and a brief never competes with facts in recall.
+
+## Conversations
+
+### Recording is the owner's choice
+
+`conversation.append` stores a turn only when the namespace has conversation logging
+on. The switch (`conversation_logging_enabled` on `loom.namespaces`) is off by default
+and fails closed: a namespace with no row is not
+recorded. The owner turns it on with `conversation.set_logging(enabled=true)` (admin) or
+the Recording toggle on the dashboard's Conversations page.
+
+When logging is off the append is accepted and nothing is kept: the response says
+`stored: false, reason: "logging_disabled"`. A client cannot override the owner's choice.
+
+### Writing turns
+
+`conversation.append` takes `thread_id`, `role` (`user`, `assistant`, `system` or
+`tool`), `content`, and optionally `msg_id`, `reasoning` (the model's reasoning kept in
+its own column), `user_id`, `run_id`, `metadata` and `tokens`. The thread is created on
+the first append; `conversation.create` only attaches a `title`, `metadata` or `run_id`
+up front.
+
+- **Idempotent on `msg_id`.** A turn whose `(thread_id, msg_id)` already landed is not
+  written again (`reason: "duplicate"`). Without a `msg_id` the server derives one from
+  a hash of the thread, role and content, so a client that re-logs a turn does not
+  double the transcript.
+- **Only user and assistant turns are embedded**, up to their first 2,048 characters. `system` and `tool` turns stay
+  in the transcript unindexed.
+- **The embed is fail-open.** A failed embed still stores the turn, with the error
+  recorded on its embedding row.
+
+### Reading and searching
+
+| Operation              | Role   | Does                                                                                               |
+| ---------------------- | ------ | -------------------------------------------------------------------------------------------------- |
+| `conversation.threads` | viewer | Recent threads of a namespace, newest first (`window_days`, `limit`; `agent="*"` for every agent). |
+| `conversation.get`     | viewer | One thread's metadata; `include_messages=true` pages its turns (`order="desc"` for the tail).      |
+| `conversation.list`    | viewer | A thread's turns, cursor-paginated, optionally by `run_id`.                                        |
+| `conversation.search`  | viewer | Vector search over embedded turns, optionally by thread, run or role.                              |
+| `conversation.update`  | writer | Change a thread's `title`, `metadata` or `run_id`.                                                 |
+
+`conversation.search` ranks turns by cosine similarity, drops any below
+`LOOM_CONVERSATION_SEARCH_MIN_SIMILARITY` (0.30) and fans out over the caller's namespaces by default
+(`namespace_scope="all_mine"`). When the embedder is unavailable it falls back to a
+substring match so the op still answers. Hits are 240-character excerpts; read the turn
+with `conversation.get` or `conversation.list`. The op is hidden from MCP;
+agents get the conversation section of [`loom_search`](./unified-search.md).
+
+`memory.recall` is a different read: it searches the turns an extraction read (kept in
+`loom.memory_evidence`), which exist whether or not the conversation plane records. See
+[search and ask](./memory/search-and-ask.md).
+
+### Compacting and deleting
+
+- **`conversation.compact`** (writer, needs an LLM provider) summarises the turns older
+  than the last `keep_recent` (default 10), writes the summary as one `system` turn
+  whose `metadata.compacted_from` lists the summarised `msg_id`s, and tombstones the
+  originals. A window smaller than `min_to_compact` (default 4) is left alone.
+- **`conversation.delete`** (admin) tombstones one thread's turns, thread row and
+  embeddings; `confirm_thread_id` must equal `thread_id`. For a person's or a
+  namespace's data everywhere, use [`erasure.request`](./memory/retention-and-erasure.md).
+
+Tombstoned turns are filtered from every read. They are removed from disk only if the
+operator set a table TTL (`LOOM_RETENTION_CONVERSATIONS_DAYS`, 0 = keep forever).
+
+### Thread titles
+
+The `conversation_titler` worker gives untitled threads (built by appends with no
+`conversation.create`) a short LLM-written title, which the dashboard's Conversations
+page leads with. It covers namespaces that record conversations, threads active in the
+last `LOOM_CONVERSATION_TITLER_WINDOW_HOURS` (168) with at least
+`LOOM_CONVERSATION_TITLER_MIN_TURNS` (4) turns, at most
+`LOOM_CONVERSATION_TITLER_MAX_THREADS_PER_PASS` (10) per pass. It is on by default
+(`LOOM_CONVERSATION_TITLER_ENABLED`) and does nothing with the fake LLM.
+
+## Capturing sessions from clients
+
+| Client             | How turns reach Loom                                                                                                                                                                                                                                                    |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code plugin | The Stop hook (`hooks/loom-conversation.mjs`) appends each new turn from the session transcript, `msg_id` = the transcript uuid; `LOOM_CAPTURE_CONVERSATIONS=false` turns it off. It caches the namespace's recording verdict and skips appends while recording is off. |
+| Codex plugin       | The same capture, see [Codex](./integrations/codex.md).                                                                                                                                                                                                                 |
+| Cursor             | `integrations/cursor/cursor-session-hook.sh`, run by Cursor's after-conversation hook, hands the transcript to `loom ingest-transcript`.                                                                                                                                |
+| Other agents       | `integrations/generic/ingest.sh` on the exported transcript.                                                                                                                                                                                                            |
+| Any MCP client     | The model calls `loom_conversation_append` (in the `core` toolset).                                                                                                                                                                                                     |
+| Your own code      | `conversation.append`, or the Python SDK's `Session`, below.                                                                                                                                                                                                            |
+
+`loom ingest-transcript --namespace NS --file session.md` reads a Markdown file with
+alternating `# user` / `# assistant` sections, or a JSON array of `{role, content}`,
+and appends each turn (`--dry-run` counts them; `--thread-id` sets a stable id).
+
+The plugins also hand the session's turns to `memory.set_from_messages(defer=true)` at
+session end, so facts are extracted whether or not the transcript is recorded, and
+record tool actions as episodic observations through `observe.record` /
+`observe.crystallize` (see [extraction](./memory/extraction.md)). The hook-by-hook
+wiring is in [Claude Code](./integrations/claude-code.md).
+
+## Session briefs
+
+A session brief is the resumable state of one line of work: goal, status, decisions, dead ends, what is done, open
+questions, next steps, key files, constraints and pointers. It is read after a compaction, the next day, in another
+client or by a teammate. It is never embedded or returned by `memory.search`. Any agent that can read the namespace
+can resume it.
+
+| Operation              | Role   | Does                                                                                                                   |
+| ---------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `session.brief_save`   | writer | Revise (or start) a brief from `events` (what happened since the last save), from `sections` the agent wrote, or both. |
+| `session.brief_get`    | viewer | Load a brief by `brief_key`, else the newest one a session wrote (`from_session`), else the newest for a `project`.    |
+| `session.brief_list`   | viewer | The namespace's briefs, newest first, one line each (`mine_only` for the caller's).                                    |
+| `session.brief_delete` | writer | Delete a brief when its writer asks for it to be forgotten.                                                            |
+
+**Addressing.** An empty `brief_key` becomes `auto/<project>/<branch>`, so every session
+on the same line of work revises the same brief, or `session/<session_id>` when neither
+is known. Keys match `^[A-Za-z0-9][A-Za-z0-9_.:/@+-]{0,159}$`.
+
+**Revising.** A save with `events` (kinds `user`, `assistant`, `edit`, `command`,
+`error`, `read`, `search`, `tool`, `note`, `summary`; up to 4,000 per call) is condensed
+server-side. With `LOOM_SESSION_BRIEF_LLM` on (default) the model named by
+`LOOM_SESSION_BRIEF_LLM_MODEL` revises the brief once per window of
+`LOOM_SESSION_BRIEF_WINDOW_CHARS` characters, at most `LOOM_SESSION_BRIEF_MAX_WINDOWS`
+windows per save; without that model's key the deployment's LLM writes it, and with no
+LLM the deterministic builder writes goal, status, files, errors and pointers (no
+decisions or dead ends). `author` in the response says `llm`, `deterministic` or
+`model` (the calling agent wrote the sections). State sections are replaced on each
+revision; decisions, dead ends and done items accumulate. Every revision is kept in
+`loom.session_brief_revisions`; `revision=N` on `brief_get` reads one. A save that
+repeats the previous save's session and `event_cursor` is a retry and writes nothing;
+`if_revision` makes a save compare-and-set (409 on a mismatch).
+
+**Restoring is the person's choice.** The coding plugins save briefs at compaction and
+session end with zero model tokens on the client, and the session-start primer only
+names the saved briefs. Loading one happens when the person asks, through the
+`loom-session` skill or the briefs section of the dashboard's Conversations page.
+`brief_get(full=true)` appends the client's own last compaction summary verbatim below
+the brief. Briefs never load on their own: only the person knows which line of work they are resuming.
+
+## Example
+
+The Python SDK's `Session` binds these ops to one `(user, session)` scope: `append`
+writes turns to the transcript and, every `flush_every` turns, to
+`memory.set_from_messages`; `resume` is `context.pack` for the scope plus the transcript
+tail.
+
+```python
+from loom import Agent
+
+async with Agent("dev", "local", "support-bot", base_url="http://localhost:7777") as bot:
+    s = bot.session("thread-42", user_id="u1")
+    resumed = await s.resume(query="resume the billing migration")
+    await s.append(
+        {"role": "user", "content": "We moved invoices to the new ledger."},
+        {"role": "assistant", "content": "Noted; I'll update the export job."},
+    )
+    print(s.transcript_stored)  # False when the namespace does not record
+    await s.close()  # flushes the buffered turns to extraction
+
+    await bot.briefs.save(
+        project="billing",
+        branch="ledger-move",
+        sections={
+            "goal": "Move invoices to the new ledger",
+            "next_steps": ["Update the export job"],
+        },
+    )
+```
+
+Extraction on `close()` needs a real LLM provider to find facts; with the stock fake
+provider the turns are still recorded.
+
+## Settings
+
+| Setting                                                                     | Effect                                                                                                                                   |
+| --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `LOOM_CONVERSATION_SEARCH_MIN_SIMILARITY`                                   | The cosine floor of `conversation.search` ([Knowledge → Conversations](../reference/configuration.md#conversations)).                    |
+| `LOOM_CONVERSATION_TITLER_*`                                                | The titler worker's switch, cadence, window and per-pass cap ([Knowledge → Conversations](../reference/configuration.md#conversations)). |
+| `LOOM_RETENTION_CONVERSATIONS_DAYS`, `LOOM_TIERING_CONVERSATIONS_WARM_DAYS` | Opt-in TTL and warm-volume move for transcripts ([Retention and tiering](../reference/configuration.md#retention-and-tiering)).          |
+| `LOOM_SESSION_BRIEF_LLM`, `…_LLM_MODEL`, `…_WINDOW_CHARS`, `…_MAX_WINDOWS`  | How briefs are condensed ([Context](../reference/configuration.md#context)).                                                             |
+| `LOOM_MCP_SESSION_RUN_IDLE_SECONDS`                                         | Closes an MCP session's implicit run after this long without a call ([Mcp](../reference/configuration.md#mcp)).                          |
+
+## Limits
+
+- **"I appended but nothing is there."** Recording is off for the namespace; the append
+  answered `stored: false`. Turn it on with `conversation.set_logging`.
+- **Transcripts are not mined.** Recorded turns never become memories on their own.
+- **`conversation.search` is vector-first.** Exact wording that the embedding does not
+  capture may rank low; `memory.recall` does lexical and time-window reads over the
+  turns extraction read.
+- **Briefs are bounded.** A rendered brief stays under about 12,000 characters; each
+  list section has a cap (for example 20 decisions, 12 dead ends, 8 next steps), so old
+  items fall off.
+- **A brief is not a lock.** Two sessions on the same branch revise the same brief;
+  pass `if_revision` when that must not interleave.
+
+## Related
+
+- [Extraction](./memory/extraction.md) — turning a transcript into memories.
+- [Working memory and profiles](./memory/working-memory-and-profiles.md) — the "where
+  was I" scratchpad block the plugins also write.
+- [Runs](./runs.md) — the run ledger a session's writes and observations join.
+- [Unified search](./unified-search.md) — the conversation section of `loom_search`.
+- [Trace and resume](../guides/trace-and-resume.md) — resuming a long run.
+- [Memory architecture](../architecture/memory-architecture.md) — the conversation and
+  brief tables from the inside.

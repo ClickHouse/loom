@@ -1,0 +1,408 @@
+# Quickstart
+
+This page boots Loom on a laptop and saves a first memory over HTTP, Python and MCP. It
+needs no API key and no account. The stock stack uses fake providers, so it shows the
+wiring, not recall quality.
+
+**The stock Docker installation is single-user:** no login, localhost-only access and
+a default `dev/local` namespace. One person can connect multiple agents without enabling
+multi-user mode. **Team deployments are also supported in OSS**, with authenticated
+accounts and namespace access controls; [start in multi-user mode](#start-in-multi-user-mode)
+or follow [Deployment → Identity modes](../operations/deployment.md#identity-modes).
+Both modes support the same Loom features; real LLMs and embeddings need provider
+configuration in either mode.
+
+## Prerequisites
+
+| Need                           | For                                                                      |
+| ------------------------------ | ------------------------------------------------------------------------ |
+| Docker with the compose plugin | The stack: ClickHouse and the Loom server.                               |
+| Python 3.12 or newer           | Contributor-only `loom` CLI. The SDK supports 3.11+.                     |
+| Node.js 20 or newer            | The TypeScript SDK (optional).                                           |
+| Free port `7777`               | Loom. Checkout development also exposes ClickHouse on `8123` and `9000`. |
+| `jq`                           | Reading the `curl` output in step 4 (optional).                          |
+
+## 1. Boot the stack
+
+### Fast path: released image, no clone
+
+Prerequisite: Docker Desktop or Docker Engine with Compose v2.
+
+```bash
+curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh | sh
+```
+
+This downloads `loom-stack.tar.gz` from the latest GitHub Release, verifies its SHA-256,
+installs the Compose and ClickHouse configuration under `~/.loom`, pulls the matching
+`ghcr.io/clickhouse/loom:X.Y.Z` image, and waits for
+`http://localhost:7777/v1/health`. The image contains the API, workers, migrations and
+the built React dashboard at `/me`; no Python or Node installation is needed. Python,
+TypeScript and Go compiler indexers are included and enabled. TypeScript repository
+dependencies are prepared automatically when you add a repository from the dashboard.
+The image supports Linux `amd64` and `arm64`, including Docker Desktop on Apple Silicon.
+
+Pin a release or inspect everything before starting:
+
+```bash
+curl -fsSL https://github.com/ClickHouse/loom/releases/download/v1.2.3/install.sh \
+  | LOOM_VERSION=1.2.3 sh
+
+curl -fLO https://github.com/ClickHouse/loom/releases/latest/download/loom-stack.tar.gz
+curl -fLO https://github.com/ClickHouse/loom/releases/latest/download/loom-stack.tar.gz.sha256
+curl -fLO https://github.com/ClickHouse/loom/releases/latest/download/install.sh
+sha256sum -c loom-stack.tar.gz.sha256
+tar -tzf loom-stack.tar.gz
+LOOM_INSTALL_BUNDLE="$PWD/loom-stack.tar.gz" \
+  LOOM_INSTALL_CHECKSUM="$PWD/loom-stack.tar.gz.sha256" sh install.sh
+```
+
+Rerunning the installer updates the managed Compose/configuration files and reconciles
+the containers. It preserves `~/.loom/.env` and the named Docker volumes. To stop without
+deleting data:
+
+```bash
+docker compose --project-directory "$HOME/.loom" down
+```
+
+Add `--volumes` only for an intentional, irreversible reset.
+
+### Start in multi-user mode
+
+For a fresh released-image installation with accounts and sign-in from the first boot,
+prepare the stack files without starting containers:
+
+```bash
+curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh \
+  | LOOM_SKIP_START=1 sh
+```
+
+Edit `~/.loom/.env` before starting Docker. Replace the existing identity and auth entries,
+and add the signup setting:
+
+```dotenv
+LOOM_IDENTITY_PROVIDER=trust-network
+LOOM_AUTH_REQUIRED=true
+LOOM_SELF_SIGNUP=open
+```
+
+Keep the generated `COMPOSE_PROJECT_NAME` and `LOOM_JWT_SECRET`. Then pull and start
+the stack:
+
+```bash
+docker compose --project-directory "$HOME/.loom" pull
+docker compose --project-directory "$HOME/.loom" up -d
+```
+
+After the [health checks](#check-the-stack) pass, open `http://localhost:7777/me` and
+sign up. SDK and MCP clients need tokens; use the org and namespaces granted to your
+account, not the single-user `dev/local` defaults in the examples below.
+
+This enables multi-user authentication, not public networking: the stack still binds
+to localhost. Before sharing it with a team, configure [operator access](../operations/deployment.md#identity-modes)
+and [TLS](../operations/deployment.md#proxy-and-tls). Configure [real models and API keys](./models-and-keys.md)
+as well; selecting multi-user mode does not replace the fake providers.
+
+For an already running single-user stack, follow the [switching instructions](#2-open-the-dashboard)
+instead; container recreation preserves the existing data volumes.
+
+### Contributor path: build a checkout
+
+```bash
+git clone https://github.com/ClickHouse/loom && cd loom
+python3 -m venv .venv && . .venv/bin/activate
+pip install -e .
+loom up
+```
+
+`loom up` does three things:
+
+1. Creates the two files git does not track: `.env` from `.env.example`, and
+   `deploy/clickhouse-config/named_collections.xml` from its template. It never
+   overwrites either.
+2. Runs the dev compose stack with `--build`.
+3. Polls `http://localhost:7777/v1/health` until the server is ready, printing the
+   pending-migration count. It gives up after `--timeout` (300 s) with the last health
+   body and log lines.
+
+The first contributor boot builds the image and applies every schema migration, so allow
+a few minutes. `loom up` then prints the dashboard URL (`http://localhost:7777/me`), a `curl`
+call and a Python snippet that save a first memory, and a line that wires Claude Code.
+When auth is on, it also mints a writer token and puts it in those snippets.
+
+| Flag         | Does                         |
+| ------------ | ---------------------------- |
+| `--rebuild`  | Rebuild after a code change. |
+| `--no-build` | Reuse the cached image.      |
+| `--open`     | Open the dashboard.          |
+| `--port`     | Use another Loom port.       |
+| `--env-file` | Point at another env file.   |
+
+Re-running `loom up` on a running stack only re-checks health. `make dev` does the same
+without the CLI and runs:
+
+```bash
+docker compose --env-file .env -f dev/docker-compose.dev.yml up -d --build
+```
+
+`--env-file .env` is required. Without it compose reads `dev/.env`, not the repository
+root, and falls back to the compose file's defaults (auth on, an OpenAI provider with no
+key). `loom down` stops the stack and preserves its volumes. `loom down --delete-data`
+permanently deletes this installation's named volumes only after you type the generated
+Compose project name; `--yes` is the non-interactive confirmation. The Makefile targets
+do the same: `make down` preserves data and `make down-all` deletes it.
+
+### What the stock `.env` boots
+
+The checkout and release-bundle `.env` templates both select single-user mode.
+The release bundle sets `LOOM_IDENTITY_PROVIDER=single-user` explicitly; the checkout
+leaves it empty and infers the same mode from `LOOM_AUTH_REQUIRED=false`.
+
+| Setting                                                                     | Value         | Effect                                                                    |
+| --------------------------------------------------------------------------- | ------------- | ------------------------------------------------------------------------- |
+| `LOOM_AUTH_REQUIRED=false`, `LOOM_IDENTITY_PROVIDER=single-user` (or empty) | `single-user` | No login. Default namespace `dev/local`. SDK and MCP calls need no token. |
+| `LOOM_LLM_PROVIDER=fake`, `LOOM_LLM_MODEL=fake-echo-1`                      | fake LLM      | Extraction, entity tagging and `memory.ask` synthesis produce nothing.    |
+| `LOOM_EMBEDDING_MODEL=fake-ngram-3072`, `LOOM_EMBEDDING_DIM=3072`           | fake embedder | Search ranks by character n-grams. Enough to check wiring, not recall.    |
+
+Both installers generate a unique `COMPOSE_PROJECT_NAME`, a random JWT signing secret,
+and `LOOM_BIND_HOST=127.0.0.1`. Separate clones therefore do not silently share
+ClickHouse volumes, and Loom plus ClickHouse are reachable only from this computer.
+
+For real providers, open **Settings → Models & keys**, choose your providers and models,
+enter their API keys, then click **Test & apply**. One OpenAI API key can serve both the
+LLM and embeddings. No Docker restart is needed; embedding changes trigger a verified
+rebuild, with progress and retry shown in the dashboard.
+
+For environment-based deployment instead, replace the provider lines in `~/.loom/.env`
+(released stack) or `.env` (checkout). Setting `OPENAI_API_KEY` alone changes nothing:
+the stock provider lines explicitly select fakes.
+
+```bash
+LOOM_EMBEDDING_MODEL=text-embedding-3-large
+LOOM_EMBEDDING_DIM=3072
+LOOM_LLM_PROVIDER=openai
+LOOM_LLM_MODEL=gpt-6-luna
+OPENAI_API_KEY=sk-...
+```
+
+For Claude, OpenAI, hosted embeddings, subscription-only clients and deployments with
+one LLM provider, follow [Configure models and API keys](./models-and-keys.md).
+Only after editing the released stack's `.env`, apply it with
+`docker compose --project-directory "$HOME/.loom" up -d --force-recreate loom`;
+a plain restart does not reload the container's environment. Advanced settings are in
+[Deployment → Providers](../operations/deployment.md#providers).
+
+### Check the stack
+
+```bash
+curl -fsS http://localhost:7777/v1/health | jq '{status, fake_embedding, fake_llm, providers_degraded, problems}'
+docker compose --project-directory "$HOME/.loom" exec loom loom doctor
+```
+
+- `/v1/health` says `status: ok` when ClickHouse is reachable and no problem is an
+  error. `fake_embedding`, `fake_llm` and `providers_degraded` say which mode you are in;
+  `problems` lists each issue with its fix; `schema.pending` lists unapplied migrations.
+- `loom doctor` prints one line per server-side check. `--json` gives JSON. From a source
+  checkout stack, run `docker compose --env-file .env -f dev/docker-compose.dev.yml exec loom loom doctor`.
+
+## 2. Open the dashboard
+
+`http://localhost:7777/me` opens straight into the dashboard in `single-user` mode;
+in multi-user mode, sign up or sign in first. In `single-user` mode
+the dashboard and agent defaults use `dev/local` (`LOOM_DEFAULT_NAMESPACE` renames the
+namespace). This is a convenience mode, not a user-isolation boundary: anyone who can
+reach the server can access its data and administration. Keep it localhost-only.
+
+To try sign-up instead (`trust-network`: email and password, and the first person to
+claim a namespace name becomes its admin), replace these entries in `~/.loom/.env`
+(released stack) or `.env` (checkout):
+
+```dotenv
+LOOM_IDENTITY_PROVIDER=trust-network
+LOOM_AUTH_REQUIRED=true
+LOOM_SELF_SIGNUP=open
+```
+
+Setting only `LOOM_AUTH_REQUIRED=true` is insufficient when `single-user` is explicitly
+selected: that mode keeps authentication off. Keep the installer's generated
+`LOOM_JWT_SECRET` and existing volumes, then recreate the server to load the environment:
+
+```bash
+# Released stack:
+docker compose --project-directory "$HOME/.loom" up -d --force-recreate loom
+# Checkout stack (run from the repository root):
+docker compose --env-file .env -f dev/docker-compose.dev.yml up -d --force-recreate loom
+```
+
+`/me` then opens on **Sign up**, and every SDK and MCP call needs a token. The identity
+modes are in [Identities and namespaces](../concepts/identities-and-namespaces.md#identity-modes).
+Before making the server reachable by a team, follow the
+[deployment guide](../operations/deployment.md#identity-modes) for operator access and
+[TLS](../operations/deployment.md#proxy-and-tls).
+
+## 3. Get a token
+
+In single-user mode a token is optional. Minting one anyway keeps your scripts working
+when auth is turned on.
+
+- **Dashboard:** **Settings → Tokens → New token**. _For my own tools_ gives a token
+  with one home namespace that reads everything you belong to, plus a client config
+  block. _For a bot that sees only these_ scopes it to the namespaces you tick, with a
+  role and an expiry.
+- **CLI, as the operator:** run it inside the server container, which holds the signing
+  secret:
+
+  ```bash
+  docker compose --project-directory "$HOME/.loom" exec loom loom mint-token --subject my-bot --org dev --namespaces local --roles writer
+  ```
+
+  Add `--ttl-days 30` for anything that leaves your machine. `loom mint-token --help`
+  lists the scoping options (`--namespace-role`, `--read-scope`, `--traffic-class`).
+
+- **A bot that signs itself up** (trust-network only):
+  `loom init --agent nightly-triage --server-url http://localhost:7777` creates the
+  namespace `agent-nightly-triage`, saves a writer token to `~/.loom/token` and the URL
+  to `~/.loom/config.json`, and prints a one-time claim code. A person signs in at `/me`
+  with that code to take ownership.
+
+Save the token where the SDK, the CLI and the plugins look for it:
+
+```bash
+mkdir -p ~/.loom && (umask 077; printf '%s' "<token>" > ~/.loom/token)
+export LOOM_API_KEY="<token>"
+```
+
+Claims, roles and grants are in [Tokens and grants](../guides/tokens-and-grants.md).
+
+## 4. First memory over HTTP
+
+Every operation is a `POST /v1/<op>` with a JSON body that names the identity
+`(org, namespace, agent)`:
+
+```bash
+curl -sX POST http://localhost:7777/v1/memory.set \
+  -H "Authorization: Bearer $LOOM_API_KEY" -H 'Content-Type: application/json' \
+  -d '{"org":"dev","namespace":"local","agent":"quickstart",
+       "memory_key":"deploy_window","value":"Tue and Thu only; never Friday."}'
+
+curl -sX POST http://localhost:7777/v1/memory.search \
+  -H "Authorization: Bearer $LOOM_API_KEY" -H 'Content-Type: application/json' \
+  -d '{"org":"dev","namespace":"local","agent":"quickstart","query":"when can we deploy?"}' \
+  | jq '.results[0].content_excerpt'
+```
+
+In single-user mode, leave out the `Authorization` header. The `memory.set` response
+carries `memory_id`, `content_sha256` and `status`. The search response carries
+`results` and `abstain`, which says whether the best hit is strong enough to answer from.
+`GET /v1/operations` lists every operation, and <http://localhost:7777/docs> lets you try
+each one from the browser. Shapes are in the [HTTP API reference](../reference/http-api.md).
+
+## 5. First memory from Python
+
+The SDK package is `clickhouse-loom`. From the clone:
+
+```bash
+pip install ./sdk/python
+```
+
+```python
+import asyncio
+
+from loom import Agent
+
+
+async def main():
+    async with Agent(
+        org="dev",
+        namespace="local",
+        agent="quickstart",  # names the writer in the audit log
+        base_url="http://localhost:7777",
+    ) as a:  # reads LOOM_API_KEY; none needed in single-user mode
+        await a.memory.set("deploy_window", "Tue and Thu only; never Friday.")
+        for hit in await a.memory.search("when can we deploy?"):
+            print(hit.content_excerpt)
+
+
+asyncio.run(main())
+```
+
+The SDK reads its credential from `api_key=`, then `LOOM_API_KEY`, then `~/.loom/token`.
+Without a clone, install it with
+`pip install "clickhouse-loom @ git+https://github.com/ClickHouse/loom#subdirectory=sdk/python"`.
+The TypeScript SDK (`@clickhouse/loom`) builds from the clone:
+
+```bash
+npm --prefix sdk/typescript ci && npm --prefix sdk/typescript run build
+npm install ./sdk/typescript
+```
+
+The client surfaces are in the [Python SDK](../reference/python-sdk.md) and
+[TypeScript SDK](../reference/typescript-sdk.md) references.
+
+## 6. First memory from a coding agent
+
+For Claude Code, install the Loom plugin. It adds hooks (context at session start,
+capture at the end) and skills on top of the MCP tools:
+
+```bash
+claude plugin marketplace add ClickHouse/loom
+claude plugin install loom@loom \
+  --config server_url=http://localhost:7777 \
+  --config token="$LOOM_API_KEY"
+```
+
+Without the plugin, add the MCP entry directly:
+
+```bash
+claude mcp add --transport http loom "http://localhost:7777/mcp?toolset=coding" \
+  -H "Authorization: Bearer $LOOM_API_KEY" -s user
+```
+
+`loom install --client <name>` writes the MCP entry for Claude Desktop, Claude Code,
+Codex, Cursor, VS Code, Cline, Windsurf and Zed; with no flag it wires every client it
+finds. [Connect a coding agent](connect-a-coding-agent.md) covers Codex and Cursor.
+
+Start a new session and say _"Remember that I never deploy on Friday."_ The agent calls
+`loom_memory_set`. In a fresh session, ask _"When can I deploy?"_ The agent calls
+`loom_search` and answers from the stored fact. The model decides when to save and
+search from the tool descriptions; there are no trigger words.
+
+## 7. See it in the dashboard
+
+| Page                 | Shows                                             |
+| -------------------- | ------------------------------------------------- |
+| `/me/memories`       | The namespace's memories, with writer and time.   |
+| `/me/admin/activity` | The audit log: which agent wrote which key, when. |
+| `/me/admin/usage`    | Cost per operation and agent.                     |
+
+The rest is in [Dashboard](../features/dashboard.md).
+
+## Optional: ask a question about a document
+
+```bash
+loom demo
+```
+
+`loom demo` ingests this repository's `CLAUDE.md` into the knowledge plane
+(`knowledge.upsert`) and asks a question about it with `knowledge.synthesize`, printing
+the answer and the chunks it cited. With the fake LLM it prints the top
+`knowledge.search` hits instead. `--file` and `--question` point it at your own document.
+
+## Common problems
+
+| Symptom                                                | Cause and fix                                                                                                                                                                  |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `set_from_messages` writes no facts; results arbitrary | Fake providers are active. Follow [Models and keys](./models-and-keys.md) to configure providers and rebuild existing embeddings. Do not delete your volumes to change models. |
+| 401 `AUTH_INVALID` after turning auth on               | No token, or one signed with another `LOOM_JWT_SECRET`. Re-mint with the Compose command in [Get a token](#3-get-a-token).                                                     |
+| `/me` returns 503                                      | The server runs from source (`make server`) without a built frontend. Run `make frontend-build`.                                                                               |
+| Released stack does not become healthy                 | Run `docker compose --project-directory "$HOME/.loom" logs --tail 100 loom clickhouse`. See [Troubleshooting](../operations/troubleshooting.md).                               |
+| Port `8123`, `9000` or `7777` is taken                 | Remap the ClickHouse host ports ([local stack](../operations/deployment.md#local-stack)).                                                                                      |
+
+## Next
+
+- [Evaluate Loom](evaluate.md): turn this smoke test into a workload-specific quality,
+  latency and cost evaluation.
+- [Connect a coding agent](connect-a-coding-agent.md): Claude Code, Codex or Cursor
+  against this stack.
+- [Your first agent](first-agent.md): identity, abstain handling, sessions, context packs
+  and runs from the SDK.
+- [Deployment](../operations/deployment.md): running Loom for a team.

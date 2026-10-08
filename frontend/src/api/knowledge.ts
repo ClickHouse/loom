@@ -1,0 +1,325 @@
+// The API client is split by plane behind the `api.ts` barrel, so a view's client rides
+// in that view's chunk and the shell evaluates only the functions it calls. Importers
+// still import from `api.ts`.
+import { getResponse, post } from "../api";
+import type { Identity, RequestOpts } from "../api";
+import { ApiError } from "../lib/errors";
+
+// ===== Knowledge =====
+
+export interface KnowledgeEntry {
+  source_uri: string;
+  title: string;
+  /** User-supplied summary. Rendered as a 2-line excerpt in the Library
+   *  list, and prepended to chunks before embedding. */
+  description?: string;
+  tags: string[];
+  ingested_at: string;
+  chunk_count: number;
+  superseded: boolean;
+  /** True when the original uploaded file was preserved and is
+   *  downloadable. False for plain-text uploads. */
+  has_blob?: boolean;
+  blob_size?: number;
+  blob_content_type?: string;
+  original_filename?: string;
+  /** First ~200 chars of extracted text — UI snippet. */
+  content_preview?: string;
+}
+
+export interface KnowledgeListResponse {
+  rows: KnowledgeEntry[];
+  next_cursor: string | null;
+}
+
+export async function listKnowledge(
+  id: Pick<Identity, "org" | "namespace">,
+  opts: {
+    tags?: string[];
+    include_superseded?: boolean;
+    limit?: number;
+    cursor?: string;
+    fields?: string[];
+  } & RequestOpts = {},
+): Promise<KnowledgeListResponse> {
+  const body: Record<string, unknown> = {
+    org: id.org,
+    namespace: id.namespace,
+    tags: opts.tags || [],
+    include_superseded: opts.include_superseded || false,
+    limit: opts.limit || 100,
+    // The fields the caller reads; unset, every field.
+    ...(opts.fields ? { fields: opts.fields } : {}),
+  };
+  if (opts.cursor) body["cursor"] = opts.cursor;
+  return post<KnowledgeListResponse>("/v1/knowledge.list", body, opts.signal);
+}
+
+/** Edit doc-level metadata (title / description / tags) without
+ *  re-chunking or re-embedding the body. Cheap (single doc-row
+ *  insert). Returns the post-update state so the caller doesn't
+ *  need to refetch. */
+export async function updateKnowledgeMetadata(
+  id: Pick<Identity, "org" | "namespace">,
+  source_uri: string,
+  patch: {
+    title?: string;
+    description?: string;
+    tags?: string[];
+    /** When true, re-embed every chunk with the new title +
+     *  description prepended, giving the same retrieval-quality boost
+     *  as a full content re-upload without re-uploading the file. */
+    reindex?: boolean;
+  },
+): Promise<{ updated: boolean; title: string; description: string; tags: string[]; chunks_reindexed: number }> {
+  return post("/v1/knowledge.update_metadata", {
+    org: id.org,
+    namespace: id.namespace,
+    source_uri,
+    ...(patch.title !== undefined ? { title: patch.title } : {}),
+    ...(patch.description !== undefined ? { description: patch.description } : {}),
+    ...(patch.tags !== undefined ? { tags: patch.tags } : {}),
+    ...(patch.reindex ? { reindex: true } : {}),
+  });
+}
+
+export async function deleteKnowledge(id: Pick<Identity, "org" | "namespace">, sourceUri: string): Promise<void> {
+  await post<void>("/v1/knowledge.delete", {
+    org: id.org,
+    namespace: id.namespace,
+    source_uri: sourceUri,
+  });
+}
+
+export interface KnowledgeBulkDeleteResult {
+  source_uri: string;
+  tombstoned: boolean;
+  chunks_tombstoned: number;
+  reason: string;
+}
+
+export async function bulkDeleteKnowledge(
+  id: Pick<Identity, "org" | "namespace">,
+  sourceUris: string[],
+): Promise<{ results: KnowledgeBulkDeleteResult[]; total_tombstoned: number }> {
+  return post("/v1/knowledge.bulk_delete", {
+    org: id.org,
+    namespace: id.namespace,
+    source_uris: sourceUris,
+  });
+}
+
+export interface KnowledgeDocument {
+  found: boolean;
+  source_uri: string;
+  title?: string | null;
+  content?: string | null;
+  tags?: string[] | null;
+  ingested_at?: string | null;
+  superseded?: boolean | null;
+  doc_id?: string | null;
+}
+
+export async function getKnowledge(
+  id: Pick<Identity, "org" | "namespace">,
+  sourceUri: string,
+  opts: { consumer?: string } = {},
+): Promise<KnowledgeDocument> {
+  return post<KnowledgeDocument>("/v1/knowledge.get", {
+    org: id.org,
+    namespace: id.namespace,
+    source_uri: sourceUri,
+    // A person previewing from the dashboard is not an agent read
+    ...(opts.consumer ? { consumer: opts.consumer } : {}),
+  });
+}
+
+/** How often agents opened each document over `days` (`knowledge.get` reads; the dashboard's own previews left out). */
+export interface KnowledgeReadRow {
+  source_uri: string;
+  reads: number;
+  agents: number;
+  last_read_at: string;
+}
+export async function knowledgeReads(
+  id: Pick<Identity, "org" | "namespace">,
+  opts: { days?: number; source_uris?: string[] } & RequestOpts = {},
+): Promise<{ window_days: number; reads: KnowledgeReadRow[] }> {
+  return post(
+    "/v1/knowledge.reads",
+    {
+      org: id.org,
+      namespace: id.namespace,
+      days: opts.days ?? 7,
+      source_uris: opts.source_uris ?? [],
+    },
+    opts.signal,
+  );
+}
+
+export interface KnowledgeAddResponse {
+  doc_id: string;
+  chunks_created: number;
+  embedding_model: string;
+  embedding_dim: number;
+  /** Surfaced by knowledge.upsert: the source_uri of an existing
+   *  document with the same content hash, so the UI can warn about
+   *  cross-URI duplication. Empty string when the upload is fresh. */
+  duplicate_of_uri?: string;
+  duplicate_chunk_count?: number;
+  chunks_superseded?: number;
+}
+
+export async function addKnowledge(
+  id: Pick<Identity, "org" | "namespace">,
+  opts: {
+    source_uri: string;
+    content: string;
+    title?: string;
+    description?: string;
+    tags?: string[];
+    upsert?: boolean;
+    /** Base64 of the original uploaded file. When supplied, the server
+     *  preserves it so the user can download exactly what they
+     *  uploaded later. Omit for paste-as-text uploads. */
+    original_bytes_b64?: string;
+    original_filename?: string;
+    blob_content_type?: string;
+  },
+): Promise<KnowledgeAddResponse> {
+  const body: Record<string, unknown> = {
+    org: id.org,
+    namespace: id.namespace,
+    source_uri: opts.source_uri,
+    content: opts.content,
+    title: opts.title || "",
+    description: opts.description || "",
+    tags: opts.tags || [],
+  };
+  if (opts.original_bytes_b64) {
+    body["original_bytes_b64"] = opts.original_bytes_b64;
+    body["original_filename"] = opts.original_filename || "";
+    body["blob_content_type"] = opts.blob_content_type || "";
+  }
+  // knowledge.upsert replaces existing chunks for the same source_uri;
+  // knowledge.add is add-only and 409s on duplicates. Default to upsert.
+  const path = opts.upsert === false ? "/v1/knowledge.add" : "/v1/knowledge.upsert";
+  return post<KnowledgeAddResponse>(path, body);
+}
+
+/** Fetch the original uploaded bytes as a same-origin Object URL. The
+ *  iframe/<embed> tag can't carry custom headers, so the auth'd fetch
+ *  happens here; the caller drops the resulting `blob:` URL into an
+ *  iframe src and revokes when done. Returns null when the document has
+ *  no preserved blob; throws on auth / 403 / unexpected errors. */
+export async function fetchKnowledgeInlineUrl(
+  id: Pick<Identity, "org" | "namespace">,
+  sourceUri: string,
+): Promise<{ url: string; contentType: string; size: number } | null> {
+  const qs = new URLSearchParams({
+    org: id.org,
+    namespace: id.namespace,
+    source_uri: sourceUri,
+    inline: "true",
+  });
+  let r: Response;
+  try {
+    r = await getResponse(`/v1/knowledge.download?${qs}`);
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) return null;
+    throw e;
+  }
+  const blob = await r.blob();
+  return {
+    url: URL.createObjectURL(blob),
+    contentType: r.headers.get("Content-Type") || blob.type || "application/octet-stream",
+    size: blob.size,
+  };
+}
+
+/** The file name a text-only document downloads under when the server
+ * sends none: the last `source_uri` segment with `.md`. Mirrors the server's
+ *  `text_download_filename`. */
+export function textDownloadName(sourceUri: string): string {
+  const segment = sourceUri.replace(/\/+$/, "").split("/").pop() || "";
+  const slug = segment
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^[-._]+|[-._]+$/g, "")
+    .slice(0, 80);
+  if (!slug) return "document.md";
+  return slug.toLowerCase().endsWith(".md") ? slug : `${slug}.md`;
+}
+
+/** Trigger a download of a document: the original uploaded file when one
+ *  was preserved, otherwise its stored text as Markdown (the server says
+ * which in `X-Loom-Download-Source: blob|text`). GET-shaped so the browser's normal
+ *  download flow handles the response; we kick it via a fetch + blob URL so the bearer
+ *  token can be sent in a header. */
+export async function downloadKnowledge(
+  id: Pick<Identity, "org" | "namespace">,
+  sourceUri: string,
+  fallbackFilename: string,
+): Promise<void> {
+  const qs = new URLSearchParams({
+    org: id.org,
+    namespace: id.namespace,
+    source_uri: sourceUri,
+  });
+  const r = await getResponse(`/v1/knowledge.download?${qs}`);
+  // Prefer the server's filename, fall back to the caller's (the original
+  // filename, or `<last URI segment>.md` for a text-only document).
+  const disposition = r.headers.get("Content-Disposition") || "";
+  const match = /filename="([^"]+)"/.exec(disposition);
+  const filename = match ? match[1] : fallbackFilename;
+  const blob = await r.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  // Defer revoke so the browser has time to dispatch the download.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// ===== Curated-doc import =====
+
+export interface ImportCuratedRow {
+  memory_key: string;
+  section_heading: string;
+  bytes_written: number;
+  verdict: "written" | "merged" | "duplicate" | "rejected_pinned" | "skipped";
+  rejection_reason: string;
+  pinned_blocker_id: string | null;
+}
+
+export interface ImportCuratedResult {
+  rows: ImportCuratedRow[];
+  written: number;
+  merged: number;
+  rejected: number;
+  skipped: number;
+}
+
+/** Split a curated markdown doc into per-section memories. Each section
+ *  becomes one memory_key=value pair, written via the same path as
+ *  memory.set so pinned-conflict rejects fire per-row. */
+export async function importCuratedDoc(
+  id: Pick<Identity, "org" | "namespace">,
+  opts: {
+    content: string;
+    source_uri?: string;
+    heading_level?: number;
+    extra_tags?: string[];
+  },
+): Promise<ImportCuratedResult> {
+  return post("/v1/memory.import_curated", {
+    org: id.org,
+    namespace: id.namespace,
+    content: opts.content,
+    source_uri: opts.source_uri || "",
+    heading_level: opts.heading_level ?? 2,
+    extra_tags: opts.extra_tags || [],
+  });
+}

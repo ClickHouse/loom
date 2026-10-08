@@ -1,0 +1,39 @@
+# Build context exclusions.
+#
+# The one that matters: **/node_modules. The frontend stage installs from the
+# lockfile with `npm ci`, and the `COPY frontend/ ./` after it would otherwise
+# copy a local `frontend/node_modules` over that install, shipping whatever is
+# on the build host instead of the pinned tree. `.gitignore` excluding
+# node_modules does not keep it out of the build context.
+**/node_modules
+
+# Built frontend assets: the frontend stage produces these itself, and a stale
+# local `dist` copied over a fresh build has the same failure mode as above.
+frontend/dist
+
+# Python build/venv/cache artefacts — never wanted in a build context.
+.venv
+**/__pycache__
+**/*.pyc
+**/*.pyo
+.pytest_cache
+.ruff_cache
+.mypy_cache
+*.egg-info
+
+# Operator-local state. `var/` holds the blob store and vector backups: large,
+# machine-specific, and never needed at build time.
+var/
+
+# Secrets must not enter the build context even though no COPY references them.
+.env
+.env.*
+
+# VCS and CI metadata.
+.git
+.gitignore
+.github
+
+# Editor / OS noise.
+.DS_Store
+*.swp

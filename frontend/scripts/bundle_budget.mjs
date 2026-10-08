@@ -1,0 +1,62 @@
+// The shell evaluates what it shows — a budget on the index chunk. Builds with source
+// maps into a scratch directory, attributes the index chunk's bytes to source files, and
+// fails when the chunk is over budget or carries a surface that opens on a click (a flow
+// dialog, the header search's body, a view). Run from frontend/: node
+// scripts/bundle_budget.mjs
+import { execSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { TraceMap, originalPositionFor } from "@jridgewell/trace-mapping";
+
+const INDEX_BUDGET_BYTES = 120 * 1024;
+// Sources that must not evaluate on every boot (relative to frontend/src).
+const FORBIDDEN_IN_INDEX = [/^flows\/.*Dialog\.tsx$/, /^components\/HeaderSearch\.tsx$/, /^views\/(?!registry\.ts$).+/];
+
+const out = path.resolve("dist-budget");
+fs.rmSync(out, { recursive: true, force: true });
+execSync(`npx vite build --sourcemap --outDir ${JSON.stringify(out)} --emptyOutDir`, { stdio: "inherit" });
+const assets = path.join(out, "assets");
+// The entry is the module script index.html loads, not the first index-*.js on disk: other
+// modules named index (a Radix package's) become chunks with the same prefix.
+const html = fs.readFileSync(path.join(out, "index.html"), "utf8");
+const index = [...html.matchAll(/<script\b[^>]*>/g)]
+  .map(([tag]) => /\btype="module"/.test(tag) && /\bsrc="[^"]*\/assets\/(index-[^"/]+\.js)"/.exec(tag))
+  .find(Boolean)?.[1];
+if (!index) {
+  console.error("bundle-budget: no module entry script in index.html");
+  process.exit(2);
+}
+const code = fs.readFileSync(path.join(assets, index), "utf8");
+const map = new TraceMap(JSON.parse(fs.readFileSync(path.join(assets, `${index}.map`), "utf8")));
+const by = new Map();
+const lines = code.split("\n");
+for (let li = 0; li < lines.length; li++) {
+  const L = lines[li];
+  let prevCol = 0;
+  for (let c = 16; c <= L.length + 16; c += 16) {
+    const col = Math.min(c, L.length);
+    const p = originalPositionFor(map, { line: li + 1, column: Math.max(0, col - 16) });
+    let src = p.source || "(unmapped)";
+    const i = src.lastIndexOf("/src/");
+    if (i >= 0) src = src.slice(i + 5);
+    else if (src.includes("node_modules/")) src = "node_modules";
+    by.set(src, (by.get(src) || 0) + (col - prevCol));
+    prevCol = col;
+    if (col === L.length) break;
+  }
+}
+const problems = [];
+if (code.length > INDEX_BUDGET_BYTES)
+  problems.push(`index chunk ${(code.length / 1024).toFixed(1)} kB over the ${INDEX_BUDGET_BYTES / 1024} kB budget`);
+for (const [src, n] of by)
+  if (n >= 256 && FORBIDDEN_IN_INDEX.some((re) => re.test(src)))
+    problems.push(`${src} (${(n / 1024).toFixed(1)} kB) evaluates on every boot — load it when opened`);
+console.log(`bundle-budget: index ${index} ${(code.length / 1024).toFixed(1)} kB; top sources:`);
+for (const [s, n] of [...by.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12))
+  console.log(`   ${(n / 1024).toFixed(1).padStart(6)} kB  ${s}`);
+fs.rmSync(out, { recursive: true, force: true });
+if (problems.length) {
+  for (const p of problems) console.error(`bundle-budget: ${p}`);
+  process.exit(1);
+}
+console.log("bundle-budget: OK");

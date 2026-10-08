@@ -1,0 +1,3 @@
+"""A stub-only module: the C extension has no Python source."""
+
+def fast(n: int) -> int: ...

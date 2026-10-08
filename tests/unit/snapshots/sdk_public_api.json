@@ -1,0 +1,3297 @@
+{
+  "Agent.__init__": [
+    "org",
+    "namespace",
+    "agent",
+    "base_url",
+    "api_key",
+    "timeout_s",
+    "pacing",
+    "coalesce_sets",
+    "ratelimit_max_wait_s",
+    "auto_run",
+    "retry",
+    "consumer",
+    "mentor_brief"
+  ],
+  "Agent.methods": {
+    "call": [
+      "op",
+      "body",
+      "user_id",
+      "session_id",
+      "run_id",
+      "agent_id",
+      "idempotency_key",
+      "timeout_s",
+      "retry",
+      "fields"
+    ],
+    "call_with_meta": [
+      "op",
+      "body",
+      "user_id",
+      "session_id",
+      "run_id",
+      "agent_id",
+      "idempotency_key",
+      "timeout_s",
+      "retry",
+      "fields"
+    ],
+    "can_call": [
+      "op"
+    ],
+    "capabilities": [
+      "max_age_s"
+    ],
+    "close": [
+      "failed"
+    ],
+    "identity": [
+      "user_id",
+      "session_id",
+      "run_id",
+      "agent_id"
+    ],
+    "mentor": [
+      "window_seconds"
+    ],
+    "probe": [
+      "ops",
+      "fields"
+    ],
+    "run_scope": [
+      "begin_kwargs"
+    ],
+    "session": [
+      "session_id",
+      "user_id",
+      "run_id",
+      "flush_every",
+      "transcript",
+      "carry_over",
+      "extraction"
+    ],
+    "tools": [
+      "user_id",
+      "session_id",
+      "run_id",
+      "only",
+      "max_result_chars"
+    ]
+  },
+  "Datapack.__init__": [
+    "org",
+    "namespace",
+    "base_url",
+    "api_key",
+    "timeout_s",
+    "pacing",
+    "coalesce_sets",
+    "ratelimit_max_wait_s",
+    "auto_run",
+    "retry",
+    "consumer",
+    "mentor_brief"
+  ],
+  "SyncAgent.__init__": [
+    "org",
+    "namespace",
+    "agent",
+    "base_url",
+    "api_key",
+    "timeout_s",
+    "pacing",
+    "coalesce_sets",
+    "ratelimit_max_wait_s",
+    "call_timeout_s",
+    "auto_run",
+    "retry",
+    "consumer",
+    "mentor_brief"
+  ],
+  "clients": {
+    "audit": {
+      "class": "AuditClient",
+      "methods": {
+        "list": [
+          "event_type",
+          "since",
+          "limit",
+          "cursor"
+        ]
+      }
+    },
+    "blacklist": {
+      "class": "BlacklistClient",
+      "methods": {
+        "add": [
+          "pattern",
+          "pattern_type",
+          "scope",
+          "reason",
+          "created_by",
+          "sweep"
+        ],
+        "list": [
+          "scope",
+          "limit"
+        ],
+        "remove": [
+          "pattern_id",
+          "removed_by",
+          "reason"
+        ]
+      }
+    },
+    "briefs": {
+      "class": "BriefsClient",
+      "methods": {
+        "delete": [
+          "brief_key"
+        ],
+        "get": [
+          "brief_key",
+          "from_session",
+          "project",
+          "revision",
+          "include_sections",
+          "full"
+        ],
+        "list": [
+          "project",
+          "mine_only",
+          "limit"
+        ],
+        "save": [
+          "brief_key",
+          "sections",
+          "events",
+          "project",
+          "branch",
+          "head_sha",
+          "session_id",
+          "trigger",
+          "if_revision"
+        ]
+      }
+    },
+    "calibration": {
+      "class": "CalibrationClient",
+      "methods": {
+        "get": []
+      }
+    },
+    "client": {
+      "class": "OpsClient",
+      "methods": {},
+      "nested": {
+        "admin": {
+          "class": "AdminOps",
+          "methods": {
+            "users": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "agents": {
+          "class": "AgentsOps",
+          "methods": {
+            "connected": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "audit": {
+          "class": "AuditOps",
+          "methods": {
+            "list": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "blacklist": {
+          "class": "BlacklistOps",
+          "methods": {
+            "add": [
+              "body",
+              "options"
+            ],
+            "list": [
+              "body",
+              "options"
+            ],
+            "remove": [
+              "body",
+              "options"
+            ],
+            "sweep": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "calibration": {
+          "class": "CalibrationOps",
+          "methods": {
+            "get": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "code": {
+          "class": "CodeOps",
+          "methods": {
+            "ask": [
+              "body",
+              "options"
+            ],
+            "backport_gap": [
+              "body",
+              "options"
+            ],
+            "backport_gaps": [
+              "body",
+              "options"
+            ],
+            "bisect_candidates": [
+              "body",
+              "options"
+            ],
+            "blame_range": [
+              "body",
+              "options"
+            ],
+            "calibrate": [
+              "body",
+              "options"
+            ],
+            "callees": [
+              "body",
+              "options"
+            ],
+            "callers": [
+              "body",
+              "options"
+            ],
+            "context_pack": [
+              "body",
+              "options"
+            ],
+            "context_packs": [
+              "body",
+              "options"
+            ],
+            "conventions": [
+              "body",
+              "options"
+            ],
+            "coverage": [
+              "body",
+              "options"
+            ],
+            "coverage_claim": [
+              "body",
+              "options"
+            ],
+            "coverage_unwatch": [
+              "body",
+              "options"
+            ],
+            "coverage_watch": [
+              "body",
+              "options"
+            ],
+            "enclosing": [
+              "body",
+              "options"
+            ],
+            "examples": [
+              "body",
+              "options"
+            ],
+            "files": [
+              "body",
+              "options"
+            ],
+            "first_build": [
+              "body",
+              "options"
+            ],
+            "grep": [
+              "body",
+              "options"
+            ],
+            "history": [
+              "body",
+              "options"
+            ],
+            "impact": [
+              "body",
+              "options"
+            ],
+            "index_errors": [
+              "body",
+              "options"
+            ],
+            "index_status": [
+              "body",
+              "options"
+            ],
+            "map": [
+              "body",
+              "options"
+            ],
+            "outcome": [
+              "body",
+              "options"
+            ],
+            "outline": [
+              "body",
+              "options"
+            ],
+            "path_guards": [
+              "body",
+              "options"
+            ],
+            "pr_check": [
+              "body",
+              "options"
+            ],
+            "recent_commits": [
+              "body",
+              "options"
+            ],
+            "refresh": [
+              "body",
+              "options"
+            ],
+            "reindex": [
+              "body",
+              "options"
+            ],
+            "repo_add": [
+              "body",
+              "options"
+            ],
+            "repo_add_branch": [
+              "body",
+              "options"
+            ],
+            "repo_remote_branches": [
+              "body",
+              "options"
+            ],
+            "repo_remove": [
+              "body",
+              "options"
+            ],
+            "repo_set_access": [
+              "body",
+              "options"
+            ],
+            "repo_set_source": [
+              "body",
+              "options"
+            ],
+            "repos": [
+              "body",
+              "options"
+            ],
+            "review_brief": [
+              "body",
+              "options"
+            ],
+            "scip_ingest": [
+              "body",
+              "options"
+            ],
+            "scip_status": [
+              "body",
+              "options"
+            ],
+            "search": [
+              "body",
+              "options"
+            ],
+            "setting_facts": [
+              "body",
+              "options"
+            ],
+            "symbol": [
+              "body",
+              "options"
+            ],
+            "symbol_history": [
+              "body",
+              "options"
+            ],
+            "test_gate": [
+              "body",
+              "options"
+            ],
+            "test_home": [
+              "body",
+              "options"
+            ],
+            "tests_for": [
+              "body",
+              "options"
+            ],
+            "trace": [
+              "body",
+              "options"
+            ],
+            "verify": [
+              "body",
+              "options"
+            ],
+            "verify_citations": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "conflicts": {
+          "class": "ConflictsOps",
+          "methods": {
+            "allowlist_list": [
+              "body",
+              "options"
+            ],
+            "allowlist_remove": [
+              "body",
+              "options"
+            ],
+            "list": [
+              "body",
+              "options"
+            ],
+            "propose_revision": [
+              "body",
+              "options"
+            ],
+            "resolve": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "consolidations": {
+          "class": "ConsolidationsOps",
+          "methods": {
+            "list": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "context": {
+          "class": "ContextOps",
+          "methods": {
+            "fetch": [
+              "body",
+              "options"
+            ],
+            "offload": [
+              "body",
+              "options"
+            ],
+            "pack": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "conversation": {
+          "class": "ConversationOps",
+          "methods": {
+            "append": [
+              "body",
+              "options"
+            ],
+            "compact": [
+              "body",
+              "options"
+            ],
+            "create": [
+              "body",
+              "options"
+            ],
+            "delete": [
+              "body",
+              "options"
+            ],
+            "get": [
+              "body",
+              "options"
+            ],
+            "list": [
+              "body",
+              "options"
+            ],
+            "search": [
+              "body",
+              "options"
+            ],
+            "set_logging": [
+              "body",
+              "options"
+            ],
+            "threads": [
+              "body",
+              "options"
+            ],
+            "update": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "cost": {
+          "class": "CostOps",
+          "methods": {
+            "agent_summary": [
+              "body",
+              "options"
+            ],
+            "budget_status": [
+              "body",
+              "options"
+            ],
+            "record_turns": [
+              "body",
+              "options"
+            ],
+            "summary": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "decision": {
+          "class": "DecisionOps",
+          "methods": {
+            "chain": [
+              "body",
+              "options"
+            ],
+            "outcome": [
+              "body",
+              "options"
+            ],
+            "precedents": [
+              "body",
+              "options"
+            ],
+            "record": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "embedding": {
+          "class": "EmbeddingOps",
+          "methods": {
+            "embed": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "erasure": {
+          "class": "ErasureOps",
+          "methods": {
+            "export": [
+              "body",
+              "options"
+            ],
+            "list": [
+              "body",
+              "options"
+            ],
+            "request": [
+              "body",
+              "options"
+            ],
+            "status": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "facts": {
+          "class": "FactsOps",
+          "methods": {
+            "expire_by_adapter": [
+              "body",
+              "options"
+            ],
+            "list": [
+              "body",
+              "options"
+            ],
+            "path": [
+              "body",
+              "options"
+            ],
+            "related": [
+              "body",
+              "options"
+            ],
+            "traverse": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "grants": {
+          "class": "GrantsOps",
+          "methods": {
+            "approve": [
+              "body",
+              "options"
+            ],
+            "create": [
+              "body",
+              "options"
+            ],
+            "list": [
+              "body",
+              "options"
+            ],
+            "pending_for_me": [
+              "body",
+              "options"
+            ],
+            "revoke": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "inbox": {
+          "class": "InboxOps",
+          "methods": {
+            "list": [
+              "body",
+              "options"
+            ],
+            "policy_list": [
+              "body",
+              "options"
+            ],
+            "policy_set": [
+              "body",
+              "options"
+            ],
+            "principals": [
+              "body",
+              "options"
+            ],
+            "register": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "knowledge": {
+          "class": "KnowledgeOps",
+          "methods": {
+            "add": [
+              "body",
+              "options"
+            ],
+            "bulk_add": [
+              "body",
+              "options"
+            ],
+            "bulk_delete": [
+              "body",
+              "options"
+            ],
+            "dedup_list": [
+              "body",
+              "options"
+            ],
+            "dedup_resolve": [
+              "body",
+              "options"
+            ],
+            "delete": [
+              "body",
+              "options"
+            ],
+            "get": [
+              "body",
+              "options"
+            ],
+            "list": [
+              "body",
+              "options"
+            ],
+            "outline": [
+              "body",
+              "options"
+            ],
+            "reads": [
+              "body",
+              "options"
+            ],
+            "search": [
+              "body",
+              "options"
+            ],
+            "synthesize": [
+              "body",
+              "options"
+            ],
+            "update_metadata": [
+              "body",
+              "options"
+            ],
+            "upsert": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "learnings": {
+          "class": "LearningsOps",
+          "methods": {
+            "list": [
+              "body",
+              "options"
+            ],
+            "quality": [
+              "body",
+              "options"
+            ],
+            "review": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "llm": {
+          "class": "LlmOps",
+          "methods": {
+            "complete": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "memory": {
+          "class": "MemoryOps",
+          "methods": {
+            "agents_list": [
+              "body",
+              "options"
+            ],
+            "aggregate": [
+              "body",
+              "options"
+            ],
+            "apply": [
+              "body",
+              "options"
+            ],
+            "ask": [
+              "body",
+              "options"
+            ],
+            "assign_category": [
+              "body",
+              "options"
+            ],
+            "backlinks": [
+              "body",
+              "options"
+            ],
+            "brief": [
+              "body",
+              "options"
+            ],
+            "bulk_get": [
+              "body",
+              "options"
+            ],
+            "bulk_set": [
+              "body",
+              "options"
+            ],
+            "clear": [
+              "body",
+              "options"
+            ],
+            "consolidate": [
+              "body",
+              "options"
+            ],
+            "copy_to": [
+              "body",
+              "options"
+            ],
+            "cross_promote": [
+              "body",
+              "options"
+            ],
+            "dedup_collapse": [
+              "body",
+              "options"
+            ],
+            "dedup_list": [
+              "body",
+              "options"
+            ],
+            "dedup_resolve": [
+              "body",
+              "options"
+            ],
+            "delete": [
+              "body",
+              "options"
+            ],
+            "demonstrate": [
+              "body",
+              "options"
+            ],
+            "demote": [
+              "body",
+              "options"
+            ],
+            "digests": [
+              "body",
+              "options"
+            ],
+            "evidence": [
+              "body",
+              "options"
+            ],
+            "export_evidence": [
+              "body",
+              "options"
+            ],
+            "exposure_summary": [
+              "body",
+              "options"
+            ],
+            "extraction_status": [
+              "body",
+              "options"
+            ],
+            "for_file": [
+              "body",
+              "options"
+            ],
+            "get": [
+              "body",
+              "options"
+            ],
+            "get_by_id": [
+              "body",
+              "options"
+            ],
+            "health": [
+              "body",
+              "options"
+            ],
+            "history": [
+              "body",
+              "options"
+            ],
+            "import_curated": [
+              "body",
+              "options"
+            ],
+            "import_evidence": [
+              "body",
+              "options"
+            ],
+            "lineage": [
+              "body",
+              "options"
+            ],
+            "link": [
+              "body",
+              "options"
+            ],
+            "list": [
+              "body",
+              "options"
+            ],
+            "lock": [
+              "body",
+              "options"
+            ],
+            "move": [
+              "body",
+              "options"
+            ],
+            "outcome": [
+              "body",
+              "options"
+            ],
+            "outcome_run": [
+              "body",
+              "options"
+            ],
+            "outline": [
+              "body",
+              "options"
+            ],
+            "owner_report": [
+              "body",
+              "options"
+            ],
+            "pin": [
+              "body",
+              "options"
+            ],
+            "promote": [
+              "body",
+              "options"
+            ],
+            "proposal_decide": [
+              "body",
+              "options"
+            ],
+            "proposals": [
+              "body",
+              "options"
+            ],
+            "provenance": [
+              "body",
+              "options"
+            ],
+            "recall": [
+              "body",
+              "options"
+            ],
+            "record_conflicts": [
+              "body",
+              "options"
+            ],
+            "record_history": [
+              "body",
+              "options"
+            ],
+            "record_query": [
+              "body",
+              "options"
+            ],
+            "record_write": [
+              "body",
+              "options"
+            ],
+            "redact": [
+              "body",
+              "options"
+            ],
+            "reindex": [
+              "body",
+              "options"
+            ],
+            "reject": [
+              "body",
+              "options"
+            ],
+            "related": [
+              "body",
+              "options"
+            ],
+            "resolve_orphan_duplicates": [
+              "body",
+              "options"
+            ],
+            "restore": [
+              "body",
+              "options"
+            ],
+            "search": [
+              "body",
+              "options"
+            ],
+            "search_trace": [
+              "body",
+              "options"
+            ],
+            "search_trace_log": [
+              "body",
+              "options"
+            ],
+            "set": [
+              "body",
+              "options"
+            ],
+            "set_from_messages": [
+              "body",
+              "options"
+            ],
+            "stack": [
+              "body",
+              "options"
+            ],
+            "sweep_expired": [
+              "body",
+              "options"
+            ],
+            "timeline": [
+              "body",
+              "options"
+            ],
+            "touch": [
+              "body",
+              "options"
+            ],
+            "unlock": [
+              "body",
+              "options"
+            ],
+            "unpin": [
+              "body",
+              "options"
+            ],
+            "update": [
+              "body",
+              "options"
+            ],
+            "update_by_id": [
+              "body",
+              "options"
+            ],
+            "verify": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "memory_schema": {
+          "class": "MemorySchemaOps",
+          "methods": {
+            "approve": [
+              "body",
+              "options"
+            ],
+            "list": [
+              "body",
+              "options"
+            ],
+            "propose": [
+              "body",
+              "options"
+            ],
+            "register": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "mentor": {
+          "class": "MentorOps",
+          "methods": {
+            "brief": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "namespace": {
+          "class": "NamespaceOps",
+          "methods": {
+            "audit": [
+              "body",
+              "options"
+            ],
+            "browse": [
+              "body",
+              "options"
+            ],
+            "cancel_request": [
+              "body",
+              "options"
+            ],
+            "delete": [
+              "body",
+              "options"
+            ],
+            "get": [
+              "body",
+              "options"
+            ],
+            "join": [
+              "body",
+              "options"
+            ],
+            "leave": [
+              "body",
+              "options"
+            ],
+            "list": [
+              "body",
+              "options"
+            ],
+            "list_categories": [
+              "body",
+              "options"
+            ],
+            "list_mine": [
+              "body",
+              "options"
+            ],
+            "list_ontology": [
+              "body",
+              "options"
+            ],
+            "mark_seen": [
+              "body",
+              "options"
+            ],
+            "register": [
+              "body",
+              "options"
+            ],
+            "register_category": [
+              "body",
+              "options"
+            ],
+            "register_ontology": [
+              "body",
+              "options"
+            ],
+            "restore": [
+              "body",
+              "options"
+            ],
+            "rollback": [
+              "body",
+              "options"
+            ],
+            "search_categories": [
+              "body",
+              "options"
+            ],
+            "snapshot": [
+              "body",
+              "options"
+            ],
+            "summary": [
+              "body",
+              "options"
+            ],
+            "taxonomy": [
+              "body",
+              "options"
+            ],
+            "validate": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "observe": {
+          "class": "ObserveOps",
+          "methods": {
+            "crystallize": [
+              "body",
+              "options"
+            ],
+            "record": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "ops": {
+          "class": "OpsOps",
+          "methods": {
+            "capabilities": [
+              "body",
+              "options"
+            ],
+            "health": [
+              "body",
+              "options"
+            ],
+            "projection_failures_list": [
+              "body",
+              "options"
+            ],
+            "projection_failures_resolve": [
+              "body",
+              "options"
+            ],
+            "projection_failures_retry": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "policy": {
+          "class": "PolicyOps",
+          "methods": {
+            "check": [
+              "body",
+              "options"
+            ],
+            "decisions": [
+              "body",
+              "options"
+            ],
+            "delete": [
+              "body",
+              "options"
+            ],
+            "list": [
+              "body",
+              "options"
+            ],
+            "set": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "procedure": {
+          "class": "ProcedureOps",
+          "methods": {
+            "add": [
+              "body",
+              "options"
+            ],
+            "evolve": [
+              "body",
+              "options"
+            ],
+            "fork": [
+              "body",
+              "options"
+            ],
+            "list": [
+              "body",
+              "options"
+            ],
+            "locate": [
+              "body",
+              "options"
+            ],
+            "match": [
+              "body",
+              "options"
+            ],
+            "record_run": [
+              "body",
+              "options"
+            ],
+            "revise": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "profile": {
+          "class": "ProfileOps",
+          "methods": {
+            "activity": [
+              "body",
+              "options"
+            ],
+            "append": [
+              "body",
+              "options"
+            ],
+            "render": [
+              "body",
+              "options"
+            ],
+            "replace": [
+              "body",
+              "options"
+            ],
+            "set": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "run": {
+          "class": "RunOps",
+          "methods": {
+            "begin": [
+              "body",
+              "options"
+            ],
+            "complete": [
+              "body",
+              "options"
+            ],
+            "get": [
+              "body",
+              "options"
+            ],
+            "grade": [
+              "body",
+              "options"
+            ],
+            "list": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "search": {
+          "class": "SearchOps",
+          "methods": {
+            "query": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "session": {
+          "class": "SessionOps",
+          "methods": {
+            "brief_delete": [
+              "body",
+              "options"
+            ],
+            "brief_get": [
+              "body",
+              "options"
+            ],
+            "brief_list": [
+              "body",
+              "options"
+            ],
+            "brief_save": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "task": {
+          "class": "TaskOps",
+          "methods": {
+            "accept": [
+              "body",
+              "options"
+            ],
+            "block": [
+              "body",
+              "options"
+            ],
+            "cancel": [
+              "body",
+              "options"
+            ],
+            "claim": [
+              "body",
+              "options"
+            ],
+            "complete": [
+              "body",
+              "options"
+            ],
+            "counts": [
+              "body",
+              "options"
+            ],
+            "create": [
+              "body",
+              "options"
+            ],
+            "defer": [
+              "body",
+              "options"
+            ],
+            "fail": [
+              "body",
+              "options"
+            ],
+            "get": [
+              "body",
+              "options"
+            ],
+            "heartbeat": [
+              "body",
+              "options"
+            ],
+            "history": [
+              "body",
+              "options"
+            ],
+            "list": [
+              "body",
+              "options"
+            ],
+            "progress": [
+              "body",
+              "options"
+            ],
+            "pull": [
+              "body",
+              "options"
+            ],
+            "reassign": [
+              "body",
+              "options"
+            ],
+            "reopen": [
+              "body",
+              "options"
+            ],
+            "resume": [
+              "body",
+              "options"
+            ],
+            "unblock": [
+              "body",
+              "options"
+            ],
+            "update": [
+              "body",
+              "options"
+            ],
+            "updates": [
+              "body",
+              "options"
+            ],
+            "wont_do": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "tracker": {
+          "class": "TrackerOps",
+          "methods": {
+            "answer": [
+              "body",
+              "options"
+            ],
+            "binding": [
+              "body",
+              "options"
+            ],
+            "component": [
+              "body",
+              "options"
+            ],
+            "contract": [
+              "body",
+              "options"
+            ],
+            "duplicate_check": [
+              "body",
+              "options"
+            ],
+            "flaky": [
+              "body",
+              "options"
+            ],
+            "item": [
+              "body",
+              "options"
+            ],
+            "links": [
+              "body",
+              "options"
+            ],
+            "release": [
+              "body",
+              "options"
+            ],
+            "similar": [
+              "body",
+              "options"
+            ],
+            "source_add": [
+              "body",
+              "options"
+            ],
+            "source_check": [
+              "body",
+              "options"
+            ],
+            "source_inspect": [
+              "body",
+              "options"
+            ],
+            "source_list": [
+              "body",
+              "options"
+            ],
+            "source_remove": [
+              "body",
+              "options"
+            ],
+            "source_rotate": [
+              "body",
+              "options"
+            ],
+            "source_set_mapping": [
+              "body",
+              "options"
+            ],
+            "test_signal": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "ui": {
+          "class": "UiOps",
+          "methods": {
+            "vitals": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "working_memory": {
+          "class": "WorkingMemoryOps",
+          "methods": {
+            "append": [
+              "body",
+              "options"
+            ],
+            "delete": [
+              "body",
+              "options"
+            ],
+            "get": [
+              "body",
+              "options"
+            ],
+            "render": [
+              "body",
+              "options"
+            ],
+            "replace": [
+              "body",
+              "options"
+            ],
+            "set": [
+              "body",
+              "options"
+            ]
+          }
+        }
+      }
+    },
+    "code": {
+      "class": "CodeClient",
+      "methods": {
+        "backport_gap": [
+          "pr_number",
+          "issue_number",
+          "branches",
+          "max_symbols",
+          "exact",
+          "history"
+        ],
+        "backport_gaps": [
+          "branch",
+          "wanted_only",
+          "days",
+          "limit"
+        ],
+        "blame_range": [
+          "path",
+          "start_line",
+          "end_line",
+          "from_version",
+          "to_version",
+          "from_sha",
+          "to_sha",
+          "limit",
+          "stage",
+          "mentions",
+          "reviews_per_pr"
+        ],
+        "callees": [
+          "name",
+          "symbol_id",
+          "depth",
+          "max_nodes",
+          "min_confidence",
+          "include_ambiguous",
+          "candidate_min_confidence"
+        ],
+        "callers": [
+          "name",
+          "symbol_id",
+          "depth",
+          "max_nodes",
+          "min_confidence",
+          "include_ambiguous",
+          "candidate_min_confidence",
+          "pr_number"
+        ],
+        "context_pack": [
+          "pr_number",
+          "token_budget",
+          "sections"
+        ],
+        "context_packs": [
+          "limit",
+          "offset",
+          "pr_number",
+          "org",
+          "namespace"
+        ],
+        "conventions": [
+          "pr_number",
+          "head_sha",
+          "files",
+          "diff",
+          "rules"
+        ],
+        "coverage": [
+          "org",
+          "namespace"
+        ],
+        "coverage_unwatch": [
+          "commit",
+          "inbox",
+          "org",
+          "namespace"
+        ],
+        "coverage_watch": [
+          "commit",
+          "inbox",
+          "org",
+          "namespace"
+        ],
+        "enclosing": [
+          "locations",
+          "include_body",
+          "token_budget",
+          "neighbours",
+          "neighbour_k"
+        ],
+        "examples": [
+          "name",
+          "symbol_id",
+          "top_k"
+        ],
+        "files": [
+          "glob",
+          "stem",
+          "path_prefix",
+          "limit"
+        ],
+        "first_build": [
+          "sha",
+          "pr_number"
+        ],
+        "grep": [
+          "pattern",
+          "regex",
+          "path_prefix",
+          "limit",
+          "mode",
+          "path_globs",
+          "exclude_globs",
+          "langs",
+          "namespaces"
+        ],
+        "history": [
+          "name",
+          "symbol_id",
+          "path",
+          "limit",
+          "reviews_per_pr"
+        ],
+        "impact": [
+          "name",
+          "symbol_id",
+          "depth",
+          "files",
+          "diff",
+          "exclude_authors",
+          "pr_number"
+        ],
+        "index_status": [
+          "org",
+          "namespace",
+          "commit",
+          "paths",
+          "brief"
+        ],
+        "map": [
+          "token_budget",
+          "module_prefix"
+        ],
+        "outcome": [
+          "trace_run_id",
+          "action",
+          "targets",
+          "source",
+          "tokens_saved",
+          "reason"
+        ],
+        "outline": [
+          "path",
+          "kinds",
+          "token_budget"
+        ],
+        "pr_check": [
+          "title",
+          "body",
+          "paths",
+          "symbols",
+          "issues",
+          "pr_number",
+          "top_k"
+        ],
+        "repos": [
+          "org"
+        ],
+        "review_brief": [
+          "pr_number",
+          "merge_sha",
+          "tier",
+          "sections",
+          "token_budget",
+          "store",
+          "open"
+        ],
+        "search": [
+          "query",
+          "top_k",
+          "token_budget",
+          "path_prefix",
+          "bodies",
+          "annotate",
+          "pattern",
+          "regex",
+          "case_sensitive",
+          "path_globs",
+          "exclude_globs",
+          "langs",
+          "namespaces"
+        ],
+        "symbol": [
+          "name",
+          "symbol_id",
+          "include_body",
+          "include_history",
+          "include_examples",
+          "include_lessons",
+          "token_budget",
+          "uses",
+          "uses_limit",
+          "uses_brief",
+          "near_paths",
+          "pr_number",
+          "namespaces",
+          "presence"
+        ],
+        "test_gate": [
+          "files",
+          "diff",
+          "depth",
+          "limit"
+        ],
+        "trace": [
+          "trace",
+          "max_frames",
+          "token_budget"
+        ],
+        "verify": [
+          "kind",
+          "subject",
+          "obj",
+          "depth"
+        ],
+        "verify_citations": [
+          "text",
+          "at_commit",
+          "base_namespace",
+          "pr_number",
+          "limit"
+        ]
+      }
+    },
+    "conflicts": {
+      "class": "ConflictsClient",
+      "methods": {
+        "allowlist_list": [
+          "limit"
+        ],
+        "allowlist_remove": [
+          "memory_key_a",
+          "memory_key_b",
+          "reason",
+          "removed_by"
+        ],
+        "list": [
+          "limit",
+          "before_version"
+        ],
+        "resolve": [
+          "memory_id",
+          "decision",
+          "peer_id",
+          "reason",
+          "resolved_by"
+        ]
+      }
+    },
+    "context": {
+      "class": "ContextClient",
+      "methods": {
+        "fetch": [
+          "blob_key",
+          "offset",
+          "limit",
+          "pattern",
+          "context_lines",
+          "user_id",
+          "session_id",
+          "run_id",
+          "agent_id"
+        ],
+        "offload": [
+          "content",
+          "blob_key",
+          "summary",
+          "content_type",
+          "ttl_seconds",
+          "user_id",
+          "session_id",
+          "run_id",
+          "agent_id"
+        ],
+        "pack": [
+          "query",
+          "situation",
+          "token_budget",
+          "top_k",
+          "mode",
+          "include_knowledge",
+          "include_conversations",
+          "include_chunks",
+          "section_token_budgets",
+          "block_order",
+          "only_sections",
+          "include_decisions",
+          "user_id",
+          "session_id",
+          "run_id",
+          "agent_id"
+        ]
+      }
+    },
+    "conversations": {
+      "class": "ConversationsClient",
+      "methods": {
+        "append": [
+          "thread_id",
+          "msg_id",
+          "role",
+          "content",
+          "reasoning",
+          "user_id",
+          "run_id",
+          "agent_id",
+          "metadata",
+          "tokens"
+        ],
+        "create": [
+          "thread_id",
+          "title",
+          "metadata",
+          "run_id",
+          "user_id",
+          "agent_id"
+        ],
+        "delete": [
+          "thread_id",
+          "confirm_thread_id",
+          "agent_id"
+        ],
+        "get": [
+          "thread_id",
+          "include_messages",
+          "limit",
+          "offset",
+          "order",
+          "agent_id"
+        ],
+        "list": [
+          "thread_id",
+          "run_id",
+          "agent_id",
+          "limit",
+          "cursor"
+        ],
+        "search": [
+          "query",
+          "thread_id",
+          "role",
+          "run_id",
+          "agent_id",
+          "top_k"
+        ],
+        "update": [
+          "thread_id",
+          "title",
+          "metadata",
+          "run_id",
+          "agent_id"
+        ]
+      }
+    },
+    "cost": {
+      "class": "CostClient",
+      "methods": {
+        "summary": [
+          "from_date",
+          "to_date",
+          "group_by",
+          "namespace",
+          "agent",
+          "operation"
+        ]
+      }
+    },
+    "decision": {
+      "class": "DecisionClient",
+      "methods": {
+        "chain": [
+          "memory_key",
+          "direction",
+          "max_hops"
+        ],
+        "outcome": [
+          "memory_key",
+          "realized_outcome",
+          "success"
+        ],
+        "precedents": [
+          "query",
+          "category",
+          "top_k",
+          "with_outcome_only"
+        ],
+        "record": [
+          "category",
+          "scenario",
+          "reasoning",
+          "outcome",
+          "alternatives",
+          "confidence",
+          "decision_maker",
+          "caused_by",
+          "influenced_by",
+          "tags",
+          "run_id",
+          "session_id",
+          "user_id",
+          "valid_at"
+        ]
+      }
+    },
+    "erasure": {
+      "class": "ErasureClient",
+      "methods": {
+        "export": [
+          "scope_type",
+          "scope_value",
+          "requester",
+          "include_tombstoned",
+          "section_limit"
+        ],
+        "export_namespace": [
+          "namespace",
+          "requester"
+        ],
+        "export_user_id": [
+          "user_id",
+          "requester",
+          "include_tombstoned"
+        ],
+        "request": [
+          "scope_type",
+          "scope_value",
+          "requester",
+          "urgency"
+        ],
+        "request_namespace": [
+          "namespace",
+          "requester",
+          "urgency"
+        ],
+        "request_user_id": [
+          "user_id",
+          "requester",
+          "urgency"
+        ],
+        "status": [
+          "erasure_id"
+        ]
+      }
+    },
+    "facts": {
+      "class": "FactsClient",
+      "methods": {
+        "list": [
+          "subject",
+          "object",
+          "relation",
+          "entity",
+          "limit",
+          "sort_by",
+          "include_sources",
+          "min_co_occur"
+        ],
+        "path": [
+          "entity_a",
+          "entity_b",
+          "max_hops",
+          "top_k_per_hop",
+          "min_co_occur",
+          "as_of",
+          "labeled",
+          "relations"
+        ],
+        "related": [
+          "entity",
+          "top_k"
+        ],
+        "traverse": [
+          "seed_entity",
+          "max_hops",
+          "top_k_per_hop",
+          "min_co_occur",
+          "as_of",
+          "labeled",
+          "relations",
+          "hub_degree",
+          "hub_share",
+          "rank_by"
+        ]
+      }
+    },
+    "grants": {
+      "class": "GrantsClient",
+      "methods": {
+        "create": [
+          "subject",
+          "role",
+          "granted_by",
+          "replace"
+        ],
+        "list": [
+          "limit"
+        ],
+        "revoke": [
+          "subject"
+        ]
+      }
+    },
+    "knowledge": {
+      "class": "KnowledgeClient",
+      "methods": {
+        "add": [
+          "content",
+          "source_uri",
+          "title",
+          "tags",
+          "metadata"
+        ],
+        "bulk_add": [
+          "entries"
+        ],
+        "bulk_delete": [
+          "source_uris"
+        ],
+        "dedup_list": [
+          "limit",
+          "include_chunk_clusters"
+        ],
+        "dedup_resolve": [
+          "canonical_uri",
+          "duplicate_uri",
+          "decision",
+          "confirm_duplicate_uri"
+        ],
+        "delete": [
+          "source_uri"
+        ],
+        "get": [
+          "source_uri",
+          "include_superseded"
+        ],
+        "list": [
+          "tags",
+          "include_superseded",
+          "limit",
+          "cursor"
+        ],
+        "outline": [
+          "source_uri",
+          "section_path",
+          "include_children"
+        ],
+        "search": [
+          "query",
+          "tags",
+          "since_seconds",
+          "top_k",
+          "uri_prefix",
+          "extra"
+        ],
+        "synthesize": [
+          "source_uris",
+          "task",
+          "window_chars",
+          "max_answer_chars",
+          "max_windows"
+        ],
+        "upsert": [
+          "content",
+          "source_uri",
+          "title",
+          "tags",
+          "metadata"
+        ]
+      }
+    },
+    "learnings": {
+      "class": "LearningsClient",
+      "methods": {
+        "list": [
+          "status",
+          "limit",
+          "source_kind"
+        ],
+        "review": [
+          "candidate_id",
+          "decision",
+          "destination",
+          "reason",
+          "approver"
+        ]
+      }
+    },
+    "memory": {
+      "class": "MemoryClient",
+      "methods": {
+        "aggregate": [
+          "agg_func",
+          "agg_field",
+          "group_by",
+          "filter",
+          "limit",
+          "user_id",
+          "session_id",
+          "run_id",
+          "agent_id"
+        ],
+        "apply": [
+          "action",
+          "reason",
+          "keys",
+          "filter",
+          "search",
+          "limit",
+          "dry_run",
+          "expire",
+          "lock",
+          "label",
+          "demote",
+          "user_id",
+          "session_id"
+        ],
+        "ask": [
+          "query",
+          "top_k",
+          "memory_type",
+          "allow_synthesis",
+          "max_answer_chars",
+          "bodies",
+          "body_budget_tokens",
+          "search_mode",
+          "namespace_scope",
+          "read_scope",
+          "agent_id",
+          "user_id",
+          "session_id",
+          "run_id",
+          "as_of",
+          "as_of_basis",
+          "tags",
+          "tags_soft",
+          "tag_boost",
+          "timeout_s"
+        ],
+        "assign_category": [
+          "memory_key",
+          "category_name",
+          "tombstone"
+        ],
+        "bulk_get": [
+          "memory_keys",
+          "user_id",
+          "session_id",
+          "fields"
+        ],
+        "bulk_set": [
+          "entries",
+          "user_id",
+          "session_id",
+          "idempotency_key"
+        ],
+        "clear": [
+          "confirm_subject",
+          "user_id",
+          "agent"
+        ],
+        "dedup_collapse": [
+          "prefix",
+          "dry_run",
+          "limit"
+        ],
+        "dedup_list": [
+          "limit"
+        ],
+        "dedup_resolve": [
+          "canonical_key",
+          "duplicate_key",
+          "decision",
+          "confirm_canonical_key"
+        ],
+        "delete": [
+          "memory_key",
+          "user_id",
+          "session_id"
+        ],
+        "demonstrate": [
+          "query",
+          "k",
+          "example_tag",
+          "label_prefix",
+          "min_margin"
+        ],
+        "demote": [
+          "memory_key",
+          "rationale"
+        ],
+        "extraction_status": [
+          "queue_id",
+          "status",
+          "limit",
+          "user_id",
+          "session_id",
+          "agent_id"
+        ],
+        "flush_sets": [],
+        "get": [
+          "memory_key",
+          "user_id",
+          "session_id",
+          "run_id",
+          "agent_id",
+          "as_of",
+          "if_version",
+          "fields",
+          "follow"
+        ],
+        "get_by_id": [
+          "memory_id",
+          "as_of"
+        ],
+        "history": [
+          "memory_key",
+          "user_id",
+          "session_id",
+          "run_id",
+          "agent_id",
+          "limit"
+        ],
+        "lineage": [
+          "memory_key",
+          "candidate_match_window_s",
+          "user_id",
+          "session_id"
+        ],
+        "link": [
+          "from_key",
+          "to_key",
+          "relation",
+          "label",
+          "explanation",
+          "evidence",
+          "confidence",
+          "run_id",
+          "weight",
+          "tombstone"
+        ],
+        "list": [
+          "prefix",
+          "memory_type",
+          "limit",
+          "offset",
+          "user_id",
+          "session_id",
+          "sort_by",
+          "quotas",
+          "as_of",
+          "include_duplicates",
+          "tags",
+          "fields"
+        ],
+        "lock": [
+          "memory_key",
+          "reason",
+          "mode",
+          "until",
+          "ttl_seconds",
+          "user_id",
+          "session_id"
+        ],
+        "outcome": [
+          "memory_id",
+          "outcome",
+          "weight",
+          "source"
+        ],
+        "outcome_by_key": [
+          "memory_key",
+          "outcome",
+          "weight",
+          "source",
+          "user_id"
+        ],
+        "outcome_run": [
+          "memory_keys",
+          "outcome",
+          "weight",
+          "source",
+          "run_id"
+        ],
+        "pin": [
+          "memory_key",
+          "value",
+          "memory_type",
+          "tags",
+          "entities",
+          "user_id",
+          "session_id",
+          "run_id",
+          "agent_id",
+          "confidence",
+          "ttl_seconds",
+          "on_expire",
+          "expire_reason",
+          "source_trace",
+          "source_resource_id",
+          "source_class",
+          "if_match_sha256",
+          "valid_at",
+          "valid_to",
+          "char_limit",
+          "dry_run",
+          "await_verdict"
+        ],
+        "promote": [
+          "memory_key",
+          "target_key",
+          "rationale",
+          "approver",
+          "reversible_for_days",
+          "user_id",
+          "session_id"
+        ],
+        "provenance": [
+          "memory_key"
+        ],
+        "read_traces": [
+          "query",
+          "top_k",
+          "body_budget_tokens",
+          "kwargs"
+        ],
+        "recall": [
+          "query",
+          "since",
+          "until",
+          "thread",
+          "role",
+          "match",
+          "order",
+          "top_k",
+          "cursor",
+          "offset",
+          "max_chars",
+          "read_scope",
+          "user_id",
+          "session_id"
+        ],
+        "redact": [
+          "memory_id",
+          "version",
+          "reason",
+          "redacted_by"
+        ],
+        "related": [
+          "memory_key",
+          "top_k",
+          "min_overlap",
+          "user_id",
+          "session_id"
+        ],
+        "restore": [
+          "memory_key",
+          "user_id",
+          "session_id"
+        ],
+        "search": [
+          "query",
+          "memory_type",
+          "tags",
+          "scope",
+          "user_id",
+          "session_id",
+          "run_id",
+          "agent_id",
+          "entity_filter",
+          "top_k",
+          "search_mode",
+          "alpha",
+          "auto_touch",
+          "namespace_scope",
+          "bodies",
+          "body_budget_tokens",
+          "recipe",
+          "hyde",
+          "rerank",
+          "retrieval_budget",
+          "category",
+          "observation_date",
+          "include_top_n_unmatched",
+          "tags_soft",
+          "tag_boost",
+          "category_soft",
+          "category_boost",
+          "confidence_weight",
+          "demote_tags",
+          "reinforcement_weight",
+          "reinforcement_half_life_days",
+          "as_of",
+          "include_tags",
+          "include_usage",
+          "include_duplicates",
+          "exclude_keys",
+          "explain",
+          "extra"
+        ],
+        "search_trace": [
+          "query",
+          "memory_type",
+          "scope",
+          "user_id",
+          "run_id",
+          "agent_id",
+          "entity_filter",
+          "top_k"
+        ],
+        "search_trace_log": [
+          "since_hours",
+          "agent",
+          "run_id",
+          "limit"
+        ],
+        "set": [
+          "memory_key",
+          "value",
+          "memory_type",
+          "tags",
+          "entities",
+          "user_id",
+          "session_id",
+          "run_id",
+          "agent_id",
+          "confidence",
+          "ttl_seconds",
+          "on_expire",
+          "expire_reason",
+          "source_trace",
+          "source_resource_id",
+          "source_class",
+          "if_match_sha256",
+          "valid_at",
+          "valid_to",
+          "char_limit",
+          "dry_run",
+          "await_verdict"
+        ],
+        "set_from_messages": [
+          "messages",
+          "extra_tags",
+          "max_tokens",
+          "user_id",
+          "session_id",
+          "run_id",
+          "agent_id",
+          "valid_at",
+          "observation_date",
+          "record_schema",
+          "memory_key",
+          "judge_extraction",
+          "defer"
+        ],
+        "share": [
+          "memory_key",
+          "target_key",
+          "rationale",
+          "reversible_for_days",
+          "approver",
+          "user_id",
+          "session_id"
+        ],
+        "timeline": [
+          "entity",
+          "tags",
+          "memory_key_prefix",
+          "since",
+          "until",
+          "top_k",
+          "order",
+          "user_id",
+          "session_id"
+        ],
+        "touch": [
+          "memory_key",
+          "ttl_seconds",
+          "clear_expiry",
+          "memory_keys",
+          "on_expire",
+          "expire_reason",
+          "user_id",
+          "session_id"
+        ],
+        "unlock": [
+          "memory_key",
+          "user_id",
+          "session_id"
+        ],
+        "update": [
+          "memory_key",
+          "value",
+          "namespace",
+          "agent",
+          "user_id",
+          "session_id",
+          "if_match_sha256",
+          "char_limit",
+          "tags",
+          "concepts",
+          "confidence",
+          "reason",
+          "revive"
+        ],
+        "update_by_id": [
+          "memory_id",
+          "value",
+          "if_match_sha256",
+          "char_limit",
+          "tags",
+          "concepts",
+          "revive"
+        ],
+        "verify": [
+          "memory_key",
+          "memory_id",
+          "revoke",
+          "actor",
+          "user_id",
+          "session_id"
+        ]
+      },
+      "nested": {
+        "record": {
+          "class": "MemoryRecordClient",
+          "methods": {
+            "conflicts": [
+              "schema_name",
+              "memory_key",
+              "open_only",
+              "limit",
+              "namespace"
+            ],
+            "history": [
+              "record_id",
+              "limit",
+              "namespace"
+            ],
+            "query": [
+              "schema_name",
+              "filters",
+              "predicates",
+              "as_of",
+              "limit",
+              "namespace"
+            ],
+            "write": [
+              "schema_name",
+              "fields",
+              "memory_key",
+              "memory_id",
+              "user_id",
+              "session_id",
+              "agent_id",
+              "valid_at",
+              "valid_to",
+              "namespace"
+            ]
+          }
+        },
+        "schema": {
+          "class": "MemorySchemaClient",
+          "methods": {
+            "list": [
+              "include_proposed",
+              "limit",
+              "namespace"
+            ],
+            "register": [
+              "name",
+              "fields",
+              "description",
+              "status",
+              "created_by",
+              "namespace"
+            ]
+          }
+        }
+      }
+    },
+    "namespaces": {
+      "class": "NamespaceClient",
+      "methods": {
+        "delete": [
+          "namespace"
+        ],
+        "get": [
+          "namespace"
+        ],
+        "list": [
+          "active_only",
+          "tags",
+          "limit"
+        ],
+        "list_categories": [
+          "namespace"
+        ],
+        "register": [
+          "owner_email",
+          "description",
+          "tags",
+          "active",
+          "namespace",
+          "conflict_threshold",
+          "retention_days",
+          "warm_days",
+          "visibility",
+          "rerank_endpoint",
+          "rerank_prompt_template",
+          "classify_endpoint",
+          "classify_prompt_template",
+          "default_conflict_policy",
+          "tag_registry",
+          "retrieval_defaults"
+        ],
+        "register_category": [
+          "name",
+          "description",
+          "summary",
+          "namespace"
+        ],
+        "search_categories": [
+          "query",
+          "top_k",
+          "namespace"
+        ],
+        "taxonomy": [
+          "namespace",
+          "top_n_tags",
+          "top_n_entities"
+        ],
+        "validate": [
+          "namespace",
+          "sample_limit",
+          "strict",
+          "conflict_age_seconds",
+          "confidence_floor"
+        ]
+      }
+    },
+    "policy": {
+      "class": "PolicyClient",
+      "methods": {
+        "check": [
+          "operation",
+          "args",
+          "agent",
+          "user_id",
+          "session_id",
+          "at",
+          "rules"
+        ],
+        "decisions": [
+          "decision",
+          "limit"
+        ],
+        "delete": [
+          "policy_id",
+          "removed_by"
+        ],
+        "list": [
+          "include_disabled"
+        ],
+        "set": [
+          "policy_id",
+          "effect",
+          "actions",
+          "condition",
+          "description",
+          "enabled",
+          "mode",
+          "created_by"
+        ]
+      }
+    },
+    "procedure": {
+      "class": "ProcedureClient",
+      "methods": {
+        "add": [
+          "name",
+          "situation",
+          "steps",
+          "tags",
+          "metadata"
+        ],
+        "evolve": [
+          "memory_key",
+          "min_runs",
+          "gate_min_runs",
+          "gate_margin"
+        ],
+        "fork": [
+          "from_namespace",
+          "memory_key",
+          "new_name",
+          "reason",
+          "from_org"
+        ],
+        "list": [
+          "prefix",
+          "tags",
+          "limit"
+        ],
+        "locate": [
+          "memory_key",
+          "at",
+          "recent_path",
+          "hops"
+        ],
+        "match": [
+          "situation",
+          "top_k",
+          "tags",
+          "namespace_scope",
+          "goal"
+        ],
+        "record_run": [
+          "memory_key",
+          "path",
+          "ok",
+          "note",
+          "steps_taken",
+          "duration_ms",
+          "tokens",
+          "session_id"
+        ],
+        "revise": [
+          "memory_key",
+          "graph",
+          "reason",
+          "force"
+        ]
+      }
+    },
+    "profile": {
+      "class": "ProfileClient",
+      "methods": {
+        "append": [
+          "label",
+          "addition",
+          "separator",
+          "user_id",
+          "session_id"
+        ],
+        "delete": [
+          "label",
+          "user_id",
+          "session_id"
+        ],
+        "get": [
+          "label",
+          "user_id",
+          "session_id"
+        ],
+        "list": [
+          "user_id",
+          "session_id",
+          "limit"
+        ],
+        "render": [
+          "labels",
+          "user_id",
+          "session_id",
+          "format",
+          "scope",
+          "read_scope"
+        ],
+        "replace": [
+          "label",
+          "old",
+          "new",
+          "user_id",
+          "session_id"
+        ],
+        "set": [
+          "label",
+          "value",
+          "char_limit",
+          "user_id",
+          "session_id"
+        ],
+        "system_prompt": [
+          "base",
+          "user_id",
+          "session_id",
+          "format",
+          "scope",
+          "read_scope",
+          "wrapper"
+        ]
+      }
+    },
+    "run": {
+      "class": "RunClient",
+      "methods": {
+        "begin": [
+          "goal",
+          "user_request",
+          "expected_outcome",
+          "run_id",
+          "session_id",
+          "user_id",
+          "environment",
+          "model",
+          "consumer",
+          "role",
+          "metadata"
+        ],
+        "complete": [
+          "run_id",
+          "status",
+          "final_response",
+          "confidence",
+          "memories_used",
+          "recalled_keys",
+          "outcome",
+          "weight",
+          "duration_ms",
+          "metadata",
+          "reflection",
+          "retain"
+        ],
+        "get": [
+          "run_id"
+        ],
+        "grade": [
+          "grade",
+          "run_id",
+          "session_id",
+          "source",
+          "reason",
+          "ref"
+        ],
+        "list": [
+          "agent",
+          "session_id",
+          "status",
+          "limit",
+          "memory_activity",
+          "grade"
+        ],
+        "scope": [
+          "begin_kwargs"
+        ]
+      }
+    },
+    "tasks": {
+      "class": "TasksClient",
+      "methods": {
+        "accept": [
+          "task_id",
+          "priority",
+          "constraints",
+          "note"
+        ],
+        "block": [
+          "task_id",
+          "reason",
+          "fence",
+          "blocked_on"
+        ],
+        "cancel": [
+          "task_id",
+          "reason",
+          "fence"
+        ],
+        "claim": [
+          "task_id",
+          "lease_seconds"
+        ],
+        "complete": [
+          "task_id",
+          "fence",
+          "outcome",
+          "note"
+        ],
+        "counts": [
+          "inbox"
+        ],
+        "create": [
+          "inbox",
+          "kind",
+          "title",
+          "brief",
+          "priority",
+          "disclosure",
+          "not_before",
+          "deadline",
+          "origin",
+          "parent_task_id",
+          "idempotency_key",
+          "agent_id"
+        ],
+        "defer": [
+          "task_id",
+          "reason",
+          "fence",
+          "resume_at"
+        ],
+        "fail": [
+          "task_id",
+          "fence",
+          "reason",
+          "outcome"
+        ],
+        "get": [
+          "task_id"
+        ],
+        "heartbeat": [
+          "task_id",
+          "fence",
+          "lease_seconds"
+        ],
+        "history": [
+          "task_id",
+          "limit"
+        ],
+        "list": [
+          "inbox",
+          "posted_by_me",
+          "statuses",
+          "kinds",
+          "owner",
+          "limit",
+          "fields"
+        ],
+        "list_inboxes": [
+          "mine_everywhere",
+          "limit"
+        ],
+        "list_policies": [
+          "inbox"
+        ],
+        "principals": [
+          "inbox",
+          "query",
+          "limit"
+        ],
+        "progress": [
+          "task_id",
+          "fence",
+          "note"
+        ],
+        "pull": [
+          "inbox",
+          "kinds",
+          "limit",
+          "wait_seconds",
+          "lease_seconds",
+          "status"
+        ],
+        "reassign": [
+          "task_id",
+          "to_inbox",
+          "reason"
+        ],
+        "register_inbox": [
+          "inbox",
+          "owner_agent",
+          "description",
+          "posters",
+          "accept_disclosure",
+          "default_lease_seconds",
+          "max_attempts",
+          "max_defers",
+          "triage_escalate_after_seconds",
+          "webhook_url",
+          "webhook_secret_ref",
+          "if_match_version"
+        ],
+        "reopen": [
+          "task_id",
+          "reason"
+        ],
+        "resume": [
+          "task_id",
+          "note"
+        ],
+        "set_policy": [
+          "inbox",
+          "poster",
+          "mode",
+          "kind",
+          "require_evidence",
+          "remove"
+        ],
+        "stream": [
+          "inbox",
+          "kinds",
+          "lease_seconds",
+          "wait_seconds"
+        ],
+        "unblock": [
+          "task_id",
+          "note"
+        ],
+        "update": [
+          "task_id",
+          "if_match_version",
+          "title",
+          "brief",
+          "priority",
+          "deadline",
+          "not_before",
+          "clear_deadline",
+          "clear_not_before",
+          "note"
+        ],
+        "updates": [
+          "since_seq",
+          "inbox",
+          "limit",
+          "wait_seconds"
+        ],
+        "wont_do": [
+          "task_id",
+          "reason",
+          "fence"
+        ]
+      }
+    },
+    "tracker": {
+      "class": "TrackerClient",
+      "methods": {
+        "answer": [
+          "question",
+          "anchors",
+          "limit",
+          "explain_only",
+          "namespace"
+        ],
+        "binding": [
+          "namespace"
+        ],
+        "component": [
+          "component",
+          "limit",
+          "namespace"
+        ],
+        "duplicate_check": [
+          "namespace",
+          "title",
+          "body",
+          "frames",
+          "component",
+          "version",
+          "mentions",
+          "paths",
+          "symbols",
+          "issue_number",
+          "top_k",
+          "as_of"
+        ],
+        "flaky": [
+          "test_name",
+          "limit",
+          "include_signal",
+          "window_days",
+          "namespace"
+        ],
+        "item": [
+          "namespace",
+          "numbers"
+        ],
+        "links": [
+          "namespace",
+          "issue_number",
+          "pr_number",
+          "limit",
+          "include_record"
+        ],
+        "release": [
+          "version",
+          "namespace"
+        ],
+        "similar": [
+          "namespace",
+          "text",
+          "issue_number",
+          "frames",
+          "kinds",
+          "top_k",
+          "legs"
+        ],
+        "test_signal": [
+          "test_name",
+          "window_days",
+          "code_namespace",
+          "include_churn",
+          "pr_number",
+          "include_smells",
+          "namespace"
+        ]
+      }
+    },
+    "working_memory": {
+      "class": "WorkingMemoryClient",
+      "methods": {
+        "append": [
+          "addition",
+          "block_key",
+          "separator",
+          "user_id",
+          "session_id",
+          "run_id",
+          "agent_id"
+        ],
+        "checkpoint": [
+          "state",
+          "run_id",
+          "block_key",
+          "char_limit",
+          "user_id",
+          "session_id",
+          "agent_id"
+        ],
+        "delete": [
+          "block_key",
+          "user_id",
+          "session_id",
+          "run_id",
+          "agent_id"
+        ],
+        "get": [
+          "block_key",
+          "user_id",
+          "session_id",
+          "run_id",
+          "agent_id"
+        ],
+        "render": [
+          "block_keys",
+          "format",
+          "limit",
+          "user_id",
+          "session_id",
+          "run_id",
+          "agent_id"
+        ],
+        "replace": [
+          "old",
+          "new",
+          "block_key",
+          "user_id",
+          "session_id",
+          "run_id",
+          "agent_id"
+        ],
+        "resume": [
+          "run_id",
+          "block_key",
+          "user_id",
+          "session_id",
+          "agent_id"
+        ],
+        "set": [
+          "content",
+          "block_key",
+          "char_limit",
+          "user_id",
+          "session_id",
+          "run_id",
+          "agent_id"
+        ]
+      }
+    }
+  },
+  "loom.__all__": [
+    "Agent",
+    "AgentTools",
+    "AuthInsufficient",
+    "AuthInvalid",
+    "BackendUnavailable",
+    "CallResult",
+    "Capabilities",
+    "DEFAULT_RETRY_POLICY",
+    "Datapack",
+    "INVALID_RESPONSE_CODE",
+    "IdempotentConflict",
+    "LOOM_TOOL_SPECS",
+    "LoomError",
+    "NETWORK_ERROR_CODE",
+    "NotFound",
+    "OpsClient",
+    "PreconditionFailed",
+    "ROLE_RANK",
+    "RateLimit",
+    "RateLimited",
+    "Resumed",
+    "RetryPolicy",
+    "Session",
+    "SyncAgent",
+    "TokenClaims",
+    "ValidationError",
+    "__version__",
+    "decode_token_claims",
+    "tool_definitions"
+  ]
+}

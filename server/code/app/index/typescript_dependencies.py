@@ -1,0 +1,162 @@
+"""Prepare compiler checkouts without executing repository lifecycle scripts.
+
+The image and native prerequisite installer provide the package managers. The
+dependency fingerprint lives in git's metadata, so a cancelled/failed install
+cannot mark dependencies current and a branch update refreshes them before SCIP.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import subprocess
+import uuid
+from pathlib import Path
+
+from server.code.app.index.compiler_tier import communicate_or_kill
+from server.settings import settings
+
+LOCKFILES = (
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "bun.lockb",
+    "bun.lock",
+)
+_INPUTS = (*LOCKFILES, "package.json", "pnpm-workspace.yaml", ".npmrc", ".yarnrc.yml")
+
+
+def install_roots(checkout: Path, projects: tuple[str, ...]) -> list[Path]:
+    """Install a workspace once at its root, or each independent named project."""
+    manifest = checkout / "package.json"
+    if manifest.exists():
+        package = json.loads(manifest.read_text())
+        if not projects or package.get("workspaces") or (checkout / "pnpm-workspace.yaml").exists():
+            return [checkout]
+    roots = [checkout / p for p in projects] if projects else [checkout]
+    for root in roots:
+        if not root.resolve().is_relative_to(checkout.resolve()):
+            raise ValueError(f"TypeScript project escapes its checkout: {root}")
+    return [root for root in roots if (root / "package.json").exists()]
+
+
+def _dependency_state(checkout: Path) -> tuple[Path, str]:
+    patterns = [p for name in _INPUTS for p in (name, f"**/{name}")]
+    inputs = subprocess.run(
+        ["git", "-C", str(checkout), "ls-files", "--stage", "-z", "--", *patterns],
+        check=True,
+        capture_output=True,
+        timeout=30,
+    ).stdout
+    metadata = subprocess.run(
+        ["git", "-C", str(checkout), "rev-parse", "--git-path", "loom-typescript-dependencies"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    ).stdout.strip()
+    marker = Path(metadata)
+    if not marker.is_absolute():
+        marker = checkout / marker
+    return marker, hashlib.sha256(inputs).hexdigest()
+
+
+def _install_command(root: Path) -> tuple[list[str], dict[str, str]]:
+    """Use shipped managers and immutable lockfiles; never load JS config hooks."""
+    if (root / "pnpm-lock.yaml").exists() or (root / "pnpm-workspace.yaml").exists():
+        args = [
+            "pnpm",
+            "install",
+            "--ignore-scripts",
+            "--ignore-pnpmfile",
+            "--config.manage-package-manager-versions=false",
+            "--config.package-manager-strict=false",
+        ]
+        if (root / "pnpm-lock.yaml").exists():
+            args.append("--frozen-lockfile")
+        return args, {}
+    if (root / "yarn.lock").exists():
+        modern = "__metadata:" in (root / "yarn.lock").read_text()
+        if modern:
+            return ["yarn-modern", "install", "--immutable", "--mode=skip-build"], {
+                "YARN_ENABLE_SCRIPTS": "false",
+                "YARN_IGNORE_PATH": "true",
+                "YARN_NODE_LINKER": "node-modules",
+                "YARN_RC_FILENAME": f".loom-indexer-{uuid.uuid4().hex}.yml",
+            }
+        return [
+            "yarn",
+            "install",
+            "--frozen-lockfile",
+            "--ignore-scripts",
+            "--non-interactive",
+            "--no-default-rc",
+        ], {"YARN_IGNORE_PATH": "1"}
+    if any((root / name).exists() for name in ("bun.lock", "bun.lockb")):
+        return ["bun", "install", "--frozen-lockfile", "--ignore-scripts"], {}
+    if any((root / name).exists() for name in ("package-lock.json", "npm-shrinkwrap.json")):
+        return ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"], {}
+    return [
+        "npm",
+        "install",
+        "--ignore-scripts",
+        "--package-lock=false",
+        "--no-audit",
+        "--no-fund",
+    ], {}
+
+
+async def prepare_dependencies(
+    checkout: Path, projects: tuple[str, ...], env: dict[str, str], *, force: bool = False
+) -> None:
+    roots = await asyncio.to_thread(install_roots, checkout, projects)
+    if not roots:
+        return  # Plain scripts/tsconfig-only trees have no dependencies to install.
+    marker, fingerprint = await asyncio.to_thread(_dependency_state, checkout)
+    current = await asyncio.to_thread(marker.read_text) if marker.exists() else ""
+    installed = all((root / "node_modules").exists() for root in roots)
+    if installed and not force and current in ("", fingerprint):
+        await asyncio.to_thread(marker.write_text, fingerprint)
+        return  # Preserve operator-prepared checkouts; subsequently track changes.
+    # An interrupted install may have created node_modules already. Keep a
+    # pending marker until every root succeeded so the next pass retries it.
+    await asyncio.to_thread(marker.write_text, "installing")
+    for root in roots:
+        command, extra_env = await asyncio.to_thread(_install_command, root)
+        # Do not pass the server environment (JWT, provider and ClickHouse keys).
+        install_env = {
+            **env,
+            "CI": "true",
+            "npm_config_ignore_scripts": "true",
+            "npm_config_production": "false",
+            **extra_env,
+        }
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *command,
+                cwd=root,
+                env=install_env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                start_new_session=True,
+            )
+        except FileNotFoundError:
+            raise RuntimeError(
+                f"TypeScript dependency tool {command[0]} is missing; "
+                "run sh scripts/install-code-toolchains.sh on native installations"
+            ) from None
+        try:
+            out = await communicate_or_kill(
+                proc, settings.code_scip_ts_delta_timeout_seconds, group=True
+            )
+        except TimeoutError:
+            raise RuntimeError(f"TypeScript dependency installation timed out in {root}") from None
+        if proc.returncode != 0:
+            tail = out.decode("utf-8", "replace")[-2000:]
+            raise RuntimeError(
+                f"TypeScript dependency installation failed in {root} "
+                f"({command[0]}, exit {proc.returncode}): {tail}"
+            )
+    await asyncio.to_thread(marker.write_text, fingerprint)

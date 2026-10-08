@@ -1,0 +1,191 @@
+# Minimal local stack — Loom + ClickHouse OSS only.
+# Smallest footprint for cloning the repo and trying Loom.
+#
+#   docker compose --env-file .env -f dev/docker-compose.dev.yml up
+#
+# Prefer `make dev`, which passes --env-file for you. Without it, compose
+# looks for a .env next to this file (dev/.env), not the repo root, so
+# your real .env (ports, auth, embedding/LLM settings) gets silently
+# ignored.
+#
+# Brings up:
+#   - clickhouse-server (OSS, port 8123)
+#   - loom control plane (port 7777)
+#
+# No HyperDX or Langfuse. Erasure backends to those
+# systems will no-op (see server/erasure/app/backends.py); other surfaces
+# (memory, knowledge, conversations, conflicts, blacklist, …) work
+# end-to-end against ClickHouse.
+
+services:
+  clickhouse:
+    # Pinned to 26.5 for: inline text-index stem post-processor,
+    # QBit native vector type, native JSON-type query path, and the
+    # newer batch of AI/NLP SQL functions. Bump explicitly when
+    # validating against newer minors.
+    image: clickhouse/clickhouse-server:26.5.1.882
+    container_name: loom-ch
+    # Host-side ports only, parametrized so a machine already using 8123/9000
+    # for something else can remap in its own .env without touching this
+    # file. Container-to-container traffic always uses clickhouse:8123.
+    ports:
+      - "${LOOM_BIND_HOST:-127.0.0.1}:${LOOM_CH_HOST_PORT:-8123}:8123"
+      - "${LOOM_BIND_HOST:-127.0.0.1}:${LOOM_CH_NATIVE_HOST_PORT:-9000}:9000"
+    environment:
+      CLICKHOUSE_DB: loom
+      CLICKHOUSE_USER: loom
+      CLICKHOUSE_PASSWORD: loomdev
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - loom-ch-data:/var/lib/clickhouse
+      # Lemmagen3 English dictionary for CH's lemmatize('en', ...)
+      # function. Read by the <lemmatizers> config below.
+      - ../deploy/lemmagen3:/var/lib/clickhouse/lemmagen3:ro
+      - ../deploy/clickhouse-config/lemmatizers.xml:/etc/clickhouse-server/config.d/lemmatizers.xml:ro
+      - ../deploy/clickhouse-config/nlp_user_settings.xml:/etc/clickhouse-server/users.d/nlp_user_settings.xml:ro
+      # MergeTree defaults so lightweight UPDATEs (knowledge/memory tombstone
+      # paths) work on OSS ClickHouse out of the box. OSS/self-host only.
+      - ../deploy/clickhouse-config/merge_tree_settings.xml:/etc/clickhouse-server/config.d/merge_tree_settings.xml:ro
+      # Embedded single-node Keeper + keeper_map_path_prefix so the KeeperMap
+      # engine (task inbox leases) works on OSS out of the box.
+      - ../deploy/clickhouse-config/keeper.xml:/etc/clickhouse-server/config.d/keeper.xml:ro
+      # Named collections for CH SQL ai* functions: the gitignored copy of
+      # named_collections.xml.template that `make` creates. It defines none
+      # as shipped; an enabled one reads its key from the container's env.
+      - ../deploy/clickhouse-config/named_collections.xml:/etc/clickhouse-server/config.d/named_collections.xml:ro
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  loom:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      # Threads the current .env choice into the image build so fastembed
+      # is only installed when LOOM_EMBEDDING_MODEL is local (see Dockerfile).
+      args:
+        LOOM_EMBEDDING_MODEL: "${LOOM_EMBEDDING_MODEL:-text-embedding-3-large}"
+        LOOM_BUILD_COMMIT: "${LOOM_BUILD_COMMIT:-unknown}"
+    container_name: loom-server
+    # Uvicorn waits up to LOOM_GRACEFUL_SHUTDOWN_S (10 s) for
+    # in-flight requests, then the lifespan drains run (supervisor ≤ 10 s,
+    # events emitter ≤ 5 s, events stream ≤ 5 s). Docker's default 10 s grace
+    # would SIGKILL that sequence mid-drain.
+    stop_grace_period: 45s
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    ports:
+      - "${LOOM_BIND_HOST:-127.0.0.1}:7777:7777"
+    # Pick up OPENAI_API_KEY (and any other operator-set values) from
+    # repo-root .env. Compose otherwise only looks adjacent to this
+    # file, which would silently leave the OpenAI clients booting in
+    # the fake-fallback path.
+    env_file:
+      - ../.env
+    environment:
+      LOOM_CH_HOST: clickhouse
+      LOOM_CH_PORT: "8123"
+      LOOM_CH_USER: loom
+      LOOM_CH_PASSWORD: loomdev
+      LOOM_CH_DATABASE: loom
+      LOOM_CH_SECURE: "false"
+      # Trust-network (self-signup) by default. For a no-login local box,
+      # set LOOM_IDENTITY_PROVIDER=single-user in .env: this disables auth
+      # on its own (see Settings.auth_actually_required), regardless of
+      # LOOM_AUTH_REQUIRED's value. LOOM_AUTH_REQUIRED only has an effect
+      # while LOOM_IDENTITY_PROVIDER is unset; do not rely on it to
+      # re-enable auth once single-user mode has been turned on. It stays
+      # here only so a fresh .env can still express "auth on" explicitly.
+      # LOOM_DEFAULT_NAMESPACE only matters in single-user mode.
+      LOOM_AUTH_REQUIRED: "${LOOM_AUTH_REQUIRED:-true}"
+      LOOM_IDENTITY_PROVIDER: "${LOOM_IDENTITY_PROVIDER:-}"
+      LOOM_DEFAULT_NAMESPACE: "${LOOM_DEFAULT_NAMESPACE:-local}"
+      # OAuth 2.1 one-click MCP connect — opt-in knob (default-off, matching the
+      # global default). Run `LOOM_OAUTH_ENABLED=true make dev` to serve the
+      # discovery + /oauth/* endpoints so clients connect via browser sign-in.
+      LOOM_OAUTH_ENABLED: "${LOOM_OAUTH_ENABLED:-false}"
+      # Public HTTPS base URL the OAuth discovery metadata advertises. Unset =
+      # derive from the request (localhost). Set to an HTTPS URL (tunnel or TLS
+      # proxy) so MCP clients' native connector can do the browser OAuth flow.
+      LOOM_OAUTH_ISSUER: "${LOOM_OAUTH_ISSUER:-}"
+      LOOM_TRUSTED_CALLERS: "gateway"
+      # LOOM_DASHBOARD_REDIRECT_URL is unset in the default dev compose
+      # so /me renders Loom's own SPA. Set per-deployment when Loom
+      # sits behind an aggregator UI (gateway, etc.).
+      # `loom up`/`make bootstrap` generate this in the private .env. Refuse
+      # to start auth with a repository-wide signing key or an empty secret.
+      LOOM_JWT_SECRET: "${LOOM_JWT_SECRET:?run 'loom up' or set LOOM_JWT_SECRET in .env}"
+      # Production defaults: OpenAI embedder + gpt-4o-mini for
+      # extraction. The dev compose flips to OpenAI when OPENAI_API_KEY
+      # is set in the env (see `.env` at repo root); falls back to
+      # fake-* when the key isn't present. Keeps OSS evaluators on the
+      # free path while letting a real deployment run real
+      # providers without a separate compose file.
+      LOOM_EMBEDDING_MODEL: "${LOOM_EMBEDDING_MODEL:-text-embedding-3-large}"
+      LOOM_EMBEDDING_DIM: "${LOOM_EMBEDDING_DIM:-3072}"
+      LOOM_LLM_PROVIDER: "${LOOM_LLM_PROVIDER:-openai}"
+      LOOM_LLM_MODEL: "${LOOM_LLM_MODEL:-gpt-4o-mini}"
+      # Validated retrieval flags — passthrough so they can be flipped for
+      # single-variable bench A/B without an image rebuild.
+      LOOM_MEMORY_EMBED_ANSWER_TOPIC: "${LOOM_MEMORY_EMBED_ANSWER_TOPIC:-true}"
+      LOOM_MEMORY_CAPTURE_STRUCTURED_ANSWERS: "${LOOM_MEMORY_CAPTURE_STRUCTURED_ANSWERS:-true}"
+      # OPENAI_API_KEY is intentionally NOT listed here. `environment:`
+      # would override `env_file:` even when the shell value is empty,
+      # silently nuking the .env-provided key. Leave it sourced solely
+      # from `env_file: ../.env`.
+      # Entity extraction — on by default. Overridable so a quiet bench/eval
+      # instance can disable it without an override file:
+      # e.g. `LOOM_ENTITY_EXTRACT_ENABLED=false make dev`.
+      LOOM_ENTITY_EXTRACT_ENABLED: "${LOOM_ENTITY_EXTRACT_ENABLED:-true}"
+      # Enable browser self-signup so the /me Welcome screen can mint
+      # JWTs directly. Trusted-network dev assumption — flip to "off"
+      # for any externally-reachable deployment.
+      LOOM_SELF_SIGNUP: "open"
+      # LOOM_SELF_SIGNUP_ORG: deliberately NOT pinned here (same reason as
+      # OPENAI_API_KEY above — `environment:` would shadow `env_file:`).
+      # Set it in .env to put signups in your org; unset falls to `dev`.
+      LOOM_BLOB_DIR: /app/var/blobs
+      # A compose deployment says so; any other process must
+      # carry LOOM_INSTANCE_LABEL or it refuses to boot. The local stack keeps
+      # one service (workers in-process, under the supervisor lease).
+      LOOM_DEPLOYMENT: "1"
+      LOOM_INSTANCE_LABEL: "deploy:dev"
+      # Self-service repositories must make progress in the stock stack. These
+      # workers are idle until a repository is added and do not require an LLM.
+      LOOM_CODE_INGEST_ENABLED: "${LOOM_CODE_INGEST_ENABLED:-true}"
+      LOOM_CODE_EMBED_RECOVERY_ENABLED: "${LOOM_CODE_EMBED_RECOVERY_ENABLED:-true}"
+      LOOM_CODE_GRAPH_STATS_ENABLED: "${LOOM_CODE_GRAPH_STATS_ENABLED:-true}"
+      LOOM_CODE_SCIP_DELTA_ENABLED: "${LOOM_CODE_SCIP_DELTA_ENABLED:-true}"
+      LOOM_CODE_SCIP_TS_DELTA_ENABLED: "${LOOM_CODE_SCIP_TS_DELTA_ENABLED:-true}"
+      LOOM_CODE_SCIP_PY_DELTA_ENABLED: "${LOOM_CODE_SCIP_PY_DELTA_ENABLED:-true}"
+      LOOM_CODE_SCIP_GO_DELTA_ENABLED: "${LOOM_CODE_SCIP_GO_DELTA_ENABLED:-true}"
+      LOOM_MCP_CODE_TOOLS: "${LOOM_MCP_CODE_TOOLS:-true}"
+    volumes:
+      - loom-blob-data:/app/var/blobs
+      - loom-code-repos:/app/var/code_repos
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:7777/v1/health', timeout=3).status==200 else 1)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      # Server lifespan applies pending migrations on boot — generous
+      # start_period covers a fresh CH applying every migration in order.
+      start_period: 45s
+
+volumes:
+  loom-ch-data:
+  loom-blob-data:
+  loom-code-repos:

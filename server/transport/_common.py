@@ -1,0 +1,217 @@
+"""Shared HTTP/MCP transport helpers: request binding, plane defaults,
+budget violations, op audits."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from server.core.request_work import RequestWork
+
+# The actor recorded when a request carries no auth. One spelling for both
+# transports, so unauthenticated traffic is one identity in every by-user view;
+# the transport is already carried by the `loom.transport` label.
+ANONYMOUS_ACTOR = "anonymous"
+
+
+IDENTITY_FIELDS: tuple[str, ...] = ("org", "namespace", "agent", "user_id", "session_id")
+
+
+def request_identity(args: dict[str, Any]) -> dict[str, str]:
+    """The identity tuple as a request's raw arguments state it, for the
+    ledger row and (HTTP) the authorization target: an absent or null field
+    is the "-" sentinel — never the text "None" — and anything else its
+    string form. Both transports read raw arguments through this."""
+    out: dict[str, str] = {}
+    for k in IDENTITY_FIELDS:
+        v = args.get(k)
+        out[k] = "-" if v is None else str(v)
+    return out
+
+
+def bind_request(op_name: str, request_id: str) -> None:
+    """Attribute the rest of this request to `request_id`: its log lines
+    (`request_id_var`) and its ClickHouse queries (`<op> <request_id>` as
+    `log_comment`), so a ledger row, a query_log row and a log line join on
+    one id whichever transport served the call."""
+    from server.core.ch import set_query_tag
+    from server.core.logging_config import request_id_var
+
+    request_id_var.set(request_id)
+    set_query_tag(f"{op_name} {request_id}")
+
+
+def begin_request() -> RequestWork:
+    """Bind everything a request accumulates, in one call for both transports:
+    the cost accumulator (tokens and dollars), the degradation notes (what the
+    response did NOT do) and the work bag (ClickHouse cost, ask stages,
+    injection counts, skipped legs). A fresh set per op, so nothing leaks
+    across requests on a long-lived task."""
+    from server.core import request_work
+    from server.observability import cost_accumulator, degradations
+
+    cost_accumulator.begin_op()
+    degradations.begin()
+    return request_work.begin()
+
+
+async def emit_budget_violation(
+    *,
+    op_name: str,
+    request_id: str,
+    org: str,
+    namespace: str,
+    agent: str,
+    elapsed_ms: int,
+    budget_ms: int,
+    transport: str = "",
+    consumer: str | None = None,
+) -> None:
+    """Best-effort `budget.violated` telemetry row (SLO alerts hang off these).
+
+    The row is an event of kind `budget_violation` on the `loom.events`
+    stream, not an audit_log row: a budget violation is a latency reading,
+    not a memory-changing write, and audit rows feed an hourly checkpoint
+    digest that exists to make state changes tamper-evident (violations
+    would be about a third of them). `memory.budget_violations` and the
+    SLO alerts read the stream (`admin_repo.budget_violations`). The
+    identity columns are typed on the event; the reading rides the payload.
+
+    `budget_ms` is the already-resolved effective budget. overage_ratio uses a
+    finite sentinel (1e9) when budget_ms=0: float('inf') serializes to the
+    non-standard JSON `Infinity`, which CH can't parse.
+
+    `consumer` rides the event's payload; None reads the
+    request-scoped value the transport published.
+    """
+    from server.observability import events_stream
+    from server.observability.consumer import current_consumer
+
+    if consumer is None:
+        consumer = current_consumer()
+
+    # An op whose budget is below its normal latency violates it on nearly
+    # every request, and one INSERT per violation would sit on the request's
+    # critical path. One row per op per interval carries the count of the
+    # violations it stands for; the alert still fires, the write path does not
+    # pay for a stale budget.
+    suppressed = _budget_violation_gate(op_name, org, namespace)
+    if suppressed is None:
+        return
+    overage_ratio = round(elapsed_ms / budget_ms, 3) if budget_ms > 0 else 1e9
+    row: dict[str, Any] = {
+        "event_type": BUDGET_VIOLATED_EVENT,
+        "org": org,
+        "namespace": namespace,
+        "agent": agent,
+        "actor": "control-plane",
+        "request_id": request_id,
+        "operation": op_name,
+        "elapsed_ms": elapsed_ms,
+        "budget_ms": budget_ms,
+        "overage_ratio": overage_ratio,
+    }
+    if suppressed:
+        row["suppressed_since_last"] = suppressed
+    if transport:
+        row["transport"] = transport
+    if consumer:
+        # Which client was slow; rides the event's payload.
+        row["consumer"] = consumer
+    events_stream.record(events_stream.BUDGET_VIOLATION_KIND, row)
+
+
+BUDGET_VIOLATED_EVENT = "budget.violated"
+
+
+_BUDGET_LAST_EMIT: dict[str, float] = {}
+_BUDGET_WINDOW_ROWS: dict[str, int] = {}
+_BUDGET_SUPPRESSED: dict[str, int] = {}
+
+
+def _budget_violation_gate(
+    op_name: str, org: str = "", namespace: str = "", *, now: float | None = None
+) -> int | None:
+    """Rate limit for `budget.violated` rows, keyed by (op, org, namespace) so
+    a tenant's SLO signal is never hidden by another tenant's storm. Within
+    each window of `budget_violation_audit_interval_s` the first
+    `budget_violation_audit_burst` violations write their own row; the rest
+    are counted and ride on the next row as `suppressed_since_last`. Returns
+    that count when this violation should be written, None when it was
+    counted. Interval 0 writes every violation."""
+    import time
+
+    from server.settings import settings
+
+    interval = float(settings.budget_violation_audit_interval_s)
+    burst = max(1, int(settings.budget_violation_audit_burst))
+    key = f"{op_name}\x1f{org}\x1f{namespace}"
+    t = time.monotonic() if now is None else now
+    if interval <= 0:
+        return 0
+    start = _BUDGET_LAST_EMIT.get(key)
+    if start is None or t - start >= interval:
+        if len(_BUDGET_LAST_EMIT) > 10_000:  # bounded: bench namespace churn must not grow it
+            _BUDGET_LAST_EMIT.clear()
+            _BUDGET_WINDOW_ROWS.clear()
+            _BUDGET_SUPPRESSED.clear()
+        _BUDGET_LAST_EMIT[key] = t
+        _BUDGET_WINDOW_ROWS[key] = 1
+        return _BUDGET_SUPPRESSED.pop(key, 0)
+    if _BUDGET_WINDOW_ROWS.get(key, 0) < burst:
+        _BUDGET_WINDOW_ROWS[key] = _BUDGET_WINDOW_ROWS.get(key, 0) + 1
+        return 0
+    _BUDGET_SUPPRESSED[key] = _BUDGET_SUPPRESSED.get(key, 0) + 1
+    return None
+
+
+async def emit_op_audit(
+    *,
+    op_name: str,
+    request_id: str,
+    org: str,
+    namespace: str,
+    actor: str,
+    subject: dict[str, Any],
+) -> None:
+    """Best-effort audit row for an op declared `audit=True`."""
+    from server.observability import audit
+
+    await audit.emit(
+        event_type=op_name,
+        org=org,
+        namespace=namespace,
+        actor=actor,
+        subject=subject,
+        request_id=request_id,
+    )
+
+
+class ValidationError(Exception):
+    """The ledger's copy of pydantic's ValidationError:
+    the same class name for `args.error_class`, and a message that is
+    `field: message` per error rather than pydantic's "N validation errors
+    for Model" headline — so `bounded_error`'s first line names the field
+    that failed."""
+
+
+def validation_note(errors: list[dict[str, Any]]) -> Exception:
+    from server.observability.event_args import validation_error_text
+
+    return ValidationError(validation_error_text(errors))
+
+
+def validation_errors(e: Any) -> list[dict[str, Any]]:
+    """A pydantic ValidationError as JSON-safe dicts for a 422 body.
+
+    `e.errors()` keeps the raising exception object under `ctx.error` for a
+    `value_error` (any `@model_validator` / `@field_validator` that raises
+    ValueError), and the response encoder then fails on it — the client would see
+    a 500 for what is a 422. `e.json()` is the serialiser pydantic itself
+    guarantees; round-tripping through it drops nothing a client can use."""
+    import json as _json
+
+    try:
+        return list(_json.loads(e.json(include_url=False)))
+    except Exception:  # noqa: BLE001 — never let the error report itself fail
+        return [{"type": "validation_error", "msg": str(e)}]

@@ -1,0 +1,52 @@
+# A read-replica: serves the same data, tokens and ops as an existing Loom from
+# its own endpoint, on that Loom's ClickHouse. See docs/operations/read-replicas.md.
+#
+#   # .env: the main Loom's LOOM_CH_* service and LOOM_JWT_* keys, its own provider key
+#   docker compose --env-file .env -f dev/docker-compose.read-replica.yml up -d --build
+#
+# One container: no workers, no migrations, no git mirrors. Upgrade the main Loom
+# first; a read-replica whose build expects a migration the service lacks refuses
+# to start.
+
+services:
+  loom-read-replica:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        LOOM_EMBEDDING_MODEL: "${LOOM_EMBEDDING_MODEL:-text-embedding-3-small}"
+        LOOM_BUILD_COMMIT: "${LOOM_BUILD_COMMIT:-unknown}"
+    container_name: loom-read-replica
+    restart: unless-stopped
+    stop_grace_period: 45s
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    env_file:
+      - ../.env
+    environment:
+      LOOM_READ_REPLICA: "true"
+      LOOM_BLOB_DIR: /app/var/blobs
+      LOOM_DEPLOYMENT: "1"
+      LOOM_INSTANCE_LABEL: "deploy:read-replica"
+    volumes:
+      # The provider-process proofs live here; keep it persistent.
+      - loom-replica-blobs:/app/var/blobs
+    ports:
+      - "7777:7777"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:7777/v1/health', timeout=3).status==200 else 1)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
+volumes:
+  loom-replica-blobs:

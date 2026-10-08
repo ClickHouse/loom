@@ -1,0 +1,23 @@
+include "header.fbs";
+
+namespace ledger.proto.log;
+
+enum RecordKind : ubyte { Data, Prepare, Learn }
+
+/// One appended record.
+table Record {
+  header: ledger.proto.Header;
+  lsn: uint64;
+  kind: RecordKind;
+  payload: [ubyte];
+}
+
+union Body { Record, Ack }
+
+table Ack {
+  lsn: uint64;
+}
+
+rpc_service LogStore {
+  Append(Record): Ack;
+}

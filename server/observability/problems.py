@@ -1,0 +1,417 @@
+"""One list of problems, each with a fix — shared by `/v1/health`, `loom
+doctor` and the dashboard banner, so the three surfaces cannot disagree and
+every flag says how to clear it.
+
+`collect_problems` is pure over `Settings` plus a `HealthState` of signals the
+caller already holds (the probed dim, the provider breaker, the lease, the
+pending list) — it does no I/O and never adds a ClickHouse read to a probe
+that is polled every few seconds. A `None` signal means "unknown here" (the
+doctor runs before boot) and skips that check rather than guessing.
+"""
+
+from __future__ import annotations
+
+import os
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass, field
+from typing import Any, Literal
+
+from server.core.provider_keys import saved_key_presence
+
+Severity = Literal["info", "warn", "error"]
+
+# Ordered so a rendered list reads worst-first.
+SEVERITY_RANK: dict[str, int] = {"error": 0, "warn": 1, "info": 2}
+
+
+@dataclass(frozen=True)
+class Problem:
+    """A condition the operator should know about, with the one sentence
+    that clears it. `fix` names the env var or command; `source` says which
+    surface saw it (`settings`, `runtime`, `schema`, `workers`)."""
+
+    code: str
+    severity: Severity
+    message: str
+    fix: str
+    source: str = "settings"
+
+    def as_dict(self) -> dict[str, str]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class HealthState:
+    """Runtime signals the health handler already has in hand. Every field
+    defaults to "unknown" so `loom doctor` (pre-boot, settings only) and the
+    server (post-boot) share one collector."""
+
+    probed_dim: int | None = None
+    provider_status: Mapping[str, Any] | None = None  # provider_health.status()
+    pending_migrations: tuple[str, ...] | None = None
+    worker_lease_held: bool | None = None
+    # `None` = not a server process (the doctor shell); '' = a server that
+    # booted without a label.
+    instance_label: str | None = None
+    # A read-replica's last word from its main Loom (`main_loom.MAIN_STATE`):
+    # True answered, False did not, None not asked yet or not a replica.
+    main_reachable: bool | None = None
+    main_error: str = ""
+    # OTel metrics tables without the `mapValues(Attributes)`
+    # skip index the erasure leg needs; `None` = not probed (doctor shell,
+    # ClickHouse down, leg off).
+    otel_metrics_unindexed: tuple[str, ...] | None = None
+    # Seconds since this process read loom.revoked_tokens (inf = never);
+    # None = not a server process.
+    revocation_age_s: float | None = None
+    env: Mapping[str, str] = field(default_factory=lambda: os.environ)
+    # Saved keys take precedence over the environment, including explicit empty keys.
+    saved_keys: Mapping[str, bool] = field(default_factory=saved_key_presence)
+
+
+def _embedder_key_envs(provider: str) -> tuple[str, ...]:
+    """The key variables the embedder reads for `provider` (its own table)."""
+    from server.embedding.embedder import KEY_ENVS
+
+    return KEY_ENVS.get(provider, ())
+
+
+def _llm_key_env(provider: str) -> str | None:
+    """The key variable the LLM client reads for `provider`."""
+    from server.core.llm_provider import KEY_ENV_BY_PROVIDER
+
+    return KEY_ENV_BY_PROVIDER.get(provider)
+
+
+def _key_env_for_health_name(name: str) -> str | None:
+    """The key behind a provider_health entry (`<provider>:<kind>`, e.g.
+    openai:embeddings, anthropic:messages); None for a name no key backs."""
+    provider = name.split(":", 1)[0]
+    return _llm_key_env(provider) or next(iter(_embedder_key_envs(provider)), None)
+
+
+def _embedder_provider(model: str) -> str:
+    from server.embedding.embedder import provider_for
+
+    try:
+        return provider_for(model)
+    except ValueError:
+        return "unknown"
+
+
+def _embeds_via_main(settings: Any) -> bool:
+    """A read-replica with the main Loom's URL embeds and completes there
+    instead of falling back to the fakes, so a missing key is not a problem on it."""
+    return bool(settings.read_replica) and bool(str(settings.read_replica_main_url).strip())
+
+
+def _fake_severity(settings: Any) -> Severity:
+    """A configured fake is a `warn` so the stock dev stack stays `status: ok`;
+    `LOOM_REQUIRE_REAL_PROVIDERS=true` (production) makes it an `error`."""
+    return "error" if bool(settings.require_real_providers) else "warn"
+
+
+def _embedder_problems(settings: Any, state: HealthState) -> list[Problem]:
+    out: list[Problem] = []
+    model = str(settings.embedding_model)
+    provider = _embedder_provider(model)
+    fix_real = (
+        "Set LOOM_EMBEDDING_MODEL=text-embedding-3-small with OPENAI_API_KEY (or "
+        "local:bge-small for a keyless CPU embedder) and run `loom reembed`."
+    )
+    if provider == "fake":
+        out.append(
+            Problem(
+                "fake_embedder",
+                _fake_severity(settings),
+                f"The embedder is the fake n-gram stub (LOOM_EMBEDDING_MODEL={model}): "
+                "search ranks by character overlap, not meaning.",
+                fix_real,
+            )
+        )
+    else:
+        keys = _embedder_key_envs(provider)
+        missing = keys and not state.saved_keys.get(provider, any(state.env.get(k) for k in keys))
+        if missing and not _embeds_via_main(settings):
+            out.append(
+                Problem(
+                    "embedder_key_missing",
+                    _fake_severity(settings),
+                    f"LOOM_EMBEDDING_MODEL={model} needs {' or '.join(keys)}, which is not "
+                    "set — the process falls back to the fake n-gram embedder.",
+                    f"Set {keys[0]}, or LOOM_EMBEDDING_MODEL=fake-ngram-3072 to make the "
+                    "fake explicit.",
+                )
+            )
+    if state.probed_dim is not None and state.probed_dim != int(settings.embedding_dim):
+        out.append(
+            Problem(
+                "embedding_dim_mismatch",
+                "error",
+                f"{model} returns {state.probed_dim}-dim vectors but "
+                f"LOOM_EMBEDDING_DIM={settings.embedding_dim}: writes at the configured "
+                "width fail or mis-rank.",
+                f"Set LOOM_EMBEDDING_DIM={state.probed_dim} and run `loom reembed` if rows "
+                "were written at the old width.",
+                source="runtime",
+            )
+        )
+    return out
+
+
+def _llm_problems(settings: Any, state: HealthState) -> list[Problem]:
+    provider = str(settings.llm_provider)
+    if provider == "fake":
+        return [
+            Problem(
+                "fake_llm",
+                _fake_severity(settings),
+                "The LLM is the fake echo client (LOOM_LLM_PROVIDER=fake): extraction, "
+                "entity tagging and memory.ask synthesis produce nothing.",
+                "Set LOOM_LLM_PROVIDER=openai with OPENAI_API_KEY (or anthropic with "
+                "ANTHROPIC_API_KEY) and LOOM_LLM_MODEL.",
+            )
+        ]
+    key_env = _llm_key_env(provider)
+    if (
+        key_env
+        and not state.saved_keys.get(provider, bool(state.env.get(key_env)))
+        and not _embeds_via_main(settings)
+    ):
+        # Say how the provider was chosen — an inferred openai
+        # with no key is the case worth naming.
+        how = (
+            f"was inferred from {settings.llm_provider_source()}"
+            if settings.llm_provider_inferred()
+            else "is set by LOOM_LLM_PROVIDER"
+        )
+        return [
+            Problem(
+                "llm_key_missing",
+                _fake_severity(settings),
+                f"LOOM_LLM_PROVIDER={provider} {how} but {key_env} is not set — every LLM "
+                "call runs on the fake echo client and extracts nothing.",
+                f"Set {key_env}, or LOOM_LLM_PROVIDER=fake to make the fake explicit.",
+            )
+        ]
+    return []
+
+
+def _runtime_problems(state: HealthState) -> list[Problem]:
+    out: list[Problem] = []
+    providers = (state.provider_status or {}).get("providers") or {}
+    for name, entry in sorted(providers.items()):
+        if not entry.get("failing"):
+            continue
+        err = str(entry.get("last_error") or "unknown error")
+        age = entry.get("last_error_age_s")
+        when = f" {age}s ago" if age is not None else ""
+        key_env = _key_env_for_health_name(name)
+        behind = f"{key_env}'s quota" if key_env else f"the key and quota behind {name}"
+        out.append(
+            Problem(
+                f"provider_failing:{name}",
+                "error",
+                f"The last call to {name} failed{when}: {err}",
+                f"Check {behind} and the provider's status page; the flag clears on the "
+                "next successful call.",
+                source="runtime",
+            )
+        )
+    return out
+
+
+def _revocation_problems(settings: Any, state: HealthState) -> list[Problem]:
+    """A snapshot never read refuses every token (503); one that stopped
+    refreshing lets a token revoked since then keep authenticating."""
+    age = state.revocation_age_s
+    if age is None or not settings.auth_actually_required():
+        return []
+    fix = "Check this process can reach ClickHouse; the snapshot reloads on the next refresh."
+    if age == float("inf"):
+        return [
+            Problem(
+                "revocation_not_loaded",
+                "error",
+                "The token revocation list has not loaded: every bearer is refused with 503.",
+                fix,
+                source="runtime",
+            )
+        ]
+    stale_after = max(300.0, 10 * float(settings.jwt_revocation_cache_ttl_seconds))
+    if age > stale_after:
+        return [
+            Problem(
+                "revocation_stale",
+                "warn",
+                f"The token revocation list was last read {int(age)}s ago: a token revoked "
+                "since then still authenticates on this process.",
+                fix,
+                source="runtime",
+            )
+        ]
+    return []
+
+
+def _auth_problems(settings: Any) -> list[Problem]:
+    if not str(settings.jwt_secret):
+        return [
+            Problem(
+                "jwt_secret_empty",
+                "error",
+                "LOOM_JWT_SECRET is empty: `loom mint-token` and /me/setup cannot sign.",
+                "Set LOOM_JWT_SECRET to a random secret (`openssl rand -hex 32`).",
+            )
+        ]
+    # The doctor grades this WARN (a boot still works); the same severity here keeps the two
+    # surfaces in agreement.
+    if settings.jwt_secret_is_dev_default() and settings.auth_actually_required():
+        return [
+            Problem(
+                "dev_jwt_secret",
+                "warn",
+                "LOOM_JWT_SECRET is the checked-in dev default with auth on: anyone who "
+                "has read this repo can mint tokens this server accepts.",
+                "Set LOOM_JWT_SECRET to a random secret (`openssl rand -hex 32`) and "
+                "re-mint every token.",
+            )
+        ]
+    if settings.auth_actually_required() and settings.jwt_sealing_secret_is_dev_default():
+        return [
+            Problem(
+                "dev_sealing_secret",
+                "warn",
+                "LOOM_JWT_SECRET is the checked-in dev default: tokens are signed with "
+                "LOOM_JWT_SECRETS_JSON, but stored credentials are sealed with it, so anyone "
+                "who reads the tables can open them.",
+                "Set LOOM_JWT_SECRET to a random secret (`openssl rand -hex 32`) and enter "
+                "the stored credentials again.",
+            )
+        ]
+    return []
+
+
+def _deployment_problems(settings: Any, state: HealthState) -> list[Problem]:
+    out: list[Problem] = []
+    pending = state.pending_migrations
+    if pending:
+        names = ", ".join(pending[:3]) + (", …" if len(pending) > 3 else "")
+        out.append(
+            Problem(
+                "pending_migrations",
+                "error",
+                f"{len(pending)} migration(s) the schema lacks: {names}. Ops that read "
+                "the new columns fail until they run.",
+                "Run `loom migrate` (or set LOOM_BOOT_MIGRATE=true and restart).",
+                source="schema",
+            )
+        )
+    if (
+        state.instance_label is not None
+        and not state.instance_label
+        and not bool(settings.deployment)
+    ):
+        out.append(
+            Problem(
+                "instance_label_missing",
+                "warn",
+                "LOOM_INSTANCE_LABEL is empty: rows this process writes cannot be "
+                "attributed to a launcher.",
+                "Set LOOM_INSTANCE_LABEL=<who>:<what>:<port>, or LOOM_DEPLOYMENT=1 for the "
+                "compose deployment only.",
+            )
+        )
+    if state.worker_lease_held is False:
+        mode = str(settings.background_workers).strip().lower()
+        if mode == "off":
+            msg = (
+                "This process runs no background workers (LOOM_BACKGROUND_WORKERS=off): "
+                "extraction and consolidation depend on a workers container holding the lease."
+            )
+        else:
+            msg = (
+                "This process does not hold the workers lease (LOOM_BACKGROUND_WORKERS="
+                f"{mode}): another process runs the workers, or none does yet."
+            )
+        out.append(
+            Problem(
+                "workers_lease_absent",
+                "info",
+                msg,
+                "Run the workers service (`loom-<colour>-workers`), or set "
+                "LOOM_BACKGROUND_WORKERS=auto on a single-container stack.",
+                source="workers",
+            )
+        )
+    return out
+
+
+def _otel_problems(settings: Any, state: HealthState) -> list[Problem]:
+    """An OTel metrics table without a `mapValues(Attributes)`
+    bloom filter turns every erasure's ClickStack pre-count into a full scan
+    (GiBs per saga). ClickStack owns the tables, so the fix is
+    the operator's DDL, named here and in `loom doctor`."""
+    db = str(settings.clickstack_database)
+    missing = state.otel_metrics_unindexed
+    if not db or not missing:
+        return []
+    return [
+        Problem(
+            "otel_erasure_index",
+            "warn",
+            f"{db}.{', '.join(missing)} carry no mapValues(Attributes) bloom filter: every "
+            "erasure full-scans them to find its rows (hundreds of millions of rows / GiBs "
+            "per table on a large histogram).",
+            "Once per table: ALTER TABLE <db>.<table> ADD INDEX IF NOT EXISTS idx_attr_value "
+            "mapValues(Attributes) TYPE bloom_filter(0.01) GRANULARITY 1, then MATERIALIZE "
+            "INDEX idx_attr_value (re-issue if system.data_skipping_indices reads 0 bytes) — "
+            '"ClickStack erasure index" in docs/operations/maintenance.md.',
+            source="erasure",
+        )
+    ]
+
+
+def _replica_problems(settings: Any, state: HealthState) -> list[Problem]:
+    """A read-replica whose main Loom does not answer serves no blame and, with
+    no provider key of its own, no embedding or LLM answer: an error, so
+    `status` says `degraded` while the HTTP code stays 200 (the replica still
+    serves every read from ClickHouse)."""
+    if not settings.read_replica or state.main_reachable is not False:
+        return []
+    return [
+        Problem(
+            "main_loom_unreachable",
+            "error",
+            "This read-replica's main Loom does not answer "
+            f"({state.main_error or 'no detail'}): blame, and embeddings and LLM calls "
+            "it sends there, fail until it does.",
+            "Check that LOOM_READ_REPLICA_MAIN_URL is reachable from this host and the main "
+            "Loom is up.",
+        )
+    ]
+
+
+def collect_problems(settings: Any, state: HealthState | None = None) -> list[Problem]:
+    """Every known problem for this process, worst-first. Pure: reads
+    `settings`, `state` and `state.env` only."""
+    st = state or HealthState()
+    problems = (
+        _embedder_problems(settings, st)
+        + _llm_problems(settings, st)
+        + _runtime_problems(st)
+        + _auth_problems(settings)
+        + _revocation_problems(settings, st)
+        + _deployment_problems(settings, st)
+        + _otel_problems(settings, st)
+        + _replica_problems(settings, st)
+    )
+    return sorted(problems, key=lambda p: (SEVERITY_RANK.get(p.severity, 9), p.code))
+
+
+def derive_status(ch_ok: bool, problems: list[Problem]) -> str:
+    """`/v1/health` `status`: `degraded` when ClickHouse is down or any
+    error-severity problem exists; configured fakes are `warn` unless
+    `LOOM_REQUIRE_REAL_PROVIDERS=true`, so the stock dev stack stays `ok`."""
+    if not ch_ok or any(p.severity == "error" for p in problems):
+        return "degraded"
+    return "ok"

@@ -1,0 +1,388 @@
+# LLM and embedding architecture
+
+Loom has two pluggable providers: an embedder (`server/embedding/`) that turns text into
+vectors, and an LLM client (`server/llm/`) that completes prompts. Each is chosen once
+per process from settings. Each falls back to a deterministic fake when its key is
+missing, so a keyless install boots and answers. Operator setup is in
+[deployment](../operations/deployment.md); every setting is in the
+[configuration reference](../reference/configuration.md).
+
+## Goals and non-goals
+
+| Goals                                                                                   | Non-goals                                                                           |
+| --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Every correctness gate on the write path works without an LLM.                          | A general LLM gateway. Loom calls models for its own features only.                 |
+| A keyless install boots and says clearly that it runs on fakes.                         | Provider-agnostic prompts. Prompts are tuned to a model and re-benched on a change. |
+| Swapping the embedder does not silently miscalibrate recall.                            | Mixing vector spaces. Vectors from different models are never compared.             |
+| Every provider call is attributed to the op or worker pass that made it, with its cost. | Runtime prompt management. Prompts are code.                                        |
+
+## Embedders
+
+### Selection
+
+`server/embedding/embedder.py` (`provider_for`, `get_embedder`) picks the served embedder
+once per process:
+
+1. A label resolves first. `prefix:<dim>:<model>` and `ctx[<variant>]:<model>` are views
+   over the served embedder and cannot be the served model.
+2. `LOOM_EMBEDDING_PROVIDER` (`fake`, `local`, `openai`, `gemini`) when set; any other
+   value raises.
+3. Otherwise inferred from `LOOM_EMBEDDING_MODEL`: `fake-ngram*` is fake, `local` or
+   `local:*` is local, `text-embedding-*` is OpenAI, `gemini*` is Gemini. Any other name
+   raises `unknown embedding model`.
+
+| Provider | Module                       | Model names                                                                | Needs                                    | Notes                                                                     |
+| -------- | ---------------------------- | -------------------------------------------------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------- |
+| `fake`   | `server/embedding/fake.py`   | `fake-ngram-<dim>`                                                         | nothing                                  | Hashed character trigrams, L2-normalised. Deterministic; the dev default. |
+| `local`  | `server/embedding/local.py`  | `local` (`bge-small`), `local:bge-small`, `local:bge-base`, `local:minilm` | the `local-embedder` extra (`fastembed`) | CPU ONNX; 384, 768 and 384 dimensions. No network.                        |
+| `openai` | `server/embedding/openai.py` | `text-embedding-3-small`, `text-embedding-3-large`                         | `OPENAI_API_KEY`                         | Requests `dimensions=LOOM_EMBEDDING_DIM`.                                 |
+| `gemini` | `server/embedding/gemini.py` | `gemini-embedding-001`                                                     | `GEMINI_API_KEY` or `GOOGLE_API_KEY`     | Requests `outputDimensionality=LOOM_EMBEDDING_DIM` (up to 3072).          |
+
+**Width.** The served width is `LOOM_EMBEDDING_DIM` (default 3072). OpenAI and Gemini are
+asked for that width; choose a model that supports it. Local models emit their native width. Boot probes the real
+width (`probe_embedding_dim`); a mismatch shows as `embedding_dim_mismatch` on
+`/v1/health`.
+
+**Image build.** The Docker image installs the local embedder only when built with a
+`local*` `LOOM_EMBEDDING_MODEL` build argument.
+
+### Protocol and paths
+
+The `Embedder` protocol is `model_name`, `dim`, `async embed(text)` and
+`async embed_many(texts)`.
+
+| Path                 | Sends                      | Used by                                                                  |
+| -------------------- | -------------------------- | ------------------------------------------------------------------------ |
+| `embed` (query)      | Whitespace-normalised text | Search. Cached.                                                          |
+| `embed_many` (write) | Raw text                   | Every stored vector: `memory.set`, extraction, ingest, recovery workers. |
+
+- **Cache** (`server/embedding/_cache.py`). A query is served from the per-process LRU
+  (`LOOM_EMBEDDING_CACHE_SIZE`, `LOOM_EMBEDDING_CACHE_TTL_S`), then an in-flight call for
+  the same text, then `loom.embedding_cache` (texts up to
+  `LOOM_EMBEDDING_CACHE_SHARED_MAX_CHARS`, matching `dim` only), then the provider. The
+  key hashes the model and the normalised text. Batch entries use a separate key over the
+  raw text, so the paths never serve each other. A cache failure falls through to the
+  provider.
+- **Batches.** OpenAI and Gemini take up to 100 inputs per request; `memory.set` embeds
+  value and key in one request.
+- **Second vector legs.** `prefix:<dim>:<model>` (a Matryoshka prefix,
+  `server/embedding/prefix.py`) and `ctx[<variant>]:<model>` (the served model over
+  rewritten text, `server/embedding/alias.py`) are built only when listed in
+  `LOOM_CODE_SEARCH_VECTOR_MODELS`. A secondary embedder never falls back to the fake; a
+  missing key raises.
+
+### Provider calls
+
+OpenAI and Gemini share `server/embedding/_provider.py`:
+
+| Concern      | Behaviour                                                                                                                                                                                           |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Retry        | Transport errors and 408, 409, 425, 429, 500, 502, 503, 504; three attempts, exponential backoff (0.5 s base, 10 s cap).                                                                            |
+| Input guard  | Inputs are token-counted first (8191 tokens for OpenAI, 2048 for Gemini); an oversize input raises instead of being truncated.                                                                      |
+| Output guard | An empty vector, a width mismatch or a non-finite value raises `MalformedEmbedding`.                                                                                                                |
+| Timeouts     | The shared HTTP client's 20 s (5 s connect). The query path uses `LOOM_MEMORY_SEARCH_EMBED_BOUND_S` (2.5 s) per attempt and `LOOM_MEMORY_SEARCH_EMBED_BOUND_RETRIES` (1), then 503 `EMBED_TIMEOUT`. |
+| Health       | Calls report to `/v1/health`. A cancellation is not a provider failure.                                                                                                                             |
+
+### Changing the embedder
+
+Changing `LOOM_EMBEDDING_MODEL` or `LOOM_EMBEDDING_DIM` changes the vector space. Stored
+vectors carry their `embedding_model`, and search never compares across models, so old
+rows stop matching until they are re-embedded.
+
+`loom reembed` (`server/memory/app/reembed.py`, `reembed_all`) rewrites every row whose
+`embedding_model` differs from the served one in `memory_embeddings`, `entity_vectors`
+and `conversation_embeddings`. It regenerates vectors from stored content and keeps every
+other column. In `memory_embeddings` and `conversation_embeddings` the model is in the
+sorting key, so old and new rows coexist until `--delete-old`. `entity_vectors`
+(`ReplacingMergeTree(created_at)`) is replaced in place. Flags: `--org`, `--namespace`,
+`--batch-size`, `--dry-run`, `--key-only`, `--resume`, and `--in-database <named
+collection>`, which runs one `INSERT … SELECT` per table through ClickHouse's `aiEmbed`
+(it needs a ClickHouse release that ships it). See the [CLI reference](../reference/cli.md).
+
+`embedding_worker` covers the rest. It embeds `embedding_dim = 0` stubs newest first; a
+stub labelled with an older model is embedded under the served one and the old stub
+tombstoned. A memory with no embedding row first gets a stub under the served model,
+copying its `status`, `invalid_at` and attestation. The tracker pass re-embeds rows
+another model wrote.
+
+## Adaptive thresholds
+
+A cosine of 0.4 means different things to different embedders. The search gates
+(similarity floor, abstain, HyDE fallback, query rewrite, rerank skip) and the write gates
+(conflict, duplicate) are cosine thresholds, so a model swap would move all of them.
+
+With `LOOM_ADAPTIVE_THRESHOLDS` on (the default), `calibrate_embedder` in
+`server/memory/app/embedder_calibration.py` derives them at boot. It embeds three built-in
+corpora (paraphrase pairs, question-to-fact pairs, distractor pairs) and reads their
+cosine distributions (`derive_thresholds`):
+
+| Threshold     | Derived as                                 |
+| ------------- | ------------------------------------------ |
+| noise floor   | distractor p90 + 0.02                      |
+| abstain       | noise floor + 0.05                         |
+| query rewrite | max(question-fact p10, noise floor + 0.01) |
+| HyDE fallback | max(question-fact p25, query rewrite)      |
+| rerank skip   | max(question-fact p75, HyDE fallback)      |
+| conflict      | paraphrase p50                             |
+| duplicate     | paraphrase p75                             |
+
+Each search resolves thresholds in three tiers:
+
+1. a per-namespace calibration (`loom.namespace_calibration_result`, written by
+   `code.calibrate`);
+2. the boot calibration;
+3. the scalar settings (`LOOM_MEMORY_SEARCH_MIN_SIMILARITY`,
+   `LOOM_MEMORY_SEARCH_ABSTAIN_THRESHOLD`, `LOOM_MEMORY_SEARCH_HYDE_FALLBACK_THRESHOLD`,
+   `LOOM_MEMORY_SEARCH_QUERY_REWRITE_THRESHOLD`, `LOOM_LLM_RERANK_SKIP_ABOVE`,
+   `LOOM_CONFLICT_THRESHOLD`).
+
+`calibration.get` and `/v1/health` (`adaptive_thresholds`) show what is in force.
+
+- Fake embedders skip calibration and use the scalar gates. So does a failed probe; it
+  never fails boot.
+- With adaptivity off and a real embedder other than `text-embedding-3-small` (the model
+  the scalar gates were tuned for), boot logs a warning. You own re-benching.
+- The `recalibration` worker (weekly, `LOOM_RECALIBRATION_ENABLED`) re-runs the probe,
+  warns on a drift of 0.05 or more, and re-probes namespace corpora with at least 5
+  similar and 3 distractor pairs.
+
+**Why.** Deriving thresholds from the model's own distribution makes an embedder swap a
+configuration change. The cost: thresholds are statistical. A namespace corpus whose
+"similar" pairs are revisions, not paraphrases, sets the conflict and duplicate gates too
+low.
+
+## LLM clients
+
+### Selection
+
+`resolve_llm_provider` in `server/core/llm_provider.py` picks the provider:
+
+1. An explicit `LOOM_LLM_PROVIDER` is never overridden.
+2. Else from `LOOM_LLM_MODEL`: `claude*` is `anthropic`; `gpt*`, `o1*`, `o3*`, `o4*`,
+   `chatgpt*` are `openai`; `fake*` is `fake`.
+3. Else from the key present: `OPENAI_API_KEY` gives `openai` with `gpt-6-luna`, then
+   `ANTHROPIC_API_KEY` gives `anthropic` with `claude-haiku-4-5`.
+4. Else `fake` (`fake-echo-1`).
+
+`Settings` resolves it once at load; `settings.llm_provider` is always concrete, and
+`llm_provider_inferred()` / `llm_provider_source()` say how. Boot logs one INFO line for
+an inferred provider. `loom doctor`'s `llm_provider` line warns when the key is missing.
+The stock `.env` pins `LOOM_LLM_PROVIDER=fake`.
+
+| Provider    | Module                    | Key                 |
+| ----------- | ------------------------- | ------------------- |
+| `openai`    | `server/llm/openai.py`    | `OPENAI_API_KEY`    |
+| `anthropic` | `server/llm/anthropic.py` | `ANTHROPIC_API_KEY` |
+| `fake`      | `server/llm/fake.py`      | none                |
+
+Per-stage models (`LOOM_MEMORY_ASK_SYNTH_MODEL`, `LOOM_CODE_SUMMARY_MODEL` and the other
+`*_model` settings) build their own client with `get_llm_client_for_model`, inferring
+the provider from the name.
+
+### Protocol
+
+`LLMClient` has `provider`, `model` and one method:
+
+```python
+async def complete(system, user, max_tokens=1024, response_format=None) -> LLMResult
+```
+
+`LLMResult` carries the text, input and output tokens, cached-input and cache-write
+tokens, the answering provider and model, and `from_cache`. There is no tool-use path.
+
+**Structured output.** Callers pass `response_format={"type": "json_object"}`. The OpenAI
+client passes it through. The Anthropic client has no JSON mode: it appends a JSON
+directive to the system prompt, strips code fences and marks the system block cacheable.
+The caller parses (`server/llm/json_text.py`).
+
+**Request shape per model, learned.** No model name decides what a request carries.
+Each client builds the request it would like (temperature, the lowest reasoning effort,
+an output cap), and `server/llm/traits.py` learns from the provider's answers, once per
+model per process:
+
+- a 400 naming a field the model does not take (`temperature`, `reasoning_effort`, an
+  `output_config`, the cap field under its other name) drops that field: the call is
+  re-sent without it, and later calls leave it out;
+- a 400 refusing a reasoning effort settles on the lowest one it lists
+  (`LOOM_LLM_OPENAI_REASONING_EFFORT` pins one instead);
+- a 400 naming the model's output limit clamps caps to it;
+- reasoning and thinking tokens count against the output cap, so the tokens a reply
+  reports become the model's reserve (twice the most seen, at most
+  `LOOM_LLM_HIDDEN_REASONING_RESERVE_MAX`), added to every caller's cap. A reply that hit
+  the cap with no visible text is re-sent once with the ceiling as its reserve.
+
+A new model therefore needs no code change; its first call or two teach the process
+what it takes. `LOOM_LLM_ANTHROPIC_EFFORT` sends a thinking effort to Claude models.
+
+### Retries, timeouts, fallback
+
+- **Retry** (`server/llm/_retry.py`): transport errors and 429, 500, 502, 503, 504, 529;
+  four attempts, exponential backoff (0.5 s base, 20 s cap). The request timeout,
+  `LOOM_LLM_REQUEST_TIMEOUT_S`, is 300 s: it only catches a hung connection, so a slow
+  model or a long output never hits it. Callers that need less wrap the call (HyDE on
+  `memory.search` waits 6 s).
+- **Fallback model.** `LOOM_LLM_FALLBACK_MODEL` wraps the client in `FallbackLLMClient`
+  (`server/llm/fallback.py`). It hands the call to the second model on an outage
+  (transport error, retryable status, timeout) or a rejected request (400, 413, 422);
+  401, 403 and 404 propagate. Each hand-over is logged and counted (`loom.llm.fallback`),
+  and the result names the model that answered. Fallbacks do not chain.
+- **Missing key.** The client is the fake (`_build_llm_client`), logged at WARNING.
+
+### Response cache
+
+`CachedLLMClient` (`server/llm/cache.py`) caches completions in `loom.llm_response_cache`
+(7-day TTL). The key is per model, over the system prompt, user prompt, `max_tokens`,
+`response_format` and extra arguments. Only a non-empty answer from the requested model
+is stored, so a fallback answer is never cached. Each row records the memory keys whose
+text the prompt carried (`window_keys`), so erasure and redaction can delete it by key.
+
+| User         | Switch                                                                                                    |
+| ------------ | --------------------------------------------------------------------------------------------------------- |
+| `memory.ask` | `LOOM_MEMORY_ASK_LLM_CACHE_DEFAULT` (on), `LOOM_MEMORY_ASK_LLM_CACHE_NAMESPACES`, per-request `llm_cache` |
+| `code.ask`   | `LOOM_CODE_ASK_LLM_CACHE` (on); a non-zero temperature bypasses it                                        |
+| Extraction   | Off, except where `LOOM_LLM_POLICY_BY_TRAFFIC_CLASS` enables it (the `bench` class by default)            |
+
+## Fake providers
+
+The fakes let a keyless install boot, tests run offline and CI stay deterministic. Do not
+serve from them. Every fallback is visible:
+
+- It is logged (ERROR for the embedder, WARNING for the LLM).
+- `/v1/health` and the dashboard show a `problems` entry: `fake_embedder`,
+  `embedder_key_missing`, `fake_llm`, `llm_key_missing`, or `provider_failing:<name>`
+  when a real provider's last call failed (`server/observability/problems.py`).
+- With `LOOM_REQUIRE_REAL_PROVIDERS=true` the fake entries are errors and health reads
+  `degraded`. The HTTP status stays 200; only a ClickHouse outage is 503.
+
+LLM features on the fake answer from a deterministic echo; some skip themselves (the
+conversation titler).
+
+## LLM-driven and deterministic parts
+
+Every gate that decides what is stored or who may read it is deterministic:
+authorization, the blacklist, sensitivity detection, conflict and duplicate verdicts,
+ranking and the abstain floor. LLM stages produce or enrich content (facts, answers,
+summaries, titles). Each is optional, bounded, and fails open to the deterministic path.
+
+**Why.** An LLM-decided gate cannot be reproduced, audited or unit-tested, and it adds
+cost and latency to every write. The deterministic gates run on the fake provider in CI
+through the production code path. The cost: a cosine threshold cannot tell a revision
+from a contradiction, which is why the optional LLM conflict judge exists.
+
+| Feature                                       | LLM?          | Switch (default)                                                                                         |
+| --------------------------------------------- | ------------- | -------------------------------------------------------------------------------------------------------- |
+| `memory.set`, `memory.search` core            | No            | —                                                                                                        |
+| Conflict and duplicate verdicts               | No, cosine    | `LOOM_CONFLICT_THRESHOLD`; optional judge `LOOM_MEMORY_CONFLICT_JUDGE` (off)                             |
+| `memory.set_from_messages` extraction         | Yes           | Always; deferred runs through the `extraction_queue` worker                                              |
+| Extraction verifier (coding captures)         | Yes           | `LOOM_MEMORY_EXTRACT_VERIFY_MODELS` (`claude-opus-5-5`; `""` turns it off); fails open                   |
+| `memory.ask` synthesis                        | Yes           | `LOOM_MEMORY_ASK_SYNTH_MODEL`, `LOOM_MEMORY_ASK_SYNTH_MODEL_CHEAP`, `LOOM_MEMORY_ASK_MID_MODEL`          |
+| `memory.search` HyDE and fallback helpers     | Yes, bounded  | Per-request `hyde`; `LOOM_MEMORY_SEARCH_FALLBACK_MAX_LLM_CALLS` (2)                                      |
+| `memory.search` rerank                        | Yes, opt-in   | Namespace `rerank_endpoint` or per-request `rerank` (`builtin:openai[:model]`, `builtin:cohere[:model]`) |
+| Entity extraction                             | Yes           | `entity_extractor` worker, `LOOM_ENTITY_EXTRACT_ENABLED` (on)                                            |
+| Conversation titles                           | Yes           | `conversation_titler` worker (on; skips on the fake LLM)                                                 |
+| Observation mining, reflection, profile folds | Yes           | `observe_extract`, `reflection_distill`, `profile_consolidation` workers (off)                           |
+| Code summaries                                | Yes           | `code_summary` worker (off), `LOOM_CODE_SUMMARY_MODEL`                                                   |
+| `code.ask`                                    | Yes           | `LOOM_CODE_ASK_LLM_MODEL`                                                                                |
+| Session briefs (`session.brief_save`)         | Yes, optional | `LOOM_SESSION_BRIEF_LLM` (on), `LOOM_SESSION_BRIEF_LLM_MODEL`                                            |
+| Retrieval-quality judge                       | Yes, sampled  | `LOOM_RETRIEVAL_JUDGE_SAMPLE_RATE` (0)                                                                   |
+| Embedding recovery, calibration               | No            | —                                                                                                        |
+
+Whether an agent calls `memory.set` at all is the client model's decision. The MCP tool
+descriptions (`server/transport/mcp_descriptions.py`) describe intent, not a syntax.
+
+## Prompts
+
+Prompts are Python constants, versioned with the code:
+
+| Prompt family                                                                  | Where                                                                                                   |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| Fact extraction, judge, retry addendum                                         | `server/memory/domain/extraction_prompts.py`; assembled in `server/memory/app/extract/prompts.py`       |
+| Search helpers (HyDE, iterative judge, derived intent, triples, verb synonyms) | `server/memory/domain/search_prompts.py`                                                                |
+| Rerank                                                                         | `server/memory/app/rerank.py`                                                                           |
+| `memory.ask` synthesis                                                         | `server/memory/app/ask/prompts.py`                                                                      |
+| Worker prompts                                                                 | The worker modules (`code_summary`, `conversation_titler`, `profile_consolidation`, `entity_extractor`) |
+
+Which model runs each job is set in one place, `server/settings/_models.py`
+([models per job](../operations/deployment.md#models-per-job)). Recalled memory
+inside a prompt is fenced as data ([security](security.md#prompt-safety)).
+
+**Extraction output repair** (`extract_from_messages` in
+`server/memory/app/extract/extract.py`):
+
+- a parse failure that looks like truncation retries with double the token budget (up to
+  8192), then keeps the complete fact objects;
+- any other parse failure retries once with a stricter addendum;
+- a non-trivial input that yields no facts gets one more retry.
+
+**Langfuse.** `scripts/codegen/push_langfuse_prompts.py --write` (with
+`LOOM_LANGFUSE_URL` and `LOOM_LANGFUSE_ADMIN_TOKEN`) publishes the prompt constants under
+fixed names and records each prompt's text hash and version in
+`server/observability/langfuse_prompts.lock.json`. Nothing fetches prompts at run time.
+The lockfile lets generation spans carry the prompt's name, version and hash
+(`server/observability/genai.py`).
+
+**Why prompts are code.** A prompt change is a behaviour change measured by the
+benchmarks. In the diff, it is reviewed, benched and rolled back with the code that
+parses its output. Editing a prompt needs a deploy.
+
+## Cost accounting
+
+Every provider call reports usage to a per-op accumulator
+(`server/observability/cost_accumulator.py`). Both transports bind it per request; the
+worker supervisor binds it per pass. Prices come from `PRICE_PER_1K_TOKENS` in the same
+module, with cache-read and cache-write multipliers. An unlisted model bills $0 and logs
+one warning. Gemini embeddings report no usage and bill $0.
+
+The op's `loom.agent_events` row carries `upstream_cost_usd`, `embedding_tokens`,
+`input_tokens`, `output_tokens`, `llm_calls` and the dominant model (`emit_agent_event`
+in `server/observability/ledger.py`). Cache savings appear per answer
+(`llm_cache_saved_usd` on `memory.ask`) and in the event's `args`
+(`out_llm_cache_saved_usd`). See [cost and usage](../features/observability/cost-and-usage.md).
+
+## Changing a default
+
+The dev defaults are the fakes. Production sets `LOOM_EMBEDDING_MODEL` and
+`LOOM_LLM_MODEL` explicitly; the commented provider block in `.env.example` uses
+`text-embedding-3-small` at 1536 dimensions and `gpt-6-luna`.
+
+**Run `make bench-quick` before changing either default** or opting into the Anthropic
+provider. It runs a 30-question sample of the long-memory benchmark (`bench/longmemeval.py`)
+against a running server with an answer judge and writes a CSV under `/tmp`. It needs
+real providers. See [running benchmarks](../benchmarks/running.md).
+
+## Invariants
+
+- A process serves one embedder and one default LLM client, chosen at startup.
+- Vectors of different `embedding_model` values are never compared.
+- The served embedder falls back to the fake only when its key is missing, and says so on
+  `/v1/health`. A secondary embedder never falls back.
+- A search always has a threshold: namespace calibration, else boot calibration, else the
+  scalar settings.
+- No gate that decides storage or access calls an LLM.
+- A fallback model's answer is never cached.
+- Every provider call's usage lands on the `agent_events` row of the op or pass that made
+  it.
+
+## Source entry points
+
+| What                      | Where                                                                                                                         |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Embedder selection        | `server/embedding/embedder.py` (`provider_for`, `get_embedder`, `probe_embedding_dim`)                                        |
+| Embedding cache           | `server/embedding/_cache.py`                                                                                                  |
+| Provider retry and guards | `server/embedding/_provider.py`, `server/llm/_retry.py`                                                                       |
+| LLM selection             | `server/core/llm_provider.py` (`resolve_llm_provider`), `server/llm/client.py` (`get_llm_client`, `get_llm_client_for_model`) |
+| Fallback model            | `server/llm/fallback.py` (`FallbackLLMClient`)                                                                                |
+| Response cache            | `server/llm/cache.py` (`CachedLLMClient`)                                                                                     |
+| Calibration               | `server/memory/app/embedder_calibration.py`, `server/memory/workers/recalibration.py`                                         |
+| Re-embed                  | `server/memory/app/reembed.py` (`reembed_all`)                                                                                |
+| Prompts                   | `server/memory/domain/extraction_prompts.py`, `server/memory/domain/search_prompts.py`                                        |
+| Prompt publishing         | `scripts/codegen/push_langfuse_prompts.py`                                                                                    |
+| Cost                      | `server/observability/cost_accumulator.py`, `server/observability/ledger.py`                                                  |
+| Provider problems         | `server/observability/problems.py`                                                                                            |
+
+## Related
+
+- [Extraction](../features/memory/extraction.md): what the extractor produces.
+- [Retrieval and ranking](../concepts/retrieval-and-ranking.md): where the thresholds act.
+- [Langfuse](../features/integrations/langfuse.md): traces and prompt links.
+- [Benchmarks](../benchmarks/overview.md): how changes are measured.

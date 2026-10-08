@@ -1,0 +1,470 @@
+"""`POST /v1/me/setup/mcp_config`: the dashboard's Setup tab mints a scoped
+token for one MCP client and returns that client's config entry."""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta
+
+from fastapi import APIRouter, HTTPException, Request
+
+from server.core.datetimes import naive_utc_now_seconds
+from server.identity.app import me_callers, token_grants
+from server.identity.app.me_service_accounts import json_int
+from server.settings import settings
+
+router = APIRouter()
+
+
+def _mcp_client_config(client: str, mcp_url: str, minted: str) -> dict[str, object]:
+    """The per-client half of the Setup endpoint: the config-file key, the
+    server entry (URL + bearer, the `mcp-remote` bridge for stdio clients,
+    `bearer_token_env_var` for Codex), the file's own text
+    when it is not JSON, the one-line registration command, and the file's
+    path per platform. Pure; the route mints the token and persists it."""
+    # Per-client shape. VS Code uses "servers", Zed uses "context_servers",
+    # everyone else uses "mcpServers".
+    if client == "vscode":
+        config_key = "servers"
+    elif client == "zed":
+        config_key = "context_servers"
+    elif client == "codex":
+        config_key = "mcp_servers"
+    else:
+        config_key = "mcpServers"
+    # stdio-only clients need the `mcp-remote` npx shim to reach a remote
+    # HTTP MCP server; the rest speak remote MCP natively (URL + headers,
+    # with `type: "http"` for claude-code / vscode). When a client gains
+    # native HTTP support, drop it out of _STDIO_VIA_NPX.
+    _STDIO_VIA_NPX = {"claude-desktop", "zed", "cline"}
+    auth_header = f"Authorization: Bearer {minted}"
+    if client in _STDIO_VIA_NPX:
+        entry: dict[str, object] = {
+            "command": "npx",
+            "args": [
+                "-y",
+                "mcp-remote",
+                mcp_url,
+                "--allow-http",
+                "--header",
+                auth_header,
+            ],
+        }
+    elif client == "codex":
+        # Codex names the env var the bearer lives in; the token itself never sits in
+        # config.toml. The `coding` toolset rides the URL as it does for the other coding
+        # agents.
+        codex_url = mcp_url if "toolset=" in mcp_url else f"{mcp_url}?toolset=coding"
+        entry = {"url": codex_url, "bearer_token_env_var": "LOOM_API_KEY"}
+    else:
+        entry = {
+            "url": mcp_url,
+            "headers": {"Authorization": f"Bearer {minted}"},
+        }
+        if client in {"claude-code", "vscode"}:
+            entry["type"] = "http"
+    config_block = {config_key: {"loom": entry}}
+    config_toml = (
+        f'[mcp_servers.loom]\nurl = "{entry["url"]}"\nbearer_token_env_var = "LOOM_API_KEY"\n'
+        if client == "codex"
+        else ""
+    )
+    command = (
+        f'codex mcp add loom --url "{entry["url"]}" --bearer-token-env-var LOOM_API_KEY'
+        if client == "codex"
+        else ""
+    )
+
+    config_paths = {
+        "claude-desktop": {
+            "darwin": "~/Library/Application Support/Claude/claude_desktop_config.json",
+            "linux": "~/.config/Claude/claude_desktop_config.json",
+            "win32": "%APPDATA%\\Claude\\claude_desktop_config.json",
+        },
+        "claude-code": {
+            "darwin": "~/.claude.json",
+            "linux": "~/.claude.json",
+            "win32": "%USERPROFILE%\\.claude.json",
+        },
+        "codex": {
+            "darwin": "~/.codex/config.toml",
+            "linux": "~/.codex/config.toml",
+            "win32": "%USERPROFILE%\\.codex\\config.toml",
+        },
+        "cursor": {
+            "darwin": "~/.cursor/mcp.json",
+            "linux": "~/.cursor/mcp.json",
+            "win32": "%USERPROFILE%\\.cursor\\mcp.json",
+        },
+        "vscode": {
+            "darwin": "~/.vscode/mcp.json",
+            "linux": "~/.vscode/mcp.json",
+            "win32": "%USERPROFILE%\\.vscode\\mcp.json",
+        },
+        "cline": {
+            "darwin": "~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json",  # noqa: E501
+            "linux": "~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json",  # noqa: E501
+            "win32": "%APPDATA%\\Code\\User\\globalStorage\\saoudrizwan.claude-dev\\settings\\cline_mcp_settings.json",  # noqa: E501
+        },
+        "windsurf": {
+            "darwin": "~/.codeium/windsurf/mcp_config.json",
+            "linux": "~/.codeium/windsurf/mcp_config.json",
+            "win32": "%USERPROFILE%\\.codeium\\windsurf\\mcp_config.json",
+        },
+        "zed": {
+            "darwin": "~/.config/zed/mcp.json",
+            "linux": "~/.config/zed/mcp.json",
+            "win32": "%APPDATA%\\Zed\\mcp.json",
+        },
+    }
+    return {
+        "config_key": config_key,
+        "config": config_block,
+        "config_toml": config_toml,
+        "command": command,
+        "config_path": config_paths[client],
+    }
+
+
+# The MCP clients the Setup tab can mint a token for, with their display
+# labels. One table for the validation set, the service-account name and
+# the dashboard's client picker (frontend/src/lib/clients.ts mirrors it).
+MCP_SETUP_CLIENT_LABELS: dict[str, str] = {
+    "claude-desktop": "Claude Desktop",
+    "claude-code": "Claude Code",
+    "codex": "Codex",
+    "cursor": "Cursor",
+    "vscode": "VS Code",
+    "cline": "Cline",
+    "windsurf": "Windsurf",
+    "zed": "Zed",
+}
+
+
+async def _validate_restricted_request(
+    org: str, subject: str, raw: object, persist: bool
+) -> list[str]:
+    """Parse `restricted_namespaces` on the Setup mint: each must be classified restricted
+    (422 NOT_RESTRICTED otherwise — a standard namespace needs no naming), the caller must
+    hold a direct grant there (403), and the token must be persisted (422) so the grant has
+    a subject to belong to and a revocation to die with."""
+    from server.identity.app.namespace_classification import is_restricted
+
+    if not raw:
+        return []
+    if not isinstance(raw, list) or not all(isinstance(x, str) and x.strip() for x in raw):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "VALIDATION_FAILED",
+                "message": "restricted_namespaces must be an array of namespace names",
+            },
+        )
+    if not persist:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "VALIDATION_FAILED",
+                "message": "restricted_namespaces requires persist=true",
+            },
+        )
+    names: list[str] = []
+    for ns in raw:
+        ns = ns.strip()
+        if ns in names:
+            continue
+        if not await is_restricted(org, ns):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "NOT_RESTRICTED",
+                    "message": (
+                        f"{ns} is not a restricted namespace; a standard "
+                        "namespace is read through your membership"
+                    ),
+                },
+            )
+        if await me_callers.caller_role_on(org, ns, subject) is None:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "AUTH_INSUFFICIENT",
+                    "message": f"you hold no direct grant on {ns}",
+                },
+            )
+        names.append(ns)
+    return await _with_bound_tracker(org, subject, names)
+
+
+async def _with_bound_tracker(org: str, subject: str, names: list[str]) -> list[str]:
+    """A restricted repository added to a token brings its bound tracker record when that
+    record is itself restricted and the caller holds a direct grant on it. The
+    history-shaped code ops (blame, bisect, backport gaps, first build, symbol history) read
+    issues and PRs from that record through the tracker namespace's own two-factor gate, so
+    a token naming the repository but not the record would answer without them, silently.
+    A standard record needs nothing: it is read by whoever reads the repository. Order is
+    kept; nothing is removed."""
+    from server.identity.app.namespace_classification import is_restricted
+    from server.tracker.app.binding import tracker_namespaces_for
+
+    out = list(names)
+    for ns in names:
+        for qa in tracker_namespaces_for(ns):  # every linked tracker
+            if qa in out:
+                continue
+            if not await is_restricted(org, qa):
+                continue
+            if await me_callers.caller_role_on(org, qa, subject) is None:
+                continue
+            out.append(qa)
+    return out
+
+
+def _mcp_token_name(client_label: str, now: datetime, sa_hash: str) -> str:
+    """The Tokens-list name of a Setup-page token. `loom.service_accounts` is
+    a ReplacingMergeTree keyed on (org, name): two mints whose names collide
+    leave ONE row, and the earlier token — whose subject that row no longer
+    names — dies at its first request. The client plus the minute alone would collide for
+    two mints in one minute; seconds plus the subject hash make it unique per mint and still
+    readable."""
+    return f"{client_label} · {now.strftime('%Y-%m-%d %H:%M:%S')} · {sa_hash}"
+
+
+async def _persist_mcp_token(
+    *,
+    org: str,
+    subject: str,
+    client: str,
+    token_namespaces: list[str],
+    roles: list[str],
+    ttl_seconds: int | None,
+    restricted_names: list[str],
+) -> tuple[str, str]:
+    """Track a Setup-page token in `service_accounts` (kind='mcp') so it is revocable from
+    the Tokens list, re-minted under its own `sa:` subject so revocation-by-sub kills this
+    token and not the person's JWT. Restricted namespaces get the token's own direct grant.
+    Returns (minted token, sa_subject)."""
+    import hashlib
+    import time as _time
+
+    from server.auth.jwt import mint_token
+
+    sa_hash = hashlib.sha1(
+        f"mcp:{org}:{client}:{subject}:{_time.time_ns()}".encode(),
+    ).hexdigest()[:6]
+    sa_subject = f"sa:{client}-{sa_hash}"
+    now = naive_utc_now_seconds()
+    expires_at = now + timedelta(seconds=ttl_seconds) if ttl_seconds is not None else None
+    # Re-mint under sa_subject so revocation-by-sub kills this token,
+    # not the user's personal JWT (which shares the original subject).
+    minted = mint_token(
+        subject=sa_subject,
+        org=org,
+        namespaces=token_namespaces,
+        roles=roles,
+        ttl_seconds=ttl_seconds,
+        is_service_account=True,
+    )
+    client_label = MCP_SETUP_CLIENT_LABELS.get(client, client)
+    token_name = _mcp_token_name(client_label, now, sa_hash)
+
+    from server.core.ch import get_client
+
+    await get_client().insert(
+        "loom.service_accounts",
+        [
+            {
+                "org": org,
+                "name": token_name,
+                "sa_subject": sa_subject,
+                "namespaces": token_namespaces,
+                "roles": roles,
+                "ttl_days": int((ttl_seconds or 0) / 86400),
+                "created_by": subject,
+                "created_at": now,
+                "expires_at": expires_at,
+                "revoked_at": None,
+                "revoked_by": "",
+                "version": _time.time_ns(),
+                "kind": "mcp",
+                "client": client,
+                # Inherit the creator's live namespace grants (default-on) so
+                # this MCP token sees namespaces the user joins later.
+                "inherit_creator_grants": True,
+            }
+        ],
+    )
+    if restricted_names:
+        caller_roles = {
+            ns: (await me_callers.caller_role_on(org, ns, subject) or "viewer")
+            for ns in restricted_names
+        }
+        await token_grants.grant_restricted_to_token(org, sa_subject, subject, caller_roles)
+
+    return minted, sa_subject
+
+
+def _setup_identity(
+    request: Request, payload: dict[str, object]
+) -> tuple[str, str, str, list[str]]:
+    """(subject, org, default namespace, roles) the setup token is minted for."""
+    from server.auth.bearer import verify_bearer_header
+
+    # Verify + use the caller's identity if auth is required or a credential
+    # is present; otherwise fall back to body-supplied identity (dev mode).
+    info = verify_bearer_header(request.headers.get("Authorization"))
+    if info is None and settings.auth_actually_required():
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "AUTH_INVALID", "message": "missing bearer token"},
+        )
+    if info is not None:
+        if info.has_ns_roles():
+            # A scoped token has no flat role (roles=[]); minting from it would turn its
+            # per-namespace map into an org-wide `*` token with a flat role.
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "AUTH_INSUFFICIENT",
+                    "message": "a scoped token cannot mint a setup token; sign in to /me",
+                },
+            )
+        subject = info.subject
+        org = info.org
+        default_ns = info.namespaces[0] if info.namespaces else "default"
+        roles = [r.name.lower() for r in info.roles] or ["writer"]
+    else:
+        # Dev mode — no auth, no Bearer. Accept body-supplied identity.
+        subject = str(payload.get("subject") or "dev")
+        org = str(payload.get("org") or "default")
+        default_ns = "default"
+        roles = ["writer"]
+    return subject, org, default_ns, roles
+
+
+@router.post("/v1/me/setup/mcp_config")
+async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> dict[str, object]:
+    """Generate an MCP-client config block + fresh token for the caller.
+
+    Powers the `/me` Setup tab: mints a Loom JWT scoped to the caller's
+    namespace and returns the config JSON to paste into the MCP client.
+
+    Body:
+      {
+        client: str,             # a key of MCP_SETUP_CLIENT_LABELS (claude-code, codex, cursor, …)
+        namespace?: str,         # defaults to caller's namespace
+        ttl_days?: int | null,   # null = indefinite (default)
+      }
+
+    Returns:
+      {
+        client: str,
+        config_path: { darwin: str, linux: str, win32: str },
+        config_key: str,         # "mcpServers" (most clients) or "servers" (VS Code)
+        config: dict,            # the JSON block to merge into the client's config file
+        token: str,              # the minted JWT
+      }
+    """
+    from server.auth.jwt import mint_token
+
+    subject, org, default_ns, roles = _setup_identity(request, payload)
+
+    client = str(payload.get("client") or "")
+    allowed_clients = set(MCP_SETUP_CLIENT_LABELS)
+    if client not in allowed_clients:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "VALIDATION_FAILED",
+                "message": f"client must be one of: {sorted(allowed_clients)}",
+            },
+        )
+
+    # Default: wildcard-namespace token so the client can target any
+    # namespace the caller can access. Explicit `namespace` scopes it down.
+    namespace_payload = payload.get("namespace")
+    if namespace_payload:
+        token_namespaces = [str(namespace_payload)]
+        displayed_namespace = str(namespace_payload)
+    else:
+        token_namespaces = ["*"]
+        displayed_namespace = default_ns  # for the response only; bearer is wildcard
+    # Restricted namespaces the token should read are named in the claim and, once the token
+    # has a subject, granted to it directly.
+    persist = bool(payload.get("persist") or False)
+    restricted_names = await _validate_restricted_request(
+        org, subject, payload.get("restricted_namespaces"), persist
+    )
+    token_namespaces = token_namespaces + [n for n in restricted_names if n not in token_namespaces]
+
+    ttl_raw = payload.get("ttl_days")
+    ttl_seconds: int | None
+    if ttl_raw is None:
+        ttl_seconds = None
+    else:
+        try:
+            ttl_seconds = json_int(ttl_raw) * 86400
+            if ttl_seconds < 86400:
+                raise ValueError
+        except (TypeError, ValueError) as e:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "VALIDATION_FAILED",
+                    "message": "ttl_days must be a positive int or null",
+                },
+            ) from e
+
+    minted = mint_token(
+        subject=subject,
+        org=org,
+        namespaces=token_namespaces,
+        roles=roles,
+        ttl_seconds=ttl_seconds,
+        is_service_account=False,
+    )
+
+    # persist=True tracks the token in service_accounts (kind='mcp') so
+    # it's revocable from the Tokens list. Skipped for preview-only calls.
+    sa_subject = ""
+    if persist:
+        minted, sa_subject = await _persist_mcp_token(
+            org=org,
+            subject=subject,
+            client=client,
+            token_namespaces=token_namespaces,
+            roles=roles,
+            ttl_seconds=ttl_seconds,
+            restricted_names=restricted_names,
+        )
+
+    # Base URL: LOOM_PUBLIC_BASE_URL when the operator set it, else the
+    # request's forwarded origin (honouring X-Forwarded-Proto, so a TLS-terminating proxy
+    # does not hand every client an http:// address).
+    from server.auth.public_url import public_base_url
+
+    base_url = public_base_url(request)
+    mcp_url = f"{base_url}/mcp"
+
+    shape = _mcp_client_config(client, mcp_url, minted)
+
+    return {
+        "client": client,
+        # Codex's file is TOML, not JSON; the dashboard renders `config_toml` (and the
+        # one-line `command`) instead of the JSON block.
+        **shape,
+        "token": minted,
+        "subject": subject,
+        "org": org,
+        "namespace": displayed_namespace,
+        "namespace_scope": "all" if token_namespaces == ["*"] else "single",
+        # The namespace above is where the token WRITES. Reads follow the creator's live
+        # grants (service_accounts.inherit_creator_grants, resolved in server/auth/context.py),
+        # so the client sees every namespace the person belongs to, now and later.
+        "read_scope": "inherited_grants",
+        # Restricted namespaces this token reads by name, each with a direct grant of its own
+        # that dies with the token.
+        "restricted_namespaces": restricted_names,
+        "mcp_url": mcp_url,
+        "persisted": bool(sa_subject),
+        "sa_subject": sa_subject,
+    }

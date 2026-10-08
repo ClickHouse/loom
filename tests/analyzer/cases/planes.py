@@ -1,0 +1,659 @@
+"""The operation planes outside search: every read-shaped handler driven
+through its Input model (required fields from the identity, optional
+fields empty and then filled with typed dummies — the `filled` axis), and
+the repositories / services those handlers and the workers read through.
+
+Handlers that call an LLM or an embedder (set, add, consolidate, ask,
+search) are left out: their statements are covered from the repositories
+they call, and a provider round trip has no place in a statement corpus.
+"""
+
+from __future__ import annotations
+
+import datetime as _dt
+import importlib
+import inspect
+import sys
+import types
+import typing
+from typing import Any
+
+from tests.analyzer.cases._common import AGENT, NS, ORG, SMALL_VEC, rows_by_substring
+from tests.analyzer.corpus import Case, RecordingCH, is_drive_defect
+
+_UUID = "00000000-0000-0000-0000-000000000001"
+_DT = _dt.datetime(2026, 1, 1, tzinfo=_dt.UTC)
+
+# Required-field values by name; anything else gets a typed dummy.
+_BY_NAME: dict[str, Any] = {
+    "org": ORG,
+    "from_org": ORG,
+    "namespace": NS,
+    "from_namespace": NS,
+    "to_namespace": "n2",
+    "target_namespace": "n2",
+    "agent": AGENT,
+    "from_agent": AGENT,
+    "to_agent": "bot2",
+    "claiming_agent": "bot2",
+    "memory_key": "k1",
+    "from_key": "k1",
+    "to_key": "k2",
+    "memory_id": _UUID,
+    "from_memory_id": _UUID,
+    "record_id": _UUID,
+    "erasure_id": _UUID,
+    "run_id": _UUID,
+    "proposal_id": _UUID,
+    "pattern_id": _UUID,
+    "failure_ids": [_UUID],
+    "policy_id": "p1",
+    "candidate_id": _UUID,
+    "thread_id": "t1",
+    "confirm_thread_id": "t1",
+    "session_id": "s1",
+    "schema_name": "ticket",
+    "name": "ticket",
+    "owner_email": "owner@example.test",
+    "subject": "corpus@example.test",
+    "role": "writer",
+    "decision": "approve",
+    "outcome": "success",
+    "realized_outcome": "success",
+    "operation": "memory.get",
+    "query": "deploy window",
+    "seed_entity": "user",
+    "entity": "user",
+    "entity_a": "user",
+    "entity_b": "clickhouse",
+    "adapter_name": "adapter",
+    "source_uri": "doc://a",
+    "source_uris": ["doc://a"],
+    "canonical_uri": "doc://a",
+    "duplicate_uri": "doc://b",
+    "confirm_duplicate_uri": "doc://b",
+    "canonical_key": "k1",
+    "duplicate_key": "k2",
+    "confirm_canonical_key": "k1",
+    "memory_keys": ["k1", "k2"],
+    "memory_key_a": "k1",
+    "memory_key_b": "k2",
+    "blob_key": "b1",
+    "from_date": "2026-01-01",
+    "to_date": "2026-02-01",
+    "as_of": "2026-01-01T00:00:00Z",
+    "category_name": "work",
+    "kind": "category",
+    "pattern": "secret",
+    "fields": {"title": "x"},
+    "payload": {},
+    "path": "src/a.py",
+    "target": "k1",
+    "action": "keep",
+    "reason": "corpus",
+    "ttl_seconds": 60,
+    "value": "v",
+    "batch_id": _UUID,
+    "label": "notes",
+    "addition": "x",
+    "old": "x",
+    "new": "y",
+    "goal": "g",
+    "status": "done",
+    "confirm_subject": "corpus@example.test",
+    "tool_name": "t",
+    "trace": "t",
+    "situation": "s",
+    "steps": ["a"],
+    "graph": {},
+    "question": "q",
+    "locations": [],
+    "git_head": "abc",
+    "cursor": "",
+}
+
+_SKIP_HANDLERS = {
+    # LLM / embedder round trips, or writers whose statements the repos render.
+    "handle_memory_set",
+    "handle_memory_pin",
+    "handle_memory_update",
+    "handle_memory_update_by_id",
+    "handle_memory_consolidate",
+    "handle_memory_reindex",
+    "handle_knowledge_add",
+    "handle_knowledge_bulk_add",
+    "handle_knowledge_upsert",
+    "handle_knowledge_synthesize",
+    "handle_knowledge_search",
+    "handle_memory_import_curated",
+    "handle_conversation_append",
+    "handle_conversation_compact",
+    "handle_decision_record",
+    "handle_decision_precedents",
+    "handle_observe_record",
+    "handle_observe_crystallize",
+    "handle_cost_record_turns",
+    "handle_namespace_restore",
+    "handle_memory_clear",
+    "handle_memory_copy_to",
+    "handle_memory_cross_promote",
+    "handle_erasure_request",
+    "handle_memory_delete",
+    "handle_memory_redact",
+    "handle_memory_outcome_run",
+    "handle_memory_record_write",
+    "handle_blacklist_sweep",
+    "handle_memory_stack",
+    "handle_working_memory_set",
+    "handle_working_memory_append",
+    "handle_working_memory_replace",
+    "handle_context_offload",
+    "handle_run_begin",
+    "handle_memory_resolve_orphan_duplicates",
+}
+
+# Handler modules whose optional input fields reach no statement: the
+# filled input renders the same shapes as the empty one.
+_FILL_INERT = frozenset(
+    {
+        "namespace_validate",
+        "grants",
+        "context_offload",
+        "knowledge",
+        "_memory_consolidate",
+        "_memory_evidence_reads",
+        "_memory_restore",
+        "_namespace_membership",
+        "_namespace_snapshot",
+        "_namespace_catalog",
+    }
+)
+
+# Handlers whose `input` parameter carries no annotation.
+_UNTYPED = {
+    "handle_memory_digests": "MemoryDigestsInput",
+    "handle_memory_outline": "MemoryOutlineInput",
+    "handle_memory_backlinks": "MemoryBacklinksInput",
+    "handle_memory_history": "MemoryHistoryInput",
+    "handle_memory_timeline": "MemoryTimelineInput",
+    "handle_admin_users": "AdminUsersInput",
+    "handle_agents_connected": "AgentsConnectedInput",
+    "handle_erasure_list": "ErasureListInput",
+    "handle_conversation_threads": "ConversationThreadsInput",
+    "handle_knowledge_update_metadata": "KnowledgeUpdateMetadataInput",
+    "handle_memory_get_by_id": "MemoryGetByIdInput",
+    "handle_memory_restore": "MemoryRestoreInput",
+    "handle_memory_evidence": "MemoryEvidenceInput",
+}
+
+# (case name, handler module): the case name is the analyzer shape id, the module
+# is where that plane's handlers live.
+HANDLER_MODULES = (
+    ("facts", "server.memory.app.facts"),
+    ("namespace", "server.identity.app.namespace"),
+    ("_namespace_membership", "server.identity.app.namespace_membership"),
+    ("_namespace_snapshot", "server.identity.app.namespace_snapshot"),
+    ("_namespace_catalog", "server.identity.app.namespace_catalog"),
+    ("namespace_validate", "server.identity.app.namespace_validate"),
+    ("namespace_ontology", "server.identity.app.namespace_ontology"),
+    ("memory_records", "server.memory.app.records"),
+    ("_memory_curation", "server.memory.app.curation"),
+    ("_memory_query", "server.memory.app.query"),
+    ("_memory_ops", "server.memory.app.ops"),
+    ("_memory_consolidate", "server.memory.app.consolidate"),
+    ("_memory_evidence_reads", "server.memory.app.evidence_reads"),
+    ("_memory_recall", "server.memory.app.recall"),
+    ("memory", "server.memory.app.handlers"),
+    ("_memory_restore", "server.memory.app.restore"),
+    ("conversations", "server.knowledge.app.conversations"),
+    ("cost", "server.insights.app.cost"),
+    ("run", "server.tasks.app.run"),
+    ("decision", "server.memory.app.decision"),
+    ("working_memory", "server.memory.app.working_memory"),
+    ("admin_users", "server.identity.app.admin_users"),
+    ("erasure", "server.erasure.app.handlers"),
+    ("knowledge", "server.knowledge.app.writes"),
+    ("_knowledge_reads", "server.knowledge.app.document_reads"),
+    ("_knowledge_dedup", "server.knowledge.app.dedup"),
+    ("grants", "server.identity.app.grants"),
+    ("policy", "server.identity.app.history_policy_ops"),
+    ("learnings", "server.memory.app.learnings"),
+    ("blacklist", "server.memory.app.blacklist"),
+    ("conflicts", "server.memory.app.conflicts_ops"),
+    ("context_offload", "server.memory.app.context_offload"),
+    ("audit", "server.insights.app.audit"),
+    ("agents", "server.insights.app.agents"),
+    ("memory_for_file", "server.memory.app.for_file"),
+    ("memory_proposals", "server.memory.app.proposals_ops"),
+)
+
+
+def _input_models() -> dict[str, type]:
+    from pydantic import BaseModel
+
+    # Every wire model module is loaded by the registry; collect the *Input
+    # models from each of them, wherever its domain package keeps it.
+    importlib.import_module("server.operations.registry")
+    out: dict[str, type] = {}
+    for mod_name, mod in sorted(sys.modules.items()):
+        if mod is None or not (mod_name.startswith("server.operations.") or ".api." in mod_name):
+            continue
+        for name, cls in inspect.getmembers(mod, inspect.isclass):
+            if issubclass(cls, BaseModel) and name.endswith("Input"):
+                out.setdefault(name, cls)
+    return out
+
+
+def _dummy_for(annotation: Any, name: str) -> Any:
+    origin = typing.get_origin(annotation)
+    if origin is typing.Literal:
+        return typing.get_args(annotation)[0]
+    if origin in (types.UnionType, typing.Union):
+        args = [a for a in typing.get_args(annotation) if a is not type(None)]
+        if args and typing.get_origin(args[0]) is typing.Literal:
+            return typing.get_args(args[0])[0]
+        if name in _BY_NAME:
+            return _BY_NAME[name]
+        return _dummy_for(args[0], name) if args else "x"
+    if name in _BY_NAME:
+        return _BY_NAME[name]
+    if origin in (list, tuple, set):
+        (inner,) = typing.get_args(annotation)[:1] or (str,)
+        return [_dummy_for(inner, name)]
+    if origin is dict:
+        return {}
+    if annotation is bool:
+        return True
+    if annotation is int:
+        return 5
+    if annotation is float:
+        return 0.5
+    if annotation is _dt.datetime:
+        return _DT
+    if inspect.isclass(annotation) and hasattr(annotation, "model_fields"):
+        return make_input(annotation, filled=False)
+    if annotation is str:
+        if name.endswith(("_at", "_date", "since", "until", "as_of", "before", "after")):
+            return "2026-01-01T00:00:00Z"
+        if name.endswith("_id") or name.endswith("_ids"):
+            return _UUID
+        return "x"
+    return None
+
+
+def make_input(cls: type, *, filled: bool) -> Any:
+    """Build an Input model: required fields by name / type, optional fields
+    left at their defaults or (filled) set to typed dummies; a field the
+    model refuses is dropped and the build retried."""
+    from pydantic import ValidationError
+
+    hints = typing.get_type_hints(cls)
+    values: dict[str, Any] = {}
+    for fname, info in cls.model_fields.items():
+        if info.is_required() or filled:
+            v = _dummy_for(hints.get(fname, str), fname)
+            if v is not None:
+                values[fname] = v
+    retyped: set[str] = set()
+    for _ in range(24):
+        try:
+            return cls(**values)
+        except ValidationError as exc:
+            bad = {str(e["loc"][0]) for e in exc.errors() if e.get("loc")}
+            if not bad:
+                raise
+            progressed = False
+            for b in bad:
+                if b in values and b not in retyped:
+                    # The by-name value did not fit this model: try the typed dummy once.
+                    retyped.add(b)
+                    v = _dummy_for(hints.get(b, str), f"__typed__{b}")
+                    if v is not None:
+                        values[b] = v
+                        progressed = True
+                        continue
+                if b in values:
+                    values.pop(b, None)
+                    progressed = True
+            if not progressed:
+                raise
+    return cls(**values)
+
+
+def _handler_cases_for(module: str) -> list[tuple[Any, type]]:
+    mod = importlib.import_module(module)
+    models = _input_models()
+    out = []
+    for name, fn in inspect.getmembers(mod, inspect.iscoroutinefunction):
+        if (
+            not name.startswith("handle_")
+            or name in _SKIP_HANDLERS
+            or fn.__module__ != mod.__name__
+        ):
+            continue
+        params = list(inspect.signature(fn).parameters.values())
+        if len(params) != 1:
+            continue
+        ann = params[0].annotation
+        cls = models.get(
+            _UNTYPED.get(name) or (ann if isinstance(ann, str) else getattr(ann, "__name__", ""))
+        )
+        if cls is None:
+            continue
+        out.append((fn, cls))
+    return out
+
+
+def _handler_drive(module: str):
+    # Import now, before any drive: a module first imported under the patched
+    # client would bind the stub for good. The operations package first, the
+    # way the app loads (identity/app/namespace.py and identity/api/namespace.py
+    # import each other).
+    importlib.import_module("server.operations.registry")
+    importlib.import_module(module)
+
+    async def _drive(ch: RecordingCH, c: dict[str, Any]) -> None:
+        failures: list[str] = []
+        defect: BaseException | None = None
+        pairs = _handler_cases_for(module)
+        for fn, cls in pairs:
+            try:
+                inp = make_input(cls, filled=c["filled"])
+            except Exception as exc:  # noqa: BLE001 — an input the dummies cannot satisfy
+                failures.append(f"{fn.__name__}: input {type(exc).__name__}: {str(exc)[:80]}")
+                continue
+            before = len(ch.calls)
+            try:
+                await fn(inp)
+            except Exception as exc:  # noqa: BLE001 — a handler that stopped after its first statement still rendered it
+                if is_drive_defect(exc):
+                    # The siblings still render; the case reports the defect after them
+                    defect = defect or exc
+                elif len(ch.calls) == before:
+                    failures.append(f"{fn.__name__}: {type(exc).__name__}: {str(exc)[:80]}")
+        if not pairs:
+            raise RuntimeError("no handler with a typed Input model")
+        if defect is not None:
+            raise defect
+        if failures and not ch.calls:
+            raise RuntimeError("; ".join(failures))
+
+    return _drive
+
+
+_HANDLER_ROWS = rows_by_substring(
+    {
+        "system.columns": [{"name": "consumer", "n": 1}],
+        "loom.namespace_registry": [
+            {
+                "org": ORG,
+                "namespace": NS,
+                "owner_email": "owner@example.test",
+                "visibility": "private",
+                "join_policy": "request",
+                "status": "active",
+                "roles": "{}",
+                "categories": [],
+                "description": "",
+            }
+        ],
+        "FROM loom.categories FINAL": [{"category_id": "c1", "name": "work", "description": ""}],
+        "count()": [{"n": 1}],
+    }
+)
+
+
+# --------------------------------------------------------------------------- repos
+
+
+async def _conversations(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.knowledge.store import conversations as R
+
+    f = c["filters"]
+    await R.fetch_thread(ORG, NS, AGENT, "t1", ch=ch)
+    await R.list_thread(
+        ORG, NS, AGENT, "t1", run_id="r1" if f else None, after=(_DT, "m1") if f else None, ch=ch
+    )
+    await R.search_substring(
+        ORG,
+        NS,
+        AGENT,
+        "deploy",
+        thread_id="t1" if f else None,
+        role="user" if f else None,
+        run_id="r1" if f else None,
+        ch=ch,
+    )
+    await R.count_thread_msgs(ORG, NS, AGENT, "t1", ch=ch)
+    await R.message_exists(ORG, NS, AGENT, "t1", "m1", ch=ch)
+    await R.namespace_logging_enabled(ORG, NS, ch=ch)
+    await R.tombstone_thread(ORG, NS, AGENT, "t1", when=_DT, ch=ch)
+
+
+async def _knowledge(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.knowledge.store import chunks as K
+    from server.knowledge.store import documents as D
+
+    f = c["filters"]
+    await K.count_active_by_uri(ORG, NS, ["doc://a"], ch=ch)
+    await K.count_active_for_doc(ORG, NS, "doc://a", ch=ch)
+    await K.count_matching_chunk_hashes(
+        ORG, NS, ["h1"], excluding_source_uri="doc://b" if f else "", ch=ch
+    )
+    await K.find_chunk_duplicate_clusters(ORG, NS, ch=ch)
+    await K.find_doc_by_content_sha256(
+        ORG, NS, "s" * 64, excluding_source_uri="doc://b" if f else "", ch=ch
+    )
+    await K.find_doc_duplicate_clusters(ORG, NS, ch=ch)
+    await K.list_for_doc(ORG, NS, "doc://a", embedding_model="m", ch=ch)
+    await K.mark_doc_superseded(
+        ORG, NS, "doc://a", embedding_model="m" if f else None, when=_DT, ch=ch
+    )
+    await K.mark_docs_superseded(ORG, NS, ["doc://a"], when=_DT, ch=ch)
+    await D.get_many_by_uris(ORG, NS, ["doc://a"], include_superseded=f, ch=ch)
+    await D.get_one(ORG, NS, "doc://a", include_superseded=f, ch=ch)
+    await D.list_with_chunk_counts(
+        ORG,
+        NS,
+        include_superseded=f,
+        tags=["t"] if f else None,
+        uri_prefixes=["doc://"] if f else None,
+        cursor=(_DT, "doc://a") if f else None,
+        ch=ch,
+    )
+
+
+async def _ledgers(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.core import namespace_write_marks as W
+    from server.insights.store import audit as A
+    from server.memory.store import blacklist as B
+    from server.memory.store import conflicts as C
+    from server.memory.store import lifecycle as L
+    from server.memory.store import redaction as R
+
+    f = c["filters"]
+    await A.earliest_audit_ts(ch=ch)
+    await A.latest_checkpoints(10, ch=ch)
+    await A.list_by_request_id("r1", ch=ch)
+    await A.verify_window(3600, ch=ch)
+    await A.verify_window(3600, after=(_DT, "r1", "0" * 64), limit=10, ch=ch)
+    await A.reported_tamper_keys(90000, ch=ch)
+    await A.window_stats(_DT, _DT, ch=ch)
+    await C.allowlist_exists(ORG, NS, "k1", "k2", ch=ch)
+    await C.allowlist_list(ORG, NS, ch=ch)
+    await C.allowlist_remove(ORG, NS, "k1", "k2", "note", _DT, ch=ch)
+    await C.list_conflicted(ORG, NS, before_version=5 if f else None, ch=ch)
+    await C.lookup_keys_for_ids(ORG, [_UUID], ch=ch)
+    await C.lookup_target(ORG, _UUID, ch=ch)
+    await C.mark_active_by_ids(ORG, [_UUID], ch=ch)
+    await C.tombstone_ids(ORG, [_UUID], "note", _DT, ch=ch)
+    await B.find_active_pattern(_UUID, org=ORG if f else None, ch=ch)
+    await B.list_for_scope(ORG, NS, scope="namespace" if f else None, ch=ch)
+    await B.tombstone_pattern(_UUID, _DT, ch=ch)
+    await W.blacklist_updated_at(ch=ch)
+    await W.last_writes(ORG, [NS, "n2"], ch=ch)
+    await L.delete_procedure_runs_by_key(ORG, NS, "k1", ch=ch)
+    await R.delete_llm_response_cache_by_key(ORG, "k1", ch=ch)
+    await R.delete_ask_precedents_by_key(ORG, "k1", ch=ch)
+
+
+async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.memory.app import conflicts as CF
+    from server.memory.app import digest_chain as DC
+    from server.memory.app import entity_communities as EC
+    from server.memory.app import entity_resolution as ER
+    from server.memory.app import extraction_queue as EQ
+    from server.memory.app import namespace_retrieval_defaults as RD
+    from server.memory.app import procedure_ledger as PL
+    from server.memory.app import projection_failures as PF
+    from server.memory.app.curation import fetch_timeline
+    from server.memory.store import conflict_candidates as conflict_candidates
+
+    f = c["filters"]
+    await PF.list_projection_failures(
+        org=ORG,
+        namespace=NS if f else None,
+        projection="entity_graph" if f else "",
+        status="active" if f else "",
+        ch=ch,
+    )
+    await PF.scan_active_projection_failures(ch=ch)
+    await PF.mark_projection_failures_resolved(org=ORG, failure_ids=[_UUID], ch=ch)
+    await EQ.claim_batch(
+        limit=10,
+        lease_seconds=60,
+        ch=ch,
+        org_filter=ORG if f else None,
+        namespace_filter=NS if f else None,
+    )
+    await EQ.list_status(
+        org=ORG,
+        namespace=NS,
+        agent=AGENT if f else None,
+        user_id="alice" if f else None,
+        session_id="s1" if f else None,
+        queue_id=_UUID if f else None,
+        status="pending" if f else None,
+        ch=ch,
+    )
+    await EQ.pending_count(
+        org=ORG, namespace=NS, agent=AGENT if f else None, user_id="alice" if f else None, ch=ch
+    )
+    await EC.community_assignment(ch, org=ORG, namespaces=[NS, "n2"], entities=["nate", "sam"])
+    await EC.fetch_communities(ch, org=ORG, namespace=NS)
+    await ER.lookup_canonical_entities(ch, org=ORG, namespaces=[NS], entity_texts=["Nate"])
+    await ER.resolve_entities_for_write(ch, org=ORG, namespace=NS, entity_texts=["Nate"])
+    await DC.neighbours(
+        ch, org=ORG, namespace=NS, agent=AGENT, user_id="alice", session_id="s1", at=_DT
+    )
+    await PL.cost_by_revision(org=ORG, namespace=NS, memory_key="k1")
+    await PL.count_since(org=ORG, namespace=NS, memory_key="k1", since="2026-01-01")
+    await PL.failure_notes(org=ORG, namespace=NS, memory_key="k1")
+    await PL.stats_by_revision(org=ORG, namespace=NS, memory_key="k1")
+    await PL.unfolded(org=ORG, namespace=NS, memory_key="k1", since="2026-01-01")
+    await CF.candidate_rows_many(
+        org=ORG, namespace=NS, items=[("k1", "preference", SMALL_VEC, 0.5)], ch=ch
+    )
+    # The per-write peer read — stage A, stage B, the join fallback.
+    _peer = {
+        "org": ORG,
+        "ns": NS,
+        "mt": "preference",
+        "self_key": "k1",
+        "emb": SMALL_VEC,
+        "max_dist": 0.5,
+        "dim": len(SMALL_VEC),
+    }
+    await ch.query_all(conflict_candidates._peer_candidates_sql(), params={**_peer, "k": 32})
+    await ch.query_all(
+        conflict_candidates._PEER_ROWS_SQL, params={**_peer, "ids": [(AGENT, "-", "-", "k2")]}
+    )
+    await CF._peer_rows_joined(ch, dict(_peer))
+    await CF.check_against_shared(
+        org=ORG, namespace=NS, target_key="k1", memory_type="preference", embedding=SMALL_VEC
+    )
+    await CF.resolve_conflict_floor(ORG, NS, "preference")
+    RD.clear_cache()
+    await RD.resolve(ORG, NS, ch=ch)
+    await CF.prefetch_write_config(ORG, NS, "preference", "k1")
+    await fetch_timeline(
+        org=ORG,
+        namespace=NS,
+        entity="nate" if f else "",
+        tags=["ops"] if f else None,
+        memory_key_prefix="user_" if f else "",
+        since=_DT if f else None,
+        until=_DT if f else None,
+        order="asc" if f else "desc",
+        ch=ch,
+    )
+
+
+async def _list_score(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """memory.list's `sort_by=score` path (the wildcard axes
+    leave WHERE and the writer columns are selected); the handler drive's
+    filled input takes the first literal, `recency`."""
+    from server.memory.api.models_crud import MemoryListInput
+    from server.memory.app.query import _list_by_score
+
+    w = c["wildcard"]
+    inp = MemoryListInput(
+        org=ORG,
+        namespace=NS,
+        agent="*" if w else AGENT,
+        user_id="*" if w else "-",
+        sort_by="score",
+        prefix="lesson_",
+        memory_type="semantic" if not w else None,
+        quotas={"semantic": 3} if w else None,
+        tags=["ops"] if w else [],
+    )
+    # The served-set flags, as the handler builds them
+    await _list_by_score(
+        inp,
+        ["ops"] if w else None,
+        {"include_duplicates": w, "include_superseded": w, "include_proposed": w},
+    )
+
+
+def cases() -> list[Case]:
+    out = [
+        Case(
+            f"handlers.{name.lstrip('_')}",
+            module,
+            _handler_drive(module),
+            {"filled": (False,) if name in _FILL_INERT else (False, True)},
+            rows=_HANDLER_ROWS,
+        )
+        for name, module in HANDLER_MODULES
+    ]
+    out.append(
+        Case(
+            "memory_list_score",
+            "server.memory.app.query",
+            _list_score,
+            {"wildcard": (False, True)},
+        )
+    )
+    out += [
+        Case(
+            "conversation_repo",
+            "server.knowledge.store.conversations",
+            _conversations,
+            {"filters": (False, True)},
+        ),
+        Case(
+            "knowledge_repos",
+            "server.knowledge.store.chunks",
+            _knowledge,
+            {"filters": (False, True)},
+        ),
+        Case("ledger_repos", "server.insights.store.audit", _ledgers, {"filters": (False, True)}),
+        Case(
+            "plane_services",
+            "server.memory.app.projection_failures",
+            _services,
+            {"filters": (False, True)},
+        ),
+    ]
+    return out

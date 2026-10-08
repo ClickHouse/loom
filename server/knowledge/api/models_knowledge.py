@@ -1,0 +1,565 @@
+"""Knowledge plane operations.
+
+Chunking is configurable via `knowledge_chunk_size` /
+`knowledge_chunk_stride` settings; short payloads are one chunk per doc,
+sliding-window kicks in past the configured size threshold.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field, field_validator
+
+from server.operations.read_projection import ProjectedRow
+
+# ============================================================
+# Models
+# ============================================================
+
+
+class KnowledgeAddInput(BaseModel):
+    org: str
+    namespace: str
+    # The document's stable identifier in the namespace; `get`, `upsert` and `delete` name it.
+    source_uri: str
+    # The document's extracted text; it is split into chunks, and each chunk is embedded.
+    content: str
+    # Document title, stored on the document and prepended to each chunk before embedding.
+    title: str = ""
+    # Prepended (with title) to each chunk before embedding so chunk
+    # vectors carry doc-level context.
+    description: str = ""
+    # Labels stored on the document and on every chunk; search and list filter on them.
+    tags: list[str] = Field(default_factory=list)
+    # Free-form JSON stored with the document and on every chunk; `knowledge.get` returns it.
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    # Original file bytes (base64), preserved alongside extracted text so
+    # users can download exactly what they uploaded.
+    original_bytes_b64: str | None = None
+    # Name of the uploaded file; empty keeps the prior document's name when its blob carries over.
+    original_filename: str = ""
+    # Media type of `original_bytes_b64`; empty keeps the prior blob's type when it carries over.
+    blob_content_type: str = ""
+
+
+class KnowledgeAddOutput(BaseModel):
+    # Id of the document version this call wrote (a fresh UUID per write).
+    doc_id: str
+    # How many chunks the content was split into and embedded.
+    chunks_created: int
+    # Embedding model that produced the chunk vectors.
+    embedding_model: str
+    # Dimension of the chunk vectors.
+    embedding_dim: int
+    # Echo the JWT-bound namespace so agents cite it instead of guessing.
+    namespace: str = ""
+    # Echo of the input `source_uri`.
+    source_uri: str = ""
+
+
+class KnowledgeUpsertInput(KnowledgeAddInput):
+    """Same fields as knowledge.add. Behavior: replaces existing chunks for
+    the same (org, namespace, source_uri); old chunks are soft-superseded
+    via lightweight UPDATE of doc_superseded_at, so searches return the latest
+    content by default while preserving history for audit / time-travel."""
+
+
+class KnowledgeUpsertOutput(BaseModel):
+    # Id of the document version this call wrote (a fresh UUID per write).
+    doc_id: str
+    # How many chunks the new content was split into and embedded.
+    chunks_created: int
+    # How many live chunks of the prior version were superseded; 0 on a first write.
+    chunks_superseded: int
+    # Embedding model that produced the chunk vectors.
+    embedding_model: str
+    # Dimension of the chunk vectors.
+    embedding_dim: int
+    # Content-hash dedup surfacing: warn-not-block — the upsert succeeds
+    # either way; the caller decides whether to reuse the existing doc.
+    duplicate_of_uri: str = ""
+    # New chunks whose content hash already lives under a different `source_uri`.
+    duplicate_chunk_count: int = 0
+    # Echo the JWT-bound namespace so agents cite it instead of guessing.
+    namespace: str = ""
+    # Echo of the input `source_uri`.
+    source_uri: str = ""
+
+
+class _SearchHit(BaseModel):
+    source_uri: str
+    chunk_idx: int
+    content: str
+    tags: list[str]
+    distance: float  # cosine distance; 0=identical, 2=opposite
+    similarity: float  # 1 - distance (caller-friendly)
+    namespace: str = ""  # source namespace; populated on cross-namespace search
+    # Where in the document this chunk sits: the heading
+    # breadcrumb as a list and as "A > B > C". Empty for unstructured text.
+    section_path: list[str] = Field(default_factory=list)
+    section: str = ""
+    # Raw BM25 over the query tokens (0 when the lexical leg did not fire)
+    # and the ranking score: fused reciprocal rank in hybrid mode,
+    # similarity in semantic mode, BM25 in lexical mode.
+    lexical_score: float = 0.0
+    score: float = 0.0
+    # Plane marker (search-quality telemetry keys cosine metrics on it).
+    source: str = "knowledge"
+    # narrow_spans=True: the sentence window of this chunk nearest the query,
+    # its character offsets in `content`, and its own similarity.
+    # Empty / 0 when narrowing was not requested or the chunk is one window.
+    span: str = ""
+    span_start: int = 0
+    span_end: int = 0
+    span_similarity: float = 0.0
+    # Other chunks of the same section that ranked in the candidate set and
+    # were folded into this one (the section is the unit; one hit per section leaves
+    # room for a second section).
+    siblings_folded: int = 0
+
+
+class KnowledgeSearchInput(BaseModel):
+    org: str
+    namespace: str
+    # Natural-language query; it is embedded for the vector leg and tokenized for BM25.
+    query: str
+    # Keep only chunks carrying at least one of these tags; empty = no tag filter.
+    tags: list[str] = Field(default_factory=list)
+    since_seconds: int | None = None  # optional recency filter
+    # At most this many hits are returned (1-100).
+    top_k: int = Field(default=5, ge=1, le=100)
+    # "this" → input.namespace only; "all_mine" → fan out across every
+    # namespace the caller belongs to (JWT + grants). Symmetric with
+    # memory.search, which also defaults to all_mine.
+    namespace_scope: Literal["this", "all_mine"] = "all_mine"
+    # hybrid: vector leg + BM25 lexical leg fused by reciprocal rank;
+    # semantic: vector only;
+    # lexical: BM25 only.
+    search_mode: Literal["hybrid", "semantic", "lexical"] = "hybrid"
+    # Weight of the lexical leg in reciprocal-rank fusion (hybrid mode).
+    # 1.0 = equal weight; lower it for queries whose tokens are ubiquitous
+    # in the corpus (paths, boilerplate) where the lexical leg cannot
+    # discriminate.
+    lexical_weight: float = Field(default=1.0, ge=0.0, le=1.0)
+    # Needle reads: also return, per hit, the two-sentence
+    # window of the chunk nearest the query as `span`, so a caller after one
+    # fact reads a sentence instead of a 1,500-character section. One extra
+    # batched embed call over the returned hits' windows; the chunk is kept.
+    narrow_spans: bool = False
+    # Keep one hit per (document, section): the best-ranked chunk represents
+    # its section and reports how many siblings it folded. Chunks without a
+    # section (headless documents) are never folded. False returns raw chunks.
+    collapse_sections: bool = True
+    # Directory scope: only chunks whose source_uri starts
+    # with one of these prefixes. A subtree of a hierarchical corpus
+    # (`docs/guides/`, `repo://x/src/`) becomes a primary-key range on
+    # loom.chunks, so scoping is cheaper than the unscoped search, not a
+    # post-filter. Empty = whole namespace.
+    uri_prefix: list[str] = Field(default_factory=list, max_length=8)
+
+    @field_validator("uri_prefix")
+    @classmethod
+    def _clean_prefixes(cls, v: list[str]) -> list[str]:
+        out: list[str] = []
+        for p in v:
+            p = (p or "").strip()
+            if not p:
+                raise ValueError("uri_prefix entries must be non-empty")
+            if len(p) > 1024:
+                raise ValueError("uri_prefix entries must be at most 1024 characters")
+            if p not in out:
+                out.append(p)
+        return out
+
+
+class KnowledgeSearchOutput(BaseModel):
+    # Hits ranked by `score` (then similarity), best first; empty when nothing matched.
+    results: list[_SearchHit]
+    # Embedding model the query was embedded with; only chunks of this model are searched.
+    embedding_model: str
+
+
+class _KnowledgeBulkEntry(BaseModel):
+    content: str
+    source_uri: str
+    title: str = ""
+    description: str = ""
+    tags: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class KnowledgeBulkAddInput(BaseModel):
+    """Batched ingestion: many documents in one CH round-trip.
+
+    Same per-doc behavior as `knowledge.add` (no upsert / supersede).
+    Chunking still applies per-doc per the configured policy.
+    """
+
+    org: str
+    namespace: str
+    # The documents to add (1-500), each chunked and embedded like a `knowledge.add`.
+    entries: list[_KnowledgeBulkEntry] = Field(..., min_length=1, max_length=500)
+
+
+class _KnowledgeBulkEntryResult(BaseModel):
+    source_uri: str
+    doc_id: str
+    chunks_created: int
+
+
+class KnowledgeBulkAddOutput(BaseModel):
+    # One result per entry, in input order: its `source_uri`, new `doc_id` and chunk count.
+    written: list[_KnowledgeBulkEntryResult]
+    # Embedding model that produced the chunk vectors.
+    embedding_model: str
+    # Dimension of the chunk vectors.
+    embedding_dim: int
+
+
+class KnowledgeGetInput(BaseModel):
+    """Fetch a single document by source_uri.
+
+    Returns the latest non-superseded version by default; set
+    `include_superseded=True` to read an old (soft-deleted) row.
+    """
+
+    org: str
+    namespace: str
+    # The document to fetch.
+    source_uri: str
+    # Also return a soft-deleted or superseded version; False returns only the live one.
+    include_superseded: bool = False
+
+
+class KnowledgeOutlineInput(BaseModel):
+    """A document's table of contents, as recorded on its chunks at ingest,
+    and optionally one section's assembled text.
+
+    The move a reader makes with a long document: look at the outline, pick
+    the section, read that. `section_path` selects a section by its heading
+    breadcrumb (as returned in `sections[].path`); `include_children` folds
+    its subsections in. A document whose chunks carry no headings reports
+    `structured=False` and an empty outline."""
+
+    org: str
+    namespace: str
+    # The document to outline.
+    source_uri: str
+    # Heading breadcrumb of the section to return as `section_content`;
+    # empty returns the outline only.
+    section_path: list[str] = Field(default_factory=list)
+    # When True, `section_content` also includes the section's subsections.
+    include_children: bool = True
+
+
+class _OutlineEntry(BaseModel):
+    path: list[str]
+    title: str
+    depth: int
+    chunk_idxs: list[int]
+    chars: int
+
+
+class KnowledgeOutlineOutput(BaseModel):
+    # False when no live document has this `source_uri`; the rest is then empty.
+    found: bool
+    # Echo of the input `source_uri`.
+    source_uri: str
+    # Document title.
+    title: str = ""
+    # True when the chunks carry section headings; False means `sections` is empty.
+    structured: bool = False
+    # How many chunks the document has for the current embedding model.
+    chunk_count: int = 0
+    # The table of contents in document order: each heading's path, depth, chunks and size.
+    sections: list[_OutlineEntry] = Field(default_factory=list)
+    # When `section_path` was given: the section's text (its chunks in order)
+    # and the chunk indices it came from. None when no chunk matched.
+    section_content: str | None = None
+    # Chunk indices `section_content` was assembled from; empty when none matched.
+    section_chunk_idxs: list[int] = Field(default_factory=list)
+
+
+class KnowledgeSynthesizeInput(BaseModel):
+    """Complete a task over WHOLE documents, not a search slice:
+    every active chunk of the named documents is read in order, in windows
+    that respect section boundaries, each window is noted once, and the notes
+    are folded into the answer. For summaries and questions whose evidence is
+    spread across a long text."""
+
+    org: str
+    namespace: str
+    # The documents to read in full (1-50); unknown URIs contribute nothing.
+    source_uris: list[str] = Field(min_length=1, max_length=50)
+    # What to do with the documents: a question to answer or a summary to write.
+    task: str = Field(min_length=1, max_length=4000)
+    # Characters of document text per map call; the reduce folds notes into
+    # batches of the same size.
+    window_chars: int = Field(default=24000, ge=2000, le=120000)
+    # Cap on the answer's length in characters; a longer answer is cut and ends with `…`.
+    max_answer_chars: int = Field(default=8000, ge=200, le=40000)
+    # Cap on map calls; a corpus needing more is answered from the first
+    # `max_windows` windows and `truncated` is set.
+    max_windows: int = Field(default=64, ge=1, le=512)
+
+
+class KnowledgeSynthesizeOutput(BaseModel):
+    # The task's answer, citing chunks as `[source#idx]`; empty when it abstained.
+    answer: str
+    # How many windows were read (one LLM map call each).
+    windows: int
+    # How many chunks the read windows covered.
+    chunks_read: int
+    # How many of the named documents had chunks to read.
+    documents: int
+    # How many fold rounds merged the notes into the answer; 1 when they fit one call.
+    reduce_rounds: int
+    # Distinct `source#idx` (or `source#a-b`) citations in the answer, in reading order.
+    citations: list[str] = Field(default_factory=list)
+    # True when the documents needed more than `max_windows` windows and only the first were read.
+    truncated: bool = False
+    # True when no answer was attempted; `abstain_reason` says why.
+    abstain: bool = False
+    # `budget_capped` (the namespace is over its cost cap) or `no_chunks`
+    # (the documents have no chunks); empty otherwise.
+    abstain_reason: str = ""
+    # LLM that wrote the notes and the answer; empty when it abstained.
+    model: str = ""
+
+
+class KnowledgeGetOutput(BaseModel):
+    # False when no document matched; every other field except `source_uri` is then None.
+    found: bool
+    # The document's identifier (the input `source_uri` when not found).
+    source_uri: str
+    # Document title.
+    title: str | None = None
+    # The document's full extracted text.
+    content: str | None = None
+    # The document's tags.
+    tags: list[str] | None = None
+    # The document's metadata JSON; `{}` when it was empty or unreadable.
+    metadata: dict[str, Any] | None = None
+    # When this version of the document was written.
+    ingested_at: datetime | None = None
+    # True when the returned version is soft-deleted or superseded.
+    superseded: bool | None = None
+    # Id of the returned document version.
+    doc_id: str | None = None
+
+
+class KnowledgeListInput(BaseModel):
+    """Paginated listing of documents in a namespace, for curation tools."""
+
+    org: str
+    namespace: str
+    tags: list[str] = Field(default_factory=list)  # ANY-match filter
+    # Directory scope: documents whose source_uri starts
+    # with one of these prefixes; empty = whole namespace.
+    uri_prefix: list[str] = Field(default_factory=list, max_length=8)
+    # Also list soft-deleted and superseded documents (their `superseded` is True).
+    include_superseded: bool = False
+    # At most this many rows per page (1-500); `next_cursor` fetches the next page.
+    limit: int = Field(default=50, ge=1, le=500)
+    cursor: str | None = None  # opaque keyset cursor
+    # The output fields the caller reads (a whitelist
+    # resolved against the row model, as memory.list's is); unset,
+    # every field. `source_uri` always rides. The Library page names the
+    # eleven fields its rows render and drops the 24 kB of content_preview.
+    fields: list[str] | None = None
+
+
+class _KnowledgeListEntry(ProjectedRow):
+    source_uri: str
+    title: str
+    description: str = ""
+    tags: list[str]
+    ingested_at: datetime
+    chunk_count: int
+    superseded: bool
+    # Original-file metadata; has_blob is True when an original binary
+    # was preserved at upload time and can be downloaded.
+    has_blob: bool = False
+    blob_size: int = 0
+    blob_content_type: str = ""
+    original_filename: str = ""
+    # First ~200 chars of extracted text, for list snippets.
+    content_preview: str = ""
+
+
+class KnowledgeListOutput(BaseModel):
+    # Documents, newest `ingested_at` first.
+    rows: list[_KnowledgeListEntry]
+    # Pass as `cursor` for the next page; None when this is the last page.
+    next_cursor: str | None = None
+
+
+class KnowledgeDeleteInput(BaseModel):
+    """Soft-delete a document by source_uri: tombstones all live chunks
+    and version-bumps the documents row. Searches stop returning it
+    immediately; hard delete follows the 365d TTL.
+
+    For right-to-erasure, use the erasure plane — it cascades across
+    external systems too.
+    """
+
+    org: str
+    namespace: str
+    # The document to soft-delete.
+    source_uri: str
+
+
+class KnowledgeDeleteOutput(BaseModel):
+    deleted: bool  # true if any live chunks were tombstoned
+    # How many live chunks were tombstoned; 0 when the document was already gone.
+    chunks_tombstoned: int
+
+
+class KnowledgeUpdateMetadataInput(BaseModel):
+    """Edit doc-level metadata (title, description, tags). Leaves chunk
+    embeddings alone unless reindex=True. To change content, use
+    knowledge.upsert; to rename the URI, delete + re-add — source_uri is
+    the stable identifier the agent cites and isn't editable.
+    """
+
+    org: str
+    namespace: str
+    # The live document to edit; an unknown or deleted one is a 404.
+    source_uri: str
+    # None means "leave unchanged" (sparse update); empty string is an
+    # explicit clear.
+    title: str | None = None
+    # New description; None leaves it unchanged, empty string clears it.
+    description: str | None = None
+    # New tag list, replacing the old one; None leaves it unchanged, `[]` clears it.
+    tags: list[str] | None = None
+    # When True, re-embed every chunk with the new title + description
+    # prepended, routed through the upsert flow for identical supersession
+    # semantics (same content, fresh embeddings).
+    reindex: bool = False
+
+
+class KnowledgeUpdateMetadataOutput(BaseModel):
+    # True when a new version was written; False when every field already matched.
+    updated: bool
+    # Echo the post-update state so the client doesn't need to refetch.
+    title: str = ""
+    # The document's description after the call.
+    description: str = ""
+    # The document's tags after the call.
+    tags: list[str] = Field(default_factory=list)
+    # Count of chunks re-embedded when reindex=True; 0 otherwise.
+    chunks_reindexed: int = 0
+
+
+class KnowledgeBulkDeleteInput(BaseModel):
+    """Tombstone multiple documents by source_uri in one lightweight UPDATE.
+
+    Symmetric with knowledge.bulk_add. All source_uris are tombstoned
+    together; the per-doc result tracks chunks tombstoned per uri.
+    """
+
+    org: str
+    namespace: str
+    # The documents to soft-delete (1-500).
+    source_uris: list[str] = Field(..., min_length=1, max_length=500)
+
+
+class _KnowledgeBulkDeleteResult(BaseModel):
+    source_uri: str
+    chunks_tombstoned: int
+
+
+class KnowledgeBulkDeleteOutput(BaseModel):
+    # One result per input URI, in input order, with its tombstoned chunk count (0 if none).
+    deleted: list[_KnowledgeBulkDeleteResult]
+    # Sum of the chunks tombstoned across every URI.
+    total_chunks_tombstoned: int
+
+
+class KnowledgeReadsInput(BaseModel):
+    """How often agents opened each document of the namespace over the last
+    `days`: `knowledge.get` reads from the event ledger, the
+    dashboard's own previews and bench traffic left out. Opened, not found —
+    what a search returned is not recorded for knowledge."""
+
+    org: str
+    namespace: str
+    # Look-back window in days (1-30).
+    days: int = Field(7, ge=1, le=30)
+    # empty = every document read in the window
+    source_uris: list[str] = Field(default_factory=list, max_length=200)
+
+
+class KnowledgeReadsOutput(BaseModel):
+    # The look-back window the counts cover, in days, after clamping to 1-30.
+    window_days: int
+    # [{source_uri, reads, agents, last_read_at}], most read first
+    reads: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class KnowledgeDedupListInput(BaseModel):
+    """List cross-URI doc duplicates and (optionally) chunk-overlap
+    clusters. ADMIN-only."""
+
+    org: str
+    namespace: str
+    # At most this many clusters of each kind (1-200).
+    limit: int = Field(default=50, ge=1, le=200)
+    # Also return chunk-level clusters (identical chunks under different URIs).
+    include_chunk_clusters: bool = False
+
+
+class _KnowledgeDocCluster(BaseModel):
+    content_sha256: str
+    doc_count: int
+    docs: list[dict[str, object]] = Field(default_factory=list)
+
+
+class _KnowledgeChunkCluster(BaseModel):
+    content_sha256: str
+    chunk_count: int
+    uri_count: int
+    samples: list[dict[str, object]] = Field(default_factory=list)
+
+
+class KnowledgeDedupListOutput(BaseModel):
+    # Groups of documents under different URIs whose content hash is identical.
+    doc_clusters: list[_KnowledgeDocCluster] = Field(default_factory=list)
+    # Groups of identical chunks across URIs; empty unless `include_chunk_clusters`.
+    chunk_clusters: list[_KnowledgeChunkCluster] = Field(default_factory=list)
+
+
+class KnowledgeDedupResolveInput(BaseModel):
+    """Resolve one document duplicate pair.
+
+    Decisions:
+      keep_canonical — soft-supersede the duplicate doc + its chunks.
+      swap           — soft-supersede the canonical instead.
+
+    `confirm_duplicate_uri` must equal `duplicate_uri` (defense).
+    """
+
+    org: str
+    namespace: str
+    # The document of the pair that `keep_canonical` keeps.
+    canonical_uri: str
+    # The document of the pair that `keep_canonical` supersedes.
+    duplicate_uri: str
+    # `keep_canonical` supersedes `duplicate_uri`; `swap` supersedes `canonical_uri`.
+    decision: Literal["keep_canonical", "swap"]
+    # Must equal `duplicate_uri`, or the call fails with 400 and nothing changes.
+    confirm_duplicate_uri: str = Field(..., min_length=1, max_length=2048)
+
+
+class KnowledgeDedupResolveOutput(BaseModel):
+    # Echo of the input `canonical_uri`.
+    canonical_uri: str
+    # Echo of the input `duplicate_uri`.
+    duplicate_uri: str
+    # Echo of the input `decision`.
+    decision: str
+    # The URI that was soft-superseded.
+    superseded_uri: str = ""

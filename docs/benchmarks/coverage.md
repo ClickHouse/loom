@@ -1,0 +1,85 @@
+# Benchmark coverage
+
+This matrix shows which parts of Loom's memory, knowledge and code flows have a
+reproducible public measurement. It distinguishes measured behaviour from a runnable
+harness and from a product capability with no public quality evidence yet.
+
+## Status
+
+| Status                    | Meaning                                                                                                         |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| **Published**             | A committed result artifact, model record, protocol, limitations and reproduction command exist.                |
+| **Partial**               | A public result measures part of the evaluation question, but not the complete flow or a representative scale.  |
+| **Harness only**          | A runnable protocol exists, but no committed real-provider measurement supports a public performance claim.     |
+| **No public measurement** | The repository has no complete public protocol and artifact for this question. Product documentation may exist. |
+
+A unit test, dry run or fake-provider gate never counts as a published quality result.
+The [results ledger](./results.md) is the source of published numbers; the
+[harness inventory](../../bench/README.md) is the source of runnable protocols.
+
+## Full-flow matrix
+
+| Surface                   | Evaluation question                                                                   | Required measures                                                                                  | Status                    | Public evidence or next required result                                                                                                                                                                                          |
+| ------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Memory construction       | Does extraction write supported facts and avoid unsupported claims?                   | evidence coverage, extraction precision, false-memory rate, tokens and build time                  | **Harness only**          | Run `memory_integrity.py` and `extraction_eval.py` on a public conversation set; commit every extracted fact and judge verdict.                                                                                                  |
+| Memory retrieval          | Does the right memory rank near the top?                                              | recall@k, rank@1, MRR and distractor intrusion                                                     | **Published**             | LongMemEval-S, LoCoMo, MuSiQue and MemoryAgentBench artifacts in the [results ledger](./results.md).                                                                                                                             |
+| Memory answers            | Does the final answer correctly use the retrieved evidence?                           | answer accuracy, citation correctness and per-category failures                                    | **Published**             | LongMemEval-S, LoCoMo, MemBench, MemoryAgentBench and PerLTQA.                                                                                                                                                                   |
+| Unknown questions         | Does Loom abstain instead of answering from weak evidence?                            | abstain precision/recall, false-answer rate and answerable recall                                  | **Partial**               | LoCoMo adversarial questions and ten code abstain probes are published; a larger calibrated memory abstention set is still required.                                                                                             |
+| Corrections and time      | Does the current value replace stale facts while historical queries stay correct?     | current-value accuracy, stale-answer rate, temporal accuracy and supersession precision            | **Harness only**          | Publish `pi_llm.py`, `forget_switch_eval.py`, `fama_forgetting.py` and `supersession_audit.py` on one shared public corpus.                                                                                                      |
+| Cross-tool continuity     | Does a fact written by one client help another client in a later session?             | cross-client recall, provenance, capture loss and latency                                          | **Harness only**          | `cross_tool_validate.py` has six queries; publish a larger Claude Code, Codex and Cursor matrix with raw captures.                                                                                                               |
+| Memory efficiency         | Does retrieval save context, model spend and turns?                                   | task success, prompt/output tokens, model cost and construction break-even                         | **Published**             | The paired LongMemEval full-history result reports 91% fewer reader tokens and its construction break-even.                                                                                                                      |
+| Knowledge retrieval       | Does document RAG find and cite the right passage?                                    | chunk recall@k, answer accuracy, citation precision, abstention, latency and tokens                | **Harness only**          | Run `narrativeqa.py` with a fixed reader and add hard unanswerable and citation cases; no knowledge-plane measurement is currently in `bench/results/`.                                                                          |
+| Source formats            | Which inputs reach equivalent searchable text?                                        | extraction success, text/table fidelity, OCR quality and failure rate by format                    | **No public measurement** | The [knowledge feature](../features/knowledge.md#getting-files-in-the-ingest-cli) documents client handling. Build a licensed format corpus and keep unsupported formats explicit.                                               |
+| Code conceptual search    | Does issue-shaped text find the implementation?                                       | file hit@k, all-gold hit@k, MRR, abstention, tokens and latency                                    | **Published**             | ClickHouse conceptual questions and a 200-instance SWE-bench Verified file-localization sample; this is retrieval, not the official patch-and-test score.                                                                        |
+| Code structure            | Are definitions and callers complete?                                                 | definition exact@1, caller precision/recall/F1 and completeness label                              | **Published**             | Ten definition and four caller questions on ClickHouse. The caller set is too small for close comparisons.                                                                                                                       |
+| Code-language portability | Does quality transfer across languages and repository shapes?                         | the same retrieval and structure metrics per language and repository                               | **Harness only**          | The [language table](../features/code-index/overview.md#language-support) documents parser tiers; `make bench-code-portability-dry` checks scoring only. Run the public fixtures against live indexes.                           |
+| Code-agent outcome        | Does the agent complete the task, not only find a file?                               | resolved rate, tests passed, patch quality, turns, tokens, cost and time                           | **Partial**               | Paired ClickHouse runs grade the agent's answer against a verified reference (explain, impact, history) and report cost, turns and time; they do not edit or test. A leak-controlled patch-and-test benchmark is still required. |
+| Index construction        | What does a cold index cost?                                                          | wall time, embedding/model tokens, ClickHouse storage and peak worker resources by repository size | **Partial**               | The SWE-bench run reports 137.5 million embedding tokens and about 10.6 hours for 11 backfills plus 188 deltas, but no size curve or hardware record.                                                                            |
+| Index freshness           | How quickly does a commit become searchable and when are answers stale?               | commit-to-query latency, delta cost, stale-answer rate and recovery after interruption             | **Harness only**          | Stage-latency and staleness harnesses exist; publish cold, incremental and repair runs with repository size and hardware.                                                                                                        |
+| Search capacity           | What happens as rows, repositories, tenants and concurrency grow?                     | p50/p95/p99, throughput, ClickHouse read volume, CPU and memory under a mixed workload             | **Partial**               | Single-server latency is published. There is no hardware record, multi-tenant capacity curve or representative mixed-agent load.                                                                                                 |
+| Cache correctness         | Do repeated questions avoid synthesis without reusing the wrong answer?               | hit rate, latency/tokens saved and false-share rate at the selected threshold                      | **Published**             | The threshold sweep and 30-day production aggregate are public. Repeats were 3% of observed calls.                                                                                                                               |
+| Tracker quality           | Does duplicate detection find the older issue with an acceptable false-positive rate? | positive hit rate, verdict precision, negative false-positive rate and latency                     | **Published**             | 104 public ClickHouse duplicates and 100 negatives. Other tracker shapes are not yet represented.                                                                                                                                |
+| Safety and privacy        | Can ordinary or adversarial use leak, poison or retain erased data?                   | extraction rate, poisoning success, benign false positives, leakage and residue                    | **Harness only**          | Red-team, sensitivity, poison and erasure harnesses exist; no committed real-provider result supports a public safety rate.                                                                                                      |
+| Reliability               | Does an interrupted write, index or erasure resume without loss?                      | recovery success, duplicate work, unavailable time and residue after fault injection               | **No public measurement** | Unit and integration tests cover mechanisms, but there is no public workload-level fault-injection result.                                                                                                                       |
+| Total operating cost      | What does Loom cost after model, ClickHouse and index-construction spend?             | construction and query model spend, ClickHouse compute/storage, worker resources and break-even    | **Partial**               | Model tokens and some paired costs are published; ClickHouse infrastructure and storage are not a comparable total-cost curve.                                                                                                   |
+
+## What belongs in the README
+
+The README carries multiple public benchmarks, grouped by the evaluation outcome they measure.
+A row belongs there only after this matrix says **Published**, the sample is large enough
+to interpret, and the result has one clear sentence about where it does not generalize.
+
+Do not move **Harness only** or **No public measurement** rows into README performance
+claims. Link to this matrix instead. A harness proves that Loom can be
+measured; it does not prove that Loom performs well.
+
+## Publication backlog
+
+Close gaps in this order because each adds a distinct buying signal:
+
+1. **Write integrity and corrections:** extraction precision, false-memory rate,
+   supersession and stale-answer rate on one public conversational corpus.
+2. **Knowledge RAG:** retrieval, answer and citation quality on text documents, followed
+   by a licensed format-fidelity corpus for PDF, CSV and structured text.
+3. **End-to-end code-agent outcome:** leak-controlled patch generation and test success,
+   paired against the same agent without Loom.
+4. **Live code portability:** real-provider measurements across the existing polyglot,
+   SQL/shell and OSS fixtures.
+5. **Index economics and freshness:** cold and incremental curves by repository size,
+   with hardware, ClickHouse storage and worker resources recorded.
+6. **Capacity and reliability:** a mixed memory/code workload across tenants, followed by
+   worker, ClickHouse and network fault injection.
+7. **Safety and privacy:** publish named-attack results separately; never collapse them
+   into a general safety score.
+
+Each new result follows [Adding a result](./results.md#adding-a-result): commit the raw
+artifact, record every model and the server build, state the dataset licence, include the
+exact command, report failures and negative findings, and add uncertainty or the size of
+one-question movement.
+
+## Related
+
+- [Evaluate Loom](../getting-started/evaluate.md): choose a product or workload test.
+- [Methodology](./methodology.md): when two numbers compare and where they are biased.
+- [Running](./running.md): providers, datasets and commands.
+- [Results](./results.md): measurements reproducible from committed files.

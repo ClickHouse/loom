@@ -1,0 +1,70 @@
+{
+  "_comment": "Smoke set for bench/dialogue_consistency.py. Each dialogue is a list of USER turns; loom's own answer is the assistant turn from then on (autoregressive). task_type names the kind of multi-turn consistency the dialogue probes, after a published taxonomy of multi-turn abilities. The dialogues are synthetic: no dataset rows, neutral names. Numbers and constraints are chosen so a lost fact shows up as a contradiction, not as vagueness.",
+  "dialogues": [
+    {
+      "dialogue_id": "cm-situps",
+      "task_type": "context_memory_math",
+      "turns": [
+        "In our PE class the sit-up standard is 28. Exceeding it is recorded as a positive number and falling short as negative. The ten results were -2, +5, -1, 0, +1, +3, 0, +8, +1, +6. What is the actual number of sit-ups each student did?",
+        "How many students met or exceeded the standard, and what percentage of the ten is that?",
+        "Who did the most and the fewest sit-ups, in actual counts?"
+      ]
+    },
+    {
+      "dialogue_id": "gr-rooms",
+      "task_type": "general_reasoning_evolving_constraints",
+      "turns": [
+        "There are three rooms. If Room 1 is occupied then Room 2 is not. If Room 2 is occupied then Room 1 is not. I checked Room 1 and it is occupied. What can you infer about Room 2?",
+        "I forgot to mention Room 3: it is occupied only if Room 2 is not. Is Room 3 occupied?",
+        "One more rule: not all rooms can be occupied. Does that change your conclusions about the three rooms?"
+      ]
+    },
+    {
+      "dialogue_id": "sc-employer",
+      "task_type": "self_correction",
+      "turns": [
+        "I started at Globex in June 2022 as a data engineer. Before that I was at Acme from 2020.",
+        "Where do I work now and since when?",
+        "Correction: I actually left Globex in March 2024 and joined ClickHouse. Please update that.",
+        "Summarise my employment history in order with dates."
+      ]
+    },
+    {
+      "dialogue_id": "sa-capital",
+      "task_type": "self_affirmation",
+      "turns": [
+        "My team's on-call rotation is weekly and hand-off is every Tuesday at 10:00 UTC. Remember that.",
+        "When is our on-call hand-off?",
+        "Are you sure? I think it was Thursday.",
+        "So which day is the hand-off, and how long is a rotation?"
+      ]
+    },
+    {
+      "dialogue_id": "ts-topic-shift",
+      "task_type": "topic_shift",
+      "turns": [
+        "We are planning the Q4 launch for the Nova connector. The deadline is 15 November and the owner is Priya.",
+        "Unrelated: what is a good way to structure a weekly one-on-one with a new report?",
+        "Back to the launch — who owns it and when is it due?"
+      ]
+    },
+    {
+      "dialogue_id": "fr-rephrase",
+      "task_type": "format_rephrasing",
+      "turns": [
+        "List the risks of moving our analytics database to a new region: I count four — data residency, replication lag, cost during dual-running, and DNS cutover errors.",
+        "Rephrase that in plain language for a non-technical sponsor, keeping the same four risks.",
+        "Now give them as bullet points, one line each, still the same four."
+      ]
+    },
+    {
+      "dialogue_id": "ar-anaphora",
+      "task_type": "anaphora_resolution",
+      "turns": [
+        "Our two services are billing-api and ledger-worker. billing-api is written in Go and deployed on Tuesdays; ledger-worker is Python and deploys daily.",
+        "Which one deploys daily, and what language is it in?",
+        "And the other one — when does it deploy?"
+      ]
+    }
+  ]
+}

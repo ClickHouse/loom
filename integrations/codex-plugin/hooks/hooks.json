@@ -1,0 +1,153 @@
+{
+  "description": "Loom ambient-capture hooks for Codex. The scripts under hooks/ and lib/ are byte-identical to the Claude Code plugin's (checked by `python scripts/codegen/agent_plugin_sync.py --check`); only this wiring differs. Each command names the client as the script's third argument (`codex`), which sets the default agent label, the run-id prefix (cx-<session_id>), the `source:codex` tag and the consumer label.  What differs from the Claude Code wiring, and why: - Codex has no Read or Grep tool: it reads files and searches through its   shell tool, whose input may be an argv array. loom-code-shunt watches the   shell tool only (its `cat` / `rg` / `grep` branch); the whole-file-Read   branch has nothing to match. - Codex edits files with apply_patch: loom-file-context and loom-blast-radius   read the target path out of the patch text. - Codex may hand the hooks no transcript (`transcript_path` null) or one in   its own shape. loom-run journals every prompt (UserPromptSubmit), and   loom-conversation journals every reply from `last_assistant_message`   (Stop); the working-memory note, the run's final text, the conversation   plane and the session memory read that journal. loom-usage needs the   per-turn token counters only a Claude Code transcript carries, so it is   not wired here. - Codex's SessionEnd hook budget is one second: only the fire-and-forget   scripts (capture, run close, session memory hand-off) run there; the   conversation hook does its work at Stop. Identity (org/namespace) is derived from the token — drop a writer JWT in ~/.loom/token or ~/.loom/config.json, or set LOOM_API_KEY. The server is ~/.loom/config.json's url, else the plugin's plugin-defaults.json; LOOM_BASE_URL overrides both. Every knob the Claude Code README lists (LOOM_INJECT_CONTEXT, LOOM_CODE_SHUNT, LOOM_TEST_GATE, …) works here.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/loom-session-start.mjs\" SessionStart codex"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/loom-run.mjs\" UserPromptSubmit codex"
+          },
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/loom-prompt-recall.mjs\" UserPromptSubmit codex"
+          },
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/loom-prompt-pack.mjs\" UserPromptSubmit codex"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|shell|exec_command|local_shell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/loom-code-shunt.mjs\" PreToolUse codex"
+          }
+        ]
+      },
+      {
+        "matcher": "apply_patch|Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/loom-file-context.mjs\" PreToolUse codex"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/loom-mentor-hint.mjs\" PostToolUse codex"
+          }
+        ]
+      },
+      {
+        "matcher": "apply_patch|Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/loom-blast-radius.mjs\" PostToolUse codex"
+          }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/loom-capture.mjs\" PostToolUse codex"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/loom-capture.mjs\" PreCompact codex"
+          },
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/loom-working-memory.mjs\" PreCompact codex"
+          },
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/loom-session-brief.mjs\" PreCompact codex"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/loom-capture.mjs\" Stop codex"
+          },
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/loom-conversation.mjs\" Stop codex"
+          },
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/loom-test-gate.mjs\" Stop codex"
+          },
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/loom-validate-gate.mjs\" Stop codex"
+          },
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/loom-namespace-health.mjs\" Stop codex"
+          },
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/loom-working-memory.mjs\" Stop codex"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/loom-capture.mjs\" SessionEnd codex"
+          },
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/loom-run.mjs\" SessionEnd codex"
+          },
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/loom-session-memory.mjs\" SessionEnd codex"
+          },
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/loom-session-brief.mjs\" SessionEnd codex"
+          }
+        ]
+      }
+    ]
+  }
+}

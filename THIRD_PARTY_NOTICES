@@ -1,0 +1,54 @@
+Loom third-party notices
+========================
+
+Loom includes third-party software and data. This file records the material
+that is copied into the source tree or assembled Loom distributions. Package
+manager dependencies retain the license metadata and license files supplied by
+their publishers. The production dashboard additionally ships a generated
+THIRD_PARTY_NOTICES.txt containing the notices of the exact npm packages used
+to build it.
+
+Lemmagen3 English model
+-----------------------
+
+File: deploy/lemmagen3/en.bin
+Project: lemmagen3, https://github.com/vpodpecan/lemmagen3
+Source material: Multext / Multext-East language resources,
+http://nl.ijs.si/ME/V4/
+License: Creative Commons Attribution-ShareAlike 4.0 International
+License URI: https://creativecommons.org/licenses/by-sa/4.0/
+Changes: none; the file is byte-identical to lemmagen3 3.5.2.
+
+The model is distributed under CC BY-SA 4.0. The license requires attribution,
+identification of the license, and an indication of modifications when the
+material is shared. See deploy/lemmagen3/README.md for its checksum and full
+provenance.
+
+SCIP schema
+-----------
+
+Files:
+  scripts/scip_harness/vendor/scip.proto
+  scripts/scip_harness/vendor/scip_pb2.py
+Project: scip-code/scip, https://github.com/scip-code/scip
+Version: v0.10.0, commit 1c2b6db7e560d5233c944f36e4ac1377cc6963fc
+License: Apache License 2.0
+Changes: scip.proto is unmodified; scip_pb2.py is generated from it.
+
+The Apache License 2.0 text is in the repository's LICENSE file. See
+scripts/scip_harness/vendor/README.md for checksums and regeneration details.
+
+Runtime packages and dashboard assets
+-------------------------------------
+
+Python distributions installed in the container retain their own package
+metadata and license files under the Python installation. They include
+packages under permissive licenses and packages under MPL-2.0; those packages
+remain separately licensed and Loom does not relicense them.
+
+The dashboard includes JavaScript packages and the Inter and JetBrains Mono
+font assets under their publishers' licenses, including MIT, BSD, Apache-2.0,
+ISC, and the SIL Open Font License. Its build creates and embeds
+THIRD_PARTY_NOTICES.txt from the installed production dependency tree so the
+copyright and license text supplied with each package travels with the
+compiled dashboard.

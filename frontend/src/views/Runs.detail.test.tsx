@@ -1,0 +1,214 @@
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { RunGetResponse, RunRow } from "../api";
+import { useStore } from "../lib/state";
+import { EMPTY_WHY, Runs, hasNoMemoryActivity } from "./Runs";
+
+// A run with no memory activity is folded whether loom inferred it or a program declared
+// it; every empty field on the replay says who fills it; the list filters by agent;
+// recalled keys open the memory and the replay links to Recall history for the run.
+
+const listRuns = vi.fn<typeof import("../api").listRuns>();
+const getRun = vi.fn();
+vi.mock("../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api")>();
+  return {
+    ...actual,
+    listRuns: (...args: Parameters<typeof actual.listRuns>) => listRuns(...args),
+    getRun: (...args: unknown[]) => getRun(...args),
+    listMine: vi.fn(async () => []),
+    isAuthDisabled: () => false,
+  };
+});
+
+const row = (over: Partial<RunRow> = {}): RunRow => ({
+  run_id: "r-hollow",
+  agent: "reporter",
+  user_id: "-",
+  session_id: "-",
+  goal: "ISSUE_TRIAGE issue_114194",
+  user_request: "",
+  expected_outcome: "",
+  environment: "",
+  model: "",
+  consumer: "",
+  status: "completed",
+  started_at: "2026-09-21T17:00:00Z",
+  completed_at: "2026-09-21T17:00:00Z",
+  duration_ms: 17,
+  final_response: "",
+  confidence: 0,
+  memories_used: [],
+  memories_written: [],
+  metadata: { work_type: "ISSUE_TRIAGE" },
+  ...over,
+});
+const full = row({
+  run_id: "r-full",
+  agent: "claude-code",
+  session_id: "s-1",
+  memories_used: ["fact_a"],
+  memories_written: ["note_b"],
+  duration_ms: 90_000,
+  goal: "fix the thing",
+});
+
+const detail = (over: Partial<RunGetResponse> = {}): RunGetResponse => ({
+  found: true,
+  run: null,
+  recalled: 0,
+  recalled_keys: [],
+  memories_written: [],
+  observations: 0,
+  turns: 0,
+  cost_usd: 0,
+  ...over,
+});
+
+describe("hasNoMemoryActivity", () => {
+  it("folds an explicit hollow run and an implicit one alike; a run with any memory activity is not folded", () => {
+    expect(hasNoMemoryActivity(row())).toBe(true);
+    expect(hasNoMemoryActivity(row({ metadata: { implicit: true } }))).toBe(true);
+    expect(hasNoMemoryActivity(row({ memories_used: ["k"] }))).toBe(false);
+    expect(hasNoMemoryActivity(row({ memories_written: ["k"] }))).toBe(false);
+  });
+});
+
+describe("Runs page", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getRun.mockResolvedValue(detail());
+    useStore.setState({
+      authed: true,
+      identity: { org: "dev", namespace: "ns", agent: "loom-ui" },
+      view: "runs",
+      recallRunFilter: null,
+    });
+  });
+  afterEach(() => {
+    cleanup();
+    useStore.setState({ identity: null, recallRunFilter: null });
+  });
+
+  it("asks run.list to fold runs with no memory activity, and refetches everything on the toggle", async () => {
+    // The fold is the server's WHERE, so the page never sees the hollow rows until the
+    // reader asks — the newest 100 of a chatty consumer can all be hollow, and slicing
+    // after LIMIT would leave the page empty.
+    listRuns.mockImplementation(async (_id, opts) => (opts?.memoryActivity === "with" ? [full] : [row(), full]));
+    render(<Runs />);
+    expect(await screen.findByText("fix the thing")).toBeInTheDocument();
+    expect(screen.queryByText("ISSUE_TRIAGE issue_114194")).toBeNull();
+    const [, first] = listRuns.mock.calls[0];
+    expect(first?.memoryActivity).toBe("with");
+    expect(first?.limit).toBe(100);
+    fireEvent.click(screen.getByText("Show runs with no memory activity"));
+    await waitFor(() => expect(listRuns).toHaveBeenCalledTimes(2));
+    const [, second] = listRuns.mock.calls[1];
+    expect(second?.memoryActivity).toBe("");
+    expect(await screen.findByText("ISSUE_TRIAGE issue_114194")).toBeInTheDocument();
+    expect(screen.getByText("no memory activity")).toBeInTheDocument();
+    expect(screen.getByText("Hide runs with no memory activity")).toBeInTheDocument();
+  });
+
+  it("says so when the folded page is empty, without claiming there are no runs", async () => {
+    listRuns.mockImplementation(async (_id, opts) => (opts?.memoryActivity === "with" ? [] : [row()]));
+    render(<Runs />);
+    expect(await screen.findByText("No runs with memory activity")).toBeInTheDocument();
+    expect(screen.queryByText("No runs yet")).toBeNull();
+    fireEvent.click(screen.getByText("Show runs with no memory activity"));
+    expect(await screen.findByText("ISSUE_TRIAGE issue_114194")).toBeInTheDocument();
+  });
+
+  it("filters by agent through run.list", async () => {
+    listRuns.mockResolvedValue([row(), full]);
+    render(<Runs />);
+    await screen.findByText("fix the thing");
+    const select = await screen.findByLabelText("Agent");
+    fireEvent.change(select, { target: { value: "reporter" } });
+    await waitFor(() => expect(listRuns).toHaveBeenCalledTimes(2));
+    const [, opts] = listRuns.mock.calls[1];
+    expect(opts?.agent).toBe("reporter");
+  });
+
+  it("the replay of a hollow run says what each empty field would have needed", async () => {
+    listRuns.mockResolvedValue([row()]);
+    render(<Runs />);
+    fireEvent.click(await screen.findByText("Show runs with no memory activity"));
+    fireEvent.click(await screen.findByRole("button", { name: "ISSUE_TRIAGE issue_114194" }));
+    const dialog = await screen.findByRole("dialog");
+    await waitFor(() => expect(getRun).toHaveBeenCalledTimes(1));
+    expect(within(dialog).getByText(/reported no memory activity/)).toBeInTheDocument();
+    expect(within(dialog).getByText(EMPTY_WHY.used)).toBeInTheDocument();
+    expect(within(dialog).getByText(EMPTY_WHY.written)).toBeInTheDocument();
+    expect(within(dialog).getByTitle(EMPTY_WHY.recalledZero)).toHaveTextContent("0");
+    // No top-level session: turns and cost cannot be joined, and the page says so.
+    expect(within(dialog).getAllByText("no session")).toHaveLength(2);
+    expect(within(dialog).getAllByTitle(EMPTY_WHY.noSession)).toHaveLength(2);
+    expect(within(dialog).queryByText(/inferred from a connection/)).toBeNull();
+  });
+
+  it("a recalled key opens the memory and the replay links to Recall history for the run", async () => {
+    listRuns.mockResolvedValue([full]);
+    getRun.mockResolvedValue(detail({ recalled: 2, recalled_keys: ["fact_a", "fact_c"], turns: 3, cost_usd: 0.0123 }));
+    render(<Runs />);
+    fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText("fact_c")).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "fact_c" }));
+    expect(useStore.getState().inspectedMemoryKey).toBe("fact_c");
+    expect(within(dialog).getByText("$0.0123")).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: /Recall history for this run/ }));
+    expect(useStore.getState().view).toBe("recall");
+    expect(useStore.getState().recallRunFilter).toBe("r-full");
+  });
+
+  it("drops a run.list answer that lands after the status filter changed", async () => {
+    let answerAll: (v: RunRow[]) => void = () => {};
+    listRuns
+      .mockImplementationOnce(() => new Promise((r) => (answerAll = r)))
+      .mockResolvedValueOnce([
+        row({ run_id: "r-failed", status: "failed", goal: "the failed one", memories_used: ["k"] }),
+      ]);
+    render(<Runs />);
+    await waitFor(() => expect(listRuns).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "failed" }));
+    await waitFor(() => expect(listRuns).toHaveBeenCalledTimes(2));
+    expect(listRuns.mock.calls[1][1]?.status).toBe("failed");
+    expect(await screen.findByText("the failed one")).toBeInTheDocument();
+    answerAll([full]);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByText("fix the thing")).toBeNull();
+    expect(screen.getByText("the failed one")).toBeInTheDocument();
+  });
+
+  it("the drawer for run Y never shows run X's replay when X's run.get lands last", async () => {
+    const other = row({ run_id: "r-other", goal: "the other run", memories_used: ["k"] });
+    listRuns.mockResolvedValue([full, other]);
+    let answerX: (v: RunGetResponse) => void = () => {};
+    getRun
+      .mockImplementationOnce(() => new Promise((r) => (answerX = r)))
+      .mockResolvedValueOnce(detail({ recalled: 1, recalled_keys: ["key_from_y"] }));
+    render(<Runs />);
+    fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
+    let dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "the other run" }));
+    dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText("key_from_y")).toBeInTheDocument();
+    answerX(detail({ recalled: 1, recalled_keys: ["key_from_x"] }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(within(dialog).queryByText("key_from_x")).toBeNull();
+    expect(within(dialog).getByText("key_from_y")).toBeInTheDocument();
+  });
+
+  it("recalled n/a when the trace log is off, with no link to a history that cannot exist", async () => {
+    listRuns.mockResolvedValue([full]);
+    getRun.mockResolvedValue(detail({ recalled: -1 }));
+    render(<Runs />);
+    fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByTitle(EMPTY_WHY.recalledOff)).toHaveTextContent("n/a");
+    expect(within(dialog).queryByRole("button", { name: /Recall history for this run/ })).toBeNull();
+  });
+});

@@ -1,0 +1,5 @@
+# Imports that break the package contract today (see test_package_contracts.py).
+# One `importer -> imported` per line. Fix one by moving the shared piece to the
+# right layer, then delete its line; the test fails on a stale line, so this
+# list only shrinks.
+server.code.domain.extract.crossref -> server.code.store.index

@@ -1,0 +1,427 @@
+"""MCP transport — the Loom primer and the surfaces that deliver it.
+
+One primer (`_loom_primer_text`: the Loom-first rules, the caller's default
+workspace and profile) reaches a client four ways, because clients differ in
+what they read: the `initialize` result's `instructions`, the `loom://primer`
+resource, the `loom` prompt and the `loom_activate` tool. This module renders
+it and answers `prompts/*` and `resources/*`; `server.transport.mcp` routes
+the methods here. Leaf: it never imports `server.transport.mcp`.
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+import uuid
+from typing import Any
+
+from server.code.domain.scope import current_code_scope
+from server.operations.registry import OPERATIONS_BY_NAME
+from server.transport._common import bind_request
+from server.transport.mcp_config import (
+    _LOOM_PRIMER_RESOURCE_URI,
+    _LOOM_PROMPT_NAME,
+    INVALID_PARAMS,
+    PRIMER_TTL_MS,
+    _err,
+    _ok,
+    cache_hints,
+)
+from server.transport.mcp_identity import _caller_default_context, _caller_defaults
+from server.transport.mcp_op import reachable as loom_op_reachable
+from server.transport.mcp_tools import _emit_mcp_event, listed_ops
+
+log = logging.getLogger("server.transport.mcp")
+
+
+# ============================================================
+# MCP prompts — discoverable activation via picker UI
+# ============================================================
+
+
+def _prompts_descriptor() -> list[dict[str, Any]]:
+    """One prompt: `loom`. Picker-driven conversation-setup — load the
+    user's persona + recall-routing instructions in one click."""
+    return [
+        {
+            "name": _LOOM_PROMPT_NAME,
+            "description": (
+                "Activate Loom for this conversation. Loads your "
+                "persona block + sets memory/recall to route through "
+                "Loom. Pick this once at the start of a new chat — "
+                "same effect as typing 'use loom' but discoverable "
+                "from the slash-command picker."
+            ),
+            "arguments": [],
+        }
+    ]
+
+
+# ============================================================
+# MCP resources — protocol-native, auto-surfaced primer
+# ============================================================
+
+
+def _resources_descriptor() -> list[dict[str, Any]]:
+    """One resource: `loom://primer`. Protocol-native delivery of the
+    caller's always-loaded context — auto-surfaceable, zero tokens until
+    read, re-pullable after compaction. Same content as the prompt/tool."""
+    return [
+        {
+            "uri": _LOOM_PRIMER_RESOURCE_URI,
+            "name": "Loom primer",
+            "title": "Loom primer",
+            "description": (
+                "Your always-loaded context — persona / preferences / goals "
+                "— plus how to route memory and recall through Loom. Read at "
+                "the start of a conversation."
+            ),
+            "mimeType": "text/markdown",
+        }
+    ]
+
+
+async def _read_resource(
+    req_id: Any, params: dict[str, Any], auth: Any, toolset: str | None = None
+) -> dict[str, Any]:
+    """Render `loom://primer`. Same primer text as the `loom` prompt and
+    `loom_activate` — single source of truth in `_loom_primer_text`."""
+    uri = params.get("uri")
+    if uri != _LOOM_PRIMER_RESOURCE_URI:
+        return _err(req_id, INVALID_PARAMS, f"Unknown resource: {uri!r}")
+    primer = await _loom_primer_text(auth, toolset=toolset)
+    return _ok(
+        req_id,
+        {
+            "contents": [
+                {
+                    "uri": _LOOM_PRIMER_RESOURCE_URI,
+                    "mimeType": "text/markdown",
+                    "text": primer,
+                }
+            ],
+            # The primer names the caller's namespaces and profile: theirs to
+            # hold for a minute, never a shared cache's.
+            **cache_hints(PRIMER_TTL_MS, "private"),
+        },
+    )
+
+
+async def _render_primer_and_emit(
+    auth: Any, client_name: str | None, op_name: str, toolset: str | None = None
+) -> str:
+    """Render the activation primer and emit one observability event + log
+    line for it. Shared by the `loom` prompt and the loom_activate tool so
+    picker- and tool-driven activations record identically in cost/audit."""
+    request_id = str(uuid.uuid4())
+    bind_request(op_name, request_id)
+    started = time.monotonic()
+    defaults = await _caller_defaults(auth, client_name)
+    primer = await _loom_primer_text(auth, toolset=toolset)
+    latency_ms = int((time.monotonic() - started) * 1000)
+    try:
+        _emit_mcp_event(
+            op_name=op_name,
+            raw_args={
+                "org": (defaults or {}).get("org", "-"),
+                "namespace": (defaults or {}).get("namespace", "-"),
+                "agent": (defaults or {}).get("agent", "claude-desktop"),
+            },
+            latency_ms=latency_ms,
+            success=True,
+            error_code="",
+            request_id=request_id,
+        )
+    except Exception as _log_err:  # noqa: BLE001 — event emission must never fail a tool call
+        log.warning("%s event emission failed: %s", op_name, _log_err)
+    log.info(
+        "[req=%s] op.ok %s ns=%s elapsed_ms=%d",
+        request_id,
+        op_name,
+        (defaults or {}).get("namespace", "-"),
+        latency_ms,
+    )
+    return primer
+
+
+async def _get_prompt(
+    req_id: Any,
+    params: dict[str, Any],
+    auth: Any,
+    client_name: str | None = None,
+    toolset: str | None = None,
+) -> dict[str, Any]:
+    """Return the loom prompt's rendered content. Body is the same
+    primer text loom_activate returns (single source of truth) wrapped
+    as one `user`-role message — MCP clients insert it into the
+    conversation as if the user typed it."""
+    name = params.get("name")
+    if name != _LOOM_PROMPT_NAME:
+        return _err(req_id, INVALID_PARAMS, f"Unknown prompt: {name!r}")
+
+    primer = await _render_primer_and_emit(auth, client_name, "prompts.loom", toolset)
+
+    return _ok(
+        req_id,
+        {
+            "description": "Loom activation primer",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": {"type": "text", "text": primer},
+                }
+            ],
+        },
+    )
+
+
+# ============================================================
+# Primer — single source of truth for prompt / resource / tool / initialize
+# ============================================================
+
+
+def _tool_refs(toolset: str | None) -> dict[str, str | None]:
+    """How the primer names each op it points at, on this connection's
+    toolset: its own tool when the listing carries it, else `loom_op` with the
+    op name — the tool every listing carries — and None when neither reaches
+    it (a write on a connection whose `loom_op` routes reads only), so the
+    primer never asks for a call the client cannot make."""
+    listed = {op.name: op.mcp_tool_name for op in listed_ops(toolset)}
+    out: dict[str, str | None] = {}
+    for name in ("context.pack", "memory.set", "knowledge.add"):
+        if name in listed:
+            out[name] = f"`{listed[name]}`"
+        elif loom_op_reachable(OPERATIONS_BY_NAME[name], toolset):
+            out[name] = f"`loom_op` (op `{name}`)"
+        else:
+            out[name] = None
+    return out
+
+
+def _write_rules(tool: dict[str, str | None]) -> str:
+    """Rules 3 and 4 (save, shape) when the connection reaches memory.set;
+    otherwise one line saying writes are not available here."""
+    save = tool["memory.set"]
+    if save is None:
+        return (
+            "**3–4. No writes here.** This connection is read-only: memory "
+            "writes are not available, so don't offer to save or remember "
+            "anything through Loom.\n\n"
+        )
+    doc = tool["knowledge.add"] or save
+    return (
+        "**3. Save.** On any remember/save/store intent, call "
+        f"{save}. Loom persists across Claude Desktop, "
+        "Claude Code, Cursor, and any other AI tool the user runs.\n\n"
+        f"**4. Shape.** {save} takes one plain-text claim per "
+        "readable key (`<scope>/<kind>/<id>`): send text or the object, "
+        "never `json.dumps` twice or base64; a document or anything over "
+        f"~2 KB goes to {doc}; leases and pointers go to "
+        "working memory; a revision rewrites the same key.\n\n"
+    )
+
+
+async def _loom_primer_text(
+    auth: Any, *, include_profile: bool = True, toolset: str | None = None
+) -> str:
+    """Render the Loom-first-mode primer with the caller's default workspace
+    baked in. Single source of truth for the `loom` prompt, the
+    `loom_activate` tool, and the `initialize` `instructions` field.
+
+    ``include_profile=False`` skips inlining profile sections — required for
+    surfaces reachable without a verified bearer (initialize in
+    discovery_only/open modes), which must not carry profile content.
+    ``toolset`` is the connection's ``?toolset=``: the primer names the tools
+    that listing carries."""
+    tool = _tool_refs(toolset)
+    defaults = await _caller_defaults(auth)
+    if defaults:
+        ns_clause = (
+            f"My default Loom namespace is **`{defaults['namespace']}`** "
+            f"— use it unless I explicitly name another."
+        )
+    else:
+        ns_clause = "Use whatever Loom workspace the tool descriptions declare as default."
+
+    # Inline authored profile sections into the primer — "call profile.render
+    # at conversation start" nudges don't fire reliably, so bundling the
+    # render here is the one-step path to loaded persona context.
+    profile_section = ""
+    if include_profile and defaults:
+        try:
+            from server.memory.api.models_profile import ProfileRenderInput
+            from server.memory.app.profile import handle_profile_render
+
+            rendered_out = await handle_profile_render(
+                ProfileRenderInput(
+                    org=defaults["org"],
+                    namespace=defaults["namespace"],
+                    agent=defaults.get("agent", "claude-desktop"),
+                    format="xml",
+                    scope="namespace",
+                )
+            )
+            if rendered_out.section_count > 0:
+                profile_section = (
+                    "\n\n**0. My always-loaded context (treat as part of "
+                    "your system prompt for this conversation):**\n\n"
+                    f"```\n{rendered_out.rendered}\n```\n\n"
+                    "Don't re-fetch — it's been delivered."
+                )
+        except Exception:  # noqa: BLE001 — primer ships without the profile on render failure
+            # Best-effort — primer ships without the profile on render failure.
+            pass
+
+    return (
+        "**Loom-first mode active for this conversation.**" + profile_section + "\n\n"
+        "**1. Session context.** At the start of a substantial task, "
+        f"call {tool['context.pack']} once if you need a bounded bundle of "
+        "profile, relevant memories, procedures, and optional docs. For "
+        "simple activation, this primer is already enough.\n\n"
+        "**2. Recall lookup order.** When I ask about preferences, "
+        "decisions, family/relationships, work, bills, contracts, "
+        "documents I've uploaded, or 'what is X' / 'what do I know "
+        "about Y':\n"
+        "   a. Call `loom_search` once. It searches memory, profile, "
+        "knowledge, and conversations server-side in one round trip.\n"
+        "   b. If it returns nothing relevant, fall through to "
+        "native memory / past-conversation context — don't surface "
+        "'not in Loom' as a final answer.\n\n"
+        + _write_rules(tool)
+        + "**5. Defaults.** "
+        + ns_clause
+        + " Don't ask which namespace; "
+        "trust the default.\n\n"
+        "**6. Native memory.** Use as fallback when Loom returns "
+        "nothing, or as primary store for Claude-only ephemeral "
+        "scratchpad."
+        + (
+            " For anything cross-tool or shared with teammates, write to Loom."
+            if tool["memory.set"]
+            else ""
+        )
+    )
+
+
+INITIALIZE_OP = "mcp.initialize"
+
+
+async def _emit_initialize_event(auth: Any, client_name: str | None) -> None:
+    """One agent_events row for an authenticated `initialize` whose
+    instructions inlined the profile. Best effort: the
+    handshake never fails on telemetry."""
+    try:
+        defaults = await _caller_defaults(auth, client_name)
+        _emit_mcp_event(
+            op_name=INITIALIZE_OP,
+            raw_args={
+                "org": (defaults or {}).get("org", "-"),
+                "namespace": (defaults or {}).get("namespace", "-"),
+                "agent": (defaults or {}).get("agent", client_name or "claude-desktop"),
+            },
+            latency_ms=0,
+            success=True,
+            error_code="",
+            request_id=str(uuid.uuid4()),
+        )
+    except Exception as e:  # noqa: BLE001 — telemetry never fails the handshake
+        log.warning("initialize ledger row failed (non-fatal): %s", e)
+
+
+async def _initialize_instructions(auth: Any, toolset: str | None = None) -> str:
+    """Session-start instructions for the `initialize` result: the primer
+    plus the default-workspace context, once per session. Profile sections
+    inline only with a verified bearer — an anonymous probe (discovery_only /
+    open modes) must not read profile content.
+    """
+    if _is_coding_toolset(toolset):
+        primer = await _coding_instructions(auth, include_profile=auth is not None, toolset=toolset)
+    else:
+        primer = await _loom_primer_text(auth, include_profile=auth is not None, toolset=toolset)
+    scope = current_code_scope()
+    scope_line = (
+        f"\n\n**Code index scope for this connection:** `{scope[0]}/{scope[1]}` — "
+        "applied to every loom_code_* call that names no namespace."
+        if scope
+        else ""
+    )
+    # The compact coding form names the default namespace in one clause; the full primer
+    # carries the default-workspace paragraph.
+    workspace = (
+        await _coding_workspace_line(auth)
+        if _is_coding_toolset(toolset)
+        else await _caller_default_context(auth)
+    )
+    return primer + workspace + scope_line + await _mentor_line(auth)
+
+
+async def _coding_workspace_line(auth: Any) -> str:
+    """The default workspace in one clause: the server fills it in on every call."""
+    defaults = await _caller_defaults(auth)
+    if not defaults:
+        return ""
+    return f" Default namespace `{defaults['namespace']}`, filled in when a call names none."
+
+
+def _is_coding_toolset(toolset: str | None) -> bool:
+    """A connection listing the `coding` roster (alone or in a union): a coding agent's,
+    whose plugin brings its own session primer."""
+    from server.operations.toolsets import toolset_parts
+
+    return "coding" in toolset_parts(toolset)
+
+
+async def _coding_instructions(
+    auth: Any, *, include_profile: bool = True, toolset: str | None = None
+) -> str:
+    """The `initialize` instructions over the `coding` toolset: the memory rules in a few
+    lines. A coding agent re-reads these on every turn of every session, and the
+    coding-agent plugins carry the code-index guidance in their own primer; the full
+    Loom-first primer (`_loom_primer_text`) stays on every other listing and on
+    `loom_activate`."""
+    tool = _tool_refs(toolset)
+    full = await _loom_primer_text(auth, include_profile=include_profile, toolset=toolset)
+    # The profile, when the caller authored one, is the one part kept whole.
+    profile = ""
+    marker = "**0. My always-loaded context"
+    if marker in full:
+        profile = (
+            "\n\n" + full[full.index(marker) : full.index("Don't re-fetch", full.index(marker))]
+        )
+        profile += "Don't re-fetch — it's been delivered."
+    save = tool["memory.set"]
+    memory = "Recall before answering from memory: call `loom_search` once. " + (
+        f"On a remember/save intent call {save} with one plain-text claim per readable "
+        "key (`<scope>/<kind>/<id>`)."
+        if save
+        else "This connection is read-only: memory writes are not available."
+    )
+    return (
+        "**Loom: memory and code for this session.**"
+        + profile
+        + "\n\nCode questions: the loom_code_* tools, as each tool's description says. "
+        + memory
+    )
+
+
+async def _mentor_line(auth: Any) -> str:
+    """The top mentor hint for the caller's default workspace,
+    only when its profile is already cached — never a ledger read on the
+    handshake. "" otherwise, and on any failure."""
+    try:
+        from server.insights.app import mentor as _mentor
+
+        defaults = await _caller_defaults(auth, None)
+        if not defaults:
+            return ""
+        org = str(defaults.get("org") or "")
+        namespace = str(defaults.get("namespace") or "")
+        agent = str(defaults.get("agent") or "-")
+        line = _mentor.top_hint_line(org, namespace, agent)
+        if not line:
+            # Nothing cached: start the read now so the next handshake of
+            # this agent carries the line. Never awaited here.
+            _mentor.warm_profile(org, namespace, agent)
+        return f"\n\n{line}" if line else ""
+    except Exception:  # noqa: BLE001 — the handshake never fails on a hint
+        return ""

@@ -1,0 +1,100 @@
+"""A restricted repository added to a client token brings
+its bound tracker record, granted read-only."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+import server.identity.app.me_setup as me
+import server.identity.app.token_grants as tg
+from server.identity.app import me_callers
+from server.identity.store import grants as grants_repo
+
+ORG = "clickhouse"
+
+
+@pytest.fixture
+def wired(monkeypatch: pytest.MonkeyPatch):
+    import server.identity.app.namespace_classification as nc
+    import server.tracker.app.binding as binding
+
+    state: dict[str, Any] = {
+        "restricted": {"code-private", "code-private-26-8", "tracker-private", "code-lumen"},
+        "bindings": {
+            "code-private": "tracker-private",
+            "code-private-26-8": "tracker-private",
+            "code-lumen": "tracker-public",
+        },
+        "grants": {
+            "code-private": "admin",
+            "code-private-26-8": "admin",
+            "tracker-private": "admin",
+            "code-lumen": "admin",
+        },
+    }
+
+    async def _isr(org: str, ns: str) -> bool:
+        return ns in state["restricted"]
+
+    async def _role(org: str, ns: str, subject: str) -> str | None:
+        return state["grants"].get(ns)
+
+    monkeypatch.setattr(nc, "is_restricted", _isr)
+    monkeypatch.setattr(binding, "tracker_namespace_for", lambda ns: state["bindings"].get(ns, ""))
+    # The token scope walks every linked tracker
+    monkeypatch.setattr(
+        binding,
+        "tracker_namespaces_for",
+        lambda ns: [state["bindings"][ns]] if state["bindings"].get(ns) else [],
+    )
+    monkeypatch.setattr(me_callers, "caller_role_on", _role)
+    return state
+
+
+@pytest.mark.asyncio
+async def test_the_bound_restricted_tracker_record_is_appended_once(wired) -> None:
+    out = await me._with_bound_tracker(ORG, "alice", ["code-private", "code-private-26-8"])
+    assert out == ["code-private", "code-private-26-8", "tracker-private"]
+
+
+@pytest.mark.asyncio
+async def test_a_standard_tracker_record_and_an_ungranted_one_are_not_added(wired) -> None:
+    # tracker-public is not restricted: read through the repository, nothing to name
+    assert await me._with_bound_tracker(ORG, "alice", ["code-lumen"]) == ["code-lumen"]
+    # no direct grant on the record: skipped, never a 403 — the repository still lands
+    wired["grants"].pop("tracker-private")
+    assert await me._with_bound_tracker(ORG, "alice", ["code-private"]) == ["code-private"]
+    assert await me._with_bound_tracker(ORG, "alice", []) == []
+
+
+@pytest.mark.asyncio
+async def test_the_tracker_record_is_granted_viewer_like_a_repository(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows: list[dict[str, Any]] = []
+
+    async def _insert(batch: list[dict[str, Any]], **_kw: Any) -> None:
+        rows.extend(batch)
+
+    monkeypatch.setattr(grants_repo, "insert_rows", _insert)
+
+    async def _isr(org: str, ns: str) -> bool:
+        return True
+
+    granted = await tg.grant_restricted_to_token(
+        ORG,
+        "sa:t",
+        "alice",
+        {"code-private": "admin", "tracker-private": "admin", "secret-notes": "admin"},
+        is_restricted=_isr,
+        is_code_namespace=lambda o, n: n.startswith(("code-", "tracker-")),
+    )
+    assert granted == ["code-private", "tracker-private", "secret-notes"]
+    roles = {r["namespace"]: r["role"] for r in rows}
+    assert roles == {
+        "code-private": "viewer",
+        "tracker-private": "viewer",
+        "secret-notes": "writer",
+    }

@@ -1,0 +1,167 @@
+# ============================================================
+# Secrets — never commit. The .env file carries CH/Langfuse/OpenAI
+# credentials and Loom's JWT signing keys.
+# ============================================================
+.env
+.env.local
+.env.*.local
+# Timestamped .env backups written by hand and by redeploy.sh. The three
+# patterns above do NOT match `.env.bak.<label>`, so five of these were tracked
+# — each carrying a live ClickHouse password, JWT signing secret, OpenAI key and
+# Langfuse token. A backup of a secrets file is a secrets file.
+.env.bak*
+.env.backup*
+*.pem
+*.key
+secrets.json
+
+# ============================================================
+# Frontend (React/Vite dashboard at /me) — node deps + build output
+# ============================================================
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/*.log
+*.pid
+# Frontend test output: Playwright traces, screenshots
+frontend/test-results/
+frontend/playwright-report/
+frontend/e2e-screenshots/
+
+# ============================================================
+# Python
+# ============================================================
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+.Python
+build/
+dist/
+.eggs/
+pip-wheel-metadata/
+.installed.cfg
+MANIFEST
+
+# ============================================================
+# Test / coverage artifacts
+# ============================================================
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.tox/
+.nox/
+
+# ============================================================
+# Type-checker / linter caches
+# ============================================================
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.pytype/
+
+# ============================================================
+# IDE / editor
+# ============================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# ============================================================
+# OS noise
+# ============================================================
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.LCK
+
+# ============================================================
+# Runtime / operational
+# ============================================================
+# Local backups produced by dev/backup_loom.py
+backups/
+# Loom log directory if anyone redirects systemd output to a file
+logs/
+*.log
+# Local sqlite caches (none today, but cheap to ignore)
+*.sqlite
+*.sqlite3
+*.db
+# JWT key material if anyone exports it to a file (canonical lives in .env)
+jwt-*.pem
+loom-jwt*
+# Sigstore / cosign artifacts
+*.sig
+*.pub.asc
+
+# ============================================================
+# Generated artifacts
+# ============================================================
+sdk/python/loom.egg-info/
+# OpenAPI export from `make openapi` if anyone runs it
+openapi.yaml
+openapi.json
+
+# ============================================================
+# Personal scratch files — anyone can name a file `scratch.*` or
+# put it in `tmp/` and it stays local.
+# ============================================================
+scratch.*
+tmp/
+.tmp/
+sdk/ts/node_modules/
+sdk/ts/dist/
+sdk/ts/*.log
+
+# Bench outputs — keep the harness in repo but not the per-run dumps.
+bench/out/
+bench/*.csv
+bench/lme_*.csv
+bench/longmemeval_*.csv
+bench/longmemeval_*.json
+# Third-party scripts fetched for cross-checks (live in the LongMemEval repo).
+bench/official/
+deploy/clickhouse-config/named_collections.xml
+
+# ============================================================
+# Local-only working notes — design rationale lives in PR descriptions,
+# not in the tree. Bench/eval scratch dumps stay out of git too.
+# ============================================================
+docs/design/
+.eval/
+*.draft.md
+
+# Local operator artefacts: blob store, pre-migration vector backups.
+var/
+
+# Third-party agent skills installed via `npx skills add`. They carry
+# executable instructions that run with full agent permissions, and this
+# is a public repo — keep other people's skill code out of it. Project
+# settings under .claude/ are deliberately NOT ignored, only skills.
+.claude/skills/
+# `npx skills add` puts the real skill payload here and symlinks
+# .claude/skills/<name> at it. It also drops a stray `agent/` copy and a
+# lockfile, so all four paths need ignoring.
+# third-party skills installed by `npx skills add` land here; the Codex
+# plugin marketplace (.agents/plugins/marketplace.json) is ours and tracked.
+.agents/skills/
+agent/
+skills-lock.json
+
+# runtime data (mirrors, scip checkouts); iso launchers symlink it in
+/var

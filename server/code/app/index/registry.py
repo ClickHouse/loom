@@ -1,0 +1,155 @@
+"""Register code namespaces in the namespace directory.
+
+The code plane keys every row on (org, namespace); without a loom.namespaces row its
+namespaces would be invisible to the /me sidebar, un-mintable from Setup, and
+indistinguishable from memory namespaces. Each ingest pass calls
+ensure_registered() once per process per repo entry: if no directory row exists, insert
+one with kind='code' and visibility='private' (read access stays grant-driven — see
+docs). An existing row is never rewritten here — with one exception: when the config
+classifies the entry `restricted` and the row says `standard`, the row is re-inserted in
+full, narrowed. Narrowing is the only direction this module ever moves a row; widening
+is the operator's.
+"""
+
+from __future__ import annotations
+
+import logging
+from datetime import UTC, datetime
+from typing import Any
+
+logger = logging.getLogger("loom.code_index.registry")
+
+_DONE: set[tuple[str, str]] = set()
+
+
+def describe(cfg: Any) -> str:
+    return f"Code index of {cfg.repo} @ {cfg.git_branch} (read-only reference data)"
+
+
+async def _sync_maintainers(cfg: Any, client: Any) -> None:
+    """On first sight of a branch namespace each process, bring the repository's
+    maintainer set onto it (an environment-registered or freshly added branch inherits
+    the maintainers of its siblings)."""
+    from server.code.app.index import maintainers
+
+    await maintainers.sync_quietly(cfg.org, cfg.namespace, ch=client)
+
+
+async def ensure_registered(cfg: Any, *, ch: Any | None = None) -> bool:
+    """Idempotent. Returns True when a row was inserted this call."""
+    key = (cfg.org, cfg.namespace)
+    if key in _DONE:
+        return False
+    from server.core.ch import get_client
+
+    client = ch or get_client()
+    restricted = cfg.classification == "restricted"
+    public = cfg.public and not restricted
+    try:
+        # SELECT * so a narrowing re-insert mirrors EVERY column forward
+        # (ReplacingMergeTree: a partial row resets what it omits).
+        from server.identity.app.registration import namespace_row
+
+        row = await namespace_row(cfg.org, cfg.namespace, ch=client)
+        now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
+        if row is not None:
+            if (
+                public
+                and str(row.get("classification") or "standard") == "standard"
+                and str(row.get("join_policy") or "inherit") != "open"
+            ):
+                # The config says the repository is public; the row is brought to open +
+                # discoverable. This is the one widening this module performs, and only
+                # from the operator's own config.
+                opened = dict(row)
+                # Open means joinable, not readable — the row stays visibility=private;
+                # reads need the join.
+                opened.update(join_policy="open", visibility="private", updated_at=now)
+                await client.insert("loom.namespaces", [opened])
+                logger.info(
+                    "code namespace %s/%s directory row set open (config says public)",
+                    cfg.org,
+                    cfg.namespace,
+                )
+            if restricted and str(row.get("classification") or "standard") != "restricted":
+                narrowed = dict(row)
+                narrowed["classification"] = "restricted"
+                narrowed["visibility"] = "private"
+                narrowed["updated_at"] = now
+                await client.insert("loom.namespaces", [narrowed])
+                from server.identity.app.namespace_classification import note_restricted
+
+                note_restricted(cfg.org, cfg.namespace)
+                logger.warning(
+                    "code namespace %s/%s directory row narrowed to restricted "
+                    "(config says so; the row said %s)",
+                    cfg.org,
+                    cfg.namespace,
+                    row.get("classification"),
+                )
+            if (
+                not restricted
+                and cfg.access_source == "registry"
+                and str(row.get("classification") or "standard") == "restricted"
+            ):
+                # A maintainer opened the repository; the directory follows the access
+                # row, not the entry's default
+                widened = dict(row)
+                widened["classification"] = "standard"
+                widened["join_policy"] = "open" if public else "approval"
+                widened["updated_at"] = now
+                await client.insert("loom.namespaces", [widened])
+                logger.warning(
+                    "code namespace %s/%s directory row widened to standard (a maintainer's "
+                    "access row says so; the row said restricted)",
+                    cfg.org,
+                    cfg.namespace,
+                )
+            _DONE.add(key)
+            await _sync_maintainers(cfg, client)
+            return False
+        await client.insert(
+            "loom.namespaces",
+            [
+                {
+                    "org": cfg.org,
+                    "namespace": cfg.namespace,
+                    "owner_email": "",
+                    "description": describe(cfg),
+                    "tags": ["code"],
+                    "active": True,
+                    "kind": "code",
+                    # Every code row is visibility=private. Discovery does not depend on
+                    # it (the Repositories page and namespace.browse list code rows by
+                    # kind), and `public` would let authz read the index without a join.
+                    # join_policy alone says how a person gets in.
+                    "visibility": "private",
+                    "classification": "restricted" if restricted else "standard",
+                    "join_policy": "open" if public and not restricted else "approval",
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            ],
+        )
+        if restricted:
+            from server.identity.app.namespace_classification import note_restricted
+
+            note_restricted(cfg.org, cfg.namespace)
+        _DONE.add(key)
+        logger.info(
+            "registered code namespace %s/%s (kind=code, classification=%s)",
+            cfg.org,
+            cfg.namespace,
+            "restricted" if restricted else "standard",
+        )
+        await _sync_maintainers(cfg, client)
+        return True
+    except Exception as e:  # noqa: BLE001 — directory is a convenience, never block indexing
+        logger.warning(
+            "code namespace registration skipped for %s/%s: %s", cfg.org, cfg.namespace, e
+        )
+        return False
+
+
+def reset_for_tests() -> None:
+    _DONE.clear()

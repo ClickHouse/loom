@@ -1,0 +1,7 @@
+[project]
+name = "company-tools"
+version = "1.0"
+
+[tool.setuptools.packages.find]
+where = ["nsroot"]
+namespaces = true

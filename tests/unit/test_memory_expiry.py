@@ -1,0 +1,415 @@
+"""Expiry has a post-action.
+
+The plan for each action, the sweep with the repo stubbed (one batched
+insert, locks honoured, dry run writes nothing), and update_by_id's
+EXPIRED refusal with revive.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+import pytest
+from fastapi import HTTPException
+
+from server.memory.api.models_crud import MemoryUpdateByIdInput
+from server.memory.app import expiry as X
+from server.memory.app import handlers as mem_handlers
+from server.memory.app import restore as _restore_mod
+from server.memory.app import stack as _stack_mod
+from server.memory.app import update as update_mod
+from server.memory.store import MemoryRow
+
+_NOW = datetime(2026, 9, 12, 12, 0, 0)
+# A row the handlers see as expired has to be expired by the wall clock.
+_REAL_NOW = datetime.now(UTC).replace(tzinfo=None)
+
+
+def _row(**overrides: Any) -> MemoryRow:
+    base: dict[str, Any] = {
+        "memory_id": "22222222-2222-2222-2222-222222222222",
+        "org": "test",
+        "namespace": "personal",
+        "agent": "cursor",
+        "user_id": "-",
+        "session_id": "-",
+        "memory_key": "churn_note",
+        "memory_type": "semantic",
+        "value": "Customer churned after the outage",
+        "confidence": 0.8,
+        "version": 100,
+        "pinned": False,
+        "created_at": _NOW - timedelta(days=30),
+        "expires_at": _REAL_NOW - timedelta(minutes=5),
+        "entities": ["acme"],
+    }
+    base.update(overrides)
+    return MemoryRow(**base)
+
+
+def test_effective_action_defaults_to_tombstone() -> None:
+    assert X.effective_action(_row()) == "tombstone"
+    assert X.effective_action(_row(on_expire="tombstone")) == "tombstone"
+    assert X.effective_action(_row(on_expire="demote")) == "demote"
+    assert X.effective_action(_row(on_expire="bogus")) == "tombstone"
+
+
+def test_plans() -> None:
+    cfg = X.ExpiryConfig(demote_factor=0.5, demote_floor=0.05)
+    t = X.plan(_row(), now=_NOW, cfg=cfg)
+    assert t["tombstoned_at"] == _NOW and t["expires_at"] is None
+    d = X.plan(_row(on_expire="demote", expire_reason="stale runbook"), now=_NOW, cfg=cfg)
+    assert d["expires_at"] is None and d["confidence"] == 0.4 and d["on_expire"] == ""
+    assert d["expire_reason"] == "demoted on expiry: stale runbook"
+    # the floor holds
+    d2 = X.plan(_row(on_expire="demote", confidence=0.05), now=_NOW, cfg=cfg)
+    assert d2["confidence"] == 0.05
+    a = X.plan(_row(on_expire="anonymize", expire_reason="gdpr"), now=_NOW, cfg=cfg)
+    assert a["value"] == '"[EXPIRED]"' and a["entities"] == [] and a["expires_at"] is None
+    assert a["redacted_at"] == _NOW and a["redaction_reason"] == "expired:anonymize|gdpr"
+    assert a["content_sha256"] and a["on_expire"] == ""
+
+
+class _CH:
+    def __init__(self) -> None:
+        self.inserts: list[tuple[str, list[dict[str, Any]]]] = []
+        self.executes: list[str] = []
+
+    async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
+        self.inserts.append((table, rows))
+
+    async def execute(self, sql: str, **_: Any) -> None:
+        self.executes.append(sql)
+
+
+_DEMOTE_REEMITS: list[tuple[str, dict[str, Any]]] = []
+reemit_calls: list[int] = []
+
+
+def _stub(monkeypatch: pytest.MonkeyPatch, rows: list[MemoryRow]) -> tuple[_CH, list[str]]:
+    ch = _CH()
+    tombstoned_keys: list[str] = []
+    _DEMOTE_REEMITS.clear()
+
+    async def _reemit(org, ns, agent, uid, sid, key, *, ch=None, **overrides) -> int:
+        # The demote mirror is a versioned re-emit, never an UPDATE.
+        _DEMOTE_REEMITS.append((key, overrides))
+        return 1
+
+    async def _find(**_: Any) -> list[MemoryRow]:
+        return rows
+
+    async def _tomb_emb(org, ns, agent, uid, sid, key, *, ts, ch=None) -> int:
+        tombstoned_keys.append(key)
+        return 1
+
+    monkeypatch.setattr("server.memory.store.find_expired_candidates", _find)
+    monkeypatch.setattr("server.memory.store.tombstone_embeddings_for_key", _tomb_emb)
+    monkeypatch.setattr("server.memory.store.reemit_embedding_rows_for_key", _reemit)
+    reemit_calls.clear()
+
+    async def _reemit_many(items, *, ch=None, batch=500) -> int:
+        # The pass's mirrors arrive as ONE call; each key keeps
+        # its own overrides (tombstone/anonymize vs demote).
+        reemit_calls.append(len(items))
+        for (_o, _n, _a, _u, _s, key), overrides in items:
+            if "tombstoned_at" in overrides:
+                tombstoned_keys.append(key)
+            else:
+                _DEMOTE_REEMITS.append((key, overrides))
+        return len(items)
+
+    monkeypatch.setattr("server.memory.store.reemit_embedding_rows_for_keys", _reemit_many)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    return ch, tombstoned_keys
+
+
+@pytest.mark.asyncio
+async def test_sweep_writes_one_batched_insert_and_mirrors(monkeypatch: pytest.MonkeyPatch) -> None:
+    rows = [
+        _row(memory_key="a"),
+        _row(memory_key="b", on_expire="demote", confidence=0.9),
+        _row(memory_key="c", on_expire="anonymize"),
+        _row(memory_key="d", lock_mode="read_only", lock_reason="hold"),  # tombstone refused
+        _row(memory_key="e", lock_mode="no_delete", on_expire="demote"),  # value write allowed
+    ]
+    ch, tomb_keys = _stub(monkeypatch, rows)
+    res = await X.run_pass(X.ExpiryConfig())
+    assert (res.scanned, res.tombstoned, res.demoted, res.anonymized, res.locked_skipped) == (
+        5,
+        1,
+        2,
+        1,
+        1,
+    )
+    assert len(ch.inserts) == 1 and ch.inserts[0][0] == "loom.memory"
+    written = {r["memory_key"]: r for r in ch.inserts[0][1]}
+    assert set(written) == {"a", "b", "c", "e"}
+    assert written["a"]["tombstoned_at"] is not None
+    assert written["b"]["expires_at"] is None and written["b"]["confidence"] == 0.45
+    assert written["c"]["value"] == '"[EXPIRED]"' and written["c"]["redacted_at"] is not None
+    assert written["e"]["lock_mode"] == "no_delete"  # the lock rides the version row
+    assert all(r["version"] > 100 for r in written.values())
+    assert sorted(tomb_keys) == ["a", "c"]  # tombstone + anonymize drop the embeddings
+    assert ch.executes == []  # no UPDATE on the vector table
+    assert sorted(_DEMOTE_REEMITS) == [  # demote mirror: expiry cleared, confidence lowered
+        ("b", {"expires_at": None, "confidence": 0.45}),
+        ("e", {"expires_at": None, "confidence": 0.4}),
+    ]
+    assert res.failures == [] and len(res.sample) == 4
+    assert reemit_calls == [4]  # One batched mirror for the pass, not four
+
+
+@pytest.mark.asyncio
+async def test_dry_run_counts_but_writes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    ch, tomb_keys = _stub(
+        monkeypatch, [_row(memory_key="a"), _row(memory_key="b", on_expire="demote")]
+    )
+    res = await X.run_pass(X.ExpiryConfig(dry_run=True))
+    assert res.dry_run and res.tombstoned == 1 and res.demoted == 1
+    assert ch.inserts == [] and ch.executes == [] and tomb_keys == []
+
+
+@pytest.mark.asyncio
+async def test_update_by_id_refuses_an_expired_row_unless_revived(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _StubCH:
+        def __init__(self) -> None:
+            self.inserts: list[Any] = []
+
+        async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
+            self.inserts.append((table, rows))
+
+        async def query_all(self, *_: Any, **__: Any) -> list[dict[str, Any]]:
+            return []
+
+        async def execute(self, *_: Any, **__: Any) -> None:
+            return None
+
+    ch = _StubCH()
+    monkeypatch.setattr(mem_handlers, "get_client", lambda: ch)
+    monkeypatch.setattr(_stack_mod, "get_client", lambda: ch)
+    monkeypatch.setattr(_restore_mod, "get_client", lambda: ch)
+    monkeypatch.setattr("server.memory.app.write.get_client", mem_handlers.get_client)
+    monkeypatch.setattr("server.memory.app.update.get_client", mem_handlers.get_client)
+    row = _row(on_expire="demote")
+
+    async def _get_by_id(*_: Any, **__: Any) -> MemoryRow:
+        return row
+
+    monkeypatch.setattr("server.memory.store.get_by_id", _get_by_id)
+
+    async def _enforce(**_: Any) -> None:
+        return None
+
+    monkeypatch.setattr("server.memory.app.blacklist_guard.enforce_on_insert", _enforce)
+
+    # The shared write path checks the new value for conflicts
+    # and runs same-key supersession; both need ClickHouse, so keep them inert.
+    from server.memory.app import conflicts as _cf
+    from server.memory.app import key_supersession as _ks
+    from server.memory.domain.conflicts import ConflictResult as _CR
+
+    async def _clear(**_: Any) -> _CR:
+        return _CR(verdict="clear", peers=[])
+
+    async def _zero(**_: Any) -> int:
+        return 0
+
+    monkeypatch.setattr(_cf, "check_on_commit", _clear)
+    monkeypatch.setattr(_ks, "supersede_same_key_rows", _zero)
+    with pytest.raises(HTTPException) as e:
+        await update_mod.handle_memory_update_by_id(
+            MemoryUpdateByIdInput(org="test", memory_id=row.memory_id, value="edited")
+        )
+    assert e.value.status_code == 409
+    d = e.value.detail
+    assert d["code"] == "EXPIRED" and d["on_expire"] == "demote" and d["memory_key"] == "churn_note"
+    assert ch.inserts == []
+    out = await update_mod.handle_memory_update_by_id(
+        MemoryUpdateByIdInput(org="test", memory_id=row.memory_id, value="edited", revive=True)
+    )
+    assert out.updated
+    written = ch.inserts[0][1][0]
+    assert written["expires_at"] is None and written["value"] == '"edited"'
+
+
+def test_sweep_op_is_admin_and_worker_is_registered() -> None:
+    from server.operations.base import Role
+    from server.operations.registry import ALL_OPERATIONS
+    from server.settings import Settings
+
+    by_name = {o.name: o for o in ALL_OPERATIONS}
+    assert by_name["memory.sweep_expired"].required_role == Role.ADMIN
+    s = Settings()
+    assert s.memory_expiry_sweep_enabled is True and s.memory_expiry_sweep_interval_seconds == 300
+
+
+# --- a namespace's table TTL owns its rows; loom sets no expiry ---
+
+
+def test_there_is_no_age_based_sweep() -> None:
+    """Loom keeps a memory until its writer asked otherwise: the sweep acts on
+    an expiry a writer set, never on a row's age."""
+    from server.memory import store as memory_repo
+    from server.settings import settings as s
+
+    assert not hasattr(memory_repo, "find_retention_candidates")
+    assert "memory_retention_sweep_enabled" not in type(s).model_fields
+    assert s.memory_sensitive_retention_days == 0 and s.memory_run_complete_retain == "keep"
+
+
+@pytest.mark.asyncio
+async def test_expired_candidates_leave_ttl_managed_namespaces_to_their_ttl() -> None:
+    """A version row written in a namespace with `retention_days` is past that
+    namespace's table TTL at birth and the next merge drops it — the live row
+    stays, and a pass that read it would rewrite it in a loop. Both reads skip them."""
+    from server.memory import store as memory_repo
+
+    seen: list[str] = []
+
+    class _CH:
+        async def query_all(
+            self, sql: str, params: dict[str, Any] | None = None
+        ) -> list[dict[str, Any]]:
+            seen.append(sql)
+            return [{"1": 1}] if "SELECT 1" in sql else []
+
+    await memory_repo.find_expired_candidates(batch_size=5, ch=_CH())
+    assert len(seen) == 2
+    for sql in seen:
+        assert (
+            "NOT IN (SELECT org, namespace FROM loom.namespaces FINAL WHERE retention_days > 0)"
+            in sql
+        )
+
+
+@pytest.mark.asyncio
+async def test_expired_candidates_probe_before_the_final_read() -> None:
+    """An empty narrow probe ends the expiry read before the
+    sixty-column FINAL projection is touched; a hit lets it run."""
+    from server.memory import store as memory_repo
+
+    class _ECH:
+        def __init__(self, hit: bool) -> None:
+            self.hit = hit
+            self.sqls: list[str] = []
+
+        async def query_all(
+            self, sql: str, params: dict[str, Any] | None = None
+        ) -> list[dict[str, Any]]:
+            self.sqls.append(sql)
+            if "SELECT 1" in sql:
+                assert "loom.memory FINAL" not in sql
+                assert params is not None and "lim" not in params
+                return [{"1": 1}] if self.hit else []
+            return []
+
+    quiet = _ECH(hit=False)
+    assert await memory_repo.find_expired_candidates(batch_size=5, ch=quiet) == []
+    assert len(quiet.sqls) == 1 and "SELECT 1" in quiet.sqls[0]
+
+    due = _ECH(hit=True)
+    await memory_repo.find_expired_candidates(batch_size=5, ch=due, org_filter="o")
+    assert len(due.sqls) == 2
+    assert "FINAL" in due.sqls[1] and "expires_at <= now()" in due.sqls[1]
+    assert "org = {org_filter:String}" in due.sqls[0]  # the probe keeps the scope
+
+
+class _BatchCH:
+    """Answers the batched keyed read with one live row per requested key."""
+
+    def __init__(self) -> None:
+        self.reads: list[dict[str, Any]] = []
+        self.inserts: list[list[dict[str, Any]]] = []
+
+    async def query_all(
+        self, sql: str, params: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
+        assert "IN arrayZip(" in sql and "FINAL" in sql and "tombstoned_at IS NULL" in sql
+        self.reads.append(params or {})
+        p = params or {}
+        return [
+            {
+                "org": o,
+                "namespace": n,
+                "agent": a,
+                "user_id": u,
+                "session_id": s_,
+                "memory_key": k,
+                "scope": "private",
+                "embedding_model": "m",
+                "embedding": [0.1],
+                "embedding_dim": 1,
+                "confidence": 0.9,
+                "expires_at": None,
+                "tombstoned_at": None,
+                "version": 1,
+            }
+            for o, n, a, u, s_, k in zip(
+                p["o"], p["n"], p["a"], p["u"], p["s"], p["k"], strict=True
+            )
+        ]
+
+
+@pytest.mark.asyncio
+async def test_batched_reemit_reads_and_inserts_once_per_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """1,200 keys = 3 keyed reads and 3 inserts at batch 500,
+    each key re-emitted with its own overrides and a fresh version."""
+    from server.memory import store as memory_repo
+    from server.memory.store import embeddings
+
+    ch = _BatchCH()
+
+    async def _insert(rows, *, ch=None):
+        ch_.inserts.append(rows)
+
+    ch_ = ch
+    monkeypatch.setattr(embeddings, "insert_embedding_rows", _insert)
+    items = [
+        (
+            ("o", "n", "a", "u", "s", f"k{i}"),
+            {"tombstoned_at": _NOW} if i % 2 else {"confidence": 0.4},
+        )
+        for i in range(1200)
+    ]
+    n = await memory_repo.reemit_embedding_rows_for_keys(items, ch=ch)
+    assert n == 1200
+    assert len(ch.reads) == 3 and [len(r) for r in ch.inserts] == [500, 500, 200]
+    flat = {r["memory_key"]: r for batch in ch.inserts for r in batch}
+    assert flat["k1"]["tombstoned_at"] == _NOW and flat["k2"]["confidence"] == 0.4
+    assert all(r["version"] > 1 for r in flat.values())
+
+
+@pytest.mark.asyncio
+async def test_rows_whose_lock_refuses_their_expiry_are_left_out_before_the_limit() -> None:
+    """The sweep skips a row whose lock refuses its post-action; if the batch
+    held 500 of them it would re-read them every pass and never reach anyone
+    else's expiries. Both reads exclude them, the lock rules mirrored."""
+    from server.memory import store as memory_repo
+    from server.memory.app.expiry import _LOCK_CLASS, ACTIONS, DEFAULT_ACTION
+    from server.memory.domain import lock as memory_lock
+
+    seen: list[str] = []
+
+    class _CH:
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            seen.append(" ".join(sql.split()))
+            return [{"1": 1}] if "SELECT 1" in sql else []
+
+    await memory_repo.find_expired_candidates(batch_size=5, ch=_CH())
+    assert len(seen) == 2, seen
+    for sql in seen:
+        cut = sql.index("AND NOT (lock_mode")
+        assert cut < sql.index("LIMIT")
+        assert "(lock_until IS NULL OR lock_until > now())" in sql
+    # the SQL's refusal table is memory_lock's: read_only refuses every action,
+    # no_delete only the tombstone (the default action)
+    assert DEFAULT_ACTION == "tombstone" and set(ACTIONS) == {"tombstone", "demote", "anonymize"}
+    for action in ACTIONS:
+        assert _LOCK_CLASS[action] in memory_lock.REFUSES["read_only"]
+        assert (_LOCK_CLASS[action] in memory_lock.REFUSES["no_delete"]) == (action == "tombstone")

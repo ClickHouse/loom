@@ -1,0 +1,12 @@
+apiVersion: v2
+name: mychart
+description: A synthetic chart for the code-lanes corpus
+type: application
+version: 0.1.0
+dependencies:
+  - name: sidecar
+    version: "1.0.0"
+    repository: file://../sidecar
+  - name: redis
+    version: "17.0.0"
+    repository: https://charts.example.com

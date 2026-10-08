@@ -1,0 +1,288 @@
+{
+  "model": "text-embedding-3-large",
+  "dim": 3072,
+  "paraphrase": {
+    "n": 42,
+    "min": 0.5504,
+    "p10": 0.6912,
+    "median": 0.8358,
+    "p90": 0.9385,
+    "max": 0.976
+  },
+  "different": {
+    "n": 43,
+    "min": 0.2084,
+    "p10": 0.4076,
+    "median": 0.5777,
+    "p90": 0.7695,
+    "max": 0.8797
+  },
+  "chosen": {
+    "threshold": 0.88,
+    "paraphrase_hits": 12,
+    "paraphrase_total": 42,
+    "false_hits": 0,
+    "margin_above_max_different": 0.0003,
+    "margin_below_min_paraphrase": -0.3296
+  },
+  "sweep": [
+    {
+      "threshold": 0.4,
+      "paraphrase_hits": 42,
+      "false_hits": 39
+    },
+    {
+      "threshold": 0.45,
+      "paraphrase_hits": 42,
+      "false_hits": 35
+    },
+    {
+      "threshold": 0.5,
+      "paraphrase_hits": 42,
+      "false_hits": 29
+    },
+    {
+      "threshold": 0.55,
+      "paraphrase_hits": 42,
+      "false_hits": 24
+    },
+    {
+      "threshold": 0.6,
+      "paraphrase_hits": 41,
+      "false_hits": 20
+    },
+    {
+      "threshold": 0.65,
+      "paraphrase_hits": 40,
+      "false_hits": 14
+    },
+    {
+      "threshold": 0.7,
+      "paraphrase_hits": 37,
+      "false_hits": 10
+    },
+    {
+      "threshold": 0.75,
+      "paraphrase_hits": 31,
+      "false_hits": 7
+    },
+    {
+      "threshold": 0.8,
+      "paraphrase_hits": 30,
+      "false_hits": 3
+    },
+    {
+      "threshold": 0.85,
+      "paraphrase_hits": 15,
+      "false_hits": 1
+    },
+    {
+      "threshold": 0.9,
+      "paraphrase_hits": 7,
+      "false_hits": 0
+    }
+  ],
+  "different_identifier": {
+    "n": 22,
+    "min": 0.674,
+    "p10": 0.687,
+    "median": 0.8397,
+    "p90": 0.9569,
+    "max": 0.9857
+  },
+  "chosen_all_different": {
+    "threshold": 0.99,
+    "paraphrase_hits": 0,
+    "paraphrase_total": 42,
+    "false_hits": 0,
+    "margin_above_max_different": 0.0043,
+    "margin_below_min_paraphrase": -0.4396
+  },
+  "chosen_with_guard": {
+    "threshold": 0.84,
+    "paraphrase_hits": 17,
+    "paraphrase_total": 42,
+    "paraphrase_guarded": 2,
+    "false_hits": 0,
+    "different_guarded": 34,
+    "different_total": 65,
+    "margin_above_max_unguarded_different": 0.0056
+  },
+  "sweep_with_guard": [
+    {
+      "threshold": 0.4,
+      "paraphrase_hits": 40,
+      "false_hits": 28
+    },
+    {
+      "threshold": 0.45,
+      "paraphrase_hits": 40,
+      "false_hits": 26
+    },
+    {
+      "threshold": 0.5,
+      "paraphrase_hits": 40,
+      "false_hits": 21
+    },
+    {
+      "threshold": 0.55,
+      "paraphrase_hits": 40,
+      "false_hits": 18
+    },
+    {
+      "threshold": 0.6,
+      "paraphrase_hits": 39,
+      "false_hits": 16
+    },
+    {
+      "threshold": 0.65,
+      "paraphrase_hits": 39,
+      "false_hits": 11
+    },
+    {
+      "threshold": 0.7,
+      "paraphrase_hits": 36,
+      "false_hits": 7
+    },
+    {
+      "threshold": 0.75,
+      "paraphrase_hits": 30,
+      "false_hits": 5
+    },
+    {
+      "threshold": 0.8,
+      "paraphrase_hits": 29,
+      "false_hits": 2
+    },
+    {
+      "threshold": 0.85,
+      "paraphrase_hits": 14,
+      "false_hits": 0
+    },
+    {
+      "threshold": 0.9,
+      "paraphrase_hits": 6,
+      "false_hits": 0
+    }
+  ],
+  "closest_unguarded_different": [
+    [
+      0.8344,
+      "how does loom_search choose namespaces to search?",
+      "how does loom_search rank results across namespaces?"
+    ],
+    [
+      0.8045,
+      "where is the memory limit enforced for a query?",
+      "where is the memory limit enforced for the whole server?"
+    ],
+    [
+      0.7695,
+      "how does ReadBufferFromS3 retry?",
+      "how does ReadBufferFromS3 seek?"
+    ],
+    [
+      0.7522,
+      "how are pinned memories protected from overwrites?",
+      "how are locked memories protected from deletes?"
+    ],
+    [
+      0.7501,
+      "how are working memory blocks scoped?",
+      "how long do working memory blocks live before they expire?"
+    ]
+  ],
+  "closest_different_identifier": [
+    [
+      0.9857,
+      "what does issue #41777 fix?",
+      "what does issue #41778 fix?"
+    ],
+    [
+      0.9676,
+      "what changed in PR #119663?",
+      "what changed in PR #119651?"
+    ],
+    [
+      0.9569,
+      "what changed in ClickHouse 26.8 for the query cache?",
+      "what changed in ClickHouse 26.3 for the query cache?"
+    ],
+    [
+      0.917,
+      "how is max_memory_usage enforced?",
+      "how is max_memory_usage_for_user enforced?"
+    ],
+    [
+      0.9004,
+      "where is max_block_size applied?",
+      "where is max_insert_block_size applied?"
+    ]
+  ],
+  "closest_different": [
+    [
+      0.8797,
+      "where is max_threads applied?",
+      "where is max_insert_threads applied?"
+    ],
+    [
+      0.8344,
+      "how does loom_search choose namespaces to search?",
+      "how does loom_search rank results across namespaces?"
+    ],
+    [
+      0.8045,
+      "where is the memory limit enforced for a query?",
+      "where is the memory limit enforced for the whole server?"
+    ],
+    [
+      0.791,
+      "where does toStartOfInterval throw ILLEGAL_TYPE_OF_ARGUMENT?",
+      "where does toStartOfInterval throw for a zero interval?"
+    ],
+    [
+      0.7695,
+      "how does ReadBufferFromS3 retry?",
+      "how does ReadBufferFromS3 seek?"
+    ]
+  ],
+  "farthest_paraphrase": [
+    [
+      0.5504,
+      "how are mutations applied to parts?",
+      "how does ClickHouse apply an ALTER mutation to data parts?"
+    ],
+    [
+      0.6057,
+      "where is the memory limit enforced for a query?",
+      "where does ClickHouse check max_memory_usage for a query?"
+    ],
+    [
+      0.6543,
+      "how does parallel replicas split work?",
+      "how does the parallel replicas coordinator assign ranges to replicas?"
+    ],
+    [
+      0.676,
+      "where is max_threads applied?",
+      "which code uses max_threads to size query parallelism?"
+    ],
+    [
+      0.6912,
+      "where is the memory limit enforced for a query?",
+      "which code throws when a query exceeds its memory limit?"
+    ]
+  ],
+  "unlabelled_cached": [
+    [
+      0.7743,
+      "how does toStartOfInterval validate argument types?",
+      "where does toStartOfInterval throw ILLEGAL_TYPE_OF_ARGUMENT?"
+    ],
+    [
+      0.5891,
+      "how are parts renamed after an insert?",
+      "how does a freshly written temporary part become visible to queries after an insert"
+    ]
+  ]
+}

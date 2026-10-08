@@ -1,0 +1,28 @@
+{
+ "protocol": "bench.lme_search_latency: one memory.search per question at top_k 15, one call at a time, over the ingested namespaces",
+ "full_500": {
+  "n": 500,
+  "errors": 0,
+  "top_k": 15,
+  "search_ms_p50": 881,
+  "search_ms_p95": 2687,
+  "context_tokens_mean": 1753,
+  "context_tokens_p50": 1722
+ },
+ "warm_100": [
+  {
+   "search_ms_p50": 487,
+   "search_ms_p95": 3379,
+   "context_tokens_p50": 1732
+  },
+  {
+   "search_ms_p50": 449,
+   "search_ms_p95": 2330,
+   "context_tokens_p50": 1732
+  }
+ ],
+ "models": {
+  "llm_model": "gpt-6-luna",
+  "embedding_model": "text-embedding-3-large"
+ }
+}

@@ -1,0 +1,331 @@
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { ChevronDown, ChevronRight, Footprints, Pin, PinOff, Plus, Route } from "lucide-react";
+import { IconButton } from "../../components/IconButton";
+import { Kbd } from "../../components/ui";
+import { relationLabel, shorten, type Selection, type VisibleTree, type WalkModel, type XNode } from "./model";
+
+/**
+ * Outline — the walk as a tree a keyboard can read. One row per drawn node in tree order,
+ * the seed as the root; each row is one line of name and one of metadata (hop, the edge
+ * that reached it, the community when known). Roving tabindex: `↑`/`↓` move, `→` expands
+ * a collapsed row or moves into its children, `←` collapses or moves to the parent, `↵`
+ * selects, `w` walks from here, `p` finds a path from the seed to here, `e` expands in
+ * place (`facts.related`), `r` selects the edge that reached the row, `x` pins. The row's
+ * relation is a button too: clicking it selects the edge. The actions are drawn on the
+ * selected row only, so 200 rows stay 200 rows.
+ */
+
+export interface OutlineProps {
+  model: WalkModel;
+  visible: VisibleTree;
+  children: Map<string, XNode[]>;
+  order: XNode[];
+  collapsed: Set<string>;
+  pinned: Set<string>;
+  selection: Selection;
+  typed: boolean;
+  hasCommunities: boolean;
+  communityLabel: (cid: number | null) => string;
+  summary: string;
+  expanding: string | null;
+  onSelect: (sel: Selection) => void;
+  onWalk: (entity: string) => void;
+  onPath: (entity: string) => void;
+  onExpand: (entity: string) => void;
+  onCollapse: (entity: string, collapsed: boolean) => void;
+  onPin: (entity: string) => void;
+}
+
+export function Outline({
+  model,
+  visible,
+  children,
+  order,
+  collapsed,
+  pinned,
+  selection,
+  typed,
+  hasCommunities,
+  communityLabel,
+  summary,
+  expanding,
+  onSelect,
+  onWalk,
+  onPath,
+  onExpand,
+  onCollapse,
+  onPin,
+}: OutlineProps) {
+  const rows: XNode[] = [
+    {
+      entity: model.seed,
+      hop: 0,
+      via_co_occur: 0,
+      via_relation: "",
+      via_direction: "",
+      via_provenance: "",
+      valid_from: "",
+      valid_to: "",
+      community_id: model.seedCommunityId,
+      path: [model.seed],
+      parent: null,
+      origin: "walk",
+    },
+    ...order,
+  ];
+  const [active, setActive] = useState<string>(model.seed);
+  const refs = useRef(new Map<string, HTMLDivElement>());
+  // A new picture puts the roving focus back on the seed when the active
+  // row is gone.
+  useEffect(() => {
+    if (!rows.some((r) => r.entity === active)) setActive(model.seed);
+    // Only a new picture resets focus; a roving `active` change must not (`rows` derives from props).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model, visible]);
+
+  const focusRow = useCallback((entity: string) => {
+    setActive(entity);
+    refs.current.get(entity)?.focus();
+  }, []);
+
+  const selectedEntity = selection?.kind === "node" ? selection.entity : null;
+  const selectedEdgeChild = selection?.kind === "edge" ? selection.child : null;
+
+  const onKey = (e: ReactKeyboardEvent<HTMLDivElement>, n: XNode, index: number) => {
+    const kids = children.get(n.entity) || [];
+    const hasKids = kids.length > 0 || (visible.hiddenUnder.get(n.entity) || 0) > 0;
+    const isCollapsed = collapsed.has(n.entity);
+    switch (e.key) {
+      case "ArrowDown":
+        e.preventDefault();
+        if (index + 1 < rows.length) focusRow(rows[index + 1].entity);
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        if (index > 0) focusRow(rows[index - 1].entity);
+        break;
+      case "Home":
+        e.preventDefault();
+        focusRow(rows[0].entity);
+        break;
+      case "End":
+        e.preventDefault();
+        focusRow(rows[rows.length - 1].entity);
+        break;
+      case "ArrowRight":
+        e.preventDefault();
+        if (isCollapsed) onCollapse(n.entity, false);
+        else if (kids.length) focusRow(kids[0].entity);
+        break;
+      case "ArrowLeft":
+        e.preventDefault();
+        if (hasKids && !isCollapsed) onCollapse(n.entity, true);
+        else if (n.parent) focusRow(n.parent);
+        break;
+      case "Enter":
+      case " ":
+        e.preventDefault();
+        onSelect(selectedEntity === n.entity ? null : { kind: "node", entity: n.entity });
+        break;
+      case "w":
+      case "W":
+        e.preventDefault();
+        if (n.entity !== model.seed) onWalk(n.entity);
+        break;
+      case "p":
+      case "P":
+        e.preventDefault();
+        if (n.entity !== model.seed) onPath(n.entity);
+        break;
+      case "e":
+      case "E":
+        e.preventDefault();
+        if (isCollapsed) onCollapse(n.entity, false);
+        else onExpand(n.entity);
+        break;
+      case "r":
+      case "R":
+        e.preventDefault();
+        if (n.parent)
+          onSelect(selectedEdgeChild === n.entity ? null : { kind: "edge", parent: n.parent, child: n.entity });
+        break;
+      case "x":
+      case "X":
+        e.preventDefault();
+        if (n.entity !== model.seed) onPin(n.entity);
+        break;
+      default:
+        return;
+    }
+  };
+
+  return (
+    <div className="explorer-outline mt-3 lg:flex-1 lg:min-h-0 flex flex-col">
+      <p className="text-xs text-[var(--color-text-muted)] mb-1" id="explorer-outline-summary">
+        {summary}{" "}
+        <span className="text-text-subtle inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+          <span>
+            <Kbd>↑</Kbd>
+            <Kbd>↓</Kbd> move
+          </span>{" "}
+          ·{" "}
+          <span>
+            <Kbd>←</Kbd>
+            <Kbd>→</Kbd> collapse/expand
+          </span>{" "}
+          ·{" "}
+          <span>
+            <Kbd>↵</Kbd> select
+          </span>{" "}
+          ·{" "}
+          <span>
+            <Kbd>w</Kbd> walk
+          </span>{" "}
+          ·{" "}
+          <span>
+            <Kbd>p</Kbd> path
+          </span>{" "}
+          ·{" "}
+          <span>
+            <Kbd>e</Kbd> expand
+          </span>{" "}
+          ·{" "}
+          <span>
+            <Kbd>r</Kbd> edge
+          </span>{" "}
+          ·{" "}
+          <span>
+            <Kbd>x</Kbd> pin
+          </span>
+        </span>
+      </p>
+      <div
+        role="tree"
+        aria-label="Walk outline"
+        aria-describedby="explorer-outline-summary"
+        className="lg:flex-1 min-h-[120px] max-h-[320px] lg:max-h-none overflow-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs"
+      >
+        {rows.map((n, i) => {
+          const kids = children.get(n.entity) || [];
+          const hidden = visible.hiddenUnder.get(n.entity) || 0;
+          const hasKids = kids.length > 0 || hidden > 0;
+          const isCollapsed = collapsed.has(n.entity);
+          const isSelected = selectedEntity === n.entity;
+          const edgeSelected = selectedEdgeChild === n.entity;
+          const parent = n.parent;
+          const isSeed = n.entity === model.seed;
+          return (
+            <div
+              key={n.entity}
+              ref={(el) => {
+                if (el) refs.current.set(n.entity, el);
+                else refs.current.delete(n.entity);
+              }}
+              role="treeitem"
+              aria-level={n.hop + 1}
+              aria-selected={isSelected}
+              aria-expanded={hasKids ? !isCollapsed : undefined}
+              aria-label={`${n.entity} · hop ${n.hop}${n.parent ? ` · ${typed && n.via_relation ? relationLabel(n.via_relation) : `co-mentioned ${n.via_co_occur}×`}` : ""}${pinned.has(n.entity) ? " · pinned" : ""}${hidden ? ` · ${hidden} hidden` : ""}`}
+              tabIndex={active === n.entity ? 0 : -1}
+              onFocus={() => setActive(n.entity)}
+              onKeyDown={(e) => onKey(e, n, i)}
+              onClick={(e) => {
+                if (e.target instanceof Element && e.target.closest("button")) return;
+                onSelect(isSelected ? null : { kind: "node", entity: n.entity });
+              }}
+              className={`group flex items-start gap-1.5 px-2 py-1 border-b border-[var(--color-border)] last:border-b-0 cursor-default ${isSelected || edgeSelected ? "bg-[var(--color-surface-2)]" : "hover:bg-[var(--color-surface-2)]"}`}
+              style={{ paddingLeft: `${8 + n.hop * 14}px` }}
+            >
+              <button
+                type="button"
+                tabIndex={-1}
+                aria-hidden="true"
+                disabled={!hasKids}
+                onClick={() => onCollapse(n.entity, !isCollapsed)}
+                className={`mt-0.5 shrink-0 w-4 h-4 grid place-items-center rounded text-[var(--color-text-muted)] ${hasKids ? "hover:text-[var(--color-text)]" : "opacity-0"}`}
+              >
+                {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+              </button>
+              <div className="min-w-0 flex-1">
+                <div
+                  className={`font-mono truncate ${isSelected ? "text-[var(--color-text)] font-semibold" : "text-[var(--color-text)]"}`}
+                >
+                  {isSeed ? <span className="text-[var(--color-text-subtle)] mr-1">seed</span> : null}
+                  {n.entity}
+                  {pinned.has(n.entity) && (
+                    <Pin size={10} aria-hidden="true" className="inline ml-1 text-[var(--color-accent)]" />
+                  )}
+                  {hidden > 0 && (
+                    <span className="ml-1.5 tabular-nums text-2xs px-1 rounded-full bg-[var(--color-surface-3)] text-[var(--color-text-muted)]">
+                      +{hidden}
+                    </span>
+                  )}
+                </div>
+                <div className="text-2xs text-[var(--color-text-muted)] flex items-center gap-1.5 min-w-0">
+                  <span className="tabular-nums shrink-0">hop {n.hop}</span>
+                  {parent && (
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      onClick={() => onSelect(edgeSelected ? null : { kind: "edge", parent, child: n.entity })}
+                      className={`truncate underline decoration-dotted hover:text-[var(--color-text)] ${edgeSelected ? "text-[var(--color-text)]" : ""}`}
+                    >
+                      {typed && n.via_relation
+                        ? `${n.via_direction === "in" ? "← " : "→ "}${relationLabel(n.via_relation)}`
+                        : `co-mentioned ${n.via_co_occur}×`}
+                      {" with "}
+                      {shorten(parent, 20)}
+                    </button>
+                  )}
+                  {hasCommunities && n.community_id !== null && (
+                    <span className="truncate">· {communityLabel(n.community_id)}</span>
+                  )}
+                  {n.origin === "expand" && <span className="text-[var(--color-text-subtle)]">· expanded</span>}
+                </div>
+              </div>
+              {isSelected && (
+                <div className="flex items-center shrink-0 -my-1">
+                  <IconButton
+                    label={isCollapsed ? "Show hidden children" : `Expand ${shorten(n.entity, 24)} in place`}
+                    onClick={() => (isCollapsed ? onCollapse(n.entity, false) : onExpand(n.entity))}
+                    disabled={expanding === n.entity}
+                    className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                  >
+                    <Plus size={13} />
+                  </IconButton>
+                  {!isSeed && (
+                    <IconButton
+                      label={pinned.has(n.entity) ? "Unpin" : "Pin (survives facet changes)"}
+                      onClick={() => onPin(n.entity)}
+                      className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                    >
+                      {pinned.has(n.entity) ? <PinOff size={13} /> : <Pin size={13} />}
+                    </IconButton>
+                  )}
+                  {!isSeed && (
+                    <IconButton
+                      label="Walk from here"
+                      onClick={() => onWalk(n.entity)}
+                      className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                    >
+                      <Footprints size={13} />
+                    </IconButton>
+                  )}
+                  {!isSeed && (
+                    <IconButton
+                      label="Path from the seed to here"
+                      onClick={() => onPath(n.entity)}
+                      className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                    >
+                      <Route size={13} />
+                    </IconButton>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}

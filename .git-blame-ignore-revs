@@ -1,0 +1,4 @@
+# Mechanical formatting commits: `git blame --ignore-revs-file .git-blame-ignore-revs`
+# (GitHub reads this file automatically).
+# ruff format + biome + prettier + taplo + shfmt across the repository
+1c059bb2a9880d4b00c8c3e446c0da28eb5e2891

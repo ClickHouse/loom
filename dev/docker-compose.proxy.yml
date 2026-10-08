@@ -1,0 +1,50 @@
+# The host proxy of a blue/green deployment. Holds :7777 and
+# forwards to the colour `var/proxy/upstream.conf` names. Started once;
+# `redeploy.sh` never restarts it — it reloads it.
+#
+#   docker compose -p loom-proxy -f dev/docker-compose.proxy.yml up -d
+#
+# Both colours join `loom-net` (created here if absent) so nginx resolves
+# `loom-blue` / `loom-green` by container name.
+
+services:
+  proxy:
+    # Pinned by digest: the proxy holds :7777, so an image change happens only
+    # on a deliberate `up`, never on a pull. Bump version and digest together.
+    image: nginx:1.28.3-alpine@sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236
+    container_name: loom-proxy
+    restart: unless-stopped
+    # nginx.conf asks for 4096 worker_connections; the daemon's default
+    # soft nofile is 1024, so without this nginx warns at start
+    # ("4096 worker_connections exceed open file resource limit: 1024") and
+    # serves at most ~1,000 concurrent connections before refusing — the
+    # fd ceiling the colour containers already raise. Same values as
+    # dev/docker-compose.colour.yml.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "7777:7777"
+    volumes:
+      # The directory, not nginx.conf itself: a checkout replaces the file with
+      # a new inode, which a single-file bind mount would not follow, so a
+      # reload would re-read stale config. entry.conf never changes.
+      - ../deploy/proxy/entry.conf:/etc/nginx/nginx.conf:ro
+      - ../deploy/proxy:/etc/nginx/loom:ro
+      # The directory, not the file: redeploy.sh writes a temp file and
+      # renames it over upstream.conf, which a single-file bind mount would
+      # not follow.
+      - ../var/proxy:/etc/nginx/upstream:ro
+    networks:
+      - loom-net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:7777/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+networks:
+  loom-net:
+    name: loom-net

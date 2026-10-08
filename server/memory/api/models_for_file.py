@@ -1,0 +1,88 @@
+"""memory.for_file — what Loom knows about one file, shaped for the moment
+before an edit.
+
+A constraint an agent must respect while editing `src/x.cpp` ("never call
+allocate() here", "this file is generated — edit the template") is only
+useful if it arrives BEFORE the edit, without the agent remembering to
+search. The plugin's PreToolUse hook on Edit/Write calls this op with the
+target path and injects the rendered block as additional context. Memories
+reach a file through the `files[]` facet the extractor fills; a match accepts
+a repo-relative path or a bare filename, because stored rows use both shapes.
+
+Read-only, VIEWER, one query. Rows tagged `constraint` sort first, then
+pinned, then confidence. `rendered` is cut at `token_budget` so the hook
+never pays more than it asked for. `extra_namespaces` (a repository's primary code
+namespace, where its team file rules live) runs the same query per readable namespace,
+merged in the same order, team rows marked with their author.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+from pydantic import BaseModel, Field
+
+
+class MemoryForFileInput(BaseModel):
+    org: str
+    namespace: str
+    # Repo-relative path ("src/Storages/MergeTreeData.cpp") or bare filename.
+    path: str = Field(min_length=1, max_length=1024)
+    # Optional tag filter (any-of), e.g. ["project:loom"] under the plugin's
+    # tag-scoped project mode. Empty = no tag filter.
+    tags: list[str] = Field(default_factory=list, max_length=16)
+    # At most this many rows, across every namespace read.
+    top_k: int = Field(default=8, ge=1, le=50)
+    # Cap on the rendered block; the hook injects `rendered` verbatim.
+    token_budget: int = Field(default=300, ge=50, le=4000)
+    # Conflicted rows are still live facts a reader should see; duplicates,
+    # superseded and rejected rows are not.
+    include_conflicted: bool = True
+    # The repository's primary code namespace (its team file
+    # rules), read beside `namespace`. Each is checked for read access like
+    # `namespace` would be and skipped silently when unreadable; its rows
+    # carry `namespace` and render as "Team rule (by <actor>):". The tag
+    # filter applies to `namespace` only — a code namespace is already the
+    # repository's.
+    extra_namespaces: list[str] = Field(default_factory=list, max_length=2)
+
+
+class _MemoryForFileHit(BaseModel):
+    memory_key: str
+    memory_type: str
+    # First 600 chars of the value; the full row is a memory.get away.
+    value: str
+    tags: list[str] = Field(default_factory=list)
+    confidence: float = 1.0
+    pinned: bool = False
+    status: str = "active"
+    agent: str = ""
+    updated_at: datetime | None = None
+    # Where the row lives — the request's namespace or one of
+    # its extra_namespaces.
+    namespace: str = ""
+    # Who wrote the row (`human:<subject>` / `process:<subject>`);
+    # a team rule renders with it.
+    actor: str = ""
+    # Set when this row and an older one of the same namespace
+    # are cross-linked by the conflict check (`conflict_with`): the older's
+    # key and author. This row is placed directly above it.
+    supersedes_key: str = ""
+    supersedes: str = ""
+    matched_files: list[str] = Field(default_factory=list)
+
+
+class MemoryForFileOutput(BaseModel):
+    # The path matched, normalised to repo-relative form.
+    path: str
+    # Number of `hits` returned (after the `top_k` cut).
+    total: int
+    # Matching rows: `constraint`-tagged first, then pinned, then by confidence,
+    # then newest.
+    hits: list[_MemoryForFileHit]
+    # Prompt-ready block, cut at token_budget. Empty when total == 0.
+    rendered: str = ""
+    # Size of `rendered` at 4 chars per token; 0 when it is empty.
+    tokens_estimate: int = 0
+    # True when `token_budget` cut rows from `rendered`; `hits` still lists them.
+    truncated: bool = False

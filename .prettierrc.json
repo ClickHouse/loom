@@ -1,0 +1,5 @@
+{
+  "proseWrap": "preserve",
+  "printWidth": 100,
+  "overrides": [{ "files": ["*.yml", "*.yaml"], "options": { "printWidth": 120 } }]
+}

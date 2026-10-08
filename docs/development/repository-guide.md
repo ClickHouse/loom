@@ -1,0 +1,103 @@
+# Repository guide
+
+What every top-level directory holds, where a concern lives inside `server/`, the order to read the code in, and the conventions a pull request fails without.
+
+## Top-level layout
+
+| Path                                                                 | Holds                                                                                                                                                                                                                   |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `server/`                                                            | the FastAPI server: domain packages (memory, code, tracker, …), the operation registry, workers, transports, CLI, settings                                                                                              |
+| `sdk/python/`                                                        | the Python SDK, published as `clickhouse-loom` (`sdk/python/loom/`)                                                                                                                                                     |
+| `sdk/typescript/`                                                    | the TypeScript SDK, published as `@clickhouse/loom` (`sdk/typescript/src/`)                                                                                                                                             |
+| `frontend/`                                                          | the React dashboard served at `/me` (Vite + Tailwind); `src/`, Playwright specs in `e2e/`, `scripts/bundle_budget.mjs`                                                                                                  |
+| `schemas/`                                                           | `migrations/` (numbered SQL), `schema.sql` (generated current shape), `otel/` (ClickStack OTel tables), `ops/` (hand-run SQL); see [`schemas/README.md`](../../schemas/README.md)                                       |
+| `dev/`                                                               | compose stacks, operator scripts (`loom_ingest.py`, `loom_init.py`, `onboard_tenant.py`, backup and restore, `verify_audit_chain.py`), `ci_start_clickhouse.sh`, `redeploy_preflight.sh`                                |
+| `deploy/`                                                            | ClickHouse server config (`clickhouse-config/`), the Lemmagen3 model (`lemmagen3/`), the blue/green proxy (`proxy/`), host cron (`cron/`), dashboards (`dashboards/`, `hyperdx_dashboards.md`, `clickstack_sources.sh`) |
+| `bench/`                                                             | benchmark harnesses and gates, their fixtures (`fixtures/`), datasets, rubrics, acceptance and skill evals; see [benchmarks](../benchmarks/overview.md)                                                                 |
+| `integrations/`                                                      | client integrations: the Claude Code and Codex plugins, the grep shim, Cursor and generic transcript hooks, the OKF CI gate                                                                                             |
+| `skills/`                                                            | the standalone `loom-code` agent skill                                                                                                                                                                                  |
+| `scripts/`                                                           | `codegen/` (generators), `gates/` (CI ratchets and guards), `ops/` (operator tools), `scip_harness/` (compiler-tier producers)                                                                                          |
+| `tests/`                                                             | `unit/`, `integration/`, `analyzer/`, `code_lanes/`, `fixtures/` (below)                                                                                                                                                |
+| `examples/`                                                          | runnable integration examples (`claude_agent_loop.py`, `ledger_run.py`, `log_conversation.py`, `onboarding_walkthrough.py`)                                                                                             |
+| `docs/`                                                              | this documentation                                                                                                                                                                                                      |
+| `.github/`                                                           | CI (`workflows/ci.yml`), release (`workflows/release.yml`), issue and pull-request templates                                                                                                                            |
+| `Dockerfile`, `Makefile`, `redeploy.sh`, `pyproject.toml`, `uv.lock` | the image, the task runner, the blue/green deploy script, the server package and its lock file                                                                                                                          |
+| `CLAUDE.md`, `AGENTS.md`                                             | orientation for coding agents working in the repository                                                                                                                                                                 |
+
+## Inside server/
+
+`server/` is organised by domain. A request enters through a transport, is dispatched by
+the operation registry to a handler in a domain's `app/`, which runs pure logic from
+`domain/` and reads and writes through the repositories in `store/`, which hold the
+domain's SQL. [Server layout](../architecture/server-layout.md) is the full map, with the
+import rules a contract test enforces; the request path is in
+[system overview](../architecture/system-overview.md).
+
+| Package / module                                                                                        | Role                                                                                                                                                                                                                                                                                                                         |
+| ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory/`, `code/`, `tracker/`, `knowledge/`, `erasure/`, `tasks/`, `identity/`, `insights/`            | the domain packages; each holds up to five layers: `api/` (wire models `models*.py` and `Operation` lists `ops*.py`), `app/` (handlers and orchestration), `domain/` (pure logic), `store/` (ClickHouse repositories and row builders; `memory/store/rows.py` holds the version-row builders), `workers/` (background loops) |
+| `operations/`                                                                                           | the registry core: `Operation` and `Role` (`base.py`); `registry.py` imports every domain's op group and builds `ALL_OPERATIONS` and `OPERATIONS_BY_NAME`; `toolsets.py`, read projection, the reach census                                                                                                                  |
+| `transport/`                                                                                            | HTTP (`http.py`) and MCP (`mcp.py` with `mcp_schemas`, `mcp_config`, `mcp_tools`, `mcp_identity`), argument feedback, body limits                                                                                                                                                                                            |
+| `workers/`                                                                                              | the worker registry (`registry.py`, `_WORKERS`) and the supervisor (`supervisor.py`) that runs it; each loop lives in its domain's `workers/`                                                                                                                                                                                |
+| `settings/`                                                                                             | one mixin per area (`_memory.py`, `_code.py`, `_tracker.py`, …) composed into `Settings`                                                                                                                                                                                                                                     |
+| `auth/`                                                                                                 | JWT mint and verify, roles and grants, login, OIDC, self-signup, revocation                                                                                                                                                                                                                                                  |
+| `embedding/`, `llm/`                                                                                    | pluggable provider surfaces (OpenAI, Anthropic, Gemini, local, fake), caches and fallback                                                                                                                                                                                                                                    |
+| `observability/`                                                                                        | the ledger emitter, audit log, cost accounting and budgets, OTel metrics and spans, the `problems` list `/v1/health` reports                                                                                                                                                                                                 |
+| `clients/`                                                                                              | HTTP clients for external services (the shared provider pool, GitHub)                                                                                                                                                                                                                                                        |
+| `storage/`                                                                                              | the filesystem blob store and per-table TTL composition                                                                                                                                                                                                                                                                      |
+| `cli/`                                                                                                  | the `loom` command tree (`app.py` assembles it)                                                                                                                                                                                                                                                                              |
+| `main.py`, `boot.py`, `health.py`, `wiring.py`                                                          | the FastAPI app and its lifespan (workers, transports), the boot and shutdown steps (boot migration, revocation snapshot), `/v1/health`, and `wire()`                                                                                                                                                                        |
+| `core/ch.py`                                                                                            | the ClickHouse client, pooling and query attribution (`set_query_tag`)                                                                                                                                                                                                                                                       |
+| `core/errors.py`                                                                                        | typed errors (`LoomServerError` subclasses) and their HTTP status                                                                                                                                                                                                                                                            |
+| `core/ratelimit.py`, `core/ratelimit_shared.py`, `core/idempotency.py`, `memory/app/blacklist_guard.py` | request-path guards                                                                                                                                                                                                                                                                                                          |
+| `core/schema/`                                                                                          | the migration runner (`migrate.py`) and its cross-container lock (`migrate_lease.py`), and the schema rewrites the runner and the rebuild tools share (`table_rebuild.py`, `vector_codec_ddl.py`)                                                                                                                            |
+
+## Inside tests/
+
+| Path                 | Contents                                                                                                                                                 |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/unit/`        | fast tests that need no ClickHouse; `snapshots/` (CLI tree and help, worker registry, SDK public API), `fixtures/`, shared helpers                       |
+| `tests/integration/` | tests against a running server and ClickHouse (`conftest.py` at `tests/` wires them), including the cross-principal leakage probe                        |
+| `tests/analyzer/`    | the statement corpus: every SQL builder's shapes through `EXPLAIN QUERY TREE` on migrated empty tables; see its [README](../../tests/analyzer/README.md) |
+| `tests/code_lanes/`  | the SQL and shell lanes corpus: what the code index derives from `tests/fixtures/code_lanes/`, compared with a committed expectation                     |
+| `tests/fixtures/`    | inputs shared across suites                                                                                                                              |
+
+How each suite runs, skips and gates CI is in [testing](./testing.md).
+
+## Reading order for a new contributor
+
+1. The [README](../../README.md) and [system overview](../architecture/system-overview.md):
+   the product surface and the shape of the system.
+2. [`server/operations/registry.py`](../../server/operations/registry.py): the wire-op
+   registry every transport iterates.
+3. `server/main.py`, the lifespan: how migrations, workers and transports are wired.
+4. The op group under `server/<domain>/api/ops*.py` for whatever you are touching, then
+   its handler in `server/<domain>/app/` and the repositories in `server/<domain>/store/`
+   it calls.
+5. [`schemas/schema.sql`](../../schemas/schema.sql) for the tables it reads and writes.
+6. [`CLAUDE.md`](../../CLAUDE.md): the conventions and their reasons.
+
+## Conventions that are not obvious
+
+[CONTRIBUTING.md](../../CONTRIBUTING.md#conventions-that-arent-obvious) lists them, and [`CLAUDE.md`](../../CLAUDE.md) gives the reasons. These tests and gates enforce them:
+
+| Gate                                                                             | Holds                                                    |
+| -------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| generated SDK tables, reach census ([code generation](code-generation.md))       | ops are registry rows                                    |
+| `tests/integration/test_cross_principal_leakage.py`                              | org-wide-id ops hide a foreign row as `found=False`      |
+| `test_memory_versions_schema.py`                                                 | `loom.memory` columns mirror into `loom.memory_versions` |
+| `test_migrations_additive.py`, the ledger checksum ([migrations](migrations.md)) | migrations are additive and never edited                 |
+| `test_every_table_is_classified.py`                                              | every table is classified for erasure                    |
+| `test_settings_attribute_access.py`, `test_settings_reference.py`                | settings read as `settings.<field>`, reference current   |
+| `test_worker_registry_snapshot.py`, `test_worker_registry_parity.py`             | workers are registry rows                                |
+| ruff `BLE001`                                                                    | a broad except says why                                  |
+| `scripts/gates/function_length_gate.py`                                          | no function grows past its baseline                      |
+| `tests/unit/test_public_copy.py`                                                 | repository text is product-neutral                       |
+
+Foundational shapes (ClickHouse as the one engine, the identity tuple, per-row content-hash audit, the five belief-revision operations) need a design rationale in the pull request and an update to the matching architecture page ([material changes](../../CONTRIBUTING.md#material-changes)).
+
+## Related
+
+- [Local development](./local-development.md), [testing](./testing.md),
+  [code generation](./code-generation.md)
+- [Adding an operation](adding-an-operation.md), [adding a worker](adding-a-worker.md), [adding a table](adding-a-table.md), [adding language support](adding-language-support.md), [extending Loom](extending-loom.md)
