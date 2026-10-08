@@ -1,6 +1,6 @@
 {
   "name": "loom-code-skill",
-  "version": "1.0.1",
+  "version": "1.0.0",
   "description": "Route-then-read code intelligence for loom-indexed repositories: the loom-code Agent Skill (skills/loom-code/SKILL.md). Hooks live in the separate `loom` plugin.",
   "author": { "name": "Loom" },
   "homepage": "https://github.com/ClickHouse/loom",

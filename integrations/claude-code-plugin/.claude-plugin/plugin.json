@@ -1,6 +1,6 @@
 {
   "name": "loom",
-  "version": "1.4.1",
+  "version": "1.0.0",
   "description": "Loom's MCP memory and code tools, ambient capture into the memory plane via lifecycle hooks, the loom skills, and loom-code-shunt: redirects the bulk-read reflex (whole-file reads, tree-wide greps) in a loom-indexed repo to the code index.",
   "author": {
     "name": "Loom"
