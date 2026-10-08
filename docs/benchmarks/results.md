@@ -151,7 +151,7 @@ pinned-reader figure LongMemEval publications report; the reader arm is.
 `memory.search` at `top_k` 15, one call at a time over the 500 questions: p50 881 ms,
 p95 2,687 ms, 1,722 tokens of context (p50); the first questions run on cold caches.
 Repeated 100-question passes on warm caches measure p50 449–487 ms and p95 2.3–3.4 s.
-Extraction used about 756 k tokens per question.
+Extraction used about 1.5 M tokens per question; each question has its own history.
 
 - **Models:** the server's above (`memory.ask` strong `claude-opus-5-5`, cheap
   `gpt-6-luna`); external reader `gpt-5`; judge `gpt-4o-2024-08-06` with the official
@@ -412,8 +412,9 @@ it holds. The 36 conceptual questions above are unchanged by it (recall@10 0.963
 
 ### With and without Loom
 
-What an agent or reader spends and gets with Loom against the same task without it, with
-Loom's own model spend counted.
+What an agent or reader spends and gets with Loom against the same task without it. The
+coding comparisons count the agent's own model bill; Loom's server-side model calls are not
+included.
 
 **Memory instead of the whole history (LongMemEval-S).** 100 questions (seed 13) answered
 by `gpt-5` (reasoning effort `medium`) twice: from the whole chat history in the prompt,
@@ -430,16 +431,17 @@ The four-point accuracy difference is descriptive: only 10 outcomes disagree, an
 two-sided exact McNemar test gives p=0.34. This sample does not establish that retrieval is
 more accurate than full history. Memory reads 91% fewer reader prompt tokens per question.
 Those prompt-token totals exclude memory construction. Building the memory costs about
-756 k extraction tokens per haystack, once, on `gpt-6-luna`. Against about 94 k
-tokens saved per question, that is repaid after about 8 questions over the same history,
+1.5 M extraction tokens per haystack, once, on `gpt-6-luna`. Against about 94 k
+tokens saved per question, that is repaid after about 16 questions over the same history,
 before the price gap between the extraction model and the reader is counted.
 
 **Coding agents on ClickHouse, with and without Loom.** Claude Code (`claude-sonnet-5`) answers
 each question twice in a stock session (no user or project settings): with Bash, Read, Grep and
 Glob, and with the same tools plus the Loom plugin (hooks, and the MCP `coding` toolset with
 `code.search` and `code.symbol` loaded up front). Sub-agents are off in both arms. Cost is the
-model bill of the whole session; every tool call is counted per run, and a run that ends out of
-turns without an answer counts as a miss at its full cost.
+Claude Code session's model bill (Loom's server-side model calls are not in it); every tool
+call is counted per run, and a run that ends out of turns without an answer
+counts as a miss at its full cost.
 
 Each set runs on a checkout without git history at the commit the questions were
 verified at (history questions keep full history), so neither arm can read a fix out of `git log`:

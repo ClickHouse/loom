@@ -32,7 +32,8 @@ The dashboard brings memories, repositories, tasks and runs into one place.
 | Memory vs full-history answers | **94%**   | 90%          | **91% fewer** reader prompt tokens | 100 paired LongMemEval-S questions |
 
 Both coding setups use Claude Code (`claude-sonnet-5`) on the ClickHouse codebase;
-cost is the whole session's model bill, excluding hosting and indexing. Answer quality
+cost is the whole session's model bill, excluding Loom's server-side model calls, hosting
+and indexing. Answer quality
 measures coverage of a verified answer's key points, with a contradiction penalty.
 File localization counts the right file among three named files.
 
