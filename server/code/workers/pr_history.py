@@ -10,6 +10,7 @@ or 5xx leaves the cursor unmoved — pass over, never a gap.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
@@ -22,6 +23,7 @@ from server.workers.status import log_pass_errors, record_pass
 logger = logging.getLogger("loom.workers.code_pr_history")
 
 _warned_no_token = False
+_BUDGET_FRACTION = 0.75
 
 
 @dataclass
@@ -51,11 +53,35 @@ async def run_pass() -> CodePrHistoryResult:
 
 
 async def _run(result: CodePrHistoryResult) -> None:
+    from server.code.app.index.pass_budget import rotate_to
     from server.code.domain.index.repos import configured_repos
     from server.code.store.index import CodeRepo
 
     repo = CodeRepo()
-    for cfg in configured_repos():
+    budget = _pass_budget()
+    # The pass starts at the entry the previous one did not finish, so the
+    # entries after a cut are served before the ones already served: a slow
+    # entry early in the list cannot keep the later ones from ever syncing.
+    configured = configured_repos()
+    repos = rotate_to(configured, pass_context.resume_cursor())
+    for i, cfg in enumerate(repos):
+        if budget.exhausted():
+            pass_context.set_cursor(cfg.namespace)
+            result.note = f"budget reached; the next pass starts at {cfg.namespace}"
+            logger.warning(
+                "code_pr_history: pass budget (%.0f s) reached before %d entr%s: %s",
+                budget.seconds,
+                len(repos) - i,
+                "y" if len(repos) - i == 1 else "ies",
+                ",".join(c.namespace for c in repos[i:]),
+            )
+            return
+        # A pass cancelled inside this entry resumes at the next one, so one
+        # entry that outlasts the deadline does not stall the rest; a pass that
+        # finishes leaves the configured order's first entry.
+        nxt = repos[i + 1] if i + 1 < len(repos) else configured[0]
+        pass_context.set_cursor(nxt.namespace)
+        pass_context.set_namespace(cfg.namespace)
         if cfg.provider != "github":
             result.note = f"PR history is not available for {cfg.provider} remotes"
             continue
@@ -67,6 +93,17 @@ async def _run(result: CodePrHistoryResult) -> None:
             result.errors.append(f"{cfg.label}: {type(e).__name__}: {e}")
             logger.exception("code_pr_history: repo %s failed", cfg.label)
             pass_context.note_failure(e, cfg.namespace)
+
+
+def _pass_budget() -> Any:
+    """Stop starting entries at three quarters of the supervisor's deadline, so a
+    pass ends cleanly with its cursor instead of being cancelled mid-entry."""
+    from server.code.app.index.pass_budget import PassBudget
+    from server.workers.registry import default_max_pass_seconds
+
+    started = time.monotonic()
+    deadline = default_max_pass_seconds(settings.code_pr_history_interval_seconds)
+    return PassBudget(started, started + deadline * _BUDGET_FRACTION)
 
 
 async def pr_rows(repo: Any, org: str, ns: str, prs: list[Any]) -> list[dict[str, Any]]:
