@@ -192,3 +192,82 @@ async def test_get_classifies_every_github_rate_limit_shape(
     with patch.object(gh, "get_client", return_value=client), pytest.raises(gh.GitHubError) as exc:
         await gh._get("https://api.github.com/x", "tok")
     assert isinstance(exc.value, gh.RateLimited) is limited
+
+
+def _three() -> list[Any]:
+    return [
+        repo_config(org="o", namespace=f"code-{n}", repo=f"Org/{n}", github_token="tok")
+        for n in ("a", "b", "c")
+    ]
+
+
+class _Budget:
+    """Exhausted from the `after`-th check on."""
+
+    seconds = 675.0
+
+    def __init__(self, after: int) -> None:
+        self.after, self.checks = after, 0
+
+    def exhausted(self) -> bool:
+        self.checks += 1
+        return self.checks > self.after
+
+
+async def _pass_order(resume: str, budget: _Budget, *, hang_in: str = "") -> tuple[list[str], Any]:
+    import asyncio
+
+    from server.workers import pass_context
+
+    seen: list[str] = []
+
+    async def _sync(cfg: Any, *_: Any) -> None:
+        seen.append(cfg.namespace)
+        if cfg.namespace == hang_in:
+            await asyncio.sleep(3600)
+
+    async def _noop(*_: Any) -> None:
+        return None
+
+    ctx = pass_context.begin("code_pr_history", resume_cursor=resume)
+    with (
+        patch("server.code.store.index.CodeRepo", return_value=AsyncMock()),
+        patch("server.code.domain.index.repos.configured_repos", return_value=_three()),
+        patch.object(w, "_pass_budget", return_value=budget),
+        patch.object(w, "_sync_repo", _sync),
+        patch.object(w, "_sync_items", _noop),
+        patch.object(w, "_fill_pr_heads", _noop),
+    ):
+        try:
+            if hang_in:
+                with pytest.raises(TimeoutError):
+                    async with asyncio.timeout(0.2):
+                        await w._run(w.CodePrHistoryResult())
+            else:
+                await w._run(w.CodePrHistoryResult())
+        finally:
+            pass_context.clear()
+    return seen, ctx
+
+
+@pytest.mark.asyncio
+async def test_pass_starts_at_the_entry_the_last_one_did_not_finish() -> None:
+    seen, ctx = await _pass_order("code-b", _Budget(after=99))
+    assert seen == ["code-b", "code-c", "code-a"]
+    # A finished pass sends the next one back to the configured order's start.
+    assert ctx.cursor == "code-a"
+
+
+@pytest.mark.asyncio
+async def test_budget_stops_the_pass_and_names_where_the_next_starts() -> None:
+    seen, ctx = await _pass_order("", _Budget(after=1))
+    assert seen == ["code-a"]
+    assert ctx.cursor == "code-b"
+
+
+@pytest.mark.asyncio
+async def test_pass_cancelled_inside_an_entry_resumes_after_it() -> None:
+    seen, ctx = await _pass_order("", _Budget(after=99), hang_in="code-b")
+    assert seen == ["code-a", "code-b"]
+    # One entry that outlasts the deadline must not stall the others.
+    assert ctx.cursor == "code-c"
