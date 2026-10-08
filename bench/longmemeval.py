@@ -647,8 +647,12 @@ def arm_summary(
 def efficiency_summary(results: list) -> dict:
     """Totals and per-item means of the build/QA cost columns,
     in the shape the memory-efficiency literature tabulates: tokens in
-    thousands, calls, seconds, and prompt tokens per memory written."""
+    thousands, calls, seconds, and prompt tokens per memory written.
+    Build means divide by the items that built a memory: a run with a
+    second answering arm over the same histories carries rows that built
+    nothing, and counting them would halve the per-history build cost."""
     n = len(results) or 1
+    built = sum(1 for r in results if r.build_tokens_in or r.build_tokens_out) or 1
     b_in = sum(r.build_tokens_in for r in results)
     b_out = sum(r.build_tokens_out for r in results)
     b_cached = sum(r.build_tokens_cached for r in results)
@@ -672,9 +676,9 @@ def efficiency_summary(results: list) -> dict:
         "qa_seconds": round(sum(r.qa_seconds for r in results), 1),
         "total_tokens_k": round((b_in + b_out + q_in + q_out) / 1000.0, 1),
         "per_item": {
-            "build_tokens_k": round((b_in + b_out) / 1000.0 / n, 2),
+            "build_tokens_k": round((b_in + b_out) / 1000.0 / built, 2),
             "qa_tokens_k": round((q_in + q_out) / 1000.0 / n, 2),
-            "build_seconds": round(sum(r.build_seconds for r in results) / n, 1),
+            "build_seconds": round(sum(r.build_seconds for r in results) / built, 1),
             "qa_seconds": round(sum(r.qa_seconds for r in results) / n, 1),
         },
     }

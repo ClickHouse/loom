@@ -102,6 +102,22 @@ def test_bench_efficiency_summary_and_usage_sink() -> None:
         "build_seconds": 30.0,
         "qa_seconds": 4.0,
     }
+    # A second answering arm's rows built nothing; they must not halve the
+    # per-history build cost.
+    reader = b.ItemResult(
+        question_id="q",
+        question_type="t",
+        question="?",
+        gold_answer="a",
+        top_k_excerpts=[],
+        recalled=True,
+        qa_tokens_in=4000,
+        qa_tokens_out=50,
+        qa_calls=1,
+        qa_seconds=4.0,
+    )
+    mixed = b.efficiency_summary([r, reader])["per_item"]
+    assert mixed["build_tokens_k"] == 15.8 and mixed["build_seconds"] == 30.0
     assert (
         b.efficiency_summary([])["items"] == 0
         and b.efficiency_summary([])["tokens_per_memory"] == 0.0

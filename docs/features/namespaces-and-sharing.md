@@ -61,18 +61,18 @@ role on one namespace: `viewer` reads, `writer` writes, `admin` manages grants a
 settings. The token carries the org and the namespaces it may reach; the grant table
 decides the role.
 
-| Operation                                                            | Role      | Does                                                                                                                                         |
-| -------------------------------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `grants.create`                                                      | admin     | Grant a role. A create below the subject's current role is refused with 409 `GRANT_WOULD_DOWNGRADE` unless `replace=true`.                   |
-| `grants.list`                                                        | viewer    | Who has access, at which role, and any `pending_role`.                                                                                       |
-| `grants.revoke`                                                      | admin     | Remove a grant.                                                                                                                              |
-| `grants.approve`                                                     | admin     | Approve or reject a pending request, optionally with a different role.                                                                       |
-| `grants.pending_for_me`                                              | viewer    | Every pending request in the namespaces the caller administers, org-wide.                                                                    |
-| `namespace.browse`                                                   | viewer    | Public namespaces in the org (`closed` ones only with `include_closed`).                                                                     |
-| `namespace.join`                                                     | viewer    | Self-join a public namespace. `viewer` is granted at once; a `writer` or `admin` request always lands pending and grants `viewer` meanwhile. |
-| `namespace.leave`, `namespace.cancel_request`, `namespace.mark_seen` | viewer    | Drop one's own grant, withdraw a pending request, acknowledge an invitation.                                                                 |
-| `namespace.list_mine`                                                | viewer    | The namespaces the caller belongs to.                                                                                                        |
-| `namespace.list`                                                     | org admin | Every namespace in the org.                                                                                                                  |
+| Operation                                                            | Role      | Does                                                                                                                                                   |
+| -------------------------------------------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `grants.create`                                                      | admin     | Grant a role. A create below the subject's current role is refused with 409 `GRANT_WOULD_DOWNGRADE` unless `replace=true`.                             |
+| `grants.list`                                                        | viewer    | Who has access, at which role, and any `pending_role`.                                                                                                 |
+| `grants.revoke`                                                      | admin     | Remove a grant.                                                                                                                                        |
+| `grants.approve`                                                     | admin     | Approve or reject a pending request, optionally with a different role.                                                                                 |
+| `grants.pending_for_me`                                              | viewer    | Every pending request in the namespaces the caller administers, org-wide.                                                                              |
+| `namespace.browse`                                                   | viewer    | Public namespaces in the org (`closed` ones only with `include_closed`).                                                                               |
+| `namespace.join`                                                     | viewer    | Self-join a public namespace. `viewer` is granted at once; a `writer` or `admin` request always lands pending, with no access until an admin approves. |
+| `namespace.leave`, `namespace.cancel_request`, `namespace.mark_seen` | viewer    | Drop one's own grant, withdraw a pending request, acknowledge an invitation.                                                                           |
+| `namespace.list_mine`                                                | viewer    | The namespaces the caller belongs to.                                                                                                                  |
+| `namespace.list`                                                     | org admin | Every namespace in the org.                                                                                                                            |
 
 Minting tokens, service accounts, read scopes and restricted namespaces are covered in
 the [tokens and grants guide](../guides/tokens-and-grants.md).
