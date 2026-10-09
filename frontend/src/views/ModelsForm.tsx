@@ -239,7 +239,11 @@ export function ModelsForm({ status, onValidate, onSave }: Props) {
                 <input
                   className={inputClass}
                   type="password"
-                  autoComplete="off"
+                  // Browsers ignore "off" on password inputs and autofill a saved login here;
+                  // "new-password" stops that, the data attributes stop password managers.
+                  autoComplete="new-password"
+                  data-1p-ignore
+                  data-lpignore="true"
                   spellCheck={false}
                   placeholder={status.configured_keys[provider] ? "Configured — leave blank to keep" : "Not configured"}
                   value={configuration.keys[provider] ?? ""}
