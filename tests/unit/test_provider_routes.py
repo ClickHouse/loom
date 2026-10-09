@@ -27,6 +27,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(routes, "require_admin", AsyncMock(return_value=None))
     monkeypatch.setattr(routes, "_existing_keys", AsyncMock(return_value={}))
     monkeypatch.setattr(routes, "configurations", AsyncMock(return_value=[]))
+    monkeypatch.setattr(routes, "unpublishable_rebuild_tables", AsyncMock(return_value=()))
     monkeypatch.setattr(
         routes,
         "validate_providers",
@@ -106,6 +107,21 @@ def test_status_exposes_only_key_presence(
     assert response.json()["configured_keys"]["openai"] is True
     assert response.json()["version"] == "0"
     assert "test-private-value" not in response.text
+
+
+def test_status_allows_embedding_change_on_publishable_storage(client: TestClient) -> None:
+    assert client.get("/v1/admin/models").json()["embedding_change_blocked"] == ""
+
+
+def test_status_explains_why_this_storage_refuses_an_embedding_change(client, monkeypatch):
+    monkeypatch.setattr(
+        routes,
+        "unpublishable_rebuild_tables",
+        AsyncMock(return_value=(("memory_embeddings", "SharedReplacingMergeTree"),)),
+    )
+    blocked = client.get("/v1/admin/models").json()["embedding_change_blocked"]
+    assert "loom.memory_embeddings uses SharedReplacingMergeTree" in blocked
+    assert "server environment" in blocked
 
 
 def test_status_hides_private_rebuild_recipe_and_manifest(client, monkeypatch):

@@ -3,7 +3,12 @@
 from uuid import UUID
 
 from server.core.repo_base import _CHClient, _default_client
-from server.insights.domain.provider_rebuild import EmbeddingSurface, rebuild_surfaces
+from server.insights.domain.provider_rebuild import (
+    PUBLISHABLE_ENGINES,
+    REBUILD_TABLES,
+    EmbeddingSurface,
+    rebuild_surfaces,
+)
 from server.insights.domain.provider_rebuild_manifest import RebuildManifest
 from server.insights.store.provider_staging import StagingNames
 
@@ -36,6 +41,23 @@ async def rebuild_inventory(
     """
     client = ch or _default_client()
     return await _inventory_excluding(_owned_tables(manifest), client)
+
+
+async def unpublishable_rebuild_tables(
+    *, ch: _CHClient | None = None
+) -> tuple[tuple[str, str], ...]:
+    """Rebuild sources, as (table, engine), that candidate preparation would refuse."""
+    client = ch or _default_client()
+    rows = await client.query_all(
+        "SELECT name, engine FROM system.tables "
+        "WHERE database = 'loom' AND name IN {tables:Array(String)} ORDER BY name",
+        {"tables": list(REBUILD_TABLES)},
+    )
+    return tuple(
+        (str(row["name"]), str(row["engine"]))
+        for row in rows
+        if row["engine"] not in PUBLISHABLE_ENGINES
+    )
 
 
 async def _inventory_excluding(

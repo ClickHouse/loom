@@ -50,6 +50,28 @@ REBUILD_TABLES = tuple(
     )
 )
 
+# Candidate preparation clones a table's DDL on one node; replicated and shared
+# engines need their own replication-path plan before a rebuild can publish.
+PUBLISHABLE_ENGINES = frozenset({"MergeTree", "ReplacingMergeTree", "AggregatingMergeTree"})
+
+
+def unpublishable_refusal(tables: tuple[tuple[str, str], ...]) -> str:
+    """Why a dashboard embedding change is refused, or "" when it can publish."""
+    if not tables:
+        return ""
+    name, engine = tables[0]
+    found = (
+        f"{len(tables)} tables, such as loom.{name} ({engine}), use other engines"
+        if len(tables) > 1
+        else f"loom.{name} uses {engine}"
+    )
+    return (
+        f"The embedding rebuild can publish only to local MergeTree tables; {found}. "
+        "Change the embedding model in the server environment instead, then re-embed each "
+        "index as the operations maintenance guide describes."
+    )
+
+
 _VECTOR_TYPE = re.compile(r"Array\((?:BFloat16|Float32|Float64)\)|QBit\(")
 
 # These are per-result scalar scores captured for observability, not vectors in

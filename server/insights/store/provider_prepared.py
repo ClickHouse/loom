@@ -11,6 +11,7 @@ from uuid import UUID
 from server.core.repo_base import _CHClient, _default_client
 from server.core.schema.vector_codec_ddl import statement_settings
 from server.insights.domain.provider_prepared_ddl import PreparedDDL, prepared_ddl
+from server.insights.domain.provider_rebuild import PUBLISHABLE_ENGINES
 from server.insights.store.provider_staging import (
     SourceSchema,
     StagingNames,
@@ -135,7 +136,7 @@ async def prepare_live_table(
     """
     if type(expected_rows) is not int or expected_rows < 0:
         raise ValueError("Invalid prepared-table row count")
-    if schema.engine not in ("MergeTree", "ReplacingMergeTree", "AggregatingMergeTree"):
+    if schema.engine not in PUBLISHABLE_ENGINES:
         raise ValueError("Prepared-table engine requires a separate replication plan")
     client = ch or _default_client()
     if await source_schema(names, ch=client) != schema:

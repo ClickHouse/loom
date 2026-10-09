@@ -115,6 +115,8 @@ class ProviderSetupStatus(SetupModel):
     llm_overrides: dict[str, str] = Field(default_factory=dict)
     verification_models: list[str] | None = None
     pending: ProviderChangeStatus | None = None
+    # Non-empty when this storage refuses an embedding change; the reason to show.
+    embedding_change_blocked: str = ""
 
 
 class ProviderSaveResult(SetupModel):

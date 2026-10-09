@@ -28,8 +28,10 @@ from server.insights.app.provider_reset import reset_configuration
 from server.insights.app.provider_retry import retry_configuration
 from server.insights.app.provider_runtime import environment_embedding, environment_settings
 from server.insights.app.provider_validation import validate_providers
+from server.insights.domain.provider_rebuild import unpublishable_refusal
 from server.insights.domain.provider_setup import committed_configuration, pending_configuration
 from server.insights.store.provider_configuration import configurations
+from server.insights.store.provider_rebuild import unpublishable_rebuild_tables
 from server.operations.base import Role
 from server.settings import settings
 
@@ -159,6 +161,7 @@ async def model_configuration_status() -> ProviderSetupStatus:
         )
         if pending
         else None,
+        embedding_change_blocked=unpublishable_refusal(await unpublishable_rebuild_tables()),
     )
 
 

@@ -76,9 +76,11 @@ data-plane requests paused until verification, publication and cleanup finish.
 Models & keys shows the phase and progress; a failed job stays paused and offers
 retry from its saved cursor. Keep the ClickHouse and blob volumes, and the original
 `LOOM_JWT_SECRET`, when recreating containers. Rebuilds make provider calls and may
-take time and incur fees proportional to the indexed content. The current
-publication path supports local MergeTree storage; shared/replicated storage and
-lost remote-process recovery remain documented limitations in
+take time and incur fees proportional to the indexed content. The rebuild publishes
+to local MergeTree tables only: on replicated or shared storage, such as ClickHouse
+Cloud, Models & keys locks the embedding fields and the server refuses an embedding
+change before pausing anything. Change the embedding model in the environment instead
+and re-embed each index as described above. Lost remote-process recovery remains a documented limitation in
 [provider reconfiguration](../architecture/provider-reconfiguration.md).
 
 The token settings are separate: they configure agent access to Loom, not model-provider credentials.
