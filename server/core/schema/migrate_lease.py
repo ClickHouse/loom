@@ -303,38 +303,38 @@ LOCK_DDL = (
 # No Keeper or no keeper_map_path_prefix: the tolerated codes of the task lease table.
 NO_KEEPER_CODES = frozenset({999, 139, 36})
 _STRICT = "SETTINGS keeper_map_strict_mode = 1"
-_LOCK_INSERT = (
+LOCK_INSERT = (
     f"INSERT INTO {LOCK_TABLE} (name, holder, acquired_at, renewed_at, ttl_s, build_commit) "
     f"{_STRICT}, async_insert = 0 "
     "VALUES ({name:String}, {me:String}, now64(3), now64(3), {ttl:UInt32}, {commit:String})"
 )
-_LOCK_ROW = (
+LOCK_ROW = (
     "SELECT holder, acquired_at, ttl_s, (renewed_at + toIntervalSecond(ttl_s)) < now64(3) "
     f"FROM {LOCK_TABLE} WHERE name = {{name:String}}"
 )
 # The staleness test sits in the WHERE, so it is evaluated on the znode version
 # the CAS checks: a holder that renewed a moment ago is not taken over.
-_LOCK_TAKEOVER = (
+LOCK_TAKEOVER = (
     f"ALTER TABLE {LOCK_TABLE} UPDATE holder = {{me:String}}, acquired_at = now64(3), "
     "renewed_at = now64(3), ttl_s = {ttl:UInt32}, build_commit = {commit:String} "
     "WHERE name = {name:String} AND holder = {old:String} "
     f"AND (renewed_at + toIntervalSecond(ttl_s)) < now64(3) {_STRICT}"
 )
-_LOCK_RENEW = (
+LOCK_RENEW = (
     f"ALTER TABLE {LOCK_TABLE} UPDATE renewed_at = now64(3) "
     f"WHERE name = {{name:String}} AND holder = {{me:String}} {_STRICT}"
 )
-_LOCK_RELEASE = (
+LOCK_RELEASE = (
     f"ALTER TABLE {LOCK_TABLE} DELETE "
     f"WHERE name = {{name:String}} AND holder = {{me:String}} {_STRICT}"
 )
 
 
-def _key_exists(e: BaseException) -> bool:
+def key_exists(e: BaseException) -> bool:
     return "Node exists" in str(e)
 
 
-def _lost_race(e: BaseException) -> bool:
+def lost_race(e: BaseException) -> bool:
     return "Bad version" in str(e) or "KEEPER_EXCEPTION" in str(e)
 
 
@@ -389,7 +389,7 @@ class KeeperLock:
         }
 
     def _holder_row(self) -> tuple[str, datetime, int, bool] | None:
-        rows = self.ch.query(_LOCK_ROW, parameters={"name": self.lock_name}).result_rows
+        rows = self.ch.query(LOCK_ROW, parameters={"name": self.lock_name}).result_rows
         if not rows:
             return None
         r = rows[0]
@@ -397,18 +397,18 @@ class KeeperLock:
 
     def _try_insert(self) -> bool:
         try:
-            self.ch.command(_LOCK_INSERT, parameters=self._params())
+            self.ch.command(LOCK_INSERT, parameters=self._params())
             return True
         except Exception as e:
-            if _key_exists(e):
+            if key_exists(e):
                 return False
             raise
 
     def _try_takeover(self, stale: str) -> bool:
         try:
-            self.ch.command(_LOCK_TAKEOVER, parameters=self._params(old=stale))
+            self.ch.command(LOCK_TAKEOVER, parameters=self._params(old=stale))
         except Exception as e:
-            if not _lost_race(e):
+            if not lost_race(e):
                 raise
         row = self._holder_row()
         return row is not None and row[0] == self.holder
@@ -471,8 +471,8 @@ class KeeperLock:
             if not force and self.clock() - self._last_renew < self.cfg.ttl_s / 3:
                 return
             try:
-                ch.command(_LOCK_RENEW, parameters=self._params())
-                rows = ch.query(_LOCK_ROW, parameters={"name": self.lock_name}).result_rows
+                ch.command(LOCK_RENEW, parameters=self._params())
+                rows = ch.query(LOCK_ROW, parameters={"name": self.lock_name}).result_rows
             except Exception as e:  # noqa: BLE001 — a missed renewal is a WARNING
                 self.out(f"  · migration lock: renewal failed ({describe_error(e)})")
                 return
@@ -511,7 +511,7 @@ class KeeperLock:
             if not self.held:
                 return
             try:
-                self.ch.command(_LOCK_RELEASE, parameters=self._params())
+                self.ch.command(LOCK_RELEASE, parameters=self._params())
             except Exception as e:  # noqa: BLE001 — the key expires by TTL
                 self.out(f"  · migration lock: release failed ({describe_error(e)})")
             self.held = False
@@ -536,6 +536,9 @@ __all__ = [
     "LOCK_TABLE",
     "NO_KEEPER_CODES",
     "KeeperLock",
+    "LOCK_INSERT",
+    "LOCK_RELEASE",
+    "LOCK_TAKEOVER",
     "bootstrap_keeper_lock",
     "ROWS_SETTINGS",
     "ROWS_SQL",
@@ -543,6 +546,8 @@ __all__ = [
     "LeaseRow",
     "MigrationLease",
     "default_holder",
+    "key_exists",
+    "lost_race",
     "describe_error",
     "winner",
 ]

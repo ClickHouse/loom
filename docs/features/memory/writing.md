@@ -139,6 +139,10 @@ precondition. The Python SDK coalesces a burst of `set` calls from one identity 
 `coalesced: true` and no `content_sha256`. A set with `if_match_sha256` is never
 coalesced.
 
+A `memory.set` or `memory.update` that carries the precondition holds a lock on its key
+from the check to the insert, so of two writers holding the same hash only one succeeds.
+The lock is a KeeperMap key when the server has a Keeper, and per process otherwise.
+
 ## Example
 
 Against the stock stack from the [quickstart](../../getting-started/quickstart.md) (drop

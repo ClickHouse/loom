@@ -29,6 +29,7 @@ from server.memory.domain import lock as _lock
 from server.memory.domain.embed_text import _build_embed_text, key_axis_text
 from server.memory.domain.excerpt import build_excerpt
 from server.memory.domain.memory_types import is_embedded
+from server.memory.store import key_write_lock
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.rows import next_version
 
@@ -554,6 +555,30 @@ async def _update_post_write(
 
 
 async def _update_live_row(
+    input: Any, existing: MemoryRow, ch: Any, *, op: str
+) -> MemoryUpdateByIdOutput:
+    """A conditional update re-reads the head under the key's write lock."""
+    if not input.if_match_sha256:
+        return await _write_revision(input, existing, ch, op=op)
+    import server.memory.store as memory_repo
+
+    async with key_write_lock.key_write_locks.hold(
+        input.org,
+        existing.namespace,
+        existing.agent,
+        existing.user_id,
+        existing.session_id,
+        existing.memory_key,
+    ):
+        head = await memory_repo.get_by_id(
+            str(existing.memory_id), org=input.org, fresh=True, strong=True
+        )
+        if head is None:
+            return MemoryUpdateByIdOutput(updated=False)
+        return await _write_revision(input, head, ch, op=op)
+
+
+async def _write_revision(
     input: Any, existing: MemoryRow, ch: Any, *, op: str
 ) -> MemoryUpdateByIdOutput:
     """The write half shared by memory.update_by_id and memory.update:
