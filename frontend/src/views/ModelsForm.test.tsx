@@ -50,6 +50,22 @@ describe("Models & keys", () => {
     expect(onSave.mock.calls[0][0].keys).toEqual({ compatible: "custom-test-key" });
   });
 
+  it("keeps browsers and password managers from filling the key fields", () => {
+    render(<ModelsForm status={status} onValidate={vi.fn()} onSave={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("Embedding provider"), { target: { value: "compatible" } });
+    for (const label of [
+      "OpenAI API key",
+      "Anthropic API key",
+      "Google Gemini API key",
+      "Custom embedding provider API key",
+    ]) {
+      const input = screen.getByLabelText(label);
+      expect(input.getAttribute("autocomplete")).toBe("new-password");
+      expect(input.hasAttribute("data-1p-ignore")).toBe(true);
+      expect(input.getAttribute("data-lpignore")).toBe("true");
+    }
+  });
+
   it("offers only hosted embedding providers", () => {
     render(<ModelsForm status={status} onValidate={vi.fn()} onSave={vi.fn()} />);
     const select = screen.getByLabelText("Embedding provider") as HTMLSelectElement;
