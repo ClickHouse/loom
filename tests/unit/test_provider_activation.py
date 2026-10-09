@@ -40,6 +40,7 @@ def dependencies(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(activation, "write_configuration", AsyncMock())
     monkeypatch.setattr(activation, "rebuild_inventory", AsyncMock(return_value=()))
     monkeypatch.setattr(activation, "unpublishable_rebuild_tables", AsyncMock(return_value=()))
+    monkeypatch.setattr(activation, "tables_with_vectors", AsyncMock(return_value=("chunks",)))
     monkeypatch.setattr(activation, "apply_configuration", Mock())
     monkeypatch.setattr(activation, "provider_for", lambda _: "openai")
     monkeypatch.setattr(activation.settings, "embedding_model", "text-embedding-test")
@@ -140,6 +141,22 @@ async def test_embedding_change_on_unpublishable_storage_is_refused(dependencies
         error.value.detail
     )
     activation.write_configuration.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_first_embedding_choice_on_unpublishable_storage_switches_directly(
+    dependencies, monkeypatch
+):
+    blocked = (("memory_embeddings", "SharedReplacingMergeTree"),)
+    monkeypatch.setattr(activation, "unpublishable_rebuild_tables", AsyncMock(return_value=blocked))
+    monkeypatch.setattr(activation, "tables_with_vectors", AsyncMock(return_value=()))
+    result = await activation.save_configuration(
+        setup_input(embedding={"provider": "gemini", "model": "gemini-embedding-001"})
+    )
+    assert result.state == "active"
+    assert activation.write_configuration.await_args.args[0]["state"] == "active"
+    # The refresh loop drains each process before it switches embedding spaces.
+    activation.apply_configuration.assert_not_called()
 
 
 @pytest.mark.asyncio

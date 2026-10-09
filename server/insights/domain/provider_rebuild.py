@@ -50,6 +50,15 @@ REBUILD_TABLES = tuple(
     )
 )
 
+# Tables whose rows a model change must rewrite; the cache is keyed by model.
+REEMBED_TABLES = tuple(
+    dict.fromkeys(
+        surface.table
+        for surface in EMBEDDING_SURFACES
+        if surface.action in ("reembed", "derive_prefix")
+    )
+)
+
 # Candidate preparation clones a table's DDL on one node; replicated and shared
 # engines need their own replication-path plan before a rebuild can publish.
 PUBLISHABLE_ENGINES = frozenset({"MergeTree", "ReplacingMergeTree", "AggregatingMergeTree"})

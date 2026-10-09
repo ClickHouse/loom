@@ -6,6 +6,7 @@ from server.core.repo_base import _CHClient, _default_client
 from server.insights.domain.provider_rebuild import (
     PUBLISHABLE_ENGINES,
     REBUILD_TABLES,
+    REEMBED_TABLES,
     EmbeddingSurface,
     rebuild_surfaces,
 )
@@ -58,6 +59,17 @@ async def unpublishable_rebuild_tables(
         for row in rows
         if row["engine"] not in PUBLISHABLE_ENGINES
     )
+
+
+async def tables_with_vectors(*, ch: _CHClient | None = None) -> tuple[str, ...]:
+    """Re-embed tables holding rows; an unknown row count counts as rows."""
+    client = ch or _default_client()
+    rows = await client.query_all(
+        "SELECT name, total_rows FROM system.tables "
+        "WHERE database = 'loom' AND name IN {tables:Array(String)} ORDER BY name",
+        {"tables": list(REEMBED_TABLES)},
+    )
+    return tuple(str(row["name"]) for row in rows if row["total_rows"] != 0)
 
 
 async def _inventory_excluding(
