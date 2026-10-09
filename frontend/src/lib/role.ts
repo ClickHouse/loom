@@ -42,6 +42,7 @@ import type { MyNamespaceEntry, NamespaceInfo, WhoAmI } from "../api";
 
 const ADMIN_CLAIMS = new Set(["admin", "org_admin", "platform_admin"]);
 const ORG_ADMIN_CLAIMS = new Set(["org_admin", "platform_admin"]);
+const PLATFORM_ADMIN_CLAIMS = new Set(["platform_admin"]);
 
 function claimIn(whoami: WhoAmI | null, claims: ReadonlySet<string>): boolean {
   if (!whoami) return false;
@@ -55,6 +56,10 @@ export function hasAdminClaim(whoami: WhoAmI | null): boolean {
 
 export function hasOrgAdminClaim(whoami: WhoAmI | null): boolean {
   return claimIn(whoami, ORG_ADMIN_CLAIMS);
+}
+
+export function hasPlatformAdminClaim(whoami: WhoAmI | null): boolean {
+  return claimIn(whoami, PLATFORM_ADMIN_CLAIMS);
 }
 
 export function holdsAdminGrant(

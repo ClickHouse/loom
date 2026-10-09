@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { MyNamespaceEntry, WhoAmI } from "../api";
-import { canUpdateNamespace, hasAdminClaim, hasOrgAdminClaim, holdsAdminGrant, isNamespaceAdmin } from "./role";
+import {
+  canUpdateNamespace,
+  hasAdminClaim,
+  hasOrgAdminClaim,
+  hasPlatformAdminClaim,
+  holdsAdminGrant,
+  isNamespaceAdmin,
+} from "./role";
 
 // Who sees the Admin drawer and who may call /v1/admin/*.
 
@@ -58,6 +65,23 @@ describe("hasOrgAdminClaim (admin.users, ops.health, claim_release, org-wide aud
 
   it("treats LOOM_AUTH_REQUIRED=false as the operator", () => {
     expect(hasOrgAdminClaim(authOff)).toBe(true);
+  });
+});
+
+describe("hasPlatformAdminClaim (Settings → Models & keys)", () => {
+  it("is the JWT roles claim naming PLATFORM_ADMIN, case-insensitively", () => {
+    expect(hasPlatformAdminClaim(platform)).toBe(true);
+    expect(hasPlatformAdminClaim({ ...viewerJwt, roles: ["platform_admin"] })).toBe(true);
+  });
+
+  it("an ORG_ADMIN claim, a lower claim or an unknown whoami does not reach it", () => {
+    expect(hasPlatformAdminClaim({ ...viewerJwt, roles: ["ORG_ADMIN"] })).toBe(false);
+    expect(hasPlatformAdminClaim(adminJwt)).toBe(false);
+    expect(hasPlatformAdminClaim(null)).toBe(false);
+  });
+
+  it("treats LOOM_AUTH_REQUIRED=false as the operator", () => {
+    expect(hasPlatformAdminClaim(authOff)).toBe(true);
   });
 });
 

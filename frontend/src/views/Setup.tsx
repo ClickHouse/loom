@@ -42,6 +42,7 @@ import { ScopeBadge } from "../components/ScopeBadge";
 import { Tip } from "../components/ui";
 import { READ_ONLY_TIP, canWrite, roleOnNamespace, useNamespaceRole } from "../lib/namespaceRole";
 import { isMemoryNamespace } from "../lib/namespace";
+import { hasPlatformAdminClaim } from "../lib/role";
 
 import {
   CLIENTS,
@@ -153,7 +154,7 @@ export function Setup() {
   const openNamespacePicker = useStore((s) => s.openNamespacePicker);
   const setView = useStore((s) => s.setView);
   const whoami = useStore((s) => s.whoami);
-  const canManageModels = isAuthDisabled() || whoami?.roles?.includes("platform_admin");
+  const canManageModels = isAuthDisabled() || hasPlatformAdminClaim(whoami);
   const subject = whoami?.subject ?? "";
   // list_mine was fetched once at boot (App.tsx) — reuse it, never re-read.
   const mine = useStore((s) => s.myNamespaces);
