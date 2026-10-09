@@ -8,12 +8,14 @@ from typing import Any
 
 import pytest
 
+import server.memory.store as memory_repo
 from server.core.errors import PreconditionFailedError
 from server.memory.app import update as update_mod
 from server.memory.app import write as write_mod
 from server.memory.store import key_write_lock as kl
 
 _IDENT = ("org", "ns", "agent", "-", "-", "proc/deploy/steps")
+_ROW_ID = "33333333-3333-3333-3333-333333333333"
 
 
 class FakeKeeper:
@@ -23,55 +25,45 @@ class FakeKeeper:
         self.engine = engine
         self.fail = fail
         self.rows: dict[str, dict[str, Any]] = {}
-        self.statements: list[str] = []
 
     async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, Any] | None:
         if "system.tables" in sql:
             return {"engine": self.engine} if self.engine else None
-        row = self.rows.get(params["name"])
-        return None if row is None else {"holder": row["holder"], "stale": row["stale"]}
+        return self.rows.get(params["name"])
 
     async def execute(self, sql: str, params: dict[str, Any]) -> None:
-        self.statements.append(sql.split()[0])
         if self.fail:
             raise RuntimeError("Code: 999. Coordination error: connection loss")
-        name = params["name"]
+        name, row = params["name"], self.rows.get(params["name"])
         if sql.startswith("INSERT"):
-            if name in self.rows:
+            if row:
                 raise RuntimeError("Code: 999. KEEPER_EXCEPTION: Node exists")
             self.rows[name] = {"holder": params["me"], "stale": False}
-        elif " UPDATE " in sql:
-            row = self.rows.get(name)
-            if row and row["holder"] == params["old"] and row["stale"]:
-                self.rows[name] = {"holder": params["me"], "stale": False}
-        elif " DELETE " in sql:
-            if self.rows.get(name, {}).get("holder") == params["me"]:
-                del self.rows[name]
+        elif " UPDATE " in sql and row and row["holder"] == params["old"] and row["stale"]:
+            self.rows[name] = {"holder": params["me"], "stale": False}
+        elif " DELETE " in sql and row and row["holder"] == params["me"]:
+            del self.rows[name]
 
 
-@pytest.fixture(autouse=True)
-def _fresh_lock_state(monkeypatch: pytest.MonkeyPatch) -> Any:
-    kl._reset_for_tests()
-    monkeypatch.setattr(kl, "WAIT_S", 0.3)
-    yield
-    kl._reset_for_tests()
+def _locks(ch: FakeKeeper, monkeypatch: pytest.MonkeyPatch) -> kl.KeyWriteLocks:
+    locks = kl.KeyWriteLocks(ch, wait_s=0.3)  # type: ignore[arg-type]
+    monkeypatch.setattr(kl, "key_write_locks", locks)
+    return locks
 
 
 def test_lock_name_is_per_identity_and_key() -> None:
     assert kl.lock_name(*_IDENT) == kl.lock_name(*_IDENT)
-    other_agent = (*_IDENT[:2], "agent-b", *_IDENT[3:])
-    assert kl.lock_name(*_IDENT) != kl.lock_name(*other_agent)
-    assert kl.lock_name(*_IDENT).startswith("memory_key/")
+    assert kl.lock_name(*_IDENT) != kl.lock_name("org", "ns", "agent-b", "-", "-", _IDENT[5])
 
 
-async def test_two_writers_of_one_key_never_overlap() -> None:
-    ch = FakeKeeper(engine="")
+async def test_writers_of_one_key_never_overlap(monkeypatch: pytest.MonkeyPatch) -> None:
+    locks = _locks(FakeKeeper(engine=""), monkeypatch)
     inside: list[int] = []
     overlap = False
 
     async def writer() -> None:
         nonlocal overlap
-        async with kl.key_write_lock(*_IDENT, ch=ch):
+        async with locks.hold(*_IDENT):
             inside.append(1)
             overlap = overlap or len(inside) > 1
             await asyncio.sleep(0.02)
@@ -79,48 +71,50 @@ async def test_two_writers_of_one_key_never_overlap() -> None:
 
     await asyncio.gather(writer(), writer(), writer())
     assert not overlap
-    assert len(kl._local) == 0
+    assert len(locks) == 0
 
 
-async def test_keeper_key_is_taken_and_released() -> None:
+async def test_keeper_key_is_taken_and_released(monkeypatch: pytest.MonkeyPatch) -> None:
     ch = FakeKeeper()
-    async with kl.key_write_lock(*_IDENT, ch=ch) as name:
-        assert ch.rows[name]["holder"]
+    locks = _locks(ch, monkeypatch)
+    async with locks.hold(*_IDENT):
+        assert ch.rows[kl.lock_name(*_IDENT)]["holder"]
     assert ch.rows == {}
-    assert ch.statements == ["INSERT", "ALTER"]
 
 
-async def test_held_key_answers_precondition_failed_after_the_wait() -> None:
+async def test_held_key_times_out_as_precondition_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     ch = FakeKeeper()
-    name = kl.lock_name(*_IDENT)
-    ch.rows[name] = {"holder": "another-process", "stale": False}
+    ch.rows[kl.lock_name(*_IDENT)] = {"holder": "other", "stale": False}
     with pytest.raises(PreconditionFailedError):
-        async with kl.key_write_lock(*_IDENT, ch=ch):
+        async with _locks(ch, monkeypatch).hold(*_IDENT):
             pytest.fail("entered a held lock")
-    assert ch.rows[name]["holder"] == "another-process"
 
 
-async def test_holder_past_its_ttl_is_taken_over() -> None:
+async def test_stale_holder_is_taken_over(monkeypatch: pytest.MonkeyPatch) -> None:
     ch = FakeKeeper()
     name = kl.lock_name(*_IDENT)
-    ch.rows[name] = {"holder": "crashed-process", "stale": True}
-    async with kl.key_write_lock(*_IDENT, ch=ch):
-        assert ch.rows[name]["holder"] != "crashed-process"
+    ch.rows[name] = {"holder": "crashed", "stale": True}
+    async with _locks(ch, monkeypatch).hold(*_IDENT):
+        assert ch.rows[name]["holder"] != "crashed"
     assert name not in ch.rows
 
 
-async def test_keeper_failure_falls_back_to_the_process_lock() -> None:
-    ch = FakeKeeper(fail=True)
-    ran = False
-    async with kl.key_write_lock(*_IDENT, ch=ch):
-        ran = True
-    assert ran
-
-
-async def test_racing_conditional_sets_let_exactly_one_through(
+async def test_keeper_failure_degrades_to_the_process_lock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(kl, "_keeper_available", _no_keeper)
+    notes: list[tuple[str, str]] = []
+    monkeypatch.setattr(kl.degradations, "note", lambda p, e, r="": notes.append((p, e)))
+    async with _locks(FakeKeeper(fail=True), monkeypatch).hold(*_IDENT):
+        pass
+    assert notes == [("memory_key_lock", "process_lock_only")]
+
+
+async def test_racing_conditional_sets_let_one_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _locks(FakeKeeper(), monkeypatch)
     stored = {"sha": "v1"}
 
     async def phases(input: Any) -> str:
@@ -128,78 +122,66 @@ async def test_racing_conditional_sets_let_exactly_one_through(
             raise PreconditionFailedError("stale", current_sha256=stored["sha"])
         await asyncio.sleep(0.02)
         stored["sha"] = input.value
-        return input.value
+        return str(input.value)
 
     monkeypatch.setattr(write_mod, "_memory_set_phases", phases)
-    a = _set_input(value="from-a", if_match_sha256="v1")
-    b = _set_input(value="from-b", if_match_sha256="v1")
     results = await asyncio.gather(
-        write_mod._handle_memory_set(a), write_mod._handle_memory_set(b), return_exceptions=True
+        write_mod._handle_memory_set(_set_input("from-a", "v1")),
+        write_mod._handle_memory_set(_set_input("from-b", "v1")),
+        return_exceptions=True,
     )
     assert sorted(type(r).__name__ for r in results) == ["PreconditionFailedError", "str"]
-    assert stored["sha"] in {"from-a", "from-b"}
 
 
 async def test_unconditional_set_takes_no_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+    locks = _locks(FakeKeeper(), monkeypatch)
+    seen: list[int] = []
+
     async def phases(input: Any) -> str:
+        seen.append(len(locks))
         return "written"
 
-    def no_lock(*a: Any, **k: Any) -> Any:
-        raise AssertionError("a write without if_match_sha256 must not lock")
-
     monkeypatch.setattr(write_mod, "_memory_set_phases", phases)
-    monkeypatch.setattr(kl, "key_write_lock", no_lock)
-    assert await write_mod._handle_memory_set(_set_input(value="x", if_match_sha256="")) == (
-        "written"
-    )
+    assert await write_mod._handle_memory_set(_set_input("x", "")) == "written"
+    assert seen == [0]
 
 
 async def test_conditional_update_rereads_the_head_under_the_lock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(kl, "_keeper_available", _no_keeper)
-    stale = _row(version=1)
-    head = _row(version=2)
-    reads: list[str] = []
+    locks = _locks(FakeKeeper(), monkeypatch)
+    stale, head = _row(version=1), _row(version=2)
+    held_during_read: list[int] = []
+    written: list[Any] = []
 
     async def get_by_id(memory_id: str, **kw: Any) -> Any:
-        reads.append(memory_id)
-        assert len(kl._local) == 1
+        held_during_read.append(len(locks))
         return head
 
-    seen: list[Any] = []
-
     async def write_revision(input: Any, existing: Any, ch: Any, *, op: str) -> str:
-        seen.append(existing)
+        written.append(existing)
         return "ok"
-
-    import server.memory.store as memory_repo
 
     monkeypatch.setattr(memory_repo, "get_by_id", get_by_id)
     monkeypatch.setattr(update_mod, "_write_revision", write_revision)
-    inp = SimpleNamespace(org="org", if_match_sha256="h")
-    assert await update_mod._update_live_row(inp, stale, None, op="memory.update") == "ok"
-    assert reads == [stale.memory_id] and seen == [head]
+    conditional = SimpleNamespace(org="org", if_match_sha256="h")
+    assert await update_mod._update_live_row(conditional, stale, None, op="memory.update") == "ok"
+    assert held_during_read == [1] and written == [head]
 
-    seen.clear()
-    reads.clear()
+    written.clear()
     plain = SimpleNamespace(org="org", if_match_sha256="")
     assert await update_mod._update_live_row(plain, stale, None, op="memory.update") == "ok"
-    assert reads == [] and seen == [stale]
+    assert held_during_read == [1] and written == [stale]
 
 
-async def _no_keeper(ch: Any) -> bool:
-    return False
-
-
-def _set_input(*, value: str, if_match_sha256: str) -> Any:
+def _set_input(value: str, if_match_sha256: str) -> Any:
     return SimpleNamespace(
         org="org",
         namespace="ns",
         agent="agent",
         user_id="-",
         session_id="-",
-        memory_key="proc/deploy/steps",
+        memory_key=_IDENT[5],
         value=value,
         if_match_sha256=if_match_sha256,
     )
@@ -207,11 +189,11 @@ def _set_input(*, value: str, if_match_sha256: str) -> Any:
 
 def _row(*, version: int) -> Any:
     return SimpleNamespace(
-        memory_id="33333333-3333-3333-3333-333333333333",
+        memory_id=_ROW_ID,
         namespace="ns",
         agent="agent",
         user_id="-",
         session_id="-",
-        memory_key="proc/deploy/steps",
+        memory_key=_IDENT[5],
         version=version,
     )

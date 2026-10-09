@@ -37,6 +37,7 @@ from server.memory.domain import provenance as _prov
 from server.memory.domain.files import files_for_set
 from server.memory.domain.procedural_contract import retype_for as _procedural_retype
 from server.memory.domain.value_shape import value_shape_advisories
+from server.memory.store import key_write_lock
 from server.memory.store.rows import next_version
 from server.settings import settings
 
@@ -594,9 +595,7 @@ async def _handle_memory_set(input: MemorySetInput) -> MemorySetOutput:
     """memory.set; a conditional write holds the key's write lock."""
     if not input.if_match_sha256:
         return await _memory_set_phases(input)
-    from server.memory.store.key_write_lock import key_write_lock
-
-    async with key_write_lock(
+    async with key_write_lock.key_write_locks.hold(
         input.org,
         input.namespace,
         input.agent,

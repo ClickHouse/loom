@@ -29,6 +29,7 @@ from server.memory.domain import lock as _lock
 from server.memory.domain.embed_text import _build_embed_text, key_axis_text
 from server.memory.domain.excerpt import build_excerpt
 from server.memory.domain.memory_types import is_embedded
+from server.memory.store import key_write_lock
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.rows import next_version
 
@@ -560,9 +561,8 @@ async def _update_live_row(
     if not input.if_match_sha256:
         return await _write_revision(input, existing, ch, op=op)
     import server.memory.store as memory_repo
-    from server.memory.store.key_write_lock import key_write_lock
 
-    async with key_write_lock(
+    async with key_write_lock.key_write_locks.hold(
         input.org,
         existing.namespace,
         existing.agent,

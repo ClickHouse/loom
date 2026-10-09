@@ -52,8 +52,6 @@ _REPLICA_BOUND_ERROR_CODES: tuple[int, ...] = (10, 242, 999)
 # load balancer in front of the replicas, so one reconnect can land on the
 # same replica that just failed, so a single retry is not enough.
 REPLICA_BOUND_RETRIES: int = 2
-# Strict-mode KeeperMap answers, the same on every replica.
-_KEEPER_ANSWERS: tuple[str, ...] = ("Node exists", "Bad version")
 
 
 # A query-level setting one replica does not know. ClickHouse
@@ -102,8 +100,6 @@ def is_replica_bound_error(e: BaseException) -> bool:
     if not isinstance(e, DatabaseError):
         return False
     msg = str(e)
-    if any(answer in msg for answer in _KEEPER_ANSWERS):
-        return False
     return any(f"Code: {code}." in msg for code in _REPLICA_BOUND_ERROR_CODES)
 
 

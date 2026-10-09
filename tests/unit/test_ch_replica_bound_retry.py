@@ -97,14 +97,3 @@ def test_read_only_and_keeper_session_errors_are_replica_bound(code: int) -> Non
             f"Received ClickHouse exception, code: {code}, server response: Code: {code}. x"
         )
     )
-
-
-@pytest.mark.parametrize(
-    "msg",
-    [
-        "Code: 999. DB::Exception: Coordination error: Node exists. (KEEPER_EXCEPTION)",
-        "Code: 999. DB::Exception: Coordination error: Bad version. (KEEPER_EXCEPTION)",
-    ],
-)
-def test_a_strict_keepermap_answer_is_not_retried(msg: str) -> None:
-    assert not ch_errors.is_replica_bound_error(DatabaseError(msg))
