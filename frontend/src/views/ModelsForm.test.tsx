@@ -66,6 +66,33 @@ describe("Models & keys", () => {
     }
   });
 
+  it("locks the embedding fields with the server's reason when storage cannot rebuild", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const blocked: ModelStatus = {
+      ...status,
+      embedding_provider: "openai",
+      embedding_model: "text-embedding-3-large",
+      configured_keys: { openai: true },
+      requires_setup: false,
+      embedding_change_blocked: "loom.memory_embeddings uses SharedReplacingMergeTree.",
+    };
+    render(
+      <ModelsForm
+        status={blocked}
+        onValidate={vi.fn().mockResolvedValue({ ready: true, checks: [] })}
+        onSave={onSave}
+      />,
+    );
+    expect(screen.getByText("loom.memory_embeddings uses SharedReplacingMergeTree.")).toBeTruthy();
+    expect((screen.getByLabelText("Embedding provider") as HTMLSelectElement).disabled).toBe(true);
+    expect((screen.getByLabelText("Embedding model") as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByLabelText("Embedding dimensions") as HTMLInputElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("LLM model"), { target: { value: "gpt-6-luna-mini" } });
+    fireEvent.click(screen.getByRole("button", { name: "Test & apply" }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect(onSave.mock.calls[0][0].embedding).toMatchObject({ provider: "openai", model: "text-embedding-3-large" });
+  });
+
   it("offers only hosted embedding providers", () => {
     render(<ModelsForm status={status} onValidate={vi.fn()} onSave={vi.fn()} />);
     const select = screen.getByLabelText("Embedding provider") as HTMLSelectElement;

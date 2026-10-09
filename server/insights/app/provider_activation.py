@@ -14,10 +14,11 @@ from server.insights.api.models_provider_setup import ProviderSaveResult, Provid
 from server.insights.app.provider_credentials import open_configuration, seal_configuration
 from server.insights.app.provider_runtime import apply_configuration, environment_embedding
 from server.insights.app.provider_validation import validate_providers
+from server.insights.domain.provider_rebuild import unpublishable_refusal
 from server.insights.domain.provider_setup import committed_configuration, pending_configuration
 from server.insights.store.provider_configuration import configurations, write_configuration
 from server.insights.store.provider_lock import ConfigurationLockUnavailable, configuration_lock
-from server.insights.store.provider_rebuild import rebuild_inventory
+from server.insights.store.provider_rebuild import rebuild_inventory, unpublishable_rebuild_tables
 from server.settings import settings
 
 
@@ -63,7 +64,8 @@ def _open_active(envelope: str) -> ProviderSetupInput:
 
 
 async def check_rebuild_inventory() -> None:
-    """Do not accept a transition that cannot account for every vector surface."""
+    """Do not accept a transition that cannot account for every vector surface
+    or that could not publish: a refused transition pauses nothing."""
     try:
         await rebuild_inventory()
     except ValueError:
@@ -72,6 +74,9 @@ async def check_rebuild_inventory() -> None:
             "Embedding storage differs from the supported schema; "
             "verify migrations and custom vector tables before changing embedding models",
         ) from None
+    refusal = unpublishable_refusal(await unpublishable_rebuild_tables())
+    if refusal:
+        raise HTTPException(409, refusal)
 
 
 async def _save_locked(setup: ProviderSetupInput) -> ProviderSaveResult:

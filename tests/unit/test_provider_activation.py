@@ -39,6 +39,7 @@ def dependencies(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(activation, "open_configuration", Mock(return_value=setup_input()))
     monkeypatch.setattr(activation, "write_configuration", AsyncMock())
     monkeypatch.setattr(activation, "rebuild_inventory", AsyncMock(return_value=()))
+    monkeypatch.setattr(activation, "unpublishable_rebuild_tables", AsyncMock(return_value=()))
     monkeypatch.setattr(activation, "apply_configuration", Mock())
     monkeypatch.setattr(activation, "provider_for", lambda _: "openai")
     monkeypatch.setattr(activation.settings, "embedding_model", "text-embedding-test")
@@ -116,6 +117,38 @@ async def test_unknown_vector_surface_prevents_accepting_partial_rebuild(depende
     assert error.value.status_code == 409
     activation.write_configuration.assert_not_awaited()
     activation.apply_configuration.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_embedding_change_on_unpublishable_storage_is_refused(dependencies, monkeypatch):
+    monkeypatch.setattr(
+        activation,
+        "unpublishable_rebuild_tables",
+        AsyncMock(
+            return_value=(
+                ("code_chunks", "SharedReplacingMergeTree"),
+                ("memory_embeddings", "SharedReplacingMergeTree"),
+            )
+        ),
+    )
+    with pytest.raises(HTTPException) as error:
+        await activation.save_configuration(
+            setup_input(embedding={"provider": "gemini", "model": "gemini-embedding-001"})
+        )
+    assert error.value.status_code == 409
+    assert "2 tables, such as loom.code_chunks (SharedReplacingMergeTree)" in str(
+        error.value.detail
+    )
+    activation.write_configuration.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_key_change_on_unpublishable_storage_still_activates(dependencies, monkeypatch):
+    blocked = AsyncMock(return_value=(("memory_embeddings", "SharedReplacingMergeTree"),))
+    monkeypatch.setattr(activation, "unpublishable_rebuild_tables", blocked)
+    result = await activation.save_configuration(setup_input())
+    assert result.state == "active"
+    blocked.assert_not_awaited()
 
 
 @pytest.mark.asyncio

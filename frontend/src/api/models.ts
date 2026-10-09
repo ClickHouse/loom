@@ -55,6 +55,7 @@ export interface ModelStatus {
   llm_overrides: ModelConfiguration["llm"]["overrides"];
   verification_models: string[] | null;
   pending?: { config_id: string; state: string; error_code: string; progress: Record<string, string | number> } | null;
+  embedding_change_blocked?: string;
 }
 
 export interface ModelValidation {

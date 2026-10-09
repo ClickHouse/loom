@@ -78,6 +78,7 @@ export function ModelsForm({ status, onValidate, onSave }: Props) {
   const [validation, setValidation] = useState<ModelValidation | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const embeddingLocked = Boolean(status.embedding_change_blocked);
   const change = (next: ModelConfiguration) => {
     setConfiguration(next);
     setValidation(null);
@@ -157,6 +158,7 @@ export function ModelsForm({ status, onValidate, onSave }: Props) {
             Embedding provider
             <select
               className={inputClass}
+              disabled={embeddingLocked}
               value={configuration.embedding.provider}
               onChange={(event) => {
                 const provider = event.target.value as EmbeddingProvider;
@@ -185,6 +187,7 @@ export function ModelsForm({ status, onValidate, onSave }: Props) {
             <input
               className={inputClass}
               required
+              disabled={embeddingLocked}
               value={configuration.embedding.model}
               onChange={(event) =>
                 change({ ...configuration, embedding: { ...configuration.embedding, model: event.target.value } })
@@ -192,6 +195,11 @@ export function ModelsForm({ status, onValidate, onSave }: Props) {
             />
           </label>
         </div>
+        {embeddingLocked && (
+          <p role="note" className="text-sm text-[var(--color-text-muted)]">
+            {status.embedding_change_blocked}
+          </p>
+        )}
         {configuration.embedding.provider === "compatible" && (
           <div className="space-y-3">
             <label className="block space-y-1">
@@ -201,6 +209,7 @@ export function ModelsForm({ status, onValidate, onSave }: Props) {
                 type="url"
                 required
                 placeholder="https://provider.example/v1"
+                disabled={embeddingLocked}
                 value={configuration.embedding.base_url ?? ""}
                 onChange={(event) =>
                   change({ ...configuration, embedding: { ...configuration.embedding, base_url: event.target.value } })
@@ -210,6 +219,7 @@ export function ModelsForm({ status, onValidate, onSave }: Props) {
             <label className="flex items-center gap-2">
               <input
                 type="checkbox"
+                disabled={embeddingLocked}
                 checked={configuration.embedding.send_dimensions ?? false}
                 onChange={(event) =>
                   change({
@@ -309,6 +319,7 @@ export function ModelsForm({ status, onValidate, onSave }: Props) {
                 min={1}
                 max={configuration.embedding.provider === "compatible" ? 65535 : 3072}
                 step={1}
+                disabled={embeddingLocked}
                 value={configuration.embedding.dimensions}
                 onChange={(event) =>
                   change({

@@ -13,7 +13,7 @@ from server.insights.domain.provider_rebuild import (
     rebuild_surfaces,
 )
 from server.insights.domain.provider_rebuild_manifest import RebuildManifest, RebuildTablePlan
-from server.insights.store.provider_rebuild import rebuild_inventory
+from server.insights.store.provider_rebuild import rebuild_inventory, unpublishable_rebuild_tables
 from server.insights.store.provider_staging import StagingNames
 
 
@@ -133,3 +133,18 @@ async def test_staging_prefix_alone_never_hides_an_unknown_vector(manifest, othe
     ]
     with pytest.raises(ValueError, match="unknown="):
         await rebuild_inventory(manifest=manifest if other_job else None, ch=client)
+
+
+@pytest.mark.asyncio
+async def test_unpublishable_tables_are_rebuild_sources_on_other_engines():
+    client = AsyncMock()
+    client.query_all.return_value = [
+        {"name": "code_chunks", "engine": "SharedReplacingMergeTree"},
+        {"name": "memory_embeddings", "engine": "ReplacingMergeTree"},
+        {"name": "query_nodes", "engine": "ReplicatedMergeTree"},
+    ]
+    assert await unpublishable_rebuild_tables(ch=client) == (
+        ("code_chunks", "SharedReplacingMergeTree"),
+        ("query_nodes", "ReplicatedMergeTree"),
+    )
+    assert client.query_all.await_args.args[1] == {"tables": list(REBUILD_TABLES)}
