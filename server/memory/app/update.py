@@ -556,6 +556,31 @@ async def _update_post_write(
 async def _update_live_row(
     input: Any, existing: MemoryRow, ch: Any, *, op: str
 ) -> MemoryUpdateByIdOutput:
+    """A conditional update re-reads the head under the key's write lock."""
+    if not input.if_match_sha256:
+        return await _write_revision(input, existing, ch, op=op)
+    import server.memory.store as memory_repo
+    from server.memory.store.key_write_lock import key_write_lock
+
+    async with key_write_lock(
+        input.org,
+        existing.namespace,
+        existing.agent,
+        existing.user_id,
+        existing.session_id,
+        existing.memory_key,
+    ):
+        head = await memory_repo.get_by_id(
+            str(existing.memory_id), org=input.org, fresh=True, strong=True
+        )
+        if head is None:
+            return MemoryUpdateByIdOutput(updated=False)
+        return await _write_revision(input, head, ch, op=op)
+
+
+async def _write_revision(
+    input: Any, existing: MemoryRow, ch: Any, *, op: str
+) -> MemoryUpdateByIdOutput:
     """The write half shared by memory.update_by_id and memory.update:
     lock, expiry/revive, hash precondition, char cap, blacklist, one new
     version row, embedding refresh. `input` carries value / tags / concepts /

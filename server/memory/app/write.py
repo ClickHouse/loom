@@ -591,6 +591,23 @@ def _set_build_memory_row(w: _SetWrite) -> None:
 
 
 async def _handle_memory_set(input: MemorySetInput) -> MemorySetOutput:
+    """memory.set; a conditional write holds the key's write lock."""
+    if not input.if_match_sha256:
+        return await _memory_set_phases(input)
+    from server.memory.store.key_write_lock import key_write_lock
+
+    async with key_write_lock(
+        input.org,
+        input.namespace,
+        input.agent,
+        input.user_id,
+        input.session_id,
+        input.memory_key,
+    ):
+        return await _memory_set_phases(input)
+
+
+async def _memory_set_phases(input: MemorySetInput) -> MemorySetOutput:
     """memory.set, as its phases in order (each `_set_*` above says what it does).
 
     The shared request state is `w` (_SetWrite). Early returns: a lock/pin
