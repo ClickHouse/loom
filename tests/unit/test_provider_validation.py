@@ -117,6 +117,7 @@ async def test_one_openai_key_validates_both_roles_without_anthropic(monkeypatch
         (401, "invalid_credentials"),
         (403, "invalid_credentials"),
         (404, "model_unavailable"),
+        (402, "quota_or_rate_limit"),
         (429, "quota_or_rate_limit"),
         (500, "provider_error"),
     ],
@@ -133,6 +134,58 @@ async def test_provider_errors_do_not_expose_response(
     assert not result.ready
     assert result.code == code
     assert "secret-key" not in result.model_dump_json()
+
+
+@pytest.mark.asyncio
+async def test_detail_names_status_and_error_code_without_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = {"error": {"code": "insufficient_quota", "message": "key secret-key has no credit"}}
+    response = httpx.Response(402, json=body, request=httpx.Request("POST", "https://example.test"))
+    error = httpx.HTTPStatusError("upstream", request=response.request, response=response)
+    monkeypatch.setattr(validation, "_probe_llm", AsyncMock(side_effect=error))
+    result = await validation._check("llm", "openai", "gpt-test", "secret-key", 0)
+    assert result.detail == "HTTP 402 (insufficient_quota)"
+    assert "secret-key" not in result.model_dump_json()
+
+
+@pytest.mark.asyncio
+async def test_width_mismatch_says_expected_and_returned_dims(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        validation.OpenAIEmbedder,
+        "_embed_one_raw",
+        AsyncMock(
+            side_effect=validation.MalformedEmbedding(
+                "provider returned 1024 dims; the request asked for 768"
+            )
+        ),
+    )
+    result = await validation._check("embedding", "openai", "text-embedding-test", "key", 768)
+    assert result.code == "invalid_output"
+    assert result.detail == "provider returned 1024 dims; the request asked for 768"
+
+
+@pytest.mark.asyncio
+async def test_failed_check_leaves_running_provider_health_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.observability import provider_health
+
+    async def failing(*_: object) -> None:
+        with provider_health.recording("openai:chat"):
+            raise RuntimeError("candidate key rejected")
+
+    provider_health.reset()
+    monkeypatch.setattr(validation, "_probe_llm", failing)
+    result = await validation._check("llm", "openai", "gpt-test", "key", 0)
+    assert result.code == "provider_error"
+    assert provider_health.status() == {"degraded": False, "providers": {}}
+    with pytest.raises(RuntimeError):
+        await failing()
+    assert provider_health.status()["degraded"]
+    provider_health.reset()
 
 
 @pytest.mark.asyncio

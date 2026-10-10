@@ -60,7 +60,14 @@ export interface ModelStatus {
 
 export interface ModelValidation {
   ready: boolean;
-  checks: { role: "llm" | "embedding"; provider: string; model: string; ready: boolean; code: string }[];
+  checks: {
+    role: "llm" | "embedding";
+    provider: string;
+    model: string;
+    ready: boolean;
+    code: string;
+    detail?: string;
+  }[];
 }
 
 export interface ModelSaveResult {

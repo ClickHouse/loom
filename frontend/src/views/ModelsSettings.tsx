@@ -61,6 +61,8 @@ export function ModelsSettings() {
   const [resetting, setResetting] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  // Outlives the form, which remounts on the new version.
+  const [saved, setSaved] = useState(false);
   useEffect(() => {
     const controller = new AbortController();
     let loading = false;
@@ -167,15 +169,22 @@ export function ModelsSettings() {
           )}
         </div>
       ) : (
-        <ModelsForm
-          key={status.version}
-          status={status}
-          onValidate={validateModelConfiguration}
-          onSave={async (configuration) => {
-            await saveModelConfiguration(configuration);
-            setReload((value) => value + 1);
-          }}
-        />
+        <>
+          {saved && <p role="status">Saved. Loom is using the new configuration.</p>}
+          <ModelsForm
+            key={status.version}
+            status={status}
+            onValidate={(configuration) => {
+              setSaved(false);
+              return validateModelConfiguration(configuration);
+            }}
+            onSave={async (configuration) => {
+              await saveModelConfiguration(configuration);
+              setSaved(true);
+              setReload((value) => value + 1);
+            }}
+          />
+        </>
       )}
     </div>
   );

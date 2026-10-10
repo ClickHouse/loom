@@ -1,7 +1,14 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getModelStatus, resetModelConfiguration, retryModelConfiguration, type ModelStatus } from "../api/models";
+import {
+  getModelStatus,
+  resetModelConfiguration,
+  retryModelConfiguration,
+  saveModelConfiguration,
+  validateModelConfiguration,
+  type ModelStatus,
+} from "../api/models";
 import { ModelsSettings } from "./ModelsSettings";
 
 vi.mock("../api/models", async (original) => ({
@@ -9,6 +16,8 @@ vi.mock("../api/models", async (original) => ({
   getModelStatus: vi.fn(),
   resetModelConfiguration: vi.fn(),
   retryModelConfiguration: vi.fn(),
+  saveModelConfiguration: vi.fn(),
+  validateModelConfiguration: vi.fn(),
 }));
 
 const status: ModelStatus = {
@@ -94,5 +103,18 @@ describe("Environment configuration reset", () => {
     await screen.findByText(/Embedding configuration: queued/);
     expect(screen.getByText("cursor: 42")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Retry rebuild" })).toBeNull();
+  });
+});
+
+describe("Saving", () => {
+  it("keeps a saved confirmation after the form reloads on the new version", async () => {
+    vi.mocked(validateModelConfiguration).mockResolvedValue({ ready: true, checks: [] });
+    vi.mocked(saveModelConfiguration).mockImplementation(async () => {
+      vi.mocked(getModelStatus).mockResolvedValue({ ...status, version: "1791195706575122050" });
+      return { config_id: "saved-id", state: "active" };
+    });
+    render(<ModelsSettings />);
+    fireEvent.click(await screen.findByRole("button", { name: "Test & apply" }));
+    await screen.findByText("Saved. Loom is using the new configuration.");
   });
 });
