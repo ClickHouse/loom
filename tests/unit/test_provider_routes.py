@@ -17,6 +17,7 @@ from server.insights.api.models_provider_setup import (
 from server.insights.app import provider_activation as activation
 from server.insights.app import provider_routes as routes
 from server.insights.app import provider_runtime as runtime
+from server.insights.domain.provider_rebuild import REBUILD_TABLES
 from server.operations.base import Role
 
 
@@ -154,7 +155,11 @@ def test_status_hides_private_rebuild_recipe_and_manifest(client, monkeypatch):
     )
     response = client.get("/v1/admin/models")
     assert response.status_code == 200
-    assert response.json()["pending"]["progress"] == {"phase": "snapshot", "rows_done": 10}
+    assert response.json()["pending"]["progress"] == {
+        "phase": "snapshot",
+        "rows_done": 10,
+        "table_count": len(REBUILD_TABLES),
+    }
 
 
 def test_status_uses_committed_models_before_replica_refresh(client, monkeypatch):

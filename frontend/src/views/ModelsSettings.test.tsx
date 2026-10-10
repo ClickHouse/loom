@@ -57,6 +57,22 @@ describe("Environment configuration reset", () => {
     expect(screen.queryByRole("button", { name: "Retry rebuild" })).toBeNull();
   });
 
+  it("describes rebuild progress in plain words and keeps raw fields under details", async () => {
+    vi.mocked(getModelStatus).mockResolvedValue({
+      ...status,
+      pending: {
+        config_id: "failed-job",
+        state: "failed",
+        error_code: "rebuild_cleanup_failed",
+        progress: { phase: "cleanup", table_index: 16, table_count: 16, rows_done: 33, cursor: 0 },
+      },
+    });
+    render(<ModelsSettings />);
+    await screen.findByText(/Step 6 of 7: Removing temporary copies, 33 rows processed\./);
+    expect(screen.getByText(/The rebuild stopped at “removing temporary copies”/)).toBeTruthy();
+    expect(screen.getByText("error: rebuild_cleanup_failed")).toBeTruthy();
+  });
+
   it("retries the displayed failed job and refreshes its checkpoint status", async () => {
     const pending = {
       config_id: "failed-job",

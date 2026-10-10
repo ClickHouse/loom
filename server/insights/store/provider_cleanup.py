@@ -5,6 +5,8 @@ drained, on one pinned ClickHouse node. Local process inspection supplements tha
 barrier; it is not a substitute for a distributed acknowledgement.
 """
 
+import asyncio
+import time
 from uuid import UUID
 
 from server.core.repo_base import _CHClient, _default_client
@@ -48,10 +50,17 @@ async def _inspect(manifest: RebuildManifest, database: str, client: _CHClient) 
     return private
 
 
-async def _assert_idle(tables: list[str], database: str, client: _CHClient) -> None:
+# Unrelated queries that name a rebuild table (status polls, stats refreshes)
+# finish in seconds; wait them out instead of failing the whole job.
+IDLE_WAIT_S = 30.0
+_IDLE_POLL_S = 0.5
+
+
+async def _running(tables: list[str], database: str, client: _CHClient) -> int:
     queries = await client.query_one(
         "SELECT count() AS running FROM system.processes WHERE query_id != currentQueryID() "
-        "AND arrayExists(name -> position(query, name) > 0, {tables:Array(String)})",
+        "AND arrayExists(name -> match(query, concat('(^|[^A-Za-z0-9_])', name, "
+        "'([^A-Za-z0-9_]|$)')), {tables:Array(String)})",
         {"tables": tables},
     )
     mutations = await client.query_one(
@@ -59,9 +68,20 @@ async def _assert_idle(tables: list[str], database: str, client: _CHClient) -> N
         "AND table IN {tables:Array(String)} AND NOT is_done",
         {"database": database, "tables": tables},
     )
+    total = 0
     for result in (queries, mutations):
-        if result is None or type(result.get("running")) is not int or result["running"] != 0:
+        if result is None or type(result.get("running")) is not int or result["running"] < 0:
             raise ValueError("Rebuild cleanup work is running or its status is unknown")
+        total += result["running"]
+    return total
+
+
+async def _assert_idle(tables: list[str], database: str, client: _CHClient) -> None:
+    deadline = time.monotonic() + IDLE_WAIT_S
+    while await _running(tables, database, client):
+        if time.monotonic() >= deadline:
+            raise ValueError("Rebuild cleanup work is running or its status is unknown")
+        await asyncio.sleep(_IDLE_POLL_S)
 
 
 async def cleanup_rebuild_copies(

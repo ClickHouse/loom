@@ -28,6 +28,7 @@ from server.insights.app.provider_reset import reset_configuration
 from server.insights.app.provider_retry import retry_configuration
 from server.insights.app.provider_runtime import environment_embedding, environment_settings
 from server.insights.app.provider_validation import validate_providers
+from server.insights.domain.provider_rebuild import REBUILD_TABLES
 from server.insights.domain.provider_setup import committed_configuration, pending_configuration
 from server.insights.store.provider_configuration import configurations
 from server.operations.base import Role
@@ -151,10 +152,14 @@ async def model_configuration_status() -> ProviderSetupStatus:
             state=pending["state"],
             error_code=pending["error_code"],
             progress={
-                key: value
-                for key, value in json.loads(pending["progress"]).items()
-                if key in {"phase", "table", "table_index", "cursor", "rows_done", "plan_version"}
-                and type(value) in (str, int)
+                **{
+                    key: value
+                    for key, value in json.loads(pending["progress"]).items()
+                    if key
+                    in {"phase", "table", "table_index", "cursor", "rows_done", "plan_version"}
+                    and type(value) in (str, int)
+                },
+                "table_count": len(REBUILD_TABLES),
             },
         )
         if pending
