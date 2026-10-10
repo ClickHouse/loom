@@ -96,7 +96,7 @@ def test_keyed_llm_without_key_is_reported_with_the_key_as_the_fix(
     p = _by_code(collect_problems(s, HealthState(env={})), "llm_key_missing")
     assert p.severity == "warn"
     assert "OPENAI_API_KEY is not set" in p.message
-    assert p.fix.startswith("Set OPENAI_API_KEY")
+    assert "set OPENAI_API_KEY" in p.fix
     # With the key present the problem is gone.
     assert "llm_key_missing" not in _codes(
         collect_problems(s, HealthState(env={"OPENAI_API_KEY": "sk"}))
@@ -108,7 +108,7 @@ def test_keyed_embedder_without_key(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch, LOOM_EMBEDDING_MODEL="text-embedding-3-small", LOOM_LLM_PROVIDER="fake"
     )
     p = _by_code(collect_problems(s, HealthState(env={})), "embedder_key_missing")
-    assert "OPENAI_API_KEY" in p.message and p.fix.startswith("Set OPENAI_API_KEY")
+    assert "OPENAI_API_KEY" in p.message and "set OPENAI_API_KEY" in p.fix
     assert "embedder_key_missing" not in _codes(
         collect_problems(s, HealthState(env={"OPENAI_API_KEY": "sk"}))
     )
@@ -477,7 +477,10 @@ def test_doctor_prints_the_same_problem_list(
     rc = _cmd_doctor(argparse.Namespace())
     out = capsys.readouterr().out
     assert rc == 0
-    assert "[WARN]  problem:fake_llm" in out and "Fix: Set LOOM_LLM_PROVIDER=openai" in out
+    assert (
+        "[WARN]  problem:fake_llm" in out
+        and "Fix: Choose an LLM in Settings → Models & keys" in out
+    )
     assert "[WARN]  problem:fake_embedder" in out
     # Same list as /v1/health: the doctor's codes are the collector's codes.
     expected = {p.code for p in collect_problems(settings, HealthState())}
@@ -522,7 +525,7 @@ def test_doctor_json_emits_checks_and_problems(
         "problem:fake_llm",
     }
     fake_llm = next(p for p in body["problems"] if p["code"] == "fake_llm")
-    assert fake_llm["severity"] == "warn" and fake_llm["fix"].startswith("Set LOOM_LLM_PROVIDER")
+    assert fake_llm["severity"] == "warn" and "LOOM_LLM_PROVIDER=openai" in fake_llm["fix"]
 
 
 def test_doctor_cli_accepts_json_flag(monkeypatch: pytest.MonkeyPatch) -> None:
