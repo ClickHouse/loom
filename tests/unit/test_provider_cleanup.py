@@ -8,6 +8,7 @@ import pytest
 
 from server.insights.domain.provider_rebuild import REBUILD_TABLES
 from server.insights.domain.provider_rebuild_manifest import RebuildManifest, RebuildTablePlan
+from server.insights.store import provider_cleanup
 from server.insights.store.provider_cleanup import _identities, cleanup_rebuild_copies
 
 
@@ -74,7 +75,8 @@ async def test_identity_preflight_fails_before_any_drop(setup, kind):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("result", [None, {}, {"running": True}, {"running": 1}, {"running": -1}])
 @pytest.mark.parametrize("kind", ["query", "mutation"])
-async def test_active_or_unknown_work_prevents_cleanup(setup, result, kind):
+async def test_active_or_unknown_work_prevents_cleanup(setup, result, kind, monkeypatch):
+    monkeypatch.setattr(provider_cleanup, "IDLE_WAIT_S", 0)
     manifest, client, *_ = setup
     client.query_one.side_effect = (
         [result, {"running": 0}] if kind == "query" else [{"running": 0}, result]
@@ -82,6 +84,15 @@ async def test_active_or_unknown_work_prevents_cleanup(setup, result, kind):
     with pytest.raises(ValueError, match="running or its status"):
         await cleanup_rebuild_copies(manifest, ch=client)
     client.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_briefly_busy_tables_are_waited_out(setup, monkeypatch):
+    monkeypatch.setattr(provider_cleanup, "_IDLE_POLL_S", 0)
+    manifest, client, _, copies, _ = setup
+    idle = {"running": 0}
+    client.query_one.side_effect = [{"running": 1}, idle, idle, idle]
+    assert await cleanup_rebuild_copies(manifest, ch=client) == len(copies)
 
 
 @pytest.mark.asyncio
