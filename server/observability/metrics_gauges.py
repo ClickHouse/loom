@@ -267,8 +267,7 @@ def _register_backlog_gauges(meter: Any, _reading: Callable[[str], Callable[[Any
     meter.create_observable_gauge(
         name="loom.vectors.total",
         callbacks=[_reading("vectors_total")],
-        description="Embedded vectors present, for capacity planning against "
-        "the brute-force/index threshold",
+        description="Embedded vectors present: the exact scan's input",
         unit="1",
     )
 
@@ -393,30 +392,6 @@ def _register_store_gauges(meter: Any, _reading: Callable[[str], Callable[[Any],
         callbacks=[_reading("audit_checkpoint_lag_windows")],
         description="One-hour windows the audit checkpoint chain has yet to seal; "
         "rising = sealer stalled, falling = backfill",
-        unit="1",
-    )
-    # The HNSW index's two ledgers: what it costs (adds)
-    # against what it serves (searches), plus the share of recent vector
-    # reads that opened it. Per replica; see _probe_state.
-    meter.create_observable_gauge(
-        name="loom.vector_index.searches_total",
-        callbacks=[_reading("usearch_searches_total")],
-        description="Cumulative usearch searches on the probed replica; flat while "
-        "tenant-filtered reads pre-filter past the index",
-        unit="1",
-    )
-    meter.create_observable_gauge(
-        name="loom.vector_index.adds_total",
-        callbacks=[_reading("usearch_adds_total")],
-        description="Cumulative vectors added to usearch graphs on the probed "
-        "replica — the build cost the index charges on inserts and merges",
-        unit="1",
-    )
-    meter.create_observable_gauge(
-        name="loom.vector_index.reads_indexed_ratio",
-        callbacks=[_reading("vector_reads_indexed_ratio")],
-        description="Share of the last 30 min of memory_embeddings vector reads "
-        "that opened the HNSW index (0 = brute force served them all)",
         unit="1",
     )
 

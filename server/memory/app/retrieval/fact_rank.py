@@ -359,7 +359,7 @@ def _graph_rank_score(q: SearchQuery, params: dict[str, Any], t: _FactRankTerms)
     # Boost memories whose entities overlap the 1-hop-expanded query
     # entity set. The expansion is fetched by the handler and passed in
     # as `graph_expanded`, so this branch stays cheap (no edge JOIN on
-    # the hot ANN path); cosine-ordered for HNSW, boost is additive.
+    # the hot vector path); cosine-ordered, boost is additive.
     params["graph_entities"] = list(q.graph_expanded or [])
     params["triple_keys"] = list(q.triple_matched_keys or [])
     # Weights default to 0.3 / 0.2.
@@ -449,8 +449,8 @@ def _fact_mode_rank_score(
         rank_score_expr = _graph_rank_score(q, params, t)
     elif q.search_mode == "related":
         # Facet-overlap retrieval for topic-clustering ("findings tagged X"):
-        # rank by tag + entity intersection. Distance is computed (HNSW order)
-        # but overlap fraction drives ranking.
+        # rank by tag + entity intersection. Distance is computed but overlap
+        # fraction drives ranking.
         params["tag_filter"] = list(q.tags)
         params["ent_filter"] = [t.lower() for t in q.entity_filter]
         tag_overlap = (

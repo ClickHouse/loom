@@ -105,10 +105,9 @@ def test_vector_search_settings_quantized_override() -> None:
     off = vector_search_settings(quantized=False, fetch_multiplier=10.0)
     assert "vector_search_use_quantized_codes" not in off
     assert "vector_search_index_fetch_multiplier = 10.0" in off
-    on = vector_search_settings(quantized=True, fetch_multiplier=1.0, ef_search=256)
+    on = vector_search_settings(quantized=True, fetch_multiplier=1.0)
     assert on == (
-        "SETTINGS hnsw_candidate_list_size_for_search = 256, "
-        "vector_search_index_fetch_multiplier = 1.0, vector_search_use_quantized_codes = 1"
+        "SETTINGS vector_search_index_fetch_multiplier = 1.0, vector_search_use_quantized_codes = 1"
     )
     set_quantized_codes_supported(False)
     assert "vector_search_use_quantized_codes" not in vector_search_settings(quantized=True)
@@ -139,8 +138,7 @@ async def test_main_leg_carries_the_codes_flag_only_on_a_patch_free_table() -> N
     await vector_search(_q(execution_planes=["fact"]), ch=ch)
     tail = _settings_tail(_fact_sql(ch))
     assert "vector_search_use_quantized_codes" not in tail  # patch parts: the codes-free fragment
-    assert "vector_search_index_fetch_multiplier = 10.0" in tail
-    assert "hnsw_candidate_list_size_for_search = 256" in tail
+    assert "vector_search_index_fetch_multiplier = 3.0" in tail
 
     P.reset()
     ch = _CH(fail=True)

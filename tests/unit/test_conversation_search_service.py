@@ -60,7 +60,7 @@ async def test_vector_search_default_filters_and_order() -> None:
     # eligible; the recency tie-break moved to Python.
     assert "ORDER BY distance ASC" in sql
     assert "ts DESC" not in sql
-    assert "hnsw_candidate_list_size_for_search" in sql
+    assert "vector_search_index_fetch_multiplier" in sql
     # Relevance gate: rows beyond max_distance are dropped in SQL.
     assert "cosineDistance(embedding, {q:Array(Float32)}) <= {maxd:Float64}" in sql
     assert params["model"] == "text-embedding-3-small"

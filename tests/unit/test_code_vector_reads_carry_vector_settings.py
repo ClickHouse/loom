@@ -54,7 +54,7 @@ async def test_fragment_is_codec_free_when_the_server_does_not_know_the_setting(
     ch = _StubCH()
     await CodeRepo(ch).vector_search_chunks("o", "n", "m", [0.1], pool=5)  # type: ignore[arg-type]
     sql = _norm(ch.calls[0][0])
-    assert "SETTINGS hnsw_candidate_list_size_for_search" in sql
+    assert "SETTINGS vector_search_index_fetch_multiplier" in sql
     assert "vector_search_use_quantized_codes" not in sql
 
 
@@ -71,6 +71,7 @@ async def test_answer_cache_lookup_carries_the_fragment(monkeypatch: pytest.Monk
     assert await answers_cache._cache_lookup(repo, "o", "n", "m", [0.1]) == []
     sql = _norm(ch.calls[0][0])
     assert (
-        "ORDER BY distance ASC LIMIT {k:UInt32} SETTINGS hnsw_candidate_list_size_for_search" in sql
+        "ORDER BY distance ASC LIMIT {k:UInt32} SETTINGS vector_search_index_fetch_multiplier"
+        in sql
     )
     assert "vector_search_use_quantized_codes = 1" in sql

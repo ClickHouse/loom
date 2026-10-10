@@ -99,7 +99,7 @@ async def test_main_ann_leg_keeps_the_bare_order(
     )
     await vector_search(_q(scope="private", agent="a", execution_planes=["fact"]), ch=ch)
     sqls = [s for s, _ in ch.query_all_calls]
-    ann = [s for s in sqls if "hnsw_candidate_list_size_for_search" in s]
+    ann = [s for s in sqls if "vector_search_index_fetch_multiplier" in s]
     assert ann and "ORDER BY value_distance ASC\n" in ann[0]
     assert "value_distance ASC, e.memory_key" not in ann[0]  # the index shape is not negotiable
 

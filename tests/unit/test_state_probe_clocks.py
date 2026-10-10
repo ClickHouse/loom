@@ -31,7 +31,7 @@ class _Client:
 
 
 def test_fast_probe_merges_the_cached_invariants(monkeypatch: pytest.MonkeyPatch) -> None:
-    fast = _Client([(643122, 5, 0, 139644, 1764375, 0.0)])
+    fast = _Client([(643122, 5, 0)])
     monkeypatch.setattr(otel_probes, "_probe_client", lambda: fast)
     monkeypatch.setattr(
         otel_probes,
@@ -46,7 +46,7 @@ def test_fast_probe_merges_the_cached_invariants(monkeypatch: pytest.MonkeyPatch
     out = otel_probes._probe_state()
     # The mutation level rides the census clock too.
     assert out["mutations_pending"] == 2
-    assert out["vectors_total"] == 643122 and out["usearch_adds_total"] == 1764375
+    assert out["vectors_total"] == 643122
     # The vector table's patch-part count rides the fast probe.
     assert out["memory_embeddings_patch_parts"] == 5
     assert "startsWith(name, 'patch')" in fast.queries[0]
@@ -60,9 +60,7 @@ def test_fast_probe_merges_the_cached_invariants(monkeypatch: pytest.MonkeyPatch
         "AS mutations_pending",  # two seconds a read on Cloud
     ):
         assert whole_table not in sql
-    # …and classifies vector reads by the columns they touched, not by text.
-    assert "has(columns, 'loom.memory_embeddings.embedding')" in sql
-    assert "position(query" not in sql
+    assert "system.query_log" not in sql
 
 
 def test_invariants_refresh_once_per_ttl(monkeypatch: pytest.MonkeyPatch) -> None:

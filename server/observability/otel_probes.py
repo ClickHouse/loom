@@ -53,31 +53,7 @@ def _probe_state() -> dict[str, Any]:
             -- been sealed. The sealer itself cannot report this when it is down.
             (SELECT if(count() = 0, 0,
                        greatest(dateDiff('hour', max(window_end), now()), 0))
-             FROM loom.audit_checkpoints) AS audit_checkpoint_lag_windows,
-            -- The HNSW index, as seen by usearch on THIS replica.
-            -- `system.events` is per server, so the two counters are
-            -- one replica's cumulative totals; a flat searches line beside a
-            -- rising adds line means distance computations spent building a
-            -- graph that few reads open.
-            (SELECT sumIf(value, event = 'USearchSearchCount')
-             FROM system.events) AS usearch_searches_total,
-            (SELECT sumIf(value, event = 'USearchAddCount')
-             FROM system.events) AS usearch_adds_total,
-            -- Share of the last 30 minutes' vector reads on this replica that
-            -- opened the index at all. Reads 0 while the planner pre-filters on
-            -- the tenant key; would read near 1 on a ClickHouse that searches
-            -- partially pruned parts. A vector read is classified by the
-            -- columns it touched (`system.query_log.columns`), never by its
-            -- text: a substring test over the statement text of every logged
-            -- query in a 30-minute window reads ~65 KB per row, GBs per probe.
-            (SELECT if(count() = 0, 0.,
-                       countIf(ProfileEvents['USearchSearchCount'] > 0) / count())
-             FROM system.query_log
-             WHERE event_time > now() - INTERVAL 30 MINUTE
-               AND type = 'QueryFinish'
-               AND query_kind = 'Select'
-               AND has(tables, 'loom.memory_embeddings')
-               AND has(columns, 'loom.memory_embeddings.embedding')) AS vector_reads_indexed_ratio
+             FROM loom.audit_checkpoints) AS audit_checkpoint_lag_windows
         """
     ).result_rows
     if not row:
@@ -86,17 +62,11 @@ def _probe_state() -> dict[str, Any]:
         vectors_total,
         memory_embeddings_patch_parts,
         audit_checkpoint_lag_windows,
-        usearch_searches_total,
-        usearch_adds_total,
-        vector_reads_indexed_ratio,
     ) = row[0]
     out = {
         "vectors_total": int(vectors_total),
         "memory_embeddings_patch_parts": int(memory_embeddings_patch_parts or 0),
         "audit_checkpoint_lag_windows": int(audit_checkpoint_lag_windows or 0),
-        "usearch_searches_total": int(usearch_searches_total or 0),
-        "usearch_adds_total": int(usearch_adds_total or 0),
-        "vector_reads_indexed_ratio": float(vector_reads_indexed_ratio or 0.0),
     }
     out.update(_probe_invariants_cached())
     return out

@@ -30,7 +30,6 @@ def test_stage_one_is_the_shape_the_index_serves() -> None:
     assert " FINAL" not in sql
     assert "JOIN" not in sql
     assert "ORDER BY distance ASC" in sql and "LIMIT {chunk_limit:UInt32}" in sql
-    assert "hnsw_candidate_list_size_for_search" in sql
     assert "vector_search_index_fetch_multiplier" in sql
     for pred in (
         "c.org = {org:String}",

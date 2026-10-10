@@ -184,7 +184,7 @@ async def _gather_legs(
         else None
     )
     lexical_task = (
-        # Admit lexical hits HNSW missed, dropping those semantically far
+        # Admit lexical hits the vector leg missed, dropping those semantically far
         # (0.9 distance = 0.1 similarity floor) as false friends. The rrf route
         # skips it: its fact leg already fuses a lexical rank, and the pool is
         # a second FINAL scan of the namespace's vectors.

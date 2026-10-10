@@ -139,7 +139,7 @@ def _served(name: str) -> Embedder:
         from server.embedding.fake import FakeNGramEmbedder
 
         # The configured width, like the explicit-fake branch: the
-        # schema and HNSW index are sized from it.
+        # schema is sized from it.
         return FakeNGramEmbedder(dim=settings.embedding_dim)
     if provider == "fake":
         from server.embedding.fake import FakeNGramEmbedder
@@ -276,5 +276,5 @@ def effective_embedding_dim() -> int:
     """Probed dim if available, else the configured scalar.
 
     Use this everywhere the actual emitted vector length matters
-    (HNSW index materialization, sanity checks on insert)."""
+    (sanity checks on insert)."""
     return _probed_dim if _probed_dim is not None else settings.embedding_dim

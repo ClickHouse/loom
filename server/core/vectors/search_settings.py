@@ -8,7 +8,6 @@ from server.core.vectors.quantized_setting import quantized_codes_supported
 
 def vector_search_settings(
     *,
-    ef_search: int | None = None,
     fetch_multiplier: float | None = None,
     quantized: bool | None = None,
     table: str | None = None,
@@ -17,9 +16,8 @@ def vector_search_settings(
     """The `SETTINGS ...` fragment every vector-ranked read should carry.
 
     Single source of truth so the helper planes can't drift from the main leg.
-    Both knobs are inert under brute-force search and only bite once a
-    `vector_similarity` index or a `Quantized(...)` codec is in play — which is
-    exactly why they have to be right *before* one appears.
+    Search is an exact scan; the settings only change it on a column with a
+    `Quantized(...)` codec, where it becomes a codes-first shortlist.
 
     Callers append this to a query that already ends in `ORDER BY
     <bare cosineDistance(col, ref)> ASC LIMIT n` — see the note below on why
@@ -40,7 +38,6 @@ def vector_search_settings(
     """
     from server.settings import settings
 
-    ef = settings.vector_search_ef_search if ef_search is None else ef_search
     deployment = bool(settings.vector_search_quantized_codes and quantized_codes_supported())
     if quantized is None:
         quantized = deployment
@@ -52,19 +49,14 @@ def vector_search_settings(
         quantized = quantized_codes_supported()
     else:
         quantized = False
-    if fetch_multiplier is not None:
-        mult = fetch_multiplier
-    elif quantized:
-        # The codes-first scan over-fetches less than HNSW
-        # post-filtering needs; x3 held recall 1.000 where x10 read twice
-        # the bytes.
-        mult = settings.vector_search_quantized_fetch_multiplier
-    else:
-        mult = settings.vector_search_index_fetch_multiplier
-    fragment = (
-        f"SETTINGS hnsw_candidate_list_size_for_search = {int(ef)}, "
-        f"vector_search_index_fetch_multiplier = {float(mult)}"
+    # x3 held recall 1.000 where x10 read twice the bytes. Inert without the
+    # codes flag; it keeps the fragment a SETTINGS clause callers extend.
+    mult = (
+        settings.vector_search_quantized_fetch_multiplier
+        if fetch_multiplier is None
+        else fetch_multiplier
     )
+    fragment = f"SETTINGS vector_search_index_fetch_multiplier = {float(mult)}"
     if quantized:
         # With a `Quantized(...)` codec on the column this turns
         # the scan into codes-first + full-precision rescore of LIMIT x
@@ -78,8 +70,8 @@ def vector_search_settings(
 # Why every vector-ranked query in this codebase orders by a BARE distance
 # expression, ASC, as the ONLY sort key — and reconstructs similarity in
 # Python instead of in SQL.
-# CH's vector-search optimizations (both the `vector_similarity` index path and
-# the newer `Quantized(...)` two-stage codec path) pattern-match a rigid query
+# CH's vector-search optimizations (the `Quantized(...)` two-stage codec path,
+# and a `vector_similarity` index) pattern-match a rigid query
 # plan: LimitStep -> SortingStep -> ExpressionStep -> [FilterStep] ->
 # ReadFromMergeTree. They bail out when
 #   - the sort has more than one key          (`ORDER BY d ASC, ts DESC`)

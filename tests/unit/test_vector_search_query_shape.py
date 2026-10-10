@@ -17,13 +17,11 @@ edits the SQL, not to re-derive CH's optimizer.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import pytest
 
 from server.core.vectors.search_settings import vector_search_settings
-from server.settings import settings
 
 ROOT = Path(__file__).resolve().parents[2]
 MEMORY_SEARCH_FILES = sorted(
@@ -81,38 +79,11 @@ def test_no_similarity_expression_as_sort_key(path: str) -> None:
     assert "ORDER BY sim DESC" not in _read(path)
 
 
-def test_no_query_pins_ef_search_below_the_clickhouse_default() -> None:
-    """No helper plane pins ef_search=64 — a quarter of CH's 256.
-
-    They are the legs that exist to catch what the main leg missed, so trading
-    their recall for latency is backwards. Every ef_search comes from
-    settings; nothing may hardcode a literal below the CH default.
-    """
-    literals: list[tuple[str, int]] = []
-    for path in (
-        *MEMORY_SEARCH_FILES,
-        "server/knowledge/app/conversation_search.py",
-        "server/knowledge/app/search.py",
-        "server/memory/app/search/ann_entity_boosts.py",
-        "server/memory/domain/search_sql.py",
-    ):
-        for m in re.finditer(r"hnsw_candidate_list_size_for_search\s*=\s*(\d+)", _read(path)):
-            literals.append((path, int(m.group(1))))
-    bad = [(p, v) for p, v in literals if v < 256]
-    assert not bad, f"ef_search pinned below the CH default of 256: {bad}"
-
-
-def test_vector_search_settings_fragment_carries_both_knobs() -> None:
+def test_vector_search_settings_fragment_is_a_settings_clause() -> None:
     frag = vector_search_settings()
-    assert frag.startswith("SETTINGS ")
-    assert f"hnsw_candidate_list_size_for_search = {settings.vector_search_ef_search}" in frag
-    # Over-fetch inside the index. At CH's default of 1, a selective tenant
-    # predicate post-filters top-N down to fewer than N returned rows.
-    assert "vector_search_index_fetch_multiplier = " in frag
-    assert settings.vector_search_index_fetch_multiplier > 1.0
+    assert frag.startswith("SETTINGS vector_search_index_fetch_multiplier = ")
 
 
 def test_vector_search_settings_overrides_are_honoured() -> None:
-    frag = vector_search_settings(ef_search=512, fetch_multiplier=3.0)
-    assert "hnsw_candidate_list_size_for_search = 512" in frag
+    frag = vector_search_settings(fetch_multiplier=3.0)
     assert "vector_search_index_fetch_multiplier = 3.0" in frag

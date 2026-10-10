@@ -67,7 +67,7 @@ async def test_vector_leg_carries_the_guard_even_without_a_lexical_predicate() -
     string, and a mode switch must not be able to drop the guard."""
     ch = _RecordingCH()
     await vector_search(_q("semantic"), ch=ch)
-    main = [s for s in ch.sql if "hnsw_candidate_list_size_for_search" in s]
+    main = [s for s in ch.sql if "vector_search_index_fetch_multiplier" in s]
     assert main and all(SETTING in s for s in main)
 
 

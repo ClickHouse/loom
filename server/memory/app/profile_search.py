@@ -342,7 +342,7 @@ async def queue_profile_reembed(
                 content_excerpt=profile_embed_text(str(r["memory_key"]), str(r.get("value") or "")),
                 embedding_model=embedder.model_name,
                 embedding_dim=0,
-                embedding=[0.0] * int(embedder.dim),  # the HNSW index rejects []
+                embedding=[0.0] * int(embedder.dim),  # a stub: embedding_dim=0 marks it
                 created_at=r.get("created_at"),
             )
             for r in rows

@@ -309,11 +309,10 @@ queue.
   `entity_vectors.entity_embedding` keeps `LZ4` because its vectors repeat. Query vectors
   bind as `Array(Float32)`. A memory carries up to two vectors (value and key), so at 3072
   dimensions up to 12 KiB of vectors.
-- **No table has a vector-similarity (HNSW) index.** Search is an exact `cosineDistance`
-  scan over the rows the identity predicates leave. Every read filters on
-  `(org, namespace)`, so ClickHouse pre-filters and almost never opens the index, while
-  every insert and merge would pay to build it.
-  Read latency therefore grows with namespace size, not corpus size.
+- **Exact search, no vector index.** Search is an exact `cosineDistance` scan over the
+  rows the identity predicates leave, read through quantized codes where the server
+  supports them (below). Read latency grows with namespace size, not corpus size. See
+  [why exact search](#why-exact-search).
 - **Quantized codes.** On ClickHouse 26.7+, a fresh install creates the vector columns of
   `CODED_TABLES` (`server/core/schema/vector_codec_ddl.py`) with `CODEC(Quantized('rabitq', <dim>, 0))`
   whenever the server supports it. The runner rewrites the `CREATE` at apply time. An
@@ -335,6 +334,22 @@ queue.
 - **One model per row.** `embedding_model` is in the sort key, so a search compares only
   its own model's vectors. `loom reembed` regenerates vectors after a model change
   (`--in-database` uses `aiEmbed` on 26.7+).
+
+### Why exact search
+
+Every read filters on `(org, namespace)`, so a table-wide vector-similarity (HNSW) index
+is almost never opened: ClickHouse pre-filters to the tenant's rows first. The index
+still costs on every write. Measured on `memory_embeddings`, building it took most of the
+table's merge time and stalled some inserts for seconds, while reads pruned under a tenth
+of the data and ran no faster than the exact scan. Exact search also returns the true
+nearest neighbours, so recall does not depend on index tuning.
+
+This stays the design while a namespace's scan is cheap. The cost that grows is one large
+namespace: the scan is linear in its vectors, and quantized codes shrink it but do not
+change its shape. `loom.vectors.total` and search latency show the trend. If single
+namespaces grow to where the scan dominates latency, the next step is an index over that
+namespace's rows rather than a table-wide one, adopted only when a benchmark at that size
+shows it beats the codes-first scan. The query shape below already suits both.
 
 **Query shape.** ClickHouse pushes a top-k into the codes-first scan only for the plan
 `Limit → Sorting → Expression → [Filter] → ReadFromMergeTree` with one ascending sort key
