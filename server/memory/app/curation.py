@@ -428,8 +428,11 @@ async def fetch_timeline(
         "ns": namespace,
     }
     if entity:
-        where_clauses.append("has(entities, {entity:String})")
-        params["entity"] = entity.lower()
+        # the canonical form rows are stored in, and the lowercase one older rows kept
+        from server.memory.domain.graph_quality import canonical_entity_text
+
+        where_clauses.append("hasAny(entities, {entity:Array(String)})")
+        params["entity"] = sorted({canonical_entity_text(entity), entity.lower()} - {""})
     if tags:
         where_clauses.append("hasAny(tags, {tags:Array(String)})")
         params["tags"] = list(tags)

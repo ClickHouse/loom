@@ -54,3 +54,45 @@ async def test_a_plural_entity_meets_its_singular_filter(ch_client) -> None:
         parameters={"org": ORG, "ns": ns},
     ).result_rows
     assert stored == [(["billing service"],)]
+
+
+async def test_a_timeline_entity_matches_canonical_and_older_lowercase_rows(ch_client) -> None:
+    import server.memory.store as memory_repo
+    from server.core.ch import get_client
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.api.models_temporal import MemoryTimelineInput
+    from server.memory.app.curation import handle_memory_timeline
+    from server.memory.app.write import handle_memory_set
+
+    try:
+        await get_client().connect()
+    except Exception as e:  # noqa: BLE001
+        pytest.skip(f"clickhouse unavailable: {e}")
+    ns = f"agent-entcanon-{os.urandom(3).hex()}"
+    for key in ("shipped", "older"):
+        await handle_memory_set(
+            MemorySetInput(
+                org=ORG,
+                namespace=ns,
+                agent="a",
+                memory_key=key,
+                value=f"the widgets {key}",
+                entities=["widgets"],
+            )
+        )
+    # `older` as rows written before entities were canonical: its mirror holds "widgets"
+    rows = await memory_repo.live_embedding_rows_for_key(
+        get_client(),
+        org=ORG,
+        namespace=ns,
+        agent="a",
+        user_id="-",
+        session_id="-",
+        memory_key="older",
+    )
+    legacy = [{**r, "entities": ["widgets"], "version": int(r["version"]) + 1} for r in rows]
+    await get_client().insert("loom.memory_embeddings", legacy)
+    found = await handle_memory_timeline(
+        MemoryTimelineInput(org=ORG, namespace=ns, agent="*", entity="widgets")
+    )
+    assert sorted(e.memory_key for e in found.events) == ["older", "shipped"]
