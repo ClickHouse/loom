@@ -350,6 +350,24 @@ tombstone within 14 days.
 [Retention and erasure](../features/memory/retention-and-erasure.md) covers the settings
 and the erasure saga.
 
+## One fact over time
+
+In March a user says "I live in Delhi"; in June, "I moved to Berlin."
+
+- **June write.** Extraction mints the key from the subject and attribute, so both
+  statements land on the same key. The June row does not overwrite March: the Delhi
+  version stays in `loom.memory_versions`, readable with `memory.history`.
+- **A misfiled fact.** If Berlin lands under another key, the peer search finds the
+  Delhi row close but different and marks both `conflicted`, linked by `conflict_with`.
+  The namespace policy decides what follows (see
+  [how a write is judged](#how-a-write-is-judged)).
+- **"Where did they live in April?"** An `as_of` read answers it, by when the fact was
+  true or by what Loom knew at that date ([time](#time)).
+- **"Who said so?"** `actor` and `source_class` record the writer and how the fact
+  arrived; `memory.evidence` returns the turns an extracted fact came from.
+- **A bad import.** `namespace.rollback` returns every head in the namespace to its
+  version at a point in time, and runs as a dry run unless told otherwise.
+
 ## Example
 
 Write a fact, probe a change before writing it, then update against the hash you read:
