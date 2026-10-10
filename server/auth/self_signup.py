@@ -412,9 +412,8 @@ async def _single_user_agent(input: AgentSignupInput, request: Request) -> Agent
     """Single-user mode has one identity and nothing to claim: hand the agent a
     writer token for the default namespace, so it keeps working if auth is
     turned on later. Reaching this server already makes the caller its admin."""
-    from server.auth.default_namespace import _SINGLE_USER_SUBJECT, ensure_default_namespace_cached
+    from server.auth.default_namespace import _SINGLE_USER_SUBJECT
 
-    await ensure_default_namespace_cached()
     org, namespace = settings.self_signup_org, settings.default_namespace
     ttl_seconds = int(input.ttl_days) * 86400 if input.ttl_days is not None else None
     token = mint_token(
@@ -433,7 +432,7 @@ async def _single_user_agent(input: AgentSignupInput, request: Request) -> Agent
         claim_code="",
         claim_url=f"{_base_url(request)}/me",
         expires_at=naive_utc_now_seconds() + timedelta(seconds=ttl_seconds)
-        if ttl_seconds
+        if ttl_seconds is not None
         else None,
     )
 

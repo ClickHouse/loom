@@ -91,8 +91,9 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   claim the namespace at /me; a single-user server returns its one identity,
   so there is no claim code and the primer just says it connected. The MCP
   headers helper cannot see install options, so with no LOOM_BASE_URL or saved
-  URL it waits for this hook's credential (`LOOM_MCP_HOOK_WAIT_MS`, 5 s; Codex stops a helper at 10 s)
-  before signing up through the same lock itself. `LOOM_AUTO_SIGNUP=off` disables
+  URL it waits for this hook's credential (`LOOM_MCP_HOOK_WAIT_MS`, 5 s, under
+  Codex's 10 s helper limit) before signing up through the same lock itself.
+  `LOOM_AUTO_SIGNUP=off` disables
   it; a server without self-signup (404) or rate-limiting it (429) leaves the
   machine without a credential and the primer says how to get a token by
   hand. A token given as the `token` install option is first copied into

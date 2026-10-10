@@ -188,15 +188,15 @@ async function _signUp({ base, client, host, user, fetchImpl, now, configPath, d
     claimed,
   });
   const claimUrl = String(body.claim_url || `${base}/me`);
-  if (claimed)
-    return { status: "created", token, namespace, org: body.org || "", claimUrl, claimPath: "", claimed, configPath };
-  const claimPath = paths.claimPath || join(dir, `claim-${namespace}.txt`);
-  writePrivateFile(
-    claimPath,
-    `Loom namespace ${namespace} on ${base} was created for this machine by the ${client} plugin.\n` +
-      `To make it yours, sign in at ${claimUrl} with the namespace name (${namespace}) and this one-time code:\n` +
-      `${claimCode}\n`,
-  );
+  const claimPath = claimed ? "" : paths.claimPath || join(dir, `claim-${namespace}.txt`);
+  if (!claimed) {
+    writePrivateFile(
+      claimPath,
+      `Loom namespace ${namespace} on ${base} was created for this machine by the ${client} plugin.\n` +
+        `To make it yours, sign in at ${claimUrl} with the namespace name (${namespace}) and this one-time code:\n` +
+        `${claimCode}\n`,
+    );
+  }
   return { status: "created", token, namespace, org: body.org || "", claimUrl, claimPath, claimed, configPath };
 }
 

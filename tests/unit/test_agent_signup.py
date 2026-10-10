@@ -373,7 +373,6 @@ def test_post_json_answers_a_read_timeout_and_a_non_json_body(monkeypatch) -> No
 async def test_single_user_signup_returns_the_default_identity_with_nothing_to_claim(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from server.auth import default_namespace
     from server.settings import settings
 
     monkeypatch.setattr(settings, "identity_provider", "single-user")
@@ -383,10 +382,6 @@ async def test_single_user_signup_returns_the_default_identity_with_nothing_to_c
     fake = _FakeCH()
     monkeypatch.setattr(ss, "get_client", lambda: fake)
 
-    async def ensured() -> None:
-        return None
-
-    monkeypatch.setattr(default_namespace, "ensure_default_namespace_cached", ensured)
     ss._agent_signups.clear()
     for _ in range(ss.AGENT_SIGNUPS_PER_HOUR):
         await _signup(fake)
