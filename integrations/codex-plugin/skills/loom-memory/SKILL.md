@@ -62,7 +62,8 @@ file rules" in `reference.md` for removing a wrong one.
 ## Writing, reading, reviewing
 
 - Read the receipt: `memory_id` and `version` mean it was saved;
-  `duplicate_of` or `status: conflicted` name a row to revise instead.
+  `status: duplicate` means `duplicate_of` already holds the fact, so leave
+  both rows; `status: conflicted` names a row to revise instead.
 - `abstain` and `below_threshold` are answers; `verified: false` or a stale
   `valid_at` means say so; a moved key answers with `canonical_key`.
 - Before you report done: one pass over what should outlive the session.

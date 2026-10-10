@@ -50,7 +50,7 @@ async def test_find_orphan_duplicates_scan_predicate_and_alias_safety() -> None:
     assert "duplicate_of NOT IN (" in sql
     # The live-active canonical set filters on live AND active heads.
     assert "argMax(tombstoned_at IS NULL, version) = 1" in sql
-    assert "argMax(status, version) = 'active'" in sql
+    assert "argMax(status, version) IN ('active', 'conflicted')" in sql
     # Head liveness gate on the outer scan.
     assert "HAVING live = 1" in sql
 

@@ -324,6 +324,7 @@ async def _repo_directory_state(auth: Any) -> tuple[_Keyed, _Keyed, _Keyed, _Key
     failed, which the caller renders as "maintained"), for every configured
     code namespace. Three statements, fail-open to defaults: the repo list
     must never fail because the directory could not be read."""
+    from server.auth.default_namespace import auth_off_subject
     from server.code.domain.index.repos import configured_repos
     from server.core.ch import get_client
     from server.identity.domain import join_policy as _jp
@@ -337,7 +338,9 @@ async def _repo_directory_state(auth: Any) -> tuple[_Keyed, _Keyed, _Keyed, _Key
     maintained: _KeySet | None = None
     try:
         ch = get_client()
-        subject = str(getattr(auth, "subject", "") or "") if auth is not None else ""
+        subject = (
+            str(getattr(auth, "subject", "") or "") if auth is not None else auth_off_subject()
+        )
         org = str(getattr(auth, "org", "") or "") if auth is not None else ""
 
         async def _aliases() -> list[str]:

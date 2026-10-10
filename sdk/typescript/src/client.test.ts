@@ -63,7 +63,7 @@ describe("Agent / Datapack", () => {
     expect(calls[0].body).toMatchObject({
       org: "acme",
       namespace: "support",
-      agent: "assistant",
+      agent: "*",
       user_id: "u1",
       session_id: SENTINEL,
       run_id: SENTINEL,
@@ -80,13 +80,15 @@ describe("Agent / Datapack", () => {
     });
     await bot.ask("why?", { userId: "u1", top_k: 3 } as never);
     expect(calls[2].url).toBe("http://x/v1/memory.ask");
-    expect(calls[2].body).toMatchObject({ query: "why?", top_k: 3, user_id: "u1" });
+    expect(calls[2].body).toMatchObject({ query: "why?", top_k: 3, user_id: "u1", agent: "*" });
     await bot.ingest([{ role: "user", content: "hi" }] as never, { sessionId: "s1" });
     expect(calls[3].url).toBe("http://x/v1/memory.set_from_messages");
     await bot.outcome("k", "used" as never);
     expect(calls[4].url).toBe("http://x/v1/memory.outcome");
     await bot.contextPack({ token_budget: 800 } as never, { sessionId: "s1" });
     expect(calls[5].body).toMatchObject({ token_budget: 800, session_id: "s1" });
+    await bot.recall("seat", { agentId: "assistant" });
+    expect(calls[6].body).toMatchObject({ agent: "assistant" });
   });
 
   it("an Agent built from options owns its client", () => {

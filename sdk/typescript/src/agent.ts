@@ -80,6 +80,11 @@ function splitScope<T extends Scope>(scope: T): [Scope, Omit<T, keyof Scope>] {
   return [{ userId, sessionId, runId, agentId }, rest];
 }
 
+/** Reads span every agent unless the caller names one, as in the Python SDK and the server default. */
+function readScope(ids: Scope): Scope {
+  return { ...ids, agentId: ids.agentId ?? "*" };
+}
+
 export class Agent {
   readonly client: LoomClient;
   readonly agent: string;
@@ -167,16 +172,16 @@ export class Agent {
     return this.call("memory.set", { memory_key: memoryKey, value, ...rest } as Body<"memory.set">, ids);
   }
 
-  /** Semantic search over this identity's memories (`memory.search`). */
+  /** Semantic search over every agent's memories in the namespace (`memory.search`); `agentId` narrows. */
   recall(query: string, scope: Scope & Omit<Body<"memory.search">, "query"> = {}) {
     const [ids, rest] = splitScope(scope);
-    return this.call("memory.search", { query, ...rest } as Body<"memory.search">, ids);
+    return this.call("memory.search", { query, ...rest } as Body<"memory.search">, readScope(ids));
   }
 
-  /** Grounded answer with citations, or an abstention (`memory.ask`). */
+  /** Grounded answer with citations, or an abstention (`memory.ask`); reads like `recall`. */
   ask(query: string, scope: Scope & Omit<Body<"memory.ask">, "query"> = {}) {
     const [ids, rest] = splitScope(scope);
-    return this.call("memory.ask", { query, ...rest } as Body<"memory.ask">, ids);
+    return this.call("memory.ask", { query, ...rest } as Body<"memory.ask">, readScope(ids));
   }
 
   /** Extract memories from a conversation's turns (`memory.set_from_messages`). */

@@ -34,7 +34,7 @@ await bot.remember("seat_pref", "Prefers an aisle seat on long flights.", {
   tags: ["travel"],
 });
 
-// read: semantic search over this identity's memories
+// read: semantic search over every agent's memories in the namespace
 const hits = await bot.recall("which seat should I book?", { userId: "u-42", top_k: 5 });
 
 // answer: grounded synthesis with citations, or an abstention when the memories do not say
