@@ -259,7 +259,7 @@ async def _peer_rows_joined(ch: Any, params: dict[str, Any]) -> list[dict[str, A
         """
         SELECT
             m.memory_id, m.memory_key, m.value, m.pinned,
-            m.agent, m.user_id, m.session_id, m.run_id, m.valid_at,
+            m.agent, m.user_id, m.session_id, m.run_id, m.valid_at, m.status,
             """
         + "cosineDistance(e.embedding, {emb:Array(Float32)})"
         + """ AS dist
@@ -301,6 +301,7 @@ def _peer_of(r: dict[str, Any]) -> ConflictPeer:
         value=str(r.get("value") or ""),
         run_id=str(r.get("run_id") or "-"),
         valid_at=_as_datetime(r.get("valid_at")),
+        status=str(r.get("status") or "active"),
     )
 
 
@@ -516,7 +517,10 @@ async def check_on_commit(
         (
             p
             for p in peers
-            if p.similarity >= dup_threshold and same_content_words(new_value, p.value)
+            # A duplicate of a conflicted row would defer to nothing (an orphan).
+            if p.status == "active"
+            and p.similarity >= dup_threshold
+            and same_content_words(new_value, p.value)
         ),
         None,
     )

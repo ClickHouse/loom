@@ -156,6 +156,38 @@ async def test_duplicate_when_high_similarity_canonical_mismatch(install_ch) -> 
 
 
 @pytest.mark.asyncio
+async def test_conflicted_peer_is_never_a_duplicates_canonical(install_ch) -> None:
+    """A duplicate of a conflicted row would defer to nothing and never surface."""
+    from server.memory.app.conflicts import check_on_commit
+
+    install_ch(
+        _FakeCH(
+            peers=[
+                {
+                    "memory_id": "uuid-conflicted",
+                    "memory_key": "k_existing",
+                    "value": '"User likes the beach."',
+                    "dist": 0.02,
+                    "pinned": 0,
+                    "status": "conflicted",
+                },
+            ]
+        )
+    )
+    result = await check_on_commit(
+        org="clickhouse",
+        namespace="finance",
+        agent="a",
+        memory_type="semantic",
+        memory_key="k_new",
+        new_value='"This user enjoys spending time by the seashore."',
+        new_embedding=[0.1, 0.2],
+    )
+    assert result.verdict != "duplicate"
+    assert result.duplicate_of_id is None
+
+
+@pytest.mark.asyncio
 async def test_conflict_when_below_duplicate_threshold(install_ch) -> None:
     """0.92 ≤ similarity < 0.97 with canonical-form mismatch stays in
     the existing conflict tier."""

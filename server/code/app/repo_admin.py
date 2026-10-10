@@ -89,11 +89,12 @@ async def _register(
     exclude_generated: bool = True,
     scip_producer: str = "",
 ) -> CodeRepoAddOutput:
+    from server.auth.default_namespace import auth_off_subject
     from server.code.app.index.bootstrap import set_stage
     from server.code.app.index.registry import ensure_registered
     from server.code.store.index import CodeRepo
 
-    subject, _ = current_caller()
+    subject = current_caller()[0] or auth_off_subject()
     await reg.insert_entry(
         org=org,
         namespace=namespace,

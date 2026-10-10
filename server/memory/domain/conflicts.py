@@ -37,6 +37,8 @@ class ConflictPeer:
     # row's own valid_at — arrival order is the clock only when the calendar
     # cannot tell.
     valid_at: datetime | None = None
+    # `active` or `conflicted`: only an active peer can be a duplicate's canonical.
+    status: str = "active"
 
 
 @dataclass(frozen=True)

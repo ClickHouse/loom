@@ -32,6 +32,14 @@ _lock = asyncio.Lock()
 # key and this bootstrap must agree on one name or the grant is invisible.
 _SINGLE_USER_SUBJECT = "you"
 
+
+def auth_off_subject() -> str:
+    """The subject an unauthenticated caller acts as: the single user when auth is off."""
+    from server.settings import settings
+
+    return "" if settings.auth_actually_required() else _SINGLE_USER_SUBJECT
+
+
 # Cap on how many stray namespaces the rename warning names individually.
 _WARN_SAMPLE = 20
 
