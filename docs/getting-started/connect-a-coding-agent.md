@@ -45,9 +45,8 @@ codex plugin marketplace add ClickHouse/loom
 codex plugin add loom@loom
 ```
 
-Then run `codex` interactively once and approve the plugin's hooks when asked. Codex runs
-plugin hooks only after that approval, also under `codex exec`; until then the tools work
-but nothing is captured. Approve again after a plugin update changes a hook.
+Then run `codex` interactively once and [approve the plugin's hooks](../features/integrations/codex.md#approve-the-hooks);
+until then the tools work but nothing is captured.
 
 The plugin's MCP entry points at `http://localhost:7777`. For another server, write its URL
 and your token to `~/.loom/config.json` and override the MCP entry in

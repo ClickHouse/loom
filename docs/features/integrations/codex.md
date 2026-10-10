@@ -24,15 +24,14 @@ same name replaces the plugin's, and one under another name lists every tool twi
 Codex runs a plugin's hooks only after the user approves them. Run `codex` interactively
 once after installing and approve the Loom hooks; Codex records each approval as a
 `trusted_hash` under `[hooks.state]` in `~/.codex/config.toml`. Until then the MCP tools
-work but sessions are not captured, including under `codex exec`. A plugin update that
-changes a hook asks again.
+work but sessions are not captured, including under `codex exec`.
 
 ### The token
 
 A single-user server on the same machine needs no token. Otherwise the helper and the
-hooks read `LOOM_API_KEY`, then `~/.loom/config.json`, then `~/.loom/token`. On a server with `LOOM_SELF_SIGNUP=open`, the first session with no
-credential signs the machine up and writes `~/.loom/config.json` itself
-(`LOOM_AUTO_SIGNUP=off` disables this). To use a token you already have:
+hooks read `LOOM_API_KEY`, then `~/.loom/config.json`, then `~/.loom/token`. On a server
+with `LOOM_SELF_SIGNUP=open`, the first session with no credential signs the machine up
+and writes `~/.loom/config.json` itself (`LOOM_AUTO_SIGNUP=off` disables this). To use a token you already have:
 
 ```bash
 mkdir -p ~/.loom && cat > ~/.loom/config.json <<'EOF'

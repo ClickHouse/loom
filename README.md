@@ -140,9 +140,8 @@ tokens in **Settings → Tokens**. Cursor and other MCP clients, and
 ## Why Loom
 
 - **Memory that carries forward.** Share decisions and findings across agents and
-  sessions. Each fact records who wrote it and how; extracted facts link to the turns they came from. Version
-  history, pinned facts and conflict review make corrections traceable, and a
-  namespace can be rolled back to any point in time, with a dry run first.
+  sessions. Each fact records who wrote it, version history and conflict review make
+  corrections traceable, and a namespace can be rolled back to any point in time.
   [Memory](./docs/concepts/memory.md)
 - **Code intelligence with evidence.** Find definitions, callers, change impact and
   relevant tests; connect code to commits, pull requests and issues. Results identify
