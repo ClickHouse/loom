@@ -84,6 +84,27 @@ export function ModelsForm({ status, onValidate, onSave }: Props) {
     setValidation(null);
     setMessage("");
   };
+  const dimensionsField = (
+    <label className="block space-y-1 text-sm">
+      Embedding dimensions
+      <input
+        className={inputClass}
+        type="number"
+        required
+        min={1}
+        max={configuration.embedding.provider === "compatible" ? 65535 : 3072}
+        step={1}
+        disabled={embeddingLocked}
+        value={configuration.embedding.dimensions}
+        onChange={(event) =>
+          change({
+            ...configuration,
+            embedding: { ...configuration.embedding, dimensions: Number(event.target.value) },
+          })
+        }
+      />
+    </label>
+  );
   const save = async () => {
     if (busy) return;
     setBusy(true);
@@ -216,6 +237,7 @@ export function ModelsForm({ status, onValidate, onSave }: Props) {
                 }
               />
             </label>
+            {dimensionsField}
             <label className="flex items-center gap-2">
               <input
                 type="checkbox"
@@ -231,7 +253,7 @@ export function ModelsForm({ status, onValidate, onSave }: Props) {
               Send dimensions parameter (only if the provider supports it)
             </label>
             <p className="text-sm text-[var(--color-text-muted)]">
-              Enter the model ID and its output dimensions below. The endpoint must support the OpenAI embeddings
+              Enter the model ID above and its output dimensions here. The endpoint must support the OpenAI embeddings
               request and response format. Use HTTPS for remote services; HTTP sends the key and content unencrypted.
             </p>
           </div>
@@ -310,25 +332,7 @@ export function ModelsForm({ status, onValidate, onSave }: Props) {
                 }
               />
             </label>
-            <label className="space-y-1 text-sm">
-              Embedding dimensions
-              <input
-                className={inputClass}
-                type="number"
-                required
-                min={1}
-                max={configuration.embedding.provider === "compatible" ? 65535 : 3072}
-                step={1}
-                disabled={embeddingLocked}
-                value={configuration.embedding.dimensions}
-                onChange={(event) =>
-                  change({
-                    ...configuration,
-                    embedding: { ...configuration.embedding, dimensions: Number(event.target.value) },
-                  })
-                }
-              />
-            </label>
+            {configuration.embedding.provider !== "compatible" && dimensionsField}
           </div>
         </details>
         <p className="text-sm text-[var(--color-text-muted)]">
@@ -352,6 +356,7 @@ export function ModelsForm({ status, onValidate, onSave }: Props) {
           {validation.checks.map((check) => (
             <li key={`${check.role}:${check.provider}:${check.model}`}>
               {check.model}: {check.ready ? "Ready" : (errorMessages[check.code] ?? "Provider check failed.")}
+              {check.detail && ` (${check.detail})`}
             </li>
           ))}
         </ul>

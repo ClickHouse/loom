@@ -22,9 +22,13 @@ import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
 
 _lock = threading.Lock()
+# Set while a candidate configuration is probed: its outcome says nothing about
+# the providers the server is running on.
+_unrecorded: ContextVar[bool] = ContextVar("provider_health_unrecorded", default=False)
 # provider -> {"ok_at": float, "err_at": float, "err": str}
 _state: dict[str, dict[str, Any]] = {}
 
@@ -35,6 +39,8 @@ def _touch(provider: str) -> dict[str, Any]:
 
 def record_success(provider: str) -> None:
     """A call to `provider` returned normally."""
+    if _unrecorded.get():
+        return
     try:
         with _lock:
             s = _touch(provider)
@@ -46,6 +52,8 @@ def record_success(provider: str) -> None:
 
 def record_failure(provider: str, err: BaseException | str) -> None:
     """A call to `provider` failed. Keeps a bounded description, not a traceback."""
+    if _unrecorded.get():
+        return
     try:
         text = err if isinstance(err, str) else f"{type(err).__name__}: {err}"
         with _lock:
@@ -70,6 +78,16 @@ def recording(provider: str) -> Iterator[None]:
         record_failure(provider, exc)
         raise
     record_success(provider)
+
+
+@contextmanager
+def unrecorded() -> Iterator[None]:
+    """Calls made inside the block leave the health state untouched."""
+    token = _unrecorded.set(True)
+    try:
+        yield
+    finally:
+        _unrecorded.reset(token)
 
 
 def reset() -> None:

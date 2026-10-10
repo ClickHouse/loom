@@ -163,4 +163,31 @@ describe("Models & keys", () => {
     await screen.findByText(/Configuration was not applied/);
     expect(screen.queryByText(/test-secret-value/)).toBeNull();
   });
+
+  it("shows a compatible endpoint's dimensions beside its URL, not under Advanced", () => {
+    render(<ModelsForm status={status} onValidate={vi.fn()} onSave={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("Embedding provider"), { target: { value: "compatible" } });
+    const field = screen.getByLabelText("Embedding dimensions");
+    expect(field.closest("details")).toBeNull();
+    expect(screen.getAllByLabelText("Embedding dimensions")).toHaveLength(1);
+  });
+
+  it("shows the check's detail next to its message", async () => {
+    const onValidate = vi.fn().mockResolvedValue({
+      ready: false,
+      checks: [
+        {
+          role: "llm",
+          provider: "openai",
+          model: "gpt-test",
+          ready: false,
+          code: "quota_or_rate_limit",
+          detail: "HTTP 402 (insufficient_quota)",
+        },
+      ],
+    });
+    render(<ModelsForm status={status} onValidate={onValidate} onSave={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Test & apply" }));
+    await screen.findByText(/Check provider billing or quota, then try again\. \(HTTP 402 \(insufficient_quota\)\)/);
+  });
 });

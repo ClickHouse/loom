@@ -148,6 +148,8 @@ class ProviderCheck(SetupModel):
         "invalid_output",
         "provider_error",
     ]
+    # Status code or expected/actual width; never upstream text, which may echo secrets.
+    detail: str = ""
 
 
 class ProviderValidation(SetupModel):

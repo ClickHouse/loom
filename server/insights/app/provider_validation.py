@@ -12,7 +12,9 @@ from typing import Literal
 
 import httpx
 
+from server.clients._http_errors import provider_error_code
 from server.core.llm_provider import provider_for_model
+from server.embedding._provider import MalformedEmbedding
 from server.embedding.compatible import CompatibleEmbedder
 from server.embedding.gemini import GeminiEmbedder
 from server.embedding.openai import OpenAIEmbedder
@@ -23,6 +25,7 @@ from server.insights.api.models_provider_setup import (
 )
 from server.llm.anthropic import AnthropicLLMClient
 from server.llm.openai import OpenAILLMClient
+from server.observability import provider_health
 from server.observability.genai import llm_stage
 
 
@@ -91,22 +94,33 @@ async def _check(
         check.code = "missing_key"
         return check
     try:
-        async with asyncio.timeout(30):
-            if role == "llm":
-                await _probe_llm(provider, model, key)
-            else:
-                await _probe_embedding(provider, model, key, dimensions, base_url, send_dimensions)
+        with provider_health.unrecorded():
+            async with asyncio.timeout(30):
+                if role == "llm":
+                    await _probe_llm(provider, model, key)
+                else:
+                    await _probe_embedding(
+                        provider, model, key, dimensions, base_url, send_dimensions
+                    )
     except (TimeoutError, httpx.TimeoutException):
         check.code = "timeout"
     except httpx.HTTPStatusError as exc:
-        if exc.response.status_code in (401, 403):
+        status = exc.response.status_code
+        # The body's error code only: its message can quote part of the key.
+        code = provider_error_code(exc)
+        check.detail = f"HTTP {status} ({code})" if code else f"HTTP {status}"
+        if status in (401, 403):
             check.code = "invalid_credentials"
-        elif exc.response.status_code == 404:
+        elif status == 404:
             check.code = "model_unavailable"
-        elif exc.response.status_code == 429:
+        elif status in (402, 429):
             check.code = "quota_or_rate_limit"
         else:
             check.code = "provider_error"
+    except MalformedEmbedding as exc:
+        # Loom's own wording (width, empty, non-finite), never the response body.
+        check.code = "invalid_output"
+        check.detail = str(exc)
     except (ValueError, KeyError, IndexError, TypeError):
         check.code = "invalid_output"
     except Exception:  # noqa: BLE001 — isolate probe failure; never expose upstream secret-bearing errors
