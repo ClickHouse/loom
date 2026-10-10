@@ -18,7 +18,11 @@ from server.insights.domain.provider_rebuild import unpublishable_refusal
 from server.insights.domain.provider_setup import committed_configuration, pending_configuration
 from server.insights.store.provider_configuration import configurations, write_configuration
 from server.insights.store.provider_lock import ConfigurationLockUnavailable, configuration_lock
-from server.insights.store.provider_rebuild import rebuild_inventory, unpublishable_rebuild_tables
+from server.insights.store.provider_rebuild import (
+    rebuild_inventory,
+    tables_with_vectors,
+    unpublishable_rebuild_tables,
+)
 from server.settings import settings
 
 
@@ -63,9 +67,18 @@ def _open_active(envelope: str) -> ProviderSetupInput:
         ) from None
 
 
-async def check_rebuild_inventory() -> None:
-    """Do not accept a transition that cannot account for every vector surface
-    or that could not publish: a refused transition pauses nothing."""
+async def embedding_change_refusal() -> str:
+    """Why this storage refuses an embedding change, or "" when it accepts one."""
+    blocked = await unpublishable_rebuild_tables()
+    if not blocked or not await tables_with_vectors():
+        return ""
+    return unpublishable_refusal(blocked)
+
+
+async def rebuild_required() -> bool:
+    """Whether an embedding change must rebuild before it serves. A refused
+    transition pauses nothing; with no vectors stored there is nothing to rebuild
+    and the change switches directly, each process draining first."""
     try:
         await rebuild_inventory()
     except ValueError:
@@ -74,9 +87,12 @@ async def check_rebuild_inventory() -> None:
             "Embedding storage differs from the supported schema; "
             "verify migrations and custom vector tables before changing embedding models",
         ) from None
-    refusal = unpublishable_refusal(await unpublishable_rebuild_tables())
-    if refusal:
-        raise HTTPException(409, refusal)
+    blocked = await unpublishable_rebuild_tables()
+    if not blocked:
+        return True
+    if await tables_with_vectors():
+        raise HTTPException(409, unpublishable_refusal(blocked))
+    return False
 
 
 async def _save_locked(setup: ProviderSetupInput) -> ProviderSaveResult:
@@ -124,10 +140,9 @@ async def _save_locked(setup: ProviderSetupInput) -> ProviderSaveResult:
         setup.embedding.base_url,
         setup.embedding.send_dimensions,
     ) != current_embedding
-    if embedding_changes:
-        await check_rebuild_inventory()
+    rebuild = embedding_changes and await rebuild_required()
     config_id = uuid4()
-    state: Literal["queued", "active"] = "queued" if embedding_changes else "active"
+    state: Literal["queued", "active"] = "queued" if rebuild else "active"
     await write_configuration(
         {
             "config_id": config_id,
@@ -143,7 +158,7 @@ async def _save_locked(setup: ProviderSetupInput) -> ProviderSaveResult:
         }
     )
     if (
-        state == "active"
+        not embedding_changes
         and local_embedding == current_embedding
         and not get_model_work_gate().closed
     ):

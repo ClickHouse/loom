@@ -9,7 +9,7 @@ from fastapi import HTTPException
 
 from server.core.model_work_gate import get_model_work_gate
 from server.insights.api.models_provider_setup import ProviderResetInput, ProviderSaveResult
-from server.insights.app.provider_activation import _open_active, check_rebuild_inventory
+from server.insights.app.provider_activation import _open_active, rebuild_required
 from server.insights.app.provider_runtime import (
     apply_environment_configuration,
     current_embedding,
@@ -50,9 +50,8 @@ async def _reset_locked(request: ProviderResetInput) -> ProviderSaveResult:
         saved.embedding.base_url,
         saved.embedding.send_dimensions,
     )
-    rebuild = current != environment_embedding()
-    if rebuild:
-        await check_rebuild_inventory()
+    changes = current != environment_embedding()
+    rebuild = changes and await rebuild_required()
     config_id = uuid4()
     # Only non-secret model settings enter progress. Credentials are always read
     # from each process's environment, never copied into a dashboard override.
@@ -72,7 +71,7 @@ async def _reset_locked(request: ProviderResetInput) -> ProviderSaveResult:
         }
     )
     if (
-        not rebuild
+        not changes
         and current_embedding() == environment_embedding()
         and not get_model_work_gate().closed
     ):

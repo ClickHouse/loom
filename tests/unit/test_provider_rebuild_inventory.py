@@ -13,7 +13,11 @@ from server.insights.domain.provider_rebuild import (
     rebuild_surfaces,
 )
 from server.insights.domain.provider_rebuild_manifest import RebuildManifest, RebuildTablePlan
-from server.insights.store.provider_rebuild import rebuild_inventory, unpublishable_rebuild_tables
+from server.insights.store.provider_rebuild import (
+    rebuild_inventory,
+    tables_with_vectors,
+    unpublishable_rebuild_tables,
+)
 from server.insights.store.provider_staging import StagingNames
 
 
@@ -148,3 +152,15 @@ async def test_unpublishable_tables_are_rebuild_sources_on_other_engines():
         ("query_nodes", "ReplicatedMergeTree"),
     )
     assert client.query_all.await_args.args[1] == {"tables": list(REBUILD_TABLES)}
+
+
+@pytest.mark.asyncio
+async def test_tables_with_vectors_counts_unknown_row_counts_as_rows():
+    client = AsyncMock()
+    client.query_all.return_value = [
+        {"name": "chunks", "total_rows": 0},
+        {"name": "code_chunks", "total_rows": None},
+        {"name": "memory_embeddings", "total_rows": 12},
+    ]
+    assert await tables_with_vectors(ch=client) == ("code_chunks", "memory_embeddings")
+    assert "embedding_cache" not in client.query_all.await_args.args[1]["tables"]

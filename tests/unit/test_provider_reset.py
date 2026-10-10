@@ -29,7 +29,7 @@ def dependencies(monkeypatch):
     monkeypatch.setattr(reset, "configuration_lock", lock)
     monkeypatch.setattr(reset, "configurations", AsyncMock(return_value=[row]))
     monkeypatch.setattr(reset, "write_configuration", AsyncMock())
-    monkeypatch.setattr(reset, "check_rebuild_inventory", AsyncMock())
+    monkeypatch.setattr(reset, "rebuild_required", AsyncMock(return_value=True))
     monkeypatch.setattr(reset, "_open_active", Mock(return_value=setup))
     monkeypatch.setattr(
         reset, "environment_embedding", lambda: ("openai", "text-embedding-test", 3072, "", False)
@@ -63,7 +63,21 @@ async def test_different_environment_embedding_is_queued(dependencies, monkeypat
     assert row["state"] == "queued"
     assert json.loads(row["progress"])["action"] == "environment"
     reset.apply_environment_configuration.assert_not_called()
-    reset.check_rebuild_inventory.assert_awaited_once()
+    reset.rebuild_required.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_different_environment_embedding_with_nothing_to_rebuild_switches(
+    dependencies, monkeypatch
+):
+    monkeypatch.setattr(
+        reset, "environment_embedding", lambda: ("gemini", "gemini-test", 3072, "", False)
+    )
+    monkeypatch.setattr(reset, "rebuild_required", AsyncMock(return_value=False))
+    result = await reset.reset_configuration(ProviderResetInput(expected_version="123"))
+    assert result.state == "active"
+    assert reset.write_configuration.await_args.args[0]["state"] == "environment"
+    reset.apply_environment_configuration.assert_not_called()
 
 
 @pytest.mark.asyncio

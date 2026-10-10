@@ -259,9 +259,12 @@ accounting or report deletion while a copy can resurrect the subject's data.
 Publication currently supports local MergeTree engines on one pinned ClickHouse
 node. Replicated/shared engine preparation and cluster-wide residual-query
 inspection still need their own supported plan, so a save or reset that changes the
-embedding space is refused with 409 while any rebuild table uses another engine,
-before a transition is queued or admission closes. The status response carries the
-same reason in `embedding_change_blocked`. Direct database writers outside
+embedding space is refused with 409 while any rebuild table uses another engine
+and any re-embed table holds rows, before a transition is queued or admission
+closes. The status response carries the same reason in `embedding_change_blocked`.
+With no stored vectors there is nothing to rebuild: the change commits as active
+and each process drains, then switches, through its configuration refresh. Rows
+written by a process before it switches keep the previous model's vectors. Direct database writers outside
 Loom's registered server/CLI paths must be stopped by the operator; a census of
 Loom processes cannot fence an arbitrary external SQL client. A lost remote
 participant without a death proof is an explicit recovery boundary, not permission
