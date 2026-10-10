@@ -216,15 +216,16 @@ async def find_orphan_duplicates(
     LIVE peer (see memory/app/conflicts.py). It's kept in recall but treated as
     non-canonical, deferring to that peer. When the peer later disappears —
     duplicate_of never got set, or the pointed-at memory is now tombstoned /
-    superseded / otherwise not a live active head — the row is an ORPHAN
+    superseded / otherwise not a live served head — the row is an ORPHAN
     duplicate: there is no canonical left to defer to, yet nothing flips it
     back. This scan finds those so the caller can re-activate them.
 
     "Orphan" predicate (evaluated on the argMax latest-version HEAD per identity
     key): live (tombstoned_at IS NULL) AND status='duplicate' AND
-    (duplicate_of='' OR duplicate_of is NOT the memory_id of a live active head
-    in the same org+namespace). A duplicate whose duplicate_of still points at a
-    live active head is a REAL duplicate and is left alone.
+    (duplicate_of='' OR duplicate_of is NOT the memory_id of a live active or
+    conflicted head in the same org+namespace). A duplicate whose duplicate_of
+    still points at one is a REAL duplicate and is left alone: reads serve a
+    conflicted canonical too.
 
     Aggregations are kept FLAT and alias-safe:
     the freshness input is exposed as `max_version`, NOT aliased `version` —
@@ -261,7 +262,7 @@ async def find_orphan_duplicates(
                    WHERE org = {org:String} AND namespace = {ns:String}
                    GROUP BY org, namespace, agent, user_id, session_id, memory_key
                    HAVING argMax(tombstoned_at IS NULL, version) = 1
-                      AND argMax(status, version) = 'active'
+                      AND argMax(status, version) IN ('active', 'conflicted')
                )
            )
         ORDER BY org, namespace, agent, user_id, memory_key
