@@ -367,3 +367,32 @@ def test_post_json_answers_a_read_timeout_and_a_non_json_body(monkeypatch) -> No
     )
     status, body = ci._post_json("http://x/v1/auth/agent-signup", {})
     assert status == 0 and "token" not in body and "not a JSON answer" in body["detail"]
+
+
+@pytest.mark.asyncio
+async def test_single_user_signup_returns_the_default_identity_with_nothing_to_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.auth import default_namespace
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "identity_provider", "single-user")
+    monkeypatch.setattr(settings, "self_signup", "closed")
+    monkeypatch.setattr(settings, "self_signup_org", "dev")
+    monkeypatch.setattr(settings, "default_namespace", "local")
+    fake = _FakeCH()
+    monkeypatch.setattr(ss, "get_client", lambda: fake)
+
+    async def ensured() -> None:
+        return None
+
+    monkeypatch.setattr(default_namespace, "ensure_default_namespace_cached", ensured)
+    ss._agent_signups.clear()
+    for _ in range(ss.AGENT_SIGNUPS_PER_HOUR):
+        await _signup(fake)
+    out = await _signup(fake, ttl_days=30)
+    assert (out.namespace, out.org, out.subject, out.claim_code) == ("local", "dev", "you", "")
+    claims = verify_token(out.token)
+    assert list(claims.namespaces) == ["local"] and claims.is_service_account is False
+    assert [r.name.lower() for r in claims.roles] == ["writer"]
+    assert fake.inserts == []

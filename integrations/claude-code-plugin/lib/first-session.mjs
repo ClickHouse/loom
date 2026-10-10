@@ -64,7 +64,8 @@ function _peerResult(cfg, { base, dir, configPath }) {
     namespace,
     org: cfg.org || "",
     claimUrl: `${String(cfg.url || base).replace(/\/+$/, "")}/me`,
-    claimPath: join(dir, `claim-${namespace}.txt`),
+    claimPath: cfg.claimed === true ? "" : join(dir, `claim-${namespace}.txt`),
+    claimed: cfg.claimed === true,
     configPath,
   };
 }
@@ -173,6 +174,9 @@ async function _signUp({ base, client, host, user, fetchImpl, now, configPath, d
   const token = String(body.token || "").trim();
   const namespace = String(body.namespace || "").trim();
   if (!token || !namespace) return { status: "error", reason: "incomplete signup body" };
+  // A single-user server returns its one identity: nothing to claim.
+  const claimCode = String(body.claim_code || "");
+  const claimed = !claimCode;
   writeConfigMerged(configPath, {
     url: base,
     token,
@@ -181,17 +185,19 @@ async function _signUp({ base, client, host, user, fetchImpl, now, configPath, d
     subject: body.subject || undefined,
     signed_up_at: now().toISOString(),
     signed_up_by: client,
-    claimed: false,
+    claimed,
   });
-  const claimPath = paths.claimPath || join(dir, `claim-${namespace}.txt`);
   const claimUrl = String(body.claim_url || `${base}/me`);
+  if (claimed)
+    return { status: "created", token, namespace, org: body.org || "", claimUrl, claimPath: "", claimed, configPath };
+  const claimPath = paths.claimPath || join(dir, `claim-${namespace}.txt`);
   writePrivateFile(
     claimPath,
     `Loom namespace ${namespace} on ${base} was created for this machine by the ${client} plugin.\n` +
       `To make it yours, sign in at ${claimUrl} with the namespace name (${namespace}) and this one-time code:\n` +
-      `${String(body.claim_code || "")}\n`,
+      `${claimCode}\n`,
   );
-  return { status: "created", token, namespace, org: body.org || "", claimUrl, claimPath, configPath };
+  return { status: "created", token, namespace, org: body.org || "", claimUrl, claimPath, claimed, configPath };
 }
 
 /** The one line the primer prints about the credential — no secrets. */
@@ -199,6 +205,9 @@ export function renderFirstSessionNotice(result, serverUrl) {
   const base = String(serverUrl || "").replace(/\/+$/, "");
   switch (result && result.status) {
     case "created":
+      if (result.claimed) {
+        return `Loom: connected this machine to ${base}; memory goes to namespace \`${result.namespace}\`.`;
+      }
       return (
         `Loom: no credential was found, so this machine signed itself up as memory namespace ` +
         `\`${result.namespace}\` on ${base}. Tell the user once: to make it theirs, sign in at ${result.claimUrl} ` +

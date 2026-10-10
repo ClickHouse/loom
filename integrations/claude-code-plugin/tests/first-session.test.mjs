@@ -197,3 +197,28 @@ test("a stale lock (crashed signer) is taken over; a fresh one is waited on, the
   assert.equal(r2.status, "error");
   assert.match(r2.reason, /another process/);
 });
+
+test("single-user server: token saved, no claim file, notice says connected", async () => {
+  const dir = tmp();
+  const configPath = path.join(dir, "config.json");
+  const r = await ensureCredential({
+    env: {},
+    paths: { configPath },
+    fetchImpl: ok({ ...SIGNED, namespace: "local", subject: "you", claim_code: "" }),
+    serverUrl: "http://localhost:7777",
+    client: "claude-code",
+    host: "box",
+    user: "alice",
+  });
+  assert.equal(r.status, "created");
+  assert.equal(r.claimed, true);
+  assert.equal(r.claimPath, "");
+  assert.equal(JSON.parse(fs.readFileSync(configPath, "utf8")).claimed, true);
+  assert.deepEqual(
+    fs.readdirSync(dir).filter((f) => f.startsWith("claim-")),
+    [],
+  );
+  const notice = renderFirstSessionNotice(r, "http://localhost:7777");
+  assert.match(notice, /connected this machine to http:\/\/localhost:7777/);
+  assert.doesNotMatch(notice, /claim/i);
+});

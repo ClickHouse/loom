@@ -388,6 +388,9 @@ async def agent_signup(input: AgentSignupInput, request: Request) -> AgentSignup
     code (the ordinary login route), which makes them its admin; the agent's
     token keeps working. First-claim-wins on the name, like the human route.
     """
+    if settings.effective_identity_provider() == "single-user":
+        # Creates nothing, so the per-address limit does not apply.
+        return await _single_user_agent(input, request)
     _signup_gate()
     if not _agent_signups.allow(client_address(request)):
         raise _rate_limited(f"at most {AGENT_SIGNUPS_PER_HOUR} agent sign-ups per address per hour")
@@ -403,6 +406,36 @@ async def agent_signup(input: AgentSignupInput, request: Request) -> AgentSignup
     org = signup_org(input.org)
     async with _claim_lock(org, namespace):
         return await _provision_agent(input, request, org, namespace)
+
+
+async def _single_user_agent(input: AgentSignupInput, request: Request) -> AgentSignupOutput:
+    """Single-user mode has one identity and nothing to claim: hand the agent a
+    writer token for the default namespace, so it keeps working if auth is
+    turned on later. Reaching this server already makes the caller its admin."""
+    from server.auth.default_namespace import _SINGLE_USER_SUBJECT, ensure_default_namespace_cached
+
+    await ensure_default_namespace_cached()
+    org, namespace = settings.self_signup_org, settings.default_namespace
+    ttl_seconds = int(input.ttl_days) * 86400 if input.ttl_days is not None else None
+    token = mint_token(
+        subject=_SINGLE_USER_SUBJECT,
+        org=org,
+        namespaces=[namespace],
+        roles=["writer"],
+        ttl_seconds=ttl_seconds,
+        is_service_account=False,
+    )
+    return AgentSignupOutput(
+        token=token,
+        namespace=namespace,
+        org=org,
+        subject=_SINGLE_USER_SUBJECT,
+        claim_code="",
+        claim_url=f"{_base_url(request)}/me",
+        expires_at=naive_utc_now_seconds() + timedelta(seconds=ttl_seconds)
+        if ttl_seconds
+        else None,
+    )
 
 
 async def _provision_agent(
