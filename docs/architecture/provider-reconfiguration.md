@@ -262,7 +262,7 @@ inspection still need their own supported plan, so a save or reset that changes 
 embedding space is refused with 409 while any rebuild table uses another engine
 and any re-embed table holds rows, before a transition is queued or admission
 closes. The status response carries the same reason in `embedding_change_blocked`.
-With no stored vectors there is nothing to rebuild: the change commits as active
+With no stored vectors there is nothing to rebuild, on any storage: the change commits as active
 and each process drains, then switches, through its configuration refresh. Rows
 written by a process before it switches keep the previous model's vectors. Direct database writers outside
 Loom's registered server/CLI paths must be stopped by the operator; a census of

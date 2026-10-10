@@ -160,6 +160,16 @@ async def test_first_embedding_choice_on_unpublishable_storage_switches_directly
 
 
 @pytest.mark.asyncio
+async def test_first_embedding_choice_on_local_storage_skips_the_rebuild(dependencies, monkeypatch):
+    monkeypatch.setattr(activation, "tables_with_vectors", AsyncMock(return_value=()))
+    result = await activation.save_configuration(
+        setup_input(embedding={"provider": "gemini", "model": "gemini-embedding-001"})
+    )
+    assert result.state == "active"
+    activation.unpublishable_rebuild_tables.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_key_change_on_unpublishable_storage_still_activates(dependencies, monkeypatch):
     blocked = AsyncMock(return_value=(("memory_embeddings", "SharedReplacingMergeTree"),))
     monkeypatch.setattr(activation, "unpublishable_rebuild_tables", blocked)

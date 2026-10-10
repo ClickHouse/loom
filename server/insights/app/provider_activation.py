@@ -76,9 +76,9 @@ async def embedding_change_refusal() -> str:
 
 
 async def rebuild_required() -> bool:
-    """Whether an embedding change must rebuild before it serves. A refused
-    transition pauses nothing; with no vectors stored there is nothing to rebuild
-    and the change switches directly, each process draining first."""
+    """Whether an embedding change must rebuild before it serves. With no vectors
+    stored there is nothing to rebuild, on any storage: the change switches
+    directly, each process draining first. A refused transition pauses nothing."""
     try:
         await rebuild_inventory()
     except ValueError:
@@ -87,12 +87,12 @@ async def rebuild_required() -> bool:
             "Embedding storage differs from the supported schema; "
             "verify migrations and custom vector tables before changing embedding models",
         ) from None
+    if not await tables_with_vectors():
+        return False
     blocked = await unpublishable_rebuild_tables()
-    if not blocked:
-        return True
-    if await tables_with_vectors():
+    if blocked:
         raise HTTPException(409, unpublishable_refusal(blocked))
-    return False
+    return True
 
 
 async def _save_locked(setup: ProviderSetupInput) -> ProviderSaveResult:

@@ -116,7 +116,8 @@ def _embedder_problems(settings: Any, state: HealthState) -> list[Problem]:
     model = str(settings.embedding_model)
     provider = _embedder_provider(model)
     fix_real = (
-        "Set LOOM_EMBEDDING_MODEL=text-embedding-3-small with OPENAI_API_KEY (or "
+        "Choose an embedding model in Settings → Models & keys, or set "
+        "LOOM_EMBEDDING_MODEL=text-embedding-3-small with OPENAI_API_KEY (or "
         "local:bge-small for a keyless CPU embedder) and run `loom reembed`."
     )
     if provider == "fake":
@@ -139,8 +140,8 @@ def _embedder_problems(settings: Any, state: HealthState) -> list[Problem]:
                     _fake_severity(settings),
                     f"LOOM_EMBEDDING_MODEL={model} needs {' or '.join(keys)}, which is not "
                     "set — the process falls back to the fake n-gram embedder.",
-                    f"Set {keys[0]}, or LOOM_EMBEDDING_MODEL=fake-ngram-3072 to make the "
-                    "fake explicit.",
+                    f"Add the key in Settings → Models & keys, or set {keys[0]}, or "
+                    "LOOM_EMBEDDING_MODEL=fake-ngram-3072 to make the fake explicit.",
                 )
             )
     if state.probed_dim is not None and state.probed_dim != int(settings.embedding_dim):
@@ -168,8 +169,8 @@ def _llm_problems(settings: Any, state: HealthState) -> list[Problem]:
                 _fake_severity(settings),
                 "The LLM is the fake echo client (LOOM_LLM_PROVIDER=fake): extraction, "
                 "entity tagging and memory.ask synthesis produce nothing.",
-                "Set LOOM_LLM_PROVIDER=openai with OPENAI_API_KEY (or anthropic with "
-                "ANTHROPIC_API_KEY) and LOOM_LLM_MODEL.",
+                "Choose an LLM in Settings → Models & keys, or set LOOM_LLM_PROVIDER=openai "
+                "with OPENAI_API_KEY (or anthropic with ANTHROPIC_API_KEY) and LOOM_LLM_MODEL.",
             )
         ]
     key_env = _llm_key_env(provider)
@@ -191,7 +192,8 @@ def _llm_problems(settings: Any, state: HealthState) -> list[Problem]:
                 _fake_severity(settings),
                 f"LOOM_LLM_PROVIDER={provider} {how} but {key_env} is not set — every LLM "
                 "call runs on the fake echo client and extracts nothing.",
-                f"Set {key_env}, or LOOM_LLM_PROVIDER=fake to make the fake explicit.",
+                f"Add the key in Settings → Models & keys, or set {key_env}, or "
+                "LOOM_LLM_PROVIDER=fake to make the fake explicit.",
             )
         ]
     return []
