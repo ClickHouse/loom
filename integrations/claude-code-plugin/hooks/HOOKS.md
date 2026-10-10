@@ -88,8 +88,12 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   hook calls the server's agent self-signup once, writes the token to
   ~/.loom/config.json (0600) and the one-time claim code to
   ~/.loom/claim-<namespace>.txt (0600), and the primer tells the user how to
-  claim the namespace at /me. The MCP headers helper signs up through the
-  same lock, so one service account results. `LOOM_AUTO_SIGNUP=off` disables
+  claim the namespace at /me; a single-user server returns its one identity,
+  so there is no claim code and the primer just says it connected. The MCP
+  headers helper cannot see install options, so with no LOOM_BASE_URL or saved
+  URL it waits for this hook's credential (`LOOM_MCP_HOOK_WAIT_MS`, 5 s, under
+  Codex's 10 s helper limit) before signing up through the same lock itself.
+  `LOOM_AUTO_SIGNUP=off` disables
   it; a server without self-signup (404) or rate-limiting it (429) leaves the
   machine without a credential and the primer says how to get a token by
   hand. A token given as the `token` install option is first copied into
@@ -260,6 +264,7 @@ Switches read on/true/1/yes and off/false/0/no. Defaults in parentheses.
 | `LOOM_MENTOR_HINTS` (on)                                                                                                                      | mentor-hint                   | mentor hints                                                                             |
 | `LOOM_NAMESPACE_HEALTH` (on)                                                                                                                  | namespace-health              | the first-Stop audit                                                                     |
 | `LOOM_MCP_CODE_SCOPE` (on)                                                                                                                    | headers helper                | the X-Loom-Code-Scope header                                                             |
+| `LOOM_MCP_HOOK_WAIT_MS` (5000)                                                                                                                | headers helper                | how long a first session waits for the hook's credential                                 |
 | `LOOM_CODE_REPO` (unset), the `code_repo` option / config key                                                                                 | repo-scope, every code hook   | the fallback repository for the index: outside a checkout, or when the checkout has none |
 
 The code-plane hooks' own settings (`LOOM_CODE_SHUNT`, `LOOM_SHUNT_*`,

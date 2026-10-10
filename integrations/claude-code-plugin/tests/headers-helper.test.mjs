@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 process.env.LOOM_HOOK_NO_MAIN = "1";
-import { headersFor, checkoutScope } from "../bin/loom-mcp-headers.mjs";
+import { checkoutScope, headersFor, hookToken } from "../bin/loom-mcp-headers.mjs";
 import { cachePathFor, scopeHeader } from "../lib/repo-scope.mjs";
 import { execSync } from "node:child_process";
 
@@ -28,7 +28,7 @@ function sandbox() {
 function run(env, box = sandbox()) {
   const out = execFileSync(process.execPath, [HELPER], {
     encoding: "utf8",
-    env: { PATH: process.env.PATH, HOME: box.home, TMPDIR: box.tmp, ...env },
+    env: { PATH: process.env.PATH, HOME: box.home, TMPDIR: box.tmp, LOOM_MCP_HOOK_WAIT_MS: "0", ...env },
     cwd: box.cwd,
     timeout: 5000,
   });
@@ -270,4 +270,16 @@ test("no token, sign-up reachable → the helper signs up and sends the bearer",
 test("LOOM_AUTO_SIGNUP=off keeps the helper from signing up", () => {
   const { parsed } = run({ LOOM_AUTO_SIGNUP: "off" });
   assert.deepEqual(parsed, {});
+});
+
+test("no token yet: the helper waits for the SessionStart hook's credential and adopts its server", async () => {
+  const env = {};
+  let reads = 0;
+  const read = () => (++reads < 3 ? {} : { token: "tok.en", url: "https://loom.team.example" });
+  assert.equal(await hookToken({ env, read, pollMs: 1, waitMs: 1000 }), "tok.en");
+  assert.equal(env.LOOM_BASE_URL, "https://loom.team.example");
+  const pinned = { LOOM_BASE_URL: "http://localhost:7777" };
+  await hookToken({ env: pinned, read: () => ({ token: "t", url: "https://other" }), pollMs: 1 });
+  assert.equal(pinned.LOOM_BASE_URL, "http://localhost:7777");
+  assert.equal(await hookToken({ env: {}, read: () => ({}), pollMs: 1, waitMs: 5 }), "");
 });

@@ -9,15 +9,24 @@
 // `X-Loom-Code-Scope: org/namespace`, which the server applies to every
 // loom_code_* call that names no namespace. LOOM_MCP_CODE_SCOPE=off disables.
 //
-// No token → the helper signs this machine up through the
-// same locked path the SessionStart hook uses, because
-// Claude Code connects the MCP entry while that hook is still running. A
-// second caller waits for the first one's token; one service account results.
+// No token → the helper waits for the SessionStart hook, which Claude Code runs
+// while it connects the MCP entry and which knows the configured server, to
+// save the first-session credential; only then does it sign up itself, through
+// the same locked path, so one account results.
 // Sign-up off, refused or unreachable → `{}`: the server then answers 401 and
 // Claude Code shows the connection as failed, which is the honest state.
 // Stdout is exactly one JSON object; nothing else is written.
 import { ensureCredential } from "../lib/first-session.mjs";
-import { envSwitch, gitToplevel, hookClient, resolveServerUrl, resolveToken } from "../lib/loom-client.mjs";
+import {
+  envNumber,
+  envSwitch,
+  gitToplevel,
+  hookClient,
+  loomConfigPath,
+  readConfigFile,
+  resolveServerUrl,
+  resolveToken,
+} from "../lib/loom-client.mjs";
 import { readCache, resolveIndexedRepo, scopeHeader, scopeKey } from "../lib/repo-scope.mjs";
 
 /** Bound for the helper's own lookup when the cache is empty: Claude Code
@@ -59,11 +68,40 @@ export async function signedUpToken(opts = {}) {
   return r.status === "created" ? r.token : "";
 }
 
+/** Bound for waiting on the SessionStart hook's first-session credential
+ *  (LOOM_MCP_HOOK_WAIT_MS overrides). */
+export const HOOK_TOKEN_WAIT_MS = 5000;
+
+/** The token the SessionStart hook saves to ~/.loom/config.json. The helper
+ *  cannot see install options (the server URL), so on a first session it
+ *  waits for the hook instead of signing up against a guessed server, and
+ *  adopts the URL the hook saved with the token. */
+export async function hookToken({
+  env = process.env,
+  waitMs = envNumber("LOOM_MCP_HOOK_WAIT_MS", HOOK_TOKEN_WAIT_MS, { min: 0 }),
+  pollMs = 200,
+  read = () => readConfigFile(loomConfigPath(env)),
+} = {}) {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    const cfg = read();
+    const token = String(cfg.token || "").trim();
+    if (token) {
+      if (cfg.url && !env.LOOM_BASE_URL) env.LOOM_BASE_URL = String(cfg.url);
+      return token;
+    }
+    if (Date.now() >= deadline) return "";
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+}
+
 async function main() {
   let token = "";
   let out = {};
   try {
-    token = resolveToken() || (await signedUpToken());
+    // Without LOOM_BASE_URL or a saved URL the configured server is unknown here.
+    const knowsServer = Boolean(process.env.LOOM_BASE_URL || readConfigFile(loomConfigPath()).url);
+    token = resolveToken() || (knowsServer ? "" : await hookToken()) || (await signedUpToken());
     out = headersFor(token, await checkoutScope(process.cwd(), { token }));
   } catch {
     out = headersFor(token);
