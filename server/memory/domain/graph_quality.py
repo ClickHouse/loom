@@ -366,6 +366,12 @@ def canonical_entity_text(raw: str) -> str:
     return canonical_entity(raw).text
 
 
+def canonical_entities(values: Iterable[str]) -> list[str]:
+    """`values` in canonical form, in order, each once: what a row's `entities` holds, so
+    a search's canonical entity filter meets the stored text."""
+    return list(dict.fromkeys(c for v in values if (c := canonical_entity_text(v))))
+
+
 def canonical_relation(
     raw: str,
     *,
