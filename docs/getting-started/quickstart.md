@@ -294,7 +294,7 @@ In single-user mode, leave out the `Authorization` header. The `memory.set` resp
 carries `memory_id`, `content_sha256` and `status`. The search response carries
 `results` and `abstain`, which says whether the best hit is strong enough to answer from.
 Search reads the calling agent's memories by default, so memories added in the
-dashboard (agent `loom-ui`) do not appear here; pass `"agent":"-"` to search every
+dashboard (agent `loom-ui`) do not appear here; pass `"agent":"*"` to search every
 agent in the namespace.
 `GET /v1/operations` lists every operation, and <http://localhost:7777/docs> lets you try
 each one from the browser. Shapes are in the [HTTP API reference](../reference/http-api.md).
