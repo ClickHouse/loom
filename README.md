@@ -2,7 +2,7 @@
 
 <p align="center">
   <b>Shared memory and code intelligence for AI agents.</b><br>
-  Persistent context, grounded retrieval and multi-agent coordination—built on ClickHouse.
+  Agents remember what they learned, find code with evidence and hand work to each other. Self-hosted on ClickHouse.
 </p>
 
 <p align="center">
@@ -76,6 +76,10 @@ The installer starts Loom and ClickHouse, applies migrations and prints the dash
 Python, TypeScript and Go compiler indexers; TypeScript dependencies are prepared
 automatically. [Quickstart and pinned releases](./docs/getting-started/quickstart.md)
 
+The installation lives in `~/.loom` (`LOOM_INSTALL_DIR` chooses another directory): the
+Compose file and the startup settings in `~/.loom/.env`. Re-running the installer upgrades
+in place and keeps your `.env` settings.
+
 Keep single-user mode localhost-only. For shared access, follow the
 [team deployment guide](./docs/operations/deployment.md#identity-modes), including TLS.
 
@@ -98,22 +102,48 @@ space rebuilds the existing index.
 OpenAI, Gemini and OpenAI-compatible embedding endpoints are supported. Your agent's
 CLI login or subscription does not supply Loom's provider keys.
 
-Prefer environment configuration? A key alone in `.env` does not replace the pinned
-fake models. Follow [models and API keys](./docs/getting-started/models-and-keys.md) for
-provider recipes and health checks.
+Prefer environment configuration? Edit `~/.loom/.env`, then recreate the server:
+
+```bash
+docker compose --project-directory "$HOME/.loom" up -d --force-recreate loom
+```
+
+A key alone does not replace the pinned fake models; set the provider and model too.
+Saved dashboard settings take precedence over `.env`. Follow
+[models and API keys](./docs/getting-started/models-and-keys.md) for provider recipes
+and health checks.
 
 ### 3. Connect your agents
 
-Open **Settings → Tokens → New token** for client setup instructions, then
-[connect your coding agent](./docs/getting-started/connect-a-coding-agent.md) or
-[build an agent with the SDK](./docs/getting-started/first-agent.md).
-Tokens are optional in single-user mode and required in multi-user mode.
+On the machine running a personal installation, the plugins need no token:
+
+```bash
+# Claude Code
+claude plugin marketplace add ClickHouse/loom
+claude plugin install loom@loom
+
+# Codex
+codex plugin marketplace add ClickHouse/loom
+codex plugin add loom@loom
+```
+
+Start a new session; the first one connects to `http://localhost:7777`. In Codex, run
+`codex` interactively once and approve the plugin's hooks; until then only the tools
+work. Tell the agent something worth keeping, then ask about it in the next session.
+
+For a team server, pass `--config server_url=… --config token=…` to Claude Code, or
+point Codex at it as described in
+[connect a coding agent](./docs/getting-started/connect-a-coding-agent.md). Create
+tokens in **Settings → Tokens**. Cursor and other MCP clients, and
+[the SDK](./docs/getting-started/first-agent.md), are covered there too.
 
 ## Why Loom
 
 - **Memory that carries forward.** Share decisions and findings across agents and
-  sessions. Version history, pinned facts and conflict review make corrections
-  traceable. [Memory](./docs/concepts/memory.md)
+  sessions. Each fact records who wrote it and how; extracted facts link to the turns they came from. Version
+  history, pinned facts and conflict review make corrections traceable, and a
+  namespace can be rolled back to any point in time, with a dry run first.
+  [Memory](./docs/concepts/memory.md)
 - **Code intelligence with evidence.** Find definitions, callers, change impact and
   relevant tests; connect code to commits, pull requests and issues. Results identify
   their revision, source location and completeness. [Code index](./docs/features/code-index/overview.md)

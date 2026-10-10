@@ -11,7 +11,8 @@ saved. To run a server yourself, start with the [quickstart](quickstart.md).
 
 - **The server URL**, for example `https://loom.example.com`, or `http://localhost:7777`
   for a stack started with `loom up`.
-- **A writer token for your namespace.** Create one in the dashboard at
+- **A writer token for your namespace**, except against a single-user server on the same
+  machine: there the plugins connect without one. Create one in the dashboard at
   `<server>/me/settings` → **Tokens**, or ask an operator to run
   `loom mint-token --subject you --org <org> --namespaces <namespace> --roles writer`.
   On a server with self-signup open, the Claude Code plugin can sign the machine up by
@@ -42,13 +43,19 @@ Everything the plugin installs, and how to configure it, is on the
 ```bash
 codex plugin marketplace add ClickHouse/loom
 codex plugin add loom@loom
-export LOOM_API_KEY=<writer JWT>   # or put it in ~/.loom/token
-export LOOM_BASE_URL=https://loom.example.com
 ```
 
+Then run `codex` interactively once and approve the plugin's hooks when asked. Codex runs
+plugin hooks only after that approval, also under `codex exec`; until then the tools work
+but nothing is captured. Approve again after a plugin update changes a hook.
+
+The plugin's MCP entry points at `http://localhost:7777`. For another server, write its URL
+and your token to `~/.loom/config.json` and override the MCP entry in
+`~/.codex/config.toml`, as shown in [Codex: the server](../features/integrations/codex.md#the-server).
+
 The Codex plugin ships the same hooks and skills; the differences are on the
-[Codex](../features/integrations/codex.md) page. Don't also run `codex mcp add loom`: the
-plugin already mounts the server.
+[Codex](../features/integrations/codex.md) page. Don't also run `codex mcp add loom` with
+the plugin installed: an entry with the same name replaces the plugin's.
 
 ## Cursor and other MCP clients
 
