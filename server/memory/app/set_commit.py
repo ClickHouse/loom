@@ -477,7 +477,8 @@ async def _set_merge(
         )
     # Auto-reinforce: bump evidence_count on the existing row when the
     # namespace policy is "auto_reinforce". Fire-and-forget.
-    await _cf.auto_reinforce_peer(input, conflict_result.existing_memory_id or "", ch=ch, cfg=_cfg)
+    if merged_into_id:  # never a row outside the read scope
+        await _cf.auto_reinforce_peer(input, merged_into_id, ch=ch, cfg=_cfg)
     # Canonical-form match: the caller restated a memory Loom already had.
     # No row was inserted, so this is the outcome that separates "still
     # ingesting" from "only ever hearing the same things again".

@@ -561,8 +561,10 @@ async def test_a_merge_into_another_users_row_does_not_name_it(monkeypatch, dry_
     async def _get_by_id(*a: Any, **k: Any) -> Any:
         return theirs
 
-    async def _reinforce(*a: Any, **k: Any) -> None:
-        return None
+    reinforced: list[str] = []
+
+    async def _reinforce(_input: Any, memory_id: str, **k: Any) -> None:
+        reinforced.append(memory_id)
 
     monkeypatch.setattr(memory_repo, "get_by_id", _get_by_id)
     monkeypatch.setattr(cf, "auto_reinforce_peer", _reinforce)
@@ -572,11 +574,12 @@ async def test_a_merge_into_another_users_row_does_not_name_it(monkeypatch, dry_
     out = await set_commit._set_merge(w, None, None, result, [])
     assert out.conflict_verdict == "merge"
     assert (out.memory_id, out.merged_into_key, out.peers) == ("", "", [])
-    assert out.content_sha256 == "new"
-    # The caller's own row is named as before.
+    assert out.content_sha256 == "new" and reinforced == []
+    # The caller's own row is named (and, on a real write, reinforced) as before.
     theirs.user_id = "u1"
     out = await set_commit._set_merge(w, None, None, result, [])
     assert (out.memory_id, out.merged_into_key) == ("theirs", "v/secret")
+    assert reinforced == ([] if dry_run else ["theirs"])
 
 
 async def test_a_pinned_blocker_outside_the_scope_blocks_but_is_not_named(monkeypatch) -> None:
@@ -665,3 +668,55 @@ def test_code_symbol_attaches_no_lessons_under_a_narrowed_scope() -> None:
     assert _read_scope_narrowed()
     _bind(None, WHOLE_NAMESPACE)
     assert not _read_scope_narrowed()
+
+
+def _candidate(mid: str, uid: str, value: str, *, pinned: bool = False) -> dict[str, Any]:
+    return {
+        "memory_id": mid,
+        "memory_key": f"k/{mid}",
+        "dist": 0.01,
+        "pinned": pinned,
+        "value": value,
+        "agent": "a",
+        "user_id": uid,
+        "session_id": "-",
+    }
+
+
+async def _verdict(rows: list[dict[str, Any]], value: str) -> Any:
+    from server.memory.app.conflicts import check_on_commit
+
+    return await check_on_commit(
+        org="o",
+        namespace="n",
+        agent="a",
+        memory_type="semantic",
+        memory_key="k/new",
+        new_value=value,
+        new_embedding=[0.1],
+        candidate_rows=rows,
+        resolved_threshold=0.85,
+        resolved_duplicate_threshold=0.9,
+        resolved_policy="flag",
+        allowlisted_keys=set(),
+        defer_judge=True,
+    )
+
+
+async def test_a_bounded_write_treats_another_users_row_as_absent() -> None:
+    """set and bulk_set (and set_from_messages through it) take their verdict
+    here: another user's restatement is neither merged into, reinforced nor
+    duplicated or marked; only their pinned row still blocks."""
+    _bind(PINNED, U1)
+    same = await _verdict([_candidate("theirs", "u2", "vault 1234")], "vault 1234")
+    assert same.verdict not in ("merge", "duplicate", "conflict", "rejected"), same
+    assert not same.existing_memory_id and not same.duplicate_of_id
+    assert all(p.user_id == "u1" for p in same.peers)
+    blocked = await _verdict([_candidate("theirs", "u2", "vault 9", pinned=True)], "vault 1234")
+    assert blocked.verdict == "rejected" and blocked.peers == []
+    # The writer's own restatement still merges, and unbounded writes see every row.
+    mine = await _verdict([_candidate("mine", "u1", "vault 1234")], "vault 1234")
+    assert (mine.verdict, mine.existing_memory_id) == ("merge", "mine")
+    _bind(None, WHOLE_NAMESPACE)
+    wide = await _verdict([_candidate("theirs", "u2", "vault 1234")], "vault 1234")
+    assert (wide.verdict, wide.existing_memory_id) == ("merge", "theirs")
