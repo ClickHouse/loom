@@ -112,6 +112,13 @@ async with Agent(org="acme", namespace="private", agent="admin", api_key=ADMIN_T
 | `webhook_url`                   | empty       | Receives a signed wake-up notice when the inbox has new events. |
 | `webhook_secret_ref`            | empty       | Environment variable holding the webhook signing secret.        |
 
+`webhook_url` is an `http` or `https` URL whose host resolves only to public addresses:
+each delivery resolves it, refuses loopback, private, link-local (cloud metadata) and
+multicast addresses, connects to the address it checked (the name stays the `Host`
+header and TLS SNI) and follows no redirect. `webhook_secret_ref` must name a variable
+starting `LOOM_WEBHOOK_SECRET_`; `inbox.register` refuses any other name (422), and a
+row that names one is never read.
+
 ### Post a task
 
 ```python

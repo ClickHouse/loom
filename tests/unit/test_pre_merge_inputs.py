@@ -44,7 +44,7 @@ def test_pull_head_refs_parse_and_select() -> None:
 async def test_fetch_pull_heads_sends_one_stdin_fetch_without_prune(monkeypatch) -> None:
     calls: list[tuple[tuple[str, ...], bytes | None]] = []
 
-    async def fake_git(git_dir, *args, timeout_s=0.0, token="", stdin=None):
+    async def fake_git(git_dir, *args, timeout_s=0.0, remote="", token="", stdin=None):
         calls.append((args, stdin))
         return ""
 

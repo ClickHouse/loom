@@ -25,9 +25,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.core.ch_errors import error_code
+from server.core.hosts import vet_host
 from server.settings import settings
 from server.tracker.domain import sources as _sources
-from server.tracker.store.source.hosts import vet_host
 
 log = logging.getLogger("loom.clients.qa_intel")
 
@@ -190,7 +190,9 @@ async def _pinned_address(credential: str, host: str) -> str:
     operator wrote it) and when the deployment allows private hosts."""
     if _sources.source_origin(credential) != "registry":
         return ""
-    why, address = await vet_host(host)
+    why, address = await vet_host(
+        host, allow_private=settings.tracker_self_service_allow_private_hosts
+    )
     if why:
         raise QaIntelUnavailable(f"qa_intel[{credential}] host refused: {why}")
     return address

@@ -242,23 +242,17 @@ def test_harness_env_carries_the_entrys_generated_rule_and_the_modules(monkeypat
     assert "MODULES" not in w._harness_env(tmp_path, [], _Cfg())
 
 
-def test_harness_env_authenticates_private_module_downloads_only_with_a_token(
-    monkeypatch, tmp_path
-):
-    """The entry's GitHub token reaches `go mod download`
-    as git's host-scoped extraheader (GIT_CONFIG_*), never as an argument or a
-    URL; an entry without a token adds nothing."""
+def test_harness_env_carries_no_credential_into_module_downloads(monkeypatch, tmp_path):
+    """`go mod download` runs the repository's module graph, so the entry's token
+    never reaches it: no extraheader, nothing that names the token. Git still
+    runs with the hardened settings (no system config, https and ssh only)."""
     monkeypatch.setattr(w.settings, "code_scip_go_bin_dir", str(tmp_path))
-
+    monkeypatch.setattr(w.settings, "code_scip_go_modcache", str(tmp_path / "modcache"))
     private = _Cfg(github_token="ghp_secret", git_remote="https://github.com/acme/private.git")
     env = w._harness_env(tmp_path, ["svc"], private)
-    assert env["GIT_CONFIG_COUNT"] == "1" and env["GIT_TERMINAL_PROMPT"] == "0"
-    assert env["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraheader"
-    assert env["GIT_CONFIG_VALUE_0"].startswith("AUTHORIZATION: basic ")
-    assert "ghp_secret" not in " ".join(
-        f"{k}={v}" for k, v in env.items() if k != "GIT_CONFIG_VALUE_0"
-    )
-    assert "GIT_CONFIG_COUNT" not in w._harness_env(tmp_path, ["svc"], _Cfg())
+    assert "ghp_secret" not in " ".join(f"{k}={v}" for k, v in env.items())
+    assert not any(v.startswith("AUTHORIZATION") for v in env.values())
+    assert env["GIT_CONFIG_NOSYSTEM"] == "1" and env["GIT_TERMINAL_PROMPT"] == "0"
 
 
 def test_registry_gives_the_go_worker_its_own_deadline(monkeypatch):

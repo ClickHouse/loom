@@ -64,6 +64,9 @@ class HealthState:
     # Seconds since this process read loom.revoked_tokens (inf = never);
     # None = not a server process.
     revocation_age_s: float | None = None
+    # Whether repository jobs run inside the sandbox (code/app/index/sandbox.py):
+    # None = not probed yet in this process.
+    repo_sandbox: bool | None = None
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     # Saved keys take precedence over the environment, including explicit empty keys.
     saved_keys: Mapping[str, bool] = field(default_factory=saved_key_presence)
@@ -470,6 +473,28 @@ def _replica_problems(settings: Any, state: HealthState) -> list[Problem]:
     ]
 
 
+def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
+    """Repository jobs run without the sandbox: an operator's repositories still
+    get their build-based tiers, which execute the repository's code on this
+    host; self-registered ones get none and adding one is refused."""
+    if state.repo_sandbox is not False or not settings.code_ingest_enabled:
+        return []
+    return [
+        Problem(
+            "repo_jobs_unsandboxed",
+            "warn",
+            "Repository jobs (clone, fetch, dependency installs, compiler tiers) run "
+            "unsandboxed: operator repositories' build tiers execute repository code on "
+            "this host; self-registered repositories get no build tier and adding one "
+            "from the page is refused.",
+            "Install bubblewrap and allow unprivileged user namespaces (in a container: a "
+            "seccomp profile that permits them) — 'Repository-job sandbox' in "
+            "docs/operations/code-index-operations.md.",
+            source="runtime",
+        )
+    ]
+
+
 def collect_problems(settings: Any, state: HealthState | None = None) -> list[Problem]:
     """Every known problem for this process, worst-first. Pure: reads
     `settings`, `state` and `state.env` only."""
@@ -484,6 +509,7 @@ def collect_problems(settings: Any, state: HealthState | None = None) -> list[Pr
         + _deployment_problems(settings, st)
         + _otel_problems(settings, st)
         + _replica_problems(settings, st)
+        + _sandbox_problems(settings, st)
     )
     return sorted(problems, key=lambda p: (SEVERITY_RANK.get(p.severity, 9), p.code))
 

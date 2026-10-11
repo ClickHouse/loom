@@ -13,12 +13,12 @@ from typing import Any
 
 import pytest
 
+import server.core.hosts as hosts
 import server.tracker.app.onboarding as ob
 import server.tracker.app.registry as reg
 import server.tracker.app.registry_sources as rs
 import server.tracker.domain.sources as qs
 import server.tracker.store.source as src
-import server.tracker.store.source.hosts as hosts
 import server.tracker.store.source.qa_intel as qi
 from server.auth.context import current_auth_var
 from server.auth.jwt import AuthInfo, Role

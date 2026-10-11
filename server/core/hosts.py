@@ -1,10 +1,10 @@
-"""A tracker source's host must be public before loom connects to it.
+"""A host must be public before loom connects to it on a caller's behalf.
 
 It resolves, and every address it resolves to is globally reachable
 (`ipaddress.is_global`, not multicast) once an IPv4 address carried inside
-IPv6 (mapped, compatible, NAT64) is unwrapped, unless the deployment allows
-private hosts (a dev stack). The caller connects to the address vetted here,
-so a second lookup cannot swap in another.
+IPv6 (mapped, compatible, NAT64) is unwrapped. The caller connects to the
+address vetted here, so a second lookup cannot swap in another. Tracker
+sources, task webhooks and the repository-job egress proxy share this gate.
 """
 
 from __future__ import annotations
@@ -12,8 +12,6 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import socket
-
-from server.settings import settings
 
 # The NAT64 well-known prefix: its low 32 bits are the IPv4 address a packet reaches
 _NAT64 = ipaddress.ip_network("64:ff9b::/96")
@@ -44,10 +42,10 @@ def _resolve(host: str) -> list[str]:
     return list(dict.fromkeys(str(i[4][0]) for i in infos))
 
 
-async def vet_host(host: str) -> tuple[str, str]:
+async def vet_host(host: str, *, allow_private: bool = False) -> tuple[str, str]:
     """(refusal, address): refusal is "" when the host is acceptable, else one
     sentence saying why not; address is the validated one to connect to ("" when
-    refused, or when private hosts are allowed and the name is used as given)."""
+    refused, or when `allow_private` (a dev stack) uses the name as given)."""
     h = (host or "").strip()
     if not h:
         return "host is required", ""
@@ -57,7 +55,7 @@ async def vet_host(host: str) -> tuple[str, str]:
         return f"{h} does not resolve ({type(e).__name__})", ""
     if not addrs:
         return f"{h} does not resolve", ""
-    if bool(settings.tracker_self_service_allow_private_hosts):
+    if allow_private:
         return "", ""
     for a in addrs:
         try:
@@ -66,7 +64,6 @@ async def vet_host(host: str) -> tuple[str, str]:
             return f"{h} resolved to {a!r}, not an address", ""
         if not public:
             return (
-                f"{h} resolves to {a}, a private or local address; loom reaches only public "
-                "hosts (LOOM_TRACKER_SELF_SERVICE_ALLOW_PRIVATE_HOSTS lifts this on a dev stack)"
+                f"{h} resolves to {a}, a private or local address; loom reaches only public hosts"
             ), ""
     return "", addrs[0]

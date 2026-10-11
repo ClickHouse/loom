@@ -236,6 +236,66 @@ x86_64).
   `run_typescript_delta.sh`, `run_python_delta.sh`, `run_go_monorepo_delta.sh`,
   `scip_to_delta.py`; see its README).
 
+### Repository-job sandbox
+
+**Build-based tiers execute repository code.** The C/C++ tier runs the repository's own
+`cmake` configure (a `CMakeLists.txt` is a program), the Go tier runs `go mod download`
+over the repository's module graph, and the TypeScript tier installs the packages its
+lockfile names. Treat every compiler-tier run as running code the repository's authors
+wrote, on the host that runs it.
+
+Loom runs every repository job (clone, fetch and `ls-remote`, `git submodule update`,
+dependency installs and the compiler-tier harnesses) inside one boundary built on
+[bubblewrap](https://github.com/containers/bubblewrap)
+(`server/code/app/index/sandbox.py`) when the host can run it:
+
+- its own user, pid, network, mount, ipc and uts namespaces, no capabilities, no new user
+  namespaces, and a seccomp filter that refuses `ptrace`, `mount`, `unshare`, `setns`,
+  `bpf`, `perf_event_open`, kernel keyrings, module and kexec loading, `userfaultfd`,
+  `open_by_handle_at` and `process_vm_readv`/`writev`;
+- only system directories, the toolchains and the job's own paths are mounted: the
+  checkout (or the bare mirror, for a fetch) and the output directory are writable, the
+  checkout's `.git` and the harness scripts are read-only, and `/tmp` and `HOME` are a
+  fresh directory removed after the job. No server environment, credentials, host
+  `HOME`, Docker socket or other host paths;
+- per-process limits: `LOOM_CODE_SANDBOX_CPU_SECONDS` (7200),
+  `LOOM_CODE_SANDBOX_MEMORY_MB` (16384), `LOOM_CODE_SANDBOX_MAX_PIDS` (2048) and
+  `LOOM_CODE_SANDBOX_MAX_FILE_MB` (32768), plus each job's wall-clock timeout. A timeout
+  kills the job's whole tree; the job's pid namespace guarantees no process it started
+  outlives it;
+- no network, except for clones, fetches, submodules and dependency downloads, and then
+  only through an egress proxy outside the sandbox. It accepts `CONNECT` to ports 443,
+  22 and the remote's own port, resolves the name, refuses it unless **every** address
+  is public (loopback, private ranges, link-local and the cloud metadata address are
+  refused, including when reached through a redirect or a `.gitmodules` URL) and
+  connects to the address it vetted. Plain HTTP has no route.
+
+Every git a repository job runs reads no system or global git config and allows only
+the `https` and `ssh` transports (`protocol.allow=never`); `ext::` and `file://` are
+refused, so are URL rewrites. The entry's access token reaches only its clone and
+fetches, never a build or `go mod download`. Inside the sandbox an `ssh` remote has no
+host SSH key: use an HTTPS remote with an access token.
+
+**Requirements.** `bwrap` on `PATH` (the image installs it) and unprivileged user
+namespaces. Docker's default seccomp profile blocks user namespaces, so a container
+needs a seccomp profile that permits them (`security_opt: [seccomp=unconfined]` is
+the blunt one), a profile that lets bwrap mount (`apparmor=unconfined` on AppArmor
+hosts), and an unmasked `/proc` (`systempaths=unconfined`) so the sandbox can mount
+its own. Ubuntu 23.10 and later also restrict unprivileged user namespaces through
+AppArmor (`kernel.apparmor_restrict_unprivileged_userns=1`): allow them for `bwrap`
+with an AppArmor profile, or the sandbox stays unavailable. These options weaken the
+container's own confinement; weigh them against running repository code without the
+sandbox.
+
+**Without the sandbox** Loom probes once per process, logs a warning and reports
+`repo_jobs_unsandboxed` in `/v1/health` and `loom doctor`. Then:
+
+- operator repositories (`LOOM_CODE_REPOS_JSON`) keep every tier, and their build steps
+  run as plain processes on the host, as before;
+- self-registered repositories keep the parser tier but get no build-based tier
+  (`workers.status` names the skip), and adding a repository or a branch from the page
+  is refused with `SANDBOX_UNAVAILABLE`.
+
 ### Host cron
 
 `deploy/cron/scip-delta.sh` and `deploy/cron/scip-full.sh` are the host-side schedules.

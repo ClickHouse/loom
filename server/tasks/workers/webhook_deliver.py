@@ -30,11 +30,14 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
 from server.core.datetimes import to_naive_utc as _naive
+from server.core.hosts import vet_host
 from server.tasks.domain import cursors as task_cursors
+from server.tasks.domain.states import WEBHOOK_SECRET_PREFIX
 from server.tasks.store import repo as repo
 from server.tasks.store.rows import TaskEventRow, WebhookCursorRow, WebhookInboxRow
 from server.workers import pass_context
@@ -155,11 +158,45 @@ def _cursor_row(
     }
 
 
+async def pinned_target(url: str) -> tuple[str, str, str, str]:
+    """(refusal, request URL, Host header, TLS server name) for a webhook URL. The
+    host must resolve to public addresses only (`vet_host`, as for tracker
+    sources), and the request goes to the address vetted here, so a second DNS
+    answer cannot point it inward; the name stays the Host header, the SNI and the
+    name the certificate is checked against. http and https only."""
+    parts = urlsplit(url)
+    host = parts.hostname or ""
+    if parts.scheme not in ("http", "https") or not host:
+        return "webhook_url must be an http or https URL with a host", "", "", ""
+    try:
+        port = parts.port
+    except ValueError:
+        return "webhook_url has an invalid port", "", "", ""
+    refusal, address = await vet_host(host)
+    if refusal:
+        return refusal, "", "", ""
+    suffix = f":{port}" if port else ""
+    literal = f"[{address}]" if ":" in address else address
+    name = f"[{host}]" if ":" in host else host
+    pinned = urlunsplit((parts.scheme, literal + suffix, parts.path, parts.query, ""))
+    return "", pinned, name + suffix, host
+
+
 async def _post(client: httpx.AsyncClient, url: str, headers: dict[str, str], body: bytes) -> int:
-    """The HTTP status, or 0 when no answer arrived inside the ack window."""
+    """The HTTP status, or 0 when the URL is refused or no answer arrived inside
+    the ack window. Redirects are not followed."""
+    refusal, pinned, host_header, server_name = await pinned_target(url)
+    if refusal:
+        log.warning("task webhook: %s refused: %s", url, refusal)
+        return 0
     try:
         response = await client.post(
-            url, content=body, headers=headers, timeout=ACK_TIMEOUT_SECONDS
+            pinned,
+            content=body,
+            headers={**headers, "Host": host_header},
+            timeout=ACK_TIMEOUT_SECONDS,
+            follow_redirects=False,
+            extensions={"sni_hostname": server_name},
         )
     except httpx.HTTPError as e:
         log.info("task webhook: no answer from %s: %s", url, type(e).__name__)
@@ -169,14 +206,15 @@ async def _post(client: httpx.AsyncClient, url: str, headers: dict[str, str], bo
 
 def _secret_for(inbox_row: WebhookInboxRow, env: Mapping[str, str]) -> bytes | None:
     ref = str(inbox_row.get("webhook_secret_ref") or "")
-    raw = env.get(ref, "") if ref else ""
+    # A row written before the prefix rule may name any variable: never read it.
+    raw = env.get(ref, "") if ref.startswith(WEBHOOK_SECRET_PREFIX) else ""
     if not raw:
         key = (str(inbox_row["org"]), str(inbox_row["inbox"]))
         if key not in _warned_missing_secret:
             _warned_missing_secret.add(key)
             log.warning(
-                "task webhook: inbox %s/%s has a webhook_url but no secret in env %r; "
-                "notices are held until it is set",
+                "task webhook: inbox %s/%s has a webhook_url but no secret in env %r "
+                "(it must be set and start LOOM_WEBHOOK_SECRET_); notices are held until then",
                 key[0],
                 key[1],
                 ref or "<unset>",

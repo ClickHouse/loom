@@ -21,7 +21,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from server.tasks.domain.states import BlockedOn, Disclosure, PolicyMode, TaskStatus
+from server.tasks.domain.states import (
+    WEBHOOK_SECRET_PREFIX,
+    BlockedOn,
+    Disclosure,
+    PolicyMode,
+    TaskStatus,
+)
 
 # The long-poll ceiling: a pull or an updates read may hold this long.
 MAX_WAIT_SECONDS = 30
@@ -162,11 +168,14 @@ class InboxRegisterInput(_Caller):
     # `triage_escalated` event on it.
     triage_escalate_after_seconds: int = Field(default=14_400, ge=60, le=30 * 86_400)
     # Where signed wake-up notices (event kinds and task ids, never task text) are
-    # POSTed; "" sends none.
-    webhook_url: str = Field(default="", max_length=2048)
+    # POSTed: an http(s) URL on a public host (checked again at each delivery); ""
+    # sends none.
+    webhook_url: str = Field(default="", max_length=2048, pattern=r"^(https?://\S+)?$")
     # Name of the environment variable holding the webhook signing secret (never
-    # stored); without it no notice is sent.
-    webhook_secret_ref: str = Field(default="", max_length=256)
+    # stored), which starts `LOOM_WEBHOOK_SECRET_`; without it no notice is sent.
+    webhook_secret_ref: str = Field(
+        default="", max_length=256, pattern=rf"^({WEBHOOK_SECRET_PREFIX}[A-Za-z0-9_]+)?$"
+    )
     # The inbox `version` this edit was based on; a different current version
     # answers 409. None skips the check.
     if_match_version: int | None = None

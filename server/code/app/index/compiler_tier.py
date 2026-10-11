@@ -18,12 +18,13 @@ import logging
 import os
 import signal
 import subprocess
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from server.code.app.index.entry_lock import EntryLockHeld, entry_lock
 from server.code.app.index.producer_inference import worker_owns
+from server.code.app.index.sandbox import run_job, sandbox_available
 from server.code.domain.index.repos import checkout_for
 from server.workers import pass_context
 from server.workers.status import log_pass_errors, record_pass
@@ -80,6 +81,9 @@ async def run_tier[R: TierResult](
         for cfg in configured_repos():
             if not await worker_owns(repo, cfg, producer):
                 continue
+            if not may_build(cfg, worker):
+                result.skipped.append(f"{cfg.namespace}: {UNSANDBOXED_SKIP}")
+                continue
             result.repos_checked += 1
             pass_context.set_namespace(cfg.namespace)  # Where a cut pass stopped
             try:
@@ -101,6 +105,25 @@ async def run_tier[R: TierResult](
         log_pass_errors(logger, worker, result.errors)
         rec.outcome = tier_outcome(result, **(extras(result) if extras else {}))
     return result
+
+
+UNSANDBOXED_SKIP = "self-registered repository, no build tier without the sandbox"
+_unsandboxed_logged: set[tuple[str, str, str]] = set()
+
+
+def may_build(cfg: RepoConfig, worker: str) -> bool:
+    """Whether a compiler tier may run this entry's build. A tier runs the
+    repository's own code (CMake, Go modules, package installs), so an entry a
+    viewer added from the Repositories page (`source == "registry"`) gets one
+    only inside the sandbox; an operator's entry runs either way. Logged once
+    per entry and tier."""
+    if cfg.source != "registry" or sandbox_available():
+        return True
+    key = (worker, cfg.org, cfg.namespace)
+    if key not in _unsandboxed_logged:
+        _unsandboxed_logged.add(key)
+        logger.warning("%s: %s/%s skipped: %s", worker, cfg.org, cfg.namespace, UNSANDBOXED_SKIP)
+    return False
 
 
 def tier_outcome(result: TierResult, **extra: Any) -> dict[str, Any]:
@@ -137,7 +160,11 @@ def resolve_checkout(cfg: RepoConfig, producer: str) -> tuple[Path, Path, str | 
     if not checkout.exists() and cfg.source == "registry":
         # a Repositories-page entry has no operator to create its checkout; an
         # empty repository is enough, the tier fetches the target from the mirror
-        subprocess.run(["git", "init", "-q", str(checkout)], check=True, capture_output=True)
+        from server.code.app.index.gitrepo import auth_env
+
+        subprocess.run(
+            ["git", "init", "-q", str(checkout)], check=True, capture_output=True, env=auth_env()
+        )
     if not checkout.exists():
         return checkout, bare, f"checkout missing at {checkout}"
     return checkout, bare.resolve(), None
@@ -259,24 +286,34 @@ def checkout_fetch_args(bare: Path | str, target: str) -> list[str]:
     return ["fetch", "--recurse-submodules=no", str(bare), f"+{target}:{SCIP_HEAD_REF}"]
 
 
-async def git(cwd: Path, *args: str, timeout_s: float = 600.0, retries: int = 0) -> None:
-    """Run one git command; on timeout, name the command (a bare TimeoutError
-    says nothing) and retry `retries` times — a stall is usually transient
-    contention on the shared bare clone."""
+async def git(
+    cwd: Path,
+    *args: str,
+    timeout_s: float = 600.0,
+    retries: int = 0,
+    local_remote: Path | None = None,
+    network: bool = False,
+) -> None:
+    """Run one git command in a checkout, as a repository job: the checkout writable,
+    `local_remote` (the bare clone a fetch reads) read-only, the network only with
+    `network`. On timeout, name the command (a bare TimeoutError says nothing) and
+    retry `retries` times — a stall is usually transient contention on the shared
+    bare clone."""
+    from server.code.app.index.gitrepo import auth_env
+
     attempt = 0
     while True:
-        proc = await asyncio.create_subprocess_exec(
-            "git",
-            "-C",
-            str(cwd),
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
         try:
-            out = await communicate_or_kill(proc, timeout_s)
+            done = await run_job(
+                ["git", "-C", str(cwd), *args],
+                env=auth_env(remote=str(local_remote or "")),
+                timeout_s=timeout_s,
+                writable=[cwd],
+                readonly=[local_remote] if local_remote else [],
+                network=network,
+                merge_stderr=True,
+            )
         except TimeoutError:
-            await proc.wait()
             attempt += 1
             if attempt > retries:
                 raise TimeoutError(
@@ -291,6 +328,41 @@ async def git(cwd: Path, *args: str, timeout_s: float = 600.0, retries: int = 0)
                 retries,
             )
             continue
-        if proc.returncode != 0:
-            raise RuntimeError(f"git {args[0]} failed: {out.decode('utf-8', 'replace')[-500:]}")
+        if done.returncode != 0:
+            tail = done.stdout.decode("utf-8", "replace")[-500:]
+            raise RuntimeError(f"git {args[0]} failed: {tail}")
         return
+
+
+async def run_harness(
+    harness: Path,
+    checkout: Path,
+    args: Sequence[str],
+    env: dict[str, str],
+    *,
+    out_dir: Path,
+    timeout_s: float,
+    writable: Sequence[Path] = (),
+    readonly: Sequence[Path] = (),
+    network: bool = False,
+) -> tuple[int, str]:
+    """A tier harness as a repository job: (exit code, output). It runs the
+    repository's own build files, so only the checkout, `out_dir` and `writable`
+    are writable; the checkout's .git stays read-only (a hook or config planted
+    there would run outside the sandbox later), as do the harness scripts.
+    RuntimeError naming the timeout past `timeout_s`."""
+    from server.core.paths import SCIP_HARNESS_DIR
+
+    try:
+        done = await run_job(
+            ["bash", str(harness), str(checkout), *args],
+            env=env,
+            timeout_s=timeout_s,
+            writable=[checkout, out_dir, *writable],
+            readonly=[checkout / ".git", SCIP_HARNESS_DIR, *readonly],
+            network=network,
+            merge_stderr=True,
+        )
+    except TimeoutError:
+        raise RuntimeError(f"harness timed out after {timeout_s}s") from None
+    return done.returncode, done.stdout.decode("utf-8", "replace")

@@ -10,11 +10,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import shutil
 import subprocess
 import uuid
 from pathlib import Path
 
-from server.code.app.index.compiler_tier import communicate_or_kill
+from server.code.app.index.gitrepo import auth_env
+from server.code.app.index.sandbox import run_job
 from server.settings import settings
 
 LOCKFILES = (
@@ -49,6 +51,7 @@ def _dependency_state(checkout: Path) -> tuple[Path, str]:
         check=True,
         capture_output=True,
         timeout=30,
+        env=auth_env(),
     ).stdout
     metadata = subprocess.run(
         ["git", "-C", str(checkout), "rev-parse", "--git-path", "loom-typescript-dependencies"],
@@ -56,6 +59,7 @@ def _dependency_state(checkout: Path) -> tuple[Path, str]:
         capture_output=True,
         text=True,
         timeout=30,
+        env=auth_env(),
     ).stdout.strip()
     marker = Path(metadata)
     if not marker.is_absolute():
@@ -133,30 +137,30 @@ async def prepare_dependencies(
             "npm_config_production": "false",
             **extra_env,
         }
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *command,
-                cwd=root,
-                env=install_env,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                start_new_session=True,
-            )
-        except FileNotFoundError:
+        if not await asyncio.to_thread(shutil.which, command[0], path=install_env.get("PATH")):
             raise RuntimeError(
                 f"TypeScript dependency tool {command[0]} is missing; "
                 "run sh scripts/install-code-toolchains.sh on native installations"
-            ) from None
+            )
+        # Package downloads go through the sandbox's egress proxy; the checkout
+        # is the one writable path, its .git read-only.
         try:
-            out = await communicate_or_kill(
-                proc, settings.code_scip_ts_delta_timeout_seconds, group=True
+            done = await run_job(
+                command,
+                env=install_env,
+                timeout_s=settings.code_scip_ts_delta_timeout_seconds,
+                writable=[checkout],
+                readonly=[checkout / ".git"],
+                cwd=root,
+                network=True,
+                merge_stderr=True,
             )
         except TimeoutError:
             raise RuntimeError(f"TypeScript dependency installation timed out in {root}") from None
-        if proc.returncode != 0:
-            tail = out.decode("utf-8", "replace")[-2000:]
+        if done.returncode != 0:
+            tail = done.stdout.decode("utf-8", "replace")[-2000:]
             raise RuntimeError(
                 f"TypeScript dependency installation failed in {root} "
-                f"({command[0]}, exit {proc.returncode}): {tail}"
+                f"({command[0]}, exit {done.returncode}): {tail}"
             )
     await asyncio.to_thread(marker.write_text, fingerprint)

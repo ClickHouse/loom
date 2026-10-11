@@ -19,3 +19,8 @@ Disclosure = Literal["confidential", "internal", "public_ok"]
 PolicyMode = Literal["deny", "review", "auto"]
 BlockedOn = Literal["sender", "human", "external"]
 RunStatus = Literal["active", "completed", "failed", "cancelled"]
+
+# An inbox's `webhook_secret_ref` must name an environment variable with this
+# prefix: any other name could hand a server secret to a URL the caller chose
+# as the signing key.
+WEBHOOK_SECRET_PREFIX = "LOOM_WEBHOOK_SECRET_"
