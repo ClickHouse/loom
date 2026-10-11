@@ -115,3 +115,29 @@ def test_a_long_name_keeps_all_of_itself() -> None:
 def test_text_lowercasing_lengthens_is_a_fixed_point_too(raw: str) -> None:
     once = canonical_entity_text(raw)
     assert canonical_entity_text(once) == once
+
+
+@pytest.mark.parametrize(
+    ("raw", "canonical"),
+    [
+        ("The .NET Services", "net service"),
+        ("the .the .net", "net"),
+        (". a . the . ledgers", "ledger"),
+        ("a.b", "a.b"),
+        ("theory", "theory"),
+    ],
+)
+def test_a_prefix_article_removal_exposes_is_taken_too(raw: str, canonical: str) -> None:
+    assert canonical_entity_text(raw) == canonical
+    assert canonical_entity_text(canonical) == canonical
+
+
+def test_canonical_text_is_a_fixed_point_for_any_mix_of_its_edge_pieces() -> None:
+    import random
+
+    pieces = ["the ", "a ", "an ", ".", " ", "'s", "s", "es", "ies", "net", "re", "x", "(", '"']
+    rng = random.Random(0)
+    for _ in range(20000):
+        raw = "".join(rng.choice(pieces) for _ in range(rng.randint(1, 8)))
+        once = canonical_entity_text(raw)
+        assert canonical_entity_text(once) == once, raw

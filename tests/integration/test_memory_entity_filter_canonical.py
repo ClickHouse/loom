@@ -300,3 +300,42 @@ async def test_long_and_unicode_names_keep_their_identity_and_boost(ch_client, n
     )
     (hit,) = [h for h in out.results if h.memory_key == "names"]
     assert hit.score_components["entity_boost_sql"] == 0.5
+
+
+@pytest.mark.parametrize("raw", ["The .NET Services", ". the . a .NET services"])
+async def test_a_name_whose_article_hides_a_dot_keeps_its_boost_and_graph_path(
+    ch_client, raw: str
+) -> None:
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.api.models_facts import FactsPathInput
+    from server.memory.api.models_search import MemorySearchInput
+    from server.memory.app.facts import handle_facts_path
+    from server.memory.app.search.handler import handle_memory_search
+    from server.memory.app.write import handle_memory_set
+    from server.memory.domain.graph_quality import canonical_entity_text
+
+    await _connected()
+    ns = f"agent-entcanon-{os.urandom(3).hex()}"
+    canonical = canonical_entity_text(raw)
+    assert canonical == "net service"
+    for key, entities in (("raw", [raw, "Latency"]), ("canonical", [canonical, "latency"])):
+        await handle_memory_set(
+            MemorySetInput(
+                org=ORG,
+                namespace=ns,
+                agent="a",
+                memory_key=key,
+                value=".NET services add latency under load",
+                entities=entities,
+            )
+        )
+    out = await handle_memory_search(
+        MemorySearchInput(org=ORG, namespace=ns, agent="*", query="latency", entity_filter=[raw])
+    )
+    boosts = {h.memory_key: h.score_components["entity_boost_sql"] for h in out.results}
+    assert boosts == {"raw": 0.5, "canonical": 0.5}
+    for seed in (raw, canonical):
+        path = await handle_facts_path(
+            FactsPathInput(org=ORG, namespace=ns, entity_a=seed, entity_b="Latency")
+        )
+        assert path.found and path.path == ["net service", "latency"], seed

@@ -16,7 +16,7 @@ from datetime import datetime
 _SPACE_RE = re.compile(r"\s+")
 _VOWELS = frozenset("aeiouy")
 _PUNCT_RE = re.compile(r"[^\w\s:/.-]+")
-_ARTICLE_RE = re.compile(r"^(?:(?:the|a|an)\s+)+", re.IGNORECASE)
+_ARTICLE_RE = re.compile(r"(?:the|a|an)\s+")
 _SINGLE_VALUED_RELATIONS = {
     "works_at",
     "employed_by",
@@ -263,24 +263,42 @@ _SINGULAR_UNCHANGED = frozenset(
 _LONGEST_UNCHANGED = max(map(len, _SINGULAR_UNCHANGED))
 
 
+def _lead(text: str) -> str:
+    """`text` from past its leading dots, spaces and articles, which uncover each other
+    (`the .the .net` -> `net`); one forward scan."""
+    i = 0
+    while True:
+        while i < len(text) and text[i] in " .":
+            i += 1
+        article = _ARTICLE_RE.match(text, i)
+        if article is None:
+            return text[i:]
+        i = article.end()
+
+
 def _settle(text: str) -> str:
     """`text` with its trailing dots and spaces dropped and its last word singular, again
     and again until neither changes (`re.s.s` -> `re.s.` -> `re.s` -> `re.` -> `re`):
     one fixed point, read by moving an end index, so linear in the text."""
-    end = len(text)
+    end = _trimmed(text, len(text), 0)
     start = text.rfind(" ", 0, end) + 1
     vowel = next((i for i in range(start, end) if text[i] in _VOWELS), end)
     while True:
-        while end > start and text[end - 1] in " .":
-            end -= 1
-        if end <= start:  # the last word went: its predecessor is the head now
-            return _settle(text[:end]) if end else ""
         cut = _singular_cut(text, start, end, vowel < end)
         if cut is None:
             return text[:end]
         end, suffix = cut
         if suffix:
             return text[:end] + suffix  # -y, -f: no `s` or `.` to expose
+        end = _trimmed(text, end, start)
+        if end <= start:  # the last word went: its predecessor is the head now
+            return _settle(text[:end])
+
+
+def _trimmed(text: str, end: int, start: int) -> int:
+    while end > start and text[end - 1] in " .":
+        end -= 1
+    return end
 
 
 def _singular_cut(text: str, s: int, e: int, has_vowel: bool) -> tuple[int, str] | None:
@@ -377,8 +395,7 @@ def is_lexical_junk_entity(text: str) -> bool:
 def _normalise(lowered: str) -> str:
     text = lowered.replace("'s", "").replace("’s", "")
     text = _PUNCT_RE.sub(" ", text)
-    # articles after punctuation: punctuation can hide one (`"The Ledger"`)
-    text = _settle(_ARTICLE_RE.sub("", _SPACE_RE.sub(" ", text).strip(" .")))
+    text = _settle(_lead(_SPACE_RE.sub(" ", text)))
     return "user" if text in _FIRST_PERSON_FORMS else text
 
 
