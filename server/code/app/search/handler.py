@@ -798,22 +798,31 @@ def _search_trace_args(input: CodeSearchInput) -> dict[str, Any]:
 
 async def _user_recent_dirs(org: str, user_id: str) -> list[str]:
     """5-min-cached directory prefixes from the user's recent memories' files facets
-    (personalization — tie-break input only)."""
+    (personalization — tie-break input only), from the namespaces the caller may read."""
+    from server.auth.context import current_auth, resolve_my_namespaces
+
+    try:
+        auth = current_auth()
+        namespaces = tuple(await resolve_my_namespaces(org)) if auth is not None else None
+    except Exception as e:  # noqa: BLE001 — personalization is best-effort
+        logger.debug("code.search: caller namespaces unavailable: %s", e)
+        return []
+    key = (org, user_id, namespaces)
     now = time.monotonic()
-    cached = _RECENT_DIR_CACHE.get((org, user_id))
+    cached = _RECENT_DIR_CACHE.get(key)
     if cached is not None and now - cached[0] < 300:
         return cached[1]
     dirs: list[str] = []
     try:
         from server.memory.app.code_plane_reads import user_file_dirs
 
-        dirs = await user_file_dirs(org, user_id)
+        dirs = await user_file_dirs(org, user_id, namespaces)
     except Exception as e:  # noqa: BLE001 — personalization is best-effort
         logger.debug("code.search: recent-dirs lookup failed: %s", e)
     if len(_RECENT_DIR_CACHE) > 2000:
         _RECENT_DIR_CACHE.clear()
-    _RECENT_DIR_CACHE[(org, user_id)] = (now, dirs[:50])
+    _RECENT_DIR_CACHE[key] = (now, dirs[:50])
     return dirs[:50]
 
 
-_RECENT_DIR_CACHE: dict[tuple[str, str], tuple[float, list[str]]] = {}
+_RECENT_DIR_CACHE: dict[tuple[str, str, tuple[str, ...] | None], tuple[float, list[str]]] = {}
