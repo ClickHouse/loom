@@ -16,8 +16,8 @@ from __future__ import annotations
 
 from fastapi import HTTPException
 
-from server.auth.jwt import AuthInfo, RevocationUnavailable, TokenError, verify_token
 from server.auth.context import quota_key_for
+from server.auth.jwt import AuthInfo, RevocationUnavailable, TokenError, verify_token
 from server.core.ch import set_quota_key
 
 
