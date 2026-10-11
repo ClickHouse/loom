@@ -165,7 +165,7 @@ async def test_healing_a_legacy_pair_converges(ch_client) -> None:
 
     def mirror() -> list[tuple]:
         return ch_client.query(
-            f"SELECT count(), argMax(entities, version) FROM loom.memory_embeddings {where}",
+            f"SELECT max(version), argMax(entities, version) FROM loom.memory_embeddings {where}",
             parameters=p,
         ).result_rows
 
@@ -175,3 +175,83 @@ async def test_healing_a_legacy_pair_converges(ch_client) -> None:
     for _ in range(2):
         await memory_repo.heal_divergent_entities(limit=10_000)
         assert mirror() == [(versions, entities)]
+
+
+async def test_the_migration_moves_stored_entities_to_the_current_form(ch_client) -> None:
+    """Rows an earlier normaliser stored (`api respons`, `payload siz`) and lowercased
+    rows (`kits`): once migrated, the plural filters and graph paths find them, and a
+    second run has nothing left to do."""
+    from server.core.ch import get_client
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.api.models_facts import FactsPathInput
+    from server.memory.api.models_search import MemorySearchInput
+    from server.memory.app.entity_migration import migrate_entities
+    from server.memory.app.facts import handle_facts_path
+    from server.memory.app.search.handler import handle_memory_search
+    from server.memory.app.write import handle_memory_set
+
+    try:
+        await get_client().connect()
+    except Exception as e:  # noqa: BLE001
+        pytest.skip(f"clickhouse unavailable: {e}")
+    ns = f"agent-entcanon-{os.urandom(3).hex()}"
+    await handle_memory_set(
+        MemorySetInput(
+            org=ORG,
+            namespace=ns,
+            agent="a",
+            memory_key="api",
+            value="api responses page",
+            entities=["x"],
+        )
+    )
+    p = {"org": ORG, "ns": ns}
+    where = "WHERE org = {org:String} AND namespace = {ns:String}"
+    for table in ("loom.memory", "loom.memory_embeddings"):
+        ch_client.command(
+            f"INSERT INTO {table} SELECT * REPLACE (['api respons', 'kits'] AS entities, "
+            f"version + 1 AS version) FROM (SELECT * FROM {table} FINAL {where})",
+            parameters=p,
+        )
+    ch_client.command(
+        "INSERT INTO loom.entity_edges (org, namespace, entity_a, entity_b, co_occur) VALUES "
+        "({org:String}, {ns:String}, 'latency', 'payload siz', 2), "
+        "({org:String}, {ns:String}, 'api respons', 'latency', 1)",
+        parameters=p,
+    )
+
+    def stored() -> list[tuple]:
+        return [
+            ch_client.query(
+                f"SELECT entities FROM {t} FINAL {where} AND tombstoned_at IS NULL", parameters=p
+            ).result_rows
+            for t in ("loom.memory", "loom.memory_embeddings")
+        ]
+
+    planned = await migrate_entities(apply=False)
+    assert planned["loom.memory"] >= 1 and planned["loom.entity_edges"] >= 2
+    assert stored() == [[(["api respons", "kits"],)]] * 2  # a dry run writes nothing
+    await migrate_entities(apply=True)
+    assert stored() == [[(["api response", "kit"],)]] * 2
+    degrees = ch_client.query(
+        f"SELECT entity, sum(degree) FROM loom.entity_degree {where} GROUP BY entity ORDER BY entity",
+        parameters=p,
+    ).result_rows
+    seeded = {"api respons", "api response", "latency", "payload siz", "payload size"}
+    assert [d for d in degrees if d[0] in seeded] == [
+        ("api response", 1),
+        ("latency", 3),
+        ("payload size", 2),
+    ]
+    out = await handle_memory_search(
+        MemorySearchInput(
+            org=ORG, namespace=ns, agent="*", query="page", entity_filter=["api responses"]
+        )
+    )
+    (hit,) = [h for h in out.results if h.memory_key == "api"]
+    assert hit.score_components["entity_boost_sql"] == 0.5
+    path = await handle_facts_path(
+        FactsPathInput(org=ORG, namespace=ns, entity_a="payload sizes", entity_b="latency")
+    )
+    assert path.found
+    assert all(n == 0 for n in (await migrate_entities(apply=False)).values())

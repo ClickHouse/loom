@@ -15,7 +15,7 @@ from datetime import datetime
 
 _SPACE_RE = re.compile(r"\s+")
 _PUNCT_RE = re.compile(r"[^\w\s:/.-]+")
-_ARTICLE_RE = re.compile(r"^(the|a|an)\s+", re.IGNORECASE)
+_ARTICLE_RE = re.compile(r"^(?:(?:the|a|an)\s+)+", re.IGNORECASE)
 _SINGLE_VALUED_RELATIONS = {
     "works_at",
     "employed_by",
@@ -232,9 +232,9 @@ _FIRST_PERSON_FORMS = frozenset(
 # plural/singular surface forms ("data breach" vs "data breaches", "kit" vs
 # "kits" → off-by-one counts). Lightweight, dependency-free; only the LAST word
 # is touched (multi-word entities + proper-noun heads are rarely plural). A
-# singular head never ends in a lone `s`, so a second pass changes nothing.
-# Changing canonical_entity reshapes the whole graph plane, so re-ingest and
-# re-bench before relying on this.
+# singular head is itself singular, so a second pass changes nothing.
+# Changing canonical_entity reshapes the whole graph plane: `loom
+# recanonicalize-entities --apply` moves the stored rows; re-bench after.
 _SINGULAR_UNCHANGED = frozenset(
     {
         "series",
@@ -244,6 +244,11 @@ _SINGULAR_UNCHANGED = frozenset(
         "analysis",
         "status",
         "bus",
+        "gas",
+        "alias",
+        "atlas",
+        "bias",
+        "canvas",
         "lens",
         "physics",
         "mathematics",
@@ -256,26 +261,30 @@ _SINGULAR_UNCHANGED = frozenset(
 
 
 def _singularize_head(text: str) -> str:
-    if not text or " " in text and not text.rsplit(" ", 1)[-1]:
-        return text
-    head = text.rsplit(" ", 1)[-1] if " " in text else text
-    prefix = text[: len(text) - len(head)]
-    w = head
+    head = text.rsplit(" ", 1)[-1]
+    return text[: len(text) - len(head)] + _singular(head) if head else text
+
+
+def _singular(w: str) -> str:
     if len(w) <= 3 or w in _SINGULAR_UNCHANGED or w.endswith("ss"):
-        return text
+        return w
     if w.endswith("ies") and len(w) > 4:
-        s = w[:-3] + "y"  # parties -> party
-    elif w.endswith(("ches", "shes", "sses", "xes", "zzes")):
-        s = w[:-2]  # breaches -> breach, classes -> class, boxes -> box
-    elif w.endswith("es") and w[-3] in "sz":
-        s = w[:-1]  # responses -> response, sizes -> size
-    elif w.endswith("ves"):
-        s = w[:-3] + "f"  # shelves -> shelf
-    elif w.endswith("s") and not w.endswith(("us", "is", "ss")):
-        s = w[:-1]  # kits -> kit, doctors -> doctor
-    else:
-        return text
-    return prefix + s
+        return w[:-3] + "y"  # parties -> party
+    if w.endswith(("ches", "shes", "xes")):
+        return w[:-2]  # breaches -> breach, boxes -> box
+    if w.endswith(("ses", "zes")):
+        # buses -> bus, classes -> class, buzzes -> buzz; else only the `s`
+        # (responses -> response, sizes -> size)
+        stem = w[:-2]
+        kept = stem in _SINGULAR_UNCHANGED or (
+            len(stem) > 3 and stem.endswith(("us", "is", "ss", "zz", "tz"))
+        )
+        return stem if kept else w[:-1]
+    if w.endswith("ves"):
+        return w[:-3] + "f"  # shelves -> shelf
+    if w.endswith("s") and not w.endswith(("us", "is")):
+        return w[:-1]  # kits -> kit, doctors -> doctor
+    return w
 
 
 # Tokens that are never an entity, whatever the corpus — pronouns and function words,
@@ -352,9 +361,9 @@ def canonical_entity(raw: str) -> CanonicalEntity:
     original = str(raw or "").strip()
     lowered = original.lower()
     lowered = lowered.replace("'s", "").replace("’s", "")
-    lowered = _ARTICLE_RE.sub("", lowered)
     lowered = _PUNCT_RE.sub(" ", lowered)
-    text = _SPACE_RE.sub(" ", lowered).strip(" .")
+    # articles last: punctuation can hide one (`"The Ledger"`)
+    text = _ARTICLE_RE.sub("", _SPACE_RE.sub(" ", lowered).strip(" ."))
     text = _singularize_head(text)
     if text in _FIRST_PERSON_FORMS:
         text = "user"
@@ -367,6 +376,17 @@ def canonical_entity_text(raw: str) -> str:
     possessives and punctuation and folds first-person forms to "user", so a
     query seed and the stored node land on identical text. Idempotent."""
     return canonical_entity(raw).text
+
+
+def recanonical(stored: str) -> str:
+    """Today's canonical form of text an earlier normaliser stored as canonical: a head
+    that rule cut to a stem (`respons`, `siz`) takes the form its plural takes now."""
+    head = stored.rsplit(" ", 1)[-1]
+    if head.endswith(("s", "z")) and not head.endswith(("ss", "zz")):
+        plural = canonical_entity_text(stored + "es")
+        if plural != stored:
+            return plural
+    return canonical_entity_text(stored)
 
 
 def canonical_entities(values: Iterable[str]) -> list[str]:
