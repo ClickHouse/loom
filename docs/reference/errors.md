@@ -271,6 +271,10 @@ Raised in `server/memory/app/promote.py`.
 
 Raised in `server/memory/app/session_brief.py`.
 
+#### `BRIEF_KEY_TAKEN`
+
+Raised in `server/memory/app/session_brief.py`.
+
 #### `BRIEF_REVISION_MISMATCH`
 
 Raised in `server/memory/app/session_brief.py`.
