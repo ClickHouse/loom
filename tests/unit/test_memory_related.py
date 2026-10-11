@@ -39,7 +39,7 @@ async def test_returns_hits_ranked_by_overlap(
         _row(key="qux", overlap=1, shared=["module-foo"]),
     ]
 
-    async def fake_find(identity, memory_key, *, top_k, min_overlap, ch=None):
+    async def fake_find(identity, memory_key, *, top_k, min_overlap, ch=None, scope=None):
         assert memory_key == "src"
         assert top_k == 10
         assert min_overlap == 1
@@ -148,7 +148,7 @@ async def test_min_overlap_passed_through(
 
     seen = {}
 
-    async def fake_find(identity, memory_key, *, top_k, min_overlap, ch=None):
+    async def fake_find(identity, memory_key, *, top_k, min_overlap, ch=None, scope=None):
         seen["top_k"] = top_k
         seen["min_overlap"] = min_overlap
         return (["kafka"], [_row(key="bar", overlap=2, shared=["kafka", "x"])])

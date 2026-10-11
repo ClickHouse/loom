@@ -9,8 +9,10 @@ from datetime import timedelta
 
 from fastapi import HTTPException
 
+from server.auth.context import current_auth
 from server.core.datetimes import naive_utc_now
 from server.embedding import get_embedder
+from server.identity.domain.read_scope import request_read_filters
 from server.memory.api.models_lifecycle import (
     MemoryDemoteInput,
     MemoryDemoteOutput,
@@ -40,6 +42,7 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
         ),
         input.memory_key,
         fresh=True,  # promote follows set; a replica-lag miss is not 'not found'
+        scope=request_read_filters(current_auth()),
     )
     if src is None:
         raise HTTPException(

@@ -14,11 +14,13 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from server.auth.context import current_auth
 from server.code.app.member_writes import assert_own_row
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.embedding import get_embedder
+from server.identity.domain.read_scope import WHOLE_NAMESPACE, request_read_filters
 from server.memory.api.models_crud import (
     MemoryClearInput,
     MemoryClearOutput,
@@ -137,7 +139,7 @@ async def _fetch_relevant_existing_memories(
         user_id=identity.user_id,
         session_id="*",
     )
-    rows = await memory_repo.get_many_by_keys(any_session, hit_keys)
+    rows = await memory_repo.get_many_by_keys(any_session, hit_keys, scope=WHOLE_NAMESPACE)
     by_key = {r.memory_key: r for r in rows}
     out: list[dict[str, str]] = []
     for h in hits:
@@ -285,6 +287,7 @@ async def _point_lookup(identity: Any, input: MemoryGetInput) -> Any:
             fresh=True,  # the SDK pattern is set → get; a miss re-reads once
             strong=strong,
             include_expired=False,  # an expired fact reads as gone, like search
+            scope=request_read_filters(current_auth()),
         )
     if row is not None or identity.agent == "*":
         return row
@@ -304,6 +307,7 @@ async def _point_lookup(identity: Any, input: MemoryGetInput) -> Any:
             fresh=True,
             strong=strong,
             include_expired=False,
+            scope=request_read_filters(current_auth()),
         )
     return row if row is not None and same_user(row, identity) else None
 
@@ -519,7 +523,9 @@ async def handle_memory_unpin(input: MemoryUnpinInput) -> MemoryUnpinOutput:
         user_id=input.user_id,
         session_id=input.session_id,
     )
-    existing = await memory_repo.get_by_key(identity, input.memory_key, fresh=True, strong=True)
+    existing = await memory_repo.get_by_key(
+        identity, input.memory_key, fresh=True, strong=True, scope=WHOLE_NAMESPACE
+    )
     if existing is None and identity.agent != "*":
         wide = memory_repo.Identity(
             org=input.org,
@@ -528,7 +534,9 @@ async def handle_memory_unpin(input: MemoryUnpinInput) -> MemoryUnpinOutput:
             user_id=input.user_id,
             session_id=input.session_id,
         )
-        existing = await memory_repo.get_by_key(wide, input.memory_key, fresh=True, strong=True)
+        existing = await memory_repo.get_by_key(
+            wide, input.memory_key, fresh=True, strong=True, scope=WHOLE_NAMESPACE
+        )
         if existing is not None and not same_user(existing, identity):
             existing = None
     if existing is None:
@@ -576,7 +584,9 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     )
     with traced("ch.query.memory.precheck", op="tombstone_lookup"):
         # fresh: a delete right after a set must not no-op on a replica lag miss.
-        existing = await memory_repo.get_by_key(identity, input.memory_key, fresh=True, strong=True)
+        existing = await memory_repo.get_by_key(
+            identity, input.memory_key, fresh=True, strong=True, scope=WHOLE_NAMESPACE
+        )
     if existing is None and identity.agent != "*":
         # A delete names a key, not the identity that wrote it (hooks write under their own
         # agent/session; a chat client deleting the key holds another), and an exact-identity
@@ -588,7 +598,9 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
             user_id=input.user_id,
             session_id=input.session_id,
         )
-        existing = await memory_repo.get_by_key(wide, input.memory_key, fresh=True, strong=True)
+        existing = await memory_repo.get_by_key(
+            wide, input.memory_key, fresh=True, strong=True, scope=WHOLE_NAMESPACE
+        )
         if existing is not None and not same_user(existing, identity):
             existing = None  # the wide form ignores user_id; another user's row is not ours
     if existing is None:
@@ -750,7 +762,9 @@ async def handle_memory_touch(input: MemoryTouchInput) -> MemoryTouchOutput:
     )
     if input.memory_keys:
         wanted = list(dict.fromkeys(k for k in input.memory_keys if k))
-        rows = await memory_repo.get_many_by_keys(ident, wanted, ch=ch, strong=True)
+        rows = await memory_repo.get_many_by_keys(
+            ident, wanted, ch=ch, strong=True, scope=WHOLE_NAMESPACE
+        )
     else:
         wanted = [input.memory_key]
         one = await memory_repo.get_by_key(
@@ -758,6 +772,7 @@ async def handle_memory_touch(input: MemoryTouchInput) -> MemoryTouchOutput:
             input.memory_key,
             fresh=True,  # touch follows set
             strong=True,  # the head feeds a write
+            scope=WHOLE_NAMESPACE,
         )
         rows = [one] if one is not None else []
     by_key = {r.memory_key: r for r in rows}
@@ -839,6 +854,7 @@ async def handle_memory_get_by_id(input: MemoryGetByIdInput) -> MemoryGetByIdOut
         as_of=getattr(input, "as_of", None),
         include_usage_totals=True,
         fresh=True,
+        scope=request_read_filters(current_auth()),
     )
     if row is None:
         return MemoryGetByIdOutput(found=False)

@@ -20,7 +20,7 @@ class _FakeConflictsRepo:
         self.counts = 0
         self.lists = 0
 
-    async def count_conflicted(self, org: str, namespace: str) -> int:
+    async def count_conflicted(self, org: str, namespace: str, scope: Any = None) -> int:
         self.counts += 1
         return 4
 
@@ -66,7 +66,8 @@ async def test_count_only_answers_the_number_from_one_cached_count(
         ConflictsListInput(org="acme", namespace="other", count_only=True)
     )
     assert fake.counts == 2
-    conflicts_mod._count_cache.pop(("acme", "team"), None)
+    for key in [k for k in conflicts_mod._count_cache if k[:2] == ("acme", "team")]:
+        conflicts_mod._count_cache.pop(key)
     await conflicts_mod.handle_conflicts_list(
         ConflictsListInput(org="acme", namespace="team", count_only=True)
     )

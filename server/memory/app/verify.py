@@ -36,6 +36,7 @@ from server.auth.context import current_auth
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value_json
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_crud import MemoryVerifyInput, MemoryVerifyOutput
 from server.memory.domain import trust
 from server.memory.store.inserts import insert_memory_versions
@@ -71,7 +72,9 @@ async def _resolve_row(input: MemoryVerifyInput) -> MemoryRow | None:
     import server.memory.store as memory_repo
 
     if input.memory_id:
-        return await memory_repo.get_by_id(input.memory_id, org=input.org, fresh=True)
+        return await memory_repo.get_by_id(
+            input.memory_id, org=input.org, fresh=True, scope=WHOLE_NAMESPACE
+        )
     if not (input.namespace and input.memory_key):
         raise HTTPException(
             status_code=422,
@@ -92,7 +95,9 @@ async def _resolve_row(input: MemoryVerifyInput) -> MemoryRow | None:
     )
     # fresh: verify follows set in the same breath; a replica-lag miss must not
     # answer "not found" for a row the caller was just handed a memory_id for.
-    return await memory_repo.get_by_key(identity, input.memory_key, fresh=True)
+    return await memory_repo.get_by_key(
+        identity, input.memory_key, fresh=True, scope=WHOLE_NAMESPACE
+    )
 
 
 def current_content_sha256(row: MemoryRow) -> str:

@@ -191,6 +191,21 @@ scoped read without the `user_id` or `session_id` it binds to is refused with
 `IDENTITY_INCOMPLETE` instead of silently widening. Mint `own_user` tokens for
 multi-user agents.
 
+Both transports resolve the scope once, when they admit the call, and every read of
+memory rows in that call carries it, whichever op made the read: `memory.get`,
+`get_by_id` (another user's id answers `found=false`), `list`, `bulk_get`, `history`,
+`timeline`, `related`, `evidence`, `conflicts.list`, `memory.proposals`, session briefs,
+digests, procedures, working memory and the `loom_search` legs. Under a scope narrower
+than `namespace`:
+
+- `user_id="*"` is refused with `AUTH_INSUFFICIENT`, and so is `session_id="*"` under
+  `own_session`.
+- A leg whose rows carry no user (conversations, runs) answers nothing.
+- An op that cannot bound its answer to one user (the entity graph `facts.*`,
+  `conversation.*` reads, namespace exports, admin and curation ops) is refused with
+  `AUTH_INSUFFICIENT`. The list is `server/identity/domain/read_scope.py`
+  (`SCOPED_OPS`, `NO_MEMORY_CONTENT`), and an op it does not name is refused.
+
 ## Agent-written rows and the shared layer
 
 Inside a namespace, rows in `loom.memory` are keyed by the full tuple: the same

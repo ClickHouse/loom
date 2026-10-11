@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory import store as memory_repo
 from server.memory.store import Identity
 
@@ -70,7 +71,7 @@ class _CH:
 async def test_related_ranks_without_the_value_then_fetches_the_winners_previews() -> None:
     ch = _CH()
     ents, rows = await memory_repo.find_related_by_entities(
-        _IDENT, "src", top_k=5, min_overlap=1, ch=ch
+        _IDENT, "src", top_k=5, min_overlap=1, ch=ch, scope=WHOLE_NAMESPACE
     )
     assert ents == ["lane-1", "exporter"]
     assert [(r["memory_key"], r["content_excerpt"], r["overlap_count"]) for r in rows] == [
@@ -98,7 +99,7 @@ async def test_related_with_no_candidates_issues_no_fetch() -> None:
 
     ch = _Empty()
     ents, rows = await memory_repo.find_related_by_entities(
-        _IDENT, "src", top_k=5, min_overlap=1, ch=ch
+        _IDENT, "src", top_k=5, min_overlap=1, ch=ch, scope=WHOLE_NAMESPACE
     )
     assert ents == ["lane-1", "exporter"] and rows == []
     assert len(ch.sqls) == 2  # source entities + the ranking scan
@@ -125,7 +126,7 @@ async def test_a_client_answering_excerpts_in_the_scan_short_circuits() -> None:
 
     ch = _Old()
     _, rows = await memory_repo.find_related_by_entities(
-        _IDENT, "src", top_k=5, min_overlap=1, ch=ch
+        _IDENT, "src", top_k=5, min_overlap=1, ch=ch, scope=WHOLE_NAMESPACE
     )
     assert rows[0]["content_excerpt"] == "x" and len(ch.sqls) == 2
 
@@ -160,7 +161,7 @@ async def test_two_identities_sharing_a_key_and_version_each_get_their_own_excer
 
     ch = _Twin()
     _, rows = await memory_repo.find_related_by_entities(
-        _IDENT, "src", top_k=5, min_overlap=1, ch=ch
+        _IDENT, "src", top_k=5, min_overlap=1, ch=ch, scope=WHOLE_NAMESPACE
     )
     assert ch.params[2] is not None and ch.params[2]["pairs"] == [("ma", 7), ("mb", 7)]
     assert [r["content_excerpt"] for r in rows] == ["agent a", "agent b"]

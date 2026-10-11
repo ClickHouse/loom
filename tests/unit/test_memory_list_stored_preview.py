@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory import store as memory_repo
 from tests.unit.schema_ddl import ddl
 
@@ -33,7 +34,9 @@ async def test_a_preview_read_selects_the_stored_columns_and_never_the_value() -
     ident = memory_repo.Identity(
         org="acme", namespace="team", agent="*", user_id="*", session_id="*"
     )
-    await memory_repo.list_by_namespace(ident, limit=10, offset=0, preview=True, ch=ch)
+    await memory_repo.list_by_namespace(
+        ident, limit=10, offset=0, preview=True, ch=ch, scope=WHOLE_NAMESPACE
+    )
     # The preview page locates first (no preview, no
     # value) and reads the previews by pairs in a second statement; the fake
     # answers no rows, so only the locate statement runs here.
@@ -50,7 +53,7 @@ async def test_a_whole_value_read_still_selects_the_value() -> None:
     ident = memory_repo.Identity(
         org="acme", namespace="team", agent="*", user_id="*", session_id="*"
     )
-    await memory_repo.list_by_namespace(ident, limit=10, offset=0, ch=ch)
+    await memory_repo.list_by_namespace(ident, limit=10, offset=0, ch=ch, scope=WHOLE_NAMESPACE)
     select = ch.sql[-1][ch.sql[-1].index("SELECT") : ch.sql[-1].index("FROM loom.memory")]
     tokens = [t.strip() for t in select.replace("SELECT", "").split(",")]
     assert "value" in tokens and "value_preview AS value" not in ch.sql[-1]

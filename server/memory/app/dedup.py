@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from server.auth.context import current_auth
+from server.identity.domain.read_scope import WHOLE_NAMESPACE, request_read_filters
 from server.memory.api.models_graph import (
     MemoryDedupCollapseInput,
     MemoryDedupCollapseOutput,
@@ -358,7 +360,9 @@ async def handle_memory_dedup_resolve(input: MemoryDedupResolveInput) -> MemoryD
 
     if input.decision == "keep_canonical":
         _lock.assert_unlocked(
-            await memory_repo.get_by_id(dup_row.memory_id, org=input.org, fresh=True, strong=True),
+            await memory_repo.get_by_id(
+                dup_row.memory_id, org=input.org, fresh=True, strong=True, scope=WHOLE_NAMESPACE
+            ),
             "delete",
             op="memory.dedup_resolve",
         )
@@ -367,7 +371,7 @@ async def handle_memory_dedup_resolve(input: MemoryDedupResolveInput) -> MemoryD
     elif input.decision == "keep_duplicate":
         _lock.assert_unlocked(
             await memory_repo.get_by_id(
-                canon_row.memory_id, org=input.org, fresh=True, strong=True
+                canon_row.memory_id, org=input.org, fresh=True, strong=True, scope=WHOLE_NAMESPACE
             ),
             "delete",
             op="memory.dedup_resolve",
@@ -421,11 +425,14 @@ async def handle_memory_related(input: MemoryRelatedInput) -> MemoryRelatedOutpu
             input.memory_key,
             top_k=input.top_k,
             min_overlap=input.min_overlap,
+            scope=request_read_filters(current_auth()),
         )
 
     if not source_entities:
         # Distinguish "row missing" from "row exists but no entities".
-        src = await memory_repo.get_by_key(identity, input.memory_key, fresh=True)
+        src = await memory_repo.get_by_key(
+            identity, input.memory_key, fresh=True, scope=request_read_filters(current_auth())
+        )
         reason = "source_not_found" if src is None else "source_has_no_entities"
         return MemoryRelatedOutput(results=[], source_entities=[], reason=reason)
 

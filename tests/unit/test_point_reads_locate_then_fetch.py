@@ -18,6 +18,7 @@ from typing import Any
 
 import pytest
 
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory import store as memory_repo
 from server.memory.store import Identity
 
@@ -125,7 +126,7 @@ async def test_bulk_get_fetches_the_located_identity_not_a_twin_at_the_same_vers
             return [r for r in rows if (r["memory_id"], r["version"]) in wanted]
 
     ch = _Pairs([_located("k", 7, _MA)], [_full("k", 7, _MB, "b"), _full("k", 7, _MA)])
-    rows = await memory_repo.get_many_by_keys(_IDENT, ["k"], ch=ch)
+    rows = await memory_repo.get_many_by_keys(_IDENT, ["k"], ch=ch, scope=WHOLE_NAMESPACE)
     assert [(r.memory_id, r.agent) for r in rows] == [(_MA, "a")]
 
 
@@ -134,7 +135,7 @@ async def test_bulk_get_locates_then_fetches_pairs_in_the_located_order() -> Non
     ch = _CH(
         [_located("b", 9, _MB), _located("a", 3, _MA)], [_full("a", 3, _MA), _full("b", 9, _MB)]
     )
-    rows = await memory_repo.get_many_by_keys(_IDENT, ["b", "a"], ch=ch)
+    rows = await memory_repo.get_many_by_keys(_IDENT, ["b", "a"], ch=ch, scope=WHOLE_NAMESPACE)
     assert [r.memory_key for r in rows] == ["b", "a"]
     locate, fetch = ch.sqls
     assert "FROM loom.memory FINAL" in locate and not _selects_value(locate)
@@ -148,7 +149,7 @@ async def test_bulk_get_locates_then_fetches_pairs_in_the_located_order() -> Non
 @pytest.mark.asyncio
 async def test_bulk_get_empty_locate_issues_no_fetch() -> None:
     ch = _CH([], [])
-    assert await memory_repo.get_many_by_keys(_IDENT, ["x"], ch=ch) == []
+    assert await memory_repo.get_many_by_keys(_IDENT, ["x"], ch=ch, scope=WHOLE_NAMESPACE) == []
     assert all("FINAL" in sql for sql in ch.sqls)  # the locate and its consistent retry only
 
 
@@ -169,7 +170,7 @@ async def test_history_reads_the_version_list_then_the_listed_values() -> None:
             ]
 
     ch = _Hist([], [])
-    rows = await memory_repo.list_history(_IDENT, "k", limit=8, ch=ch)
+    rows = await memory_repo.list_history(_IDENT, "k", limit=8, ch=ch, scope=WHOLE_NAMESPACE)
     assert [(r.version, r.value) for r in rows] == [(7, "v7"), (5, "v5")]
     listing, values = ch.sqls
     assert (
@@ -190,7 +191,7 @@ async def test_a_client_answering_full_rows_short_circuits_the_fetch() -> None:
     """Older fakes and a future combined read answer the locate with the rows;
     the repository then hydrates them and issues nothing more."""
     ch = _CH([_full()], [])
-    rows = await memory_repo.get_many_by_keys(_IDENT, ["k"], ch=ch)
+    rows = await memory_repo.get_many_by_keys(_IDENT, ["k"], ch=ch, scope=WHOLE_NAMESPACE)
     assert len(rows) == 1 and rows[0].value == {"text": "v"}
     assert len(ch.sqls) == 1
 
@@ -200,7 +201,7 @@ async def test_get_by_key_stays_one_statement() -> None:
     """One row is one granule whatever the shape; the hottest read keeps its
     single FINAL statement (the PREWHERE test covers its form)."""
     ch = _CH([_full()], [])
-    row = await memory_repo.get_by_key(_IDENT, "k", ch=ch)
+    row = await memory_repo.get_by_key(_IDENT, "k", ch=ch, scope=WHOLE_NAMESPACE)
     assert row is not None and len(ch.sqls) == 1 and "FROM loom.memory FINAL" in ch.sqls[0]
 
 
@@ -253,12 +254,12 @@ async def test_a_wildcard_agent_reads_the_keys_history_namespace_wide() -> None:
 
     wild = Identity(org="o", namespace="n", agent="*", user_id="-", session_id="-")
     ch = _Hist([], [])
-    rows = await memory_repo.list_history(wild, "k", ch=ch)
+    rows = await memory_repo.list_history(wild, "k", ch=ch, scope=WHOLE_NAMESPACE)
     assert [(r.agent, r.value) for r in rows] == [
         ("claude-code", "from claude-code"),
         ("codex", "from codex"),
     ]
     assert all("agent = {a:String}" not in sql for sql in ch.sqls)
     ch = _Hist([], [])
-    await memory_repo.list_history(_IDENT, "k", ch=ch)
+    await memory_repo.list_history(_IDENT, "k", ch=ch, scope=WHOLE_NAMESPACE)
     assert all("agent = {a:String}" in sql for sql in ch.sqls)

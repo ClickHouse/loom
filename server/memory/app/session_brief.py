@@ -15,8 +15,10 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from server.auth.context import current_auth
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
+from server.identity.domain.read_scope import WHOLE_NAMESPACE, request_read_filters
 from server.memory.api.models_session_brief import (
     SessionBriefDeleteInput,
     SessionBriefDeleteOutput,
@@ -231,7 +233,7 @@ async def handle_session_brief_save(inp: SessionBriefSaveInput) -> SessionBriefS
     if not sb.brief_key_ok(key):
         raise HTTPException(status_code=422, detail={"code": "BAD_BRIEF_KEY", "message": key})
     ch = get_client()
-    row = await repo.current(ch, inp.org, inp.namespace, key)
+    row = await repo.current(ch, inp.org, inp.namespace, key, scope=WHOLE_NAMESPACE)
     live = row if row and row.get("tombstoned_at") is None else None
     stored_rev = int(row.get("revision") or 0) if row else 0
     if inp.if_revision is not None and inp.if_revision != (stored_rev if live else 0):
@@ -351,11 +353,18 @@ async def handle_session_brief_save(inp: SessionBriefSaveInput) -> SessionBriefS
 
 async def _find(inp: SessionBriefGetInput) -> dict[str, Any] | None:
     ch = get_client()
+    scope = request_read_filters(current_auth())
     if inp.brief_key:
-        row = await repo.current(ch, inp.org, inp.namespace, inp.brief_key)
+        row = await repo.current(ch, inp.org, inp.namespace, inp.brief_key, scope=scope)
         return row
     rows = await repo.listing(
-        ch, inp.org, inp.namespace, project=inp.project, from_session=inp.from_session, limit=1
+        ch,
+        inp.org,
+        inp.namespace,
+        project=inp.project,
+        from_session=inp.from_session,
+        limit=1,
+        scope=scope,
     )
     return rows[0] if rows else None
 
@@ -391,7 +400,14 @@ async def handle_session_brief_get(inp: SessionBriefGetInput) -> SessionBriefGet
             found=False, deleted=True, revision=int(row["revision"]), **base
         )
     if inp.revision:
-        past = await repo.by_revision(ch, inp.org, inp.namespace, key, inp.revision)
+        past = await repo.by_revision(
+            ch,
+            inp.org,
+            inp.namespace,
+            key,
+            inp.revision,
+            scope=request_read_filters(current_auth()),
+        )
         # A revision from before a delete belongs to the forgotten brief: the
         # current life of the key started at its `created_at`.
         born = row.get("created_at")
@@ -440,6 +456,7 @@ async def handle_session_brief_list(inp: SessionBriefListInput) -> SessionBriefL
         agent=inp.agent if inp.mine_only else "",
         from_session=inp.from_session,
         limit=inp.limit,
+        scope=request_read_filters(current_auth()),
     )
     items: list[SessionBriefSummary] = []
     lines: list[str] = []
@@ -470,7 +487,7 @@ async def handle_session_brief_list(inp: SessionBriefListInput) -> SessionBriefL
 
 async def handle_session_brief_delete(inp: SessionBriefDeleteInput) -> SessionBriefDeleteOutput:
     ch = get_client()
-    row = await repo.current(ch, inp.org, inp.namespace, inp.brief_key)
+    row = await repo.current(ch, inp.org, inp.namespace, inp.brief_key, scope=WHOLE_NAMESPACE)
     if row is None or row.get("tombstoned_at") is not None:
         return SessionBriefDeleteOutput(deleted=False, brief_key=inp.brief_key)
     from server.memory.app.provenance import writer_actor

@@ -29,7 +29,7 @@ async def test_unit_budget_buys_one_body_per_cited_entity_first(
     # rank order: two bodies about eric, then zoey's; each body ~1,000 tokens
     hits = [hit("eric_1", ["eric"]), hit("eric_2", ["eric"]), hit("zoey_1", ["zoey"])]
 
-    async def fake_get_many(identity: Any, keys: list[str]) -> list[Any]:
+    async def fake_get_many(identity: Any, keys: list[str], *, scope: Any) -> list[Any]:
         return [SimpleNamespace(memory_key=k, value="v" * 4000) for k in keys]
 
     monkeypatch.setattr(repo, "get_many_by_keys", fake_get_many)
@@ -57,7 +57,7 @@ async def test_anchor_first_places_the_oldest_run_memory_first(
 
     calls: list[dict[str, Any]] = []
 
-    async def fake_list(ident: Any, *, order_by: str, limit: int) -> list[Any]:
+    async def fake_list(ident: Any, *, order_by: str, limit: int, scope: Any) -> list[Any]:
         calls.append({"order_by": order_by, "limit": limit})
         return [
             SimpleNamespace(

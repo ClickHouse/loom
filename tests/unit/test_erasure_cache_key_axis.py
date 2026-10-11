@@ -272,7 +272,7 @@ async def test_redact_handler_reports_the_cache_and_precedent_rows_it_deleted(mo
     async def _find(org, mid):
         return HistoryTarget.from_row(target)
 
-    async def _head(identity, key, *, fresh=False, strong=False):
+    async def _head(identity, key, *, fresh=False, strong=False, scope=None):
         return SimpleNamespace(version=9, pinned=False, locked_until=None, lock_mode="")
 
     async def _scope(org, ns, role):

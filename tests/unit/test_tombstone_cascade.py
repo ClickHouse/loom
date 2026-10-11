@@ -48,7 +48,9 @@ def cascade_spy(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     rows = {"m1": _row("m1", "k1"), "m2": _row("m2", "k2", ns="other")}
     spy: dict[str, Any] = {"versions": [], "mirrored": [], "overrides": []}
 
-    async def fake_get_by_id(mid: str, *, org: str | None = None, ch: Any = None):
+    async def fake_get_by_id(
+        mid: str, *, org: str | None = None, ch: Any = None, scope: Any = None
+    ):
         return rows.get(mid)
 
     async def fake_write_versions(org: str, ids: list[str], update: Any, *, ch: Any = None) -> int:

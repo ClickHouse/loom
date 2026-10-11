@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
+from server.identity.domain.read_scope import ReadFilters, scope_and
 from server.memory.store.rows import MEMORY_PERSISTED_COLS, Identity, MemoryRow, _hydrate
 from server.memory.store.sql import _is_full_row
 
@@ -111,6 +112,7 @@ async def list_history(
     identity: Identity,
     memory_key: str,
     *,
+    scope: ReadFilters,
     limit: int = 100,
     ch: _CHClient | None = None,
 ) -> list[HistoryVersion]:
@@ -150,6 +152,8 @@ async def list_history(
         "k": memory_key,
         "limit": limit,
     }
+    # A wildcard-agent history spans writers, never users outside the read scope.
+    ident_where += scope_and(scope, params)
     # A version that reads like the one before it, `entities` aside, is the entity
     # tagger's re-emit: a caller's write stamps `updated_at`, a re-emit carries it
     # forward. It is left out before the limit, so a run of them cannot hide an

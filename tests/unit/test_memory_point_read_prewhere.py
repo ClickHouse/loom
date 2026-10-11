@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory import store as memory_repo
 from server.memory.store import Identity
 from tests.unit.schema_ddl import ddl
@@ -55,7 +56,7 @@ def _split(sql: str) -> tuple[str, str]:
 async def test_get_by_key_puts_the_sort_key_in_prewhere_and_the_rest_in_where() -> None:
     ch = _CH()
     ident = Identity(org="o", namespace="n", agent="a", user_id="u", session_id="s")
-    await memory_repo.get_by_key(ident, "k", ch=ch, include_expired=False)
+    await memory_repo.get_by_key(ident, "k", ch=ch, include_expired=False, scope=WHOLE_NAMESPACE)
     sql = ch.sqls[0]
     pre, where = _split(sql)
     for col in ("org", "namespace", "memory_key", "agent", "user_id", "session_id"):
@@ -71,7 +72,12 @@ async def test_get_by_key_wildcard_agent_and_as_of_keep_non_key_filters_in_where
     ch = _CH()
     ident = Identity(org="o", namespace="n", agent="*", user_id="-", session_id="-")
     await memory_repo.get_by_key(
-        ident, "k", ch=ch, as_of=datetime(2026, 9, 13, tzinfo=UTC), include_tombstoned=True
+        ident,
+        "k",
+        ch=ch,
+        as_of=datetime(2026, 9, 13, tzinfo=UTC),
+        include_tombstoned=True,
+        scope=WHOLE_NAMESPACE,
     )
     sql = ch.sqls[0]
     pre, where = _split(sql)
@@ -85,7 +91,7 @@ async def test_get_by_key_wildcard_agent_and_as_of_keep_non_key_filters_in_where
 async def test_get_by_key_without_filters_has_no_empty_where() -> None:
     ch = _CH()
     ident = Identity(org="o", namespace="n", agent="a", user_id="u", session_id="s")
-    await memory_repo.get_by_key(ident, "k", ch=ch, include_tombstoned=True)
+    await memory_repo.get_by_key(ident, "k", ch=ch, include_tombstoned=True, scope=WHOLE_NAMESPACE)
     sql = ch.sqls[0]
     body = sql.split("FROM loom.memory FINAL", 1)[1]
     assert "PREWHERE" in body
@@ -98,7 +104,10 @@ async def test_get_by_id_second_phase_prewheres_only_the_key_columns_it_found() 
     key = {"org": "o", "namespace": "n", "created_at": datetime(2026, 9, 13), "memory_key": "k"}
     ch = _CH(rows=[key, None])  # phase 1 finds the key; phase 2 reads nothing
     assert (
-        await memory_repo.get_by_id("00000000-0000-0000-0000-000000000001", org="o", ch=ch) is None
+        await memory_repo.get_by_id(
+            "00000000-0000-0000-0000-000000000001", org="o", ch=ch, scope=WHOLE_NAMESPACE
+        )
+        is None
     )
     assert len(ch.sqls) == 2
     phase1, phase2 = ch.sqls

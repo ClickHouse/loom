@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from tests.analyzer.cases._common import AGENT, MODEL, NS, ORG, VEC, chunk_cand, rows_by_substring
 from tests.analyzer.cases.search import _q
 from tests.analyzer.corpus import Case, RecordingCH
@@ -261,7 +262,7 @@ async def _memory_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
 
     ident = Identity(org=ORG, namespace=NS, agent=c["agent"], user_id=c["user_id"], session_id="-")
     as_of = _AS_OF if c["as_of"] else None
-    await M.get_many_by_keys(ident, ["k1", "k2"], ch=ch)
+    await M.get_many_by_keys(ident, ["k1", "k2"], ch=ch, scope=WHOLE_NAMESPACE)
     await M.get_by_key(
         ident,
         "k1",
@@ -269,6 +270,7 @@ async def _memory_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
         as_of=as_of,
         include_tombstoned=c["as_of"],
         include_usage_totals=c["as_of"],
+        scope=WHOLE_NAMESPACE,
     )
     await M.get_by_id(
         "00000000-0000-0000-0000-000000000001",
@@ -276,6 +278,7 @@ async def _memory_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
         ch=ch,
         as_of=as_of,
         include_usage_totals=c["as_of"],
+        scope=WHOLE_NAMESPACE,
     )
     await M.list_by_namespace(
         ident,
@@ -289,6 +292,7 @@ async def _memory_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
         exclude_high_sensitivity=c["as_of"],
         ch=ch,
         include_duplicates=c["as_of"],
+        scope=WHOLE_NAMESPACE,
     )
     await M.count_by_namespace(
         ident,
@@ -300,9 +304,10 @@ async def _memory_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
         created_since=as_of,
         ch=ch,
         include_duplicates=c["as_of"],
+        scope=WHOLE_NAMESPACE,
     )
-    await M.list_history(ident, "k1", ch=ch)
-    await M.find_related_by_entities(ident, "k1", ch=ch)
+    await M.list_history(ident, "k1", ch=ch, scope=WHOLE_NAMESPACE)
+    await M.find_related_by_entities(ident, "k1", ch=ch, scope=WHOLE_NAMESPACE)
 
 
 async def _memory_finders(ch: RecordingCH, c: dict[str, Any]) -> None:

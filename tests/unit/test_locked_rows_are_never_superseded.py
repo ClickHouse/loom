@@ -51,7 +51,7 @@ async def test_supersede_leaves_a_locked_victim_live_in_both_tables(monkeypatch)
         "lapsed": _row("lapsed", lock_mode="read_only", lock_until=datetime(2000, 1, 1)),
     }
 
-    async def _get(mid: str, *, org: str, ch: Any = None) -> MemoryRow | None:
+    async def _get(mid: str, *, org: str, ch: Any = None, scope: Any = None) -> MemoryRow | None:
         return heads.get(mid)
 
     embedded: list[str] = []

@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.store.conflicts import (
     allowlist_exists,
     allowlist_insert,
@@ -48,7 +49,9 @@ class StubCH:
 async def test_list_conflicted_filters_and_paginates() -> None:
     ch = StubCH()
     ch.query_all_returns.append([])
-    await list_conflicted("clickhouse", "ns", before_version=1000, limit=50, ch=ch)
+    await list_conflicted(
+        "clickhouse", "ns", before_version=1000, limit=50, ch=ch, scope=WHOLE_NAMESPACE
+    )
     sql, params = ch.query_all_calls[0]
     assert "status = 'conflicted'" in sql
     assert "tombstoned_at IS NULL" in sql
@@ -87,7 +90,7 @@ async def test_tombstone_ids_writes_rmt_versions(
     ch = StubCH()
     captured: dict[str, Any] = {}
 
-    async def fake_get_by_id(mid, *, org=None, ch=None):
+    async def fake_get_by_id(mid, *, org=None, ch=None, scope=None):
         return memory_repo.MemoryRow(
             memory_id=str(mid),
             org=org or "o",

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.store.embeddings import mirror_status_to_embeddings
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.reads import get_by_id
@@ -572,7 +573,7 @@ async def clear_duplicate_tag(
     new status, which is what memory.search reads. False when no live row
     has that id."""
     ch = ch or _default_client()
-    existing = await get_by_id(memory_id, org=org, ch=ch, fresh=True)
+    existing = await get_by_id(memory_id, org=org, ch=ch, fresh=True, scope=WHOLE_NAMESPACE)
     if existing is None:
         return False
     row = build_memory_version_row(

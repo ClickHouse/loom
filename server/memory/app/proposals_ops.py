@@ -5,7 +5,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from server.auth.context import current_auth
 from server.core.ch import get_client
+from server.identity.domain.read_scope import request_read_filters, scope_where
 from server.memory.api.models_proposals import (
     MemoryProposal,
     MemoryProposalDecideInput,
@@ -40,6 +42,7 @@ async def handle_memory_proposals(input: MemoryProposalsInput) -> MemoryProposal
     if input.tags:
         where.append("hasAny(tags, {tags:Array(String)})")
         params["tags"] = list(input.tags)
+    where.extend(scope_where(request_read_filters(current_auth()), params))
     rows = await ch.query_all(
         f"""
         SELECT memory_key, toString(memory_id) AS mid, agent, memory_type,

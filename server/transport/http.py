@@ -29,7 +29,7 @@ from server.code.app.common import (
     schedule_code_trace_validation_failure,
 )
 from server.core import idempotency, read_replica
-from server.core.errors import IdentityIncompleteError, LoomServerError
+from server.core.errors import AuthInsufficientError, IdentityIncompleteError, LoomServerError
 from server.observability.consumer import (
     bind_current_consumer,
     explicit_consumer,
@@ -398,9 +398,10 @@ def _rate_limit(op: Operation, response: Response, call: _HttpCall, target: gate
 
 async def _bind_context_and_policy(
     op: Operation, request: Request, call: _HttpCall, target: gates.Target, payload: Any
-) -> None:
+) -> Any:
     """The verified caller and the ambient run id on the request context,
-    then the history policy gate — a structured 403 when it denies."""
+    then the history policy gate — a structured 403 when it denies — and the
+    read scope. Returns the input the handler runs with."""
     request_id, raw_body, auth = call.request_id, call.raw_body, call.auth
     # Make auth visible to handlers via request.state and a ContextVar
     # (so handlers can read the caller's identity without taking Request).
@@ -434,6 +435,12 @@ async def _bind_context_and_policy(
             error_code="POLICY_FORBIDDEN",
         )
         raise HTTPException(status_code=403, detail=e.to_detail()) from e
+    try:
+        return gates.read_scope(op, auth, payload)
+    except IdentityIncompleteError as e:
+        raise _refuse(op, call, 400, "IDENTITY_INCOMPLETE", e) from e
+    except AuthInsufficientError as e:
+        raise _refuse(op, call, 403, gates.ROLE_REFUSAL_CODE, e) from e
 
 
 def _record_failure(op: Operation, identity: dict[str, str], elapsed_ms: int) -> None:
@@ -685,7 +692,7 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
         # The shared admission sequence (server/transport/gates.py):
         # authorization target, authorization, policy, then the limiter.
         call.target = target = await _authorize(op, response, call, payload)
-        await _bind_context_and_policy(op, request, call, target, payload)
+        payload = await _bind_context_and_policy(op, request, call, target, payload)
         _rate_limit(op, response, call, target)
         replay = await _idempotency_gate(op, request, response, call, target, payload)
         if replay.hit is not None:

@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.ch import get_client
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.domain.conflicts import (
     APPEND_ONLY_POLICY,
     ConflictPeer,
@@ -760,7 +761,7 @@ async def apply_refines(
     # A proposal (a fact on trial) retires nothing — whichever
     # path reached this verdict (inline, deferred settle, the sweep, bulk).
     try:
-        new_row = await get_by_id(new_memory_id, org=org, ch=ch)
+        new_row = await get_by_id(new_memory_id, org=org, ch=ch, scope=WHOLE_NAMESPACE)
     except Exception:  # noqa: BLE001 — unreadable: the verdict applies
         new_row = None
     if new_row is not None and str(getattr(new_row, "status", "") or "") == "proposed":

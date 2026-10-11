@@ -208,6 +208,7 @@ def test_the_mcp_primer_presents_the_profile_as_reference_data(
 
 
 def test_author_lookup_reads_only_what_the_search_could_see() -> None:
+    from server.identity.domain.read_scope import ReadFilters
     from server.memory.store.reads import actors_by_key
 
     seen: dict[str, Any] = {}
@@ -217,11 +218,12 @@ def test_author_lookup_reads_only_what_the_search_could_see() -> None:
             seen.update(sql=sql, params=params)
             return [{"namespace": "ns", "memory_key": "k", "actors": ["human:b", "human:a"]}]
 
-    got = asyncio.run(actors_by_key("o", [("ns", "k")], user_id="u1", ch=_CH()))
+    own_user = ReadFilters(scope="own_user", user_id="u1", session_id=None)
+    got = asyncio.run(actors_by_key("o", [("ns", "k")], scope=own_user, ch=_CH()))
     assert got == {("ns", "k"): ["human:a", "human:b"]}
-    assert "user_id = {uid:String}" in seen["sql"] and seen["params"]["uid"] == "u1"
+    assert "u1" in seen["params"].values()
     assert "session_id" not in seen["sql"]
-    assert asyncio.run(actors_by_key("o", [], ch=_CH())) == {}
+    assert asyncio.run(actors_by_key("o", [], scope=own_user, ch=_CH())) == {}
 
 
 def test_the_runs_manifest_says_who_wrote_a_session_and_what_its_digest_compressed() -> None:
