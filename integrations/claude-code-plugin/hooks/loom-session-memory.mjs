@@ -20,7 +20,7 @@ import { sessionMemoryBody, sessionToolEchoes, transcriptTurns } from "../lib/se
 import { readRecalledStash, recalledStashPath } from "../lib/run-hook.mjs";
 import { parseLines, readTail } from "../lib/transcript.mjs";
 import { removeFile } from "../lib/tmp-state.mjs";
-import { journalTurns, readJournal, removeJournal } from "../lib/turn-journal.mjs";
+import { journalTurns, readJournal } from "../lib/turn-journal.mjs";
 
 const MAX_TRANSCRIPT_BYTES = 8 * 1024 * 1024; // read the tail of a huge transcript only
 
@@ -29,12 +29,12 @@ async function main() {
   if (event !== "SessionEnd") return scheduleExit(0);
   const payload = await readStdinJson();
   const sid = payload.session_id || "";
-  // This is the last SessionEnd hook: whether or not it sends anything, it
-  // removes the capture hook's recalled stash and the turn journal.
+  // Only this hook reads the capture hook's recalled stash, so it removes it. The turn
+  // journal stays: the other SessionEnd hooks run alongside this one and read it too;
+  // SessionStart sweeps stale journals.
   const recalledKeys = readRecalledStash(sid);
   const journal = readJournal(sid);
   removeFile(recalledStashPath(sid));
-  removeJournal(sid);
   if (envSwitch("LOOM_SESSION_MEMORY", true) && resolveToken()) handOff(payload, journal, recalledKeys);
   scheduleExit(0);
 }
