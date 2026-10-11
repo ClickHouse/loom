@@ -53,7 +53,8 @@ async def test_cors_get_includes_origin_header(cors_server: str) -> None:
 
 @pytest.mark.asyncio
 async def test_cors_rejects_unlisted_origin(cors_server: str) -> None:
-    """An origin not in the allow-list gets no CORS-allow header."""
+    """An origin not in the allow-list gets no CORS-allow header. With auth
+    off the cross-site gate refuses it outright."""
     async with httpx.AsyncClient(base_url=cors_server, timeout=5.0) as c:
         r = await c.get(
             "/v1/health",
@@ -61,7 +62,10 @@ async def test_cors_rejects_unlisted_origin(cors_server: str) -> None:
                 "Origin": "https://evil.example.com",
             },
         )
-    assert r.status_code == 200
+    if r.status_code == 403:
+        assert r.json()["detail"]["code"] == "CROSS_SITE_REQUEST"
+    else:
+        assert r.status_code == 200
     # FastAPI / Starlette's CORSMiddleware omits the header when origin
     # is not allowed.
     assert "access-control-allow-origin" not in r.headers
