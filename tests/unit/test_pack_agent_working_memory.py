@@ -83,7 +83,7 @@ def test_block_content_is_escaped(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(wm, "handle_working_memory_render", _render)
     _, rendered = asyncio.run(ctx._working_memory_layers(_pack_input()))
-    assert rendered == '<working-memory block="a&quot;b">&lt;x&gt; &amp; y</working-memory>'
+    assert rendered == '<working-memory block="a&quot;b">&lt;x&gt; & y</working-memory>'
 
 
 def test_a_named_bookmark_keeps_other_projects_bookmarks_out(_store, monkeypatch) -> None:

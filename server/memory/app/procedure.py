@@ -185,10 +185,36 @@ async def _goal_similarities(
     return sims
 
 
+async def _procedure_rows(
+    input: ProcedureMatchInput, keys_by_ns: dict[str, list[str]]
+) -> dict[tuple[str, str], Any]:
+    """The live rows of the candidate keys whose value is a dict, by (namespace, key)."""
+    from server.memory.app import query as _query
+
+    rows: dict[tuple[str, str], Any] = {}
+    for ns, keys in keys_by_ns.items():
+        try:
+            bulk = await _query.handle_memory_bulk_get(
+                MemoryBulkGetInput(
+                    org=input.org,
+                    namespace=ns,
+                    agent=input.agent,
+                    user_id=input.user_id,
+                    session_id=input.session_id,
+                    memory_keys=keys,
+                )
+            )
+        except Exception:  # noqa: BLE001 — an unreadable namespace drops its candidates, not the match
+            continue
+        for key, row in bulk.results.items():
+            if isinstance(row.value, dict):
+                rows[(ns, key)] = row
+    return rows
+
+
 async def handle_procedure_match(input: ProcedureMatchInput) -> ProcedureMatchOutput:
     """Top-K procedures by situation similarity (and goal similarity when a
     goal is given), each with its full body."""
-    from server.memory.app import query as _query
     from server.memory.app import search as _search
 
     search_in = MemorySearchInput(
@@ -221,31 +247,13 @@ async def handle_procedure_match(input: ProcedureMatchInput) -> ProcedureMatchOu
     if input.goal and keys_by_ns:
         goal_sims = await _goal_similarities(input.org, input.goal, keys_by_ns)
 
-    values_by_key: dict[tuple[str, str], dict[str, Any]] = {}
-    actor_by_key: dict[tuple[str, str], str] = {}
-    for ns, keys in keys_by_ns.items():
-        try:
-            bulk = await _query.handle_memory_bulk_get(
-                MemoryBulkGetInput(
-                    org=input.org,
-                    namespace=ns,
-                    agent=input.agent,
-                    user_id=input.user_id,
-                    session_id=input.session_id,
-                    memory_keys=keys,
-                )
-            )
-        except Exception:  # noqa: BLE001 — an unreadable namespace drops its candidates, not the match
-            continue
-        for key, row in bulk.results.items():
-            if isinstance(row.value, dict):
-                values_by_key[(ns, key)] = row.value
-                actor_by_key[(ns, key)] = str(getattr(row, "actor", "") or "")
+    rows_by_key = await _procedure_rows(input, keys_by_ns)
 
     matches: list[_ProcedureMatch] = []
     for hit in search_out.results:
-        value = values_by_key.get((hit.namespace or input.namespace, hit.memory_key), {})
-        if not isinstance(value, dict) or "steps" not in value:
+        row = rows_by_key.get((hit.namespace or input.namespace, hit.memory_key))
+        value = row.value if row is not None else {}
+        if row is None or not isinstance(value, dict) or "steps" not in value:
             continue
         is_template = bool(value.get("template", False))
         if input.templates_only and not is_template:
@@ -315,7 +323,7 @@ async def handle_procedure_match(input: ProcedureMatchInput) -> ProcedureMatchOu
                 goal_similarity=goal_sim,
                 score=round(axes + input.tool_boost * overlap + u_weight * utility, 6),
                 for_agent=by_agent.get(input.agent, {}) if input.agent not in ("*", "-") else {},
-                actor=actor_by_key.get((hit.namespace or input.namespace, hit.memory_key), ""),
+                actor=str(getattr(row, "actor", "") or ""),
                 run_stats_by_agent=by_agent,
                 rejected_revisions=[
                     {k: r.get(k) for k in _REJECTED_PUBLIC_KEYS}
@@ -324,6 +332,8 @@ async def handle_procedure_match(input: ProcedureMatchInput) -> ProcedureMatchOu
                 ],
             )
         )
+    for m in matches:
+        m._user_id = str(getattr(rows_by_key[(m.namespace, m.memory_key)], "_user_id", ""))
     # Fused score within a tier (situation×goal axes + tool overlap boost +
     # weighted ledger utility; equals similarity when no goal and no
     # recent_tools were given and the utility weight is 0); candidates
@@ -338,17 +348,26 @@ async def handle_procedure_match(input: ProcedureMatchInput) -> ProcedureMatchOu
     )
 
 
+def _procedure_owner(m: _ProcedureMatch) -> str:
+    """The subject who wrote a procedure: its actor without the `human:` / `process:` kind,
+    or, for one the worker mined (no actor), the row's user_id."""
+    if m.actor:
+        return m.actor.removeprefix("human:").removeprefix("process:")
+    return m._user_id
+
+
 def own_procedures(matches: list[_ProcedureMatch]) -> list[_ProcedureMatch]:
     """The matches the caller wrote. A pack injects procedures as steps to follow, so a
     teammate's procedure in a shared namespace is never auto-injected; procedure.match
-    still finds it on request. Without an authenticated caller (auth off) all of them."""
+    still finds it on request. Ownership is by principal: the caller's subject or, for a
+    delegated token, its creator. Without an authenticated caller (auth off) all of them."""
     from server.auth.context import current_auth
-    from server.memory.app.provenance import writer_actor
 
-    if current_auth() is None:
+    auth = current_auth()
+    if auth is None:
         return matches
-    me = writer_actor()
-    return [m for m in matches if me and m.actor == me]
+    me = {s for s in (auth.subject, auth.creator) if s}
+    return [m for m in matches if _procedure_owner(m) in me]
 
 
 async def handle_procedure_list(input: ProcedureListInput) -> ProcedureListOutput:

@@ -131,6 +131,9 @@ class MemoryGetOutput(ProjectedRow):
     # (agent="*") can tell callers which agent owns the row — the /me search
     # re-fetch needs it to render + re-open a hit found outside the preload.
     agent: str = ""
+    # The row's user_id, off the wire (procedure.match reads it to tell whose a mined
+    # procedure is).
+    _user_id: str = ""
     # Lifecycle state from loom.memory.status.
     status: str | None = None
     # For a `status='superseded'` row, the memory_id of the row

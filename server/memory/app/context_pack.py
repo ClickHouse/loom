@@ -37,6 +37,7 @@ from server.memory.domain.context_layout import (
     _trim,
     author_label,
     escape_data,
+    one_item,
 )
 from server.memory.domain.evidence_pack import EvidenceItem, pack_evidence
 
@@ -255,7 +256,7 @@ async def _pack_memory_stack(st: _PackState) -> None:
         cite = f"stack:{layer}/{entry.memory_key or entry.memory_type}"
         citations.append(cite)
         author = author_label([entry.actor]) if layer in _STACK_MEMORY_LAYERS else ""
-        lines.append(f"- [{layer}/{entry.memory_key}{author}] {entry.value}")
+        lines.append(one_item(f"- [{layer}/{entry.memory_key}{author}] {entry.value}"))
     st.put(
         "memory_stack",
         "\n".join(lines),
@@ -467,7 +468,7 @@ async def _pack_decisions_from_hits(
             succ = rec.get("success")
             verdict = " (succeeded)" if succ is True else " (failed)" if succ is False else ""
             line += f"; realized: {realized}{verdict}"
-        lines.append(line)
+        lines.append(one_item(line))
         citations.append(f"decision:{ns}/{h.memory_key}")
     st.put(
         "decisions",

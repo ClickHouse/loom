@@ -115,7 +115,9 @@ services:
       LOOM_BIND_HOST: "0.0.0.0"
       # The proxy reaches the colour over loom-net (a Docker private range)
       # and overwrites X-Forwarded-For with the peer it saw; only loom-net
-      # peers and the host can connect to this port.
+      # peers and the host can connect to this port. loom-net's subnet is not
+      # pinned, so the proxy has no fixed address to trust; set this to the
+      # subnet `docker network inspect loom-net` shows to narrow it.
       LOOM_TRUSTED_PROXIES: "${LOOM_TRUSTED_PROXIES:-127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}"
     ports:
       - "127.0.0.1:${LOOM_COLOUR_PORT}:${LOOM_COLOUR_PORT}"

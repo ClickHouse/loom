@@ -1,5 +1,6 @@
-// Per-session tmp files are owner-only, refuse planted paths, and the
-// session's journal and code-trace stash are gone after SessionEnd.
+// Per-session tmp files are owner-only, refuse planted paths on read and write,
+// SessionEnd leaves the journal its parallel hooks read, and SessionStart sweeps
+// stale state.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -9,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { writeJsonFile, writePrivateFile } from "../lib/tmp-state.mjs";
+import { readJsonFile, sweepStaleStateFiles, writeJsonFile, writePrivateFile } from "../lib/tmp-state.mjs";
 import { appendTurn, journalPath, readJournal } from "../lib/turn-journal.mjs";
 
 const posix = process.platform !== "win32";
@@ -52,12 +53,47 @@ test("a planted FIFO fails the write instead of hanging the hook", { skip: !posi
   assert.equal(writeJsonFile(fifo, { a: 1 }), false);
 });
 
-test("SessionEnd removes the turn journal and the code-trace stash", { skip: !posix }, () => {
+test("a planted symlink is not read as state", { skip: !posix }, () => {
+  const dir = tmp();
+  const target = path.join(dir, "victim.json");
+  fs.writeFileSync(target, JSON.stringify({ role: "user", content: "planted" }) + "\n");
+  fs.symlinkSync(target, journalPath("s3", dir));
+  assert.deepEqual(readJournal("s3", { dir }), []);
+  const link = path.join(dir, "loom-x.json");
+  fs.symlinkSync(target, link);
+  assert.deepEqual(readJsonFile(link), {});
+});
+
+test("SessionStart sweeps this user's state files untouched for a day", { skip: !posix }, () => {
+  const dir = tmp();
+  const now = Date.now();
+  const day = 24 * 60 * 60 * 1000;
+  assert.ok(appendTurn("old", "user", "hello", { dir }));
+  assert.ok(appendTurn("new", "user", "hello", { dir }));
+  const oldStash = path.join(dir, "loom-recalled-old.json");
+  const other = path.join(dir, "loom-notes.txt");
+  const link = path.join(dir, "loom-code-trace-link.json");
+  fs.writeFileSync(oldStash, "[]");
+  fs.writeFileSync(other, "not ours to sweep");
+  fs.symlinkSync(other, link);
+  const old = new Date(now - day - 1000);
+  for (const f of [journalPath("old", dir), oldStash, other]) fs.utimesSync(f, old, old);
+  fs.lutimesSync(link, old, old);
+  assert.equal(sweepStaleStateFiles({ tmp: dir, now }), 2);
+  assert.equal(fs.existsSync(journalPath("old", dir)), false);
+  assert.equal(fs.existsSync(oldStash), false);
+  assert.ok(fs.existsSync(journalPath("new", dir)), "a live session's journal stays");
+  assert.ok(fs.existsSync(other) && fs.lstatSync(link).isSymbolicLink(), "other files and links stay");
+});
+
+test("SessionEnd keeps the turn journal and removes the stashes", { skip: !posix }, () => {
   const dir = tmp();
   const sid = "s-end";
   assert.ok(appendTurn(sid, "user", "hello", { dir }));
   const stash = path.join(dir, `loom-code-trace-${sid}.json`);
+  const recalled = path.join(dir, `loom-recalled-${sid}.json`);
   fs.writeFileSync(stash, "[]");
+  fs.writeFileSync(recalled, "[]");
   const env = {
     PATH: process.env.PATH,
     HOME: dir,
@@ -74,6 +110,7 @@ test("SessionEnd removes the turn journal and the code-trace stash", { skip: !po
       timeout: 10_000,
     });
   }
-  assert.equal(fs.existsSync(journalPath(sid, dir)), false, "journal removed");
+  assert.ok(fs.existsSync(journalPath(sid, dir)), "the parallel SessionEnd hooks still read it");
   assert.equal(fs.existsSync(stash), false, "code-trace stash removed");
+  assert.equal(fs.existsSync(recalled), false, "recalled stash removed");
 });

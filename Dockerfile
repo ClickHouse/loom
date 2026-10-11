@@ -27,14 +27,15 @@ COPY sdk ./sdk
 # they don't import. Flipping LOOM_EMBEDDING_MODEL between local and cloud
 # in .env re-triggers this layer on the next --build.
 ARG LOOM_EMBEDDING_MODEL=""
-# Dependencies come from uv.lock exactly (--frozen: no re-resolve, hashes
-# checked) into a venv the runtime stage copies at the same path.
+# Dependencies come from uv.lock exactly (--locked: the build fails when the
+# lock no longer matches pyproject.toml; hashes checked) into a venv the
+# runtime stage copies at the same path.
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv UV_PYTHON_DOWNLOADS=never UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
 RUN case "$LOOM_EMBEDDING_MODEL" in \
          local*) EXTRAS="--extra code --extra lemma --extra local-embedder" ;; \
          *) EXTRAS="--extra code --extra lemma" ;; \
        esac \
-    && uv sync --frozen --no-editable --no-cache $EXTRAS
+    && uv sync --locked --no-editable --no-cache $EXTRAS
 
 FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS frontend-builder
 WORKDIR /frontend

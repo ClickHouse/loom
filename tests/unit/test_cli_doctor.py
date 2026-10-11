@@ -163,7 +163,7 @@ def test_the_doctor_probes_and_queries_one_resolved_endpoint(
     assert doctor._doctor_ch_endpoint(s) == want
 
 
-def test_doctor_reports_the_bind_host_and_a_reachable_bind_without_safeguards(
+def test_doctor_reports_a_reachable_bind_without_safeguards(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -172,13 +172,11 @@ def test_doctor_reports_the_bind_host_and_a_reachable_bind_without_safeguards(
     monkeypatch.setattr("httpx.Client", _failing_httpx_client)
     from server.cli.doctor import _cmd_doctor
 
+    monkeypatch.setattr(settings, "public_base_url", "")
     monkeypatch.setattr(settings, "bind_host", "127.0.0.1")
     _cmd_doctor(argparse.Namespace())
-    assert "127.0.0.1 (loopback only)" in capsys.readouterr().out
+    assert "problem:public_base_url_missing" not in capsys.readouterr().out
 
     monkeypatch.setattr(settings, "bind_host", "0.0.0.0")
-    monkeypatch.setattr(settings, "public_base_url", "")
     _cmd_doctor(argparse.Namespace())
-    out = capsys.readouterr().out
-    assert "0.0.0.0 (reachable by others" in out
-    assert "problem:public_base_url_missing" in out
+    assert "problem:public_base_url_missing" in capsys.readouterr().out

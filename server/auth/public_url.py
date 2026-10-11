@@ -65,3 +65,15 @@ def host_header_allowed(host_header: str, public_base: str) -> bool:
     if hostname in _LOCAL_HOSTNAMES:
         return True
     return bool(public_base) and hostname == urlsplit(public_base).hostname
+
+
+def cors_origin_list(raw: str) -> list[str]:
+    """LOOM_CORS_ORIGINS as a list. `*` is refused: CORS here allows
+    credentials, so it would let every site make credentialed calls."""
+    origins = [o.strip() for o in raw.split(",") if o.strip()]
+    if "*" in origins:
+        raise RuntimeError(
+            "refusing to start: LOOM_CORS_ORIGINS contains '*', and CORS is served with "
+            "credentials allowed. List the exact origins instead."
+        )
+    return origins

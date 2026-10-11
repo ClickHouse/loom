@@ -42,10 +42,27 @@ export function writeSessionState(kind, sessionId, value, opts = {}) {
   return writeJsonFile(sessionStatePath(kind, sessionId, opts), value);
 }
 
-/** The parsed JSON in `file`, or `fallback` when it is missing or malformed. */
+/** The text of `file`. Throws when the path is a symlink, not a regular file, or
+ *  owned by another user, like writePrivateFile: a planted file is not our state. */
+export function readPrivateFile(file) {
+  const c = fs.constants;
+  const fd = fs.openSync(file, c.O_RDONLY | (c.O_NOFOLLOW ?? 0) | (c.O_NONBLOCK ?? 0));
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) throw new Error(`${file} is not a regular file`);
+    if (typeof process.getuid === "function" && st.uid !== process.getuid()) {
+      throw new Error(`${file} belongs to another user`);
+    }
+    return fs.readFileSync(fd, "utf8");
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/** The parsed JSON in `file`, or `fallback` when it is missing, malformed or not ours. */
 export function readJsonFile(file, fallback = {}) {
   try {
-    const v = JSON.parse(fs.readFileSync(file, "utf8"));
+    const v = JSON.parse(readPrivateFile(file));
     return v === null || v === undefined ? fallback : v;
   } catch {
     return fallback;
@@ -97,7 +114,7 @@ export function writeJsonFile(file, value) {
 /** An integer cursor kept as text; 0 when missing or malformed. */
 export function readCursor(file) {
   try {
-    const n = parseInt(fs.readFileSync(file, "utf8").trim(), 10);
+    const n = parseInt(readPrivateFile(file).trim(), 10);
     return Number.isInteger(n) && n > 0 ? n : 0;
   } catch {
     return 0;
@@ -111,4 +128,35 @@ export function writeCursor(file, n) {
   } catch {
     return false;
   }
+}
+
+export const STALE_STATE_MS = 24 * 60 * 60 * 1000;
+// tmpStatePath's names, and the recalled-key and code-trace stashes named by session id.
+const STATE_FILE_RE = /^loom-(?:[a-z0-9-]+-[0-9a-f]{12}(?:\.[a-z]+)?|(?:recalled|code-trace)-[\w-]+\.json)$/;
+
+/** Remove this user's state files in `tmp` untouched for `maxAgeMs`: a session's
+ *  journal and cursors outlive it, since SessionEnd hooks run in parallel and none
+ *  of them can know it is the last reader. Returns how many were removed. */
+export function sweepStaleStateFiles({ tmp = os.tmpdir(), maxAgeMs = STALE_STATE_MS, now = Date.now() } = {}) {
+  let removed = 0;
+  let names = [];
+  try {
+    names = fs.readdirSync(tmp);
+  } catch {
+    return 0;
+  }
+  const uid = typeof process.getuid === "function" ? process.getuid() : null;
+  for (const name of names) {
+    if (!STATE_FILE_RE.test(name)) continue;
+    const file = path.join(tmp, name);
+    try {
+      const st = fs.lstatSync(file);
+      if (!st.isFile() || (uid !== null && st.uid !== uid) || now - st.mtimeMs < maxAgeMs) continue;
+      fs.unlinkSync(file);
+      removed += 1;
+    } catch {
+      /* gone already, or not ours to remove */
+    }
+  }
+  return removed;
 }

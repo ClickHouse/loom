@@ -14,9 +14,12 @@ and `violation` at write.
 
 from __future__ import annotations
 
+import functools
 import json
-import re
 from typing import Any
+
+from server.core.caller_regex import compile_caller_regex
+from server.core.errors import ValidationError
 
 # Keys a constraints object may carry, by field type.
 STRING_KEYS = ("pattern", "min_length", "max_length")
@@ -38,6 +41,13 @@ def from_field(field: Any) -> dict[str, Any]:
         if value is not None:
             out[key] = value
     return out
+
+
+@functools.lru_cache(maxsize=256)
+def _compiled(pattern: str) -> Any:
+    """A schema's pattern compiled once, with RE2: a writer chooses it, and it runs on
+    every record write, so it must not backtrack."""
+    return compile_caller_regex(pattern)
 
 
 def validate_shape(field_name: str, field_type: str, constraints: dict[str, Any]) -> str | None:
@@ -63,9 +73,9 @@ def validate_shape(field_name: str, field_type: str, constraints: dict[str, Any]
         if len(pattern) > _MAX_PATTERN_LEN:
             return f"field {field_name!r}: pattern longer than {_MAX_PATTERN_LEN} chars"
         try:
-            re.compile(pattern)
-        except re.error as exc:
-            return f"field {field_name!r}: pattern does not compile ({exc})"
+            _compiled(pattern)
+        except ValidationError as exc:
+            return f"field {field_name!r}: pattern does not compile ({exc.message})"
     for key in ("min_length", "max_length"):
         v = constraints.get(key)
         if v is not None and (isinstance(v, bool) or not isinstance(v, int) or v < 0):
@@ -99,8 +109,13 @@ def violation(
         return None
     if field_type == "string":
         pattern = constraints.get("pattern")
-        if pattern and re.search(str(pattern), value_string) is None:
-            return f"field {field_name!r}: {value_string!r} does not match pattern {pattern!r}"
+        if pattern:
+            try:
+                rx = _compiled(str(pattern))
+            except ValidationError:
+                return f"field {field_name!r}: the schema's pattern {pattern!r} is not RE2"
+            if rx.search(value_string) is None:
+                return f"field {field_name!r}: {value_string!r} does not match pattern {pattern!r}"
         lo, hi = constraints.get("min_length"), constraints.get("max_length")
         n = len(value_string)
         if lo is not None and n < int(lo):

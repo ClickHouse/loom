@@ -51,14 +51,14 @@ def slice_content(content: str, offset: int, limit: int) -> tuple[str, int]:
 
 
 def grep_content(
-    content: str, pattern: str, *, offset: int, limit: int, context_lines: int = 0
+    content: str, rx: Any, *, offset: int, limit: int, context_lines: int = 0
 ) -> tuple[str, int, int]:
-    """Matching lines as `lineno: text` (1-based), with `context_lines` of
-    surrounding context; `offset` skips that many matches. Returns
-    (text, matched_lines_total, next_match_offset or -1). RE2, case-insensitive, over at
-    most LOOM_CONTEXT_OFFLOAD_MAX_BYTES characters (the most a blob may hold)."""
-    rx = compile_caller_regex(pattern, case_sensitive=False)
-    lines = content[: int(settings.context_offload_max_bytes)].splitlines()
+    """Lines matching the compiled pattern `rx` as `lineno: text` (1-based), with
+    `context_lines` of surrounding context; `offset` skips that many matches. Returns
+    (text, matched_lines_total, next_match_offset or -1). Scans at most
+    LOOM_CONTEXT_OFFLOAD_MAX_BYTES bytes (the most a blob may hold)."""
+    capped = content.encode("utf-8")[: int(settings.context_offload_max_bytes)]
+    lines = capped.decode("utf-8", "ignore").splitlines()
     matches = [i for i, ln in enumerate(lines) if rx.search(ln)]
     out: list[str] = []
     used = 0
@@ -139,9 +139,10 @@ async def handle_context_offload(input: ContextOffloadInput) -> ContextOffloadOu
 
 
 async def handle_context_fetch(input: ContextFetchInput) -> ContextFetchOutput:
+    rx = None
     if input.pattern:
         try:
-            compile_caller_regex(input.pattern, case_sensitive=False)
+            rx = compile_caller_regex(input.pattern, case_sensitive=False)
         except ValidationError as e:
             raise ValidationError(e.message, code="BAD_PATTERN") from None
     # expires_at > now(): the TTL merge is retention, not visibility.
@@ -168,12 +169,12 @@ async def handle_context_fetch(input: ContextFetchInput) -> ContextFetchOutput:
         offset=input.offset,
         expires_at=row.get("expires_at"),
     )
-    if input.pattern:
+    if rx is not None:
         # off the event loop: a scan of a blob of megabytes must not stall the worker
         text, matched, nxt = await asyncio.to_thread(
             grep_content,
             content,
-            input.pattern,
+            rx,
             offset=input.offset,
             limit=input.limit,
             context_lines=input.context_lines,

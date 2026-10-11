@@ -289,23 +289,10 @@ def _run_live_checks() -> list[tuple[str, str, str]]:
     # key is absent — the runtime then falls back to the echo client.
     if settings_ok:
         checks.append(_doctor_llm_provider_check())
-        checks.append(_doctor_bind_host_check())
     else:
         checks.append(("llm_provider", PASS, "skipped (settings did not load)"))
 
     return checks
-
-
-def _doctor_bind_host_check() -> tuple[str, str, str]:
-    """Whether LOOM_BIND_HOST is loopback. Either is a PASS: what a reachable
-    bind lacks is reported by the `problem:` lines (public base URL, auth,
-    secret)."""
-    from server.auth.public_url import is_loopback_host
-    from server.settings import settings
-
-    if is_loopback_host(settings.bind_host):
-        return ("bind_host", PASS, f"{settings.bind_host} (loopback only)")
-    return ("bind_host", PASS, f"{settings.bind_host} (reachable by others; startup checks apply)")
 
 
 def _client_checks(args: argparse.Namespace) -> list[tuple[str, str, str]]:

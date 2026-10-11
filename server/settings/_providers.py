@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 from pydantic import Field, PrivateAttr, model_validator
 
-from server.settings._env import CaseFolded, JsonObject, kid_map_items
+from server.settings._env import CaseFolded, JsonObject, json_map_items
 from server.settings._models import ModelSettings
 
 # A configured rerank endpoint's name: what a request or a namespace sends instead of a URL.
@@ -154,7 +154,7 @@ class ProviderSettings(ModelSettings):
         raw = self.rerank_endpoints_json.strip()
         if not raw:
             return {}
-        return dict(kid_map_items(raw, "rerank_endpoints_json", non_empty=False))
+        return dict(json_map_items(raw, "rerank_endpoints_json", non_empty=False))
 
     @model_validator(mode="after")
     def _check_rerank_endpoints(self) -> ProviderSettings:

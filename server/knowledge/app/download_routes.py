@@ -99,7 +99,7 @@ async def knowledge_download(
 
 
 # Types a browser renders without running script. Anything else (HTML, SVG,
-# XML, unknown) is never served inline: an uploaded file is attacker-chosen
+# XML, PDF, unknown) is never served inline: an uploaded file is attacker-chosen
 # bytes with an attacker-chosen label, on the dashboard's own origin.
 _TEXT_TYPES = frozenset({"text/plain", "text/markdown", "text/csv", "application/json"})
 # A binary type is previewed only when the bytes start the way that format
@@ -109,7 +109,6 @@ _BINARY_MAGIC = {
     "image/jpeg": (b"\xff\xd8\xff",),
     "image/gif": (b"GIF87a", b"GIF89a"),
     "image/webp": (b"RIFF",),
-    "application/pdf": (b"%PDF-",),
 }
 # Opening the URL on its own (not through the dashboard) still runs no script.
 _DOWNLOAD_CSP = "sandbox; default-src 'none'"

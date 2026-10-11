@@ -313,7 +313,7 @@ def _exposure_problems(settings: Any) -> list[Problem]:
     """A server others can reach (non-loopback LOOM_BIND_HOST) without its
     safeguards, and forwarded-header or CORS settings that trust everyone.
     The bind ones also stop the server at boot unless LOOM_ALLOW_INSECURE=1."""
-    from server.auth.public_url import is_loopback_host
+    from server.auth.public_url import cors_origin_list, is_loopback_host
 
     out: list[Problem] = []
     reachable = not is_loopback_host(str(settings.bind_host))
@@ -360,7 +360,9 @@ def _exposure_problems(settings: Any) -> list[Problem]:
                 "List the proxy addresses or CIDRs in front of Loom.",
             )
         )
-    if "*" in [o.strip() for o in str(settings.cors_origins).split(",")]:
+    try:
+        cors_origin_list(str(settings.cors_origins))
+    except RuntimeError:
         out.append(
             Problem(
                 "cors_wildcard",

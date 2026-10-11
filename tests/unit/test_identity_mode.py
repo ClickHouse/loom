@@ -135,7 +135,7 @@ def test_key_maps_decode_once_per_value(monkeypatch: pytest.MonkeyPatch) -> None
         return real(raw, field)
 
     monkeypatch.setattr(_env, "_decode_json_or_b64", counting)
-    _env.kid_map_items.cache_clear()
+    _env.json_map_items.cache_clear()
     s = AuthSettings(jwt_secrets_json=json.dumps({"k9": "a" * 32}), jwt_active_kid="k9")
     for _ in range(5):
         assert s.jwt_secret_map() == {"k9": "a" * 32}
@@ -144,4 +144,4 @@ def test_key_maps_decode_once_per_value(monkeypatch: pytest.MonkeyPatch) -> None
     assert s.jwt_secret_map() == {"k9": "a" * 32}
     s.jwt_secrets_json = json.dumps({"k9": "b" * 32})
     assert s.jwt_secret_map() == {"k9": "b" * 32}
-    _env.kid_map_items.cache_clear()
+    _env.json_map_items.cache_clear()

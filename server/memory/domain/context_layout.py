@@ -4,7 +4,6 @@ rendered pack."""
 
 from __future__ import annotations
 
-from html import escape
 from typing import Any
 
 # The pack's first line. Recalled text can come from anyone who writes to the namespace, so
@@ -23,9 +22,16 @@ RECALLED_SECTIONS = frozenset(
 
 
 def escape_data(text: Any) -> str:
-    """Recalled text as data: `<`, `>` and `&` escaped, so a stored value can neither close
-    nor open a section tag."""
-    return escape(str(text or ""), quote=False)
+    """Recalled text as data: `<` and `>` escaped, so a stored value can neither close nor
+    open a section tag. `&` is left as is, so text that was escaped once already (a pack
+    a transcript recorded) is not escaped again."""
+    return str(text or "").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def one_item(line: str) -> str:
+    """An item's line with each continuation line indented, so a newline in a recalled value
+    cannot start a line of its own and pass as another item with its own by=."""
+    return "\n  ".join(str(line).splitlines())
 
 
 def author_label(actors: Any) -> str:
@@ -41,8 +47,8 @@ def _procedure_line(m: Any, label: str, steps: str, avoid: str) -> str:
     head = f"- [{m.namespace}/{m.name}{author}]{label}"
     situation = str(m.situation or "").strip()
     if not situation or steps.strip() == situation:
-        return f"{head} {steps or situation}{avoid}"
-    return f"{head} when {situation}: {steps}{avoid}"
+        return one_item(f"{head} {steps or situation}{avoid}")
+    return one_item(f"{head} when {situation}: {steps}{avoid}")
 
 
 def _trim(text: str, char_budget: int) -> tuple[str, bool]:

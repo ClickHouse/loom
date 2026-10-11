@@ -142,7 +142,7 @@ def test_document_with_a_blob_still_serves_the_blob(
     r = client.get(URL)
     assert r.status_code == 200
     assert r.content == pdf
-    assert r.headers["content-type"] == "application/pdf"
+    assert r.headers["content-type"] == "application/octet-stream"
     assert r.headers["content-disposition"] == 'attachment; filename="digest.pdf"'
     assert r.headers["x-loom-download-source"] == "blob"
 
@@ -267,7 +267,6 @@ def _blob(monkeypatch: pytest.MonkeyPatch, data: bytes, content_type: str) -> No
         (b"{}", "application/json", "text/plain; charset=utf-8"),
         (HTML, "text/plain", "text/plain; charset=utf-8"),  # HTML bytes stay text
         (PNG, "image/png", "image/png"),
-        (b"%PDF-1.7", "application/pdf", "application/pdf"),
     ],
 )
 def test_passive_types_preview_inline(
@@ -288,6 +287,7 @@ def test_passive_types_preview_inline(
         (b"<x/>", "application/xml"),
         (HTML, "image/png"),  # label and bytes disagree
         (HTML, "application/pdf"),
+        (b"%PDF-1.7", "application/pdf"),  # a PDF viewer runs the file's script
         (b"RIFF0000HTML", "image/webp"),
         (HTML, ""),
         (HTML, "application/x-unknown"),

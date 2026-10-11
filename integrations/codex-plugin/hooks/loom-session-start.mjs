@@ -49,7 +49,7 @@ import { teamRulesLine } from "../lib/file-context.mjs";
 import { applyPluginOptions } from "../lib/plugin-options.mjs";
 import { cacheIsFresh, countsBody, renderTaskLine, summarizeCounts } from "../lib/task-inbox.mjs";
 import { briefPrimerEnabled, primerLine } from "../lib/session-brief.mjs";
-import { readJsonFile, tmpStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
+import { readJsonFile, sweepStaleStateFiles, tmpStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
 
 async function main() {
   // A token given at `claude plugin install --config token=…`
@@ -58,6 +58,7 @@ async function main() {
   // CLI, the SDK) read it. Before the token check below, so this very
   // session's hooks use it too.
   applyPluginOptions();
+  sweepStaleStateFiles();
   // Default ON; opt out with LOOM_INJECT_CONTEXT=false (see header).
   if (!envSwitch("LOOM_INJECT_CONTEXT", true)) {
     scheduleExit(0);

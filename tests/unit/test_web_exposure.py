@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import re
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -65,7 +66,7 @@ def test_a_real_secret_with_auth_on_starts() -> None:
 
 
 def test_cors_star_is_refused() -> None:
-    from server.main import cors_origin_list
+    from server.auth.public_url import cors_origin_list
 
     with pytest.raises(RuntimeError, match="LOOM_CORS_ORIGINS"):
         cors_origin_list("https://a.example, *")
@@ -83,22 +84,32 @@ def auth_off(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "auth_required", False)
     monkeypatch.setattr(settings, "identity_provider", "")
     monkeypatch.setattr(settings, "public_base_url", "")
+    monkeypatch.setattr(settings, "cors_origins", "")
 
 
-def _get(base_url: str, path: str = "/", **headers: str) -> int:
-    from server.main import app
+def _gated_client(base_url: str) -> TestClient:
+    """An app behind the auth-off gate exactly as server.main attaches it."""
+    from fastapi import FastAPI
 
-    r = TestClient(app, base_url=base_url).get(path, headers=headers, follow_redirects=False)
-    return r.status_code
+    from server.main import attach_auth_off_gate
+
+    app = FastAPI()
+    app.get("/")(lambda: {"ok": True})
+    app.post("/v1/memory.list")(lambda: {"ok": True})
+    attach_auth_off_gate(app)
+    return TestClient(app, base_url=base_url)
+
+
+def _get(base_url: str, **headers: str) -> int:
+    return _gated_client(base_url).get("/", headers=headers).status_code
 
 
 @pytest.mark.usefixtures("auth_off")
 def test_auth_off_refuses_a_foreign_host_before_routing() -> None:
-    from server.main import app
-
-    r = TestClient(app, base_url="http://rebind.evil.example").get("/v1/health")
+    r = _gated_client("http://rebind.evil.example").get("/")
     assert r.status_code == 421
     assert r.json()["detail"]["code"] == "MISDIRECTED_REQUEST"
+    assert r.headers["x-content-type-options"] == "nosniff"
 
 
 @pytest.mark.usefixtures("auth_off")
@@ -106,20 +117,64 @@ def test_auth_off_refuses_a_foreign_host_before_routing() -> None:
     "base", ["http://localhost:7777", "http://127.0.0.1:7777", "http://[::1]:7777"]
 )
 def test_auth_off_serves_a_local_host(base: str) -> None:
-    assert _get(base) == 302
+    assert _get(base) == 200
 
 
 @pytest.mark.usefixtures("auth_off")
 def test_auth_off_serves_the_public_base_url_host(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "public_base_url", "https://loom.example")
-    assert _get("http://loom.example") == 302
+    assert _get("http://loom.example") == 200
     assert _get("http://other.example") == 421
 
 
-def test_auth_on_does_not_check_the_host(monkeypatch: pytest.MonkeyPatch) -> None:
+def _post(**headers: str) -> Any:
+    client = _gated_client("http://localhost:7777")
+    body = b'{"org":"o","namespace":"n","agent":"a"}'
+    return client.post("/v1/memory.list", content=body, headers=headers)
+
+
+@pytest.mark.usefixtures("auth_off")
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"origin": "https://evil.example"},
+        {"origin": "null"},
+        {"sec-fetch-site": "cross-site"},
+        {"origin": "https://evil.example", "sec-fetch-site": "cross-site"},
+    ],
+)
+def test_auth_off_refuses_a_cross_site_text_plain_post(headers: dict[str, str]) -> None:
+    r = _post(**{"content-type": "text/plain", **headers})
+    assert r.status_code == 403
+    assert r.json()["detail"]["code"] == "CROSS_SITE_REQUEST"
+    assert r.headers["x-content-type-options"] == "nosniff"
+
+
+@pytest.mark.usefixtures("auth_off")
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {},  # curl, the SDKs
+        {"origin": "http://localhost:7777", "sec-fetch-site": "same-origin"},
+        {"origin": "http://127.0.0.1:7777"},
+    ],
+)
+def test_auth_off_serves_same_origin_and_originless_calls(headers: dict[str, str]) -> None:
+    assert _post(**headers).status_code == 200
+
+
+@pytest.mark.usefixtures("auth_off")
+def test_auth_off_serves_a_configured_cors_origin(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "cors_origins", "https://app.example")
+    assert _post(origin="https://app.example").status_code == 200
+    assert _post(origin="https://evil.example").status_code == 403
+
+
+def test_auth_on_attaches_no_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "auth_required", True)
     monkeypatch.setattr(settings, "identity_provider", "gateway")
-    assert _get("http://anything.example") == 302
+    assert _get("http://anything.example") == 200
+    assert _post(origin="https://evil.example").status_code == 200
 
 
 def test_every_response_is_nosniff() -> None:
@@ -206,6 +261,22 @@ def test_the_dashboard_csp_admits_only_the_nonced_boot_script(
         assert directive in csp
     _, again = _dashboard(tmp_path, monkeypatch)
     assert again != csp  # a fresh nonce per response
+
+
+def test_the_e2e_spec_serves_the_dashboard_csp_the_server_sends() -> None:
+    """frontend/e2e/preview-isolation.spec.ts hand-copies the policy (vite preview sends
+    no headers), so a change to dashboard_csp must change the spec too."""
+    from server.identity.app.me_routes import dashboard_csp
+
+    spec = (
+        Path(__file__).resolve().parents[2] / "frontend/e2e/preview-isolation.spec.ts"
+    ).read_text()
+    nonce = re.search(r'const NONCE = "([^"]+)";', spec)
+    block = re.search(r"const DASHBOARD_CSP =(.*?);\n", spec, re.S)
+    assert nonce and block
+    parts = re.findall(r'"([^"]*)"|`([^`]*)`', block.group(1))
+    copied = "".join(a or b for a, b in parts).replace("${NONCE}", nonce.group(1))
+    assert copied == dashboard_csp(nonce.group(1))
 
 
 # ---- `loom serve` ----

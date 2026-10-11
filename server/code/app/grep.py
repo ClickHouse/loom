@@ -207,6 +207,10 @@ async def _bounded_scan(
     if budget is None:
         return await read(*args, **kw)
     limit_s = budget.statement_s(_GREP_RESERVE_MS)
+    # The statement's own SETTINGS win over the URL ceiling, so clamp here.
+    ceiling_s = settings.ch_caller_shaped_max_execution_s
+    if ceiling_s > 0:
+        limit_s = min(limit_s, ceiling_s)
     t0 = time.monotonic()
     out = await read(*args, max_execution_s=limit_s, **kw)
     if code_deadline.broke(time.monotonic() - t0, limit_s):

@@ -323,6 +323,10 @@ Raised in `server/tracker/app/sources.py`.
 
 Raised in `server/tracker/app/sources.py`.
 
+#### `CROSS_SITE_REQUEST`
+
+Raised in `server/main.py`.
+
 #### `DEDUP_PAIR_NOT_FOUND`
 
 Raised in `server/memory/app/dedup.py`.

@@ -15,11 +15,13 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
 
 from server import __version__, boot
+from server.auth.public_url import cors_origin_list, host_header_allowed
 from server.core.ch import get_client
 from server.core.logging_config import configure_logging
 from server.observability import get_emitter
@@ -262,18 +264,6 @@ async def _cache_and_nosniff_headers(request: Request, call_next: Any) -> Respon
     return response
 
 
-def cors_origin_list(raw: str) -> list[str]:
-    """LOOM_CORS_ORIGINS as a list. `*` is refused: CORS here allows
-    credentials, so it would let every site make credentialed calls."""
-    origins = [o.strip() for o in raw.split(",") if o.strip()]
-    if "*" in origins:
-        raise RuntimeError(
-            "refusing to start: LOOM_CORS_ORIGINS contains '*', and CORS is served with "
-            "credentials allowed. List the exact origins instead."
-        )
-    return origins
-
-
 # CORS — opt-in via LOOM_CORS_ORIGINS (comma-separated exact origins).
 if settings.cors_origins:
     from fastapi.middleware.cors import CORSMiddleware
@@ -298,30 +288,58 @@ if settings.cors_origins:
     )
 
 
-@app.middleware("http")
-async def _auth_off_host_allowlist(request: Request, call_next: Any) -> Response:
-    """With auth off, answer only requests addressed to this server by name
-    (DNS rebinding would otherwise let any web page drive it). Runs before
-    any route handler."""
-    from server.auth.public_url import host_header_allowed
+def _refused(status: int, *, code: str, message: str) -> Response:
+    from fastapi.responses import JSONResponse
 
-    if not settings.auth_actually_required() and not host_header_allowed(
-        request.headers.get("host", ""), settings.public_base_url
-    ):
-        from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=status,
+        content={"detail": {"code": code, "message": message}},
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
 
-        return JSONResponse(
-            status_code=421,
-            content={
-                "detail": {
-                    "code": "MISDIRECTED_REQUEST",
-                    "message": "this server answers only localhost or LOOM_PUBLIC_BASE_URL",
-                }
-            },
+
+def auth_off_refusal(request: Request) -> Response | None:
+    """With auth off, what stops a web page from driving this server, or None to let the
+    request through. A foreign Host is DNS rebinding (421). A foreign Origin or a
+    cross-site fetch is a page on another site posting here, which a text/plain body
+    does without a preflight (403). curl and the SDKs send neither header."""
+    host_ok = host_header_allowed(request.headers.get("host", ""), settings.public_base_url)
+    if not host_ok:
+        return _refused(
+            421,
+            code="MISDIRECTED_REQUEST",
+            message="this server answers only localhost or LOOM_PUBLIC_BASE_URL",
         )
+    origin = request.headers.get("origin")
+    foreign_origin = (
+        origin is not None
+        and not host_header_allowed(urlsplit(origin).netloc, settings.public_base_url)
+        and origin not in cors_origin_list(settings.cors_origins)
+    )
+    if foreign_origin or request.headers.get("sec-fetch-site") == "cross-site":
+        return _refused(
+            403, code="CROSS_SITE_REQUEST", message="this server refuses cross-site requests"
+        )
+    return None
+
+
+async def _auth_off_gate(request: Request, call_next: Any) -> Response:
+    """Runs before any route handler."""
+    refusal = auth_off_refusal(request)
+    if refusal is not None:
+        return refusal
     response: Response = await call_next(request)
     return response
 
+
+def attach_auth_off_gate(target: FastAPI) -> None:
+    """The gate only matters with auth off; with auth on a bearer header is what a
+    cross-site page cannot send."""
+    if not settings.auth_actually_required():
+        target.middleware("http")(_auth_off_gate)
+
+
+attach_auth_off_gate(app)
 
 http_transport.attach(app)
 mcp_transport.attach(app)
