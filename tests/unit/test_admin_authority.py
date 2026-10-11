@@ -1,7 +1,10 @@
 """Who reaches `/v1/admin/*`. Deployment-wide endpoints need PLATFORM_ADMIN;
 the org-scoped ones (token.mint, namespace.adopt, claim_release) need ORG_ADMIN
 pinned to the caller's own org. A per-namespace admin, flat or scoped, never
-passes. Every route of both routers is covered, so a new one cannot be missed."""
+passes. Every route of the two admin routers and of the model-setup router
+(`/v1/admin/models`) is iterated, so a new one there cannot be missed;
+`/v1/admin/claim_release` checks inside its handler and is covered by the
+cross-org test below."""
 
 from __future__ import annotations
 
@@ -15,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from server.auth.jwt import mint_token
 from server.insights.app import admin_routes as admin
+from server.insights.app import provider_routes
 from server.settings import settings
 
 ORG_SCOPED = {"/v1/admin/token.mint", "/v1/admin/namespace.adopt"}
@@ -36,7 +40,7 @@ def _token(caller: str, org: str = "acme") -> str:
 def _routes() -> list[tuple[str, APIRoute]]:
     return [
         (r.path, r)
-        for router in (admin.admin_router, admin.org_admin_router)
+        for router in (admin.admin_router, admin.org_admin_router, provider_routes.provider_router)
         for r in router.routes
         if isinstance(r, APIRoute)
     ]
@@ -55,11 +59,19 @@ async def test_every_admin_route_admits_only_its_authority(
 ) -> None:
     monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: True)
     gates = [d.dependency for d in route.dependencies]
-    assert gates == [admin.require_org_admin if path in ORG_SCOPED else admin.require_admin]
+    if path.startswith("/v1/admin/models"):
+        expected = provider_routes.require_model_operator
+    elif path in ORG_SCOPED:
+        expected = admin.require_org_admin
+    else:
+        expected = admin.require_admin
+    assert gates == [expected]
     request: Any = SimpleNamespace(headers={"Authorization": f"Bearer {_token(caller)}"})
     allowed = caller == "platform-admin" or (caller == "org-admin" and path in ORG_SCOPED)
     if allowed:
-        assert (await gates[0](request)) is not None
+        admitted = await gates[0](request)
+        # require_model_operator answers None once it admits
+        assert admitted is not None or expected is provider_routes.require_model_operator
         return
     with pytest.raises(HTTPException) as err:
         await gates[0](request)

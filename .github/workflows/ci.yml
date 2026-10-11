@@ -382,6 +382,32 @@ jobs:
       # justify a separate merge-only tier.
       - name: pytest
         run: pytest tests/integration -q
+      # The tenant-isolation gates again, against a second server that
+      # enforces auth: with auth off every token is ignored, so these
+      # tests alone would never see a refusal.
+      - name: Boot control plane with auth on
+        env:
+          LOOM_AUTH_REQUIRED: "true"
+          LOOM_INSTANCE_LABEL: "ci:integration-auth"
+        run: |
+          nohup uvicorn server.main:app --host 127.0.0.1 --port 7778 --timeout-graceful-shutdown 10 > server-auth.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -fsS http://localhost:7778/v1/health && exit 0
+            sleep 1
+          done
+          echo "auth-on control plane never became healthy"
+          tail -100 server-auth.log
+          exit 1
+      - name: pytest isolation gates (auth on)
+        env:
+          LOOM_AUTH_REQUIRED: "true"
+          LOOM_BASE_URL: http://localhost:7778
+        run: >-
+          pytest -q
+          tests/integration/test_cross_principal_leakage.py
+          tests/integration/test_read_scope_isolation.py
+          tests/integration/test_me_setup_mcp_config.py
+          tests/integration/test_onboard_tenant.py
       # The statement corpus: every builder's shapes through
       # EXPLAIN QUERY TREE on the migrated service, and shapes.txt in step
       # with the builders. ~10 s; a rejection here is a statement that would
@@ -393,7 +419,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: server-log
-          path: server.log
+          path: |
+            server.log
+            server-auth.log
 
   sdk-typescript:
     name: typescript sdk (generated types in sync, lint, tsc, vitest, dist)

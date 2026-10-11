@@ -243,3 +243,37 @@ async def test_starter_deletes_what_it_wrote(
     rc = await mod.main()
     assert rc == (0 if hits else 1)
     assert "memory.delete" in calls and "knowledge.delete" in calls
+
+
+def _refusing_onboard(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, argv: list[str]) -> int:
+    """`main` with loom_init faked and every admin call refused with 403."""
+    env_path = tmp_path / ".env"
+    env_path.write_text("LOOM_API_KEY=namespace-admin\n")
+
+    def fake_init(**kw: object) -> dict:
+        return {"env_path": str(env_path), "subject": "sa:x"}
+
+    def refuse(url: str, body: dict, timeout_s: float = 5.0, *, token: str = "") -> dict:
+        raise onboard_tenant.AdminRefused(f"{url} returned HTTP 403")
+
+    monkeypatch.setattr(onboard_tenant, "_run_loom_init", fake_init)
+    monkeypatch.setattr(onboard_tenant, "_post_json", refuse)
+    base = ["--namespace", "ns", "--agent", "a", "--output-dir", str(tmp_path), "--skip-smoke"]
+    return onboard_tenant.main([*base, "--json", *argv])
+
+
+def test_without_a_platform_admin_token_the_admin_steps_are_skipped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("LOOM_ADMIN_TOKEN", raising=False)
+    assert _refusing_onboard(monkeypatch, tmp_path, []) == 0
+    out = capsys.readouterr()
+    assert json.loads(out.out)["ratelimits"] == {}
+    assert "platform_admin" in out.err
+
+
+def test_a_refused_explicit_admin_token_fails_the_onboard(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("LOOM_ADMIN_TOKEN", raising=False)
+    assert _refusing_onboard(monkeypatch, tmp_path, ["--token", "weak"]) == 1
