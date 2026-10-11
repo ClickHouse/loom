@@ -47,6 +47,7 @@ from server.operations.base import Role
 from server.settings import settings
 
 if TYPE_CHECKING:
+    from server.auth.delegation import Delegated
     from server.auth.jwt import AuthInfo
 
 log = logging.getLogger(__name__)
@@ -818,7 +819,7 @@ async def admin_token_mint(
         minted = delegated.mint(input.subject, jti=jti, consumer=input.consumer or None)
         namespaces, roles, ns_roles = delegated.namespaces, delegated.roles, delegated.ns_roles
         ttl_seconds = delegated.ttl_seconds
-        await _audit_mint(info, input, namespaces)
+        await _audit_mint(info, input, delegated, jti)
     return TokenMintOutput.model_validate(
         {
             "token": minted,
@@ -847,7 +848,9 @@ def _refuse_foreign_org(info: AuthInfo | None, org: str, action: str) -> None:
         )
 
 
-async def _audit_mint(info: AuthInfo, input: TokenMintInput, namespaces: list[str]) -> None:
+async def _audit_mint(info: AuthInfo, input: TokenMintInput, granted: Delegated, jti: str) -> None:
+    """Records what the child was granted, not what was asked for."""
+    namespaces = granted.namespaces
     await audit.emit(
         "token.minted",
         org=input.org,
@@ -855,9 +858,10 @@ async def _audit_mint(info: AuthInfo, input: TokenMintInput, namespaces: list[st
         actor=info.subject,
         subject={
             "subject": input.subject,
+            "jti": jti,
             "namespaces": namespaces,
-            "roles": list(input.roles),
-            "ns_roles": dict(input.ns_roles) if input.ns_roles else None,
+            "roles": granted.roles,
+            "ns_roles": granted.ns_roles,
             "consumer": input.consumer,
             "is_service_account": input.is_service_account,
         },

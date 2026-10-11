@@ -219,3 +219,30 @@ def test_a_narrow_caller_mints_inside_its_own_claim(client) -> None:
     r = _mint(client, narrow, ["*"], roles=["viewer"])
     assert r.status_code == 200 and r.json()["namespaces"] == ["clickgap-public"]
     assert _mint(client, narrow, ["team-b"], roles=["viewer"]).status_code == 403
+
+
+def test_namespaces_beside_ns_roles_are_asked_for_as_viewer(client) -> None:
+    client.grants[(ORG, PRIV, "ops@x")] = Role.VIEWER
+    r = client.post(
+        "/v1/admin/token.mint",
+        headers=_bearer(["org_admin"]),
+        json={
+            "subject": "sa:clickgap",
+            "org": ORG,
+            "namespaces": [PRIV],
+            "ns_roles": {"clickgap-public": "admin"},
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["ns_roles"] == {PRIV: "viewer", "clickgap-public": "admin"}
+
+
+def test_the_audit_row_records_what_was_granted_and_the_jti(client) -> None:
+    r = _mint(client, _bearer(["org_admin"], ns=("clickgap-public",)), ["*"], roles=["admin"])
+    assert r.status_code == 200, r.text
+    ((_evt, kw),) = client.audit_rows
+    audited = kw["subject"]
+    assert audited["jti"] == r.json()["jti"]
+    assert audited["namespaces"] == r.json()["namespaces"]
+    assert audited["roles"] == r.json()["roles"]
+    assert audited["ns_roles"] == r.json()["ns_roles"]

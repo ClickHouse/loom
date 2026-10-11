@@ -124,10 +124,10 @@ class TokenMintInput(BaseModel):
         return self
 
     def requested_role_for(self, ns: str) -> str:
-        """The role this mint asks for on `ns`: its `ns_roles` entry, else the
-        highest of the flat `roles`."""
-        if self.ns_roles and ns in self.ns_roles:
-            return self.ns_roles[ns]
+        """The role this mint asks for on `ns`: its `ns_roles` entry (viewer for
+        a namespace the map leaves out), else the highest of the flat `roles`."""
+        if self.ns_roles:
+            return self.ns_roles.get(ns, "viewer")
         from server.auth.authz import grant_rank
 
         known = [r for r in self.roles if grant_rank(r)]
