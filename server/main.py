@@ -288,7 +288,7 @@ if settings.cors_origins:
     )
 
 
-def _refused(status: int, code: str, message: str) -> Response:
+def _refused(status: int, *, code: str, message: str) -> Response:
     from fastapi.responses import JSONResponse
 
     return JSONResponse(
@@ -307,8 +307,8 @@ def auth_off_refusal(request: Request) -> Response | None:
     if not host_ok:
         return _refused(
             421,
-            "MISDIRECTED_REQUEST",
-            "this server answers only localhost or LOOM_PUBLIC_BASE_URL",
+            code="MISDIRECTED_REQUEST",
+            message="this server answers only localhost or LOOM_PUBLIC_BASE_URL",
         )
     origin = request.headers.get("origin")
     foreign_origin = (
@@ -317,7 +317,9 @@ def auth_off_refusal(request: Request) -> Response | None:
         and origin not in cors_origin_list(settings.cors_origins)
     )
     if foreign_origin or request.headers.get("sec-fetch-site") == "cross-site":
-        return _refused(403, "CROSS_SITE_REQUEST", "this server refuses cross-site requests")
+        return _refused(
+            403, code="CROSS_SITE_REQUEST", message="this server refuses cross-site requests"
+        )
     return None
 
 
