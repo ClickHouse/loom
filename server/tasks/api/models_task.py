@@ -19,7 +19,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from server.tasks.domain.states import (
     WEBHOOK_SECRET_PREFIX,
@@ -27,6 +27,8 @@ from server.tasks.domain.states import (
     Disclosure,
     PolicyMode,
     TaskStatus,
+    webhook_secret_org_prefix,
+    webhook_secret_ref_ok,
 )
 
 # The long-poll ceiling: a pull or an updates read may hold this long.
@@ -172,13 +174,24 @@ class InboxRegisterInput(_Caller):
     # sends none.
     webhook_url: str = Field(default="", max_length=2048, pattern=r"^(https?://\S+)?$")
     # Name of the environment variable holding the webhook signing secret (never
-    # stored), which starts `LOOM_WEBHOOK_SECRET_`; without it no notice is sent.
+    # stored): `LOOM_WEBHOOK_SECRET_<ORG>__<NAME>`, ORG the org id upper-cased with
+    # every other character as `_`, NAME letters and digits. Without it no notice
+    # is sent.
     webhook_secret_ref: str = Field(
         default="", max_length=256, pattern=rf"^({WEBHOOK_SECRET_PREFIX}[A-Za-z0-9_]+)?$"
     )
     # The inbox `version` this edit was based on; a different current version
     # answers 409. None skips the check.
     if_match_version: int | None = None
+
+    @model_validator(mode="after")
+    def _own_secret(self) -> InboxRegisterInput:
+        if self.webhook_secret_ref and not webhook_secret_ref_ok(self.org, self.webhook_secret_ref):
+            raise ValueError(
+                "webhook_secret_ref must be "
+                f"{webhook_secret_org_prefix(self.org)}<letters and digits>"
+            )
+        return self
 
 
 class InboxRegisterOutput(BaseModel):

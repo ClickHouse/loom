@@ -40,7 +40,7 @@ from server.code.app.index.compiler_tier import (
     run_tier,
 )
 from server.code.app.index.gitrepo import git_config_env
-from server.code.app.index.sandbox import tool_root
+from server.code.app.index.sandbox import tool_mounts
 from server.core.paths import SCIP_HARNESS_DIR
 from server.settings import settings
 
@@ -151,7 +151,7 @@ async def _run_harness(checkout: Path, base: str, head: str, delta_path: Path) -
     JSON delta — no upload, no watermark read (the worker owns both)."""
     env = await asyncio.to_thread(_harness_env, delta_path)
     binary = await asyncio.to_thread(resolve_binary, settings.code_scip_python_path)
-    readonly = [tool_root(binary.parent)]
+    readonly = tool_mounts(binary.parent)
     if "SCIP_ENV_JSON" in env:
         readonly.append(Path(env["SCIP_ENV_JSON"]))
     returncode, out = await run_harness(

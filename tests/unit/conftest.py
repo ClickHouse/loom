@@ -29,8 +29,9 @@ import pytest
 
 # The unit suite runs as CI does: no dotenv, no LOOM_* or provider keys from
 # the developer's shell. Set before `server.settings` builds its singleton.
-# LOOM_UPDATE_* are the snapshot tests' regenerate switches, not settings.
-_TEST_SWITCH_PREFIX = "LOOM_UPDATE_"
+# LOOM_UPDATE_* are the snapshot tests' regenerate switches and LOOM_TEST_* other
+# test switches (LOOM_TEST_REQUIRE_SANDBOX), not settings.
+_TEST_SWITCH_PREFIX = ("LOOM_UPDATE_", "LOOM_TEST_")
 for _name in [
     n for n in os.environ if n.startswith("LOOM_") and not n.startswith(_TEST_SWITCH_PREFIX)
 ] + [

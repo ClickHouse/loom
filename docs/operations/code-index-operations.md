@@ -254,14 +254,18 @@ dependency installs and the compiler-tier harnesses) inside one boundary built o
   a `clone` with `CLONE_NEWUSER`, `bpf`, `perf_event_open`, kernel keyrings, module and
   kexec loading, `userfaultfd`, `open_by_handle_at` and `process_vm_readv`/`writev`
   (`clone3` answers `ENOSYS`, so the C library falls back to `clone`);
-- only system directories, the toolchains and the job's own paths are mounted: the
-  checkout (or the bare mirror, for a fetch) and the output directory are writable, the
-  checkout's `.git` and the harness scripts are read-only, and `/tmp` and `HOME` are a
-  fresh directory removed after the job. No server environment, credentials, host
-  `HOME`, Docker socket or other host paths;
+- only system directories, the toolchains and the job's own paths are mounted. A
+  toolchain is mounted only where it exposes none of Loom's data: never a directory
+  that is or holds `var/`, the mirrors and checkouts, the blob store, the env file, the
+  install root or `HOME`, nor one inside `var/` or under `HOME` (the default
+  `var/bin/scip-clang` is mounted as that one file). The checkout (or the bare mirror,
+  for a fetch) and the output directory are writable, the checkout's `.git` and the
+  harness scripts are read-only, and `/tmp` and `HOME` are a fresh directory removed
+  after the job. No server environment, credentials, host `HOME`, Docker socket or
+  other host paths;
 - rlimits, set by `prlimit` before bwrap starts: `LOOM_CODE_SANDBOX_CPU_SECONDS` (7200),
   `LOOM_CODE_SANDBOX_MEMORY_MB` (16384) and `LOOM_CODE_SANDBOX_MAX_FILE_MB` (32768)
-  bound **each process** of a job (CPU time, address space, file size), not the job's
+  bound **each process** of a job (CPU time, data memory, file size), not the job's
   total, and `LOOM_CODE_SANDBOX_MAX_PIDS` (2048) bounds the processes of the server's
   uid, so one job's fork bomb can starve concurrent jobs of processes. Loom sets no
   cgroup; give the container its own memory and pids limits for a hard total. Each job
@@ -287,16 +291,16 @@ the container options below, so under Docker's defaults the probe fails and ever
 repository job runs as a plain process (see _Without the sandbox_). A source run
 (`make server`) has the sandbox only where the host passes the same requirements.
 
-**Requirements.** `bwrap` on `PATH` (the image installs it) and unprivileged user
-namespaces. Docker's default seccomp profile blocks user namespaces, so a container
-needs a seccomp profile that permits them (`security_opt: [seccomp=unconfined]` is
-the blunt one), a profile that lets bwrap mount (`apparmor=unconfined` on AppArmor
-hosts), and an unmasked `/proc` (`systempaths=unconfined`) so the sandbox can mount
-its own. Ubuntu 23.10 and later also restrict unprivileged user namespaces through
-AppArmor (`kernel.apparmor_restrict_unprivileged_userns=1`): allow them for `bwrap`
-with an AppArmor profile, or the sandbox stays unavailable. These options weaken the
-container's own confinement; weigh them against running repository code without the
-sandbox.
+**Requirements.** `bwrap` and `prlimit` (util-linux) on `PATH` (the image has both) and
+unprivileged user namespaces. Docker's default seccomp profile blocks user namespaces,
+so a container needs a seccomp profile that permits them
+(`security_opt: [seccomp=unconfined]` is the blunt one), a profile that lets bwrap mount
+(`apparmor=unconfined` on AppArmor hosts), and an unmasked `/proc`
+(`systempaths=unconfined`) so the sandbox can mount its own. Ubuntu 23.10 and later also
+restrict unprivileged user namespaces through AppArmor
+(`kernel.apparmor_restrict_unprivileged_userns=1`): allow them for `bwrap` with an
+AppArmor profile, or the sandbox stays unavailable. These options weaken the container's
+own confinement; weigh them against running repository code without the sandbox.
 
 **Without the sandbox** Loom probes once per process, logs a warning and reports
 `repo_jobs_unsandboxed` in `/v1/health` and `loom doctor`. Then:

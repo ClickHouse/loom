@@ -38,7 +38,6 @@ from typing import TYPE_CHECKING
 
 from server.code.app.index.compiler_tier import (
     checkout_fetch_args,
-    communicate_or_kill,
     compiler_target,
     git,
     gone_documents,
@@ -48,8 +47,8 @@ from server.code.app.index.compiler_tier import (
     run_harness,
     run_tier,
 )
-from server.code.app.index.gitrepo import auth_env, git_config_env
-from server.code.app.index.sandbox import tool_root
+from server.code.app.index.gitrepo import auth_env, communicate_or_kill, git_config_env
+from server.code.app.index.sandbox import tool_mounts
 from server.code.app.index.typescript_dependencies import (
     LOCKFILES,
     install_roots,
@@ -217,7 +216,7 @@ async def _lockfile_changed(checkout: Path, base: str, head: str) -> bool:
         stderr=asyncio.subprocess.DEVNULL,
         env=auth_env(),
     )
-    out = await communicate_or_kill(proc, 120.0)
+    out, _err = await communicate_or_kill(proc, timeout_s=120.0)
     return bool(out.strip())
 
 
@@ -235,7 +234,7 @@ async def _run_harness(
         env,
         out_dir=delta_path.parent,
         timeout_s=settings.code_scip_ts_delta_timeout_seconds,
-        readonly=[tool_root(binary.parent)],
+        readonly=tool_mounts(binary.parent),
     )
     if returncode != 0:
         raise harness_failure(returncode, out[-2000:])

@@ -13,8 +13,9 @@ or a package download gets the same answer:
   second DNS answer cannot point the tunnel inward.
 
 Anything that is not CONNECT (plain http) is refused. One job holds at most
-`MAX_TUNNELS` connections at a time (more wait their turn), and a tunnel with
-no bytes either way for `_IDLE_TIMEOUT_S` is closed.
+`MAX_TUNNELS` connections at a time; one more waits up to `_SLOT_WAIT_S` for a
+free slot and is then refused (503), and a tunnel with no bytes either way for
+`_IDLE_TIMEOUT_S` is closed.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ logger = logging.getLogger("loom.code_index.egress")
 ALLOWED_PORTS = frozenset({443, 22})
 _CONNECT_TIMEOUT_S = 15.0
 _IDLE_TIMEOUT_S = 300.0
+_SLOT_WAIT_S = 5.0
 MAX_TUNNELS = 32
 
 
@@ -93,8 +95,15 @@ class EgressProxy:
         if task is not None:
             self._tunnels.add(task)
         try:
-            async with self._slots:
+            try:
+                await asyncio.wait_for(self._slots.acquire(), timeout=_SLOT_WAIT_S)
+            except TimeoutError:
+                writer.write(b"HTTP/1.1 503 Refused\r\n\r\ntoo many open tunnels\n")
+                return
+            try:
                 await self._tunnel(reader, writer)
+            finally:
+                self._slots.release()
         finally:
             if task is not None:
                 self._tunnels.discard(task)

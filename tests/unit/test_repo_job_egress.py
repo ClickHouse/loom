@@ -184,6 +184,35 @@ async def test_a_job_holds_at_most_max_tunnels_and_close_ends_every_one(
         writer.close()
 
 
+async def test_a_connection_past_the_tunnel_cap_is_refused_after_a_short_wait(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Waiting without a bound would let a job park any number of connections
+    (two fds each) in the workers process."""
+    gate = asyncio.Event()
+
+    async def slow_vet(host: str) -> tuple[str, str]:
+        await gate.wait()
+        return "refused", ""
+
+    monkeypatch.setattr(egress, "vet_host", slow_vet)
+    monkeypatch.setattr(egress, "MAX_TUNNELS", 1)
+    monkeypatch.setattr(egress, "_SLOT_WAIT_S", 0.2)
+    sock = str(tmp_path / "p.sock")
+    proxy = await egress.start_proxy(sock, None)
+    try:
+        _r1, first = await asyncio.open_unix_connection(sock)
+        first.write(b"CONNECT public.example:443 HTTP/1.1\r\n\r\n")
+        await asyncio.sleep(0.05)
+        second, w2 = await asyncio.open_unix_connection(sock)
+        answer = await asyncio.wait_for(second.read(), timeout=5)
+        assert answer.startswith(b"HTTP/1.1 503")
+        first.close()
+        w2.close()
+    finally:
+        await proxy.close()
+
+
 async def test_a_tunnel_with_no_bytes_either_way_is_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

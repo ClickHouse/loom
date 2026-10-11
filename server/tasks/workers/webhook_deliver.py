@@ -13,7 +13,8 @@ seconds) and ``webhook-signature: v1,<base64 HMAC-SHA256>`` over
 ``"{id}.{timestamp}.{body}"``. The secret is read from the environment
 variable ``task_inboxes.webhook_secret_ref`` names (a ``whsec_`` prefix
 marks a base64 key, as the spec's generators emit); it is never stored in
-ClickHouse and never logged. Acknowledgement is any 2xx inside a 10 s
+ClickHouse and never logged, and only a name of the inbox org's own
+(``states.webhook_secret_ref_ok``) is read. Acknowledgement is any 2xx inside a 10 s
 window; anything else retries with backoff (next pass, 5 s, 5 min, 30 min,
 capped) tracked in ``loom.task_webhook_cursor``.
 """
@@ -37,7 +38,7 @@ import httpx
 from server.core.datetimes import to_naive_utc as _naive
 from server.core.hosts import vet_host
 from server.tasks.domain import cursors as task_cursors
-from server.tasks.domain.states import WEBHOOK_SECRET_PREFIX
+from server.tasks.domain.states import webhook_secret_org_prefix, webhook_secret_ref_ok
 from server.tasks.store import repo as repo
 from server.tasks.store.rows import TaskEventRow, WebhookCursorRow, WebhookInboxRow
 from server.workers import pass_context
@@ -211,18 +212,19 @@ async def _post(
 
 def _secret_for(inbox_row: WebhookInboxRow, env: Mapping[str, str]) -> bytes | None:
     ref = str(inbox_row.get("webhook_secret_ref") or "")
-    # A row written before the prefix rule may name any variable: never read it.
-    raw = env.get(ref, "") if ref.startswith(WEBHOOK_SECRET_PREFIX) else ""
+    key = (str(inbox_row["org"]), str(inbox_row["inbox"]))
+    # A row written before the org rule may name any variable: never read it.
+    raw = env.get(ref, "") if webhook_secret_ref_ok(key[0], ref) else ""
     if not raw:
-        key = (str(inbox_row["org"]), str(inbox_row["inbox"]))
         if key not in _warned_missing_secret:
             _warned_missing_secret.add(key)
             log.warning(
                 "task webhook: inbox %s/%s has a webhook_url but no secret in env %r "
-                "(it must be set and start LOOM_WEBHOOK_SECRET_); notices are held until then",
+                "(it must be set and start %s); notices are held until then",
                 key[0],
                 key[1],
                 ref or "<unset>",
+                webhook_secret_org_prefix(key[0]),
             )
         return None
     return secret_bytes(raw)

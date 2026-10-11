@@ -115,9 +115,13 @@ async with Agent(org="acme", namespace="private", agent="admin", api_key=ADMIN_T
 `webhook_url` is an `http` or `https` URL whose host resolves only to public addresses:
 each delivery resolves it, refuses loopback, private, link-local (cloud metadata) and
 multicast addresses, connects to the address it checked (the name stays the `Host`
-header and TLS SNI) and follows no redirect. `webhook_secret_ref` must name a variable
-starting `LOOM_WEBHOOK_SECRET_`; `inbox.register` refuses any other name (422), and a
-row that names one is never read.
+header and TLS SNI) and follows no redirect. `webhook_secret_ref` must name one of the
+inbox org's own variables, `LOOM_WEBHOOK_SECRET_<ORG>__<NAME>`: ORG is the org id
+upper-cased with every character other than a letter or digit written `_` (org
+`acme-corp` → `LOOM_WEBHOOK_SECRET_ACME_CORP__ALERTS`), NAME is letters and digits.
+`inbox.register` refuses any other name (422), and a row that names one is never read,
+so no tenant can have Loom sign with another tenant's secret. Orgs whose ids differ only
+in case or punctuation share the ORG part; give them distinct ids.
 
 ### Post a task
 

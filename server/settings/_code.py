@@ -108,7 +108,8 @@ class CodeSettings(BaseModel):
     # They bound each process, not a job's total: there is no cgroup.
     # CPU seconds a process may use.
     code_sandbox_cpu_seconds: int = 7200
-    # Address space a process may map, in MiB.
+    # Data memory (heap and private mappings, RLIMIT_DATA) a process may use, in
+    # MiB. Not address space: node reserves far more of that than it uses.
     code_sandbox_memory_mb: int = 16384
     # Processes and threads the server's uid may run at once (RLIMIT_NPROC):
     # shared by every job running at the time, not one job's own.

@@ -42,7 +42,6 @@ from typing import TYPE_CHECKING
 from server.code.app.index.compiler_tier import (
     BaseUnknown,
     checkout_fetch_args,
-    communicate_or_kill,
     compiler_target,
     git,
     harness_failure,
@@ -50,8 +49,14 @@ from server.code.app.index.compiler_tier import (
     run_harness,
     run_tier,
 )
-from server.code.app.index.gitrepo import UNQUOTED_PATHS, auth_env, git_config_env, nul_fields
-from server.code.app.index.sandbox import tool_root
+from server.code.app.index.gitrepo import (
+    UNQUOTED_PATHS,
+    auth_env,
+    communicate_or_kill,
+    git_config_env,
+    nul_fields,
+)
+from server.code.app.index.sandbox import tool_mounts
 from server.core.paths import SCIP_HARNESS_DIR
 from server.settings import settings
 
@@ -145,7 +150,7 @@ async def _module_dirs(checkout: Path) -> list[str]:
         stderr=asyncio.subprocess.DEVNULL,
         env=auth_env(),
     )
-    out = await communicate_or_kill(proc, 120.0)
+    out, _err = await communicate_or_kill(proc, timeout_s=120.0)
     return sorted({posixpath.dirname(p) for p in nul_fields(out.decode("utf-8", "replace"))})
 
 
@@ -169,7 +174,7 @@ async def _changed_paths(checkout: Path, base: str, head: str) -> list[str]:
         stderr=asyncio.subprocess.DEVNULL,
         env=auth_env(),
     )
-    out = await communicate_or_kill(proc, 300.0)
+    out, _err = await communicate_or_kill(proc, timeout_s=300.0)
     if proc.returncode != 0:
         if not await _has_commit(checkout, base):
             raise BaseUnknown(f"base commit {base[:12]} not in {checkout}")
@@ -189,7 +194,7 @@ async def _has_commit(checkout: Path, sha: str) -> bool:
         stderr=asyncio.subprocess.DEVNULL,
         env=auth_env(),
     )
-    await communicate_or_kill(proc, 60.0)
+    await communicate_or_kill(proc, timeout_s=60.0)
     return proc.returncode == 0
 
 
@@ -328,7 +333,7 @@ async def _run_harness(
         out_dir=out_dir,
         timeout_s=settings.code_scip_go_delta_timeout_seconds,
         writable=caches,
-        readonly=[tool_root(Path(d)) for d in _bin_dirs()],
+        readonly=[mount for d in _bin_dirs() for mount in tool_mounts(Path(d))],
         network=True,
     )
     if returncode != 0:

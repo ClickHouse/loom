@@ -114,6 +114,48 @@ def test_a_read_only_path_inside_a_writable_one_stays_read_only(tmp_path: Path) 
     ]
 
 
+def test_a_writable_checkout_under_a_read_only_parent_stays_writable(tmp_path: Path) -> None:
+    """bwrap mounts in order: a read-only parent after the checkout would hide it."""
+    checkout = tmp_path / "tools" / "repos" / "checkout"
+    binds = sandbox._binds([checkout], [tmp_path / "tools", checkout / ".git"], "")
+    assert binds == [
+        *("--ro-bind", str(tmp_path / "tools"), str(tmp_path / "tools")),
+        *("--bind", str(checkout), str(checkout)),
+        *("--ro-bind", str(checkout / ".git"), str(checkout / ".git")),
+    ]
+
+
+@pytest.fixture
+def loom_dirs(tmp_path: Path, monkeypatch) -> Path:
+    """A server run from `tmp_path` with the default data settings."""
+    from server.settings import settings
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("LOOM_ENV_FILE", str(tmp_path / "srv" / ".env"))
+    for field in ("code_repos_root", "blob_dir", "code_scip_checkout_dir"):
+        monkeypatch.setattr(settings, field, type(settings).model_fields[field].default)
+    for d in ("var/bin", "var/blobs", "var/code_repos/self", "home/bin", "srv/bin", "opt/x/bin"):
+        (tmp_path / d).mkdir(parents=True)
+    (tmp_path / "var/bin/scip-clang").write_text("")
+    (tmp_path / "srv/.env").write_text("")
+    return tmp_path
+
+
+def test_a_toolchain_is_never_mounted_with_loom_data(loom_dirs: Path) -> None:
+    root = loom_dirs
+    # the default scip-clang is mounted as that one file, never var/ or var/bin
+    assert sandbox.tool_mounts(root / "var/bin/scip-clang") == [root / "var/bin/scip-clang"]
+    assert sandbox.tool_mounts(root / "var/bin") == []
+    assert sandbox.tool_mounts(root / "var/code_repos/self/checkout-x/node_modules/.bin") == []
+    assert sandbox.tool_mounts(root / "home/bin") == []
+    # srv/ holds the env file: only its bin directory is mounted
+    assert sandbox.tool_mounts(root / "srv/bin") == [root / "srv/bin"]
+    assert sandbox.tool_mounts(root / "srv/.env") == []
+    assert sandbox.tool_mounts(root / "opt/x/bin") == [root / "opt/x"]
+    assert sandbox.tool_mounts(root / "opt/x/bin" / ".." / ".." / "..") == []
+
+
 def test_toolchains_on_path_are_mounted_but_nothing_under_the_server_home(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -161,30 +203,10 @@ def test_the_probe_says_no_without_bwrap(monkeypatch) -> None:
     assert sandbox._probe() is False
 
 
-def test_each_job_process_gets_the_configured_rlimits(monkeypatch) -> None:
-    import resource
-
-    from server.settings import settings
-
-    monkeypatch.setattr(settings, "code_sandbox_cpu_seconds", 60)
-    monkeypatch.setattr(settings, "code_sandbox_memory_mb", 512)
-    monkeypatch.setattr(settings, "code_sandbox_max_pids", 64)
-    monkeypatch.setattr(settings, "code_sandbox_max_file_mb", 8)
-    set_limits: dict[int, tuple[int, int]] = {}
-    monkeypatch.setattr(resource, "setrlimit", lambda kind, v: set_limits.__setitem__(kind, v))
-    sandbox._limits()()
-    mib = 1024 * 1024
-    assert set_limits == {
-        resource.RLIMIT_CPU: (60, 60),
-        resource.RLIMIT_AS: (512 * mib, 512 * mib),
-        resource.RLIMIT_NPROC: (64, 64),
-        resource.RLIMIT_FSIZE: (8 * mib, 8 * mib),
-    }
-
-
 def test_prlimit_sets_the_rlimits_in_front_of_bwrap(monkeypatch) -> None:
     """No Python runs between fork and exec (preexec_fn can deadlock a threaded
-    server); the fallback without prlimit is the old preexec_fn."""
+    server). Memory is RLIMIT_DATA: node reserves far more address space than
+    RLIMIT_AS would allow."""
     from server.settings import settings
 
     monkeypatch.setattr(settings, "code_sandbox_cpu_seconds", 60)
@@ -195,13 +217,16 @@ def test_prlimit_sets_the_rlimits_in_front_of_bwrap(monkeypatch) -> None:
     assert sandbox._prlimit_argv() == [
         "/usr/bin/prlimit",
         "--cpu=60:60",
-        "--as=1048576:1048576",
+        "--data=1048576:1048576",
         "--nproc=64:64",
         "--fsize=2097152:2097152",
         "--",
     ]
-    monkeypatch.setattr(sandbox.shutil, "which", lambda _name: None)
-    assert sandbox._prlimit_argv() == []
+
+
+def test_the_probe_says_no_without_prlimit(monkeypatch) -> None:
+    monkeypatch.setattr(sandbox.shutil, "which", lambda name: None if name == "prlimit" else name)
+    assert sandbox._probe() is False
 
 
 def test_a_relative_or_home_holding_path_entry_mounts_nothing(tmp_path: Path, monkeypatch) -> None:

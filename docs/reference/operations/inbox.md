@@ -107,7 +107,7 @@ The identities loom already knows in the org — the poster picker's source.
 | `max_defers` | `int` | `5` | Defers a task may take; the next `task.defer` blocks it on a human instead. |
 | `triage_escalate_after_seconds` | `int` | `14400` | Seconds a task may wait in `triage` before the sweeper records one `triage_escalated` event on it. |
 | `webhook_url` | `str` | `''` | Where signed wake-up notices (event kinds and task ids, never task text) are POSTed: an http(s) URL on a public host (checked again at each delivery); "" sends none. |
-| `webhook_secret_ref` | `str` | `''` | Name of the environment variable holding the webhook signing secret (never stored), which starts `LOOM_WEBHOOK_SECRET_`; without it no notice is sent. |
+| `webhook_secret_ref` | `str` | `''` | Name of the environment variable holding the webhook signing secret (never stored): `LOOM_WEBHOOK_SECRET_<ORG>__<NAME>`, ORG the org id upper-cased with every other character as `_`, NAME letters and digits. |
 | `if_match_version` | `int \| None` | `None` | The inbox `version` this edit was based on; a different current version answers 409. |
 
 | Output field | Type | Meaning |
