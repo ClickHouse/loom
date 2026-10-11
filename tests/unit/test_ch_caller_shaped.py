@@ -70,12 +70,19 @@ def test_reads_outside_the_scope_and_writes_inside_it_are_untouched() -> None:
     [
         RuntimeError("Code: 158. DB::Exception: Limit for rows exceeded"),
         RuntimeError("Code: 241. DB::Exception: Memory limit (for query) exceeded"),
+        RuntimeError("Code: 159. DB::Exception: Timeout exceeded: elapsed 30.1 seconds"),
     ],
 )
 def test_a_row_or_memory_cap_hit_inside_the_scope_is_a_422(err: RuntimeError) -> None:
     with ch.caller_shaped(), pytest.raises(ValidationError, match="narrow it"):
         ch._raise_if_caller_cap(err)
     ch._raise_if_caller_cap(err)  # outside the scope: left to the caller as before
+
+
+def test_the_server_wide_memory_limit_stays_a_server_error() -> None:
+    err = RuntimeError("Code: 241. DB::Exception: Memory limit (total) exceeded")
+    with ch.caller_shaped():
+        ch._raise_if_caller_cap(err)
 
 
 def _principal(org: str, subject: str) -> AuthInfo:

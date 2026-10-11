@@ -131,19 +131,29 @@ def _apply_caller_ceilings(out: dict[str, Any], sql: str) -> None:
     out["read_overflow_mode"] = "throw"
 
 
-# Caps a caller-shaped read hit: TOO_MANY_ROWS, TOO_MANY_BYTES, MEMORY_LIMIT_EXCEEDED.
-_CALLER_CAP_CODES = (158, 307, 241)
+# Caps a caller-shaped read hit: TOO_MANY_ROWS, TOO_MANY_BYTES, TIMEOUT_EXCEEDED.
+_CALLER_CAP_CODES = (158, 307, 159)
+_MEMORY_LIMIT_EXCEEDED = 241
+
+
+def _is_caller_cap(e: BaseException) -> bool:
+    code = error_code(e)
+    if code == _MEMORY_LIMIT_EXCEEDED:
+        # Only the per-query limit is this request's breadth; the server-wide
+        # total ("(total)") is the server running short, not the caller.
+        return "(for query)" in str(e)
+    return code in _CALLER_CAP_CODES
 
 
 def _raise_if_caller_cap(e: BaseException) -> None:
-    """A caller-shaped read that hit its row or memory cap is the request's breadth,
-    not a server fault: a 422 that says how to narrow it."""
-    if caller_shaped_var.get() and error_code(e) in _CALLER_CAP_CODES:
+    """A caller-shaped read that hit its row, time or memory cap is the request's
+    breadth, not a server fault: a 422 that says how to narrow it."""
+    if caller_shaped_var.get() and _is_caller_cap(e):
         from server.core.errors import ValidationError
 
         raise ValidationError(
-            "the query reads more rows than this deployment allows one request; narrow it "
-            "(a path prefix or globs, a more selective pattern, a filter)"
+            "the query needs more rows, time or memory than this deployment allows one "
+            "request; narrow it (a path prefix or globs, a more selective pattern, a filter)"
         ) from None
 
 
