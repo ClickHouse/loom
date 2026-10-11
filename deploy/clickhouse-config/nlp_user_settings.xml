@@ -37,8 +37,11 @@
       Loom sends quota_key = <org>:<subject> from the verified token on every
       query of a request, so each tenant gets its own bucket. Loom's own work
       (workers, migrations) sends no key and shares the user-name bucket.
-      execution_time is seconds of query time per key per hour (36000 = ten
-      queries running for the whole hour); 0 = no limit. Tune for the host.
+      Every limit is 0 (none): the quota only counts, per key, in
+      system.quotas_usage. A time limit would also bind that shared bucket, so
+      one busy indexer could fail every worker; Loom enforces the per-tenant
+      concurrency and rate limit itself. Set a limit here only with workers on
+      their own user.
     -->
     <quotas>
         <loom_tenant>
@@ -50,7 +53,7 @@
                 <errors>0</errors>
                 <result_rows>0</result_rows>
                 <read_rows>0</read_rows>
-                <execution_time>36000</execution_time>
+                <execution_time>0</execution_time>
             </interval>
         </loom_tenant>
     </quotas>
