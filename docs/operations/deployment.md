@@ -447,6 +447,15 @@ The image serves plain HTTP. Put a TLS-terminating proxy or load balancer in fro
   `LOOM_TRUSTED_PROXIES` (default `127.0.0.1`); set it to your proxy's address or
   network. `X-Forwarded-Host` is never read: client-facing URLs come from
   `LOOM_PUBLIC_BASE_URL`.
+- With `deploy/standalone/compose.yaml` or `dev/docker-compose.cloud.yml` and a proxy on
+  the host, the proxy reaches Loom through the published port, so Loom sees the Docker
+  network's gateway as the peer, not `127.0.0.1`. Set `LOOM_TRUSTED_PROXIES` to that
+  gateway, which
+  `docker network inspect <project>_default -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}'`
+  prints. Left at the default, forwarded headers are dropped, URLs say `http://` and
+  every client shares the proxy's address for rate limits and sign-in lockouts. Every
+  process on the host also arrives from that gateway, so trust it only on a host you
+  control.
 - A non-loopback `LOOM_BIND_HOST` refuses to start without `LOOM_PUBLIC_BASE_URL`, and
   with auth off or the dev JWT secret unless `LOOM_ALLOW_INSECURE=1`. With auth off, any
   request whose `Host` is not `localhost`, `127.0.0.1`, `::1` or the public URL's host
