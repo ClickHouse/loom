@@ -37,7 +37,7 @@ import {
   truncate,
 } from "../lib/loom-client.mjs";
 import { appendRecalledStash, runIdFor, servedMemoryKeys } from "../lib/run-hook.mjs";
-import { readJsonFile, removeFile, sessionStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
+import { readJsonFile, readPrivateFile, removeFile, sessionStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
 
 const OBSERVE_OP = "observe.record";
 const CRYSTALLIZE_OP = "observe.crystallize";
@@ -229,7 +229,7 @@ function codeStashPath(sessionId) {
 
 function readCodeStash(sessionId) {
   try {
-    const raw = fs.readFileSync(codeStashPath(sessionId), "utf8");
+    const raw = readPrivateFile(codeStashPath(sessionId));
     const rows = JSON.parse(raw);
     const cutoff = Date.now() - CODE_STASH_TTL_MS;
     return Array.isArray(rows) ? rows.filter((r) => r.ts > cutoff) : [];

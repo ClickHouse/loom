@@ -7,10 +7,10 @@
 // {ts, indexed:true, org, namespace, repo, branch, prefixes, asOf, fetchedAt}.
 // A definite answer is trusted CACHE_TTL_MS; an unresolved one (the server
 // did not answer) UNRESOLVED_TTL_MS, then the next caller retries.
-import fs from "node:fs";
 import os from "node:os";
 import { git, postBounded, resolveCodeRepo, resolveToken, shuntCachePath } from "./loom-client.mjs";
 import { repoSlug } from "./code-shunt.mjs";
+import { readPrivateFile, writeJsonFile } from "./tmp-state.mjs";
 
 export const CACHE_TTL_MS = 10 * 60 * 1000;
 /** The repository lookup (`code.repos` + `code.index_status`)
@@ -109,7 +109,7 @@ export function cachePathFor(root, tmp = os.tmpdir()) {
 /** The cached entry for `root` when it is still fresh at `now`, else null. */
 export function readCache(root, now = Date.now(), tmp = os.tmpdir()) {
   try {
-    const c = JSON.parse(fs.readFileSync(cachePathFor(root, tmp), "utf8"));
+    const c = JSON.parse(readPrivateFile(cachePathFor(root, tmp)));
     return cacheIsFresh(c, now, CACHE_TTL_MS) ? c : null;
   } catch {
     return null;
@@ -117,11 +117,7 @@ export function readCache(root, now = Date.now(), tmp = os.tmpdir()) {
 }
 
 export function writeCache(root, entry, tmp = os.tmpdir()) {
-  try {
-    fs.writeFileSync(cachePathFor(root, tmp), JSON.stringify(entry));
-  } catch {
-    /* tmp not writable: fine */
-  }
+  writeJsonFile(cachePathFor(root, tmp), entry); // tmp not writable: fine
 }
 
 /** The MCP header for an indexed entry, {} otherwise. */

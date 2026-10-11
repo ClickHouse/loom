@@ -8,12 +8,11 @@
 // through run.complete): a guess there would poison the signal the ledger
 // exists to clean.
 
-import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { contentText, hookClient, runPrefixFor } from "./loom-client.mjs";
-import { writeJsonFile } from "./tmp-state.mjs";
+import { readPrivateFile, writeJsonFile } from "./tmp-state.mjs";
 
 const GOAL_MAX = 2000;
 const REQUEST_MAX = 8000;
@@ -102,7 +101,7 @@ export function recalledStashPath(sessionId, tmp = os.tmpdir()) {
 
 export function readRecalledStash(sessionId, tmp = os.tmpdir()) {
   try {
-    const rows = JSON.parse(fs.readFileSync(recalledStashPath(sessionId, tmp), "utf8"));
+    const rows = JSON.parse(readPrivateFile(recalledStashPath(sessionId, tmp)));
     return Array.isArray(rows) ? rows.map(String).filter(Boolean) : [];
   } catch {
     return [];
