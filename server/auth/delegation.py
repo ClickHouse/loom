@@ -33,7 +33,7 @@ from server.auth import jwt as jwt_mod
 from server.auth.authz import grant_role
 from server.auth.jwt import AuthInfo
 from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT
-from server.operations.base import Role
+from server.operations.base import GRANT_ROLES, Role, grant_rank
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -247,7 +247,7 @@ class _Account:
 _account_active: dict[tuple[str, str], tuple[float, _Account]] = {}
 _ACCOUNT_CACHE_MAX = 4096
 
-_RANK_ROLE = {3: Role.ADMIN, 2: Role.WRITER, 1: Role.VIEWER}
+_RANK_ROLE = {grant_rank(name): grant_role(name) for name in GRANT_ROLES}
 
 
 async def creator_account_active(org: str, creator: str) -> bool:
@@ -283,7 +283,7 @@ async def _creator_account(org: str, creator: str) -> _Account:
             FROM (
                 SELECT count() AS owned, countIf(active = 1) AS owned_live
                 FROM loom.namespaces FINAL
-                WHERE org = {{org:String}} AND owner_email = {{sub:String}}
+                WHERE org = {{org:String}} AND owner_email IN {{subs:Array(String)}}
             ) AS o
             CROSS JOIN (
                 SELECT countIf(status = 'active') AS granted,
@@ -292,7 +292,7 @@ async def _creator_account(org: str, creator: str) -> _Account:
                 WHERE org = {{org:String}} AND subject IN {{subs:Array(String)}}
             ) AS g
             """,
-            params={"org": org, "sub": creator, "subs": subjects},
+            params={"org": org, "subs": subjects},
         )
     except Exception as e:  # noqa: BLE001 — an unreadable account counts as disabled (closed)
         log.warning("account lookup failed for %s/%s: %s", org, creator, e)

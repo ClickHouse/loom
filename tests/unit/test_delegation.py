@@ -347,10 +347,11 @@ class _TablesCH:
     async def query_one(self, sql: str, params: Any = None, **k: Any) -> dict[str, Any] | None:
         if "SELECT *" in sql:
             return self.namespaces.get((params["org"], params["ns"]))
+        owners = params["subs"] if "owner_email IN {subs:" in sql else [params.get("sub")]
         owned = [
             n
             for (org, _), n in self.namespaces.items()
-            if org == params["org"] and n["owner_email"] == params["sub"]
+            if org == params["org"] and n["owner_email"] in owners
         ]
         held = [
             g
@@ -413,6 +414,22 @@ async def test_a_claim_release_disables_the_creator(monkeypatch: pytest.MonkeyPa
     assert ch.namespaces[(ORG, "a")]["owner_email"] == ""
     monkeypatch.setattr(delegation, "_account_active", {})
     assert await delegation.creator_account_active(ORG, "alice") is False
+
+
+@pytest.mark.asyncio
+async def test_an_owner_stored_under_the_email_alias_is_the_same_account(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ch = _TablesCH()
+    ch.namespaces[(ORG, "a")] = {"org": ORG, "owner_email": "alice@x", "active": False}
+
+    async def aliases(org: str, subject: str, **k: Any) -> list[str]:
+        return ["alice", "alice@x"]
+
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    monkeypatch.setattr("server.auth.aliases.subject_aliases", aliases)
+    monkeypatch.setattr(delegation, "_account_active", {})
+    assert await delegation.creator_account_active(ORG, "alice") is False  # deactivated
 
 
 @pytest.mark.asyncio
