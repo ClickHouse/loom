@@ -307,34 +307,35 @@ async def actors_by_key(
     *,
     scope: ReadFilters,
     ch: _CHClient | None = None,
-) -> dict[tuple[str, str], list[str]]:
-    """The recorded writers (`actor`) of each live (namespace, memory_key), for labelling
-    recalled text with its author, read inside `scope`. A key with no recorded actor is
-    absent."""
+) -> dict[tuple[str, str], list[dict[str, str]]]:
+    """The live rows under each (namespace, memory_key), read inside `scope`, as
+    `{agent, user_id, session_id, actor}`: one entry per row, so a caller labels a recalled
+    item with the writer of the row it came from, not every writer of the key. Rows with
+    no recorded actor are left out."""
     if not keys:
         return {}
     ch = ch or _default_client()
+    params: dict[str, Any] = {"org": org, "keys": sorted({(str(n), str(k)) for n, k in keys})}
     where = [
         "org = {org:String}",
         "(namespace, memory_key) IN {keys:Array(Tuple(String, String))}",
         "tombstoned_at IS NULL",
         "actor != ''",
+        *scope_where(scope, params),
     ]
-    params: dict[str, Any] = {"org": org, "keys": [(str(n), str(k)) for n, k in keys]}
-    where.extend(scope_where(scope, params))
     rows = await ch.query_all(
         f"""
-        SELECT namespace, memory_key, groupUniqArray(actor) AS actors
+        SELECT namespace, memory_key, agent, user_id, session_id, actor
         FROM loom.memory FINAL
         WHERE {" AND ".join(where)}
-        GROUP BY namespace, memory_key
         """,
         params=params,
     )
-    return {
-        (str(r["namespace"]), str(r["memory_key"])): sorted(str(a) for a in r["actors"])
-        for r in rows
-    }
+    out: dict[tuple[str, str], list[dict[str, str]]] = {}
+    for r in rows:
+        row = {c: str(r[c]) for c in ("agent", "user_id", "session_id", "actor")}
+        out.setdefault((str(r["namespace"]), str(r["memory_key"])), []).append(row)
+    return out
 
 
 async def get_many_by_keys(

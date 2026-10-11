@@ -4,6 +4,7 @@ rendered pack."""
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 # The pack's first line. Recalled text can come from anyone who writes to the namespace, so
@@ -28,6 +29,16 @@ def escape_data(text: Any) -> str:
     return str(text or "").replace("<", "&lt;").replace(">", "&gt;")
 
 
+_LABEL_UNSAFE = re.compile(r'[\s\[\]=%"]')
+
+
+def label_part(text: Any) -> str:
+    """Stored text placed inside an item's label (a key, a name, a session id): whitespace,
+    brackets, `=`, `"` and `%` are percent-escaped, so it can neither close the label nor
+    add an attribute such as `by=`."""
+    return _LABEL_UNSAFE.sub(lambda m: "".join(f"%{b:02X}" for b in m[0].encode()), str(text))
+
+
 def one_item(line: str) -> str:
     """An item's line with each continuation line indented, so a newline in a recalled value
     cannot start a line of its own and pass as another item with its own by=."""
@@ -44,7 +55,7 @@ def _procedure_line(m: Any, label: str, steps: str, avoid: str) -> str:
     """One procedure in the pack. A mined procedure whose single step IS its situation (a fix
     recipe stored as one sentence) prints that sentence once, not as `when X: X`."""
     author = author_label([getattr(m, "actor", "")])
-    head = f"- [{m.namespace}/{m.name}{author}]{label}"
+    head = f"- [{label_part(f'{m.namespace}/{m.name}')}{author}]{label}"
     situation = str(m.situation or "").strip()
     if not situation or steps.strip() == situation:
         return one_item(f"{head} {steps or situation}{avoid}")
