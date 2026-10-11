@@ -636,9 +636,9 @@ class CodeSettings(BaseModel):
     code_search_card_leg_cap: float = 1.0
     # CSV of prose question kinds the card leg votes on; `any` = all.
     code_search_card_leg_kinds: str = "responsibility"
-    # Rerank endpoint code.search and code.ask use when the request names none
-    # (same values as the per-request `rerank`; rerank="none" turns it off).
-    # Empty = no default rerank.
+    # Reranker code.search and code.ask use when the request names none (same
+    # values as the per-request `rerank`: a builtin or a name in
+    # LOOM_RERANK_ENDPOINTS_JSON; rerank="none" turns it off). Empty = no default rerank.
     code_search_rerank_default: str = ""
     # Prose question kinds the default rerank applies to (`any` = all);
     # symbol-shaped or constrained searches are never default-reranked.

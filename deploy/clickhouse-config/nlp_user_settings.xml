@@ -10,6 +10,9 @@
   An AI function takes a named collection's name as a string first
   argument, e.g. SELECT aiClassify('openai_default', text, ['a', 'b']).
   See named_collections.xml.template.
+
+  It also holds the loom user's limits: a per-tenant quota and the
+  read_overflow_mode constraint (see the comments below).
 -->
 <clickhouse>
     <profiles>
@@ -20,14 +23,44 @@
             <use_query_condition_cache>0</use_query_condition_cache>
             <allow_experimental_nlp_functions>1</allow_experimental_nlp_functions>
             <allow_experimental_ai_functions>1</allow_experimental_ai_functions>
+            <constraints>
+                <!-- Loom caps caller-shaped reads with max_rows_to_read and
+                     max_memory_usage. No statement may switch the overflow mode
+                     to `break`, which would turn a cap into a silent partial answer. -->
+                <read_overflow_mode>
+                    <readonly/>
+                </read_overflow_mode>
+            </constraints>
         </default>
     </profiles>
+    <!--
+      Loom sends quota_key = <org>:<subject> from the verified token on every
+      query of a request, so each tenant gets its own bucket. Loom's own work
+      (workers, migrations) sends no key and shares the user-name bucket.
+      execution_time is seconds of query time per key per hour (36000 = ten
+      queries running for the whole hour); 0 = no limit. Tune for the host.
+    -->
+    <quotas>
+        <loom_tenant>
+            <!-- keyed = by the client's quota_key, else the user name -->
+            <keyed/>
+            <interval>
+                <duration>3600</duration>
+                <queries>0</queries>
+                <errors>0</errors>
+                <result_rows>0</result_rows>
+                <read_rows>0</read_rows>
+                <execution_time>36000</execution_time>
+            </interval>
+        </loom_tenant>
+    </quotas>
     <!--
       The loom user resolves named collections by name. It never needs to
       read their secrets, so show_named_collections_secrets stays off.
     -->
     <users>
         <loom>
+            <quota>loom_tenant</quota>
             <access_management>1</access_management>
             <named_collection_control>1</named_collection_control>
             <show_named_collections>1</show_named_collections>

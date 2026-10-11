@@ -14,6 +14,7 @@ _OBJECTS = [
     "ch_settings_by_traffic_class",
     "llm_policy_by_traffic_class",
     "ratelimit_class_fractions",
+    "rerank_endpoints_json",
     "code_vector_tables",
     "latency_budget_overrides_by_consumer",
     "tracker_sources_json",
@@ -38,7 +39,12 @@ def test_the_checked_fields_are_the_json_valued_ones() -> None:
     ]
 
 
-@pytest.mark.parametrize("field", _OBJECTS)
+# Object fields whose entries a model validator also checks (test_rerank_names.py), so
+# the arbitrary object below is not a valid value for them.
+_ENTRIES_CHECKED = {"rerank_endpoints_json"}
+
+
+@pytest.mark.parametrize("field", [f for f in _OBJECTS if f not in _ENTRIES_CHECKED])
 def test_an_object_field_takes_empty_or_an_object(field: str) -> None:
     assert getattr(_load(**{field: ""}), field) == ""
     assert getattr(_load(**{field: ' {"a": {}} '}), field) == ' {"a": {}} '

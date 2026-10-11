@@ -13,6 +13,7 @@ from pydantic import (
 )
 
 from server.memory.api.models_common import MemoryType, _Identity
+from server.memory.domain.rerank_names import RerankName
 from server.operations.base import MCP_HIDDEN
 
 # ============================================================
@@ -404,9 +405,9 @@ class MemorySearchInput(BaseModel):
     # resolved date is appended to the embedded query text. Empty = no expansion.
     observation_date: str = Field(default="", max_length=10)
     # Per-request reranker override. Empty = use the namespace's rerank_endpoint.
-    # Set a URL or sentinel ("builtin:openai[:<model>]" / "builtin:cohere[:<model>]")
-    # to rerank this call without registering the namespace.
-    rerank: str = ""
+    # "none" = no rerank; "builtin:openai[:<model>]" / "builtin:cohere[:<model>]", or the
+    # name of an endpoint in LOOM_RERANK_ENDPOINTS_JSON, reranks this call. A URL is refused.
+    rerank: RerankName = ""
     # Cost posture. "standard" stages cheap recall first, spending expensive
     # LLM/graph/rerank legs only when the planner or fallback gates justify them.
     # "fast" minimizes LLM/fan-out; "deep" allows upfront expensive recall.

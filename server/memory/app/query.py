@@ -9,7 +9,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from server.core.ch import get_client
+from server.core.ch import caller_shaped, get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import hash_text
 from server.core.hashing import sha256_value_json as _sha256_value_json
@@ -648,7 +648,9 @@ async def handle_memory_aggregate(
     )
 
     ch = get_client()
-    rows = await ch.query_all(sql, params=params)
+    # the caller picks the fields, groups and filters: the caller-shaped ceilings apply
+    with caller_shaped():
+        rows = await ch.query_all(sql, params=params)
 
     out_rows: list[_AggregateRow] = []
     for r in rows:

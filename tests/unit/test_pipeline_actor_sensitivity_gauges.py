@@ -28,7 +28,7 @@ def test_writer_actor_falls_back_to_the_pipeline_actor_only_without_a_token() ->
     with prov.pipeline_actor("process:b5-memo-bench"):
         assert writer_actor() == "process:b5-memo-bench"
         # a live request's own principal wins over the stage's
-        set_current_auth(SimpleNamespace(subject="alice", is_service_account=False))
+        set_current_auth(SimpleNamespace(org="o", subject="alice", is_service_account=False))
         assert writer_actor() == "human:alice"
         set_current_auth(None)
         with prov.pipeline_actor(""):  # empty leaves the chain as it was
@@ -54,7 +54,7 @@ def _input(**kw: Any):
 
 
 def test_the_queue_payload_carries_the_enqueuer_and_the_rebuild_strips_it() -> None:
-    set_current_auth(SimpleNamespace(subject="b5-memo-bench", is_service_account=True))
+    set_current_auth(SimpleNamespace(org="o", subject="b5-memo-bench", is_service_account=True))
     try:
         payload, n_msgs, _chars = payload_for(_input())
     finally:

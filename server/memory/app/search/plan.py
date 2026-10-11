@@ -128,7 +128,7 @@ async def _resolve_rerank_endpoint(
     rerank is on."""
 
     if run.rerank_cfg_task is None:
-        endpoint = run.rerank_override
+        endpoint = "" if run.rerank_override == "none" else run.rerank_override
         prompt_template = ""
     else:
         endpoint, prompt_template = await run.rerank_cfg_task

@@ -1,9 +1,10 @@
 """The admission sequence both transports run for a registry op.
 
 authn → authz target → authz → traffic class → history policy → rate limit
-→ dispatch. HTTP and MCP each verify the token and render refusals in their
-own protocol (a status + detail, an `isError` tool result); the decisions in
-between are made here, once:
+→ dispatch, holding one of the org's in-flight slots (`tenant_slot`). HTTP
+and MCP each verify the token and render refusals in their own protocol (a
+status + detail, an `isError` tool result); the decisions in between are made
+here, once:
 
 - `authz_target`: the (org, namespace) a call is authorized against, which
   is also what its handler reads. An empty or "-" field is absent. The org is
@@ -25,11 +26,14 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from server.code.app.common import plane_namespace_for, plane_org_for
-from server.core.errors import IdentityIncompleteError
+from server.core.errors import IdentityIncompleteError, RateLimitedError
+from server.settings import settings
 
 if TYPE_CHECKING:
     from server.auth.jwt import AuthInfo
@@ -230,6 +234,47 @@ def rate_limit(
     except Exception as e:  # noqa: BLE001 — FAILS OPEN: a limiter error admits the call
         _fail_open("rate_limit", op.name, e)
         return None
+
+
+# Requests each org has running in this process (org -> count).
+_IN_FLIGHT: dict[str, int] = {}
+
+
+def tenant_inflight_cap() -> int:
+    """This process's share of LOOM_TENANT_MAX_CONCURRENT_REQUESTS, divided the way
+    the rate limits are (replicas × web workers, at least 1); 0 = no cap."""
+    configured = int(settings.tenant_max_concurrent_requests)
+    if configured <= 0:
+        return 0
+    from server.core.ratelimit import effective_divisor
+
+    return max(1, configured // effective_divisor(shared=False))
+
+
+@contextmanager
+def tenant_slot(auth: AuthInfo | None, target: Target | None) -> Iterator[None]:
+    """Hold one of the org's in-flight slots while the handler runs, released however
+    it ends. RateLimitedError (429 RATE_LIMITED) when the org's share is all in use. The
+    org is the verified token's, else the target's, as for the rate limiter."""
+    org = _rate_limit_org(auth, target) if target is not None else _token_org(auth)
+    cap = tenant_inflight_cap()
+    if not org or cap <= 0:
+        yield
+        return
+    if _IN_FLIGHT.get(org, 0) >= cap:
+        raise RateLimitedError(
+            f"org {org!r} already has {cap} requests running on this server; retry shortly",
+            retry_after_s=1,
+        )
+    _IN_FLIGHT[org] = _IN_FLIGHT.get(org, 0) + 1
+    try:
+        yield
+    finally:
+        left = _IN_FLIGHT[org] - 1
+        if left > 0:
+            _IN_FLIGHT[org] = left
+        else:
+            del _IN_FLIGHT[org]
 
 
 @dataclass(frozen=True, slots=True)

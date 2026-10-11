@@ -50,6 +50,10 @@ dependencies = [
   # stemmer collapses inflected forms (visited/visiting/visits → visit)
   # so triple-store matches across write/query verb tense.
   "snowballstemmer>=2.2",
+  # RE2 (linear-time, no backtracking) for caller-supplied regexes matched in
+  # Python: code.grep's line step and context.fetch. Same engine as ClickHouse's
+  # match(), so a pattern means the same thing in both places.
+  "google-re2>=1.1",
   # lemmagen3 (the English lemmatizer) is the `[lemma]` extra below, not a
   # core dep: it ships no wheel and compiles against Python.h, and a host
   # that only wants the `loom` CLI (`loom up`) may have no build toolchain.
@@ -188,6 +192,11 @@ exclude = ["tests/"]
 # Protocols.
 [[tool.mypy.overrides]]
 module = ["fastembed", "fastembed.*", "lemmagen3", "tiktoken", "tiktoken.*"]
+ignore_missing_imports = true
+
+# google-re2 ships no type information; server/core/caller_regex.py types its result as Any.
+[[tool.mypy.overrides]]
+module = ["re2"]
 ignore_missing_imports = true
 
 # The SDK's framework adapters: langgraph and strands are optional, so each adapter

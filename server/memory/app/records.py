@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 from fastapi import HTTPException
 
-from server.core.ch import CHClient, get_client
+from server.core.ch import CHClient, caller_shaped, get_client
 from server.core.datetimes import naive_utc_now
 from server.memory.api.models_records import (
     MemoryRecordConflictRow,
@@ -702,7 +702,9 @@ async def handle_memory_record_query(
     input: MemoryRecordQueryInput,
 ) -> MemoryRecordQueryOutput:
     sql, params = _build_record_query(input)
-    rows = await get_client().query_all(sql, params=params)
+    # the caller's filters shape the statement: the caller-shaped ceilings apply
+    with caller_shaped():
+        rows = await get_client().query_all(sql, params=params)
     ids = [str(r["record_id"]) for r in rows[: input.limit]]
     return MemoryRecordQueryOutput(
         rows=await _records_by_ids(input.org, input.namespace, ids),

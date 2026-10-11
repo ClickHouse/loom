@@ -490,13 +490,17 @@ def regex_shaped(pattern: str) -> bool:
     return bool(_REGEX_SHAPE_RE.search(pattern))
 
 
-def compile_fallback(pattern: str) -> re.Pattern[str] | None:
-    """The pattern as a regex when it is regex-shaped and valid, else None."""
+def compile_fallback(pattern: str, *, case_sensitive: bool = True) -> Any:
+    """The pattern as an RE2 regex (the engine the SQL step uses) when it is regex-shaped
+    and valid, else None."""
+    from server.core.caller_regex import compile_caller_regex
+    from server.core.errors import ValidationError
+
     if not regex_shaped(pattern):
         return None
     try:
-        return re.compile(pattern)
-    except re.error:
+        return compile_caller_regex(pattern, case_sensitive=case_sensitive)
+    except ValidationError:
         return None
 
 

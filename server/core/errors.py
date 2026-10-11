@@ -106,6 +106,17 @@ class OverloadedError(LoomServerError):
         super().__init__(message, retry_after_s=retry_after_s)
 
 
+class RateLimitedError(LoomServerError):
+    """429 — the caller is over one of its admission limits (the org's in-flight
+    requests); `retry_after_s` is the hint the SDK's retry layer honours."""
+
+    code = "RATE_LIMITED"
+    status_code = 429
+
+    def __init__(self, message: str = "", *, retry_after_s: int = 1) -> None:
+        super().__init__(message, retry_after_s=retry_after_s)
+
+
 class BackendUnavailableError(LoomServerError):
     """503 — ClickHouse could not be reached after the bounded reconnect.
 

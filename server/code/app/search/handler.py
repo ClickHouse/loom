@@ -37,12 +37,22 @@ from server.code.app.spans import (
 )
 from server.code.domain import deadline as code_deadline
 from server.code.store.index import CodeRepo
+from server.core.ch import caller_shaped
 from server.settings import settings
 
 logger = logging.getLogger(__name__)
 
 
 async def handle_code_search(input: CodeSearchInput) -> CodeSearchOutput:
+    """code.search. A pattern or path globs put the caller's own expression into the
+    scans, so such a search runs under the caller-shaped ClickHouse ceilings."""
+    if not (input.pattern or input.path_globs or input.exclude_globs):
+        return await _code_search(input)
+    with caller_shaped():
+        return await _code_search(input)
+
+
+async def _code_search(input: CodeSearchInput) -> CodeSearchOutput:
     require_code_intel()
     # Several namespaces: each authorized, the single-namespace search run per namespace, the
     # ranks interleaved under one budget and one deadline. Unset: the single-namespace search.
