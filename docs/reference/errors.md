@@ -551,6 +551,10 @@ Raised in `server/code/app/repo_admin.py`.
 
 Raised in `server/identity/app/grants.py`, `server/identity/app/namespace_membership.py`.
 
+#### `SANDBOX_UNAVAILABLE`
+
+Raised in `server/code/app/repo_admin.py`.
+
 #### `SCHEMA_ACTIVE`
 
 Raised in `server/memory/app/records.py`.

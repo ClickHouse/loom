@@ -125,6 +125,10 @@ Source: `server/settings/_code.py`
 | `LOOM_CODE_BOOTSTRAP_FILES_PER_PASS` | `int` | `400` | Files indexed per pass while a new entry's initial index builds; the cursor persists in code_index_state (400 ≈ 1 min at the live rate). |
 | `LOOM_CODE_REPOS_REFRESH_SECONDS` | `int` | `30` | Seconds between re-reads of loom.code_repos. |
 | `LOOM_CODE_BOOTSTRAP_CLONE_TIMEOUT_S` | `float` | `1800.0` | Seconds a bare clone may take before the worker gives up for the pass and retries next pass. |
+| `LOOM_CODE_SANDBOX_CPU_SECONDS` | `int` | `7200` | Limits for each process of a sandboxed repository job (clone, fetch, dependency install, compiler-tier harness; code/app/index/sandbox.py). CPU seconds a process may use. |
+| `LOOM_CODE_SANDBOX_MEMORY_MB` | `int` | `16384` | Address space a process may map, in MiB. |
+| `LOOM_CODE_SANDBOX_MAX_PIDS` | `int` | `2048` | Processes and threads the job's user may run at once. |
+| `LOOM_CODE_SANDBOX_MAX_FILE_MB` | `int` | `32768` | Largest file a process may write, in MiB (a pack or index.scip). |
 | `LOOM_CODE_GIT_DIR` | `str` | `''` | Bare clone the ingest worker fetches into (created by `loom code init`) and its remote. Empty = derived from code_repo: `var/code_repos/<name>.git` and `https://github.com/<owner>/<name>.git`. |
 | `LOOM_CODE_GIT_REMOTE` | `str` | `''` | The scalar entry's fetch remote; empty = `https://github.com/<owner>/<name>.git`. |
 | `LOOM_CODE_GIT_BRANCH` | `str` | `'main'` | The scalar entry's branch: the one the ingest worker fetches and indexes. |
