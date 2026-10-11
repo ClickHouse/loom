@@ -15,6 +15,8 @@ between are made here, once:
   the restricted-access audit row and the first-write registration.
 - `policy`: the history policy gate on the authorized identity (raises
   PolicyForbiddenError).
+- `read_scope`: the read scope (token ceiling and pin, narrowed by the
+  request), resolved once and bound for the handler's store reads.
 - `traffic_class` and `rate_limit`: availability controls. Both FAIL OPEN on
   their own errors — an unclassifiable call is `interactive`, a limiter that
   raises admits the call — and each failure is counted and logged once per
@@ -158,6 +160,52 @@ async def policy(
         **{k: str(getattr(input_obj, k, None) or "-") for k in ("agent", "user_id", "session_id")},
     }
     await gate(op, identity, raw_args, request_id=request_id)
+
+
+def read_scope(op: Operation, auth: AuthInfo | None, input_obj: Any) -> Any:
+    """Resolve the call's read scope from the token and the validated input and
+    bind it for the request (`server.identity.domain.read_scope`). Every store
+    reader that returns memory rows requires it. A refusal (a body user the
+    token is not pinned to, a missing user, a `*` under a narrowed scope) is
+    bound too: a read op (`SCOPED_OPS`) is refused with it here, any other op
+    by its first read, so a write is not refused for a body the read rules do
+    not fit.
+
+    Returns the input the handler runs with: a scoped read names the user
+    (and session) its scope binds. Raises AuthInsufficientError (or
+    IdentityIncompleteError) for a scoped read that does not resolve, and
+    AuthInsufficientError when the token bounds reads below the namespace
+    and the op cannot keep its answer inside that bound."""
+    from server.core.errors import AuthInsufficientError
+    from server.identity.domain.read_scope import (
+        SCOPED_OPS,
+        bind_request_read_filters,
+        honours_read_scope,
+        resolve_read_filters,
+        with_read_identity,
+    )
+
+    try:
+        result: Any = resolve_read_filters(
+            requested=getattr(input_obj, "read_scope", None),
+            user_id=getattr(input_obj, "user_id", None),
+            session_id=getattr(input_obj, "session_id", None),
+            auth=auth,
+        )
+        narrowed = result.narrowed
+    except (AuthInsufficientError, IdentityIncompleteError) as e:
+        result, narrowed = e, True
+    bind_request_read_filters(auth, result)
+    if narrowed and not honours_read_scope(op.name):
+        raise AuthInsufficientError(
+            f"{op.name} cannot keep its answer inside this token's read scope "
+            "(read_scope / read_user_id); call it with a namespace-scoped token"
+        )
+    if op.name not in SCOPED_OPS:
+        return input_obj
+    if isinstance(result, Exception):
+        raise result  # a read whose scope does not resolve is refused here
+    return with_read_identity(input_obj, result)
 
 
 def _fail_open(gate: str, op_name: str, err: BaseException) -> None:

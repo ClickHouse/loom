@@ -320,7 +320,7 @@ async def test_uncited_or_hedged_answers_are_not_stored(prec_env) -> None:
     assert prec_env.inserts == []
 
 
-def test_ask_shape_excludes_identity_unless_the_scope_narrows_to_it() -> None:
+def test_ask_shape_carries_the_user_and_session_the_read_filters_on() -> None:
     from server.memory.app.ask.handler import ask_shape_sha256
     from tests.unit.test_memory_ask import _input
 
@@ -328,7 +328,9 @@ def test_ask_shape_excludes_identity_unless_the_scope_narrows_to_it() -> None:
     assert base == ask_shape_sha256(
         _input(query="something else", org="o2", namespace="n2", run_id="r1")
     )
-    assert base == ask_shape_sha256(_input(user_id="alice"))
+    # A body user filters the read under namespace scope too: its own precedent.
+    assert base != ask_shape_sha256(_input(user_id="alice"))
+    assert ask_shape_sha256(_input(user_id="alice")) != ask_shape_sha256(_input(user_id="bob"))
     assert base != ask_shape_sha256(_input(top_k=7))
     assert base != ask_shape_sha256(_input(search_mode="semantic"))
     own = ask_shape_sha256(_input(read_scope="own_user", user_id="alice"))

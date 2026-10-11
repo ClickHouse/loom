@@ -153,7 +153,11 @@ loom mint-token --subject support-bot --org acme --namespaces support --roles wr
 ```
 
 A scoped read without the `user_id` / `session_id` it binds to is 400
-`IDENTITY_INCOMPLETE`, never silently widened.
+`IDENTITY_INCOMPLETE`, never silently widened. A token scoped below the namespace binds
+every op's reads, not only the ones that take `read_scope` in the body: `user_id="*"` is
+refused, another user's `memory_id` reads as not found, and an op that cannot bound its
+answer to the user (the entity graph, conversation reads, exports, admin ops) is 403
+`AUTH_INSUFFICIENT` ([read scope inside a namespace](../concepts/identities-and-namespaces.md#read-scope-inside-a-namespace)).
 
 ## Give and take away grants
 

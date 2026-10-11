@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any
 
 import server.memory.store as store
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.domain import rollback as svc
 from server.memory.store.inserts import insert_memory_versions
 
@@ -131,6 +132,7 @@ async def apply_rollback(
             ),
             a.memory_key,
             fresh=True,
+            scope=WHOLE_NAMESPACE,
         )
         if head is None or head.tombstoned_at is not None:
             continue

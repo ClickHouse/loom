@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_crud import (
     MemoryRestoreInput,
     MemoryRestoreOutput,
@@ -37,7 +38,12 @@ async def _restore_superseded(
         session_id=input.session_id,
     )
     existing = await memory_repo.get_by_key(
-        identity, input.memory_key, include_tombstoned=True, fresh=True, strong=True
+        identity,
+        input.memory_key,
+        include_tombstoned=True,
+        fresh=True,
+        strong=True,
+        scope=WHOLE_NAMESPACE,
     )
     if existing is None or str(getattr(existing, "status", "")) != "superseded":
         return MemoryRestoreOutput(
@@ -274,6 +280,7 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
         include_tombstoned=True,
         fresh=True,
         strong=True,  # restore follows delete; read the latest head (no miss)
+        scope=WHOLE_NAMESPACE,
     )
     if existing is None or existing.tombstoned_at is None:
         # Race: tombstone vanished between the SELECT above and here.

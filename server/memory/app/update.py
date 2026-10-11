@@ -16,6 +16,7 @@ from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value as _content_sha256
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.embedding import get_embedder
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_crud import (
     MemoryUpdateByIdInput,
     MemoryUpdateByIdOutput,
@@ -141,6 +142,7 @@ async def handle_memory_update_by_id(input: MemoryUpdateByIdInput) -> MemoryUpda
         fresh=True,
         # With a hash precondition the read must be of the latest version.
         strong=True,  # always — the head feeds a write
+        scope=WHOLE_NAMESPACE,
     )
     if existing is None:
         return MemoryUpdateByIdOutput(updated=False)
@@ -202,6 +204,7 @@ async def handle_memory_update(input: MemoryUpdateInput) -> MemoryUpdateOutput:
         org=input.org,
         fresh=True,
         strong=True,  # always — the head feeds a write
+        scope=WHOLE_NAMESPACE,
     )
     if existing is None:
         return MemoryUpdateOutput(updated=False, memory_key=input.memory_key, reason="not_found")
@@ -571,7 +574,7 @@ async def _update_live_row(
         existing.memory_key,
     ):
         head = await memory_repo.get_by_id(
-            str(existing.memory_id), org=input.org, fresh=True, strong=True
+            str(existing.memory_id), org=input.org, fresh=True, strong=True, scope=WHOLE_NAMESPACE
         )
         if head is None:
             return MemoryUpdateByIdOutput(updated=False)

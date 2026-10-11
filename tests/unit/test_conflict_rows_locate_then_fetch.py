@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.store import conflicts as conflicts_repo
 
 
@@ -57,7 +58,9 @@ async def test_the_locate_statement_reads_no_value_and_the_fetch_reads_no_final(
         {"memory_id": "a", "version": 20, "value": '"one"'},
     ]
     ch = _CH(located, values)
-    rows = await conflicts_repo.list_conflicted("o", "n", before_version=99, limit=50, ch=ch)
+    rows = await conflicts_repo.list_conflicted(
+        "o", "n", before_version=99, limit=50, ch=ch, scope=WHOLE_NAMESPACE
+    )
     assert len(ch.calls) == 2
     locate_sql, locate_params = ch.calls[0]
     fetch_sql, fetch_params = ch.calls[1]
@@ -79,7 +82,7 @@ async def test_the_locate_statement_reads_no_value_and_the_fetch_reads_no_final(
 @pytest.mark.asyncio
 async def test_an_empty_queue_is_one_statement() -> None:
     ch = _CH([], [])
-    assert await conflicts_repo.list_conflicted("o", "n", ch=ch) == []
+    assert await conflicts_repo.list_conflicted("o", "n", ch=ch, scope=WHOLE_NAMESPACE) == []
     assert len(ch.calls) == 1
 
 
@@ -97,7 +100,7 @@ async def test_a_row_whose_value_vanished_between_the_statements_is_null_not_los
         }
     ]
     ch = _CH(located, [])
-    (row,) = await conflicts_repo.list_conflicted("o", "n", ch=ch)
+    (row,) = await conflicts_repo.list_conflicted("o", "n", ch=ch, scope=WHOLE_NAMESPACE)
     assert row["memory_key"] == "k1" and row["value"] is None
 
 
@@ -124,6 +127,6 @@ async def test_two_identities_sharing_a_key_and_version_each_get_their_own_value
         {"memory_id": "m-a", "version": 7, "value": '"a"'},
     ]
     ch = _CH(located, values)
-    rows = await conflicts_repo.list_conflicted("o", "n", ch=ch)
+    rows = await conflicts_repo.list_conflicted("o", "n", ch=ch, scope=WHOLE_NAMESPACE)
     assert ch.calls[1][1]["pairs"] == [("m-a", 7), ("m-b", 7)]
     assert [(r["memory_id"], r["value"]) for r in rows] == [("m-a", '"a"'), ("m-b", '"b"')]

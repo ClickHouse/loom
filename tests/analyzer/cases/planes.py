@@ -18,6 +18,7 @@ import types
 import typing
 from typing import Any
 
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from tests.analyzer.cases._common import AGENT, NS, ORG, SMALL_VEC, rows_by_substring
 from tests.analyzer.corpus import Case, RecordingCH, is_drive_defect
 
@@ -482,7 +483,7 @@ async def _ledgers(ch: RecordingCH, c: dict[str, Any]) -> None:
     await C.allowlist_exists(ORG, NS, "k1", "k2", ch=ch)
     await C.allowlist_list(ORG, NS, ch=ch)
     await C.allowlist_remove(ORG, NS, "k1", "k2", "note", _DT, ch=ch)
-    await C.list_conflicted(ORG, NS, before_version=5 if f else None, ch=ch)
+    await C.list_conflicted(ORG, NS, before_version=5 if f else None, ch=ch, scope=WHOLE_NAMESPACE)
     await C.lookup_keys_for_ids(ORG, [_UUID], ch=ch)
     await C.lookup_target(ORG, _UUID, ch=ch)
     await C.mark_active_by_ids(ORG, [_UUID], ch=ch)
@@ -586,6 +587,7 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
         until=_DT if f else None,
         order="asc" if f else "desc",
         ch=ch,
+        scope=WHOLE_NAMESPACE,
     )
 
 

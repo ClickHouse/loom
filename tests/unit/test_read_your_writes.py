@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory import store as memory_repo
 
 _ROW: dict[str, Any] = {
@@ -44,7 +45,7 @@ def _ident() -> memory_repo.Identity:
 @pytest.mark.asyncio
 async def test_miss_re_reads_once_with_sequential_consistency() -> None:
     ch = _CH([None, _ROW])
-    row = await memory_repo.get_by_key(_ident(), "k", ch=ch, fresh=True)  # type: ignore[arg-type]
+    row = await memory_repo.get_by_key(_ident(), "k", ch=ch, fresh=True, scope=WHOLE_NAMESPACE)  # type: ignore[arg-type]
     assert row is not None and row.memory_key == "k"
     assert len(ch.sqls) == 2
     assert "select_sequential_consistency" not in ch.sqls[0]
@@ -59,25 +60,34 @@ async def test_miss_re_reads_once_with_sequential_consistency() -> None:
 @pytest.mark.asyncio
 async def test_hit_never_pays_and_a_double_miss_is_a_miss() -> None:
     ch = _CH([_ROW])
-    assert await memory_repo.get_by_key(_ident(), "k", ch=ch, fresh=True) is not None  # type: ignore[arg-type]
+    assert (
+        await memory_repo.get_by_key(_ident(), "k", ch=ch, fresh=True, scope=WHOLE_NAMESPACE)
+        is not None
+    )  # type: ignore[arg-type]
     assert len(ch.sqls) == 1
 
     ch = _CH([None, None])
-    assert await memory_repo.get_by_key(_ident(), "k", ch=ch, fresh=True) is None  # type: ignore[arg-type]
+    assert (
+        await memory_repo.get_by_key(_ident(), "k", ch=ch, fresh=True, scope=WHOLE_NAMESPACE)
+        is None
+    )  # type: ignore[arg-type]
     assert len(ch.sqls) == 2  # exactly one retry, never a loop
 
 
 @pytest.mark.asyncio
 async def test_not_fresh_and_flag_off_do_not_retry(monkeypatch: pytest.MonkeyPatch) -> None:
     ch = _CH([None, _ROW])
-    assert await memory_repo.get_by_key(_ident(), "k", ch=ch) is None  # type: ignore[arg-type]
+    assert await memory_repo.get_by_key(_ident(), "k", ch=ch, scope=WHOLE_NAMESPACE) is None  # type: ignore[arg-type]
     assert len(ch.sqls) == 1
 
     from server.settings import settings
 
     monkeypatch.setattr(settings, "ch_read_your_writes", False)
     ch = _CH([None, _ROW])
-    assert await memory_repo.get_by_key(_ident(), "k", ch=ch, fresh=True) is None  # type: ignore[arg-type]
+    assert (
+        await memory_repo.get_by_key(_ident(), "k", ch=ch, fresh=True, scope=WHOLE_NAMESPACE)
+        is None
+    )  # type: ignore[arg-type]
     assert len(ch.sqls) == 1
 
 
@@ -88,7 +98,9 @@ async def test_by_id_lookup_retries_the_same_way() -> None:
     # read under FINAL by that key. The fake answers: phase-1 miss, phase-1
     # retry hit, phase-2 hit.
     ch = _CH([None, _ROW, _ROW])
-    row = await memory_repo.get_by_id(_ROW["memory_id"], org="o", ch=ch, fresh=True)  # type: ignore[arg-type]
+    row = await memory_repo.get_by_id(
+        _ROW["memory_id"], org="o", ch=ch, fresh=True, scope=WHOLE_NAMESPACE
+    )  # type: ignore[arg-type]
     assert row is not None and len(ch.sqls) == 3
     assert "FROM loom.memory\n" in ch.sqls[0] and "FINAL" not in ch.sqls[0]
     assert "select_sequential_consistency = 1" in ch.sqls[1]
@@ -105,7 +117,10 @@ async def test_by_id_lookup_retries_the_same_way() -> None:
         assert pred in ch.sqls[2], pred
     # a key that resolves to no live row (tombstoned, or a lagging replica) is None, no third read
     ch = _CH([_ROW, None])
-    assert await memory_repo.get_by_id(_ROW["memory_id"], org="o", ch=ch) is None  # type: ignore[arg-type]
+    assert (
+        await memory_repo.get_by_id(_ROW["memory_id"], org="o", ch=ch, scope=WHOLE_NAMESPACE)
+        is None
+    )  # type: ignore[arg-type]
     assert len(ch.sqls) == 2
 
 
@@ -125,20 +140,26 @@ async def test_bulk_read_retries_once_when_some_keys_are_missing(
 ) -> None:
     row_b = {**_ROW, "memory_key": "b", "memory_id": "22222222-2222-2222-2222-222222222222"}
     ch = _CHMany([[_ROW], [_ROW, row_b]])
-    rows = await memory_repo.get_many_by_keys(_ident(), ["k", "b"], ch=ch)  # type: ignore[arg-type]
+    rows = await memory_repo.get_many_by_keys(_ident(), ["k", "b"], ch=ch, scope=WHOLE_NAMESPACE)  # type: ignore[arg-type]
     assert sorted(r.memory_key for r in rows) == ["b", "k"]
     assert len(ch.sqls) == 2 and "select_sequential_consistency = 1" in ch.sqls[1]
 
     # every key present first time → one query; nothing asked → no query
     ch = _CHMany([[_ROW, row_b]])
-    assert len(await memory_repo.get_many_by_keys(_ident(), ["k", "b"], ch=ch)) == 2  # type: ignore[arg-type]
+    assert (
+        len(await memory_repo.get_many_by_keys(_ident(), ["k", "b"], ch=ch, scope=WHOLE_NAMESPACE))
+        == 2
+    )  # type: ignore[arg-type]
     assert len(ch.sqls) == 1
 
     from server.settings import settings
 
     monkeypatch.setattr(settings, "ch_read_your_writes", False)
     ch = _CHMany([[_ROW]])
-    assert len(await memory_repo.get_many_by_keys(_ident(), ["k", "b"], ch=ch)) == 1  # type: ignore[arg-type]
+    assert (
+        len(await memory_repo.get_many_by_keys(_ident(), ["k", "b"], ch=ch, scope=WHOLE_NAMESPACE))
+        == 1
+    )  # type: ignore[arg-type]
     assert len(ch.sqls) == 1
 
 
@@ -170,11 +191,15 @@ async def test_strong_reads_with_sequential_consistency_first() -> None:
     miss, so the retry never fires; a read that feeds a write asks for
     sequential consistency up front — one query, the setting on it."""
     ch = _CH([_ROW])
-    row = await memory_repo.get_by_key(_ident(), "k", ch=ch, fresh=True, strong=True)  # type: ignore[arg-type]
+    row = await memory_repo.get_by_key(
+        _ident(), "k", ch=ch, fresh=True, strong=True, scope=WHOLE_NAMESPACE
+    )  # type: ignore[arg-type]
     assert row is not None and len(ch.sqls) == 1
     assert ch.sqls[0].rstrip().endswith("SETTINGS select_sequential_consistency = 1")
     ch = _CH([_ROW, _ROW])
-    await memory_repo.get_by_id(_ROW["memory_id"], org="o", ch=ch, strong=True)  # type: ignore[arg-type]
+    await memory_repo.get_by_id(
+        _ROW["memory_id"], org="o", ch=ch, strong=True, scope=WHOLE_NAMESPACE
+    )  # type: ignore[arg-type]
     # both phases of the by-id read carry the setting
     assert len(ch.sqls) == 2 and all("select_sequential_consistency = 1" in q for q in ch.sqls)
 
@@ -185,7 +210,7 @@ async def test_strong_respects_the_flag(monkeypatch: pytest.MonkeyPatch) -> None
 
     monkeypatch.setattr(settings, "ch_read_your_writes", False)
     ch = _CH([_ROW])
-    await memory_repo.get_by_key(_ident(), "k", ch=ch, strong=True)  # type: ignore[arg-type]
+    await memory_repo.get_by_key(_ident(), "k", ch=ch, strong=True, scope=WHOLE_NAMESPACE)  # type: ignore[arg-type]
     assert len(ch.sqls) == 1 and "select_sequential_consistency" not in ch.sqls[0]
 
 
@@ -238,11 +263,11 @@ async def test_bulk_read_session_wildcard_drops_the_session_axis() -> None:
     the identity, the way agent="*" already fans out across agents."""
     ch = _CHMany([[_ROW]])
     ident = memory_repo.Identity(org="o", namespace="n", agent="a", user_id="u", session_id="*")
-    rows = await memory_repo.get_many_by_keys(ident, ["k"], ch=ch)  # type: ignore[arg-type]
+    rows = await memory_repo.get_many_by_keys(ident, ["k"], ch=ch, scope=WHOLE_NAMESPACE)  # type: ignore[arg-type]
     assert [r.memory_key for r in rows] == ["k"]
     assert "session_id = {sid:String}" not in ch.sqls[0]
     ch = _CHMany([[_ROW]])
-    await memory_repo.get_many_by_keys(_ident(), ["k"], ch=ch)  # type: ignore[arg-type]
+    await memory_repo.get_many_by_keys(_ident(), ["k"], ch=ch, scope=WHOLE_NAMESPACE)  # type: ignore[arg-type]
     assert "session_id = {sid:String}" in ch.sqls[0]
 
 
@@ -250,7 +275,7 @@ async def test_bulk_read_session_wildcard_drops_the_session_axis() -> None:
 async def test_bulk_read_user_wildcard_drops_the_user_axis() -> None:
     ch = _CHMany([[_ROW]])
     ident = memory_repo.Identity(org="o", namespace="n", agent="*", user_id="*", session_id="*")
-    await memory_repo.get_many_by_keys(ident, ["k"], ch=ch)  # type: ignore[arg-type]
+    await memory_repo.get_many_by_keys(ident, ["k"], ch=ch, scope=WHOLE_NAMESPACE)  # type: ignore[arg-type]
     sql = ch.sqls[0]
     assert "user_id = {uid:String}" not in sql and "session_id = {sid:String}" not in sql
     assert "agent = {agent:String}" not in sql

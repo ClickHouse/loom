@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_admin import (
     MemoryAgentsListInput,
     MemoryAgentsListOutput,
@@ -94,7 +95,9 @@ async def handle_memory_outcome(input: MemoryOutcomeInput) -> MemoryOutcomeOutpu
             user_id=input.user_id or "-",
             session_id="-",
         )
-        row = await memory_repo.get_by_key(ident, input.memory_key, fresh=True)
+        row = await memory_repo.get_by_key(
+            ident, input.memory_key, fresh=True, scope=WHOLE_NAMESPACE
+        )
         if row is None:
             return MemoryOutcomeOutput(recorded=False, evidence_count_after=0)
         memory_id = str(row.memory_id)
@@ -396,8 +399,12 @@ async def _open_conflict_for_edge(org: str, namespace: str, from_key: str, to_ke
         org=org, namespace=namespace, agent="*", user_id="-", session_id="-"
     )
     try:
-        a = await memory_repo.get_by_key(ident, from_key, fresh=True, strong=True)
-        b = await memory_repo.get_by_key(ident, to_key, fresh=True, strong=True)
+        a = await memory_repo.get_by_key(
+            ident, from_key, fresh=True, strong=True, scope=WHOLE_NAMESPACE
+        )
+        b = await memory_repo.get_by_key(
+            ident, to_key, fresh=True, strong=True, scope=WHOLE_NAMESPACE
+        )
     except Exception as e:  # noqa: BLE001 — the edge is kept
         log.warning("memory.link contradicts: lookup failed (%s); edge kept", e)
         return False

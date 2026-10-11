@@ -70,7 +70,9 @@ def _existing(status: str = "active") -> Any:
 
 
 def _wire(monkeypatch: pytest.MonkeyPatch, ch: _CH, existing: Any) -> None:
-    async def _get_by_id(memory_id: str, *, org: str | None = None, ch: Any = None) -> Any:
+    async def _get_by_id(
+        memory_id: str, *, org: str | None = None, ch: Any = None, scope: Any = None
+    ) -> Any:
         return existing
 
     def _build(row: Any, **overrides: Any) -> dict[str, Any]:

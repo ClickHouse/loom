@@ -5,8 +5,10 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from server.auth.context import current_auth
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value_json as _sha256
+from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, request_read_filters
 from server.memory.api.models_conflicts import (
     ConflictsAllowlistListInput,
     ConflictsAllowlistListOutput,
@@ -26,7 +28,7 @@ from server.memory.api.models_conflicts import (
 from server.operations.read_projection import project_rows
 
 _COUNT_TTL_S = 60.0
-_count_cache: dict[tuple[str, str], tuple[float, int]] = {}
+_count_cache: dict[tuple[str, str, ReadFilters], tuple[float, int]] = {}
 
 
 def reset_conflicts_count_cache() -> None:
@@ -34,13 +36,13 @@ def reset_conflicts_count_cache() -> None:
     _count_cache.clear()
 
 
-async def _conflicted_count_cached(repo: Any, org: str, namespace: str) -> int:
-    key = (org, namespace)
+async def _conflicted_count_cached(repo: Any, org: str, namespace: str, scope: ReadFilters) -> int:
+    key = (org, namespace, scope)
     hit = _count_cache.get(key)
     now = time.monotonic()
     if hit is not None and now - hit[0] < _COUNT_TTL_S:
         return hit[1]
-    n = int(await repo.count_conflicted(org, namespace))
+    n = int(await repo.count_conflicted(org, namespace, scope=scope))
     if len(_count_cache) > 1024:
         _count_cache.clear()
     _count_cache[key] = (now, n)
@@ -53,21 +55,23 @@ async def handle_conflicts_list(
     from server.memory.store import conflicts as conflicts_repo
     from server.memory.store import parse_memory_value
 
+    scope = request_read_filters(current_auth())
     if input.keys_only:
         # Keys for the cards' chips, no value column.
-        keys = await conflicts_repo.conflicted_keys(input.org, input.namespace)
+        keys = await conflicts_repo.conflicted_keys(input.org, input.namespace, scope=scope)
         return ConflictsListOutput(rows=[], keys=keys)
     if input.count_only:
         # The sidebar badge wants a number every minute from every open tab. One count per (org,
         # namespace) per `_COUNT_TTL_S` serves them all, and the count reads no value column —
         # reading the rows costs ~33 MB per tick on a large namespace.
-        total = await _conflicted_count_cached(conflicts_repo, input.org, input.namespace)
+        total = await _conflicted_count_cached(conflicts_repo, input.org, input.namespace, scope)
         return ConflictsListOutput(rows=[], total=total)
     rows = await conflicts_repo.list_conflicted(
         input.org,
         input.namespace,
         before_version=input.before_version,
         limit=input.limit + 1,
+        scope=scope,
     )
     has_next = len(rows) > input.limit
     if has_next:
@@ -226,14 +230,16 @@ async def _peers_in_scope(input: ConflictsResolveInput, peers: list[str]) -> lis
     from server.auth.authz import row_in_scope
     from server.operations.base import Role
 
-    target = await memory_repo.get_by_id(input.memory_id, org=input.org, fresh=True)
+    target = await memory_repo.get_by_id(
+        input.memory_id, org=input.org, fresh=True, scope=WHOLE_NAMESPACE
+    )
     if target is None or target.namespace != input.namespace:
         return None
     if not await row_in_scope(input.org, target.namespace, Role.ADMIN):
         return None
     live: list[str] = []
     for peer_id in peers:
-        row = await memory_repo.get_by_id(peer_id, org=input.org, fresh=True)
+        row = await memory_repo.get_by_id(peer_id, org=input.org, fresh=True, scope=WHOLE_NAMESPACE)
         if row is None:
             continue
         if not await row_in_scope(input.org, row.namespace, Role.ADMIN):
@@ -328,8 +334,9 @@ async def handle_conflicts_resolve(
                     )
                 await conflicts_repo.allowlist_insert(allowlist_rows)
 
-    # The badge's cached count is stale now.
-    _count_cache.pop((input.org, input.namespace), None)
+    # The badge's cached counts (one per read scope) are stale now.
+    for key in [k for k in _count_cache if k[:2] == (input.org, input.namespace)]:
+        _count_cache.pop(key, None)
     return ConflictsResolveOutput(
         resolved=True,
         decision=input.decision,

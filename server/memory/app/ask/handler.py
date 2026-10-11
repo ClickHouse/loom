@@ -584,13 +584,14 @@ _ASK_SHAPE_EXCLUDE = frozenset({"query", "org", "namespace", "run_id", "preceden
 
 
 def ask_shape_sha256(input: MemoryAskInput) -> str:
-    """sha256 over the ask's non-default, non-identity fields. `user_id` and
-    `session_id` stay in the shape only when the read scope narrows to them,
-    so a namespace-scoped precedent is shared by the namespace's readers and
-    an own_user one never crosses users. The identity hashed is the one the
-    read runs under: the token's read filters are pinned first, so a token
-    bound to one end user never shares a precedent with another user's token
-    whatever the body names."""
+    """sha256 over the ask's non-default, non-identity fields. A `user_id` or
+    `session_id` the read filters on is part of the shape, whatever the read
+    scope: a namespace-scoped ask that names no user shares its precedent
+    with the namespace's readers, and one filtered to a user (by the body or
+    by the token) never shares it with another user. The identity hashed is
+    the one the read runs under: the token's read filters are pinned first,
+    so a token bound to one end user never shares a precedent with another
+    user's token whatever the body names."""
     import hashlib
     import json
 
@@ -599,8 +600,8 @@ def ask_shape_sha256(input: MemoryAskInput) -> str:
 
     input, _ = pin_read_filters(input, current_auth())
     exclude = set(_ASK_SHAPE_EXCLUDE)
-    if input.read_scope == "namespace":
-        exclude |= {"user_id", "session_id"}
+    # Only a user or session the read filters on is part of the shape.
+    exclude |= {f for f in ("user_id", "session_id") if getattr(input, f) in (None, "-")}
     shape = input.model_dump(exclude=exclude, exclude_defaults=True)
     canonical = json.dumps(shape, sort_keys=True, default=str, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

@@ -25,6 +25,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.domain.proposal_policy import ProposalPolicy, parse_policy
 from server.memory.store.inserts import insert_memory_versions
 
@@ -162,7 +163,9 @@ async def decide(
     ident = memory_repo.Identity(
         org=org, namespace=namespace, agent="*", user_id="-", session_id="-"
     )
-    rows = await memory_repo.get_many_by_keys(ident, wanted, ch=ch, strong=True)
+    rows = await memory_repo.get_many_by_keys(
+        ident, wanted, ch=ch, strong=True, scope=WHOLE_NAMESPACE
+    )
     by_key = {r.memory_key: r for r in rows}
     to_write: list[dict[str, Any]] = []
     decided: list[Any] = []

@@ -106,7 +106,7 @@ async def test_apply_reinstates_the_historical_row_and_tombstones_the_newborn(
         assert (org, ns, pairs) == ("o", "n", [("old", 200)])
         return [_row("old", 200, "as of T")]
 
-    async def _head(identity: object, key: str, *, fresh: bool) -> store.MemoryRow:
+    async def _head(identity: object, key: str, *, fresh: bool, scope: object) -> store.MemoryRow:
         assert key == "new" and fresh
         return _row("new", 300, "born later")
 

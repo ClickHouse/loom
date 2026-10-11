@@ -13,6 +13,8 @@ from typing import Any
 
 import pytest
 
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
+
 pytestmark = pytest.mark.skipif(
     not os.environ.get("LOOM_CH_HOST"),
     reason="LOOM_CH_HOST not set — integration tests require a live CH",
@@ -122,7 +124,7 @@ async def test_memory_repo_set_get_delete_roundtrip(ch: Any, identity: Any) -> N
     )
     assert version > 0
 
-    fetched = await memory_repo.get_by_key(identity, "deploy_window", ch=ch)
+    fetched = await memory_repo.get_by_key(identity, "deploy_window", ch=ch, scope=WHOLE_NAMESPACE)
     assert fetched is not None
     assert fetched.value == "Tue/Thu, never Friday"
     assert fetched.pinned is True
@@ -131,7 +133,7 @@ async def test_memory_repo_set_get_delete_roundtrip(ch: Any, identity: Any) -> N
 
     await _tombstone_memory(ch, identity, "deploy_window")
 
-    gone = await memory_repo.get_by_key(identity, "deploy_window", ch=ch)
+    gone = await memory_repo.get_by_key(identity, "deploy_window", ch=ch, scope=WHOLE_NAMESPACE)
     assert gone is None
 
 
@@ -155,6 +157,7 @@ async def test_memory_repo_list_filters(ch: Any, identity: Any) -> None:
         order_by="memory_key_asc",
         limit=10,
         ch=ch,
+        scope=WHOLE_NAMESPACE,
     )
     assert len(semantic) == 2
     assert all(r.memory_type == "semantic" for r in semantic)
@@ -173,6 +176,7 @@ async def test_memory_repo_get_many_by_keys(ch: Any, identity: Any) -> None:
         identity,
         ["a", "b", "missing"],
         ch=ch,
+        scope=WHOLE_NAMESPACE,
     )
     keys = sorted(r.memory_key for r in out)
     assert keys == ["a", "b"]

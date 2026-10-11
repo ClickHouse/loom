@@ -25,6 +25,7 @@ from typing import Any
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value as _content_sha256
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_observe import (
     ObserveCrystallizeInput,
     ObserveCrystallizeOutput,
@@ -428,7 +429,7 @@ async def handle_observe_crystallize(
         # get_by_key returns the full row; build_memory_version_row needs
         # every column to mirror forward. The bulk get_many_by_keys projects
         # a subset and would zero tags/entities on the rewrite.
-        existing = await memory_repo.get_by_key(identity, key, fresh=True)
+        existing = await memory_repo.get_by_key(identity, key, fresh=True, scope=WHOLE_NAMESPACE)
         if existing is None:
             continue
         new_tags = list(existing.tags or [])

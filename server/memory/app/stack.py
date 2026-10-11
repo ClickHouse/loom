@@ -8,7 +8,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.auth.context import current_auth
 from server.core.ch import get_client
+from server.identity.domain.read_scope import request_read_filters, scope_and
 from server.memory.api.models_lifecycle import MemoryStackInput, MemoryStackOutput, _StackEntry
 
 log = logging.getLogger(__name__)
@@ -100,6 +102,15 @@ async def _stack_profile(input: MemoryStackInput, fill: _StackFill) -> None:
 
 async def _stack_pinned(ch: Any, input: MemoryStackInput, fill: _StackFill) -> None:
     """Section 2: pinned memories."""
+    params: dict[str, Any] = {
+        "org": input.org,
+        "ns": input.namespace,
+        "agent": input.agent,
+        "uid": input.user_id or "-",
+        "sid": input.session_id or "-",
+        "lim": int(input.pinned_limit),
+    }
+    scope = scope_and(request_read_filters(current_auth()), params)
     pinned_rows = await ch.query_all(
         """
         SELECT memory_key, memory_type, value, recall_count, last_recalled_at
@@ -114,17 +125,11 @@ async def _stack_pinned(ch: Any, input: MemoryStackInput, fill: _StackFill) -> N
           AND (expires_at IS NULL OR expires_at > now())
           AND status IN ('active', 'conflicted')
           AND sensitivity != 'high'
+          {scope}
         ORDER BY version DESC
         LIMIT {lim:UInt32}
-        """,
-        params={
-            "org": input.org,
-            "ns": input.namespace,
-            "agent": input.agent,
-            "uid": input.user_id or "-",
-            "sid": input.session_id or "-",
-            "lim": int(input.pinned_limit),
-        },
+        """.replace("{scope}", scope),
+        params=params,
     )
     for r in pinned_rows:
         val = _value_str(r.get("value"))
@@ -156,6 +161,16 @@ async def _stack_recent(ch: Any, input: MemoryStackInput, fill: _StackFill) -> s
     # Admit `medium` only when this pack's own query asks how to reach
     # someone; `high` never rides the stack.
     medium_ok = recent_recall_admits_medium(str(getattr(input, "seed_query", "") or ""))
+    params: dict[str, Any] = {
+        "org": input.org,
+        "ns": input.namespace,
+        "agent": input.agent,
+        "uid": input.user_id or "-",
+        "sid": input.session_id or "-",
+        "lim": int(input.recent_limit),
+        "medium_ok": 1 if medium_ok else 0,
+    }
+    scope = scope_and(request_read_filters(current_auth()), params)
     recent_rows = await ch.query_all(
         """
         SELECT memory_key, memory_type, value, recall_count,
@@ -173,19 +188,12 @@ async def _stack_recent(ch: Any, input: MemoryStackInput, fill: _StackFill) -> s
           AND (sensitivity != 'medium' OR {medium_ok:UInt8} = 1)
           AND pinned = 0
           AND recall_count > 0
+          {scope}
         ORDER BY (recall_count + evidence_count * 0.5) DESC,
                  coalesce(last_recalled_at, created_at) DESC
         LIMIT {lim:UInt32}
-        """,
-        params={
-            "org": input.org,
-            "ns": input.namespace,
-            "agent": input.agent,
-            "uid": input.user_id or "-",
-            "sid": input.session_id or "-",
-            "lim": int(input.recent_limit),
-            "medium_ok": 1 if medium_ok else 0,
-        },
+        """.replace("{scope}", scope),
+        params=params,
     )
     most_recent_excerpt = ""
     for r in recent_rows:

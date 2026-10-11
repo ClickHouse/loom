@@ -246,7 +246,8 @@ async def _call_tool(
     )
     refused = await _admission_refusal(call)
     if refused is not None:
-        return refused  # POLICY_FORBIDDEN or RATE_LIMITED
+        return refused  # POLICY_FORBIDDEN, AUTH_INSUFFICIENT (read scope) or RATE_LIMITED
+    input_obj = call.input_obj  # names the user a scoped read binds
 
     # The replay cache is read only for an admitted caller.
     replay, idem_scope, idem_body_hash = await _idempotency_gate(call, name, client_idem_key)
@@ -657,10 +658,12 @@ class _AdmittedCall:
 
 async def _admission_refusal(call: _AdmittedCall) -> dict[str, Any] | None:
     """Phase 6 of `_call_tool`: the traffic class, the history policy gate,
-    then the rate limiter — HTTP's order after authorization. Returns the
-    refusal response, or None to run the handler. The classifier and the
-    limiter FAIL OPEN (gates); the policy gate turns only
-    PolicyForbiddenError into a refusal."""
+    the read scope (which may rewrite `call.input_obj`), then the rate
+    limiter — HTTP's order after authorization. Returns the refusal
+    response, or None to run the handler. The classifier and the limiter
+    FAIL OPEN (gates); the policy gate turns only PolicyForbiddenError, and
+    the read-scope gate only AuthInsufficientError and
+    IdentityIncompleteError, into a refusal."""
     req_id, op, input_obj, arguments = call.req_id, call.op, call.input_obj, call.arguments
     auth, request_id, target = call.auth, call.request_id, call.target
     # Published for the ClickHouse settings composer, the ask handler's tier
@@ -690,6 +693,15 @@ async def _admission_refusal(call: _AdmittedCall) -> dict[str, Any] | None:
                 "structuredContent": e.to_detail(),
             },
         )
+    from server.core.errors import AuthInsufficientError, IdentityIncompleteError
+
+    try:
+        call.input_obj = gates.read_scope(op, auth, input_obj)
+    except (AuthInsufficientError, IdentityIncompleteError) as e:
+        _emit_mcp_event(
+            op.name, arguments, 0, success=False, error_code=e.code, request_id=request_id
+        )
+        return _ok(req_id, _refusal_result(e))
 
     rl = gates.rate_limit(op, auth, target, traffic_class)
     if rl is not None and not rl.allowed:

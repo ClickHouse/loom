@@ -14,9 +14,15 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from server.auth.context import current_auth
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.embedding import get_embedder
+from server.identity.domain.read_scope import (
+    WHOLE_NAMESPACE,
+    request_read_filters,
+    row_in_read_scope,
+)
 from server.memory.api.models_common import (
     SET_PEERS_MAX,
     MemorySetPeer,
@@ -71,11 +77,24 @@ def _count_write(namespace: str, outcome: str) -> None:
         pass
 
 
+def _peer_in_read_scope(peer: Any) -> bool:
+    """Whether the writer may see `peer`: a conflict verdict never names a row
+    outside the caller's read scope, and a scope the request cannot resolve
+    shows none."""
+    from server.core.errors import AuthInsufficientError, IdentityIncompleteError
+
+    try:
+        scope = request_read_filters(current_auth())
+    except (AuthInsufficientError, IdentityIncompleteError):
+        return False
+    return row_in_read_scope(scope, getattr(peer, "user_id", ""), getattr(peer, "session_id", ""))
+
+
 def _set_peers(conflict_result: Any) -> list[Any]:
     """The rows a verdict was reached against, as the wire shape memory.set
     returns: closest first, at most SET_PEERS_MAX, the value
-    clipped to an excerpt. `refines` lists the refined peers ahead of the
-    rest. Pure; never raises on an odd peer."""
+    clipped to an excerpt, only those inside the read scope. `refines` lists
+    the refined peers ahead of the rest. Never raises on an odd peer."""
     seen: set[str] = set()
     ordered: list[Any] = []
     for p in [
@@ -83,7 +102,7 @@ def _set_peers(conflict_result: Any) -> list[Any]:
         *list(getattr(conflict_result, "peers", None) or []),
     ]:
         mid = str(getattr(p, "memory_id", "") or "")
-        if mid in seen:
+        if mid in seen or not _peer_in_read_scope(p):
             continue
         seen.add(mid)
         ordered.append(p)
@@ -383,6 +402,7 @@ async def _set_merge(
         org=input.org,
         fresh=True,
         strong=True,  # the conflict check just saw it; read the latest head
+        scope=WHOLE_NAMESPACE,
     )
     existing_sha = (
         _content_sha256_of_stored(json.dumps(existing.value, default=str))
@@ -400,7 +420,7 @@ async def _set_merge(
         )
     )
     merge_peers = peers_out
-    if not merge_peers and existing is not None:
+    if not merge_peers and existing is not None and _peer_in_read_scope(existing):
         # The canonical match may not be among the cosine peers list (a same-content match
         # under another identity); name the row the write merged into.
         from server.memory.api.models_common import MemorySetPeer, set_peer_excerpt

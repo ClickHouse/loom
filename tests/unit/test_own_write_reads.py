@@ -20,6 +20,7 @@ from server.core.ch import (
     sequential_reads,
     sequential_reads_active,
 )
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 
 # ---- the scope itself -------------------------------------------------------
 
@@ -293,5 +294,9 @@ def test_the_leg_reads_consistently(monkeypatch: pytest.MonkeyPatch) -> None:
     import server.memory.app.profile_search as ps
 
     ch = _RecCH(rows=[])
-    out = asyncio.run(ps.search_profile("o", ["n"], "q", top_k=3, lexical=lambda *a: False, ch=ch))
+    out = asyncio.run(
+        ps.search_profile(
+            "o", ["n"], "q", top_k=3, lexical=lambda *a: False, ch=ch, scope=WHOLE_NAMESPACE
+        )
+    )
     assert out == [] and ch.seen == [True]

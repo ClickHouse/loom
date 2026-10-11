@@ -13,6 +13,7 @@ from typing import Any
 
 from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.store.embeddings import (
     live_embedding_rows_for_key,
     mirror_status_to_embeddings,
@@ -60,7 +61,7 @@ async def write_versions_by_ids(
         if not mid or mid in seen:
             continue
         seen.add(mid)
-        existing = await get_by_id(mid, org=org, ch=ch)
+        existing = await get_by_id(mid, org=org, ch=ch, scope=WHOLE_NAMESPACE)
         if existing is None or (skip is not None and skip(existing)):
             continue
         overrides = dict(update(existing))
@@ -387,7 +388,7 @@ async def tombstone_cascade_by_ids(
         if not mid or mid in seen:
             continue
         seen.add(mid)
-        existing = await get_by_id(mid, org=org, ch=ch)
+        existing = await get_by_id(mid, org=org, ch=ch, scope=WHOLE_NAMESPACE)
         if existing is not None:
             rows.append(existing)
     if not rows:
