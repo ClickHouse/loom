@@ -45,6 +45,8 @@ _CROSS_CHECKED = {
     "jwt_secrets_json",
     "llm_model",
     "llm_provider",
+    # Names and URLs checked by a model validator (test_rerank_names.py).
+    "rerank_endpoints_json",
 }
 
 

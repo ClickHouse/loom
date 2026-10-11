@@ -1,8 +1,11 @@
 """Pluggable per-namespace reranker.
 
-When a namespace sets `rerank_endpoint`, `memory.search` POSTs its
-candidate pool to that URL and orders results by the response. The
-endpoint is operator-supplied; Loom owns the data plane, not the model.
+When a namespace sets `rerank_endpoint` (or a request sets `rerank`),
+`memory.search` POSTs its candidate pool to the endpoint of that NAME and
+orders results by the response. Names map to URLs only in the operator's
+LOOM_RERANK_ENDPOINTS_JSON; a caller never supplies the URL, and a name that
+is not configured (a namespace row still holding a legacy URL) reranks
+nothing. Loom owns the data plane, not the model.
 
 Built-in rerankers (no separate service to run): `builtin:openai` (or
 `builtin:openai:gpt-4o-mini`) routes through Loom's LLM client;
@@ -45,17 +48,19 @@ from typing import Any
 import httpx
 
 from server.llm.json_text import strip_code_fence
+from server.memory.domain.rerank_names import (
+    BUILTIN_COHERE,
+    BUILTIN_OPENAI,
+    is_rerank_choice,
+)
 from server.observability import degradations as _degradations
 from server.observability.genai import llm_stage
+from server.settings import settings
 
 log = logging.getLogger(__name__)
 
 _TIMEOUT = httpx.Timeout(connect=2.0, read=8.0, write=2.0, pool=2.0)
 
-# Sentinel prefixes routing to a built-in path instead of an operator
-# HTTP endpoint. Optional model override after a colon.
-_BUILTIN_OPENAI_PREFIX = "builtin:openai"
-_BUILTIN_COHERE_PREFIX = "builtin:cohere"
 _BUILTIN_COHERE_DEFAULT_MODEL = "rerank-english-v3.0"
 _COHERE_API_URL = "https://api.cohere.com/v2/rerank"
 
@@ -93,6 +98,22 @@ class RerankCandidate:
     similarity: float
 
 
+# Names already logged as not configured, so a namespace that still holds a legacy
+# URL logs once per process, not once per search.
+_UNCONFIGURED_LOGGED: set[str] = set()
+
+
+def _note_unconfigured(endpoint: str) -> None:
+    """Log once that `endpoint` is not a configured name; nothing is posted to it."""
+    shown = f"a URL on host {_host_of(endpoint)!r}" if "://" in endpoint else repr(endpoint[:64])
+    if shown in _UNCONFIGURED_LOGGED or len(_UNCONFIGURED_LOGGED) > 1000:
+        return
+    _UNCONFIGURED_LOGGED.add(shown)
+    log.warning(
+        "rerank endpoint %s is not a name in LOOM_RERANK_ENDPOINTS_JSON; not reranking", shown
+    )
+
+
 def _host_of(url: str) -> str:
     """Bounded span attribute: the reranker's host, never its full URL."""
     try:
@@ -116,10 +137,10 @@ async def rerank(
     Returns the candidates re-ordered by the reranker's response; entries
     missing from the response are appended in input order.
     """
-    if not endpoint or not candidates:
+    if not endpoint or endpoint == "none" or not candidates:
         return candidates
 
-    if endpoint.startswith(_BUILTIN_OPENAI_PREFIX):
+    if endpoint.startswith(BUILTIN_OPENAI):
         return await _rerank_with_builtin_openai(
             endpoint,
             query,
@@ -127,8 +148,13 @@ async def rerank(
             excerpt_chars=excerpt_chars,
         )
 
-    if endpoint.startswith(_BUILTIN_COHERE_PREFIX):
+    if endpoint.startswith(BUILTIN_COHERE):
         return await _rerank_with_builtin_cohere(endpoint, query, candidates)
+
+    url = settings.rerank_endpoint_map().get(endpoint)
+    if not url:
+        _note_unconfigured(endpoint)
+        return candidates
 
     body: dict[str, Any] = {
         "query": query,
@@ -150,9 +176,9 @@ async def rerank(
     from server.observability.otel import traced
 
     try:
-        with traced("rerank.http", candidates=len(candidates), endpoint_host=_host_of(endpoint)):
+        with traced("rerank.http", candidates=len(candidates), endpoint_host=_host_of(url)):
             async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                resp = await client.post(endpoint, json=body)
+                resp = await client.post(url, json=body)
                 resp.raise_for_status()
                 payload = resp.json()
     except Exception as e:  # noqa: BLE001 — a failed reranker keeps the input order
@@ -380,4 +406,11 @@ async def get_namespace_rerank_config(
         return "", ""
     if not row:
         return "", ""
-    return (row.get("rerank_endpoint") or "", row.get("rerank_prompt_template") or "")
+    endpoint = str(row.get("rerank_endpoint") or "").strip()
+    if not is_rerank_choice(endpoint):
+        # a row written before endpoints were names (a raw URL): never posted to
+        _note_unconfigured(endpoint)
+        return "", ""
+    if endpoint == "none":
+        return "", ""
+    return (endpoint, row.get("rerank_prompt_template") or "")

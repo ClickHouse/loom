@@ -9,6 +9,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from server.memory.domain.proposal_policy import ProposalPolicy
+from server.memory.domain.rerank_names import RerankName
 from server.operations.base import GrantRoleStr
 
 VisibilityStr = Literal["private", "public"]
@@ -153,10 +154,11 @@ class NamespaceRegisterInput(BaseModel):
     # reinforcement_weight). None keeps the stored value; `{}` clears it.
     # A namespace admin sets it (the same gate as every other field here).
     retrieval_defaults: NamespaceRetrievalDefaults | None = None
-    # Optional pluggable reranker. When set, memory.search POSTs the candidate
-    # pool to this URL and orders by the response; empty ⇒ cosine + entity_boost.
+    # Optional reranker for memory.search: "builtin:openai[:<model>]",
+    # "builtin:cohere[:<model>]" or the name of an endpoint in
+    # LOOM_RERANK_ENDPOINTS_JSON (a URL is refused); empty ⇒ cosine + entity_boost.
     # The prompt template is passed through opaquely, not interpreted.
-    rerank_endpoint: str | None = None
+    rerank_endpoint: RerankName | None = None
     # Text forwarded as `prompt_template` in every call to `rerank_endpoint`.
     rerank_prompt_template: str | None = None
     # Optional pluggable classifier for memory.set(classify=True). Out-of-registry
@@ -260,7 +262,8 @@ class NamespaceGetOutput(BaseModel):
     effective_join_policy: str | None = None
     # The set retrieval knobs; None when the namespace has none.
     retrieval_defaults: dict[str, Any] | None = None
-    # URL `memory.search` posts its candidates to for reranking; empty when none.
+    # The reranker `memory.search` uses (a builtin or a configured endpoint's name);
+    # empty when none.
     rerank_endpoint: str | None = None
     # URL `memory.set(classify=true)` calls to classify a write; empty when none.
     classify_endpoint: str | None = None

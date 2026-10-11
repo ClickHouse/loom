@@ -18,6 +18,7 @@ from pydantic import (
 
 from server.code.api.models_common import _CodeIdentity, _lead_namespaces, _trim_namespaces
 from server.code.domain.units import CodeUnit
+from server.memory.domain.rerank_names import RerankName
 from server.operations.base import MCP_HIDDEN
 
 # ============================================================
@@ -64,8 +65,9 @@ class CodeSearchInput(_CodeIdentity):
     )
     # Reranker over the fused pool: "" = the deployment default
     # (LOOM_CODE_SEARCH_RERANK_DEFAULT, for prose questions of its kinds), "none" = off
-    # for this request, or an explicit endpoint (builtin:openai / builtin:cohere / URL).
-    rerank: str = Field(default="", json_schema_extra=MCP_HIDDEN)
+    # for this request, "builtin:openai" / "builtin:cohere", or the name of an endpoint
+    # in LOOM_RERANK_ENDPOINTS_JSON. A URL is refused.
+    rerank: RerankName = Field(default="", json_schema_extra=MCP_HIDDEN)
     # Vocabulary bridge: one LLM hop proposes codebase identifiers for the
     # lexical leg (natural-language wording often misses the implementing
     # subsystem's vocabulary). Opt-in — adds ~500ms + one mini call.
@@ -303,8 +305,9 @@ class CodeAskInput(_CodeIdentity):
     # cited file changes at merge.
     synthesize: bool = True
     # Reranker for the retrieval: "" = the deployment default
-    # (LOOM_CODE_SEARCH_RERANK_DEFAULT), "none" = off for this request, or an explicit endpoint.
-    rerank: str = ""
+    # (LOOM_CODE_SEARCH_RERANK_DEFAULT), "none" = off for this request, "builtin:openai" /
+    # "builtin:cohere", or the name of an endpoint in LOOM_RERANK_ENDPOINTS_JSON (not a URL).
+    rerank: RerankName = ""
     # Skip the cache lookup and synthesize fresh (the fresh answer still
     # refreshes the cache entry). For eval and for agents that suspect a
     # stale answer. Also skips the exact-prompt cache of the pre-synthesis
