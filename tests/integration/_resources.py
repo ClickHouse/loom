@@ -20,9 +20,9 @@ import pytest
 _ORG_SHAPE = re.compile(r"^it-[a-z0-9][a-z0-9-]{0,40}-[0-9a-f]{8}$")
 _minted: set[str] = set()
 
-# Server-side buffers (events, usage, async inserts) flush about every half
-# second; a row flushed after the purge is retried once past this window.
-_LATE_FLUSH_S = 3.0
+# Server-side buffers flush every half second or so (namespace write marks
+# every 5 s); a row flushed after the purge is retried once past this window.
+_LATE_FLUSH_S = 6.0
 _MUTATION_WAIT_S = 120.0
 
 
