@@ -5303,13 +5303,13 @@
        ],
        "dest": "host",
        "action": "_StoreAction",
-       "default": "0.0.0.0",
+       "default": null,
        "const": null,
        "choices": null,
        "nargs": null,
        "type": null,
        "required": false,
-       "help": null,
+       "help": "Address to bind (default: LOOM_BIND_HOST, 127.0.0.1)",
        "metavar": null
       },
       {

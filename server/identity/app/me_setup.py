@@ -397,9 +397,7 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
         minted = delegated.mint(subject)
     reads_everywhere = "*" in delegated.namespaces
 
-    # Base URL: LOOM_PUBLIC_BASE_URL when the operator set it, else the
-    # request's forwarded origin (honouring X-Forwarded-Proto, so a TLS-terminating proxy
-    # does not hand every client an http:// address).
+    # Base URL: LOOM_PUBLIC_BASE_URL (required off loopback), else the request's own origin.
     from server.auth.public_url import public_base_url
 
     base_url = public_base_url(request)

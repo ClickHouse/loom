@@ -34,7 +34,7 @@ Sign-in depends on the deployment's identity mode:
 | Auth off (`LOOM_AUTH_REQUIRED=false` or `LOOM_IDENTITY_PROVIDER=single-user`) | No sign-in. The page serves the one namespace `LOOM_DEFAULT_NAMESPACE` names (`local` by default). A laptop mode only.       |
 | Auth on, password accounts                                                    | **Sign in** with an email or namespace and a password; the server mints the token and the page stores it without showing it. |
 | Auth on, `LOOM_SELF_SIGNUP=open`                                              | A **Sign up** tab creates an account on a fresh namespace.                                                                   |
-| A token minted with `loom mint-token`                                         | Open `/me#token=<jwt>` (or `/me?token=<jwt>`). The page stores the token and scrubs it from the URL.                         |
+| A token minted with `loom mint-token`                                         | Open `/me#token=<jwt>`. The page stores the token and scrubs it from the URL. A `?token=` query is ignored and removed.      |
 | Behind a reverse proxy that adds `Authorization`                              | The page sends no token of its own; the proxy's header authenticates every call.                                             |
 
 `loom init --agent NAME` signs an agent up on its own and prints a one-time code a person

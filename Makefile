@@ -91,9 +91,13 @@ bench-matrix:
 # LOOM_INSTANCE_LABEL: a process outside the compose
 # deployment refuses to boot unlabelled; this is the label its ledger rows
 # and spans carry. Override: `LOOM_INSTANCE_LABEL=dev:me:7777 make server`.
+# Binds LOOM_BIND_HOST (loopback by default); forwarded headers are honoured
+# only from LOOM_TRUSTED_PROXIES.
 server:
 	LOOM_INSTANCE_LABEL="$${LOOM_INSTANCE_LABEL:-dev:make-server:7777}" \
-		uvicorn server.main:app --host 0.0.0.0 --port 7777 --reload --timeout-graceful-shutdown 10
+	LOOM_BIND_HOST="$${LOOM_BIND_HOST:-127.0.0.1}" \
+		uvicorn server.main:app --host "$${LOOM_BIND_HOST:-127.0.0.1}" --port 7777 --reload \
+		--forwarded-allow-ips "$${LOOM_TRUSTED_PROXIES:-127.0.0.1}" --timeout-graceful-shutdown 10
 
 # Build the /me React/Vite dashboard. Output lands in frontend/dist/
 # which the server picks up automatically. Required before `make server`

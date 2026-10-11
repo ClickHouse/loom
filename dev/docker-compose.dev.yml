@@ -157,6 +157,11 @@ services:
       # one service (workers in-process, under the supervisor lease).
       LOOM_DEPLOYMENT: "1"
       LOOM_INSTANCE_LABEL: "deploy:dev"
+      # The address the port is published on (the container listens on all
+      # its interfaces). Loopback keeps the startup checks for a reachable
+      # server off; anything else needs LOOM_PUBLIC_BASE_URL, auth and a real
+      # signing secret.
+      LOOM_BIND_HOST: "${LOOM_BIND_HOST:-127.0.0.1}"
       # Self-service repositories must make progress in the stock stack. These
       # workers are idle until a repository is added and do not require an LLM.
       LOOM_CODE_INGEST_ENABLED: "${LOOM_CODE_INGEST_ENABLED:-true}"

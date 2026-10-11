@@ -55,6 +55,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         dev_secret=settings.jwt_secret_is_dev_default(),
         dev_sealing_secret=settings.jwt_sealing_secret_is_dev_default(),
     )
+    boot.require_safe_bind(
+        bind_host=settings.bind_host,
+        public_base_url=settings.public_base_url,
+        auth_required=settings.auth_actually_required(),
+        dev_secret=settings.jwt_secret_is_dev_default(),
+        allow_insecure=settings.allow_insecure,
+    )
 
     ch = get_client()
     await ch.connect()
@@ -246,21 +253,34 @@ async def root_dashboard_redirect() -> Response:
 
 
 @app.middleware("http")
-async def _immutable_hashed_assets(request: Request, call_next: Any) -> Response:
+async def _cache_and_nosniff_headers(request: Request, call_next: Any) -> Response:
     response: Response = await call_next(request)
     if request.url.path.startswith("/me/assets/") and response.status_code == 200:
         response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    # No response is ever sniffed into a type it was not served as.
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
     return response
 
 
-# CORS — opt-in via LOOM_CORS_ORIGINS (comma-separated). "*" = allow-all.
+def cors_origin_list(raw: str) -> list[str]:
+    """LOOM_CORS_ORIGINS as a list. `*` is refused: CORS here allows
+    credentials, so it would let every site make credentialed calls."""
+    origins = [o.strip() for o in raw.split(",") if o.strip()]
+    if "*" in origins:
+        raise RuntimeError(
+            "refusing to start: LOOM_CORS_ORIGINS contains '*', and CORS is served with "
+            "credentials allowed. List the exact origins instead."
+        )
+    return origins
+
+
+# CORS — opt-in via LOOM_CORS_ORIGINS (comma-separated exact origins).
 if settings.cors_origins:
     from fastapi.middleware.cors import CORSMiddleware
 
-    origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=origins,
+        allow_origins=cors_origin_list(settings.cors_origins),
         allow_credentials=True,
         allow_methods=["GET", "POST"],
         allow_headers=["*"],
@@ -276,6 +296,32 @@ if settings.cors_origins:
             "Link",
         ],
     )
+
+
+@app.middleware("http")
+async def _auth_off_host_allowlist(request: Request, call_next: Any) -> Response:
+    """With auth off, answer only requests addressed to this server by name
+    (DNS rebinding would otherwise let any web page drive it). Runs before
+    any route handler."""
+    from server.auth.public_url import host_header_allowed
+
+    if not settings.auth_actually_required() and not host_header_allowed(
+        request.headers.get("host", ""), settings.public_base_url
+    ):
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(
+            status_code=421,
+            content={
+                "detail": {
+                    "code": "MISDIRECTED_REQUEST",
+                    "message": "this server answers only localhost or LOOM_PUBLIC_BASE_URL",
+                }
+            },
+        )
+    response: Response = await call_next(request)
+    return response
+
 
 http_transport.attach(app)
 mcp_transport.attach(app)

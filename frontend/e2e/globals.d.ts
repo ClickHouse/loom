@@ -19,5 +19,9 @@ declare global {
     __ls: { entries: number; value: number };
     /** graph: MutationObserver records under the canvas. */
     __mut: number;
+    /** preview-isolation: what an uploaded file's script would set on the page; never set. */
+    __pwned?: string;
+    /** preview-isolation: Content-Security-Policy violations the page reported. */
+    __cspViolations: string[];
   }
 }

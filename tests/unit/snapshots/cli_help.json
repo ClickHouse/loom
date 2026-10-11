@@ -169,7 +169,7 @@
  ],
  "loom serve": [
   "usage: loom serve [-h] [--host HOST] [--port PORT] [--log-level LOG_LEVEL] [--reload]",
-  "options: -h, --help show this help message and exit --host HOST --port PORT --log-level LOG_LEVEL --reload Auto-reload on code changes (dev only)."
+  "options: -h, --help show this help message and exit --host HOST Address to bind (default: LOOM_BIND_HOST, 127.0.0.1) --port PORT --log-level LOG_LEVEL --reload Auto-reload on code changes (dev only)."
  ],
  "loom migrate": [
   "usage: loom migrate [-h] [--status] [--dry-run] [--strict] [--target TARGET] [--migrations-dir MIGRATIONS_DIR]",

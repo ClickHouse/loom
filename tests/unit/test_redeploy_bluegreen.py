@@ -92,8 +92,8 @@ def test_nginx_forwards_the_terminators_scheme_and_never_overwrites_it() -> None
 
 
 def test_nginx_replaces_client_sent_address_headers() -> None:
-    """uvicorn runs with --forwarded-allow-ips='*' and reads the first
-    X-Forwarded-For entry as the client, so the proxy must send only the
+    """uvicorn trusts this proxy's X-Forwarded-For (LOOM_TRUSTED_PROXIES) and reads its last
+    entry as the client, so the proxy must send only the
     peer address it saw, never a chain the caller wrote."""
     text = NGINX.read_text(encoding="utf-8")
     assert "$proxy_add_x_forwarded_for" not in text

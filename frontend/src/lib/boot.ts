@@ -43,6 +43,26 @@ export function claimsFromToken(jwt: string | null | undefined): TokenClaims | n
   }
 }
 
+/** The token a login link carries in its `#token=` fragment, or null. A
+ *  fragment never reaches the server or its logs; a `?token=` query does, so it
+ *  is not accepted. Both are scrubbed from the address bar (and history) so a
+ *  token never lingers in a copied link. */
+export function takeLinkToken(): string | null {
+  const { hash, search, pathname } = window.location;
+  const fromHash = hash.startsWith("#token=");
+  const query = new URLSearchParams(search);
+  if (!fromHash && !query.has("token")) return null;
+  query.delete("token");
+  const qs = query.toString();
+  history.replaceState(null, "", pathname + (qs ? `?${qs}` : "") + (fromHash ? "" : hash));
+  if (!fromHash) return null;
+  try {
+    return decodeURIComponent(hash.slice("#token=".length)) || null;
+  } catch {
+    return null;
+  }
+}
+
 /** Namespace kinds from the last membership answer this browser saw, so a
  *  deep link can tell a memory namespace from a code or QA one before
  *  list_mine answers again (a memory view never mounts on a code or tracker namespace;
