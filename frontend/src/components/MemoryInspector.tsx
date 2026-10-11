@@ -891,6 +891,10 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                       {history.slice(0, 8).map((h, idx) => {
                         const isCurrent = idx === 0;
                         const isOpen = diffVersion === h.version;
+                        // The version is int64 epoch ns: past 2^53 as a JS number, so its
+                        // digits are not the stored ones. Number the loaded versions instead.
+                        const label = `v${history.length - idx}`;
+                        const writtenAt = relativeTime(h.written_at || h.created_at);
                         return (
                           <div key={h.version} className="rounded-md bg-[var(--color-surface-2)] overflow-hidden">
                             <button
@@ -903,10 +907,10 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                               <div className="flex items-center justify-between text-2xs tabular text-[var(--color-text-muted)] mb-0.5 gap-2">
                                 <span className="inline-flex items-center gap-1">
                                   {!isCurrent && (isOpen ? <ChevronDown size={9} /> : <ChevronRight size={9} />)}
-                                  <span className="font-mono">v{String(h.version).slice(-8)}</span>
+                                  <span className="font-mono">{label}</span>
                                   {isCurrent && <span className="text-success font-medium ml-1">· current</span>}
                                 </span>
-                                <span>{relativeTime(h.created_at)}</span>
+                                <span>{writtenAt}</span>
                               </div>
                               <div className="text-xs text-[var(--color-text)] line-clamp-1">
                                 {formatValue(h.value).slice(0, 80)}
@@ -919,8 +923,8 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                                 <DiffView
                                   prev={formatValue(h.value)}
                                   next={formatValue(history[0].value)}
-                                  prevLabel={`v${String(h.version).slice(-8)} (${relativeTime(h.created_at)})`}
-                                  nextLabel={`v${String(history[0].version).slice(-8)} (current)`}
+                                  prevLabel={`${label} (${writtenAt})`}
+                                  nextLabel={`v${history.length} (current)`}
                                 />
                               </div>
                             )}

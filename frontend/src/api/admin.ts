@@ -773,6 +773,8 @@ export interface MemoryHistoryEntry {
   version: number;
   value: unknown;
   created_at: string;
+  // When this version was written; `created_at` is the key's first write on every version.
+  written_at?: string | null;
   tombstoned_at: string | null;
   redacted_at: string | null;
   source_trace: string;

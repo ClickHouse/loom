@@ -387,7 +387,26 @@ async def handle_memory_history(input: MemoryHistoryInput) -> MemoryHistoryOutpu
         )
         for r in rows
     ]
-    return MemoryHistoryOutput(rows=out_rows)
+    return MemoryHistoryOutput(rows=_collapse_unchanged_versions(out_rows))
+
+
+# Columns that differ between two versions without the reader seeing a change.
+_HISTORY_VERSION_STAMP: set[str] = {"version", "written_at"}
+
+
+def _collapse_unchanged_versions(rows: list[_MemoryHistoryRow]) -> list[_MemoryHistoryRow]:
+    """Drop a version whose row reads the same as the next newer one of its memory_id:
+    a re-emit that only moved a column history does not show (the entity tagger's
+    `entities`). The newest of each run stays, so the head is still the live version."""
+    newer: dict[str, dict[str, Any]] = {}
+    kept: list[_MemoryHistoryRow] = []
+    for r in rows:  # newest first
+        seen = r.model_dump(exclude=_HISTORY_VERSION_STAMP)
+        if newer.get(r.memory_id) == seen:
+            continue
+        newer[r.memory_id] = seen
+        kept.append(r)
+    return kept
 
 
 async def fetch_timeline(
