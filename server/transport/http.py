@@ -183,6 +183,7 @@ class _HttpCall:
     raw_body: dict[str, Any] = field(default_factory=dict)
     auth: AuthInfo | None = None
     identity: dict[str, str] = field(default_factory=dict)
+    target: gates.Target | None = None
 
 
 def _begin_request(op: Operation, request: Request, response: Response) -> str:
@@ -511,7 +512,8 @@ async def _run_handler(op: Operation, payload: Any, call: _HttpCall) -> tuple[An
     request_id, raw_body, identity = call.request_id, call.raw_body, call.identity
     start = time.perf_counter()
     try:
-        result = await op.handler(payload)
+        with gates.tenant_slot(call.auth, call.target):
+            result = await op.handler(payload)
     except HTTPException as he:
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         _emit_event(
@@ -682,7 +684,7 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
 
         # The shared admission sequence (server/transport/gates.py):
         # authorization target, authorization, policy, then the limiter.
-        target = await _authorize(op, response, call, payload)
+        call.target = target = await _authorize(op, response, call, payload)
         await _bind_context_and_policy(op, request, call, target, payload)
         _rate_limit(op, response, call, target)
         replay = await _idempotency_gate(op, request, response, call, target, payload)

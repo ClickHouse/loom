@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
-import re
 from datetime import timedelta
 from typing import Any
 
+from server.core.caller_regex import compile_caller_regex
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now as _now
 from server.core.errors import ValidationError
@@ -54,9 +55,10 @@ def grep_content(
 ) -> tuple[str, int, int]:
     """Matching lines as `lineno: text` (1-based), with `context_lines` of
     surrounding context; `offset` skips that many matches. Returns
-    (text, matched_lines_total, next_match_offset or -1)."""
-    rx = re.compile(pattern, re.IGNORECASE)
-    lines = content.splitlines()
+    (text, matched_lines_total, next_match_offset or -1). RE2, case-insensitive, over at
+    most LOOM_CONTEXT_OFFLOAD_MAX_BYTES characters (the most a blob may hold)."""
+    rx = compile_caller_regex(pattern, case_sensitive=False)
+    lines = content[: int(settings.context_offload_max_bytes)].splitlines()
     matches = [i for i, ln in enumerate(lines) if rx.search(ln)]
     out: list[str] = []
     used = 0
@@ -139,11 +141,9 @@ async def handle_context_offload(input: ContextOffloadInput) -> ContextOffloadOu
 async def handle_context_fetch(input: ContextFetchInput) -> ContextFetchOutput:
     if input.pattern:
         try:
-            re.compile(input.pattern)
-        except re.error as e:
-            raise ValidationError(
-                f"pattern is not a valid regular expression: {e}", code="BAD_PATTERN"
-            ) from None
+            compile_caller_regex(input.pattern, case_sensitive=False)
+        except ValidationError as e:
+            raise ValidationError(e.message, code="BAD_PATTERN") from None
     # expires_at > now(): the TTL merge is retention, not visibility.
     row = await get_client().query_one(
         """
@@ -169,7 +169,9 @@ async def handle_context_fetch(input: ContextFetchInput) -> ContextFetchOutput:
         expires_at=row.get("expires_at"),
     )
     if input.pattern:
-        text, matched, nxt = grep_content(
+        # off the event loop: a scan of a blob of megabytes must not stall the worker
+        text, matched, nxt = await asyncio.to_thread(
+            grep_content,
             content,
             input.pattern,
             offset=input.offset,

@@ -29,6 +29,7 @@ from server.core.ch_class_settings import is_read_statement, traffic_class_setti
 from server.core.ch_errors import (
     QUANTIZED_SETTING,
     REPLICA_BOUND_RETRIES,
+    error_code,
     is_replica_bound_error,
     is_transient_network_error,
     is_unknown_quantized_setting,
@@ -78,6 +79,72 @@ def set_query_tag(tag: str) -> None:
 
 def current_query_tag() -> str:
     return query_tag_var.get()
+
+
+# The ClickHouse `quota_key` of the verified caller, `<org>:<subject>`, so a
+# server quota keyed by it gives each tenant its own bucket. Set only by
+# `server.auth.context.set_current_auth` from the verified token, never from a
+# request body; every query of the request carries it.
+quota_key_var: ContextVar[str] = ContextVar("ch_quota_key", default="")
+
+
+def set_quota_key(key: str) -> None:
+    quota_key_var.set(str(key or ""))
+
+
+# Reads a caller shapes (its regex, globs or aggregate over a namespace) run
+# under fixed ceilings on time, memory and rows read. A ceiling only ever
+# lowers the statement's own value, so neither a request nor a per-call setting
+# widens it, and a row cap fails the read rather than truncating it.
+caller_shaped_var: ContextVar[bool] = ContextVar("ch_caller_shaped", default=False)
+
+
+@contextmanager
+def caller_shaped() -> Iterator[None]:
+    """Every read statement in this block runs under the caller-shaped ceilings."""
+    token = caller_shaped_var.set(True)
+    try:
+        yield
+    finally:
+        caller_shaped_var.reset(token)
+
+
+def _caller_shaped_ceilings() -> dict[str, float]:
+    return {
+        "max_execution_time": float(settings.ch_caller_shaped_max_execution_s),
+        "max_memory_usage": float(settings.ch_caller_shaped_max_memory_bytes),
+        "max_rows_to_read": float(settings.ch_caller_shaped_max_rows_to_read),
+    }
+
+
+def _apply_caller_ceilings(out: dict[str, Any], sql: str) -> None:
+    """Lower each limit to its ceiling inside a `caller_shaped()` block (0 in
+    ClickHouse means unlimited, so an unset or 0 value takes the ceiling)."""
+    if not caller_shaped_var.get() or not is_read_statement(sql):
+        return
+    for name, ceiling in _caller_shaped_ceilings().items():
+        if ceiling <= 0:
+            continue
+        asked = float(out.get(name) or 0)
+        if asked <= 0 or asked > ceiling:
+            out[name] = int(ceiling) if ceiling.is_integer() else ceiling
+    out["read_overflow_mode"] = "throw"
+
+
+# Row and byte caps a caller-shaped read hit: TOO_MANY_ROWS, TOO_MANY_BYTES.
+_CALLER_CAP_CODES = (158, 307)
+
+
+def _raise_if_caller_cap(e: BaseException) -> None:
+    """A caller-shaped read that hit its row cap is the request's breadth, not a
+    server fault: a 422 that says how to narrow it."""
+    if caller_shaped_var.get() and error_code(e) in _CALLER_CAP_CODES:
+        from server.core.errors import ValidationError
+
+        raise ValidationError(
+            "the query reads more rows than this deployment allows one request; narrow it "
+            "(a path prefix or globs, a more selective pattern, a filter)"
+        ) from None
 
 
 # Read-your-writes for whole read paths. The point lookups append `SETTINGS
@@ -267,6 +334,7 @@ def statement_settings(
     if tclass and is_read_statement(sql):
         for name, value in traffic_class_settings(tclass).items():
             out.setdefault(name, value)
+    _apply_caller_ceilings(out, sql)
     return _with_request_query_id(out)
 
 
@@ -309,6 +377,10 @@ def query_settings(extra: dict[str, Any] | None = None) -> dict[str, Any]:
             out["log_comment"] = tag
     if sequential_reads_var.get() and "select_sequential_consistency" not in out:
         out["select_sequential_consistency"] = 1
+    # the verified caller's key always wins over anything a call passed
+    key = quota_key_var.get()
+    if key:
+        out["quota_key"] = key
     return out
 
 
@@ -579,6 +651,7 @@ class CHClient:
                         "then restart it with `loom up`.",
                         operation=op_name,
                     ) from retry_error
+            _raise_if_caller_cap(e)
             if not is_replica_bound_error(e):
                 raise
             last: BaseException = e

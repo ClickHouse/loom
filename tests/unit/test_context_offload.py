@@ -124,3 +124,34 @@ def test_operations_registered_with_roles_and_descriptions() -> None:
         context_offload.required_role == Role.WRITER and context_fetch.required_role == Role.VIEWER
     )
     assert "context.offload" in TOOL_DESCRIPTIONS and "context.fetch" in TOOL_DESCRIPTIONS
+
+
+def test_grep_content_runs_a_catastrophic_pattern_in_linear_time() -> None:
+    import time
+
+    started = time.monotonic()
+    text, matched, _ = h.grep_content("a" * 50_000 + "!", "(a+)+$", offset=0, limit=100)
+    assert matched == 0 and text == ""
+    assert time.monotonic() - started < 2.0
+
+
+def test_fetch_refuses_a_backreference_naming_re2(monkeypatch) -> None:
+    import pytest
+
+    from server.core.errors import ValidationError
+
+    def _no_read():
+        raise AssertionError("an invalid pattern must not reach ClickHouse")
+
+    monkeypatch.setattr(h, "get_client", _no_read)
+    with pytest.raises(ValidationError, match="RE2") as err:
+        asyncio.run(
+            h.handle_context_fetch(ContextFetchInput(**IDENT, blob_key="blob/k", pattern=r"(a)\1"))
+        )
+    assert err.value.extra["code"] == "BAD_PATTERN"
+
+
+def test_grep_content_scans_at_most_the_offload_cap(monkeypatch) -> None:
+    monkeypatch.setattr(h.settings, "context_offload_max_bytes", 10)
+    _, matched, _ = h.grep_content("hit\n" * 10, "hit", offset=0, limit=1000)
+    assert matched == 2  # only "hit\nhit\nhi" is scanned

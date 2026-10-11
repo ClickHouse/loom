@@ -332,3 +332,40 @@ def test_limit_defaults_per_mode_and_clamps_lines() -> None:
         CodeGrepInput(org="o", namespace="n", pattern="xx", mode="files", limit=7).effective_limit
         == 7
     )
+
+
+def test_a_case_insensitive_regex_matches_lines_the_sql_step_matched() -> None:
+    chunk = {"path": "a.py", "scope": "", "start_line": 1, "end_line": 1, "content": "MagicErr"}
+    # ClickHouse is sent `(?i)magic\w+`; the line step must read it the same way
+    assert _run([chunk], pattern=r"magic\w+", regex=True, case_sensitive=False).matches
+    assert not _run([chunk], pattern=r"magic\w+", regex=True, case_sensitive=True).matches
+
+
+def test_a_catastrophic_pattern_returns_quickly() -> None:
+    import time
+
+    chunk = {"path": "a.py", "scope": "", "start_line": 1, "end_line": 1}
+    chunk["content"] = "a" * 50_000 + "!"
+    started = time.monotonic()
+    out = _run([chunk], pattern="(a+)+$", regex=True)
+    assert not out.matches
+    assert time.monotonic() - started < 2.0  # Python's re takes minutes here
+
+
+@pytest.mark.parametrize("pattern", [r"(a)\1", r"foo(?=bar)", r"(?<!x)foo"])
+def test_constructs_re2_lacks_are_refused_naming_re2(pattern: str) -> None:
+    chunk = {"path": "a.py", "scope": "", "start_line": 1, "end_line": 1, "content": "aa"}
+    with pytest.raises(ValidationError, match="RE2"):
+        _run([chunk], pattern=pattern, regex=True)
+
+
+def test_the_line_step_stops_at_its_scan_cap(monkeypatch) -> None:
+    from server.code.app import grep as grep_mod
+
+    monkeypatch.setattr(grep_mod, "_LINE_SCAN_MAX_CHARS", 10)
+    chunks = [
+        {"path": f"{i}.py", "scope": "", "start_line": 1, "end_line": 1, "content": "hit"}
+        for i in range(5)
+    ]
+    out = _run(chunks, pattern="hit")
+    assert len(out.matches) == 3 and out.truncated

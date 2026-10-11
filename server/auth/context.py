@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from server.auth.directory import ClassificationUnavailable, directory
+from server.core.ch import set_quota_key
 
 if TYPE_CHECKING:
     from server.auth.jwt import AuthInfo
@@ -35,9 +36,18 @@ def current_caller() -> tuple[str, str | None]:
     return auth.subject or "", auth.org
 
 
+def quota_key_for(auth: AuthInfo | None) -> str:
+    """The ClickHouse quota key of a verified caller, `<org>:<subject>`; '' without one."""
+    if auth is None:
+        return ""
+    return f"{auth.org}:{auth.subject}"
+
+
 def set_current_auth(auth: AuthInfo | None) -> None:
     current_auth_var.set(auth)
     _fanout_memo.set(None)
+    # every ClickHouse query of this request draws the caller's own quota bucket
+    set_quota_key(quota_key_for(auth))
 
 
 # The fan-out set the current principal resolved in `org`, kept for the rest

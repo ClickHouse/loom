@@ -284,7 +284,8 @@ async def _call_tool(
 
     start = time.perf_counter()
     try:
-        result = await op.handler(input_obj)
+        with gates.tenant_slot(auth, target):
+            result = await op.handler(input_obj)
     except Exception as e:  # noqa: BLE001 — any handler error becomes a refusal or RPC error
         return _handler_failed(
             e,

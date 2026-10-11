@@ -52,6 +52,15 @@ class ClickHouseSettings(BaseModel):
     # Max wait, ms, for a pool slot before failing fast with 503 OVERLOADED.
     # 0 = no slot gate.
     ch_pool_wait_ms: int = 500
+    # Ceilings for the reads a caller shapes (code.grep, code.search with a
+    # pattern or globs, memory.aggregate, memory.record.query). A ceiling only
+    # lowers the statement's own value, so no request can widen it; 0 = none.
+    # Seconds one such read may run (the read class default).
+    ch_caller_shaped_max_execution_s: float = 30.0
+    # Bytes of memory one such read may use.
+    ch_caller_shaped_max_memory_bytes: int = 4_000_000_000
+    # Rows one such read may scan; past it the read fails (422), never a partial answer.
+    ch_caller_shaped_max_rows_to_read: int = 500_000_000
 
     # JSON map {traffic class: ClickHouse settings} applied by
     # `server.core.ch.statement_settings` to every read (an explicit per-call

@@ -13,9 +13,9 @@ from server.memory.domain import provenance as prov
 
 
 def test_writer_actor_kind_comes_from_the_token() -> None:
-    set_current_auth(SimpleNamespace(subject="alice", is_service_account=False))
+    set_current_auth(SimpleNamespace(org="o", subject="alice", is_service_account=False))
     assert writer_actor() == "human:alice"
-    set_current_auth(SimpleNamespace(subject="ci-bot", is_service_account=True))
+    set_current_auth(SimpleNamespace(org="o", subject="ci-bot", is_service_account=True))
     assert writer_actor() == "process:ci-bot"
     set_current_auth(None)
     assert writer_actor() == ""

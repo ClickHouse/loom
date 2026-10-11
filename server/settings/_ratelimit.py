@@ -31,3 +31,7 @@ class RateLimitSettings(BaseModel):
     # Class = token `traffic_class` claim, else namespace row, else request
     # hint, else interactive. Absent class = 1.0 (base bucket).
     ratelimit_class_fractions: Annotated[str, JsonObject] = '{"bench": 0.5}'
+    # Requests one org may have in flight at once, deployment-wide. Each
+    # process holds its share (divided by replicas × web workers, at least 1);
+    # a call over it gets 429 RATE_LIMITED. 0 = no cap.
+    tenant_max_concurrent_requests: int = Field(default=256, ge=0)

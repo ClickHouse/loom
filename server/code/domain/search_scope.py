@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.code.domain.index.grep_plan import content_predicate
+from server.core.caller_regex import compile_caller_regex
 from server.core.errors import ValidationError
 
 MAX_GLOBS = 8
@@ -255,10 +256,8 @@ def build_scope(
     if pat and not (PATTERN_MIN <= len(pat) <= PATTERN_MAX):
         raise ValidationError(f"pattern must be {PATTERN_MIN}-{PATTERN_MAX} chars")
     if pat and regex:
-        try:
-            re.compile(pat)
-        except re.error as e:
-            raise ValidationError(f"pattern is not a valid regex: {e}") from e
+        # RE2, the engine ClickHouse's match() runs it with
+        compile_caller_regex(pat, case_sensitive=case_sensitive)
     globs = [g for g in (path_globs or []) if g and g.strip()]
     excl = [g for g in (exclude_globs or []) if g and g.strip()]
     if len(globs) > MAX_GLOBS:

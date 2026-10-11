@@ -33,6 +33,8 @@ from server.code.app.spans import (
 )
 from server.code.domain import deadline as code_deadline
 from server.code.store.index import CodeRepo
+from server.core.caller_regex import compile_caller_regex
+from server.core.ch import caller_shaped
 from server.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -45,7 +47,15 @@ async def handle_code_grep(input: CodeGrepInput) -> CodeGrepOutput:
 
     mode=files answers "which files"; mode=message takes a RENDERED message and finds the
     statement whose template printed it. A literal pattern that is regex-shaped and matches
-    nothing is run once as a regex and says so in `note`."""
+    nothing is run once as a regex and says so in `note`.
+
+    The caller's pattern shapes every scan, so they all run under the caller-shaped
+    ClickHouse ceilings."""
+    with caller_shaped():
+        return await _code_grep(input)
+
+
+async def _code_grep(input: CodeGrepInput) -> CodeGrepOutput:
     from server.observability.budget_shape import note_budget_shape
 
     require_code_intel()
@@ -79,17 +89,12 @@ async def handle_code_grep(input: CodeGrepInput) -> CodeGrepOutput:
         return not_covered
     repo = CodeRepo()
 
-    import re as _re
-
-    if input.regex:
-        try:
-            line_re: _re.Pattern[str] | None = _re.compile(input.pattern)
-        except _re.error as e:
-            from server.core.errors import ValidationError
-
-            raise ValidationError(f"invalid regex: {e}") from e
-    else:
-        line_re = None
+    # RE2, as ClickHouse's match() reads it, and case-folded the way the SQL step's `(?i)` is
+    line_re = (
+        compile_caller_regex(input.pattern, case_sensitive=input.case_sensitive)
+        if input.regex
+        else None
+    )
 
     # rg -g / -t style file filters; unset = no SQL added
     scope = _scope_of(input)
@@ -167,7 +172,7 @@ async def _fetch_grep_chunks(
     chunks = await _read(input.regex)
     if chunks or input.regex or not mg.regex_shaped(input.pattern):
         return chunks, line_re, "", ""
-    fallback = mg.compile_fallback(input.pattern)
+    fallback = mg.compile_fallback(input.pattern, case_sensitive=input.case_sensitive)
     if fallback is None:
         return chunks, line_re, "", mg.REGEX_INVALID_NOTE
     if not _second_scan_allowed(budget, "regex retry"):
@@ -248,49 +253,13 @@ async def _grep_lines(
         span_attrs(sp, chunks_matched=len(chunks))
 
     spans = await _unit_spans(repo, org, ns, chunks)
-    needle = input.pattern if input.case_sensitive else input.pattern.lower()
-    matches: list[dict[str, Any]] = []
-    seen: set[tuple[str, int]] = set()
-    excluded_paths = set(input.exclude_unit_ids)
-    # extract past the page: the extra lines become the continuation pool
-    keep = limit + _GREP_POOL_EXTRA
-    for c in chunks:
-        if str(c["path"]) in excluded_paths:
-            continue
-        content = str(c["content"])
-        lines = content.splitlines()
-        # a continuation window of an oversized unit opens with a synthetic
-        # "// … continued from <header>" line that is not in the file: drop
-        # it so line numbers stay exact and the header cannot re-match
-        if lines and lines[0].startswith(_CONTINUED_PREFIX):
-            lines = lines[1:]
-        scope = str(c["scope"] or "")
-        span = spans.get((str(c["path"]), scope), (0, 0)) if scope else (0, 0)
-        for off, line in enumerate(lines):
-            hay = line if input.case_sensitive else line.lower()
-            hit = line_re.search(line) if line_re is not None else (needle in hay)
-            if not hit:
-                continue
-            key = (str(c["path"]), int(c["start_line"] or 1) + off)
-            if key in seen:
-                continue  # the same span indexed twice (re-parse race)
-            seen.add(key)
-            matches.append(
-                {
-                    "path": key[0],
-                    "line": key[1],
-                    "text": line.strip()[:300],
-                    "scope": scope,
-                    "scope_start_line": span[0],
-                    "scope_end_line": span[1],
-                }
-            )
-            if len(matches) > keep:
-                break
-        if len(matches) > keep:
-            break
+    # extract past the page: the extra lines become the continuation pool. Off the event
+    # loop: a scan of 200 chunks must not stall every other request on this worker.
+    matches, scan_capped = await asyncio.to_thread(
+        _matching_lines, chunks, spans, input, line_re, limit + _GREP_POOL_EXTRA
+    )
 
-    truncated = len(matches) > limit or len(chunks) >= min(200, limit * 3)
+    truncated = scan_capped or len(matches) > limit or len(chunks) >= min(200, limit * 3)
     trace_run_id = new_trace_run_id()
     next_cursor = _issue_grep_cursor(
         input,
@@ -425,6 +394,66 @@ async def _grep_neighbours(
 # server/code/domain/extract/chunker.py::_split_oversized prefixes every
 # window after the first with this marker + the unit's header line.
 _CONTINUED_PREFIX = "// … continued from "
+
+# Most chunk text the line step scans per call: 200 chunks of at most
+# LOOM_CODE_CHUNK_MAX_CHARS (6000) is 1.2 MB, so 2 MB leaves room for older, larger
+# chunks and still bounds the work one request can ask of a worker.
+_LINE_SCAN_MAX_CHARS = 2_000_000
+
+
+def _matching_lines(
+    chunks: list[dict[str, Any]],
+    spans: dict[tuple[str, str], tuple[int, int]],
+    input: CodeGrepInput,
+    line_re: Any,
+    keep: int,
+) -> tuple[list[dict[str, Any]], bool]:
+    """(matching lines, capped): the lines of `chunks` the pattern matches, stopping past
+    `keep` lines or `_LINE_SCAN_MAX_CHARS` of text (capped=True). Pure; runs in a thread."""
+    needle = input.pattern if input.case_sensitive else input.pattern.lower()
+    excluded_paths = set(input.exclude_unit_ids)
+    matches: list[dict[str, Any]] = []
+    seen: set[tuple[str, int]] = set()
+    scanned = 0
+    for c in chunks:
+        if str(c["path"]) in excluded_paths:
+            continue
+        content = str(c["content"])
+        scanned += len(content)
+        if scanned > _LINE_SCAN_MAX_CHARS:
+            return matches, True
+        lines = content.splitlines()
+        # a continuation window of an oversized unit opens with a synthetic
+        # "// … continued from <header>" line that is not in the file: drop
+        # it so line numbers stay exact and the header cannot re-match
+        if lines and lines[0].startswith(_CONTINUED_PREFIX):
+            lines = lines[1:]
+        scope = str(c["scope"] or "")
+        span = spans.get((str(c["path"]), scope), (0, 0)) if scope else (0, 0)
+        for off, line in enumerate(lines):
+            hay = line if input.case_sensitive else line.lower()
+            hit = line_re.search(line) if line_re is not None else (needle in hay)
+            if not hit:
+                continue
+            key = (str(c["path"]), int(c["start_line"] or 1) + off)
+            if key in seen:
+                continue  # the same span indexed twice (re-parse race)
+            seen.add(key)
+            matches.append(
+                {
+                    "path": key[0],
+                    "line": key[1],
+                    "text": line.strip()[:300],
+                    "scope": scope,
+                    "scope_start_line": span[0],
+                    "scope_end_line": span[1],
+                }
+            )
+            if len(matches) > keep:
+                return matches, False
+    return matches, False
+
+
 # Matching lines extracted past the served page and kept in the pool row.
 _GREP_POOL_EXTRA = 100
 
@@ -684,7 +713,7 @@ async def _grep_files(
         # a regex-shaped literal that names no file: once more as a regex; a non-empty literal
         # answer is untouched
         if not files and not input.regex and mg.regex_shaped(input.pattern):
-            if mg.compile_fallback(input.pattern) is None:
+            if mg.compile_fallback(input.pattern, case_sensitive=input.case_sensitive) is None:
                 note = mg.REGEX_INVALID_NOTE
             elif _second_scan_allowed(budget, "regex retry"):
                 files, total = await _bounded_scan(
