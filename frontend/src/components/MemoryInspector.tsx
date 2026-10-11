@@ -60,6 +60,7 @@ import { relativeTime, formatValue, humanizeError, SENTINEL_AGENTS } from "../li
 import { detectEncodedValue } from "../lib/encoded";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
+import { historyChange, previousVersion } from "../lib/historyChange";
 
 type SectionId = "history" | "related" | "provenance" | "lineage";
 const SECTIONS_KEY = "loom_inspector_sections_v1";
@@ -895,6 +896,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                         // digits are not the stored ones. Number the loaded versions instead.
                         const label = `v${history.length - idx}`;
                         const writtenAt = relativeTime(h.written_at || h.created_at);
+                        const changed = historyChange(h, previousVersion(history, idx));
                         return (
                           <div key={h.version} className="rounded-md bg-[var(--color-surface-2)] overflow-hidden">
                             <button
@@ -917,6 +919,14 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                                 {h.tombstoned_at && <span className="ml-1 text-danger">· tombstoned</span>}
                                 {h.redacted_at && <span className="ml-1 text-warn">· redacted</span>}
                               </div>
+                              {changed.length > 0 && (
+                                <div
+                                  data-testid="history-change"
+                                  className="text-2xs text-[var(--color-text-muted)] [overflow-wrap:anywhere]"
+                                >
+                                  {changed.join(" · ")}
+                                </div>
+                              )}
                             </button>
                             {isOpen && history[0] && (
                               <div className="px-2 pb-2">

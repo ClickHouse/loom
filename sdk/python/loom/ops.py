@@ -10646,6 +10646,15 @@ class MemoryHistoryRow(TypedDict, total=False):
     source_class: NotRequired[str]
     agent: NotRequired[str]
     written_at: NotRequired[Optional[str]]
+    status: NotRequired[str]
+    conflict_with: NotRequired[list[str]]
+    tags: NotRequired[list[str]]
+    verified_at: NotRequired[Optional[str]]
+    verified_by: NotRequired[str]
+    verified_sha256: NotRequired[str]
+    lock_mode: NotRequired[str]
+    lock_reason: NotRequired[str]
+    lock_until: NotRequired[Optional[str]]
 
 
 class MemoryImportCuratedInput(TypedDict, total=False):

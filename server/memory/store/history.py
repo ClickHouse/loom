@@ -34,6 +34,15 @@ class HistoryVersion:
     actor: str
     source_class: str
     agent: str
+    status: str
+    conflict_with: tuple[str, ...]
+    tags: tuple[str, ...]
+    verified_at: Any
+    verified_by: str
+    verified_sha256: str
+    lock_mode: str
+    lock_reason: str
+    lock_until: Any
 
     @classmethod
     def from_row(cls, r: Mapping[str, Any]) -> HistoryVersion:
@@ -53,6 +62,15 @@ class HistoryVersion:
             actor=str(r.get("actor") or ""),
             source_class=str(r.get("source_class") or ""),
             agent=str(r.get("agent") or ""),
+            status=str(r.get("status") or "active"),
+            conflict_with=tuple(str(c) for c in r.get("conflict_with") or ()),
+            tags=tuple(r.get("tags") or ()),
+            verified_at=r.get("verified_at"),
+            verified_by=str(r.get("verified_by") or ""),
+            verified_sha256=str(r.get("verified_sha256") or ""),
+            lock_mode=str(r.get("lock_mode") or ""),
+            lock_reason=str(r.get("lock_reason") or ""),
+            lock_until=r.get("lock_until"),
         )
 
 
@@ -121,7 +139,8 @@ async def list_history(
     # of the listed versions alone — 13.6 MB → under 1 MB for eight versions.
     cols = """memory_id, version, confidence, source_trace, pinned,
                created_at, updated_at, expires_at, tombstoned_at, redacted_at, redaction_reason,
-               actor, source_class, agent"""
+               actor, source_class, agent, status, conflict_with, tags,
+               verified_at, verified_by, verified_sha256, lock_mode, lock_reason, lock_until"""
     params = {
         "org": identity.org,
         "ns": identity.namespace,

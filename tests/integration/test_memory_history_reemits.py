@@ -79,11 +79,51 @@ async def test_reemits_are_left_out_and_edits_stay(control_plane_url, mint_test_
         # A tag change is a caller's edit.
         await a.memory.set("t", "owned", tags=["owner:old"])
         await a.memory.set("t", "owned", tags=["owner:new"])
-        assert len(await _history(a, "t", 2)) == 2
+        tagged = await _history(a, "t", 2)
+        assert [r["tags"] for r in tagged] == [["owner:new"], ["owner:old"]], tagged
 
         # Attest, then revoke: three versions.
         await a.memory.set("a", "attested")
         await _history(a, "a", 1)
         assert (await a.memory.verify("a")).get("changed")
         assert (await a.memory.verify("a", revoke=True)).get("changed")
-        assert len(await _history(a, "a", 3)) == 3
+        attested = await _history(a, "a", 3)
+        assert [bool(r["verified_at"]) for r in attested] == [False, True, False], attested
+
+        # A second verifier and a lock update that keeps its mode: history carries
+        # the attestation and lock metadata that tell them from the version before.
+        await a.memory.set("r", "reviewed")
+        await _history(a, "r", 1)
+        assert (await a.memory.verify("r")).get("changed")
+        tok2 = mint_test_token(org=ORG, namespaces=[ns], roles=["admin"], subject="reviewer2")
+        async with Agent(
+            org=ORG, namespace=ns, agent="t", base_url=control_plane_url, api_key=tok2
+        ) as b:
+            assert (await b.memory.verify("r")).get("changed")
+        reviewed = await _history(a, "r", 3)
+        first, second = reviewed[1]["verified_by"], reviewed[0]["verified_by"]
+        assert first and second and first != second, reviewed
+
+        # Verify, edit, verify again within one second: the same verifier and timestamp,
+        # a new attested hash.
+        await a.memory.set("e", "draft")
+        await _history(a, "e", 1)
+        assert (await a.memory.verify("e")).get("changed")
+        await a.memory.set("e", "final")
+        assert (await a.memory.verify("e")).get("changed")
+        edited = await _history(a, "e", 4)
+        assert edited[0]["verified_sha256"] == edited[0]["content_sha256"], edited
+        assert (
+            edited[1]["verified_sha256"]
+            == edited[2]["content_sha256"]
+            != edited[0]["content_sha256"]
+        ), edited
+
+        await a.memory.set("l", "held")
+        await a.memory.lock("l", reason="audit", mode="no_delete", ttl_seconds=600)
+        await a.memory.lock("l", reason="legal hold", mode="no_delete")
+        held = await _history(a, "l", 3)
+        assert [(r["lock_reason"], r["lock_until"] is None) for r in held[:2]] == [
+            ("legal hold", True),
+            ("audit", False),
+        ], held

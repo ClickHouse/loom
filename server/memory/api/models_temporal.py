@@ -180,6 +180,19 @@ class _MemoryHistoryRow(BaseModel):
     # every version); the version is the write's epoch nanoseconds, so every
     # stored row has one.
     written_at: datetime | None = None
+    # State a version can change with the value unchanged: a reader tells
+    # such a version from the one before it by these.
+    status: str = "active"
+    conflict_with: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    verified_at: datetime | None = None
+    verified_by: str = ""
+    # The content hash the attestation covers: a re-attestation within the same
+    # second by the same verifier differs from the one before only here.
+    verified_sha256: str = ""
+    lock_mode: str = ""
+    lock_reason: str = ""
+    lock_until: datetime | None = None
 
 
 class MemoryHistoryOutput(BaseModel):
