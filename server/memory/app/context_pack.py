@@ -24,6 +24,7 @@ from server.memory.domain.context_layout import (
     _BLOCK_LABELS,
     _DEFAULT_SECTION_ORDER,
     _DEFAULT_SECTION_TOKENS,
+    RECALLED_SECTIONS,
     _ordered_section_names,
     _own_bookmark,
     _procedure_line,
@@ -32,6 +33,8 @@ from server.memory.domain.context_layout import (
     _stable_prefix,
     _tokens_estimate,
     _trim,
+    author_label,
+    escape_data,
 )
 from server.memory.domain.evidence_pack import EvidenceItem, pack_evidence
 
@@ -166,6 +169,8 @@ class _PackState:
         default_section_tokens = self.default_section_tokens
         if not body:
             return
+        if name in RECALLED_SECTIONS:
+            body = escape_data(body)
         trimmed, was_truncated = _trim(
             body,
             _section_budget(input, name, default_section_tokens.get(name, 300)),
@@ -203,6 +208,10 @@ async def _pack_working_memory(st: _PackState) -> None:
             citations=[f"working_memory:{b.block_key}" for b in blocks],
             source_count=len(blocks),
         )
+
+
+# The stack layers that are stored memories with a writer; profile and knowledge are not.
+_STACK_MEMORY_LAYERS = frozenset({"pinned", "recent_recall", "procedure"})
 
 
 async def _pack_memory_stack(st: _PackState) -> None:
@@ -243,7 +252,8 @@ async def _pack_memory_stack(st: _PackState) -> None:
             layers.append(layer)
         cite = f"stack:{layer}/{entry.memory_key or entry.memory_type}"
         citations.append(cite)
-        lines.append(f"- [{layer}/{entry.memory_key}] {entry.value}")
+        author = author_label([entry.actor]) if layer in _STACK_MEMORY_LAYERS else ""
+        lines.append(f"- [{layer}/{entry.memory_key}{author}] {entry.value}")
     st.put(
         "memory_stack",
         "\n".join(lines),
@@ -362,6 +372,7 @@ async def _pack_startup_recall(st: _PackState) -> None:
                 else ""
             ),
             conflict=(r.status == "conflicted"),
+            author=author_label([getattr(r, "actor", "")]),
         )
         for r in rows
     ]
@@ -387,7 +398,35 @@ async def _pack_startup_recall(st: _PackState) -> None:
     )
 
 
-async def _pack_decisions_from_hits(st: _PackState, decision_hits: list[Any]) -> None:
+def _hit_row_key(input: ContextPackInput, h: Any) -> tuple[str, str]:
+    """The (namespace, memory_key) of the stored row a hit came from: a chunk's parent."""
+    key = getattr(h, "parent_memory_key", "") or h.memory_key
+    return (getattr(h, "namespace", "") or input.namespace, str(key))
+
+
+async def _hit_actors(input: ContextPackInput, hits: list[Any]) -> dict[tuple[str, str], list[str]]:
+    """Each hit's recorded writers, read as narrowly as the pack's search was. {} when the
+    read fails: the lines then say by=unknown rather than naming anyone."""
+    import server.memory.store as memory_repo
+
+    def _set(v: str | None) -> str | None:
+        return v if v and v != "-" else None
+
+    try:
+        return await memory_repo.actors_by_key(
+            input.org,
+            [_hit_row_key(input, h) for h in hits],
+            user_id=_set(input.user_id),
+            session_id=_set(input.session_id),
+        )
+    except Exception as e:  # noqa: BLE001 — authorship labels are best-effort; lines say by=unknown
+        log.warning("context.pack: memory authors unavailable: %s", e)
+        return {}
+
+
+async def _pack_decisions_from_hits(
+    st: _PackState, decision_hits: list[Any], actors: dict[tuple[str, str], list[str]]
+) -> None:
     """Decision-typed hits leave the memories block and render as their
     own tagged section with the structured record (scenario, outcome,
     realized outcome). One search, two planes on the wire: the reader
@@ -415,7 +454,8 @@ async def _pack_decisions_from_hits(st: _PackState, decision_hits: list[Any]) ->
         realized = str(rec.get("realized_outcome") or "").strip()
         reasoning = str(rec.get("reasoning") or "").strip()
         made = str(rec.get("made_at") or "")[:10]
-        line = f"- [{ns}/{h.memory_key}]" + (f" {made}" if made else "") + f" {scenario}"
+        author = author_label(actors.get(_hit_row_key(input, h)))
+        line = f"- [{ns}/{h.memory_key}{author}]" + (f" {made}" if made else "") + f" {scenario}"
         if outcome:
             line += f" → decided: {outcome}"
         if reasoning:
@@ -481,12 +521,13 @@ async def _pack_memories(st: _PackState) -> None:
     search_input._context_pack_block_tokens = int(_memories_token_budget)
     out = await handle_memory_search(search_input)
     hits = _without_transcript_rows(list(out.results or []))
+    actors = await _hit_actors(input, hits) if hits else {}
     if input.include_decisions and st.wanted("decisions"):
         decision_hits = [h for h in hits if str(getattr(h, "memory_type", "") or "") == "decision"]
         if decision_hits:
             dec_ids = {id(h) for h in decision_hits}
             hits = [h for h in hits if id(h) not in dec_ids]
-            await _pack_decisions_from_hits(st, decision_hits)
+            await _pack_decisions_from_hits(st, decision_hits, actors)
     if hits:
         evidence: list[EvidenceItem] = []
         for h in hits:
@@ -513,6 +554,8 @@ async def _pack_memories(st: _PackState) -> None:
                     ),
                     # the row state rides `status`; `memory_type` is never "conflicted"
                     conflict=getattr(h, "status", "") == "conflicted",
+                    author=author_label(actors.get(_hit_row_key(input, h))),
+                    derived_from=tuple(getattr(h, "derived_from", None) or ()),
                 )
             )
         packed = pack_evidence(
@@ -549,7 +592,7 @@ async def _pack_procedures(st: _PackState) -> None:
     situation = input.situation or input.query
     if not situation:
         return
-    from server.memory.app.procedure import handle_procedure_match
+    from server.memory.app.procedure import handle_procedure_match, own_procedures
 
     # Two-factor match when the caller separated the state it is in from
     # the objective it pursues: the situation scores the precondition
@@ -571,7 +614,7 @@ async def _pack_procedures(st: _PackState) -> None:
             top_k=min(input.top_k, 5),
         )
     )
-    matches = list(out.matches)
+    matches = own_procedures(list(out.matches))
     explore_meta: dict[str, Any] = {}
     if matches and _explore_this_pack(input, situation):
         # Exploration: withhold the top match so the ledger learns how the run goes without
@@ -881,7 +924,7 @@ async def _working_memory_layers(input: Any) -> tuple[list[Any], str]:
     # its body.
     rendered = "\n".join(
         f'<working-memory block="{_esc(b.block_key, quote=True)}">'
-        f"{_esc(b.content)}</working-memory>"
+        f"{escape_data(b.content)}</working-memory>"
         for b in blocks
     )
     return blocks, rendered

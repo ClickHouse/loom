@@ -19,6 +19,11 @@ class EvidenceItem:
     score: float = 0.0
     temporal_anchor: str = ""
     conflict: bool = False
+    # Who wrote it (` by=…` on the line, from author_label); "" where the plane has no
+    # writer of its own (knowledge, conversations cite their source instead).
+    author: str = ""
+    # The keys a digest compressed, so a summary says what it derives from.
+    derived_from: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -36,6 +41,14 @@ def _trim(text: str, char_budget: int) -> tuple[str, bool]:
     if char_budget <= 20:
         return text[:char_budget], True
     return text[: char_budget - 16].rstrip() + "\n...[truncated]", True
+
+
+def _derived(item: EvidenceItem) -> str:
+    keys = list(item.derived_from)
+    if not keys:
+        return ""
+    more = f"+{len(keys) - 3}" if len(keys) > 3 else ""
+    return f" derived_from={','.join(keys[:3])}{more}"
 
 
 def pack_evidence(
@@ -86,7 +99,8 @@ def pack_evidence(
         group = item.group or item.source or "fact"
         marker = " conflict=true" if item.conflict else ""
         date = f" date={item.temporal_anchor[:10]}" if item.temporal_anchor else ""
-        line = f"- [{item.citation} source={item.source}{date}{marker}] {item.text}"
+        labels = f"source={item.source}{item.author}{_derived(item)}{date}{marker}"
+        line = f"- [{item.citation} {labels}] {item.text}"
         tentative = "\n".join([*lines, line])
         if len(tentative) > char_budget:
             truncated = True

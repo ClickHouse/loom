@@ -6,6 +6,9 @@
 //
 // Reads return the fallback and writes return false on any error: a hook
 // that cannot keep state behaves as on its first run.
+//
+// Every write goes through writePrivateFile: these files can hold prompt and
+// reply text, and their names are predictable in a shared tmp dir.
 
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -49,10 +52,42 @@ export function readJsonFile(file, fallback = {}) {
   }
 }
 
+/** Write (or append) `text` to `file` with mode 0600. Throws, writing
+ *  nothing, when the path is a symlink, not a regular file, or owned by
+ *  another user: someone else may have planted it in a shared tmp dir. */
+export function writePrivateFile(file, text, { append = false } = {}) {
+  const c = fs.constants;
+  // O_NONBLOCK so a planted FIFO fails the open instead of hanging the hook.
+  const flags = c.O_WRONLY | c.O_CREAT | (append ? c.O_APPEND : c.O_TRUNC) | (c.O_NOFOLLOW ?? 0) | (c.O_NONBLOCK ?? 0);
+  const fd = fs.openSync(file, flags, 0o600);
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) throw new Error(`${file} is not a regular file`);
+    if (typeof process.getuid === "function" && st.uid !== process.getuid()) {
+      throw new Error(`${file} belongs to another user`);
+    }
+    // A file left by an older version keeps its mode on open; tighten it.
+    fs.fchmodSync(fd, 0o600);
+    fs.writeSync(fd, text);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/** Remove `file`; true when it is gone. */
+export function removeFile(file) {
+  try {
+    fs.unlinkSync(file);
+    return true;
+  } catch (e) {
+    return e && e.code === "ENOENT";
+  }
+}
+
 /** Write `value` as JSON; true when it was written. */
 export function writeJsonFile(file, value) {
   try {
-    fs.writeFileSync(file, JSON.stringify(value));
+    writePrivateFile(file, JSON.stringify(value));
     return true;
   } catch {
     return false;
@@ -71,7 +106,7 @@ export function readCursor(file) {
 
 export function writeCursor(file, n) {
   try {
-    fs.writeFileSync(file, String(n));
+    writePrivateFile(file, String(n));
     return true;
   } catch {
     return false;

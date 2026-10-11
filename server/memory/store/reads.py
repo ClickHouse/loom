@@ -291,6 +291,48 @@ async def key_holds_established_fact(
     return int((row or {}).get("n") or 0) > 0
 
 
+async def actors_by_key(
+    org: str,
+    keys: Sequence[tuple[str, str]],
+    *,
+    user_id: str | None = None,
+    session_id: str | None = None,
+    ch: _CHClient | None = None,
+) -> dict[tuple[str, str], list[str]]:
+    """The recorded writers (`actor`) of each live (namespace, memory_key), for labelling
+    recalled text with its author. `user_id` / `session_id` narrow the read the way the
+    search that found the keys was narrowed. A key with no recorded actor is absent."""
+    if not keys:
+        return {}
+    ch = ch or _default_client()
+    where = [
+        "org = {org:String}",
+        "(namespace, memory_key) IN {keys:Array(Tuple(String, String))}",
+        "tombstoned_at IS NULL",
+        "actor != ''",
+    ]
+    params: dict[str, Any] = {"org": org, "keys": [(str(n), str(k)) for n, k in keys]}
+    if user_id is not None:
+        where.append("user_id = {uid:String}")
+        params["uid"] = user_id
+    if session_id is not None:
+        where.append("session_id = {sid:String}")
+        params["sid"] = session_id
+    rows = await ch.query_all(
+        f"""
+        SELECT namespace, memory_key, groupUniqArray(actor) AS actors
+        FROM loom.memory FINAL
+        WHERE {" AND ".join(where)}
+        GROUP BY namespace, memory_key
+        """,
+        params=params,
+    )
+    return {
+        (str(r["namespace"]), str(r["memory_key"])): sorted(str(a) for a in r["actors"])
+        for r in rows
+    }
+
+
 async def get_many_by_keys(
     identity: Identity,
     memory_keys: list[str],

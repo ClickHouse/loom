@@ -102,7 +102,7 @@ async def _stack_pinned(ch: Any, input: MemoryStackInput, fill: _StackFill) -> N
     """Section 2: pinned memories."""
     pinned_rows = await ch.query_all(
         """
-        SELECT memory_key, memory_type, value, recall_count, last_recalled_at
+        SELECT memory_key, memory_type, value, recall_count, last_recalled_at, actor
         FROM loom.memory FINAL
         WHERE org = {org:String}
           AND namespace = {ns:String}
@@ -141,6 +141,7 @@ async def _stack_pinned(ch: Any, input: MemoryStackInput, fill: _StackFill) -> N
                 pinned=True,
                 recall_count=int(r.get("recall_count") or 0),
                 last_recalled_at=r.get("last_recalled_at"),
+                actor=str(r.get("actor") or ""),
             )
         )
 
@@ -159,7 +160,7 @@ async def _stack_recent(ch: Any, input: MemoryStackInput, fill: _StackFill) -> s
     recent_rows = await ch.query_all(
         """
         SELECT memory_key, memory_type, value, recall_count,
-               evidence_count, last_recalled_at
+               evidence_count, last_recalled_at, actor
         FROM loom.memory FINAL
         WHERE org = {org:String}
           AND namespace = {ns:String}
@@ -206,6 +207,7 @@ async def _stack_recent(ch: Any, input: MemoryStackInput, fill: _StackFill) -> s
                 tokens=cost,
                 recall_count=int(r.get("recall_count") or 0),
                 last_recalled_at=r.get("last_recalled_at"),
+                actor=str(r.get("actor") or ""),
             )
         )
     return most_recent_excerpt
@@ -217,7 +219,7 @@ async def _stack_procedures(input: MemoryStackInput, fill: _StackFill) -> None:
     procedural matching to be worth the embed + cosine."""
     try:
         from server.memory.api.models_procedure import ProcedureMatchInput
-        from server.memory.app.procedure import handle_procedure_match
+        from server.memory.app.procedure import handle_procedure_match, own_procedures
 
         pm_out = await handle_procedure_match(
             ProcedureMatchInput(
@@ -230,7 +232,7 @@ async def _stack_procedures(input: MemoryStackInput, fill: _StackFill) -> None:
                 top_k=int(input.procedure_limit),
             )
         )
-        for m in pm_out.matches:
+        for m in own_procedures(list(pm_out.matches)):
             steps_text = "\n".join(m.steps) if m.steps else ""
             val = (f"{m.situation}\n{steps_text}").strip()
             if not val:
@@ -245,6 +247,7 @@ async def _stack_procedures(input: MemoryStackInput, fill: _StackFill) -> None:
                     memory_type="procedure",
                     value=val,
                     tokens=cost,
+                    actor=m.actor,
                 )
             )
     except Exception as e:  # noqa: BLE001 — a failed procedure section must not fail the stack

@@ -144,6 +144,9 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
 - **loom-capture.** PostToolUse and PostToolUseFailure record one episodic
   `observe.record` per tool call (zero-token heuristic typing, inputs and
   outputs truncated to 800 characters, the session's run id attached);
+  input, output and error pass through client-side secret redaction first
+  (private keys, AWS/GitHub/Slack tokens, JWTs, bearer headers,
+  `password=`-style assignments: best effort, not a guarantee);
   Loom's own tools and the harness's meta tools are skipped
   (`LOOM_OBSERVE_SKIP_TOOLS` overrides the list), and a read of the same
   file repeated within `LOOM_OBSERVE_DEDUPE_S` (60) seconds is posted once.
@@ -211,7 +214,10 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
 - **loom-session-memory.** Hands the session's user prompts and assistant
   text (the last 8 MB of the transcript, else the turn journal) to
   memory.set_from_messages(defer=true) once, through the flusher; the server
-  extracts the facts and the summary.
+  extracts the facts and the summary. It then removes the session's turn
+  journal and recalled-key stash, whatever it sent (loom-capture removes its
+  code-trace stash). Every tmp state file the hooks write is mode 0600 and
+  is not written through a symlink or into a file another user owns.
 
 ## SessionEnd budget
 

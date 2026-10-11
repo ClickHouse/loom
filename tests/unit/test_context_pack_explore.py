@@ -69,7 +69,7 @@ def test_rate_one_withholds_the_top_match_and_names_it(monkeypatch: pytest.Monke
     assert out.procedure_keys_withheld == ["procedure_top"]
     assert out.procedure_keys == ["procedure_second"]
     assert "[ns/top]" not in out.sections["procedures"]
-    assert "[ns/second]" in out.sections["procedures"]
+    assert "[ns/second by=unknown]" in out.sections["procedures"]
     meta = out.section_meta["procedures"]
     assert meta["explore"] is True and meta["withheld"] == ["procedure_top"]
     assert meta["source_count"] == 1

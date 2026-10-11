@@ -165,6 +165,21 @@ that knows its outcome calls `run.complete` itself.
 **SessionEnd budget.** Claude Code shares about 1.5 s across all SessionEnd hooks. The
 plugin's five entries each declare `timeout: 10` so the last one is not cancelled.
 
+### Recalled content and local data
+
+The primer and the per-prompt recall carry other people's writes when the namespace is
+shared. Loom escapes recalled text so a stored value cannot close its section, labels each
+item with its writer (`by=`), wraps the injected text in a `<loom-recalled-data>` block that
+says it is data and not instructions, and injects only procedures the caller wrote (a
+teammate's still answers an explicit `procedure.match`). Loom cannot control what an agent
+then does: keeping tool authority independent of retrieved text is the client's job.
+
+The hooks' temp files (turn journal, cursors, stashes, flush jobs) are created `0600`,
+never written through a symlink or into another user's file, and the turn journal and
+stashes are removed at SessionEnd. Captured tool input, output and errors pass through a
+client-side secret redaction before they are sent; it catches common credential shapes and
+is best effort, not a guarantee.
+
 ### Tuning knobs
 
 Beyond the off switches in the table:

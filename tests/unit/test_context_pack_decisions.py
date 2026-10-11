@@ -107,7 +107,7 @@ def test_decision_hits_render_as_their_own_section(monkeypatch: pytest.MonkeyPat
 
     assert "decisions" in out.sections and "memories" in out.sections
     dec = out.sections["decisions"]
-    assert "[ns/d1] 2026-09-01 pick a store for agent memory" in dec
+    assert "[ns/d1 by=unknown] 2026-09-01 pick a store for agent memory" in dec
     assert "→ decided: ClickHouse" in dec
     assert "(because one engine for vectors, text and time)" in dec
     assert "realized: p95 under budget (succeeded)" in dec
@@ -133,7 +133,7 @@ def test_record_fetch_failure_falls_back_to_the_excerpt(monkeypatch: pytest.Monk
     out = asyncio.run(
         handle_context_pack(ContextPackInput(org="o", namespace="ns", agent="a", query="q"))
     )
-    assert out.sections["decisions"] == "- [ns/d1] we chose clickhouse"
+    assert out.sections["decisions"] == "- [ns/d1 by=unknown] we chose clickhouse"
     assert "memories" not in out.sections  # the only hit was a decision
 
 

@@ -222,6 +222,7 @@ async def handle_procedure_match(input: ProcedureMatchInput) -> ProcedureMatchOu
         goal_sims = await _goal_similarities(input.org, input.goal, keys_by_ns)
 
     values_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    actor_by_key: dict[tuple[str, str], str] = {}
     for ns, keys in keys_by_ns.items():
         try:
             bulk = await _query.handle_memory_bulk_get(
@@ -239,6 +240,7 @@ async def handle_procedure_match(input: ProcedureMatchInput) -> ProcedureMatchOu
         for key, row in bulk.results.items():
             if isinstance(row.value, dict):
                 values_by_key[(ns, key)] = row.value
+                actor_by_key[(ns, key)] = str(getattr(row, "actor", "") or "")
 
     matches: list[_ProcedureMatch] = []
     for hit in search_out.results:
@@ -313,6 +315,7 @@ async def handle_procedure_match(input: ProcedureMatchInput) -> ProcedureMatchOu
                 goal_similarity=goal_sim,
                 score=round(axes + input.tool_boost * overlap + u_weight * utility, 6),
                 for_agent=by_agent.get(input.agent, {}) if input.agent not in ("*", "-") else {},
+                actor=actor_by_key.get((hit.namespace or input.namespace, hit.memory_key), ""),
                 run_stats_by_agent=by_agent,
                 rejected_revisions=[
                     {k: r.get(k) for k in _REJECTED_PUBLIC_KEYS}
@@ -333,6 +336,19 @@ async def handle_procedure_match(input: ProcedureMatchInput) -> ProcedureMatchOu
         procedure_key=str(_top.memory_key) if _top else "",
         score=float(_top.score) if _top else 0.0,
     )
+
+
+def own_procedures(matches: list[_ProcedureMatch]) -> list[_ProcedureMatch]:
+    """The matches the caller wrote. A pack injects procedures as steps to follow, so a
+    teammate's procedure in a shared namespace is never auto-injected; procedure.match
+    still finds it on request. Without an authenticated caller (auth off) all of them."""
+    from server.auth.context import current_auth
+    from server.memory.app.provenance import writer_actor
+
+    if current_auth() is None:
+        return matches
+    me = writer_actor()
+    return [m for m in matches if me and m.actor == me]
 
 
 async def handle_procedure_list(input: ProcedureListInput) -> ProcedureListOutput:

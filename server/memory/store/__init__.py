@@ -101,6 +101,7 @@ from server.memory.store.lookups import (
 )
 from server.memory.store.reads import (
     CONTAINS_PREDICATE,
+    actors_by_key,
     count_by_namespace,
     find_related_by_entities,
     get_by_id,
@@ -206,6 +207,7 @@ __all__ = [
     "get_by_id",
     "get_by_key",
     "get_canonical_row",
+    "actors_by_key",
     "get_many_by_keys",
     "heal_divergent_entities",
     "Identity",
