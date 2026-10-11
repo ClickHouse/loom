@@ -106,6 +106,14 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
       `duplicate`;
     - any other close peer: `conflict`.
 
+    Under a token bounded to one user (`read_user_id`), peers outside that user's rows are
+    treated as absent, with two exceptions that hold across the whole namespace by design: a
+    close pinned peer still rejects the write (409 `PINNED_CONFLICT`), and `proposed=true`
+    still may not land on a key that holds any user's established fact (409
+    `KEY_HOLDS_FACT`). A pin protects the namespace's fact from every writer, and a proposal
+    must not retire anyone's fact. The refusal names no row, id or value, so the narrowed
+    token learns only that its write was refused.
+
     With `LOOM_MEMORY_CONFLICT_JUDGE` on (off by default), an LLM judge
     (`memory/app/conflict_judge.py`) labels close peers, and peers down to
     `LOOM_MEMORY_CONFLICT_JUDGE_MIN_SIMILARITY`, as `conflict`, `refines`, `merge` or
