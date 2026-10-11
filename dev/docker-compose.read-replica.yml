@@ -30,10 +30,7 @@ services:
       LOOM_BLOB_DIR: /app/var/blobs
       LOOM_DEPLOYMENT: "1"
       LOOM_INSTANCE_LABEL: "deploy:read-replica"
-      # The address the port is published on (the container listens on all
-      # its interfaces). Loopback keeps the startup checks for a reachable
-      # server off; anything else needs LOOM_PUBLIC_BASE_URL, auth and a real
-      # signing secret.
+      # The address the port is published on; see docs/operations/deployment.md.
       LOOM_BIND_HOST: "${LOOM_BIND_HOST:-127.0.0.1}"
     volumes:
       # The provider-process proofs live here; keep it persistent.

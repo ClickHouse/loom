@@ -85,10 +85,7 @@ services:
       # is set — and its rows carry the label `deploy:web`.
       LOOM_DEPLOYMENT: "1"
       LOOM_INSTANCE_LABEL: "deploy:web"
-      # The address the port is published on (the container listens on all
-      # its interfaces). Loopback keeps the startup checks for a reachable
-      # server off; anything else needs LOOM_PUBLIC_BASE_URL, auth and a real
-      # signing secret.
+      # The address the port is published on; see docs/operations/deployment.md.
       LOOM_BIND_HOST: "${LOOM_BIND_HOST:-127.0.0.1}"
     ports:
       - "${LOOM_BIND_HOST:-127.0.0.1}:7777:7777"
@@ -110,6 +107,13 @@ services:
   loom-workers:
     <<: *loom-common
     container_name: loom-workers
+    # Listens on loopback only: nothing outside this container calls it.
+    command:
+      [
+        "sh",
+        "-c",
+        "exec uvicorn server.main:app --host 127.0.0.1 --port $$PORT --loop $${LOOM_UVICORN_LOOP:-auto} --timeout-graceful-shutdown $${LOOM_GRACEFUL_SHUTDOWN_S:-10}",
+      ]
     # The workers' process boots the same lifespan (migrations under the same
     # ledger — whichever container applies them first, the other finds
     # nothing pending), then runs the WorkerSupervisor. One uvicorn process:
