@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from server.memory.domain.context_layout import one_item
+
 
 @dataclass(frozen=True)
 class EvidenceItem:
@@ -100,7 +102,7 @@ def pack_evidence(
         marker = " conflict=true" if item.conflict else ""
         date = f" date={item.temporal_anchor[:10]}" if item.temporal_anchor else ""
         labels = f"source={item.source}{item.author}{_derived(item)}{date}{marker}"
-        line = f"- [{item.citation} {labels}] {item.text}"
+        line = one_item(f"- [{item.citation} {labels}] {item.text}")
         tentative = "\n".join([*lines, line])
         if len(tentative) > char_budget:
             truncated = True

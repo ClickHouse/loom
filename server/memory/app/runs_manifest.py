@@ -23,6 +23,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from server.memory.domain.context_layout import one_item
+
 log = logging.getLogger(__name__)
 
 _MAX_FILES = 4
@@ -141,7 +143,7 @@ def render_manifest(rows: list[SessionRow]) -> str:
         if r.digest:
             sources = f" (from {r.digest_sources} memories)" if r.digest_sources else ""
             parts.append(f"digest{sources}: {r.digest}")
-        out.append(" · ".join(parts))
+        out.append(one_item(" · ".join(parts)))
     return "\n".join(out)
 
 
