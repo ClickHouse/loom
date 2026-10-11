@@ -44,6 +44,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
+from urllib.parse import quote
 
 from pydantic import BaseModel, Field
 
@@ -172,6 +173,20 @@ class BriefSections(BaseModel):
 
 def brief_key_ok(key: str) -> bool:
     return bool(_BRIEF_KEY_RE.match(key or ""))
+
+
+def owner_key_prefix(user_id: str, session_id: str | None = None) -> str:
+    """The stored-key prefix of a brief saved under a token bounded to one user
+    (and session): `~<user>~` or `~<user>~<session>~`. A requested key never
+    starts with or holds `~` (BRIEF_KEY_PATTERN), and `~` is escaped out of the
+    ids, so two owners never share a stored key and none equals a plain key."""
+
+    def tag(value: str) -> str:
+        return quote(value, safe="").replace("~", "%7E")
+
+    if session_id is None:
+        return f"~{tag(user_id)}~"
+    return f"~{tag(user_id)}~{tag(session_id)}~"
 
 
 def auto_brief_key(project: str, branch: str) -> str:

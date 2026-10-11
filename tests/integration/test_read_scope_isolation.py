@@ -431,6 +431,28 @@ def test_writes_aimed_at_vs_rows_never_answer_or_change_them(
         assert r.status_code == 200 and seed.nonce_v in r.text, f"{op}: {r.text[:300]}"
 
 
+def test_pinned_users_keep_their_own_brief_under_one_key(
+    control_plane_url: str, seed: _Seed, tokens: dict[str, str]
+) -> None:
+    key = f"{seed.brief_key}-both"
+    tok = {U: tokens["pinned_u"], V: tokens["pinned_v"]}
+    for user, nonce in ((U, seed.nonce_u), (V, seed.nonce_v)):
+        ident = {"org": seed.org, "namespace": seed.ns, "agent": "a", "user_id": user}
+        body = {**ident, "brief_key": key, "trigger": "model", "sections": {"goal": nonce}}
+        saved = _write(control_plane_url, tok[user], "session.brief_save", body)
+        assert saved["brief_key"] == key and saved["revision"] == 1, saved
+    for user, mine, theirs in ((U, seed.nonce_u, seed.nonce_v), (V, seed.nonce_v, seed.nonce_u)):
+        ident = {"org": seed.org, "namespace": seed.ns, "agent": "a", "user_id": user}
+        got = _write(
+            control_plane_url,
+            tok[user],
+            "session.brief_get",
+            {**ident, "brief_key": key},
+        )
+        assert got["found"] and got["brief_key"] == key and mine in got["rendered"], got
+        assert theirs not in str(got)
+
+
 def test_a_pinned_token_cannot_write_as_another_user(
     control_plane_url: str, seed: _Seed, tokens: dict[str, str]
 ) -> None:

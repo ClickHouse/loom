@@ -18,11 +18,7 @@ from fastapi import HTTPException
 from server.auth.context import current_auth
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
-from server.identity.domain.read_scope import (
-    WHOLE_NAMESPACE,
-    request_read_filters,
-    row_in_read_scope,
-)
+from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, request_read_filters
 from server.memory.api.models_session_brief import (
     SessionBriefDeleteInput,
     SessionBriefDeleteOutput,
@@ -230,21 +226,23 @@ async def _recording_off(inp: Any) -> bool:
     return not await namespace_recording_enabled(inp.org, inp.namespace)
 
 
-async def _own_brief(ch: Any, org: str, namespace: str, key: str) -> dict[str, Any] | None:
-    """The stored brief under `key`, or None. A brief key is one row per namespace, so a
-    token bounded to one user that names a key another user holds is refused: it may
-    neither read that brief nor write over it. The refusal does not describe the row."""
-    scope = request_read_filters(current_auth())
-    row = await repo.current(ch, org, namespace, key, scope=WHOLE_NAMESPACE)
-    if row and not row_in_read_scope(scope, row.get("user_id"), row.get("session_id")):
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "BRIEF_KEY_TAKEN",
-                "message": f"{key!r} is held outside this token's read scope; use another key",
-            },
-        )
-    return row
+# A brief key is one row per namespace. A token bounded to one user (or session) stores
+# its briefs under a prefix naming that owner, so two users saving the same key get two
+# briefs, and neither can see or overwrite the other's. A namespace-wide token uses the
+# key as given.
+def _key_prefix(scope: ReadFilters) -> str:
+    if not scope.narrowed:
+        return ""
+    session = scope.session_id if scope.scope == "own_session" else None
+    return sb.owner_key_prefix(scope.user_id or "", session)
+
+
+def _stored_key(key: str, scope: ReadFilters) -> str:
+    return _key_prefix(scope) + key
+
+
+def _shown_key(stored: str, scope: ReadFilters) -> str:
+    return stored.removeprefix(_key_prefix(scope))
 
 
 async def handle_session_brief_save(inp: SessionBriefSaveInput) -> SessionBriefSaveOutput:
@@ -254,7 +252,9 @@ async def handle_session_brief_save(inp: SessionBriefSaveInput) -> SessionBriefS
     if not sb.brief_key_ok(key):
         raise HTTPException(status_code=422, detail={"code": "BAD_BRIEF_KEY", "message": key})
     ch = get_client()
-    row = await _own_brief(ch, inp.org, inp.namespace, key)
+    stored_key = _stored_key(key, request_read_filters(current_auth()))
+    # The stored key names its owner, so the row under it is the caller's own.
+    row = await repo.current(ch, inp.org, inp.namespace, stored_key, scope=WHOLE_NAMESPACE)
     live = row if row and row.get("tombstoned_at") is None else None
     stored_rev = int(row.get("revision") or 0) if row else 0
     if inp.if_revision is not None and inp.if_revision != (stored_rev if live else 0):
@@ -320,7 +320,7 @@ async def handle_session_brief_save(inp: SessionBriefSaveInput) -> SessionBriefS
         live,
         org=inp.org,
         namespace=inp.namespace,
-        brief_key=key,
+        brief_key=stored_key,
         agent=inp.agent,
         user_id=inp.user_id,
         session_id=inp.session_id,
@@ -376,8 +376,8 @@ async def _find(inp: SessionBriefGetInput) -> dict[str, Any] | None:
     ch = get_client()
     scope = request_read_filters(current_auth())
     if inp.brief_key:
-        row = await repo.current(ch, inp.org, inp.namespace, inp.brief_key, scope=scope)
-        return row
+        key = _stored_key(inp.brief_key, scope)
+        return await repo.current(ch, inp.org, inp.namespace, key, scope=scope)
     rows = await repo.listing(
         ch,
         inp.org,
@@ -386,6 +386,7 @@ async def _find(inp: SessionBriefGetInput) -> dict[str, Any] | None:
         from_session=inp.from_session,
         limit=1,
         scope=scope,
+        key_prefix=_key_prefix(scope),
     )
     return rows[0] if rows else None
 
@@ -403,11 +404,12 @@ async def handle_session_brief_get(inp: SessionBriefGetInput) -> SessionBriefGet
     row = await _find(inp)
     if row is None:
         return SessionBriefGetOutput(found=False, brief_key=inp.brief_key)
+    scope = request_read_filters(current_auth())
     key = str(row["brief_key"])
     ch = get_client()
     revisions = await repo.revision_count(ch, inp.org, inp.namespace, key)
     base: dict[str, Any] = {
-        "brief_key": key,
+        "brief_key": _shown_key(key, scope),
         "project": str(row.get("project") or ""),
         "branch": str(row.get("branch") or ""),
         "source_sessions": list(row.get("source_sessions") or []),
@@ -427,7 +429,7 @@ async def handle_session_brief_get(inp: SessionBriefGetInput) -> SessionBriefGet
             inp.namespace,
             key,
             inp.revision,
-            scope=request_read_filters(current_auth()),
+            scope=scope,
         )
         # A revision from before a delete belongs to the forgotten brief: the
         # current life of the key started at its `created_at`.
@@ -469,6 +471,7 @@ def _ago(seconds: int) -> str:
 
 
 async def handle_session_brief_list(inp: SessionBriefListInput) -> SessionBriefListOutput:
+    scope = request_read_filters(current_auth())
     rows = await repo.listing(
         get_client(),
         inp.org,
@@ -477,7 +480,8 @@ async def handle_session_brief_list(inp: SessionBriefListInput) -> SessionBriefL
         agent=inp.agent if inp.mine_only else "",
         from_session=inp.from_session,
         limit=inp.limit,
-        scope=request_read_filters(current_auth()),
+        scope=scope,
+        key_prefix=_key_prefix(scope),
     )
     items: list[SessionBriefSummary] = []
     lines: list[str] = []
@@ -485,7 +489,7 @@ async def handle_session_brief_list(inp: SessionBriefListInput) -> SessionBriefL
         secs = sb_render.sections_from_json(str(r.get("sections") or "{}"))
         age = _age(r.get("updated_at"))
         item = SessionBriefSummary(
-            brief_key=str(r["brief_key"]),
+            brief_key=_shown_key(str(r["brief_key"]), scope),
             revision=int(r.get("revision") or 0),
             project=str(r.get("project") or ""),
             branch=str(r.get("branch") or ""),
@@ -508,9 +512,9 @@ async def handle_session_brief_list(inp: SessionBriefListInput) -> SessionBriefL
 
 async def handle_session_brief_delete(inp: SessionBriefDeleteInput) -> SessionBriefDeleteOutput:
     ch = get_client()
-    row = await repo.current(
-        ch, inp.org, inp.namespace, inp.brief_key, scope=request_read_filters(current_auth())
-    )
+    scope = request_read_filters(current_auth())
+    key = _stored_key(inp.brief_key, scope)
+    row = await repo.current(ch, inp.org, inp.namespace, key, scope=scope)
     if row is None or row.get("tombstoned_at") is not None:
         return SessionBriefDeleteOutput(deleted=False, brief_key=inp.brief_key)
     from server.memory.app.provenance import writer_actor
