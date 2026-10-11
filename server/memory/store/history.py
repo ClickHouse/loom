@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
-from server.memory.store.rows import Identity, MemoryRow, _hydrate
+from server.memory.store.rows import MEMORY_PERSISTED_COLS, Identity, MemoryRow, _hydrate
 from server.memory.store.sql import _is_full_row
 
 
@@ -81,6 +81,14 @@ class HistoryTarget:
         )
 
 
+# Every persisted column but the version stamp and `entities`; `content_sha256`
+# stands in for the value, which the version list does not read.
+_SAME_STATE_COLS = tuple(
+    c for c in MEMORY_PERSISTED_COLS if c not in ("version", "entities", "value", "value_json")
+)
+_STATE_HASH = f"cityHash64(tuple({', '.join(_SAME_STATE_COLS)}))"
+
+
 async def list_history(
     identity: Identity,
     memory_key: str,
@@ -88,8 +96,8 @@ async def list_history(
     limit: int = 100,
     ch: _CHClient | None = None,
 ) -> list[HistoryVersion]:
-    """Full version history of one memory_key, newest-first, including
-    tombstoned + redacted rows.
+    """Version history of one memory_key, newest-first, including
+    tombstoned + redacted rows; entity-only re-emits are left out.
 
     Reads loom.memory_versions — the append-only mirror a materialized view
     fills on every INSERT into loom.memory — UNIONed with the
@@ -123,16 +131,32 @@ async def list_history(
         "k": memory_key,
         "limit": limit,
     }
+    # A version that reads like the one before it, `entities` aside, is the entity
+    # tagger's re-emit: a caller's write stamps `updated_at`, a re-emit carries it
+    # forward. It is left out before the limit, so a run of them cannot hide an
+    # older edit. Every other persisted column counts (_SAME_STATE_COLS).
     rows = await ch.query_all(
         f"""
         SELECT {cols}
         FROM (
-            SELECT {cols} FROM loom.memory_versions WHERE {ident_where}
-            UNION ALL
-            SELECT {cols} FROM loom.memory WHERE {ident_where}
+            SELECT *,
+                   lagInFrame(_state) OVER w AS _prev_state,
+                   row_number() OVER w AS _n
+            FROM (
+                SELECT * FROM (
+                    SELECT {cols}, content_sha256, {_STATE_HASH} AS _state
+                    FROM loom.memory_versions WHERE {ident_where}
+                    UNION ALL
+                    SELECT {cols}, content_sha256, {_STATE_HASH} AS _state
+                    FROM loom.memory WHERE {ident_where}
+                )
+                LIMIT 1 BY memory_id, version
+            )
+            WINDOW w AS (PARTITION BY memory_id ORDER BY version
+                         ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)
         )
+        WHERE NOT (_n > 1 AND content_sha256 != '' AND _state = _prev_state)
         ORDER BY version DESC
-        LIMIT 1 BY memory_id, version
         LIMIT {{limit:UInt32}}
         """,
         params=params,
