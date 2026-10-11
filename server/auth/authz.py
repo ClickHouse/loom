@@ -323,7 +323,8 @@ async def _check_restricted(auth: AuthInfo, required_role: Role, org: str, names
     """The two-factor gate for restricted namespaces. Raises PermissionError unless:
 
     1. the token belongs to `org` (no cross-org wildcard);
-    2. the token names `namespace` (claim or ns_roles; no wildcard);
+    2. the token names `namespace` (claim or ns_roles; no wildcard), and a
+       write also needs it in the token's `ns_write` set when it has one;
     3. the token's own role there — the scoped `ns_roles` entry, else the
        flat `roles` — reaches `required_role`;
     4. a live DIRECT grant for the token's subject reaches `required_role`
@@ -346,6 +347,8 @@ async def _check_restricted(auth: AuthInfo, required_role: Role, org: str, names
     if auth.org != org:
         raise refusal
     if not names_namespace(auth, org, namespace):
+        raise refusal
+    if required_role.value >= Role.WRITER.value and not auth.can_write(org, namespace):
         raise refusal
     own = auth.effective_role(org, namespace) if auth.has_ns_roles() else None
     if own is None and not auth.has_ns_roles():

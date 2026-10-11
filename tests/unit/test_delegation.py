@@ -190,6 +190,21 @@ async def test_a_restricted_namespace_needs_its_two_factors_and_the_creator(worl
 
 
 @pytest.mark.asyncio
+async def test_a_restricted_namespace_outside_ns_write_is_read_only(world) -> None:
+    child = _login(
+        namespaces=("a", RESTRICTED),
+        write_namespaces=("a",),
+        creator="alice",
+        parents=("login-1",),
+        subject="sa:r",
+    )
+    world["grants"][(ORG, RESTRICTED, "sa:r")] = Role.WRITER
+    assert await _reaches(child, RESTRICTED)
+    assert not await _reaches(child, RESTRICTED, Role.WRITER)
+    assert await _reaches(child, "a", Role.WRITER)
+
+
+@pytest.mark.asyncio
 async def test_the_creators_grants_are_rechecked_on_every_request(world) -> None:
     child = await _child(_login(), {"*": None}, subject="alice", is_service_account=False)
     assert await _reaches(child, "b")
