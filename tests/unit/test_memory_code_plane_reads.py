@@ -56,6 +56,21 @@ async def test_user_file_dirs_read_only_the_callers_namespaces(
     assert len(ch.calls) == 1
 
 
+def test_code_search_personalises_by_the_scopes_user_not_the_bodys() -> None:
+    from server.code.app.search import handler
+    from tests.unit.principals import acting_as, principal
+
+    pinned = principal("viewer", org="o", namespaces=("ns1",), read_user_id="u1")
+    with acting_as(pinned):
+        assert handler._personalisation_user("u2") == "u1"
+        assert handler._personalisation_user(None) == "u1"
+    unpinned = principal("viewer", org="o", namespaces=("ns1",), read_scope="own_user")
+    with acting_as(unpinned):
+        assert handler._personalisation_user("u2") is None  # scope unresolved: no tie-break
+    with acting_as(principal("viewer", org="o", namespaces=("ns1",))):
+        assert handler._personalisation_user("u2") == "u2"
+
+
 @pytest.mark.asyncio
 async def test_lesson_reads_scope_to_the_org_and_the_lesson_namespaces(
     monkeypatch: pytest.MonkeyPatch,

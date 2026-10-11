@@ -206,6 +206,11 @@ than `namespace`:
 - A write's answer names no row outside the scope: a merge into, a duplicate of or a
   pinned conflict with another user's row reports the verdict without that row's id,
   hash or key, and `conflicts.list` drops such peers from `conflict_with`.
+- Session briefs are kept per user (per session under `own_session`): two users saving
+  the same `brief_key` get two briefs, each sees only its own, and a namespace-wide
+  token lists them under keys prefixed `~<user>~` (or `~<user>~<session>~`).
+- `code.search` breaks ties with the scope's own user's recent files, whatever
+  `user_id` the body names.
 - A leg whose rows carry no user (conversations, runs) answers nothing.
 - An op that cannot bound its answer to one user (the entity graph `facts.*`,
   `conversation.*` reads, namespace exports, admin and curation ops) is refused with
