@@ -263,6 +263,22 @@ def test_the_dashboard_csp_admits_only_the_nonced_boot_script(
     assert again != csp  # a fresh nonce per response
 
 
+def test_the_e2e_spec_serves_the_dashboard_csp_the_server_sends() -> None:
+    """frontend/e2e/preview-isolation.spec.ts hand-copies the policy (vite preview sends
+    no headers), so a change to dashboard_csp must change the spec too."""
+    from server.identity.app.me_routes import dashboard_csp
+
+    spec = (
+        Path(__file__).resolve().parents[2] / "frontend/e2e/preview-isolation.spec.ts"
+    ).read_text()
+    nonce = re.search(r'const NONCE = "([^"]+)";', spec)
+    block = re.search(r"const DASHBOARD_CSP =(.*?);\n", spec, re.S)
+    assert nonce and block
+    parts = re.findall(r'"([^"]*)"|`([^`]*)`', block.group(1))
+    copied = "".join(a or b for a, b in parts).replace("${NONCE}", nonce.group(1))
+    assert copied == dashboard_csp(nonce.group(1))
+
+
 # ---- `loom serve` ----
 
 

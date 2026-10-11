@@ -38,7 +38,7 @@ const FIXTURES: Fixture[] = [
 const uri = (f: Fixture) => `docs/${f.title.toLowerCase().replace(/ /g, "-")}`;
 
 // The /me page's policy, as server/identity/app/me_routes.py::dashboard_csp builds it
-// (tests/unit/test_web_exposure.py pins the server side). vite preview sends no headers,
+// (tests/unit/test_web_exposure.py checks this copy against it). vite preview sends no headers,
 // so the page is served here with it and the nonce'd boot snippet the server injects.
 const NONCE = "e2eNonce0123456789";
 const DASHBOARD_CSP =
