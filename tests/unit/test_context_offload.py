@@ -14,6 +14,12 @@ LOG = "\n".join(f"line {i}: {'ERROR disk full' if i % 50 == 0 else 'ok'}" for i 
 IDENT = {"org": "o", "namespace": "ns", "agent": "a"}
 
 
+def _rx(pattern: str):
+    from server.core.caller_regex import compile_caller_regex
+
+    return compile_caller_regex(pattern, case_sensitive=False)
+
+
 def test_content_key_is_deterministic_and_summary_flattens() -> None:
     sha, key = h.content_key("hello\nworld")
     assert key == f"blob/{sha[:20]}" and h.content_key("hello\nworld") == (sha, key)
@@ -26,9 +32,9 @@ def test_slice_and_grep_paginate() -> None:
     piece, nxt = h.slice_content("abcdef", 0, 4)
     assert (piece, nxt) == ("abcd", 4)
     assert h.slice_content("abcdef", 4, 4) == ("ef", -1)
-    text, matched, nxt = h.grep_content(LOG, r"error", offset=0, limit=60)
+    text, matched, nxt = h.grep_content(LOG, _rx("error"), offset=0, limit=60)
     assert matched == 6 and text.startswith("50: line 50: ERROR") and nxt == 2
-    text2, _, nxt2 = h.grep_content(LOG, r"error", offset=nxt, limit=10_000, context_lines=1)
+    text2, _, nxt2 = h.grep_content(LOG, _rx("error"), offset=nxt, limit=10_000, context_lines=1)
     assert text2.startswith("149- line 149: ok\n150: line 150: ERROR") and nxt2 == -1
 
 
@@ -130,7 +136,7 @@ def test_grep_content_runs_a_catastrophic_pattern_in_linear_time() -> None:
     import time
 
     started = time.monotonic()
-    text, matched, _ = h.grep_content("a" * 50_000 + "!", "(a+)+$", offset=0, limit=100)
+    text, matched, _ = h.grep_content("a" * 50_000 + "!", _rx("(a+)+$"), offset=0, limit=100)
     assert matched == 0 and text == ""
     assert time.monotonic() - started < 2.0
 
@@ -153,5 +159,8 @@ def test_fetch_refuses_a_backreference_naming_re2(monkeypatch) -> None:
 
 def test_grep_content_scans_at_most_the_offload_cap(monkeypatch) -> None:
     monkeypatch.setattr(h.settings, "context_offload_max_bytes", 10)
-    _, matched, _ = h.grep_content("hit\n" * 10, "hit", offset=0, limit=1000)
+    _, matched, _ = h.grep_content("hit\n" * 10, _rx("hit"), offset=0, limit=1000)
     assert matched == 2  # only "hit\nhit\nhi" is scanned
+    # the cap is bytes: four 3-byte characters are 12 bytes, past a 10-byte cap
+    _, matched, _ = h.grep_content("€€€€\nhit", _rx("hit"), offset=0, limit=1000)
+    assert matched == 0
