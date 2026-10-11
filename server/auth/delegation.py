@@ -7,21 +7,24 @@
 
 and never more: same org, grant roles only (org_admin / platform_admin are
 never delegated), the parent's read scope and write namespaces, an expiry no
-later than the parent's, and the parent's chain plus the parent's own id.
+later than the parent's, and the parent's chain plus the parent's own id
+and subject.
 The CLI `loom mint-token` holds the signing secret and is not a delegation.
 
 The creator is the root principal of the chain (a grandchild keeps it).
 Live grants are rechecked on every request, inside the token's own claim
 (`authz.check_authorized`, `context.resolve_my_namespaces`), and
-`jwt.verify_token` refuses the child once any ancestor token or the
-creator is revoked.
+`jwt.verify_token` refuses the child once any ancestor token (by id or by
+subject) or the creator is revoked.
 """
 
 from __future__ import annotations
 
 import logging
+import math
 import time
 from dataclasses import dataclass
+from typing import Any
 
 from fastapi import HTTPException
 
@@ -29,6 +32,7 @@ from server.auth import authz
 from server.auth import jwt as jwt_mod
 from server.auth.authz import grant_role
 from server.auth.jwt import AuthInfo
+from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT
 from server.operations.base import Role
 from server.settings import settings
 
@@ -53,8 +57,14 @@ class Delegated:
     read_user_id: str
     ttl_seconds: int
     parents: list[str]
+    parent_subjects: list[str]
     creator: str
     is_service_account: bool
+
+    @property
+    def ttl_days(self) -> int:
+        """The TTL in whole days, rounded up: a live token never shows 0."""
+        return math.ceil(self.ttl_seconds / 86400)
 
     def mint(self, subject: str, *, jti: str | None = None, consumer: str | None = None) -> str:
         return jwt_mod.mint_token(
@@ -71,6 +81,7 @@ class Delegated:
             consumer=consumer,
             jti=jti,
             parents=self.parents,
+            parent_subjects=self.parent_subjects,
             creator=self.creator,
         )
 
@@ -120,6 +131,7 @@ async def delegate(
         read_user_id=parent.read_user_id,
         ttl_seconds=_child_ttl(parent, ttl_seconds),
         parents=parents,
+        parent_subjects=[*parent.parent_subjects, parent.subject],
         creator=creator,
         is_service_account=is_service_account,
     )
@@ -156,7 +168,7 @@ async def _allowed_roles(
         want = delegable_role(asked)
         allowed = ceiling_role(parent, org, ns)
         if ns != "*":
-            allowed = _lower(allowed, await authz._grant_role_for(org, ns, creator))
+            allowed = _lower(allowed, await authz.grant_role_for(org, ns, creator))
         if allowed is None or (want is not None and want > allowed):
             if ns not in requested:
                 continue
@@ -222,15 +234,39 @@ def ceiling_role(token: AuthInfo, org: str, namespace: str, *, write: bool = Fal
     return min(flat, Role.ADMIN)
 
 
-# (org, creator) -> (time.monotonic() of the read, account active).
-_account_active: dict[tuple[str, str], tuple[float, bool]] = {}
+@dataclass(frozen=True)
+class _Account:
+    """What the creator's rows in one org say about its delegated tokens."""
+
+    active: bool
+    best_grant: Role | None
+
+
+# (org, creator) -> (time.monotonic() of the read, the account). Only the
+# token's own org reaches it (authz checks the org first); the cap bounds it.
+_account_active: dict[tuple[str, str], tuple[float, _Account]] = {}
+_ACCOUNT_CACHE_MAX = 4096
+
+_RANK_ROLE = {3: Role.ADMIN, 2: Role.WRITER, 1: Role.VIEWER}
 
 
 async def creator_account_active(org: str, creator: str) -> bool:
-    """False when the creator owns namespaces in `org` and none is active any
-    more (deactivated, claim-released): every token it delegated stops. A
-    creator that owns none (an operator subject) is not disabled. Cached for
-    the revocation refresh interval; a failed read counts as disabled."""
+    """False when the creator's account in `org` is disabled, so every token
+    it delegated stops: it owns namespaces and none is active any more
+    (deactivated), or it held grants and none is live (a claim release
+    tombstones them and blanks the owner). A creator with neither (an
+    operator subject) is not disabled. A failed read counts as disabled."""
+    return (await _creator_account(org, creator)).active
+
+
+async def creator_best_grant(org: str, creator: str) -> Role | None:
+    """The highest live grant the creator holds on any namespace of `org`."""
+    return (await _creator_account(org, creator)).best_grant
+
+
+async def _creator_account(org: str, creator: str) -> _Account:
+    """Cached for the revocation refresh interval; a failed read is not cached."""
+    from server.auth.aliases import subject_aliases
     from server.core.ch import get_client
 
     key = (org, creator)
@@ -239,22 +275,41 @@ async def creator_account_active(org: str, creator: str) -> bool:
     if hit is not None and now - hit[0] < settings.jwt_revocation_cache_ttl_seconds:
         return hit[1]
     try:
+        subjects = await subject_aliases(org, creator)
         row = await get_client().query_one(
-            """
-            SELECT count() AS total, countIf(active = 1) AS live
-            FROM loom.namespaces FINAL
-            WHERE org = {org:String} AND owner_email = {sub:String}
+            f"""
+            SELECT o.owned AS owned, o.owned_live AS owned_live,
+                   g.granted AS granted, g.best_rank AS best_rank
+            FROM (
+                SELECT count() AS owned, countIf(active = 1) AS owned_live
+                FROM loom.namespaces FINAL
+                WHERE org = {{org:String}} AND owner_email = {{sub:String}}
+            ) AS o
+            CROSS JOIN (
+                SELECT countIf(status = 'active') AS granted,
+                       maxIf({GRANT_RANK_SQL}, {LIVE_GRANT}) AS best_rank
+                FROM loom.namespace_grants FINAL
+                WHERE org = {{org:String}} AND subject IN {{subs:Array(String)}}
+            ) AS g
             """,
-            params={"org": org, "sub": creator},
+            params={"org": org, "sub": creator, "subs": subjects},
         )
     except Exception as e:  # noqa: BLE001 — an unreadable account counts as disabled (closed)
         log.warning("account lookup failed for %s/%s: %s", org, creator, e)
-        return False
-    total = int((row or {}).get("total") or 0)
-    live = int((row or {}).get("live") or 0)
-    active = total == 0 or live > 0
-    _account_active[key] = (now, active)
-    return active
+        return _Account(active=False, best_grant=None)
+    account = _account_from_row(row or {})
+    if len(_account_active) >= _ACCOUNT_CACHE_MAX:
+        _account_active.clear()
+    _account_active[key] = (now, account)
+    return account
+
+
+def _account_from_row(row: dict[str, Any]) -> _Account:
+    counts = {k: int(row.get(k) or 0) for k in ("owned", "owned_live", "granted", "best_rank")}
+    best = _RANK_ROLE.get(counts["best_rank"])
+    owns_ok = counts["owned"] == 0 or counts["owned_live"] > 0
+    grants_ok = counts["granted"] == 0 or best is not None
+    return _Account(active=owns_ok and grants_ok, best_grant=best)
 
 
 __all__ = [
@@ -262,6 +317,7 @@ __all__ = [
     "Delegated",
     "ceiling_role",
     "creator_account_active",
+    "creator_best_grant",
     "delegable_role",
     "delegate",
 ]

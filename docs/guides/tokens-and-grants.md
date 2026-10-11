@@ -52,21 +52,21 @@ Without `--save` stdout is the bare token, so `TOKEN=$(loom mint-token …)` wor
 
 ## Read the claims
 
-| Claim                        | Meaning                                                                                                                                                          |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sub`                        | The principal. Service-account subjects created from the dashboard start with `sa:`.                                                                             |
-| `org`                        | The org; `*` reaches every org.                                                                                                                                  |
-| `namespaces`                 | The readable set, in order; `["*"]` reads every namespace of the org.                                                                                            |
-| `roles`                      | The flat role list, applied to every readable namespace.                                                                                                         |
-| `ns_roles`                   | Scoped tokens only: namespace → role. Authoritative: it replaces `roles` and the grant lookup for those namespaces.                                              |
-| `ns_write`                   | Optional writable subset of `namespaces`, set through `mint_token(write_namespaces=…)` in `server/auth/jwt.py`; no CLI flag. Absent = writes follow reads.       |
-| `read_scope`, `read_user_id` | The read ceiling and the pinned end user.                                                                                                                        |
-| `traffic_class`, `consumer`  | Bound traffic class and consumer tag.                                                                                                                            |
-| `sa`                         | `true` for a service account, `false` for a user token.                                                                                                          |
-| `jti`                        | The token's id: stamped on the audit and exposure ledgers as `token_id`, and the handle `loom revoke-token --jti` takes. Not a secret.                           |
-| `parents`, `creator`         | Delegated tokens only: the ids of every ancestor token, and the person whose live grants the token is rechecked against ([delegated tokens](#delegated-tokens)). |
-| `exp`                        | Expiry, when minted with a TTL.                                                                                                                                  |
-| `iss`, `aud`, `iat`          | `LOOM_JWT_ISSUER` (`loom`), `LOOM_JWT_AUDIENCE` (`loom-platform`), issued-at.                                                                                    |
+| Claim                                   | Meaning                                                                                                                                                                     |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sub`                                   | The principal. Service-account subjects created from the dashboard start with `sa:`.                                                                                        |
+| `org`                                   | The org; `*` reaches every org.                                                                                                                                             |
+| `namespaces`                            | The readable set, in order; `["*"]` reads every namespace of the org.                                                                                                       |
+| `roles`                                 | The flat role list, applied to every readable namespace.                                                                                                                    |
+| `ns_roles`                              | Scoped tokens only: namespace → role. Authoritative: it replaces `roles` and the grant lookup for those namespaces.                                                         |
+| `ns_write`                              | Optional writable subset of `namespaces`, set through `mint_token(write_namespaces=…)` in `server/auth/jwt.py`; no CLI flag. Absent = writes follow reads.                  |
+| `read_scope`, `read_user_id`            | The read ceiling and the pinned end user.                                                                                                                                   |
+| `traffic_class`, `consumer`             | Bound traffic class and consumer tag.                                                                                                                                       |
+| `sa`                                    | `true` for a service account, `false` for a user token.                                                                                                                     |
+| `jti`                                   | The token's id: stamped on the audit and exposure ledgers as `token_id`, and the handle `loom revoke-token --jti` takes. Not a secret.                                      |
+| `parents`, `parent_subjects`, `creator` | Delegated tokens only: the ids and `sub`s of every ancestor token, and the person whose live grants the token is rechecked against ([delegated tokens](#delegated-tokens)). |
+| `exp`                                   | Expiry, when minted with a TTL.                                                                                                                                             |
+| `iss`, `aud`, `iat`                     | `LOOM_JWT_ISSUER` (`loom`), `LOOM_JWT_AUDIENCE` (`loom-platform`), issued-at.                                                                                               |
 
 The JWT header's `kid` names the signing key. `GET /v1/whoami` shows what the server
 verified for a token: the first thing to check when a call is refused.
@@ -206,16 +206,21 @@ what was asked for, cut to what the caller's token allows and to the caller's li
 - `*` only from a sign-in token or a delegated `*` token, and it means "wherever the person
   holds a grant"; from a narrower token it becomes that token's own namespace list;
 - the caller's `read_scope`, `read_user_id` and `ns_write`;
-- a service-account caller mints only service-account tokens;
+- a service-account caller mints only service-account tokens (on the Setup page: send
+  `persist=true`);
 - an expiry: `ttl_days`/`ttl_seconds`, 90 days when unset, and never past the caller's own
   token's `exp` (a longer TTL is clipped);
-- `parents` (every ancestor's token id) and `creator` (the person at the root).
+- `parents` (every ancestor's token id), `parent_subjects` (every ancestor's `sub`) and
+  `creator` (the person at the root).
 
 On every request the gate rechecks a delegated token: the person's live grant must still
 reach the role, inside the token's own claim (the token subject's own grants do not widen
 it), and the person's account must still be active (a creator who owns namespaces, none of
-them active any more, stops every token they delegated). Revoking any ancestor's `jti` or
-the person's `sub` kills the token, its children and theirs. `loom mint-token` signs with
+them active any more, or who held grants and has none live, as after a claim release,
+stops every token they delegated). An op with no namespace that writes needs the person to
+hold that role on some namespace of the org. Revoking any ancestor's `jti` or `sub` (the
+dashboard revokes a service account by its `sub`) or the person's `sub` kills the token,
+its children and theirs. `loom mint-token` signs with
 the key and is not a delegation.
 
 ## Let people join a namespace

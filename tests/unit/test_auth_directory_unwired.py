@@ -46,7 +46,7 @@ async def test_the_authorization_gate_refuses(
     async def _grant(org: str, ns: str, subject: str) -> Role:
         return Role.ADMIN
 
-    monkeypatch.setattr(authz, "_grant_role_for", _grant)
+    monkeypatch.setattr(authz, "grant_role_for", _grant)
     with pytest.raises(PermissionError, match="cannot access"):
         await authz.check_authorized(_auth(), Role.VIEWER, org=ORG, namespace=NS)
 

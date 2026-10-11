@@ -39,7 +39,7 @@ def world(monkeypatch: pytest.MonkeyPatch):
     async def _grant(org, ns, subject):
         return state["grants"].get((org, ns, subject))
 
-    monkeypatch.setattr(authz, "_grant_role_for", _grant)
+    monkeypatch.setattr(authz, "grant_role_for", _grant)
 
     class _Client:
         async def query_all(self, sql, params=None):

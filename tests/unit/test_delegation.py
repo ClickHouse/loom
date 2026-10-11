@@ -70,13 +70,18 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     async def account_active(org: str, creator: str) -> bool:
         return bool(state["active"])
 
+    async def best_grant(org: str, creator: str) -> Role | None:
+        held = [r for (o, _ns, sub), r in grants.items() if (o, sub) == (org, creator)]
+        return max(held, default=None)
+
     async def aliases(org: str, subject: str, **k: Any) -> list[str]:
         return [subject]
 
-    monkeypatch.setattr(authz, "_grant_role_for", grant_role_for)
+    monkeypatch.setattr(authz, "grant_role_for", grant_role_for)
     monkeypatch.setattr(authz, "directory", lambda: _Directory())
     monkeypatch.setattr(context, "directory", lambda: _Directory())
     monkeypatch.setattr(delegation, "creator_account_active", account_active)
+    monkeypatch.setattr(delegation, "creator_best_grant", best_grant)
     monkeypatch.setattr("server.auth.aliases.subject_aliases", aliases)
     monkeypatch.setattr("server.core.ch.get_client", lambda: _CH(grants))
     return state
@@ -274,23 +279,247 @@ class _AccountCH:
         return self.row
 
 
+async def _no_aliases(org: str, subject: str, **k: Any) -> list[str]:
+    return [subject]
+
+
 @pytest.mark.parametrize(
-    ("row", "fail", "active"),
+    ("row", "fail", "active", "best"),
     [
-        ({"total": 0, "live": 0}, False, True),  # an operator subject owns no account rows
-        ({"total": 2, "live": 1}, False, True),
-        ({"total": 2, "live": 0}, False, False),  # deactivated / claim-released
-        (None, True, False),  # unreadable: closed
+        ({}, False, True, None),  # an operator subject owns and holds nothing
+        ({"owned": 2, "owned_live": 1, "granted": 1, "best_rank": 2}, False, True, Role.WRITER),
+        ({"owned": 2, "owned_live": 0, "granted": 1, "best_rank": 2}, False, False, Role.WRITER),
+        ({"granted": 3, "best_rank": 0}, False, False, None),  # every grant revoked
+        (None, True, False, None),  # unreadable: closed
     ],
 )
 @pytest.mark.asyncio
-async def test_creator_account_active(monkeypatch: pytest.MonkeyPatch, row, fail, active) -> None:
+async def test_creator_account_active(
+    monkeypatch: pytest.MonkeyPatch, row, fail, active, best
+) -> None:
     ch = _AccountCH(row, fail)
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    monkeypatch.setattr("server.auth.aliases.subject_aliases", _no_aliases)
     monkeypatch.setattr(delegation, "_account_active", {})
     assert await delegation.creator_account_active(ORG, "alice") is active
     assert await delegation.creator_account_active(ORG, "alice") is active
-    assert ch.reads == (2 if fail else 1)  # a good answer is cached, a failure is not
+    assert await delegation.creator_best_grant(ORG, "alice") == best
+    assert ch.reads == (3 if fail else 1)  # a good answer is cached, a failure is not
+
+
+class _TablesCH:
+    """loom.namespaces and loom.namespace_grants as the latest row per key:
+    what release_claim reads and writes, and what the account query counts."""
+
+    def __init__(self) -> None:
+        self.namespaces: dict[tuple[str, str], dict[str, Any]] = {}
+        self.grants: dict[tuple[str, str, str], dict[str, Any]] = {}
+
+    async def insert(self, table: str, rows: list[dict[str, Any]], **k: Any) -> None:
+        for r in rows:
+            if table == "loom.namespaces":
+                self.namespaces[(r["org"], r["namespace"])] = dict(r)
+            else:
+                self.grants[(r["org"], r["namespace"], r["subject"])] = dict(r)
+
+    async def query_all(self, sql: str, params: Any = None, **k: Any) -> list[dict[str, Any]]:
+        return [  # release_claim's live grants on one namespace
+            g
+            for (org, ns, _), g in self.grants.items()
+            if (org, ns) == (params["org"], params["ns"]) and g["revoked_at"] is None
+        ]
+
+    async def query_one(self, sql: str, params: Any = None, **k: Any) -> dict[str, Any] | None:
+        if "SELECT *" in sql:
+            return self.namespaces.get((params["org"], params["ns"]))
+        owned = [
+            n
+            for (org, _), n in self.namespaces.items()
+            if org == params["org"] and n["owner_email"] == params["sub"]
+        ]
+        held = [
+            g
+            for (org, _, sub), g in self.grants.items()
+            if org == params["org"]
+            and sub in params["subs"]
+            and g.get("status", "active") == "active"
+        ]
+        rank = {"admin": 3, "writer": 2, "viewer": 1}
+        live = [rank.get(g["role"], 0) for g in held if g["revoked_at"] is None]
+        return {
+            "owned": len(owned),
+            "owned_live": sum(1 for n in owned if n["active"]),
+            "granted": len(held),
+            "best_rank": max(live, default=0),
+        }
+
+
+@pytest.mark.asyncio
+async def test_a_claim_release_disables_the_creator(monkeypatch: pytest.MonkeyPatch) -> None:
+    """release_claim blanks owner_email and tombstones every grant; the
+    account check must still read the released creator as disabled."""
+    from server.identity.app.claim_release import release_claim
+
+    ch = _TablesCH()
+    await ch.insert(
+        "loom.namespaces",
+        [
+            {
+                "org": ORG,
+                "namespace": "a",
+                "owner_email": "alice",
+                "contact_email": "a@x",
+                "password_hash": "h",
+                "active": True,
+                "description": "",
+                "updated_at": None,
+            }
+        ],
+    )
+    await ch.insert(
+        "loom.namespace_grants",
+        [
+            {
+                "org": ORG,
+                "namespace": "a",
+                "subject": "alice",
+                "role": "admin",
+                "granted_by": "alice",
+                "revoked_at": None,
+                "status": "active",
+            }
+        ],
+    )
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    monkeypatch.setattr("server.auth.aliases.subject_aliases", _no_aliases)
+    monkeypatch.setattr(delegation, "_account_active", {})
+    assert await delegation.creator_account_active(ORG, "alice") is True
+    await release_claim(org=ORG, namespace="a", reason="", actor_subject="op", ch=ch)
+    assert ch.namespaces[(ORG, "a")]["owner_email"] == ""
+    monkeypatch.setattr(delegation, "_account_active", {})
+    assert await delegation.creator_account_active(ORG, "alice") is False
+
+
+@pytest.mark.asyncio
+async def test_the_account_cache_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    ch = _AccountCH({})
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    monkeypatch.setattr("server.auth.aliases.subject_aliases", _no_aliases)
+    monkeypatch.setattr(delegation, "_account_active", {})
+    monkeypatch.setattr(delegation, "_ACCOUNT_CACHE_MAX", 3)
+    for i in range(10):
+        await delegation.creator_account_active(ORG, f"c{i}")
+    assert len(delegation._account_active) <= 3
+
+
+@pytest.mark.asyncio
+async def test_another_orgs_request_is_refused_before_any_account_read(
+    world, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reads: list[str] = []
+
+    async def account_active(org: str, creator: str) -> bool:
+        reads.append(org)
+        return True
+
+    child = await _child(_login(), {"*": None})
+    monkeypatch.setattr(delegation, "creator_account_active", account_active)
+    for org in ("evil-1", "evil-2"):
+        with pytest.raises(PermissionError, match="cannot act in org"):
+            await authz.check_authorized(child, Role.VIEWER, org, "a")
+    assert reads == []
+
+
+@pytest.mark.asyncio
+async def test_an_org_level_write_rechecks_the_creators_grants(world) -> None:
+    child = await _child(_login(), {"*": None})
+    await authz.check_authorized(child, Role.WRITER, ORG, None)
+    await authz.check_authorized(child, Role.VIEWER, ORG, None)
+    for key in [k for k in world["grants"] if k[0] == ORG]:
+        del world["grants"][key]
+    with pytest.raises(PermissionError, match="no grant"):
+        await authz.check_authorized(child, Role.WRITER, ORG, None)
+    await authz.check_authorized(child, Role.VIEWER, ORG, None)  # reads stay namespace-gated
+
+
+@pytest.mark.asyncio
+async def test_revoking_a_service_account_by_subject_kills_its_children(
+    world, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The dashboard revokes a service account by its `sa_subject`."""
+    sa = await _child(_login(), {"a": None}, subject="sa:parent", scoped=True)
+    child = await _child(sa, {"a": None}, subject="sa:child", scoped=True)
+    assert child.parent_subjects == ("alice", "sa:parent")
+    d = await delegate(
+        child,
+        org=ORG,
+        requested={"a": None},
+        scoped=True,
+        ttl_seconds=None,
+        is_service_account=True,
+    )
+    raw_grandchild = d.mint("sa:grandchild")
+    raw_child = (
+        await delegate(
+            sa,
+            org=ORG,
+            requested={"a": None},
+            scoped=True,
+            ttl_seconds=None,
+            is_service_account=True,
+        )
+    ).mint("sa:child2")
+    verify_token(raw_grandchild)
+    monkeypatch.setattr(revocation, "_revoked_jtis", frozenset({"sa:parent"}))
+    for raw in (raw_child, raw_grandchild):
+        with pytest.raises(TokenError, match="parent"):
+            verify_token(raw)
+
+
+@pytest.mark.asyncio
+async def test_a_known_creator_grant_is_used_and_the_lookup_is_memoised(
+    world, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    child = await _child(_login(), {"*": None})
+    reads: list[str] = []
+
+    async def counting(org: str, ns: str, subject: str) -> Role | None:
+        reads.append(ns)
+        return world["grants"].get((org, ns, subject))
+
+    monkeypatch.setattr(authz, "grant_role_for", counting)
+    await authz.check_authorized(child, Role.VIEWER, ORG, "c", known_grant=Role.VIEWER)
+    assert reads == []
+    context.set_current_auth(child)
+    try:
+        for _ in range(3):
+            await authz.check_authorized(child, Role.VIEWER, ORG, "a")
+    finally:
+        context.set_current_auth(None)
+    assert reads == ["a"]
+
+
+@pytest.mark.asyncio
+async def test_ttl_days_rounds_up(world) -> None:
+    d = await delegate(
+        _login(),
+        org=ORG,
+        requested={"a": None},
+        scoped=False,
+        ttl_seconds=3600,
+        is_service_account=True,
+    )
+    assert d.ttl_days == 1
+
+
+def test_the_revocation_stale_limit_must_exceed_the_refresh_interval() -> None:
+    from pydantic import ValidationError
+
+    from server.settings._auth import AuthSettings
+
+    with pytest.raises(ValidationError, match="MAX_STALE"):
+        AuthSettings(jwt_revocation_cache_ttl_seconds=60, jwt_revocation_max_stale_seconds=60)
+    AuthSettings(jwt_revocation_cache_ttl_seconds=30, jwt_revocation_max_stale_seconds=600)
 
 
 # ------------------------------------------------------------- expiry and type

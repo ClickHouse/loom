@@ -338,8 +338,11 @@ async def _repo_directory_state(auth: Any) -> tuple[_Keyed, _Keyed, _Keyed, _Key
     maintained: _KeySet | None = None
     try:
         ch = get_client()
+        # A delegated token reads as its creator, whose grants its gate checks.
         subject = (
-            str(getattr(auth, "subject", "") or "") if auth is not None else auth_off_subject()
+            str(getattr(auth, "creator", "") or getattr(auth, "subject", "") or "")
+            if auth is not None
+            else auth_off_subject()
         )
         org = str(getattr(auth, "org", "") or "") if auth is not None else ""
 
@@ -398,7 +401,7 @@ async def _repo_directory_state(auth: Any) -> tuple[_Keyed, _Keyed, _Keyed, _Key
 async def _maintained_entries(ch: Any, keys: list[tuple[str, str]]) -> _KeySet:
     """The configured entries on which ANY subject holds an
     active admin grant — one grouped statement over the grants table for all
-    keys, the same predicate `_grant_role_for` applies to one subject. Not
+    keys, the same predicate `grant_role_for` applies to one subject. Not
     the caller's grants: the question is "does anyone maintain it", so the
     page offers adopt only on a truly ownerless entry."""
     rows = await ch.query_all(

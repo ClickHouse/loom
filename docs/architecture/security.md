@@ -65,8 +65,8 @@ boot and refreshes it every `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` (30 s), thro
 
 - Until the first load succeeds, every token gets 503 `AUTH_UNAVAILABLE`.
 - After that, a ClickHouse outage keeps the last good snapshot for at most
-  `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS` (600 s); past it every token gets 503 again
-  until a refresh lands.
+  `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS` (600 s, and it must be larger than the refresh
+  interval); past it every token gets 503 again until a refresh lands.
 - `/v1/health` reports `revocation_not_loaded` (error), `revocation_stale` (warning,
   once older than `max(300 s, 10 × the refresh interval)`) and `revocation_too_stale`
   (error, past the max-stale bound).
@@ -106,7 +106,8 @@ authenticated call, from `gates.authorize` in both transports:
    `IDENTITY_INCOMPLETE`, unless the op is `deployment_scoped` or `row_scoped`; those pass
    on the token's best namespace role in its own org.
 2. A delegated token (a `creator` claim, minted by `server/auth/delegation.py`) is refused
-   when its creator's account is disabled, and on a namespace needs its own claim to reach
+   when its creator's account is disabled, on an op with no namespace that writes unless the
+   creator holds that role somewhere in the org, and on a namespace needs its own claim to reach
    the role and the creator's live grant to reach it too (`_check_delegated`; restricted
    namespaces also take the restricted gate). Nothing below applies to it.
 3. A restricted namespace goes to the restricted gate only.

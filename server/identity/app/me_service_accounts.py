@@ -199,7 +199,7 @@ async def me_service_accounts_create(
                 "namespaces": ordered_ns,
                 "roles": distinct_roles,
                 "ns_roles": _json.dumps(ns_roles),
-                "ttl_days": delegated.ttl_seconds // 86400,
+                "ttl_days": delegated.ttl_days,
                 "created_by": subject,
                 "created_at": now,
                 "expires_at": expires_at,

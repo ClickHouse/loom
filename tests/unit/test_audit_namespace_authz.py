@@ -157,7 +157,7 @@ async def test_restricted_namespace_reads_for_a_named_token_with_a_grant(monkeyp
     async def _grant(org, namespace, subject):
         return Role.VIEWER
 
-    monkeypatch.setattr(authz, "_grant_role_for", _grant)
+    monkeypatch.setattr(authz, "grant_role_for", _grant)
     ch = _CH()
     monkeypatch.setattr(h, "get_client", lambda: ch)
     await h.handle_audit_list(AuditListInput(org="dev", namespace="secret-ns"))
