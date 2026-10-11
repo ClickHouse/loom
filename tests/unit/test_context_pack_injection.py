@@ -307,3 +307,67 @@ def test_code_in_a_recalled_value_is_escaped_once() -> None:
     once = escape_data("std::vector<int> when a && b")
     assert once == "std::vector&lt;int&gt; when a && b"
     assert escape_data(once) == once
+
+
+def _proc(actor: str, user_id: str = "-") -> Any:
+    from server.memory.api.models_procedure import _ProcedureMatch
+
+    m = _ProcedureMatch(
+        name=f"{actor or 'mined'}-{user_id}",
+        situation="s",
+        steps=["x"],
+        similarity=0.9,
+        memory_key="procedure_x",
+        namespace="ns",
+        actor=actor,
+    )
+    m._user_id = user_id
+    return m
+
+
+def test_a_procedure_is_the_callers_by_principal_not_by_token_kind() -> None:
+    from server.memory.app.procedure import own_procedures
+
+    other_kind = _proc("human:alice@example.com")
+    mined = _proc("", "alice@example.com")
+    teammates = _proc("human:mallory@example.com")
+    teammates_mined = _proc("", "mallory@example.com")
+    plugin = principal("writer", namespaces=("ns",), subject="alice@example.com")
+    with acting_as(plugin):  # a service-account token: process:alice@example.com
+        got = own_procedures([other_kind, mined, teammates, teammates_mined])
+    assert got == [other_kind, mined]
+
+
+def test_a_delegated_token_owns_its_creators_procedures() -> None:
+    from server.memory.app.procedure import own_procedures
+
+    creators = _proc("human:alice@example.com")
+    teammates = _proc("human:mallory@example.com")
+    child = principal("writer", namespaces=("ns",), subject="sa:agent", creator="alice@example.com")
+    with acting_as(child):
+        assert own_procedures([creators, teammates]) == [creators]
+
+
+def test_a_procedure_the_worker_mined_reaches_its_owner_through_procedure_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.api.models_crud import MemoryGetOutput
+    from server.memory.api.models_procedure import ProcedureMatchInput
+    from server.memory.app.procedure import handle_procedure_match, own_procedures
+
+    async def _search(inp: Any) -> Any:
+        return NS(results=[NS(namespace="ns", memory_key="p:ship", similarity=0.9)])
+
+    async def _bulk(inp: Any) -> Any:
+        row = MemoryGetOutput(found=True, value={"steps": ["build"], "situation": "ship"})
+        row._user_id = "alice@example.com"
+        return NS(results={"p:ship": row})
+
+    monkeypatch.setattr("server.memory.app.search.handle_memory_search", _search)
+    monkeypatch.setattr("server.memory.app.query.handle_memory_bulk_get", _bulk)
+    out = asyncio.run(
+        handle_procedure_match(ProcedureMatchInput(org="o", namespace="ns", situation="x"))
+    )
+    assert "_user_id" not in out.model_dump_json()
+    with acting_as(ME):
+        assert [m.memory_key for m in own_procedures(out.matches)] == ["p:ship"]
