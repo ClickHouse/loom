@@ -263,15 +263,17 @@ def _bin_dirs() -> list[str]:
     ]
 
 
-def _cache_dirs() -> tuple[Path, Path]:
-    """(GOMODCACHE, GOPATH): the module cache the runs share."""
-    modcache = Path(settings.code_scip_go_modcache).absolute()
-    return modcache, modcache.parent / "gopath"
+def _cache_dirs(cfg: RepoConfig) -> tuple[Path, Path]:
+    """(GOMODCACHE, GOPATH) of this entry alone. A shared cache would let one
+    repository's job plant module sources another's reuses: go does not re-check
+    the sums of what is already in its cache."""
+    entry = Path(settings.code_scip_go_modcache).absolute() / cfg.org / cfg.namespace
+    return entry / "mod", entry / "gopath"
 
 
-def _make_cache_dirs() -> list[Path]:
+def _make_cache_dirs(cfg: RepoConfig) -> list[Path]:
     """The cache directories, created so the sandbox can mount them writable."""
-    dirs = list(_cache_dirs())
+    dirs = list(_cache_dirs(cfg))
     for d in dirs:
         d.mkdir(parents=True, exist_ok=True)
     return dirs
@@ -281,7 +283,7 @@ def _harness_env(out_dir: Path, modules: list[str], cfg: RepoConfig) -> dict[str
     """The runner's environment (sync: resolves the binaries' paths). It carries
     no credential: `go mod download` runs the repository's module graph, so a
     private dependency the entry's token could read is not fetched."""
-    modcache, gopath = _cache_dirs()
+    modcache, gopath = _cache_dirs(cfg)
     env = {
         **git_config_env(),
         "PATH": ":".join([*_bin_dirs(), os.environ.get("PATH", os.defpath)]),
@@ -317,7 +319,7 @@ async def _run_harness(
     upload, no watermark read (the worker owns both). Returns the log. Module
     downloads go through the sandbox's egress proxy."""
     env = await asyncio.to_thread(_harness_env, out_dir, modules, cfg)
-    caches = await asyncio.to_thread(_make_cache_dirs)
+    caches = await asyncio.to_thread(_make_cache_dirs, cfg)
     returncode, text = await run_harness(
         _HARNESS,
         checkout,

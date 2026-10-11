@@ -90,7 +90,6 @@
 "setting:code_scip_delta_max_tus" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_scip_delta_timeout_seconds" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_scip_go_jobs" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
-"setting:code_scip_go_modcache" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_scip_max_parts" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_scip_py_delta_enabled" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_scip_py_delta_interval_seconds" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }

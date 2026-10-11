@@ -255,6 +255,22 @@ def test_harness_env_carries_no_credential_into_module_downloads(monkeypatch, tm
     assert env["GIT_CONFIG_NOSYSTEM"] == "1" and env["GIT_TERMINAL_PROMPT"] == "0"
 
 
+def test_each_entry_gets_its_own_module_cache(monkeypatch, tmp_path):
+    """go reuses what is in GOMODCACHE without re-checking its sums, so a cache
+    one repository's job can write must never be another's."""
+    monkeypatch.setattr(w.settings, "code_scip_go_bin_dir", str(tmp_path))
+    monkeypatch.setattr(w.settings, "code_scip_go_modcache", str(tmp_path / "modcache"))
+    mine = w._harness_env(tmp_path, [], _Cfg(namespace="code-a"))
+    theirs = w._harness_env(tmp_path, [], _Cfg(namespace="code-b"))
+    assert mine["GOMODCACHE"] != theirs["GOMODCACHE"] and mine["GOPATH"] != theirs["GOPATH"]
+    assert w._make_cache_dirs(_Cfg(namespace="code-a")) == [
+        Path(mine["GOMODCACHE"]),
+        Path(mine["GOPATH"]),
+    ]
+    assert Path(mine["GOMODCACHE"]).is_dir()
+    assert Path(mine["GOMODCACHE"]).is_relative_to(tmp_path / "modcache")
+
+
 def test_registry_gives_the_go_worker_its_own_deadline(monkeypatch):
     """The Go compiler-tier pass runs under
     `code_scip_go_delta_timeout_seconds`, not the 900 s the interval implies —
