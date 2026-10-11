@@ -195,15 +195,35 @@ default):
   account is active and re-derives its roles.
 
 **Unauthenticated routes.** Sign-up and password sign-in are rate-limited in-process
-(`server/auth/attempts.py`) per client address (the last `X-Forwarded-For` hop, set by
-the proxy), and sign-in also per identifier. An unknown account costs one full argon2id
+(`server/auth/attempts.py`) per client address (the connection's peer, which uvicorn
+replaces with the `X-Forwarded-For` client only when the peer is in
+`LOOM_TRUSTED_PROXIES`), and sign-in also per identifier. An unknown account costs one full argon2id
 hash, like a wrong password. The limits are per process, so N replicas allow N times the
 limit.
 
 **Client-facing URLs** (OAuth metadata, setup config, claim links) come from
-`LOOM_OAUTH_ISSUER` / `LOOM_PUBLIC_BASE_URL`, else the forwarded scheme and host,
-validated as `http(s)://hostname[:port]`. The OIDC callback comes from configuration
-only.
+`LOOM_OAUTH_ISSUER` / `LOOM_PUBLIC_BASE_URL`, else (only on a loopback bind) the
+request's own scheme and `Host`, validated as `http(s)://hostname[:port]`.
+`X-Forwarded-Host` is never read. The OIDC callback comes from configuration only.
+
+**Exposure.** A non-loopback `LOOM_BIND_HOST` refuses to start without
+`LOOM_PUBLIC_BASE_URL`, and with auth off or the dev JWT secret unless
+`LOOM_ALLOW_INSECURE=1`. `LOOM_CORS_ORIGINS=*` refuses to start (CORS allows
+credentials). With auth off, a request whose `Host` is not `localhost`, `127.0.0.1`,
+`::1` or the public URL's host gets `421`, so a DNS-rebinding page cannot drive a
+local server. `loom doctor` and `/v1/health` report each of these.
+
+**Browser.** Every response is `X-Content-Type-Options: nosniff`. `/me` carries a
+Content-Security-Policy whose `script-src` admits the bundle's origin and the one boot
+snippet by a per-response nonce, never `unsafe-inline`. An uploaded document is
+attacker-chosen bytes under an attacker-chosen type, so `knowledge.download` previews
+inline only plain text (text, Markdown, CSV and JSON, all served as `text/plain`), PNG,
+JPEG, GIF, WebP and PDF whose bytes match their type; anything else (HTML, SVG, XML,
+unknown, mismatched) is an `application/octet-stream` attachment, and every download
+carries `Content-Security-Policy: sandbox; default-src 'none'`. The dashboard applies the
+same allowlist itself, because a `blob:` URL ignores the server's headers: it re-types
+text as `text/plain` in an `<iframe sandbox="">`, shows images with `<img>`, and
+downloads everything else, PDF and SVG included.
 
 ## Rate limiting
 

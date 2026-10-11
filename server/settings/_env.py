@@ -56,7 +56,6 @@ NON_SETTINGS_ENV = frozenset(
         "LOOM_API_KEY_FILE",
         "LOOM_AUTH_DISABLED",
         "LOOM_BASE_URL",
-        "LOOM_BIND_HOST",
         "LOOM_BIND_PORT",
         "LOOM_CH_CAPTURE_STATEMENTS",
         "LOOM_CH_HOST_PORT",

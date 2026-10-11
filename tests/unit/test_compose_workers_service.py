@@ -59,7 +59,8 @@ def test_worker_service_publishes_no_port_and_healthchecks_its_own() -> None:
     d = _load(CLOUD)
     web, workers = d["services"]["loom"], d["services"]["loom-workers"]
     assert "ports" not in workers
-    assert web["ports"] == ["7777:7777"]
+    # Published on loopback unless the operator says otherwise.
+    assert web["ports"] == ["${LOOM_BIND_HOST:-127.0.0.1}:7777:7777"]
     wenv = _env(workers)
     assert wenv["PORT"] == "7778"
     assert "127.0.0.1:7778/v1/health" in workers["healthcheck"]["test"][-1]

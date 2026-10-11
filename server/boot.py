@@ -101,6 +101,48 @@ def run_boot_migrations_if_enabled(
     return 0
 
 
+class InsecureBindRefused(RuntimeError):
+    """A server others can reach would start without its safeguards."""
+
+
+def require_safe_bind(
+    *,
+    bind_host: str,
+    public_base_url: str,
+    auth_required: bool,
+    dev_secret: bool,
+    allow_insecure: bool,
+) -> None:
+    """Refuse to start on a non-loopback LOOM_BIND_HOST without
+    LOOM_PUBLIC_BASE_URL (generated URLs would otherwise echo a request's Host),
+    or with auth off or the dev signing secret unless LOOM_ALLOW_INSECURE=1.
+    A loopback bind is not checked."""
+    from server.auth.public_url import is_loopback_host
+
+    if is_loopback_host(bind_host):
+        return
+    where = f"LOOM_BIND_HOST={bind_host} is reachable by others"
+    if not public_base_url.strip():
+        raise InsecureBindRefused(
+            f"refusing to start: {where} and LOOM_PUBLIC_BASE_URL is unset. Set it to the "
+            "address clients use (e.g. https://loom.example), or bind 127.0.0.1."
+        )
+    if allow_insecure:
+        return
+    if not auth_required:
+        raise InsecureBindRefused(
+            f"refusing to start: {where} and auth is off, so anyone who reaches it has full "
+            "access. Turn auth on, bind 127.0.0.1, or set LOOM_ALLOW_INSECURE=1 if the port "
+            "is not actually reachable."
+        )
+    if dev_secret:
+        raise InsecureBindRefused(
+            f"refusing to start: {where} and LOOM_JWT_SECRET is the checked-in dev default, "
+            "which anyone can mint accepted tokens with. Set a private LOOM_JWT_SECRET, bind "
+            "127.0.0.1, or set LOOM_ALLOW_INSECURE=1 if the port is not actually reachable."
+        )
+
+
 def require_replica_schema() -> None:
     """A read-replica runs against the schema the main Loom applies. A build
     that expects a migration the service lacks would fail on every path that

@@ -293,6 +293,70 @@ def _auth_problems(settings: Any) -> list[Problem]:
     return []
 
 
+def _exposure_problems(settings: Any) -> list[Problem]:
+    """A server others can reach (non-loopback LOOM_BIND_HOST) without its
+    safeguards, and forwarded-header or CORS settings that trust everyone.
+    The bind ones also stop the server at boot unless LOOM_ALLOW_INSECURE=1."""
+    from server.auth.public_url import is_loopback_host
+
+    out: list[Problem] = []
+    reachable = not is_loopback_host(str(settings.bind_host))
+    severity: Severity = "warn" if settings.allow_insecure else "error"
+    if reachable and not str(settings.public_base_url).strip():
+        out.append(
+            Problem(
+                "public_base_url_missing",
+                "error",
+                f"LOOM_BIND_HOST={settings.bind_host} is not loopback and LOOM_PUBLIC_BASE_URL "
+                "is unset: the server refuses to start.",
+                "Set LOOM_PUBLIC_BASE_URL to the address clients use, or bind 127.0.0.1.",
+            )
+        )
+    if reachable and not settings.auth_actually_required():
+        out.append(
+            Problem(
+                "insecure_bind_auth_off",
+                severity,
+                f"Auth is off on a non-loopback bind (LOOM_BIND_HOST={settings.bind_host}): "
+                "anyone who reaches the port has full access.",
+                "Turn auth on or bind 127.0.0.1 (LOOM_ALLOW_INSECURE=1 only if the port is "
+                "not actually reachable).",
+            )
+        )
+    if reachable and settings.jwt_secret_is_dev_default():
+        out.append(
+            Problem(
+                "insecure_bind_dev_secret",
+                severity,
+                f"LOOM_JWT_SECRET is the checked-in dev default on a non-loopback bind "
+                f"(LOOM_BIND_HOST={settings.bind_host}).",
+                "Set LOOM_JWT_SECRET to a random secret (`openssl rand -hex 32`) or bind "
+                "127.0.0.1.",
+            )
+        )
+    if "*" in [p.strip() for p in str(settings.trusted_proxies).split(",")]:
+        out.append(
+            Problem(
+                "trusted_proxies_any",
+                "warn",
+                "LOOM_TRUSTED_PROXIES is '*': any caller can set its own X-Forwarded-For "
+                "(rate-limit address) and X-Forwarded-Proto.",
+                "List the proxy addresses or CIDRs in front of Loom.",
+            )
+        )
+    if "*" in [o.strip() for o in str(settings.cors_origins).split(",")]:
+        out.append(
+            Problem(
+                "cors_wildcard",
+                "error",
+                "LOOM_CORS_ORIGINS contains '*' while CORS allows credentials: the server "
+                "refuses to start.",
+                "List the exact origins allowed to call Loom from a browser.",
+            )
+        )
+    return out
+
+
 def _deployment_problems(settings: Any, state: HealthState) -> list[Problem]:
     out: list[Problem] = []
     pending = state.pending_migrations
@@ -402,6 +466,7 @@ def collect_problems(settings: Any, state: HealthState | None = None) -> list[Pr
         + _llm_problems(settings, st)
         + _runtime_problems(st)
         + _auth_problems(settings)
+        + _exposure_problems(settings)
         + _revocation_problems(settings, st)
         + _deployment_problems(settings, st)
         + _otel_problems(settings, st)

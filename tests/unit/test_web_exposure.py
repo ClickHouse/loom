@@ -1,0 +1,244 @@
+"""What a server reachable from a browser or a network refuses: startup on a
+non-loopback bind without its safeguards, CORS `*` with credentials, a foreign
+Host while auth is off, URLs built from spoofed forwarded headers, and the
+/me page's inline script without its nonce."""
+
+from __future__ import annotations
+
+import asyncio
+import re
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+from starlette.requests import Request
+
+from server.boot import InsecureBindRefused, require_safe_bind
+from server.settings import settings
+
+# ---- startup refusal on a non-loopback bind ----
+
+
+def _bind(**over: object) -> None:
+    kw: dict[str, object] = {
+        "bind_host": "0.0.0.0",
+        "public_base_url": "https://loom.example",
+        "auth_required": True,
+        "dev_secret": False,
+        "allow_insecure": False,
+    }
+    kw.update(over)
+    require_safe_bind(**kw)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1"])
+def test_a_loopback_bind_starts_with_the_dev_secret_or_auth_off(host: str) -> None:
+    _bind(bind_host=host, dev_secret=True, auth_required=False, public_base_url="")
+
+
+def test_the_dev_secret_on_a_reachable_bind_is_refused() -> None:
+    with pytest.raises(InsecureBindRefused, match="LOOM_JWT_SECRET"):
+        _bind(dev_secret=True)
+
+
+def test_auth_off_on_a_reachable_bind_is_refused() -> None:
+    with pytest.raises(InsecureBindRefused, match="auth is off"):
+        _bind(bind_host="10.0.0.5", auth_required=False)
+
+
+def test_allow_insecure_lets_either_start() -> None:
+    _bind(dev_secret=True, allow_insecure=True)
+    _bind(auth_required=False, allow_insecure=True)
+
+
+def test_a_reachable_bind_needs_a_public_base_url_even_with_the_override() -> None:
+    for allow in (False, True):
+        with pytest.raises(InsecureBindRefused, match="LOOM_PUBLIC_BASE_URL"):
+            _bind(public_base_url=" ", allow_insecure=allow)
+
+
+def test_a_real_secret_with_auth_on_starts() -> None:
+    _bind()
+
+
+# ---- CORS ----
+
+
+def test_cors_star_is_refused() -> None:
+    from server.main import cors_origin_list
+
+    with pytest.raises(RuntimeError, match="LOOM_CORS_ORIGINS"):
+        cors_origin_list("https://a.example, *")
+    assert cors_origin_list(" https://a.example ,https://b.example") == [
+        "https://a.example",
+        "https://b.example",
+    ]
+
+
+# ---- Host allowlist while auth is off ----
+
+
+@pytest.fixture
+def auth_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "auth_required", False)
+    monkeypatch.setattr(settings, "identity_provider", "")
+    monkeypatch.setattr(settings, "public_base_url", "")
+
+
+def _get(base_url: str, path: str = "/", **headers: str) -> int:
+    from server.main import app
+
+    r = TestClient(app, base_url=base_url).get(path, headers=headers, follow_redirects=False)
+    return r.status_code
+
+
+@pytest.mark.usefixtures("auth_off")
+def test_auth_off_refuses_a_foreign_host_before_routing() -> None:
+    from server.main import app
+
+    r = TestClient(app, base_url="http://rebind.evil.example").get("/v1/health")
+    assert r.status_code == 421
+    assert r.json()["detail"]["code"] == "MISDIRECTED_REQUEST"
+
+
+@pytest.mark.usefixtures("auth_off")
+@pytest.mark.parametrize(
+    "base", ["http://localhost:7777", "http://127.0.0.1:7777", "http://[::1]:7777"]
+)
+def test_auth_off_serves_a_local_host(base: str) -> None:
+    assert _get(base) == 302
+
+
+@pytest.mark.usefixtures("auth_off")
+def test_auth_off_serves_the_public_base_url_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "public_base_url", "https://loom.example")
+    assert _get("http://loom.example") == 302
+    assert _get("http://other.example") == 421
+
+
+def test_auth_on_does_not_check_the_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "auth_required", True)
+    monkeypatch.setattr(settings, "identity_provider", "gateway")
+    assert _get("http://anything.example") == 302
+
+
+def test_every_response_is_nosniff() -> None:
+    from server.main import app
+
+    r = TestClient(app, base_url="http://localhost").get("/", follow_redirects=False)
+    assert r.headers["x-content-type-options"] == "nosniff"
+
+
+# ---- generated URLs use the canonical base ----
+
+SPOOF = {"x-forwarded-host": "evil.example", "x-forwarded-proto": "https"}
+
+
+def _request(host: str = "localhost:7777") -> Request:
+    headers = [(b"host", host.encode())] + [(k.encode(), v.encode()) for k, v in SPOOF.items()]
+    return Request({"type": "http", "method": "GET", "path": "/", "headers": headers})
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [("", "http://localhost:7777"), ("https://loom.example", "https://loom.example")],
+)
+def test_oauth_metadata_and_challenge_ignore_forwarded_host(
+    monkeypatch: pytest.MonkeyPatch, configured: str, expected: str
+) -> None:
+    from server.auth import oauth
+    from server.transport.mcp_auth import _oauth_challenge_header
+
+    monkeypatch.setattr(settings, "oauth_issuer", "")
+    monkeypatch.setattr(settings, "public_base_url", configured)
+    meta = asyncio.run(oauth.as_metadata(_request())).body.decode()
+    assert f'"issuer":"{expected}"' in meta and "evil" not in meta
+    prm = asyncio.run(oauth.prm_metadata(_request())).body.decode()
+    assert f'"resource":"{expected}/mcp"' in prm
+    assert _oauth_challenge_header(_request()) == (
+        f'Bearer resource_metadata="{expected}/.well-known/oauth-protected-resource"'
+    )
+
+
+@pytest.mark.usefixtures("auth_off")
+def test_the_mcp_config_url_ignores_forwarded_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.main import app
+
+    client = TestClient(app, base_url="http://localhost:7777")
+    body = {"client": "claude-code"}
+    r = client.post("/v1/me/setup/mcp_config", json=body, headers=SPOOF)
+    assert r.status_code == 200, r.text
+    assert "http://localhost:7777/mcp" in r.text and "evil.example" not in r.text
+    monkeypatch.setattr(settings, "public_base_url", "https://loom.example")
+    r = client.post("/v1/me/setup/mcp_config", json=body, headers=SPOOF)
+    assert "https://loom.example/mcp" in r.text and "evil.example" not in r.text
+
+
+# ---- /me: the boot snippet is the only inline script, and it carries the nonce ----
+
+
+def _dashboard(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[str, str]:
+    from server.identity.app import me_routes
+
+    (tmp_path / "index.html").write_text(
+        '<html><head><script type="module" src="/me/assets/i.js"></script></head></html>'
+    )
+    monkeypatch.setattr(me_routes, "_FRONTEND_DIST", tmp_path)
+    monkeypatch.setattr(settings, "auth_required", True)
+    monkeypatch.setattr(settings, "identity_provider", "gateway")
+    monkeypatch.setattr(settings, "dashboard_redirect_url", "")
+    request = Request({"type": "http", "method": "GET", "path": "/me", "headers": []})
+    response = asyncio.run(me_routes.memory_dashboard(request))
+    return response.body.decode(), response.headers["content-security-policy"]
+
+
+def test_the_dashboard_csp_admits_only_the_nonced_boot_script(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    html, csp = _dashboard(tmp_path, monkeypatch)
+    script_src = next(d for d in csp.split("; ") if d.startswith("script-src"))
+    nonce = re.fullmatch(r"script-src 'self' 'nonce-([A-Za-z0-9_-]{16,})'", script_src)
+    assert nonce, script_src
+    assert "unsafe-inline" not in script_src and "unsafe-eval" not in csp
+    inline = re.findall(r"<script(?![^>]*\bsrc=)([^>]*)>", html)
+    assert inline == [f' nonce="{nonce.group(1)}"']
+    for directive in ("object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'"):
+        assert directive in csp
+    _, again = _dashboard(tmp_path, monkeypatch)
+    assert again != csp  # a fresh nonce per response
+
+
+# ---- `loom serve` ----
+
+
+def _serve_args(monkeypatch: pytest.MonkeyPatch, host: str | None) -> dict[str, object]:
+    import argparse
+
+    import uvicorn
+
+    from server.cli.serve import _cmd_serve
+
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(uvicorn, "run", lambda *_a, **kw: seen.update(kw))
+    monkeypatch.setattr(settings, "bind_host", "127.0.0.1")
+    monkeypatch.setattr(settings, "trusted_proxies", "127.0.0.1")
+    monkeypatch.setenv("LOOM_BIND_HOST", "127.0.0.1")
+    monkeypatch.setenv("LOOM_INSTANCE_LABEL", "test:serve")
+    _cmd_serve(argparse.Namespace(host=host, port=7777, log_level="info", reload=False))
+    return seen
+
+
+def test_loom_serve_binds_loopback_and_trusts_only_loopback_proxies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen = _serve_args(monkeypatch, None)
+    assert seen["host"] == "127.0.0.1"
+    assert seen["forwarded_allow_ips"] == "127.0.0.1"
+
+
+def test_loom_serve_host_flag_reaches_the_startup_checks(monkeypatch: pytest.MonkeyPatch) -> None:
+    import os
+
+    seen = _serve_args(monkeypatch, "0.0.0.0")
+    assert seen["host"] == "0.0.0.0"
+    assert settings.bind_host == "0.0.0.0" and os.environ["LOOM_BIND_HOST"] == "0.0.0.0"

@@ -71,7 +71,8 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     from server.main import app
 
     monkeypatch.setattr(settings_mod.settings, "auth_required", False)
-    return TestClient(app)
+    # Auth off answers only a local Host.
+    return TestClient(app, base_url="http://localhost")
 
 
 def _serve(
@@ -241,3 +242,74 @@ def test_missing_document_is_404_not_found(
 )
 def test_text_download_filename(title: str, uri: str, expected: str) -> None:
     assert text_download_filename(title, uri) == expected
+
+
+# ---- inline preview: only passive types, and never runnable on its own ----
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+HTML = b"<script>parent.document.title='pwned'</script>"
+
+
+def _blob(monkeypatch: pytest.MonkeyPatch, data: bytes, content_type: str) -> None:
+    _serve(
+        monkeypatch,
+        _row(blob_path="b", blob_size=len(data), blob_content_type=content_type),
+        {"b": data},
+    )
+
+
+@pytest.mark.parametrize(
+    ("data", "content_type", "served"),
+    [
+        (b"plain", "text/plain", "text/plain; charset=utf-8"),
+        (b"# md", "text/markdown", "text/plain; charset=utf-8"),
+        (b"a,b", "text/csv; charset=latin-1", "text/plain; charset=utf-8"),
+        (b"{}", "application/json", "text/plain; charset=utf-8"),
+        (HTML, "text/plain", "text/plain; charset=utf-8"),  # HTML bytes stay text
+        (PNG, "image/png", "image/png"),
+        (b"%PDF-1.7", "application/pdf", "application/pdf"),
+    ],
+)
+def test_passive_types_preview_inline(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, data: bytes, content_type: str, served: str
+) -> None:
+    _blob(monkeypatch, data, content_type)
+    r = client.get(URL + "&inline=true")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == served
+    assert r.headers["content-disposition"].startswith("inline;")
+
+
+@pytest.mark.parametrize(
+    ("data", "content_type"),
+    [
+        (HTML, "text/html"),
+        (b"<svg onload='alert(1)'/>", "image/svg+xml"),
+        (b"<x/>", "application/xml"),
+        (HTML, "image/png"),  # label and bytes disagree
+        (HTML, "application/pdf"),
+        (b"RIFF0000HTML", "image/webp"),
+        (HTML, ""),
+        (HTML, "application/x-unknown"),
+    ],
+)
+def test_active_or_mismatched_types_download_as_octet_stream(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, data: bytes, content_type: str
+) -> None:
+    _blob(monkeypatch, data, content_type)
+    for qs in ("&inline=true", ""):
+        r = client.get(URL + qs)
+        assert r.status_code == 200
+        assert r.headers["content-type"] == "application/octet-stream"
+        assert r.headers["content-disposition"].startswith("attachment;")
+
+
+def test_every_download_is_unsniffable_and_sandboxed(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for data, content_type in ((HTML, "text/plain"), (HTML, "text/html"), (PNG, "image/png")):
+        _blob(monkeypatch, data, content_type)
+        for qs in ("&inline=true", ""):
+            r = client.get(URL + qs)
+            assert r.headers["x-content-type-options"] == "nosniff"
+            assert r.headers["content-security-policy"] == "sandbox; default-src 'none'"

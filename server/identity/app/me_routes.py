@@ -13,6 +13,7 @@ registry's role gate.
 from __future__ import annotations
 
 import json
+import secrets
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -27,6 +28,26 @@ me_router = APIRouter()
 
 
 _FRONTEND_DIST = FRONTEND_DIST
+
+
+def dashboard_csp(nonce: str) -> str:
+    """The /me page's Content-Security-Policy. Scripts run only from the
+    bundle's own origin or the one boot snippet carrying `nonce`; a document
+    preview is a blob: frame or image, never a script source."""
+    return (
+        "default-src 'self'; "
+        f"script-src 'self' 'nonce-{nonce}'; "
+        "style-src 'self' 'unsafe-inline'; "
+        # Vite inlines small font subsets as data: URLs.
+        "font-src 'self' data:; "
+        "img-src 'self' data: blob:; "
+        "frame-src 'self' blob:; "
+        "connect-src 'self'; "
+        "object-src 'none'; "
+        "base-uri 'none'; "
+        "frame-ancestors 'none'; "
+        "form-action 'self'"
+    )
 
 
 def _js_string(value: str) -> str:
@@ -107,8 +128,9 @@ async def memory_dashboard(request: Request, spa_path: str = "") -> Response:
     # POSTing a real signup would be a read that writes (claiming a namespace on a fresh
     # instance, then a 409 on every later load). The server already knows the answer.
     signup_open = settings.self_signup == "open"
+    nonce = secrets.token_urlsafe(16)
     boot_snippet = (
-        f"<script>"
+        f'<script nonce="{nonce}">'
         f"window.__LOOM_PROXY_AUTH = {'true' if has_bearer else 'false'};"
         f"window.__LOOM_AUTH_DISABLED = {'true' if auth_disabled else 'false'};"
         f"window.__LOOM_SELF_SIGNUP = {'true' if signup_open else 'false'};"
@@ -124,8 +146,6 @@ async def memory_dashboard(request: Request, spa_path: str = "") -> Response:
             status_code=503,
         )
     html = built_index.read_text()
-    # Append the server-side globals block after the static fallback one so
-    # later assignments win, keeping `npm run dev` standalone-working.
     if "</head>" in html:
         html = html.replace("</head>", boot_snippet + "\n</head>", 1)
     else:
@@ -134,7 +154,7 @@ async def memory_dashboard(request: Request, spa_path: str = "") -> Response:
     # build; a cached HTML would point at a bundle hash that no longer exists.
     return HTMLResponse(
         content=html,
-        headers={"Cache-Control": "no-store"},
+        headers={"Cache-Control": "no-store", "Content-Security-Policy": dashboard_csp(nonce)},
     )
 
 

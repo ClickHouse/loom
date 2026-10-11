@@ -11,6 +11,7 @@ import {
   textDownloadName,
   type KnowledgeEntry,
   type KnowledgeDocument,
+  type InlinePreview,
 } from "../api";
 import { useStore, useIdentity } from "../lib/state";
 import { SkeletonCard } from "../components/Skeleton";
@@ -68,7 +69,7 @@ export function Documents() {
   const [previewEntry, setPreviewEntry] = useState<KnowledgeEntry | null>(null);
   const [previewDoc, setPreviewDoc] = useState<KnowledgeDocument | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [inlineBlob, setInlineBlob] = useState<{ url: string; contentType: string; size: number } | null>(null);
+  const [inlineBlob, setInlineBlob] = useState<InlinePreview | null>(null);
   const [showText, setShowText] = useState(false);
   const [replaceEntry, setReplaceEntry] = useState<KnowledgeEntry | null>(null);
   const [editEntry, setEditEntry] = useState<KnowledgeEntry | null>(null);
@@ -162,7 +163,7 @@ export function Documents() {
     setPreviewEntry(r);
     setPreviewDoc(null);
     setShowText(false);
-    if (inlineBlob) {
+    if (inlineBlob?.url) {
       try {
         URL.revokeObjectURL(inlineBlob.url);
       } catch {
@@ -191,7 +192,7 @@ export function Documents() {
   onOpenRef.current = onOpen;
 
   const closePreview = () => {
-    if (inlineBlob) {
+    if (inlineBlob?.url) {
       try {
         URL.revokeObjectURL(inlineBlob.url);
       } catch {
@@ -730,24 +731,36 @@ export function Documents() {
                   Loading…
                 </div>
               )}
-              {!previewLoading &&
-                inlineBlob &&
-                previewEntry?.has_blob &&
-                (inlineBlob.contentType.startsWith("image/") ? (
-                  <div className="absolute inset-0 grid place-items-center p-6 overflow-auto">
-                    <img
-                      src={inlineBlob.url}
-                      alt={previewEntry.original_filename || "document"}
-                      className="max-w-full max-h-full object-contain shadow"
-                    />
-                  </div>
-                ) : (
-                  <iframe
+              {/* Only passive types reach here (previewKind): text in an iframe whose empty
+                  sandbox grants nothing, images as <img>. Nothing else is ever framed. */}
+              {!previewLoading && inlineBlob?.url && previewEntry?.has_blob && inlineBlob.kind === "image" && (
+                <div className="absolute inset-0 grid place-items-center p-6 overflow-auto">
+                  <img
                     src={inlineBlob.url}
-                    title={previewEntry.original_filename || "document preview"}
-                    className="w-full h-full border-0 bg-text"
+                    alt={previewEntry.original_filename || "document"}
+                    className="max-w-full max-h-full object-contain shadow"
                   />
-                ))}
+                </div>
+              )}
+              {!previewLoading && inlineBlob?.url && previewEntry?.has_blob && inlineBlob.kind === "text" && (
+                <iframe
+                  sandbox=""
+                  src={inlineBlob.url}
+                  title={previewEntry.original_filename || "document preview"}
+                  className="w-full h-full border-0 bg-text"
+                />
+              )}
+              {!previewLoading && inlineBlob?.kind === "download" && previewEntry?.has_blob && (
+                <div className="absolute inset-0 grid place-items-center px-8 text-center">
+                  <div className="max-w-md">
+                    <FileText size={32} className="mx-auto text-[var(--color-text-subtle)] mb-3" />
+                    <div className="text-base font-medium text-[var(--color-text)]">No preview for this file type</div>
+                    <div className="text-xs text-[var(--color-text-muted)] mt-2">
+                      Only text and images are shown here. Click <strong>Download</strong> above to open the file.
+                    </div>
+                  </div>
+                </div>
+              )}
               {!previewLoading && !inlineBlob && previewEntry && !previewEntry.has_blob && (
                 <div className="absolute inset-0 grid place-items-center px-8 text-center">
                   <div className="max-w-md">

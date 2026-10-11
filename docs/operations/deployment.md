@@ -167,12 +167,15 @@ renaming the database; give each its own service.
 
 ### Public URL and clients
 
-| Variable               | Default          | Set it when                                                                                                        |
-| ---------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `LOOM_PUBLIC_BASE_URL` | empty            | The proxy cannot be trusted to forward the client-facing scheme. Empty derives it from `X-Forwarded-Proto`/`Host`. |
-| `LOOM_OAUTH_ENABLED`   | `false`          | You want one-click MCP connect (OAuth 2.1 browser sign-in instead of a pasted token).                              |
-| `LOOM_OAUTH_ISSUER`    | empty            | OAuth is on: the public HTTPS base URL the discovery metadata advertises. Empty derives it per request.            |
-| `LOOM_CORS_ORIGINS`    | empty (CORS off) | A browser application on another origin calls Loom directly. List exactly those origins.                           |
+| Variable               | Default          | Set it when                                                                                                             |
+| ---------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `LOOM_PUBLIC_BASE_URL` | empty            | Always, off loopback: a non-loopback `LOOM_BIND_HOST` refuses to start without it. Empty uses the request's own `Host`. |
+| `LOOM_BIND_HOST`       | `127.0.0.1`      | Loom must be reachable by others. In a container it is the address the port is published on.                            |
+| `LOOM_TRUSTED_PROXIES` | `127.0.0.1`      | A proxy in front of Loom: its addresses or CIDRs. Only those peers' `X-Forwarded-For`/`-Proto` are honoured.            |
+| `LOOM_ALLOW_INSECURE`  | `false`          | Never on a reachable port. Lets a non-loopback bind start with auth off or the dev JWT secret.                          |
+| `LOOM_OAUTH_ENABLED`   | `false`          | You want one-click MCP connect (OAuth 2.1 browser sign-in instead of a pasted token).                                   |
+| `LOOM_OAUTH_ISSUER`    | empty            | OAuth is on: the public HTTPS base URL the discovery metadata advertises. Empty derives it per request.                 |
+| `LOOM_CORS_ORIGINS`    | empty (CORS off) | A browser application on another origin calls Loom directly. List exactly those origins; `*` refuses to start.          |
 
 OAuth sign-in through your identity provider also needs `LOOM_OAUTH_LOGIN_PROVIDER=oidc`
 and the `LOOM_OIDC_*` settings ([auth settings](../reference/configuration.md#auth)).
@@ -440,9 +443,14 @@ ledger row.
 
 The image serves plain HTTP. Put a TLS-terminating proxy or load balancer in front.
 
-- The server runs uvicorn with `--proxy-headers --forwarded-allow-ips='*'`, so it trusts
-  `X-Forwarded-*` from whatever reaches it. Do not publish the container port where a
-  client can bypass your proxy.
+- uvicorn honours `X-Forwarded-For` and `X-Forwarded-Proto` only from the peers in
+  `LOOM_TRUSTED_PROXIES` (default `127.0.0.1`); set it to your proxy's address or
+  network. `X-Forwarded-Host` is never read: client-facing URLs come from
+  `LOOM_PUBLIC_BASE_URL`.
+- A non-loopback `LOOM_BIND_HOST` refuses to start without `LOOM_PUBLIC_BASE_URL`, and
+  with auth off or the dev JWT secret unless `LOOM_ALLOW_INSECURE=1`. With auth off, any
+  request whose `Host` is not `localhost`, `127.0.0.1`, `::1` or the public URL's host
+  gets `421` (DNS rebinding).
 - Raise the file-descriptor limit on anything that holds many connections; the compose
   files set `nofile` to 65536.
 - `/docs`, `/redoc`, `/openapi.json` and `/v1/api/openapi.json` answer without a token.

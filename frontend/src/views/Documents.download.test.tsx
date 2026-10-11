@@ -12,6 +12,8 @@ const api = vi.hoisted(() => ({
   listKnowledge: vi.fn(),
   downloadKnowledge: vi.fn(),
   deleteKnowledge: vi.fn(),
+  getKnowledge: vi.fn(),
+  fetchKnowledgeInlineUrl: vi.fn(),
 }));
 vi.mock("../api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api")>()), ...api }));
 vi.mock("../components/ConfirmDialog", () => ({ confirmAction: vi.fn(async () => true) }));
@@ -118,5 +120,48 @@ describe("Library download", () => {
     const alert = screen.getByRole("alert");
     expect(alert.textContent).toContain("Delete failed");
     expect(alert.textContent).toContain("request id rid-123");
+  });
+});
+
+describe("Library preview", () => {
+  beforeEach(() => {
+    api.listKnowledge.mockResolvedValue({ rows: ROWS, total: ROWS.length, next_cursor: null });
+    api.getKnowledge.mockResolvedValue({ found: true, content: "text", source_uri: "docs/handbook.pdf" });
+    useStore.setState({ identity: { org: ORG, namespace: NS, agent: "loom-ui" }, view: "knowledge" });
+  });
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    useStore.setState({ identity: null });
+  });
+
+  async function open(preview: unknown) {
+    api.fetchKnowledgeInlineUrl.mockResolvedValue(preview);
+    render(<Documents />);
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "Preview Handbook" }));
+    await settle();
+    return screen.getByRole("dialog");
+  }
+
+  it("frames text only in an iframe with an empty sandbox", async () => {
+    const d = await open({ kind: "text", url: "blob:t", contentType: "text/plain", size: 4 });
+    const frames = d.querySelectorAll("iframe");
+    expect(frames).toHaveLength(1);
+    expect(frames[0].getAttribute("sandbox")).toBe("");
+    expect(frames[0].getAttribute("src")).toBe("blob:t");
+  });
+
+  it("shows an image as <img>, never in a frame", async () => {
+    const d = await open({ kind: "image", url: "blob:i", contentType: "image/png", size: 4 });
+    expect(d.querySelector("iframe")).toBeNull();
+    expect(d.querySelector("img")?.getAttribute("src")).toBe("blob:i");
+  });
+
+  it("frames nothing for a type that only downloads", async () => {
+    const d = await open({ kind: "download", url: null, contentType: "text/html", size: 4 });
+    expect(d.querySelector("iframe")).toBeNull();
+    expect(d.querySelector("img")).toBeNull();
+    expect(d.textContent).toContain("No preview for this file type");
   });
 });

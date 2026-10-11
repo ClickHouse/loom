@@ -156,9 +156,15 @@ RUN groupadd -r loom && useradd -r -g loom -d /app loom \
     && chown -R loom:loom /app
 USER loom
 
+# LOOM_BIND_HOST is the address the port is published on, which the startup
+# checks read: the container itself always listens on all its interfaces.
+# 0.0.0.0 = reachable by others, so it needs LOOM_PUBLIC_BASE_URL, auth and a
+# real signing secret. A compose stack that publishes on loopback passes its
+# LOOM_BIND_HOST through.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PORT=7777
+    PORT=7777 \
+    LOOM_BIND_HOST=0.0.0.0
 
 EXPOSE 7777
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
@@ -175,9 +181,10 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 # container until docker's stop grace expires and SIGKILLs it, skipping the
 # lifespan drains (events emitter, drop ledger, events stream). 10 s bounds
 # the wait; compose's stop_grace_period leaves room for the drains after it.
+# LOOM_TRUSTED_PROXIES: the peers whose X-Forwarded-For/Proto uvicorn applies.
 # `exec`: the shell that expands these variables must hand PID 1 to uvicorn.
 # Without it `sh` is PID 1 and a POSIX shell does not forward SIGTERM to its
 # foreground child, so uvicorn never sees the stop, the graceful timeout
 # never starts, and docker SIGKILLs the tree at stop_grace_period (exit 137,
 # with tens of seconds of refused connections during a colour swap).
-CMD ["sh", "-c", "exec uvicorn server.main:app --host 0.0.0.0 --port ${PORT} --workers ${LOOM_WEB_WORKERS:-1} --loop ${LOOM_UVICORN_LOOP:-auto} --timeout-graceful-shutdown ${LOOM_GRACEFUL_SHUTDOWN_S:-10} --proxy-headers --forwarded-allow-ips='*'"]
+CMD ["sh", "-c", "exec uvicorn server.main:app --host 0.0.0.0 --port ${PORT} --workers ${LOOM_WEB_WORKERS:-1} --loop ${LOOM_UVICORN_LOOP:-auto} --timeout-graceful-shutdown ${LOOM_GRACEFUL_SHUTDOWN_S:-10} --proxy-headers --forwarded-allow-ips=\"${LOOM_TRUSTED_PROXIES:-127.0.0.1}\""]
