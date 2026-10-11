@@ -29,8 +29,8 @@ def json_int(value: object) -> int:
     return int(value)
 
 
-def _parse_sa_ttl(ttl_raw: object) -> int | None:
-    """`ttl_days` of a scoped token in seconds: None = the delegation default
+def parse_ttl_days(ttl_raw: object) -> int | None:
+    """`ttl_days` of a minted token in seconds: None = the delegation default
     (90 days); else 1..3650 days; anything else is a 422."""
     if ttl_raw is None:
         return None
@@ -169,7 +169,7 @@ async def me_service_accounts_create(
         org=org,
         requested=requested_role,
         scoped=True,
-        ttl_seconds=_parse_sa_ttl(payload.get("ttl_days")),
+        ttl_seconds=parse_ttl_days(payload.get("ttl_days")),
         is_service_account=True,
     )
     ordered_ns = delegated.namespaces

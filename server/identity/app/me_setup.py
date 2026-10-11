@@ -11,7 +11,7 @@ from server.auth.delegation import Delegated, delegate
 from server.auth.jwt import AuthInfo
 from server.core.datetimes import naive_utc_now_seconds
 from server.identity.app import me_callers, token_grants
-from server.identity.app.me_service_accounts import dev_parent, json_int
+from server.identity.app.me_service_accounts import dev_parent, parse_ttl_days
 from server.settings import settings
 
 router = APIRouter()
@@ -299,25 +299,6 @@ def _setup_parent(request: Request, payload: dict[str, object]) -> AuthInfo:
     return dev_parent(payload)
 
 
-def _parse_setup_ttl(ttl_raw: object) -> int | None:
-    """`ttl_days` in seconds; None (absent or null) = the delegation default."""
-    if ttl_raw is None:
-        return None
-    try:
-        ttl_seconds = json_int(ttl_raw) * 86400
-        if ttl_seconds < 86400:
-            raise ValueError
-    except (TypeError, ValueError) as e:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "VALIDATION_FAILED",
-                "message": "ttl_days must be a positive int or null",
-            },
-        ) from e
-    return ttl_seconds
-
-
 @router.post("/v1/me/setup/mcp_config")
 async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> dict[str, object]:
     """Generate an MCP-client config block + fresh token for the caller.
@@ -389,7 +370,7 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
         org=org,
         requested=requested,
         scoped=False,
-        ttl_seconds=_parse_setup_ttl(payload.get("ttl_days")),
+        ttl_seconds=parse_ttl_days(payload.get("ttl_days")),
         is_service_account=persist,
     )
 

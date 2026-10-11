@@ -96,3 +96,13 @@ async def test_a_namespace_the_caller_holds_no_grant_on_is_refused(
     token = verify_token(out["token"])
     assert token.namespaces == ("a",) and token.roles == (Role.WRITER,)
     assert (out["namespace_scope"], out["read_scope"]) == ("single", "named_namespaces")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ttl_days", [0, 3651, 10**9])
+async def test_a_ttl_outside_ten_years_is_a_422(
+    monkeypatch: pytest.MonkeyPatch, grants: dict, ttl_days: int
+) -> None:
+    with pytest.raises(HTTPException) as err:
+        await _setup(monkeypatch, _caller(), {"ttl_days": ttl_days})
+    assert err.value.status_code == 422
