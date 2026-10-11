@@ -13,6 +13,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { contentText, hookClient, runPrefixFor } from "./loom-client.mjs";
+import { writeJsonFile } from "./tmp-state.mjs";
 
 const GOAL_MAX = 2000;
 const REQUEST_MAX = 8000;
@@ -110,11 +111,7 @@ export function readRecalledStash(sessionId, tmp = os.tmpdir()) {
 
 export function appendRecalledStash(sessionId, keys, tmp = os.tmpdir()) {
   const merged = [...new Set([...readRecalledStash(sessionId, tmp), ...(keys || []).map(String).filter(Boolean)])];
-  try {
-    fs.writeFileSync(recalledStashPath(sessionId, tmp), JSON.stringify(merged.slice(-RECALLED_MAX)));
-  } catch {
-    /* best-effort */
-  }
+  writeJsonFile(recalledStashPath(sessionId, tmp), merged.slice(-RECALLED_MAX)); // best-effort
   return merged.length;
 }
 

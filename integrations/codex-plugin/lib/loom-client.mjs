@@ -601,14 +601,35 @@ export async function postBounded(opName, body, { token, serverUrl, timeoutMs } 
 
 // --- diagnostics ------------------------------------------------------------
 
+// Best effort, not a guarantee: common credential shapes only. A secret in
+// another shape still reaches the server, whose blacklist and sensitivity
+// sweep are the next line.
+const PRIVATE_KEY_RE = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g;
+const TOKEN_SHAPES_RE =
+  /\b(?:(?:AKIA|ASIA)[0-9A-Z]{16}|(?:ghp|gho|ghs|ghu|ghr)_[A-Za-z0-9]{20,}|github_pat_\w{20,}|xox[abeprs]-[A-Za-z0-9-]{10,})\b/g;
+// `password=…`, `"api_key": "…"`, `AWS_SECRET_ACCESS_KEY=…`: the name stays, the value goes.
+const SECRET_ASSIGNMENT_RE =
+  /\b([\w.-]*?(?:password|passwd|secret|secret[_-]?key|token|api[_-]?key|access[_-]?key|private[_-]?key)\b["']?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s"'\\,;}]+)/gi;
 const JWT_RE = /\beyJ[\w-]*\.[\w-]+\.[\w-]*/g;
-const BEARER_RE = /\b(Bearer)\s+\S+/gi;
+const BEARER_RE = /\b(Bearer)\s+[^\s"'\\]+/gi;
 
-/** `text` with bearer tokens, JWTs and the resolved token itself replaced. */
+/** `replacement` in the quotes `value` had, so redacted JSON still parses. */
+function quoted(value, replacement) {
+  const q = value[0] === '"' || value[0] === "'" ? value[0] : "";
+  return q + replacement + q;
+}
+
+/** `text` with private keys, cloud/GitHub/Slack tokens, secret assignments,
+ *  bearer tokens, JWTs and the resolved token itself replaced. */
 export function redactSecrets(text, token = resolveToken()) {
   let s = String(text ?? "");
   if (token && token.length >= 8) s = s.split(token).join("[redacted]");
-  return s.replace(JWT_RE, "[redacted]").replace(BEARER_RE, "$1 [redacted]");
+  return s
+    .replace(PRIVATE_KEY_RE, "[redacted private key]")
+    .replace(TOKEN_SHAPES_RE, "[redacted]")
+    .replace(SECRET_ASSIGNMENT_RE, (_, name, value) => name + quoted(value, "[redacted]"))
+    .replace(JWT_RE, "[redacted]")
+    .replace(BEARER_RE, "$1 [redacted]");
 }
 
 /**

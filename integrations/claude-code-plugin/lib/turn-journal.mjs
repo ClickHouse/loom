@@ -10,12 +10,13 @@
 // the run's final text, the session memory — read the same {role, content}
 // turns whether or not a transcript exists.
 //
-// One JSONL file per session in tmpdir; bounded per line; never throws.
+// One JSONL file per session in tmpdir, mode 0600 and removed at SessionEnd
+// (removeJournal); bounded per line; never throws.
 // Pure helpers take rows so they are unit-testable without I/O.
 
 import fs from "node:fs";
 import os from "node:os";
-import { readCursor, sessionStatePath } from "./tmp-state.mjs";
+import { readCursor, removeFile, sessionStatePath, writePrivateFile } from "./tmp-state.mjs";
 
 export const JOURNAL_MAX_CHARS = 8000;
 export const JOURNAL_MAX_ROWS = 400;
@@ -41,7 +42,7 @@ export function appendTurn(sessionId, role, content, { dir, at } = {}) {
   const row = journalRow(role, content, at);
   if (!row || !sessionId) return false;
   try {
-    fs.appendFileSync(journalPath(sessionId, dir), JSON.stringify(row) + "\n");
+    writePrivateFile(journalPath(sessionId, dir), JSON.stringify(row) + "\n", { append: true });
     return true;
   } catch {
     return false;
@@ -74,6 +75,12 @@ export function readJournal(sessionId, { dir } = {}) {
   } catch {
     return [];
   }
+}
+
+/** Delete the session's journal and its cursor. */
+export function removeJournal(sessionId, { dir } = {}) {
+  removeFile(journalPath(sessionId, dir));
+  removeFile(journalCursorPath(sessionId, dir));
 }
 
 export function readJournalCursor(sessionId, { dir } = {}) {
