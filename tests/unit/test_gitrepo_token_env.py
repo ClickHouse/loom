@@ -10,21 +10,59 @@ import pytest
 
 from server.code.app.index import gitrepo
 
+HEADER = "http.https://github.com/.extraheader"
+
+
+def _config(env: dict[str, str]) -> dict[str, str]:
+    """The `-c key=value` pairs an environment hands git."""
+    n = int(env.get("GIT_CONFIG_COUNT", "0"))
+    return {env[f"GIT_CONFIG_KEY_{i}"]: env[f"GIT_CONFIG_VALUE_{i}"] for i in range(n)}
+
 
 def test_auth_env_carries_the_token_as_an_extraheader() -> None:
     env = gitrepo.auth_env("ghp_secret123", "https://github.com/ClickHouse/example-private.git")
     assert env["GIT_TERMINAL_PROMPT"] == "0"
-    assert env["GIT_CONFIG_COUNT"] == "1"
-    assert env["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraheader"
-    basic = base64.b64decode(env["GIT_CONFIG_VALUE_0"].split()[-1]).decode()
+    header = _config(env)[HEADER]
+    basic = base64.b64decode(header.split()[-1]).decode()
     assert basic == "x-access-token:ghp_secret123"
-    assert "ghp_secret123" not in env["GIT_CONFIG_VALUE_0"]  # encoded, not raw
+    assert "ghp_secret123" not in header  # encoded, not raw
 
 
-def test_no_token_sets_no_config() -> None:
+def test_no_token_sets_no_extraheader() -> None:
     env = gitrepo.auth_env("")
     assert env["GIT_TERMINAL_PROMPT"] == "0"
-    assert "GIT_CONFIG_COUNT" not in env and "GIT_CONFIG_VALUE_0" not in env
+    assert not any(k.endswith(".extraheader") for k in _config(env))
+
+
+def test_git_reads_no_system_or_global_config_and_allows_only_https_and_ssh() -> None:
+    env = gitrepo.auth_env("tok", "https://github.com/o/r.git")
+    assert env["GIT_CONFIG_NOSYSTEM"] == "1" and env["GIT_CONFIG_GLOBAL"] == "/dev/null"
+    config = _config(env)
+    assert config["protocol.allow"] == "never"
+    assert config["protocol.https.allow"] == "always"
+    assert config["protocol.ssh.allow"] == "always"
+    assert "protocol.file.allow" not in config  # file://, ext:: and the rest stay refused
+
+
+def test_only_a_local_remote_allows_the_file_transport() -> None:
+    assert _config(gitrepo.auth_env("", "/srv/mirror.git"))["protocol.file.allow"] == "always"
+    assert "protocol.file.allow" not in _config(gitrepo.auth_env("", "git@github.com:o/r.git"))
+
+
+def test_git_inherits_no_server_environment(monkeypatch) -> None:
+    monkeypatch.setenv("LOOM_JWT_SECRET", "server-secret")
+    monkeypatch.setenv("GIT_SSH_COMMAND", "evil")
+    env = gitrepo.auth_env("tok", "https://github.com/o/r.git")
+    assert "LOOM_JWT_SECRET" not in env and "GIT_SSH_COMMAND" not in env
+    assert set(env) - {"PATH", "HOME", "LANG", "TMPDIR"} <= {k for k in env if k.startswith("GIT_")}
+
+
+def test_remote_port_names_the_port_the_egress_proxy_must_allow() -> None:
+    assert gitrepo.remote_port("https://github.com/o/r.git") == 443
+    assert gitrepo.remote_port("https://git.example.com:8443/o/r.git") == 8443
+    assert gitrepo.remote_port("ssh://git@example.com:2222/o/r.git") == 2222
+    assert gitrepo.remote_port("git@github.com:o/r.git") == 22
+    assert gitrepo.remote_port("/srv/mirror.git") is None
 
 
 def test_fetch_passes_the_token_to_the_environment_not_argv(monkeypatch) -> None:
@@ -46,7 +84,7 @@ def test_fetch_passes_the_token_to_the_environment_not_argv(monkeypatch) -> None
         gitrepo.fetch("/tmp/x.git", "https://github.com/o/r.git", "master", token="tok_abc")
     )
     assert "tok_abc" not in " ".join(seen["argv"])
-    assert seen["env"]["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraheader"
+    assert HEADER in _config(seen["env"])
     argv = seen["argv"]
     assert argv[0] == "git"
     assert argv[argv.index("--git-dir") :][:3] == ("--git-dir", "/tmp/x.git", "fetch")

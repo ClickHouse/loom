@@ -69,6 +69,7 @@ class FakeRepo:
 def fake(monkeypatch: pytest.MonkeyPatch) -> FakeRepo:
     fr = FakeRepo()
     monkeypatch.setattr(wd, "repo", fr)
+    monkeypatch.setattr(wd, "vet_host", _public)
     wd._warned_missing_secret.clear()
     fr.inboxes.append(
         {
@@ -76,11 +77,19 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeRepo:
             "inbox": "private-bot",
             "owner_namespace": "private",
             "webhook_url": "https://bot.example.invalid/hook",
-            "webhook_secret_ref": "PRIVATE_BOT_WEBHOOK_SECRET",
+            "webhook_secret_ref": "LOOM_WEBHOOK_SECRET_PRIVATE_BOT",
         }
     )
     fr.events.extend([_event(101), _event(102, "accepted")])
     return fr
+
+
+PUBLIC = "93.184.215.14"
+
+
+async def _public(host: str) -> tuple[str, str]:
+    """Every test host resolves to one public address."""
+    return "", PUBLIC
 
 
 def _client(handler) -> httpx.AsyncClient:
@@ -135,12 +144,15 @@ async def test_a_2xx_advances_the_cursor_and_resets_attempts(fake: FakeRepo, cap
     caplog.set_level(logging.DEBUG)
     async with _client(handler) as client:
         result = await wd.deliver_once(
-            client=client, now=NOW, env={"PRIVATE_BOT_WEBHOOK_SECRET": SECRET}
+            client=client, now=NOW, env={"LOOM_WEBHOOK_SECRET_PRIVATE_BOT": SECRET}
         )
     assert result.delivered == 1 and result.failed == 0
     assert len(seen) == 1
     req = seen[0]
-    assert str(req.url) == "https://bot.example.invalid/hook"
+    # sent to the vetted address, the name kept as the Host header and TLS SNI
+    assert str(req.url) == f"https://{PUBLIC}/hook"
+    assert req.headers["host"] == "bot.example.invalid"
+    assert req.extensions["sni_hostname"] == "bot.example.invalid"
     body = json.loads(req.content)
     assert body["since_seq"] == 0 and body["last_seq"] == 102 and body["count"] == 2
     assert req.headers["webhook-id"] == "102"
@@ -161,7 +173,7 @@ async def test_a_5xx_keeps_the_cursor_and_backs_off(fake: FakeRepo) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(503)
 
-    env = {"PRIVATE_BOT_WEBHOOK_SECRET": SECRET}
+    env = {"LOOM_WEBHOOK_SECRET_PRIVATE_BOT": SECRET}
     async with _client(handler) as client:
         r1 = await wd.deliver_once(client=client, now=NOW, env=env)
         cur = fake.cursors[("acme", "private-bot")]
@@ -189,7 +201,7 @@ async def test_no_answer_in_the_ack_window_counts_as_status_0(fake: FakeRepo) ->
 
     async with _client(handler) as client:
         r = await wd.deliver_once(
-            client=client, now=NOW, env={"PRIVATE_BOT_WEBHOOK_SECRET": SECRET}
+            client=client, now=NOW, env={"LOOM_WEBHOOK_SECRET_PRIVATE_BOT": SECRET}
         )
     assert r.failed == 1
     assert fake.cursors[("acme", "private-bot")]["last_status"] == 0
@@ -228,7 +240,9 @@ async def test_nothing_new_makes_no_request(fake: FakeRepo) -> None:
         raise AssertionError("no request expected")
 
     async with _client(handler) as client:
-        r = await wd.deliver_once(client=client, now=NOW, env={"PRIVATE_BOT_WEBHOOK_SECRET": "x"})
+        r = await wd.deliver_once(
+            client=client, now=NOW, env={"LOOM_WEBHOOK_SECRET_PRIVATE_BOT": "x"}
+        )
     assert r.skipped == 1 and r.total == 0
 
 
@@ -247,26 +261,30 @@ async def test_one_broken_inbox_does_not_stop_the_next(
     # inbox 1 raises outside httpx.HTTPError (httpx.InvalidURL / binascii.Error);
     # inbox 2 must still be delivered and inbox 1's failure lands in its cursor.
     fake.inboxes[:] = [
-        {**fake.inboxes[0], "webhook_url": bad_url, "webhook_secret_ref": "BAD_SECRET"},
+        {
+            **fake.inboxes[0],
+            "webhook_url": bad_url,
+            "webhook_secret_ref": "LOOM_WEBHOOK_SECRET_BAD",
+        },
         {
             "org": "acme",
             "inbox": "good-bot",
             "owner_namespace": "good",
             "webhook_url": "https://good.example.invalid/hook",
-            "webhook_secret_ref": "PRIVATE_BOT_WEBHOOK_SECRET",
+            "webhook_secret_ref": "LOOM_WEBHOOK_SECRET_PRIVATE_BOT",
         },
     ]
     fake.events.append({**_event(103), "inbox": "good-bot"})
     seen: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(str(request.url))
+        seen.append(request.headers["host"])
         return httpx.Response(204)
 
-    env = {"PRIVATE_BOT_WEBHOOK_SECRET": SECRET, "BAD_SECRET": bad_secret}
+    env = {"LOOM_WEBHOOK_SECRET_PRIVATE_BOT": SECRET, "LOOM_WEBHOOK_SECRET_BAD": bad_secret}
     async with _client(handler) as client:
         r = await wd.deliver_once(client=client, now=NOW, env=env)
-    assert seen == ["https://good.example.invalid/hook"]
+    assert seen == ["good.example.invalid"]
     assert r.delivered == 1 and r.failed == 1
     assert fake.cursors[("acme", "good-bot")]["last_seq"] == 103
     bad = fake.cursors[("acme", "private-bot")]
@@ -289,7 +307,11 @@ async def test_a_failure_row_that_cannot_be_written_does_not_stop_the_next(
     """The backoff row of a broken inbox is itself an insert; if it raised,
     every inbox after the broken one would wait for the next pass."""
     fake.inboxes[:] = [
-        {**fake.inboxes[0], "webhook_url": "http://[::1", "webhook_secret_ref": "BAD"},
+        {
+            **fake.inboxes[0],
+            "webhook_url": "http://[::1",
+            "webhook_secret_ref": "LOOM_WEBHOOK_SECRET_BAD",
+        },
         {**fake.inboxes[0], "inbox": "good-bot", "owner_namespace": "good"},
     ]
     fake.events.append({**_event(103), "inbox": "good-bot"})
@@ -303,7 +325,9 @@ async def test_a_failure_row_that_cannot_be_written_does_not_stop_the_next(
     fake.insert_webhook_cursor = insert  # type: ignore[method-assign]
     async with _client(lambda request: httpx.Response(204)) as client:
         r = await wd.deliver_once(
-            client=client, now=NOW, env={"PRIVATE_BOT_WEBHOOK_SECRET": SECRET, "BAD": SECRET}
+            client=client,
+            now=NOW,
+            env={"LOOM_WEBHOOK_SECRET_PRIVATE_BOT": SECRET, "LOOM_WEBHOOK_SECRET_BAD": SECRET},
         )
     assert r.delivered == 1 and r.failed == 1
     assert fake.cursors[("acme", "good-bot")]["last_seq"] == 103
@@ -324,10 +348,97 @@ async def test_a_pass_posts_at_most_the_cap_and_the_rest_go_first_next_pass(
         posted.append(request.headers["webhook-id"])
         return httpx.Response(204)
 
-    env = {"PRIVATE_BOT_WEBHOOK_SECRET": SECRET}
+    env = {"LOOM_WEBHOOK_SECRET_PRIVATE_BOT": SECRET}
     async with _client(handler) as client:
         r1 = await wd.deliver_once(client=client, now=NOW, env=env)
         r2 = await wd.deliver_once(client=client, now=NOW + timedelta(seconds=5), env=env)
     assert (r1.delivered, r1.deferred) == (2, 3) and r1.total == 5
     # the three not reached come before the two just delivered
     assert posted == ["100", "101", "102", "103"] and r2.deferred == 3
+
+
+# ------------------------------------------------------------ outbound guard
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("url", "resolves_to"),
+    [
+        ("https://hook.example/x", "10.0.0.1"),
+        ("https://hook.example/x", "127.0.0.1"),
+        ("http://169.254.169.254/latest/meta-data/", "169.254.169.254"),
+        ("https://hook.example/x", "::ffff:192.168.1.1"),
+    ],
+    ids=["private", "loopback", "metadata", "mapped-private"],
+)
+async def test_a_webhook_to_a_non_public_address_is_never_sent(
+    fake: FakeRepo, monkeypatch: pytest.MonkeyPatch, url: str, resolves_to: str
+) -> None:
+    import server.core.hosts as hosts
+
+    monkeypatch.setattr(wd, "vet_host", hosts.vet_host)
+    monkeypatch.setattr(hosts, "_resolve", lambda host: [resolves_to])
+    fake.inboxes[0]["webhook_url"] = url
+    seen: list[httpx.Request] = []
+    async with _client(lambda r: seen.append(r) or httpx.Response(204)) as client:
+        r = await wd.deliver_once(
+            client=client, now=NOW, env={"LOOM_WEBHOOK_SECRET_PRIVATE_BOT": SECRET}
+        )
+    assert seen == [] and r.failed == 1
+    assert fake.cursors[("acme", "private-bot")]["last_status"] == 0
+
+
+@pytest.mark.asyncio
+async def test_pinned_target_connects_to_the_vetted_address_only_over_http_or_https(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def resolver(host: str) -> tuple[str, str]:
+        return "", "2606:2800:220:1::1"
+
+    monkeypatch.setattr(wd, "vet_host", resolver)
+    assert await wd.pinned_target("https://hook.example:8443/a?b=1") == (
+        "",
+        "https://[2606:2800:220:1::1]:8443/a?b=1",
+        "hook.example:8443",
+        "hook.example",
+    )
+    assert (await wd.pinned_target("ftp://hook.example/a"))[0]
+    assert (await wd.pinned_target("file:///etc/passwd"))[0]
+
+
+@pytest.mark.asyncio
+async def test_a_secret_ref_outside_the_prefix_is_never_read(fake: FakeRepo) -> None:
+    """A row naming any other variable (written before the prefix rule) would
+    sign notices to a caller-chosen URL with a server secret as the key."""
+    fake.inboxes[0]["webhook_secret_ref"] = "LOOM_JWT_SECRET"
+    seen: list[httpx.Request] = []
+    async with _client(lambda r: seen.append(r) or httpx.Response(204)) as client:
+        r = await wd.deliver_once(client=client, now=NOW, env={"LOOM_JWT_SECRET": SECRET})
+    assert seen == [] and r.skipped == 1
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("webhook_secret_ref", "LOOM_JWT_SECRET"),
+        ("webhook_secret_ref", "LOOM_WEBHOOK_SECRET_"),
+        ("webhook_url", "file:///etc/passwd"),
+        ("webhook_url", "gopher://hook.example/"),
+    ],
+)
+def test_inbox_register_refuses_a_foreign_secret_ref_and_a_non_http_url(
+    field: str, value: str
+) -> None:
+    from pydantic import ValidationError
+
+    from server.tasks.api.models_task import InboxRegisterInput
+
+    base = {"org": "acme", "namespace": "ns", "agent": "a", "inbox": "i", "owner_agent": "a"}
+    with pytest.raises(ValidationError):
+        InboxRegisterInput(**base, **{field: value})
+    ok = InboxRegisterInput(
+        **base,
+        webhook_url="https://hook.example/x",
+        webhook_secret_ref="LOOM_WEBHOOK_SECRET_BOT",
+    )
+    assert ok.webhook_secret_ref == "LOOM_WEBHOOK_SECRET_BOT"

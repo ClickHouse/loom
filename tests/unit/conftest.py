@@ -235,6 +235,19 @@ socket.getaddrinfo = _guarded_getaddrinfo
 
 
 @pytest.fixture(autouse=True)
+def _no_repo_job_sandbox() -> Iterator[None]:
+    """Repository jobs run as plain children in unit tests, whether or not this
+    host can run bubblewrap: the tests fake the child process. The tests of the
+    real sandbox (test_repo_job_sandbox_hostile.py) switch it back on."""
+    from server.code.app.index import sandbox
+
+    before = sandbox._available
+    sandbox._available = False
+    yield
+    sandbox._available = before
+
+
+@pytest.fixture(autouse=True)
 def _network_left_untouched() -> Iterator[None]:
     """Fail a test that tried to connect to or resolve a remote host."""
     _network_attempts.clear()

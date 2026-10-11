@@ -111,6 +111,9 @@ def _cfg(namespace: str, branch: str, repo: str = "ClickHouse/ClickHouse") -> An
 
 @pytest.fixture(autouse=True)
 def _auth(monkeypatch):
+    from server.code.app.index import sandbox
+
+    monkeypatch.setattr(sandbox, "_available", True)
     monkeypatch.setattr(settings, "code_self_service_enabled", True)
     monkeypatch.setattr(settings, "code_self_service_max_repos", 10)
     token = current_auth_var.set(

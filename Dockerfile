@@ -104,7 +104,12 @@ FROM python:3.12-slim
 # repo mirror (fetch + cat-file) by shelling out to git. Mounted repos are
 # owned by the host operator, not uid 999 — without safe.directory git
 # refuses every command with "dubious ownership".
+# bubblewrap: the repository-job sandbox (clone, fetch, dependency installs and
+# the compiler tiers run inside it). It needs user namespaces, which Docker's
+# default seccomp profile blocks: see "Repository-job sandbox" in
+# docs/operations/code-index-operations.md for the container options.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    bubblewrap \
     ca-certificates \
     git \
     && rm -rf /var/lib/apt/lists/* \

@@ -47,9 +47,11 @@ from server.code.app.index.compiler_tier import (
     git,
     harness_failure,
     resolve_checkout,
+    run_harness,
     run_tier,
 )
-from server.code.app.index.gitrepo import UNQUOTED_PATHS, nul_fields
+from server.code.app.index.gitrepo import UNQUOTED_PATHS, auth_env, git_config_env, nul_fields
+from server.code.app.index.sandbox import tool_root
 from server.core.paths import SCIP_HARNESS_DIR
 from server.settings import settings
 
@@ -141,6 +143,7 @@ async def _module_dirs(checkout: Path) -> list[str]:
         "**/go.mod",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
+        env=auth_env(),
     )
     out = await communicate_or_kill(proc, 120.0)
     return sorted({posixpath.dirname(p) for p in nul_fields(out.decode("utf-8", "replace"))})
@@ -164,6 +167,7 @@ async def _changed_paths(checkout: Path, base: str, head: str) -> list[str]:
         head,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
+        env=auth_env(),
     )
     out = await communicate_or_kill(proc, 300.0)
     if proc.returncode != 0:
@@ -183,6 +187,7 @@ async def _has_commit(checkout: Path, sha: str) -> bool:
         f"{sha}^{{commit}}",
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
+        env=auth_env(),
     )
     await communicate_or_kill(proc, 60.0)
     return proc.returncode == 0
@@ -200,7 +205,7 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipGoDeltaResu
     if missing:
         result.skipped.append(f"{cfg.namespace}: {missing}")
         return
-    await git(checkout, *checkout_fetch_args(bare, target))
+    await git(checkout, *checkout_fetch_args(bare, target), local_remote=bare)
     await git(checkout, "checkout", "--force", target)
 
     if scip_commit:
@@ -246,10 +251,9 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipGoDeltaResu
     )
 
 
-def _harness_env(out_dir: Path, modules: list[str], cfg: RepoConfig) -> dict[str, str]:
-    """The runner's environment (sync: resolves the binaries' paths)."""
+def _bin_dirs() -> list[str]:
     scip_go = Path(settings.code_scip_go_path)
-    bin_dirs = [
+    return [
         d
         for d in (
             settings.code_scip_go_bin_dir,
@@ -257,32 +261,44 @@ def _harness_env(out_dir: Path, modules: list[str], cfg: RepoConfig) -> dict[str
         )
         if d
     ]
+
+
+def _cache_dirs() -> tuple[Path, Path]:
+    """(GOMODCACHE, GOPATH): the module cache the runs share."""
+    modcache = Path(settings.code_scip_go_modcache).absolute()
+    return modcache, modcache.parent / "gopath"
+
+
+def _make_cache_dirs() -> list[Path]:
+    """The cache directories, created so the sandbox can mount them writable."""
+    dirs = list(_cache_dirs())
+    for d in dirs:
+        d.mkdir(parents=True, exist_ok=True)
+    return dirs
+
+
+def _harness_env(out_dir: Path, modules: list[str], cfg: RepoConfig) -> dict[str, str]:
+    """The runner's environment (sync: resolves the binaries' paths). It carries
+    no credential: `go mod download` runs the repository's module graph, so a
+    private dependency the entry's token could read is not fetched."""
+    modcache, gopath = _cache_dirs()
     env = {
-        "PATH": ":".join([*bin_dirs, os.environ.get("PATH", os.defpath)]),
+        **git_config_env(),
+        "PATH": ":".join([*_bin_dirs(), os.environ.get("PATH", os.defpath)]),
         "PYTHON": sys.executable,  # converter needs the server's venv (protobuf runtime)
         "DELTA_OUT_DIR": str(out_dir),
-        "SCIP_GO": str(scip_go),
+        "SCIP_GO": str(Path(settings.code_scip_go_path)),
         "JOBS": str(settings.code_scip_go_jobs),
         "MIN_GO_FILES": "1",
         "EXCLUDE_GENERATED": "1" if cfg.exclude_generated else "0",
         "GOFLAGS": "-mod=mod",
-        "GOMODCACHE": str(Path(settings.code_scip_go_modcache).absolute()),
-        "GOPATH": str(Path(settings.code_scip_go_modcache).absolute().parent / "gopath"),
+        "GOMODCACHE": str(modcache),
+        "GOPATH": str(gopath),
         "HOME": str(Path.home()),
     }
     if settings.code_scip_go_private:
         env["GOPRIVATE"] = settings.code_scip_go_private
         env["GONOSUMDB"] = settings.code_scip_go_private
-    # A module that requires another PRIVATE repository
-    # (a `require` with no local `replace`) downloads through git; the entry's
-    # token rides the same host-scoped extraheader the clone uses (`auth_env`)
-    # — never an argv, never a URL, never the runner's log.
-    token = cfg.github_token
-    if token:
-        from server.code.app.index.gitrepo import auth_env
-
-        git = auth_env(token, cfg.git_remote or "https://github.com/")
-        env.update({k: v for k, v in git.items() if k.startswith(("GIT_CONFIG_", "GIT_TERMINAL"))})
     if modules:
         env["MODULES"] = "\n".join(modules)
     return env
@@ -298,30 +314,23 @@ async def _run_harness(
 ) -> str:
     """`run_go_monorepo_delta.sh` in DELTA_OUT_DIR mode over `modules` (every
     module when empty): index, convert, write one JSON delta per module — no
-    upload, no watermark read (the worker owns both). Returns the log."""
+    upload, no watermark read (the worker owns both). Returns the log. Module
+    downloads go through the sandbox's egress proxy."""
     env = await asyncio.to_thread(_harness_env, out_dir, modules, cfg)
-    proc = await asyncio.create_subprocess_exec(
-        "bash",
-        str(_HARNESS),
-        str(checkout),
-        base,
-        head,
-        env=env,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-        start_new_session=True,
+    caches = await asyncio.to_thread(_make_cache_dirs)
+    returncode, text = await run_harness(
+        _HARNESS,
+        checkout,
+        [base, head],
+        env,
+        out_dir=out_dir,
+        timeout_s=settings.code_scip_go_delta_timeout_seconds,
+        writable=caches,
+        readonly=[tool_root(Path(d)) for d in _bin_dirs()],
+        network=True,
     )
-    try:
-        out = await communicate_or_kill(
-            proc, settings.code_scip_go_delta_timeout_seconds, group=True
-        )
-    except TimeoutError:
-        raise RuntimeError(
-            f"harness timed out after {settings.code_scip_go_delta_timeout_seconds}s"
-        ) from None
-    text = out.decode("utf-8", "replace")
-    if proc.returncode != 0:
-        raise harness_failure(proc.returncode, text[-2000:])
+    if returncode != 0:
+        raise harness_failure(returncode, text[-2000:])
     return text
 
 

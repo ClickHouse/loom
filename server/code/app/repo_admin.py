@@ -41,6 +41,22 @@ def _require_self_service() -> None:
         )
 
 
+def _require_sandbox() -> None:
+    """A repository someone adds from the page gets compiler tiers that run its
+    own build code, and its clone talks to a host they chose: both need the
+    repository-job sandbox (code/app/index/sandbox.py), so without it the add
+    is refused."""
+    from server.code.app.index.sandbox import sandbox_available
+
+    if not sandbox_available():
+        raise ValidationError(
+            "adding repositories from the page needs the repository-job sandbox, which is "
+            "unavailable on this deployment (bubblewrap missing or user namespaces blocked); "
+            "ask the operator",
+            code="SANDBOX_UNAVAILABLE",
+        )
+
+
 def _require_same_org(org: str) -> None:
     from server.auth.authz import may_act_in_org
     from server.auth.context import current_auth
@@ -154,6 +170,7 @@ async def handle_code_repo_remote_branches(input: Any) -> Any:
     release branches, and which are indexed here already — so the add dialog
     can offer the choice instead of one text field."""
     _require_self_service()
+    _require_sandbox()
     _require_same_org(input.org)
     try:
         repo, git_remote, provider = reg.normalize_remote(input.repo)
@@ -285,6 +302,7 @@ async def _add_extra_branches(
 
 async def handle_code_repo_add(input: CodeRepoAddInput) -> CodeRepoAddOutput:
     _require_self_service()
+    _require_sandbox()
     _require_same_org(input.org)
     try:
         repo, git_remote, provider = reg.normalize_remote(input.repo)
@@ -413,6 +431,7 @@ async def handle_code_repo_remove(input: CodeRepoRemoveInput) -> CodeRepoRemoveO
 
 async def handle_code_repo_add_branch(input: CodeRepoAddBranchInput) -> CodeRepoAddOutput:
     _require_self_service()
+    _require_sandbox()
     _require_same_org(input.org)
     from server.code.domain.index.repos import repo_for_namespace
 

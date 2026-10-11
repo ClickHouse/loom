@@ -132,3 +132,49 @@ async def test_a_gone_base_clears_the_watermark_for_a_full_run(
     ]
     assert ctx.count == 0
     assert repo.set_state.await_args.args[:4] == ("o", "code-x", watermark, "")
+
+
+class _RegistryCfg(_Cfg):
+    source = "registry"  # a viewer added it from the Repositories page
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("worker", "module", "watermark"), TIERS)
+@pytest.mark.parametrize(
+    ("cfg_type", "sandboxed", "builds"),
+    [
+        (_RegistryCfg, False, False),
+        (_RegistryCfg, True, True),
+        (_Cfg, False, True),
+        (_Cfg, True, True),
+    ],
+    ids=["registry-unsandboxed", "registry-sandboxed", "config-unsandboxed", "config-sandboxed"],
+)
+async def test_a_self_registered_repo_gets_no_build_tier_without_the_sandbox(
+    worker: str,
+    module: str,
+    watermark: str,
+    cfg_type: type,
+    sandboxed: bool,
+    builds: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every build-based tier (C++ CMake, Go, TypeScript install + index, Python)
+    runs the repository's own code; a self-registered entry gets none of them
+    unless the sandbox holds. An operator's entry runs either way."""
+    from server.code.app.index import sandbox
+
+    w = importlib.import_module(module)
+    monkeypatch.setattr(sandbox, "_available", sandboxed)
+    ran: list[str] = []
+
+    async def run_repo(_repo: Any, cfg: Any, _result: Any) -> None:
+        ran.append(cfg.namespace)
+
+    monkeypatch.setattr(w, "_run_repo", run_repo)
+    result, _ = await _run(w, cfg_type(tmp_path), _repo(watermark), owns=True)
+    assert ran == (["code-x"] if builds else [])
+    if not builds:
+        assert result.skipped == [f"code-x: {compiler_tier.UNSANDBOXED_SKIP}"]
+        assert _outcome(worker)["reason"] == result.skipped[0]

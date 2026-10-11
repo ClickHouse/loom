@@ -1,0 +1,109 @@
+"""The relay inside a repository-job sandbox (run as `python -I`, stdlib only).
+
+The sandbox has no network. Its one way out is the egress proxy's unix socket,
+mounted in; this script bridges to it so ordinary clients can use it:
+
+  serve PORT SOCKET -- ARGV...  listen on 127.0.0.1:PORT (git, go and npm use
+                                it as their https proxy), then exec ARGV
+  connect HOST PORT SOCKET      ssh's ProxyCommand: ask the proxy for HOST:PORT
+                                and pipe stdin/stdout through the tunnel
+
+It is not imported by the server; sandbox.py mounts this file into the sandbox.
+"""
+
+import os
+import socket
+import sys
+import threading
+
+
+def _pipe(src: socket.socket, dst: socket.socket) -> None:
+    try:
+        while data := src.recv(65536):
+            dst.sendall(data)
+    except OSError:
+        pass
+    finally:
+        try:
+            dst.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
+
+
+def _bridge(conn: socket.socket, path: str) -> None:
+    upstream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        upstream.connect(path)
+    except OSError:
+        conn.close()
+        return
+    threading.Thread(target=_pipe, args=(upstream, conn), daemon=True).start()
+    _pipe(conn, upstream)
+
+
+def serve(port: int, path: str, argv: list[str]) -> None:
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", port))
+    listener.listen(64)
+    child = os.fork()
+    if child == 0:
+        # The relay is a grandchild handed to the sandbox's init, so ARGV has no
+        # stray child; it dies with the sandbox's pid namespace.
+        if os.fork() == 0:
+            while True:
+                conn, _ = listener.accept()
+                threading.Thread(target=_bridge, args=(conn, path), daemon=True).start()
+        os._exit(0)
+    os.waitpid(child, 0)
+    listener.close()
+    try:
+        os.execvp(argv[0], argv)
+    except OSError as e:
+        sys.stderr.write(f"{argv[0]}: {e.strerror}\n")
+        os._exit(127)
+
+
+def connect(host: str, port: str, path: str) -> int:
+    upstream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    upstream.connect(path)
+    upstream.sendall(f"CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n".encode())
+    head = b""
+    while b"\r\n\r\n" not in head:
+        piece = upstream.recv(1)
+        if not piece:
+            break
+        head += piece
+    if not head.startswith((b"HTTP/1.1 200", b"HTTP/1.0 200")):
+        sys.stderr.write(f"egress proxy refused {host}:{port}: {head[:200]!r}\n")
+        return 1
+    threading.Thread(target=_copy_stdin, args=(upstream,), daemon=True).start()
+    while data := upstream.recv(65536):
+        os.write(1, data)
+    return 0
+
+
+def _copy_stdin(dst: socket.socket) -> None:
+    try:
+        while data := os.read(0, 65536):
+            dst.sendall(data)
+    except OSError:
+        pass
+    finally:
+        try:
+            dst.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
+
+
+def main(args: list[str]) -> int:
+    if len(args) >= 5 and args[0] == "serve" and args[3] == "--":
+        serve(int(args[1]), args[2], args[4:])
+    if len(args) == 4 and args[0] == "connect":
+        return connect(args[1], args[2], args[3])
+    sys.stderr.write("usage: egress_relay.py serve PORT SOCKET -- ARGV | connect HOST PORT SOCK\n")
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

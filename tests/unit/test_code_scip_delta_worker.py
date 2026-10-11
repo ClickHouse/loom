@@ -88,7 +88,7 @@ async def test_fetch_does_not_recurse_submodules(monkeypatch, tmp_path):
 
     git_calls: list[tuple[str, ...]] = []
 
-    async def fake_git(cwd, *args):
+    async def fake_git(cwd, *args, **kw):
         git_calls.append(args)
 
     monkeypatch.setattr(w, "git", fake_git)
@@ -165,6 +165,7 @@ async def test_git_timeout_names_the_command_and_retries(monkeypatch, tmp_path):
 
     class _Proc:
         returncode = 0
+        pid = 4_194_305  # above pid_max: the group kill finds nothing
 
         async def communicate(self):
             calls["n"] += 1

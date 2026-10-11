@@ -27,9 +27,10 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.core.hosts import vet_host
+from server.settings import settings
 from server.tracker.domain.contract import OPTIONAL, REQUIRED
 from server.tracker.store.source import qa_intel
-from server.tracker.store.source.hosts import vet_host
 
 log = logging.getLogger("loom.tracker.onboarding")
 
@@ -78,7 +79,11 @@ _ALLOWED_CREATE = frozenset({"CREATE TEMPORARY TABLE", "CREATE ARBITRARY TEMPORA
 
 async def host_refusal(host: str) -> str:
     """ "" when the host is acceptable; else one sentence saying why not."""
-    return (await vet_host(host))[0]
+    return (await _vet(host))[0]
+
+
+async def _vet(host: str) -> tuple[str, str]:
+    return await vet_host(host, allow_private=settings.tracker_self_service_allow_private_hosts)
 
 
 @dataclass
@@ -188,7 +193,7 @@ async def probe_credential(
     `host_refusal` and the connection cannot point the probe inward."""
     from server.tracker.app import contract
 
-    why, address = await vet_host(host)
+    why, address = await _vet(host)
     if why:
         raise HostRefused(why)
     try:

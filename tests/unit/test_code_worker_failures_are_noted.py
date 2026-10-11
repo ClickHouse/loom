@@ -25,6 +25,7 @@ class _Cfg:
     provider = "github"
     github_token = "tok"
     git_dir = ""
+    source = "config"
 
 
 async def _boom(*_: Any, **__: Any) -> Any:

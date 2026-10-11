@@ -172,10 +172,11 @@ def _doctor_problems() -> list[Any]:
     only — no probed dim, breaker, lease or ledger before boot. Empty when
     settings do not load (the `settings_load` check already says so)."""
     try:
+        from server.code.app.index.sandbox import sandbox_available
         from server.observability.problems import HealthState, collect_problems
         from server.settings import settings
 
-        return collect_problems(settings, HealthState())
+        return collect_problems(settings, HealthState(repo_sandbox=sandbox_available()))
     except Exception:  # noqa: BLE001 — a doctor line must never crash the doctor
         return []
 

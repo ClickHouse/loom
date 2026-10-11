@@ -23,7 +23,9 @@ import json
 import logging
 import math
 import os
+import shutil
 import time
+from pathlib import Path
 from typing import Any
 
 from server.settings import settings
@@ -106,7 +108,8 @@ async def set_stage(repo: Any, org: str, ns: str, stage: str, **detail: Any) -> 
 async def clone_if_missing(cfg: Any, repo: Any) -> bool:
     """True when the mirror exists after the call. A failed clone records
     stage=error with the reason and returns False; the next pass retries."""
-    from server.code.app.index.gitrepo import auth_env, communicate_or_kill
+    from server.code.app.index.gitrepo import auth_env, remote_access
+    from server.code.app.index.sandbox import run_job
 
     git_dir = cfg.git_dir
     if await asyncio.to_thread(os.path.isdir, git_dir):
@@ -114,33 +117,25 @@ async def clone_if_missing(cfg: Any, repo: Any) -> bool:
     await set_stage(repo, cfg.org, cfg.namespace, "cloning", remote=cfg.git_remote)
     await asyncio.to_thread(os.makedirs, os.path.dirname(git_dir) or ".", exist_ok=True)
     tmp = git_dir + ".partial"
-    proc = await asyncio.create_subprocess_exec(
-        "git",
-        "clone",
-        "-c",
-        "gc.auto=0",
-        "-c",
-        "maintenance.auto=false",
-        "--bare",
-        "--quiet",
-        cfg.git_remote,
-        tmp,
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.PIPE,
-        env={
-            **os.environ,
-            **auth_env(cfg.github_token, cfg.git_remote),
-            "GIT_TERMINAL_PROMPT": "0",
-        },
-    )
+    # The clone runs as a repository job: the empty target its one writable path.
+    await asyncio.to_thread(shutil.rmtree, tmp, True)
+    await asyncio.to_thread(os.makedirs, tmp)
     try:
-        _, err = await communicate_or_kill(proc, timeout_s=settings.code_bootstrap_clone_timeout_s)
+        done = await run_job(
+            ["git", "clone", "-c", "gc.auto=0", "-c", "maintenance.auto=false"]
+            + ["--bare", "--quiet", cfg.git_remote, tmp],
+            env=auth_env(cfg.github_token, cfg.git_remote),
+            timeout_s=settings.code_bootstrap_clone_timeout_s,
+            writable=[Path(tmp)],
+            **remote_access(cfg.git_remote),
+        )
     except TimeoutError:
         await set_stage(
             repo, cfg.org, cfg.namespace, "error", reason="clone timed out; retrying next pass"
         )
         return False
-    if proc.returncode != 0:
+    err = done.stderr
+    if done.returncode != 0:
         reason = err.decode(errors="replace").strip().splitlines()[-1:] or ["git clone failed"]
         await set_stage(repo, cfg.org, cfg.namespace, "error", reason=reason[0][:300])
         logger.warning("bootstrap: clone of %s failed: %s", cfg.label, reason[0][:300])

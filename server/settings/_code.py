@@ -103,6 +103,16 @@ class CodeSettings(BaseModel):
     # Seconds a bare clone may take before the worker gives up for the pass
     # and retries next pass.
     code_bootstrap_clone_timeout_s: float = 1800.0
+    # Limits for each process of a sandboxed repository job (clone, fetch,
+    # dependency install, compiler-tier harness; code/app/index/sandbox.py).
+    # CPU seconds a process may use.
+    code_sandbox_cpu_seconds: int = 7200
+    # Address space a process may map, in MiB.
+    code_sandbox_memory_mb: int = 16384
+    # Processes and threads the job's user may run at once.
+    code_sandbox_max_pids: int = 2048
+    # Largest file a process may write, in MiB (a pack or index.scip).
+    code_sandbox_max_file_mb: int = 32768
     # Bare clone the ingest worker fetches into (created by `loom code init`)
     # and its remote. Empty = derived from code_repo: `var/code_repos/<name>.git`
     # and `https://github.com/<owner>/<name>.git`.
