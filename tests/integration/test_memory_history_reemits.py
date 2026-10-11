@@ -89,3 +89,26 @@ async def test_reemits_are_left_out_and_edits_stay(control_plane_url, mint_test_
         assert (await a.memory.verify("a", revoke=True)).get("changed")
         attested = await _history(a, "a", 3)
         assert [bool(r["verified_at"]) for r in attested] == [False, True, False], attested
+
+        # A second verifier and a lock update that keeps its mode: history carries
+        # the attestation and lock metadata that tell them from the version before.
+        await a.memory.set("r", "reviewed")
+        await _history(a, "r", 1)
+        assert (await a.memory.verify("r")).get("changed")
+        tok2 = mint_test_token(org=ORG, namespaces=[ns], roles=["admin"], subject="reviewer2")
+        async with Agent(
+            org=ORG, namespace=ns, agent="t", base_url=control_plane_url, api_key=tok2
+        ) as b:
+            assert (await b.memory.verify("r")).get("changed")
+        reviewed = await _history(a, "r", 3)
+        first, second = reviewed[1]["verified_by"], reviewed[0]["verified_by"]
+        assert first and second and first != second, reviewed
+
+        await a.memory.set("l", "held")
+        await a.memory.lock("l", reason="audit", mode="no_delete", ttl_seconds=600)
+        await a.memory.lock("l", reason="legal hold", mode="no_delete")
+        held = await _history(a, "l", 3)
+        assert [(r["lock_reason"], r["lock_until"] is None) for r in held[:2]] == [
+            ("legal hold", True),
+            ("audit", False),
+        ], held

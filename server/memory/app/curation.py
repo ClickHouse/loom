@@ -388,7 +388,10 @@ async def handle_memory_history(input: MemoryHistoryInput) -> MemoryHistoryOutpu
             conflict_with=list(r.conflict_with),
             tags=list(r.tags),
             verified_at=r.verified_at,
+            verified_by=r.verified_by,
             lock_mode=r.lock_mode,
+            lock_reason=r.lock_reason,
+            lock_until=r.lock_until,
         )
         for r in rows
     ]

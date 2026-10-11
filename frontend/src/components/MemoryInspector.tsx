@@ -60,7 +60,7 @@ import { relativeTime, formatValue, humanizeError, SENTINEL_AGENTS } from "../li
 import { detectEncodedValue } from "../lib/encoded";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
-import { historyChange } from "../lib/historyChange";
+import { historyChange, previousVersion } from "../lib/historyChange";
 
 type SectionId = "history" | "related" | "provenance" | "lineage";
 const SECTIONS_KEY = "loom_inspector_sections_v1";
@@ -896,7 +896,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                         // digits are not the stored ones. Number the loaded versions instead.
                         const label = `v${history.length - idx}`;
                         const writtenAt = relativeTime(h.written_at || h.created_at);
-                        const changed = historyChange(h, history[idx + 1]);
+                        const changed = historyChange(h, previousVersion(history, idx));
                         return (
                           <div key={h.version} className="rounded-md bg-[var(--color-surface-2)] overflow-hidden">
                             <button

@@ -770,6 +770,8 @@ export async function listCostRollup(
 // ===== memory.history / lineage / related (inspector wiring) =====
 
 export interface MemoryHistoryEntry {
+  // A namespace-wide history interleaves several writers' rows of the key.
+  memory_id?: string;
   version: number;
   value: unknown;
   created_at: string;
@@ -779,13 +781,17 @@ export interface MemoryHistoryEntry {
   redacted_at: string | null;
   source_trace: string;
   confidence?: number;
+  content_sha256?: string;
   pinned?: boolean;
   // State a version can change with the value unchanged.
   status?: string;
   conflict_with?: string[];
   tags?: string[];
   verified_at?: string | null;
+  verified_by?: string;
   lock_mode?: string;
+  lock_reason?: string;
+  lock_until?: string | null;
 }
 
 /** Version-by-version timeline for a single memory key. */

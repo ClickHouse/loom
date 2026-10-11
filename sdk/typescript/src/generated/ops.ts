@@ -4455,7 +4455,10 @@ export interface MemoryHistoryRow {
   conflict_with?: string[];
   tags?: string[];
   verified_at?: string | null;
+  verified_by?: string;
   lock_mode?: string;
+  lock_reason?: string;
+  lock_until?: string | null;
 }
 
 export interface MemoryHistoryOutput {

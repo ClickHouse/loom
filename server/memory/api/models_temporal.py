@@ -186,7 +186,10 @@ class _MemoryHistoryRow(BaseModel):
     conflict_with: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     verified_at: datetime | None = None
+    verified_by: str = ""
     lock_mode: str = ""
+    lock_reason: str = ""
+    lock_until: datetime | None = None
 
 
 class MemoryHistoryOutput(BaseModel):

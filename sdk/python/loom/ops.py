@@ -10650,7 +10650,10 @@ class MemoryHistoryRow(TypedDict, total=False):
     conflict_with: NotRequired[list[str]]
     tags: NotRequired[list[str]]
     verified_at: NotRequired[Optional[str]]
+    verified_by: NotRequired[str]
     lock_mode: NotRequired[str]
+    lock_reason: NotRequired[str]
+    lock_until: NotRequired[Optional[str]]
 
 
 class MemoryImportCuratedInput(TypedDict, total=False):
