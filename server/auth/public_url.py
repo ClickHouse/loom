@@ -22,7 +22,7 @@ _HOST = re.compile(
     r"^(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?|\[[0-9A-Fa-f:.]+\])(?::\d{1,5})?$"
 )
 _FALLBACK_HOST = "localhost:7777"
-_LOCAL_HOSTNAMES = frozenset({"localhost", "127.0.0.1", "::1"})
+_DEFAULT_PORTS = {"http": 80, "https": 443}
 
 
 def public_base_url(request: Any, *, configured: str | None = None) -> str:
@@ -55,16 +55,34 @@ def is_loopback_host(host: str) -> bool:
 
 
 def host_header_allowed(host_header: str, public_base: str) -> bool:
-    """Whether a request's Host names this server: localhost, 127.0.0.1, ::1
-    or the hostname of `public_base`. Guards an auth-off server against DNS
+    """Whether a request's Host names this server: a loopback host or the
+    hostname of `public_base`. Guards an auth-off server against DNS
     rebinding, where a page on another site reaches it under its own name."""
     host_header = host_header.strip()
     if not _HOST.fullmatch(host_header):
         return False
     hostname = urlsplit(f"//{host_header}").hostname
-    if hostname in _LOCAL_HOSTNAMES:
+    if hostname and is_loopback_host(hostname):
         return True
     return bool(public_base) and hostname == urlsplit(public_base).hostname
+
+
+def _origin_parts(url: str) -> tuple[str, str, int] | None:
+    parts = urlsplit(url.strip())
+    scheme = parts.scheme.lower()
+    try:
+        port = parts.port or _DEFAULT_PORTS.get(scheme)
+    except ValueError:
+        return None
+    if not parts.hostname or port is None:
+        return None
+    return scheme, parts.hostname, port
+
+
+def same_origin(origin: str, own_base: str) -> bool:
+    """Whether a browser Origin is this server's own scheme, host and port."""
+    mine = _origin_parts(own_base)
+    return mine is not None and _origin_parts(origin) == mine
 
 
 def cors_origin_list(raw: str) -> list[str]:

@@ -88,15 +88,15 @@ def auth_off(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _gated_client(base_url: str) -> TestClient:
-    """An app behind the auth-off gate exactly as server.main attaches it."""
+    """An app behind the web gate exactly as server.main attaches it."""
     from fastapi import FastAPI
 
-    from server.main import attach_auth_off_gate
+    from server.main import attach_web_gate
 
     app = FastAPI()
     app.get("/")(lambda: {"ok": True})
     app.post("/v1/memory.list")(lambda: {"ok": True})
-    attach_auth_off_gate(app)
+    attach_web_gate(app)
     return TestClient(app, base_url=base_url)
 
 
@@ -141,6 +141,8 @@ def _post(**headers: str) -> Any:
         {"origin": "null"},
         {"sec-fetch-site": "cross-site"},
         {"origin": "https://evil.example", "sec-fetch-site": "cross-site"},
+        {"origin": "http://localhost:8080"},  # another port is another origin
+        {"origin": "http://localhost:7777", "sec-fetch-site": "same-site"},
     ],
 )
 def test_auth_off_refuses_a_cross_site_text_plain_post(headers: dict[str, str]) -> None:
@@ -156,7 +158,7 @@ def test_auth_off_refuses_a_cross_site_text_plain_post(headers: dict[str, str]) 
     [
         {},  # curl, the SDKs
         {"origin": "http://localhost:7777", "sec-fetch-site": "same-origin"},
-        {"origin": "http://127.0.0.1:7777"},
+        {"origin": "http://localhost:7777", "sec-fetch-site": "none"},
     ],
 )
 def test_auth_off_serves_same_origin_and_originless_calls(headers: dict[str, str]) -> None:
@@ -170,11 +172,57 @@ def test_auth_off_serves_a_configured_cors_origin(monkeypatch: pytest.MonkeyPatc
     assert _post(origin="https://evil.example").status_code == 403
 
 
-def test_auth_on_attaches_no_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture
+def auth_on(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "auth_required", True)
     monkeypatch.setattr(settings, "identity_provider", "gateway")
+    monkeypatch.setattr(settings, "public_base_url", "")
+    monkeypatch.setattr(settings, "cors_origins", "")
+
+
+@pytest.mark.usefixtures("auth_on")
+def test_auth_on_checks_no_host_and_lets_cross_site_navigation_through() -> None:
+    # A link to /me or an OAuth redirect from another site is a cross-site GET.
     assert _get("http://anything.example") == 200
-    assert _post(origin="https://evil.example").status_code == 200
+    assert _get("http://localhost:7777", origin="https://evil.example") == 200
+    assert _get("http://localhost:7777", **{"sec-fetch-site": "cross-site"}) == 200
+
+
+@pytest.mark.usefixtures("auth_on")
+@pytest.mark.parametrize("path", ["/v1/memory.list", "/mcp"])
+def test_auth_on_refuses_a_cross_site_post_that_carries_a_bearer(path: str) -> None:
+    # Proxy mode: the front proxy adds the bearer to whatever the browser sends.
+    from server.main import app
+
+    client = TestClient(app, base_url="http://localhost:7777")
+    headers = {
+        "content-type": "text/plain",
+        "authorization": "Bearer proxied",
+        "origin": "https://evil.example",
+        "sec-fetch-site": "cross-site",
+    }
+    r = client.post(path, content=b'{"org":"o","namespace":"n","agent":"a"}', headers=headers)
+    assert r.status_code == 403
+    assert r.json()["detail"]["code"] == "CROSS_SITE_REQUEST"
+
+
+@pytest.mark.usefixtures("auth_on")
+def test_auth_on_serves_same_origin_listed_and_originless_posts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert _post().status_code == 200
+    assert (
+        _post(origin="http://localhost:7777", **{"sec-fetch-site": "same-origin"}).status_code
+        == 200
+    )
+    assert _post(origin="https://evil.example").status_code == 403
+    monkeypatch.setattr(settings, "cors_origins", "https://app.example")
+    assert (
+        _post(origin="https://app.example", **{"sec-fetch-site": "cross-site"}).status_code == 200
+    )
+    monkeypatch.setattr(settings, "public_base_url", "https://loom.example")
+    assert _post(origin="https://loom.example:443").status_code == 200
+    assert _post(origin="http://localhost:7777").status_code == 403
 
 
 def test_every_response_is_nosniff() -> None:
@@ -313,3 +361,12 @@ def test_loom_serve_host_flag_reaches_the_startup_checks(monkeypatch: pytest.Mon
     seen = _serve_args(monkeypatch, "0.0.0.0")
     assert seen["host"] == "0.0.0.0"
     assert settings.bind_host == "0.0.0.0" and os.environ["LOOM_BIND_HOST"] == "0.0.0.0"
+
+
+def test_the_host_allowlist_and_the_bind_check_share_one_loopback_definition() -> None:
+    from server.auth.public_url import host_header_allowed, is_loopback_host
+
+    for host in ("localhost", "127.0.0.1", "127.0.0.2", "[::1]"):
+        assert is_loopback_host(host)
+        assert host_header_allowed(f"{host}:7777", "")
+    assert not host_header_allowed("10.0.0.1:7777", "")

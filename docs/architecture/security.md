@@ -217,11 +217,13 @@ request's own scheme and `Host`, validated as `http(s)://hostname[:port]`.
 **Exposure.** A non-loopback `LOOM_BIND_HOST` refuses to start without
 `LOOM_PUBLIC_BASE_URL`, and with auth off or the dev JWT secret unless
 `LOOM_ALLOW_INSECURE=1`. `LOOM_CORS_ORIGINS=*` refuses to start (CORS allows
-credentials). With auth off, a request whose `Host` is not `localhost`, `127.0.0.1`,
-`::1` or the public URL's host gets `421`, so a DNS-rebinding page cannot drive a
-local server, and one whose `Origin` names another host (and is not in
-`LOOM_CORS_ORIGINS`) or whose `Sec-Fetch-Site` is `cross-site` gets `403`, so a page
-on another site cannot post to it either. `loom doctor` and `/v1/health` report each of these.
+credentials). With auth off, a request whose `Host` is not a loopback host or the
+public URL's host gets `421`, so a DNS-rebinding page cannot drive a local server. A
+request whose `Origin` is not the server's own scheme, host and port (and is not in
+`LOOM_CORS_ORIGINS`), or whose `Sec-Fetch-Site` is `cross-site` or `same-site`, gets
+`403`, so a page on another site cannot post to it either: every request with auth
+off, and every non-GET request with auth on, because in proxy mode the front proxy adds
+the bearer to whatever the browser sends. `loom doctor` and `/v1/health` report each of these.
 
 **Browser.** Every response is `X-Content-Type-Options: nosniff`. `/me` carries a
 Content-Security-Policy whose `script-src` admits the bundle's origin and the one boot

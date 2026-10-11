@@ -458,9 +458,13 @@ The image serves plain HTTP. Put a TLS-terminating proxy or load balancer in fro
   control.
 - A non-loopback `LOOM_BIND_HOST` refuses to start without `LOOM_PUBLIC_BASE_URL`, and
   with auth off or the dev JWT secret unless `LOOM_ALLOW_INSECURE=1`. With auth off, any
-  request whose `Host` is not `localhost`, `127.0.0.1`, `::1` or the public URL's host
-  gets `421` (DNS rebinding), and one from a page on another site (a foreign `Origin`
-  or `Sec-Fetch-Site: cross-site`) gets `403`.
+  request whose `Host` is not a loopback host or the public URL's host gets `421` (DNS
+  rebinding). A request from a page on another origin (an `Origin` that is not the
+  server's own scheme, host and port, or `Sec-Fetch-Site: cross-site` / `same-site`)
+  gets `403` unless `LOOM_CORS_ORIGINS` lists that origin: every request with auth off,
+  and every non-GET request with auth on, since in proxy mode the proxy adds the bearer
+  itself. A proxy that rewrites `Host` needs `LOOM_PUBLIC_BASE_URL` set for the
+  dashboard's own calls to count as same-origin.
 - In a container the server listens on every interface, so the check trusts the
   declared `LOOM_BIND_HOST`, not the socket: it must match the address the compose
   file publishes the port on.

@@ -15,13 +15,17 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
-from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
 
 from server import __version__, boot
-from server.auth.public_url import cors_origin_list, host_header_allowed
+from server.auth.public_url import (
+    cors_origin_list,
+    host_header_allowed,
+    public_base_url,
+    same_origin,
+)
 from server.core.ch import get_client
 from server.core.logging_config import configure_logging
 from server.observability import get_emitter
@@ -298,48 +302,53 @@ def _refused(status: int, *, code: str, message: str) -> Response:
     )
 
 
-def auth_off_refusal(request: Request) -> Response | None:
-    """With auth off, what stops a web page from driving this server, or None to let the
-    request through. A foreign Host is DNS rebinding (421). A foreign Origin or a
-    cross-site fetch is a page on another site posting here, which a text/plain body
-    does without a preflight (403). curl and the SDKs send neither header."""
-    host_ok = host_header_allowed(request.headers.get("host", ""), settings.public_base_url)
-    if not host_ok:
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def web_refusal(request: Request) -> Response | None:
+    """What stops a page on another site from driving this server, or None to let the
+    request through. A cross-origin POST with a text/plain body needs no preflight, and
+    in proxy mode the front proxy adds the bearer itself, so a foreign Origin or a
+    cross-site / same-site fetch is refused (403) unless LOOM_CORS_ORIGINS lists it.
+    curl and the SDKs send neither header. With auth off every method is checked, and
+    a foreign Host is DNS rebinding (421)."""
+    auth_off = not settings.auth_actually_required()
+    if auth_off and not host_header_allowed(
+        request.headers.get("host", ""), settings.public_base_url
+    ):
         return _refused(
             421,
             code="MISDIRECTED_REQUEST",
             message="this server answers only localhost or LOOM_PUBLIC_BASE_URL",
         )
+    if not auth_off and request.method in _SAFE_METHODS:
+        return None
     origin = request.headers.get("origin")
-    foreign_origin = (
-        origin is not None
-        and not host_header_allowed(urlsplit(origin).netloc, settings.public_base_url)
-        and origin not in cors_origin_list(settings.cors_origins)
-    )
-    if foreign_origin or request.headers.get("sec-fetch-site") == "cross-site":
+    if origin is not None and origin in cors_origin_list(settings.cors_origins):
+        return None
+    foreign_origin = origin is not None and not same_origin(origin, public_base_url(request))
+    fetch_site = request.headers.get("sec-fetch-site")
+    if foreign_origin or fetch_site in ("cross-site", "same-site"):
         return _refused(
             403, code="CROSS_SITE_REQUEST", message="this server refuses cross-site requests"
         )
     return None
 
 
-async def _auth_off_gate(request: Request, call_next: Any) -> Response:
-    """Runs before any route handler."""
-    refusal = auth_off_refusal(request)
+async def _web_gate(request: Request, call_next: Any) -> Response:
+    """Runs before any route handler; the auth mode is read per request."""
+    refusal = web_refusal(request)
     if refusal is not None:
         return refusal
     response: Response = await call_next(request)
     return response
 
 
-def attach_auth_off_gate(target: FastAPI) -> None:
-    """The gate only matters with auth off; with auth on a bearer header is what a
-    cross-site page cannot send."""
-    if not settings.auth_actually_required():
-        target.middleware("http")(_auth_off_gate)
+def attach_web_gate(target: FastAPI) -> None:
+    target.middleware("http")(_web_gate)
 
 
-attach_auth_off_gate(app)
+attach_web_gate(app)
 
 http_transport.attach(app)
 mcp_transport.attach(app)
