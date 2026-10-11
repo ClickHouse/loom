@@ -17,6 +17,8 @@ from __future__ import annotations
 from fastapi import HTTPException
 
 from server.auth.jwt import AuthInfo, RevocationUnavailable, TokenError, verify_token
+from server.auth.context import quota_key_for
+from server.core.ch import set_quota_key
 
 
 def bearer_token(authorization: str | None) -> str | None:
@@ -47,9 +49,11 @@ def verify_bearer_header(authorization: str | None) -> AuthInfo | None:
 
 
 def verify_bearer(token: str) -> AuthInfo:
-    """The principal `token` names; HTTPException 401 / 503 otherwise."""
+    """The principal `token` names; HTTPException 401 / 503 otherwise. The
+    rest of the request's ClickHouse queries carry its quota key, so routes
+    outside the op registry draw the caller's bucket too."""
     try:
-        return verify_token(token)
+        info = verify_token(token)
     except RevocationUnavailable as e:
         raise HTTPException(
             status_code=503,
@@ -61,3 +65,5 @@ def verify_bearer(token: str) -> AuthInfo:
             status_code=401,
             detail={"code": "AUTH_INVALID", "message": str(e)},
         ) from e
+    set_quota_key(quota_key_for(info))
+    return info

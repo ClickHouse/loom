@@ -7,10 +7,13 @@ import contextvars
 from typing import Any
 
 import pytest
+from fastapi import FastAPI, Request
+from fastapi.testclient import TestClient
 
 import server.core.ch as ch
+from server.auth.bearer import verify_bearer_header
 from server.auth.context import set_current_auth
-from server.auth.jwt import AuthInfo
+from server.auth.jwt import AuthInfo, mint_token
 from server.core.errors import ValidationError
 from server.operations.base import Role
 from server.settings import settings
@@ -109,6 +112,20 @@ def test_no_principal_no_quota_key() -> None:
         return ch.statement_settings(_SELECT)
 
     assert "quota_key" not in _isolated(_anonymous)
+
+
+def test_a_route_outside_the_registry_carries_the_quota_key_once_the_bearer_verifies() -> None:
+    # /v1/me/*, downloads and the admin routes verify through server.auth.bearer
+    app = FastAPI()
+
+    @app.get("/probe")
+    async def probe(request: Request) -> dict[str, Any]:
+        verify_bearer_header(request.headers.get("Authorization"))
+        return {"key": ch.statement_settings(_SELECT).get("quota_key")}
+
+    tok = mint_token(subject="alice", org="acme", namespaces=["n"], roles=["viewer"])
+    r = TestClient(app).get("/probe", headers={"Authorization": f"Bearer {tok}"})
+    assert r.json() == {"key": "acme:alice"}
 
 
 class _ScopeSpy:
