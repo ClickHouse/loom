@@ -8,6 +8,7 @@
 // LOOM_CONTEXT_RUNS=false leaves it out; LOOM_CONTEXT_RUNS_LIMIT bounds the rows.
 
 import { envNumber, envSwitch } from "./loom-client.mjs";
+import { recalledDataBlock } from "./prompt-recall.mjs";
 import { runIdFor } from "./run-hook.mjs";
 import { blockKeyFor } from "./working-memory.mjs";
 
@@ -82,7 +83,9 @@ export function renderPrimer({
     .join("");
   const primer = rendered.trim();
   const head = notice ? `${notice}\n\n` : "";
-  const body = primer ? `# Loom memory primer — project: ${project}\n\n${repoLine}${primer}\n\n` : repoLine;
+  const body = primer
+    ? `# Loom memory primer — project: ${project}\n\n${repoLine}${recalledDataBlock(primer)}\n\n`
+    : repoLine;
   return `${head}${body}${codeBlock}${extra}${recordingLine}\n`;
 }
 

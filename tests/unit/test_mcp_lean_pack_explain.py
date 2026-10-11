@@ -120,15 +120,21 @@ def test_explain_is_the_lean_answer_plus_a_why_per_hit() -> None:
 
 def _proc(situation: str, steps: list[str]) -> SimpleNamespace:
     return SimpleNamespace(
-        namespace="clickgap-public", name="fr_9aac", situation=situation, steps=steps
+        namespace="clickgap-public",
+        name="fr_9aac",
+        situation=situation,
+        steps=steps,
+        actor="human:ana",
     )
 
 
 def test_a_one_sentence_procedure_prints_its_sentence_once() -> None:
     recipe = "[FIX RECIPE] Check: Style check | Fix: renumber the test"
     line = _procedure_line(_proc(recipe, [recipe]), "", recipe, "")
-    assert line == f"- [clickgap-public/fr_9aac] {recipe}"
+    assert line == f"- [clickgap-public/fr_9aac by=human:ana] {recipe}"
     two = _procedure_line(
         _proc("deploy fails", ["drain", "swap"]), " (unproven)", "drain; swap", ""
     )
-    assert two == "- [clickgap-public/fr_9aac] (unproven) when deploy fails: drain; swap"
+    assert two == (
+        "- [clickgap-public/fr_9aac by=human:ana] (unproven) when deploy fails: drain; swap"
+    )

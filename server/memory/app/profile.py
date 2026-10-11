@@ -8,6 +8,7 @@ loom.agent_events.
 
 from __future__ import annotations
 
+from html import escape
 from typing import Any
 
 from server.memory.api.models_common import _Identity
@@ -24,6 +25,7 @@ from server.memory.api.models_profile import (
     ProfileReplaceInput,
     ProfileSetInput,
 )
+from server.memory.domain.context_layout import escape_data
 
 _CAS_MAX_RETRIES = 3
 
@@ -397,16 +399,23 @@ async def handle_profile_render(input: ProfileRenderInput) -> ProfileRenderOutpu
     else:
         sections.sort(key=lambda p: p[0])
 
-    if input.format == "markdown":
-        rendered = "\n\n".join(f"## {lbl}\n{val}" for lbl, val in sections)
-    else:
-        rendered = "\n".join(f'<section label="{lbl}">{val}</section>' for lbl, val in sections)
+    rendered = _render_sections(sections, input.format)
 
     return ProfileRenderOutput(
         rendered=rendered,
         section_count=len(sections),
         total_chars=len(rendered),
         labels=[lbl for lbl, _ in sections],
+    )
+
+
+def _render_sections(sections: list[tuple[str, str]], fmt: str) -> str:
+    if fmt == "markdown":
+        return "\n\n".join(f"## {lbl}\n{val}" for lbl, val in sections)
+    # Escaped like every recalled value, so a section cannot close its own tag.
+    return "\n".join(
+        f'<section label="{escape(lbl, quote=True)}">{escape_data(val)}</section>'
+        for lbl, val in sections
     )
 
 

@@ -136,6 +136,13 @@ The sequential test decides as soon as the evidence is strong enough. A reverted
 goes into `rejected_revisions`, and `procedure.revise` refuses to re-propose it unless
 `force=true`.
 
+### Whose procedures a pack injects
+
+`context.pack` and `memory.stack` inject a matched procedure as steps to follow, so with
+auth on they carry only procedures the calling principal wrote (the row's `actor`). A
+teammate's procedure in a shared namespace is still returned by an explicit
+`procedure.match`, whose matches carry `actor`. With auth off every match is injected.
+
 ### Measuring whether a procedure helps
 
 `context.pack` can withhold its top-matched procedure with probability
