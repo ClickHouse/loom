@@ -21,11 +21,11 @@ from fastapi import FastAPI, Request
 from fastapi.responses import Response
 
 from server import __version__, boot
+from server.auth.public_url import cors_origin_list, host_header_allowed
 from server.core.ch import get_client
 from server.core.logging_config import configure_logging
 from server.observability import get_emitter
 from server.operations.capabilities import operation_rows
-from server.auth.public_url import cors_origin_list, host_header_allowed
 from server.settings import settings
 from server.transport import http as http_transport
 from server.transport import mcp as mcp_transport
