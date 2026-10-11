@@ -501,7 +501,7 @@ Raised in `server/transport/mcp_op.py`.
 
 #### `ORG_MISMATCH`
 
-Raised in `server/identity/app/claim_release.py`, `server/transport/mcp_auth.py`.
+Raised in `server/transport/mcp_auth.py`.
 
 #### `OVERLOADED`
 
