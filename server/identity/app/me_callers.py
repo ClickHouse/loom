@@ -89,6 +89,13 @@ def require_authed_caller(request: Request) -> tuple[str, str]:
     return info.subject, info.org
 
 
+def require_authed_info(request: Request) -> AuthInfo:
+    """`require_authed_caller`, returning the verified token itself."""
+    info = _authed(request)
+    remember_caller(request, info.subject, info.org)
+    return info
+
+
 def _authed(request: Request) -> AuthInfo:
     """The verified bearer's principal; 401 when the request carries none."""
     from server.auth.bearer import verify_bearer_header

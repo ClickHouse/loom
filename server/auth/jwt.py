@@ -129,6 +129,14 @@ class AuthInfo:
     # interactive | bench. '' = the namespace row (then the request's hint,
     # then interactive) decides.
     traffic_class: str = ""
+    # Delegation chain (server/auth/delegation.py). `parents`: the token ids
+    # of every ancestor token, root first; revoking any of them kills this
+    # token. `creator`: the root principal whose live grants and account this
+    # token is rechecked against on every request. '' = not a delegated token.
+    parents: tuple[str, ...] = ()
+    creator: str = ""
+    # `exp` as unix seconds; None for a token without one.
+    expires_at: int | None = None
 
     def has_role(self, required: Role) -> bool:
         return any(r.value >= required.value for r in self.roles)
@@ -209,6 +217,8 @@ def mint_token(
     traffic_class: str | None = None,
     consumer: str | None = None,
     jti: str | None = None,
+    parents: list[str] | None = None,
+    creator: str | None = None,
 ) -> str:
     """Mint a JWT for service accounts, user onboarding, and tests.
 
@@ -226,6 +236,8 @@ def mint_token(
     authorization per namespace instead of the flat `roles`. No `ttl_seconds`
     => no `exp` => indefinite token. The active kid goes in the header so
     verifiers pick the matching secret during signing-key rotation.
+    `parents` / `creator` are the delegation claims `delegation.delegate`
+    computes; a token minted from another token gets them from there.
     """
     now = int(time.time())
     payload: dict[str, Any] = {
@@ -263,6 +275,10 @@ def mint_token(
         if not c:
             raise TokenError(f"consumer must be a printable name, got {consumer!r}")
         payload["consumer"] = c
+    if parents:
+        payload["parents"] = list(parents)
+    if creator:
+        payload["creator"] = creator
     if ttl_seconds is not None:
         payload["exp"] = now + ttl_seconds
     if secret is not None:
@@ -339,22 +355,7 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
         )
         raise TokenError(f"untrusted issuer {decoded.get('iss')!r}")
 
-    # Revocation by `jti` (one token), by `sub` (every token of a principal),
-    # or by `sub` with an issued-before cutoff (the
-    # tokens minted before the cutoff die, a re-mint after it stays valid).
-    # `iat` is in the required set above, so the cutoff always has an anchor.
-    from server.auth.revocation import is_revoked, loaded, snapshot_age_seconds
-
-    if not loaded():
-        raise RevocationUnavailable("token revocation list not loaded yet; retry shortly")
-    if snapshot_age_seconds() > settings.jwt_revocation_max_stale_seconds:
-        raise RevocationUnavailable("token revocation list is stale; retry shortly")
-    jti = decoded.get("jti")
-    if jti and is_revoked(str(jti)):
-        raise TokenError(f"token jti {jti!r} is revoked")
-    sub_for_revoke = decoded.get("sub")
-    if sub_for_revoke and is_revoked(str(sub_for_revoke), issued_at=_iat_of(decoded)):
-        raise TokenError(f"token sub {sub_for_revoke!r} is revoked")
+    _check_not_revoked(decoded)
 
     roles: list[Role] = []
     for name in _str_list(decoded, "roles"):
@@ -369,6 +370,7 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
     org = decoded.get("org", "")
     if not isinstance(org, str):
         raise TokenError("claim 'org' must be a string")
+    exp = decoded.get("exp")
 
     return AuthInfo(
         subject=str(decoded["sub"]),
@@ -383,7 +385,43 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
         token_id=token_id_of(token, decoded.get("jti")),
         traffic_class=_traffic_class_claim(decoded.get("traffic_class")),
         consumer=_consumer_claim(decoded.get("consumer")),
+        parents=tuple(_str_list(decoded, "parents")),
+        creator=_creator_claim(decoded),
+        expires_at=int(exp) if isinstance(exp, (int, float)) else None,
     )
+
+
+def _check_not_revoked(decoded: dict[str, Any]) -> None:
+    """Refuse a token revoked by `jti` (one token), by `sub` (every token of
+    a principal) or by `sub` with an issued-before cutoff (tokens minted
+    before it die, a re-mint after it stays valid). A delegated token also
+    dies with any ancestor token (`parents`) and with its creator's `sub`.
+    `iat` is required, so the cutoff always has an anchor."""
+    from server.auth.revocation import is_revoked, loaded, snapshot_age_seconds
+
+    if not loaded():
+        raise RevocationUnavailable("token revocation list not loaded yet; retry shortly")
+    if snapshot_age_seconds() > settings.jwt_revocation_max_stale_seconds:
+        raise RevocationUnavailable("token revocation list is stale; retry shortly")
+    jti = decoded.get("jti")
+    if jti and is_revoked(str(jti)):
+        raise TokenError(f"token jti {jti!r} is revoked")
+    issued_at = _iat_of(decoded)
+    sub_for_revoke = decoded.get("sub")
+    if sub_for_revoke and is_revoked(str(sub_for_revoke), issued_at=issued_at):
+        raise TokenError(f"token sub {sub_for_revoke!r} is revoked")
+    if any(is_revoked(parent) for parent in _str_list(decoded, "parents")):
+        raise TokenError("a parent of this token is revoked")
+    creator = _creator_claim(decoded)
+    if creator and is_revoked(creator, issued_at=issued_at):
+        raise TokenError(f"token creator {creator!r} is revoked")
+
+
+def _creator_claim(decoded: dict[str, Any]) -> str:
+    creator = decoded.get("creator") or ""
+    if not isinstance(creator, str):
+        raise TokenError("claim 'creator' must be a string")
+    return creator
 
 
 def _accepted_algorithms() -> frozenset[str]:
