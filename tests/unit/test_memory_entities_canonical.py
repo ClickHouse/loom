@@ -95,11 +95,23 @@ def test_an_acronym_is_not_a_plural(raw: str, canonical: str) -> None:
     assert canonical_entities(["HTTP", "HTTPS"]) == ["http", "https"]
 
 
-def test_normalising_a_huge_entity_is_bounded() -> None:
+def test_normalising_a_huge_entity_is_linear() -> None:
     import time
 
     started = time.perf_counter()
-    for raw in ("re" + ".S" * 16000, "x" * 32000, "the " * 8000):
+    for raw in ("re" + ".S" * 16000, "x" * 32000, "the " * 8000, "s." * 10000):
         once = canonical_entity_text(raw)
-        assert len(once) <= 200 and canonical_entity_text(once) == once
+        assert canonical_entity_text(once) == once
     assert time.perf_counter() - started < 0.5  # was seconds per call
+
+
+def test_a_long_name_keeps_all_of_itself() -> None:
+    prefix = "https://example.test/" + "x" * 179
+    alpha, beta = canonical_entity_text(prefix + "/alpha"), canonical_entity_text(prefix + "/beta")
+    assert alpha != beta and alpha.endswith("/alpha")
+
+
+@pytest.mark.parametrize("raw", ["İstanbul/" + "a" * 191, "İ" * 300, "ß" * 50 + "S"])
+def test_text_lowercasing_lengthens_is_a_fixed_point_too(raw: str) -> None:
+    once = canonical_entity_text(raw)
+    assert canonical_entity_text(once) == once

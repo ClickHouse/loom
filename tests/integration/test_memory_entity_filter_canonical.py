@@ -259,3 +259,44 @@ async def test_a_huge_entity_neither_slows_a_write_nor_a_search(ch_client) -> No
         MemorySearchInput(org=ORG, namespace=ns, agent="*", query="flags", entity_filter=[huge])
     )
     assert time.perf_counter() - started < 3  # was ~14 s, the worker blocked throughout
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        [
+            "https://example.test/" + "x" * 179 + "/alpha",
+            "https://example.test/" + "x" * 179 + "/beta",
+        ],
+        ["İstanbul/" + "a" * 191],
+    ],
+)
+async def test_long_and_unicode_names_keep_their_identity_and_boost(ch_client, names) -> None:
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.api.models_search import MemorySearchInput
+    from server.memory.app.search.handler import handle_memory_search
+    from server.memory.app.write import handle_memory_set
+    from server.memory.domain.graph_quality import canonical_entity_text
+
+    await _connected()
+    ns = f"agent-entcanon-{os.urandom(3).hex()}"
+    await handle_memory_set(
+        MemorySetInput(
+            org=ORG,
+            namespace=ns,
+            agent="a",
+            memory_key="names",
+            value="two long names",
+            entities=[canonical_entity_text(n) for n in names],
+        )
+    )
+    stored = ch_client.query(
+        "SELECT entities FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String}",
+        parameters={"org": ORG, "ns": ns},
+    ).result_rows
+    assert stored == [([canonical_entity_text(n) for n in names],)]
+    out = await handle_memory_search(
+        MemorySearchInput(org=ORG, namespace=ns, agent="*", query="names", entity_filter=names)
+    )
+    (hit,) = [h for h in out.results if h.memory_key == "names"]
+    assert hit.score_components["entity_boost_sql"] == 0.5

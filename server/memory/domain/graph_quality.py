@@ -14,9 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 _SPACE_RE = re.compile(r"\s+")
-_VOWEL_RE = re.compile(r"[aeiouy]")
-# Text past this many characters is not part of an entity's name.
-_MAX_ENTITY_CHARS = 200
+_VOWELS = frozenset("aeiouy")
 _PUNCT_RE = re.compile(r"[^\w\s:/.-]+")
 _ARTICLE_RE = re.compile(r"^(?:(?:the|a|an)\s+)+", re.IGNORECASE)
 _SINGLE_VALUED_RELATIONS = {
@@ -262,33 +260,54 @@ _SINGULAR_UNCHANGED = frozenset(
         "iris",
     }
 )
+_LONGEST_UNCHANGED = max(map(len, _SINGULAR_UNCHANGED))
 
 
-def _singularize_head(text: str) -> str:
-    head = text.rsplit(" ", 1)[-1]
-    return text[: len(text) - len(head)] + _singular(head) if head else text
+def _settle(text: str) -> str:
+    """`text` with its trailing dots and spaces dropped and its last word singular, again
+    and again until neither changes (`re.s.s` -> `re.s.` -> `re.s` -> `re.` -> `re`):
+    one fixed point, read by moving an end index, so linear in the text."""
+    end = len(text)
+    start = text.rfind(" ", 0, end) + 1
+    vowel = next((i for i in range(start, end) if text[i] in _VOWELS), end)
+    while True:
+        while end > start and text[end - 1] in " .":
+            end -= 1
+        if end <= start:  # the last word went: its predecessor is the head now
+            return _settle(text[:end]) if end else ""
+        cut = _singular_cut(text, start, end, vowel < end)
+        if cut is None:
+            return text[:end]
+        end, suffix = cut
+        if suffix:
+            return text[:end] + suffix  # -y, -f: no `s` or `.` to expose
 
 
-def _singular(w: str) -> str:
-    if len(w) <= 3 or w in _SINGULAR_UNCHANGED or w.endswith("ss") or not _VOWEL_RE.search(w):
-        return w
-    if w.endswith("ies") and len(w) > 4:
-        return w[:-3] + "y"  # parties -> party
-    if w.endswith(("ches", "shes", "xes")):
-        return w[:-2]  # breaches -> breach, boxes -> box
-    if w.endswith(("ses", "zes")):
+def _singular_cut(text: str, s: int, e: int, has_vowel: bool) -> tuple[int, str] | None:
+    """The singular of the word `text[s:e]` as (its new end, what follows it); None when
+    it is singular already."""
+    n = e - s
+    if n <= 3 or not has_vowel or text.endswith("ss", s, e):
+        return None
+    if n <= _LONGEST_UNCHANGED and text[s:e] in _SINGULAR_UNCHANGED:
+        return None
+    if text.endswith("ies", s, e) and n > 4:
+        return e - 3, "y"  # parties -> party
+    if text.endswith(("ches", "shes", "xes"), s, e):
+        return e - 2, ""  # breaches -> breach, boxes -> box
+    if text.endswith(("ses", "zes"), s, e):
         # buses -> bus, classes -> class, buzzes -> buzz; else only the `s`
         # (responses -> response, sizes -> size)
-        stem = w[:-2]
-        kept = stem in _SINGULAR_UNCHANGED or (
-            len(stem) > 3 and stem.endswith(("us", "is", "ss", "zz", "tz"))
+        stem = n - 2
+        kept = (stem <= _LONGEST_UNCHANGED and text[s : e - 2] in _SINGULAR_UNCHANGED) or (
+            stem > 3 and text.endswith(("us", "is", "ss", "zz", "tz"), s, e - 2)
         )
-        return stem if kept else w[:-1]
-    if w.endswith("ves"):
-        return w[:-3] + "f"  # shelves -> shelf
-    if w.endswith("s") and not w.endswith(("us", "is")):
-        return w[:-1]  # kits -> kit, doctors -> doctor
-    return w
+        return (e - 2, "") if kept else (e - 1, "")
+    if text.endswith("ves", s, e):
+        return e - 3, "f"  # shelves -> shelf
+    if text.endswith("s", s, e) and not text.endswith(("us", "is"), s, e):
+        return e - 1, ""  # kits -> kit, doctors -> doctor
+    return None
 
 
 # Tokens that are never an entity, whatever the corpus — pronouns and function words,
@@ -359,8 +378,7 @@ def _normalise(lowered: str) -> str:
     text = lowered.replace("'s", "").replace("’s", "")
     text = _PUNCT_RE.sub(" ", text)
     # articles after punctuation: punctuation can hide one (`"The Ledger"`)
-    text = _ARTICLE_RE.sub("", _SPACE_RE.sub(" ", text).strip(" ."))
-    text = _singularize_head(text)
+    text = _settle(_ARTICLE_RE.sub("", _SPACE_RE.sub(" ", text).strip(" .")))
     return "user" if text in _FIRST_PERSON_FORMS else text
 
 
@@ -372,12 +390,7 @@ def canonical_entity(raw: str) -> CanonicalEntity:
     surface form is preserved in `aliases` for provenance and recall."""
 
     original = str(raw or "").strip()
-    # a name, not a passage: the passes below cost the length times the passes taken
-    text = original[:_MAX_ENTITY_CHARS].lower()
-    # until a pass changes nothing (`re.S` -> `re.` -> `re`); a pass only drops or blanks
-    # characters, so this ends
-    while (again := _normalise(text)) != text:
-        text = again
+    text = _normalise(original.lower())
     entity_id = text.replace(" ", "_")
     return CanonicalEntity(text=text, entity_id=entity_id, aliases=[original] if original else [])
 
