@@ -200,6 +200,12 @@ than `namespace`:
 
 - `user_id="*"` is refused with `AUTH_INSUFFICIENT`, and so is `session_id="*"` under
   `own_session`.
+- A token pinned with `read_user_id` acts only as that user, on writes too: a body naming
+  another `user_id` is refused with `AUTH_INSUFFICIENT` on every op, and a body that names
+  none (or `-`) runs as the pinned user.
+- A write's answer names no row outside the scope: a merge into, a duplicate of or a
+  pinned conflict with another user's row reports the verdict without that row's id,
+  hash or key, and `conflicts.list` drops such peers from `conflict_with`.
 - A leg whose rows carry no user (conversations, runs) answers nothing.
 - An op that cannot bound its answer to one user (the entity graph `facts.*`,
   `conversation.*` reads, namespace exports, admin and curation ops) is refused with

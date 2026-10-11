@@ -189,10 +189,50 @@ def test_a_read_naming_another_user_is_refused_at_admission() -> None:
         )
 
 
-def test_a_write_naming_another_user_is_admitted_and_its_reads_are_refused() -> None:
-    gates.read_scope(OPERATIONS_BY_NAME["memory.set"], PINNED, SimpleNamespace(user_id="u2"))
-    with pytest.raises(AuthInsufficientError):
-        request_read_filters(PINNED)
+@pytest.mark.parametrize(
+    "name",
+    [
+        "memory.set",
+        "memory.bulk_set",
+        "memory.delete",
+        "memory.pin",
+        "memory.lock",
+        "memory.touch",
+        "session.brief_delete",
+        "working_memory.set",
+        "profile.set",
+        "procedure.add",
+        "code.search",
+    ],
+)
+def test_a_pinned_token_never_names_another_user_on_any_op(name: str) -> None:
+    op = OPERATIONS_BY_NAME[name]
+    for other in ("u2", "*"):
+        with pytest.raises(AuthInsufficientError):
+            gates.read_scope(op, PINNED, SimpleNamespace(user_id=other, session_id="-"))
+
+
+def test_a_write_naming_no_user_writes_as_the_pinned_one() -> None:
+    from server.memory.api.models_crud import MemorySetInput
+
+    body = MemorySetInput(org="o", namespace="n", agent="a", memory_key="k", value="v")
+    assert body.user_id == "-"
+    out = gates.read_scope(OPERATIONS_BY_NAME["memory.set"], PINNED, body)
+    assert out.user_id == "u1" and out.session_id == "-"
+    # Under own_session the write also lands in the scope's session.
+    own_session = _auth(read_user_id="u1", read_scope="own_session")
+    body = body.model_copy(update={"session_id": "s1"})
+    out = gates.read_scope(OPERATIONS_BY_NAME["memory.set"], own_session, body)
+    assert (out.user_id, out.session_id) == ("u1", "s1")
+    # A namespace-scoped token writes what the body says.
+    assert gates.read_scope(OPERATIONS_BY_NAME["memory.set"], _auth(), body) is body
+
+
+def test_a_write_under_an_unresolved_scope_is_admitted_and_its_reads_refused() -> None:
+    own_user = _auth(read_scope="own_user")
+    gates.read_scope(OPERATIONS_BY_NAME["memory.set"], own_user, SimpleNamespace(user_id="-"))
+    with pytest.raises(IdentityIncompleteError):
+        request_read_filters(own_user)
 
 
 def test_a_scoped_read_runs_as_the_user_its_scope_binds() -> None:
@@ -437,3 +477,191 @@ async def test_the_conflict_badge_count_is_cached_per_scope() -> None:
     assert await conflicts_ops._conflicted_count_cached(repo, "o", "n", U1) == 1
     assert seen == [WHOLE_NAMESPACE, U1]
     conflicts_ops.reset_conflicts_count_cache()
+
+
+# --------------------------------------------------------------------------
+# memory.ask's raw-turn legs, write verdicts and conflict peers stay in scope
+# --------------------------------------------------------------------------
+
+
+async def test_the_literal_completion_reads_only_the_scopes_turns() -> None:
+    from server.memory.app.ask_literal_evidence import fetch_turns_with_literal
+
+    _bind(PINNED, U1)
+    ch = _CH()
+    await fetch_turns_with_literal(org="o", namespace="n", literal="Alice", limit=5, ch=ch)
+    _bound_to_u1(ch)
+    _bind(None, WHOLE_NAMESPACE)
+    ch = _CH()
+    await fetch_turns_with_literal(org="o", namespace="n", literal="Alice", limit=5, ch=ch)
+    assert "scope_uid" not in ch.calls[0][0]
+
+
+async def test_deep_evidence_opens_only_the_scopes_links_turns_and_sessions() -> None:
+    from server.memory.app import deep_evidence
+
+    _bind(PINNED, U1)
+    ch = _CH([{"memory_key": "k", "evidence_id": "00000000-0000-0000-0000-000000000001"}])
+    await deep_evidence.fetch_raw_evidence(
+        org="o",
+        namespace="n",
+        memory_keys=["k"],
+        max_chars_per_memory=99,
+        max_chars_total=99,
+        ch=ch,
+    )
+    assert len(ch.calls) == 2
+    # The links come only from the memory rows the scope reaches.
+    assert "memory_id IN (" in ch.calls[0][0]
+    _bound_to_u1(ch)
+    ch = _CH()
+    await deep_evidence.fetch_session_turns(
+        org="o",
+        namespace="n",
+        session_ids=["sess-1"],
+        question="q",
+        max_chars_per_session=99,
+        max_chars_total=99,
+        ch=ch,
+    )
+    _bound_to_u1(ch)
+
+
+def _peer(mid: str, uid: str, *, pinned: bool = False) -> Any:
+    return SimpleNamespace(
+        memory_id=mid, memory_key=f"k{mid}", value="v", similarity=0.9, user_id=uid, pinned=pinned
+    )
+
+
+def _set_write(**body: Any) -> Any:
+    from server.memory.api.models_crud import MemorySetInput
+
+    inp = MemorySetInput(org="o", namespace="n", agent="a", user_id="u1", value="v", **body)
+    return SimpleNamespace(input=inp, retyped_from="", version=1, new_sha="new", memory_id="mine")
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+async def test_a_merge_into_another_users_row_does_not_name_it(monkeypatch, dry_run: bool) -> None:
+    import server.memory.store as memory_repo
+    from server.memory.app import conflicts as cf
+    from server.memory.app import set_commit
+
+    _bind(PINNED, U1)
+    theirs = SimpleNamespace(
+        memory_id="theirs",
+        memory_key="v/secret",
+        value="vault 1234",
+        user_id="u2",
+        session_id="-",
+        evidence_count=3,
+        reinforcement_count=3,
+        valid_at=None,
+    )
+
+    async def _get_by_id(*a: Any, **k: Any) -> Any:
+        return theirs
+
+    async def _reinforce(*a: Any, **k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(memory_repo, "get_by_id", _get_by_id)
+    monkeypatch.setattr(cf, "auto_reinforce_peer", _reinforce)
+    monkeypatch.setattr(set_commit, "record_drop", lambda *a, **k: None)
+    result = SimpleNamespace(existing_memory_id="theirs", merge_scope="", peers=[], refines=[])
+    w = _set_write(memory_key="u/guess", dry_run=dry_run)
+    out = await set_commit._set_merge(w, None, None, result, [])
+    assert out.conflict_verdict == "merge"
+    assert (out.memory_id, out.merged_into_key, out.peers) == ("", "", [])
+    assert out.content_sha256 == "new"
+    # The caller's own row is named as before.
+    theirs.user_id = "u1"
+    out = await set_commit._set_merge(w, None, None, result, [])
+    assert (out.memory_id, out.merged_into_key) == ("theirs", "v/secret")
+
+
+async def test_a_pinned_blocker_outside_the_scope_blocks_but_is_not_named(monkeypatch) -> None:
+    from fastapi import HTTPException
+
+    from server.memory.app import conflicts as cf
+    from server.memory.app import set_commit
+
+    _bind(PINNED, U1)
+    result = SimpleNamespace(
+        verdict="rejected",
+        peers=[_peer("theirs", "u2", pinned=True), _peer("mine-old", "u1")],
+        refined_peers=[],
+        pinned_blocker_id="theirs",
+    )
+
+    async def _check(**k: Any) -> Any:
+        return result
+
+    async def _cfg() -> Any:
+        return SimpleNamespace(check_kwargs=lambda: {})
+
+    monkeypatch.setattr(cf, "check_on_commit", _check)
+
+    def _w(dry_run: bool) -> Any:
+        w = _set_write(memory_key="k", dry_run=dry_run)
+        w.serialized_value, w.embedding = "v", [0.1]
+        return w
+
+    with pytest.raises(HTTPException) as e:
+        await set_commit._set_conflict_verdict(_w(False), _cfg())
+    detail = e.value.detail
+    assert detail["code"] == "PINNED_CONFLICT"
+    assert detail["pinned_blocker_id"] == "" and detail["peer_ids"] == ["mine-old"]
+    assert "theirs" not in detail["message"]
+    _, _, peers, out = await set_commit._set_conflict_verdict(_w(True), _cfg())
+    assert out is not None and out.conflict_verdict == "rejected"
+    assert [p.memory_id for p in peers] == ["mine-old"]
+
+
+def test_a_duplicate_of_another_users_row_does_not_name_it() -> None:
+    from server.memory.app.set_commit import _set_dry_run_answer
+
+    _bind(PINNED, U1)
+    w = _set_write(memory_key="k", dry_run=True)
+    result = SimpleNamespace(
+        verdict="duplicate", peers=[_peer("theirs", "u2"), _peer("mine", "u1")], refined_peers=[]
+    )
+    assert _set_dry_run_answer(w, result, [], "theirs").duplicate_of == ""
+    assert _set_dry_run_answer(w, result, [], "mine").duplicate_of == "mine"
+    _bind(None, WHOLE_NAMESPACE)
+    assert _set_dry_run_answer(w, result, [], "theirs").duplicate_of == "theirs"
+
+
+async def test_conflicts_list_drops_peers_outside_the_scope() -> None:
+    from server.memory.store import conflicts
+
+    located = [
+        {
+            "memory_id": "m1",
+            "memory_key": "k",
+            "memory_type": "semantic",
+            "version": 2,
+            "pinned": 0,
+            "created_at": None,
+            "conflict_with": ["p-in", "p-out"],
+        }
+    ]
+    ch = _CH(located, [{"mid": "p-in"}], [])
+    rows = await conflicts.list_conflicted("o", "n", scope=U1, ch=ch)
+    assert rows[0]["conflict_with"] == ["p-in"]
+    _bound_to_u1(ch, every=False)
+    assert "{scope_uid:String}" in ch.calls[1][0]
+    # Unbounded, no lookup: every peer stays.
+    ch = _CH([dict(located[0])], [])
+    rows = await conflicts.list_conflicted("o", "n", scope=WHOLE_NAMESPACE, ch=ch)
+    assert rows[0]["conflict_with"] == ["p-in", "p-out"] and len(ch.calls) == 2
+
+
+def test_code_symbol_attaches_no_lessons_under_a_narrowed_scope() -> None:
+    from server.code.app.symbol.symbol import _read_scope_narrowed
+
+    _bind(PINNED, U1)
+    assert _read_scope_narrowed()
+    _bind(PINNED, AuthInsufficientError("pinned to u1"))
+    assert _read_scope_narrowed()
+    _bind(None, WHOLE_NAMESPACE)
+    assert not _read_scope_narrowed()

@@ -1,8 +1,8 @@
 """Read scope inside one namespace: a token pinned to user U never sees user V.
 
 Users U and V write into the SAME namespace: facts (one key both hold, the
-rest V's alone, across two sessions), an entity both rows name, a profile
-section, a session brief, a working-memory block and a procedure. V's rows
+rest V's alone, across two sessions), raw turns through set_from_messages
+(the same session id for both), an entity both rows name, a profile section, a session brief, a working-memory block and a procedure. V's rows
 carry a nonce. A token minted with `read_user_id=U` then drives every op the
 registry holds:
 
@@ -110,6 +110,17 @@ def _seed_user(base: str, tok: str, s: _Seed, user: str, nonce: str) -> list[str
     )
     ids.append(str(shared.get("memory_id") or ""))
     ident = {"org": s.org, "namespace": s.ns, "agent": "a", "user_id": user, "session_id": "sess-1"}
+    # Raw turns in loom.memory_evidence, behind memory.ask's literal and
+    # deep-evidence legs; the same session id for both users.
+    _write(
+        base,
+        tok,
+        "memory.set_from_messages",
+        {
+            **ident,
+            "messages": [{"role": "user", "content": f"{s.entity} said the vault code is {nonce}"}],
+        },
+    )
     _write(base, tok, "profile.set", {**ident, "label": "canary", "value": f"likes {nonce}"})
     _write(base, tok, "working_memory.set", {**ident, "block_key": "scratchpad", "content": nonce})
     _write(
@@ -335,6 +346,26 @@ def test_ops_that_cannot_bound_their_answer_are_refused(
         if r.status_code not in (403, 422):
             served[op.name] = r.status_code
     assert not served, f"served to a token bounded to one user: {served}"
+
+
+def test_a_pinned_token_cannot_write_as_another_user(
+    control_plane_url: str, seed: _Seed, tokens: dict[str, str]
+) -> None:
+    ident = {"org": seed.org, "namespace": seed.ns, "agent": "a", "user_id": V}
+    for op, body in [
+        ("memory.set", {**ident, "memory_key": seed.keys_v[0], "value": "poisoned"}),
+        ("memory.delete", {**ident, "memory_key": seed.keys_v[0]}),
+        ("session.brief_delete", {**ident, "brief_key": f"{seed.brief_key}-{V}"}),
+    ]:
+        r = _post(control_plane_url, tokens["pinned_u"], op, body)
+        assert r.status_code == 403, f"{op}: {r.status_code} {r.text}"
+    r = _post(
+        control_plane_url,
+        tokens["namespace"],
+        "memory.get",
+        {**ident, "memory_key": seed.keys_v[0], "session_id": "sess-1"},
+    )
+    assert r.status_code == 200 and seed.nonce_v in r.text, r.text
 
 
 def test_another_users_memory_id_is_not_found(

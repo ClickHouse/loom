@@ -20,6 +20,8 @@ import contextvars
 import logging
 from typing import Any
 
+from server.auth.context import current_auth
+from server.identity.domain.read_scope import request_read_filters, scope_and
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.domain.question_literals import question_literals
 
@@ -44,28 +46,28 @@ async def fetch_turns_with_literal(
     from server.memory.store import read_your_writes_enabled
 
     client = ch or get_client()
+    params: dict[str, Any] = {"org": org, "ns": namespace, "lit": literal, "lim": int(limit)}
+    in_scope = scope_and(request_read_filters(current_auth()), params)
     # Versioned, not FINAL.
-    sql = """
+    sql = f"""
         SELECT session_id, role, toString(observed_at) AS observed_at, content
         FROM (
             SELECT session_id, role, observed_at, content, evidence_id, tombstoned_at
             FROM loom.memory_evidence
-            WHERE org = {org:String}
-              AND namespace = {ns:String}
+            WHERE org = {{org:String}}
+              AND namespace = {{ns:String}}
               AND role = 'user'
-              AND positionCaseInsensitive(content, {lit:String}) > 0
+              AND positionCaseInsensitive(content, {{lit:String}}) > 0{in_scope}
             ORDER BY evidence_id, created_at DESC
             LIMIT 1 BY evidence_id
         )
         WHERE tombstoned_at IS NULL
         ORDER BY observed_at ASC, evidence_id
-        LIMIT {lim:UInt32}
+        LIMIT {{lim:UInt32}}
     """
     scope = sequential_reads() if read_your_writes_enabled() else nullcontext()
     with scope:
-        rows = await client.query_all(
-            sql, params={"org": org, "ns": namespace, "lit": literal, "lim": int(limit)}
-        )
+        rows = await client.query_all(sql, params=params)
     return list(rows or [])
 
 
