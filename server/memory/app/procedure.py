@@ -332,8 +332,6 @@ async def handle_procedure_match(input: ProcedureMatchInput) -> ProcedureMatchOu
                 ],
             )
         )
-    for m in matches:
-        m._user_id = str(getattr(rows_by_key[(m.namespace, m.memory_key)], "_user_id", ""))
     # Fused score within a tier (situation×goal axes + tool overlap boost +
     # weighted ledger utility; equals similarity when no goal and no
     # recent_tools were given and the utility weight is 0); candidates
@@ -349,11 +347,10 @@ async def handle_procedure_match(input: ProcedureMatchInput) -> ProcedureMatchOu
 
 
 def _procedure_owner(m: _ProcedureMatch) -> str:
-    """The subject who wrote a procedure: its actor without the `human:` / `process:` kind,
-    or, for one the worker mined (no actor), the row's user_id."""
-    if m.actor:
-        return m.actor.removeprefix("human:").removeprefix("process:")
-    return m._user_id
+    """The subject who wrote a procedure: its actor without the `human:` / `process:` kind.
+    A procedure with no recorded actor (one the worker mined) is owned by nobody: its
+    user_id is a client-supplied label, not a subject."""
+    return m.actor.removeprefix("human:").removeprefix("process:")
 
 
 def own_procedures(matches: list[_ProcedureMatch]) -> list[_ProcedureMatch]:

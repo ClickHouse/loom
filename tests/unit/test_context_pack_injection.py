@@ -403,11 +403,11 @@ def test_code_in_a_recalled_value_is_escaped_once() -> None:
     assert escape_data(once) == once
 
 
-def _proc(actor: str, user_id: str = "-") -> Any:
+def _proc(actor: str) -> Any:
     from server.memory.api.models_procedure import _ProcedureMatch
 
-    m = _ProcedureMatch(
-        name=f"{actor or 'mined'}-{user_id}",
+    return _ProcedureMatch(
+        name=actor or "mined",
         situation="s",
         steps=["x"],
         similarity=0.9,
@@ -415,21 +415,20 @@ def _proc(actor: str, user_id: str = "-") -> Any:
         namespace="ns",
         actor=actor,
     )
-    m._user_id = user_id
-    return m
 
 
 def test_a_procedure_is_the_callers_by_principal_not_by_token_kind() -> None:
+    """A procedure with no recorded actor (one the worker mined) is nobody's: its row's
+    user_id is whatever the client sent, not a subject, so it is never auto-injected."""
     from server.memory.app.procedure import own_procedures
 
     other_kind = _proc("human:alice@example.com")
-    mined = _proc("", "alice@example.com")
+    mined = _proc("")
     teammates = _proc("human:mallory@example.com")
-    teammates_mined = _proc("", "mallory@example.com")
     plugin = principal("writer", namespaces=("ns",), subject="alice@example.com")
     with acting_as(plugin):  # a service-account token: process:alice@example.com
-        got = own_procedures([other_kind, mined, teammates, teammates_mined])
-    assert got == [other_kind, mined]
+        got = own_procedures([other_kind, mined, teammates])
+    assert got == [other_kind]
 
 
 def test_a_delegated_token_owns_its_creators_procedures() -> None:
@@ -442,29 +441,45 @@ def test_a_delegated_token_owns_its_creators_procedures() -> None:
         assert own_procedures([creators, teammates]) == [creators]
 
 
-def test_a_procedure_the_worker_mined_reaches_its_owner_through_procedure_match(
+def test_a_mined_procedure_under_the_callers_user_id_is_not_theirs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from server.memory.api.models_crud import MemoryGetOutput
+    """The row's user_id is a label any writer may set, not a subject: a procedure with no
+    actor stored under alice's user_id is not auto-injected for alice."""
+    from server.memory import store as memory_repo
     from server.memory.api.models_procedure import ProcedureMatchInput
     from server.memory.app.procedure import handle_procedure_match, own_procedures
 
     async def _search(inp: Any) -> Any:
         return NS(results=[NS(namespace="ns", memory_key="p:ship", similarity=0.9)])
 
-    async def _bulk(inp: Any) -> Any:
-        row = MemoryGetOutput(found=True, value={"steps": ["build"], "situation": "ship"})
-        row._user_id = "alice@example.com"
-        return NS(results={"p:ship": row})
+    async def _rows(*a: Any, **k: Any) -> list[Any]:
+        row = memory_repo.MemoryRow(
+            memory_id="m1",
+            org="o",
+            namespace="ns",
+            agent="a",
+            user_id="alice@example.com",
+            session_id="-",
+            memory_key="p:ship",
+            memory_type="procedural",
+            value={"steps": ["build"], "situation": "ship"},
+            confidence=1.0,
+            version=1,
+            pinned=False,
+            created_at=datetime(2026, 9, 1),
+            expires_at=None,
+        )
+        return [row]
 
     monkeypatch.setattr("server.memory.app.search.handle_memory_search", _search)
-    monkeypatch.setattr("server.memory.app.query.handle_memory_bulk_get", _bulk)
+    monkeypatch.setattr(memory_repo, "get_many_by_keys", _rows)
     out = asyncio.run(
         handle_procedure_match(ProcedureMatchInput(org="o", namespace="ns", situation="x"))
     )
-    assert "_user_id" not in out.model_dump_json()
+    assert [m.memory_key for m in out.matches] == ["p:ship"]
     with acting_as(ME):
-        assert [m.memory_key for m in own_procedures(out.matches)] == ["p:ship"]
+        assert own_procedures(out.matches) == []
 
 
 def test_a_backtick_run_in_the_profile_cannot_close_the_primers_fence(
