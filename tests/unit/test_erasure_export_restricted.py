@@ -49,7 +49,7 @@ def exports(monkeypatch):
     async def _grant(org, ns, subject):
         return grants.get((org, ns, subject))
 
-    monkeypatch.setattr(authz, "_grant_role_for", _grant)
+    monkeypatch.setattr(authz, "grant_role_for", _grant)
     yield grants
     nc.reset()
     set_current_auth(None)

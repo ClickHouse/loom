@@ -86,7 +86,7 @@ def wire(monkeypatch: pytest.MonkeyPatch):
     async def _no_audit(*_a: Any, **_k: Any) -> str:
         return ""
 
-    monkeypatch.setattr(authz, "_grant_role_for", _grant)
+    monkeypatch.setattr(authz, "grant_role_for", _grant)
     monkeypatch.setattr(_audit, "emit", _no_audit)
     nc.reset()
 

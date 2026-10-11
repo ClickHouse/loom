@@ -96,7 +96,7 @@ async def test_restricted_gate_reads_the_pair(monkeypatch) -> None:
     client = AsyncMock()
     client.query_one.return_value = {"role": "admin"}
     monkeypatch.setattr("server.core.ch.get_client", lambda: client)
-    role = await authz._grant_role_for("acme", "code-x", "jdoe")
+    role = await authz.grant_role_for("acme", "code-x", "jdoe")
     assert role is not None and role.name.lower() == "admin"
     params = client.query_one.await_args.kwargs["params"]
     assert params["subs"] == ["jdoe", "avery@example.com"]

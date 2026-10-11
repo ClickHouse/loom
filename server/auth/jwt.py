@@ -133,7 +133,10 @@ class AuthInfo:
     # of every ancestor token, root first; revoking any of them kills this
     # token. `creator`: the root principal whose live grants and account this
     # token is rechecked against on every request. '' = not a delegated token.
+    # `parent_subjects`: the ancestors' `sub`s, in the same order, so revoking
+    # an ancestor by subject (a service account's revoke) kills this token too.
     parents: tuple[str, ...] = ()
+    parent_subjects: tuple[str, ...] = ()
     creator: str = ""
     # `exp` as unix seconds; None for a token without one.
     expires_at: int | None = None
@@ -218,6 +221,7 @@ def mint_token(
     consumer: str | None = None,
     jti: str | None = None,
     parents: list[str] | None = None,
+    parent_subjects: list[str] | None = None,
     creator: str | None = None,
 ) -> str:
     """Mint a JWT for service accounts, user onboarding, and tests.
@@ -236,8 +240,9 @@ def mint_token(
     authorization per namespace instead of the flat `roles`. No `ttl_seconds`
     => no `exp` => indefinite token. The active kid goes in the header so
     verifiers pick the matching secret during signing-key rotation.
-    `parents` / `creator` are the delegation claims `delegation.delegate`
-    computes; a token minted from another token gets them from there.
+    `parents` / `parent_subjects` / `creator` are the delegation claims
+    `delegation.delegate` computes; a token minted from another token gets
+    them from there.
     """
     now = int(time.time())
     payload: dict[str, Any] = {
@@ -277,6 +282,8 @@ def mint_token(
         payload["consumer"] = c
     if parents:
         payload["parents"] = list(parents)
+    if parent_subjects:
+        payload["parent_subjects"] = list(parent_subjects)
     if creator:
         payload["creator"] = creator
     if ttl_seconds is not None:
@@ -386,6 +393,7 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
         traffic_class=_traffic_class_claim(decoded.get("traffic_class")),
         consumer=_consumer_claim(decoded.get("consumer")),
         parents=tuple(_str_list(decoded, "parents")),
+        parent_subjects=tuple(_str_list(decoded, "parent_subjects")),
         creator=_creator_claim(decoded),
         expires_at=int(exp) if isinstance(exp, (int, float)) else None,
     )
@@ -395,7 +403,8 @@ def _check_not_revoked(decoded: dict[str, Any]) -> None:
     """Refuse a token revoked by `jti` (one token), by `sub` (every token of
     a principal) or by `sub` with an issued-before cutoff (tokens minted
     before it die, a re-mint after it stays valid). A delegated token also
-    dies with any ancestor token (`parents`) and with its creator's `sub`.
+    dies with any ancestor token (`parents`), any ancestor's `sub`
+    (`parent_subjects`) and its creator's `sub`.
     `iat` is required, so the cutoff always has an anchor."""
     from server.auth.revocation import is_revoked, loaded, snapshot_age_seconds
 
@@ -415,6 +424,8 @@ def _check_not_revoked(decoded: dict[str, Any]) -> None:
     creator = _creator_claim(decoded)
     if creator and is_revoked(creator, issued_at=issued_at):
         raise TokenError(f"token creator {creator!r} is revoked")
+    if any(is_revoked(sub, issued_at=issued_at) for sub in _str_list(decoded, "parent_subjects")):
+        raise TokenError("a parent of this token is revoked")
 
 
 def _creator_claim(decoded: dict[str, Any]) -> str:

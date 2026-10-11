@@ -245,6 +245,17 @@ class AuthSettings(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _check_revocation_staleness(self) -> AuthSettings:
+        """A snapshot is refreshed every cache TTL, so a stale limit at or under
+        it refuses every bearer between two refreshes."""
+        if self.jwt_revocation_max_stale_seconds <= self.jwt_revocation_cache_ttl_seconds:
+            raise ValueError(
+                "LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be larger than "
+                "LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS"
+            )
+        return self
+
     def jwt_public_key_map(self) -> dict[str, str]:
         """For RS256 verifiers: kid → PEM public key. Empty when none set."""
         raw = self.jwt_public_keys_json.strip()

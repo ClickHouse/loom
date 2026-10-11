@@ -25,7 +25,7 @@ def grants(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str, str], Role]:
     async def grant_role_for(org: str, ns: str, subject: str) -> Role | None:
         return held.get((org, ns, subject))
 
-    monkeypatch.setattr(authz, "_grant_role_for", grant_role_for)
+    monkeypatch.setattr(authz, "grant_role_for", grant_role_for)
     monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: True)
     monkeypatch.setattr(settings, "public_base_url", "https://loom.example")
     return held
@@ -82,6 +82,7 @@ async def test_a_service_account_cannot_mint_an_unrecorded_personal_token(
     with pytest.raises(HTTPException) as err:
         await _setup(monkeypatch, sa, {"persist": False})
     assert err.value.status_code == 403
+    assert "persist=true" in err.value.detail["message"]
 
 
 @pytest.mark.asyncio

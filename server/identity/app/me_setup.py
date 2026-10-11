@@ -258,7 +258,7 @@ async def _persist_mcp_token(
                 "sa_subject": sa_subject,
                 "namespaces": delegated.namespaces,
                 "roles": delegated.roles,
-                "ttl_days": delegated.ttl_seconds // 86400,
+                "ttl_days": delegated.ttl_days,
                 "created_by": subject,
                 "created_at": now,
                 "expires_at": now + timedelta(seconds=delegated.ttl_seconds),
@@ -368,6 +368,16 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
     # Restricted namespaces the token should read are named in the claim and, once the token
     # has a subject, granted to it directly.
     persist = bool(payload.get("persist") or False)
+    if parent.is_service_account and not persist:
+        # delegate() refuses it too; this says what to send instead.
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "AUTH_INSUFFICIENT",
+                "message": "a service-account token must pass persist=true, so the "
+                "token it mints is recorded and revocable",
+            },
+        )
     restricted_names = await _validate_restricted_request(
         org, subject, payload.get("restricted_namespaces"), persist
     )

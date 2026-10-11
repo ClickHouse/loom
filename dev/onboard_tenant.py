@@ -10,8 +10,10 @@ Composes:
   4. Smoke test               — exec the generated loom_starter.py
 
 Arguments are validated before step 1, so a malformed --budget-override
-changes nothing. The token is never printed: the next steps read it from
-the .env loom_init wrote.
+changes nothing. Steps 2 and 3 need a platform_admin bearer (`--token` or
+`$LOOM_ADMIN_TOKEN`) when auth is on; without one they are skipped with a
+message and the tenant keeps the server's defaults. The token is never
+printed: the next steps read it from the .env loom_init wrote.
 
 Exit codes: 0 onboarded · 1 a step failed (the message names it) · 2 bad arguments.
 
@@ -62,11 +64,14 @@ def parse_budget_overrides(entries: list[str]) -> dict[str, int]:
     return parsed
 
 
+class AdminRefused(RuntimeError):
+    """The server refused the admin bearer (401 / 403)."""
+
+
 def _post_json(url: str, body: dict, timeout_s: float = 5.0, *, token: str = "") -> dict:
-    """POST one admin call. `/v1/admin/*` sits behind a bearer + ADMIN gate
-    whenever auth is on (server/insights/app/admin_routes.py::require_admin), so the
-    call carries `token` as a bearer; without one every call is a 401 the
-    moment a deployment leaves dev mode."""
+    """POST one admin call. `/v1/admin/*` sits behind a bearer + PLATFORM_ADMIN
+    gate whenever auth is on (server/insights/app/admin_routes.py::require_admin),
+    so the call carries `token` as a bearer; a refused one raises AdminRefused."""
     headers = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -80,7 +85,8 @@ def _post_json(url: str, body: dict, timeout_s: float = 5.0, *, token: str = "")
         with urllib.request.urlopen(req, timeout=timeout_s) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
-        raise RuntimeError(f"{url} returned HTTP {e.code}: {e.read()!r}") from e
+        error = AdminRefused if e.code in (401, 403) else RuntimeError
+        raise error(f"{url} returned HTTP {e.code}: {e.read()!r}") from e
 
 
 def _apply_rate_limits(
@@ -124,8 +130,7 @@ def _read_env_file(env_path: Path) -> dict[str, str]:
 def _resolve_admin_token(explicit: str | None, env_path: Path) -> str:
     """The bearer for the `/v1/admin/*` calls, in order: `--token`,
     `$LOOM_ADMIN_TOKEN`, then the service-account token loom_init just
-    minted (it carries ADMIN, which is all `require_admin` checks), so the
-    common path needs no second secret."""
+    minted. That last one is a namespace admin, enough only with auth off."""
     if explicit:
         return explicit
     from_env = os.environ.get("LOOM_ADMIN_TOKEN", "")
@@ -220,8 +225,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--token",
         default=None,
-        help="Admin bearer for the /v1/admin/* calls (default: $LOOM_ADMIN_TOKEN, "
-        "else the service-account token loom_init mints — it carries ADMIN).",
+        help="platform_admin bearer for the /v1/admin/* calls (default: "
+        "$LOOM_ADMIN_TOKEN). Without one, auth-on servers skip those steps.",
     )
     parser.add_argument("--agent", required=True)
     parser.add_argument(
@@ -289,10 +294,20 @@ def _onboard(
         force=args.force,
     )
     token = _resolve_admin_token(args.token, Path(init_summary["env_path"]))
-    ratelimits = _apply_rate_limits(
-        base, args.namespace, anchor_overrides(args.rate_limit_multiplier), token=token
-    )
-    budgets_applied = _apply_budget_overrides(base, budgets, token=token) if budgets else {}
+    try:
+        ratelimits = _apply_rate_limits(
+            base, args.namespace, anchor_overrides(args.rate_limit_multiplier), token=token
+        )
+        budgets_applied = _apply_budget_overrides(base, budgets, token=token) if budgets else {}
+    except AdminRefused:
+        if args.token or os.environ.get("LOOM_ADMIN_TOKEN"):
+            raise  # the operator named this token; its refusal is the answer
+        print(
+            "! raised rate limits and budget overrides skipped: they need a "
+            "platform_admin token (--token or $LOOM_ADMIN_TOKEN)",
+            file=sys.stderr,
+        )
+        ratelimits, budgets_applied = {}, {}
     if not args.skip_smoke:
         smoke = _run_smoke_test(starter_path=out_dir / "loom_starter.py", env_path=out_dir / ".env")
         if smoke["returncode"] != 0:

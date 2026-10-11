@@ -17,6 +17,7 @@ from server.core.ch import set_quota_key
 
 if TYPE_CHECKING:
     from server.auth.jwt import AuthInfo
+    from server.operations.base import Role
 
 current_auth_var: ContextVar[AuthInfo | None] = ContextVar(
     "current_auth",
@@ -46,6 +47,7 @@ def quota_key_for(auth: AuthInfo | None) -> str:
 def set_current_auth(auth: AuthInfo | None) -> None:
     current_auth_var.set(auth)
     _fanout_memo.set(None)
+    creator_grant_memo.set({} if getattr(auth, "creator", "") else None)
     # every ClickHouse query of this request draws the caller's own quota bucket
     set_quota_key(quota_key_for(auth))
 
@@ -55,6 +57,12 @@ def set_current_auth(auth: AuthInfo | None) -> None:
 # search handler reads it again. Binding a principal clears it.
 _fanout_memo: ContextVar[tuple[str, list[str]] | None] = ContextVar(
     "loom_fanout_namespaces", default=None
+)
+
+# A delegated token's creator grants, (org, namespace, creator) -> role, read
+# once per request by `authz._check_delegated`. Binding a principal resets it.
+creator_grant_memo: ContextVar[dict[tuple[str, str, str], Role | None] | None] = ContextVar(
+    "loom_creator_grants", default=None
 )
 
 

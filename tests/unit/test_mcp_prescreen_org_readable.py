@@ -56,7 +56,7 @@ def wired(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(directory_mod, "_directory", _Directory())
     monkeypatch.setattr(repos, "configured_repos", lambda: [_Repo(ORG, CODE_NS, "acme/acme")])
     monkeypatch.setattr(tracker_ns, "configured_namespaces", dict)
-    monkeypatch.setattr("server.auth.authz._grant_role_for", _no_grant)
+    monkeypatch.setattr("server.auth.authz.grant_role_for", _no_grant)
     monkeypatch.setattr("server.auth.service_accounts.inheriting_creator", _no_grant)
 
 
