@@ -29,10 +29,10 @@ def _decode_json_or_b64(raw: str, field: str) -> object:
 
 
 @functools.lru_cache(maxsize=16)
-def kid_map_items(raw: str, field: str, *, non_empty: bool) -> tuple[tuple[str, str], ...]:
-    """A kid → key map setting, decoded once per raw value: signing and
-    verification read it on every token. Keyed on the raw string, so a changed
-    value (a test override) is decoded afresh."""
+def json_map_items(raw: str, field: str, *, non_empty: bool) -> tuple[tuple[str, str], ...]:
+    """A string → string map setting (JWT kid → key, rerank name → URL), decoded once
+    per raw value: signing and verification read it on every token. Keyed on the raw
+    string, so a changed value (a test override) is decoded afresh."""
     parsed = _decode_json_or_b64(raw, field)
     if not isinstance(parsed, dict) or (non_empty and not parsed):
         shape = "a non-empty JSON object" if non_empty else "a JSON object"

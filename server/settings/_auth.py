@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, field_validator, model_validator
 
-from server.settings._env import DEV_JWT_SECRET, kid_map_items
+from server.settings._env import DEV_JWT_SECRET, json_map_items
 
 
 class AuthSettings(BaseModel):
@@ -224,7 +224,7 @@ class AuthSettings(BaseModel):
         entry. Accepts raw JSON or base64-encoded JSON."""
         raw = self.jwt_secrets_json.strip()
         if raw:
-            return dict(kid_map_items(raw, "jwt_secrets_json", non_empty=True))
+            return dict(json_map_items(raw, "jwt_secrets_json", non_empty=True))
         return {self.jwt_active_kid: self.jwt_secret}
 
     @model_validator(mode="after")
@@ -250,7 +250,7 @@ class AuthSettings(BaseModel):
         raw = self.jwt_public_keys_json.strip()
         if not raw:
             return {}
-        return dict(kid_map_items(raw, "jwt_public_keys_json", non_empty=False))
+        return dict(json_map_items(raw, "jwt_public_keys_json", non_empty=False))
 
     # Kill switch for restricted namespaces. True: served to a principal whose
     # token names the namespace AND who holds a live direct grant. False: every
