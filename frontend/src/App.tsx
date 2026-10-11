@@ -17,7 +17,7 @@ import {
   type MyNamespaceEntry,
 } from "./api";
 import { deepLinkNamespace, isMemoryNamespace, landingTarget, needsMemoryNamespace } from "./lib/namespace";
-import { claimsFromToken, provisionalNamespace, rememberKinds, sameIdentity } from "./lib/boot";
+import { claimsFromToken, provisionalNamespace, rememberKinds, sameIdentity, takeLinkToken } from "./lib/boot";
 import { pendingKey } from "./lib/pendingKey";
 import { preloadView } from "./views/registry";
 import { MemoryScopeMissing } from "./components/MemoryScopeMissing";
@@ -213,19 +213,9 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        // Pick up an inline token from the URL (federation redirect): #token=<jwt>
-        // fragment or ?token=<jwt> query. Promote to localStorage, then scrub from
-        // the URL so it doesn't linger in history or share-link copies.
-        const fragMatch = window.location.hash.startsWith("#token=");
-        const queryToken = new URLSearchParams(window.location.search).get("token");
-        if (fragMatch || queryToken) {
-          const raw = fragMatch ? decodeURIComponent(window.location.hash.slice("#token=".length)) : queryToken || "";
-          if (raw) setToken(raw);
-          const cleanSearch = new URLSearchParams(window.location.search);
-          cleanSearch.delete("token");
-          const qs = cleanSearch.toString();
-          history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : ""));
-        }
+        // A login link (federation redirect) carries the token in the #token= fragment.
+        const linkToken = takeLinkToken();
+        if (linkToken) setToken(linkToken);
 
         // Auth-disabled mode (LOOM_AUTH_REQUIRED=false): skip TokenGate, synthesise
         // a local identity. The server accepts every /v1/* call without a bearer.

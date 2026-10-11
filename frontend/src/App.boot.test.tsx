@@ -275,3 +275,45 @@ describe("boot order", () => {
     expect(useStore.getState().identity?.namespace).toBe("joined");
   });
 });
+
+describe("login link", () => {
+  let stored: string[];
+  beforeEach(() => {
+    localStorage.clear();
+    useStore.setState({ authed: false, whoami: null, myNamespaces: null, identity: null, view: "setup" });
+    Element.prototype.scrollTo = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => json(GENERIC)),
+    );
+    stored = [];
+    const setItem = Storage.prototype.setItem;
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, k: string, v: string) {
+      if (k === "loom_token_v1") stored.push(v);
+      setItem.call(this, k, v);
+    });
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    useStore.setState({ whoami: null, myNamespaces: null, identity: null });
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("stores nothing from a ?token= query and scrubs it from the URL", async () => {
+    window.history.replaceState(null, "", "/me/memories?token=query.jwt.value");
+    render(<App />);
+    await settle();
+    expect(stored).toEqual([]);
+    expect(window.location.href).not.toContain("query.jwt.value");
+  });
+
+  it("stores a #token= fragment and scrubs it", async () => {
+    window.history.replaceState(null, "", "/me/memories#token=frag.jwt.value");
+    render(<App />);
+    await settle();
+    expect(stored).toEqual(["frag.jwt.value"]);
+    expect(window.location.href).not.toContain("frag.jwt.value");
+  });
+});
