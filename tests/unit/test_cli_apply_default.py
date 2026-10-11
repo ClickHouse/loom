@@ -13,7 +13,6 @@ from server.cli._apply import APPLY_HINT, add_apply_flags, dry_run_hint
 GATED: list[list[str]] = [
     ["reconcile-status", "--org", "o", "--namespace", "n"],
     ["period-digest", "--org", "o", "--namespace", "n"],
-    ["recanonicalize-entities"],
     ["rechunk", "--org", "o", "--namespace", "n"],
     ["tracker-embed-reset", "--org", "o", "--namespace", "n"],
     ["code", "compact"],

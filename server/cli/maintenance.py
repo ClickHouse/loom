@@ -1,5 +1,5 @@
 """Memory maintenance commands: activity-narration demotion, period digests,
-reconcile status, entity recanonicalisation, and the reextract / reembed passes.
+reconcile status, and the reextract / reembed passes.
 """
 
 from __future__ import annotations
@@ -308,40 +308,8 @@ def _add_reembed_parser(sub: Any) -> None:
     p_reembed.set_defaults(func=_cmd_reembed)
 
 
-def _cmd_recanonicalize_entities(args: argparse.Namespace) -> int:
-    """Move every stored entity to the current canonical form."""
-
-    from pathlib import Path
-
-    from server.memory.app.entity_migration import migrate_entities
-
-    async def _go(ch: Any) -> int:
-        counts = await migrate_entities(apply=not args.dry_run, state=Path(args.state), ch=ch)
-        verb = "would rewrite" if args.dry_run else "rewrote"
-        for table, n in counts.items():
-            print(f"  {table}: {verb} {n} rows")
-        return 0
-
-    return run_connected(_go)
-
-
 def _add_memory_repair_parsers(sub: Any) -> None:
-    """The memory repair passes: `reconcile-status`, `period-digest` and
-    `recanonicalize-entities`."""
-    p_re = sub.add_parser(
-        "recanonicalize-entities",
-        help="Rewrite stored entities (memory rows, their mirrors and the entity graph) in "
-        "the current canonical form; run once after the entity normaliser changes. Dry run "
-        "by default (rows per table); --apply writes, and resumes from --state when a run "
-        "was interrupted.",
-    )
-    p_re.add_argument(
-        "--state",
-        default="loom-recanonicalize-entities.json",
-        help="where --apply keeps the mapping until it completes (default: %(default)s)",
-    )
-    add_apply_flags(p_re, writes="rewrite the entities")
-    p_re.set_defaults(func=_cmd_recanonicalize_entities)
+    """The one-namespace memory passes: `reconcile-status` and `period-digest`."""
     p_rs = sub.add_parser(
         "reconcile-status",
         help="Re-emit memory_embeddings rows whose status diverged from loom.memory "

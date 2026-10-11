@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 _SPACE_RE = re.compile(r"\s+")
-_WORD_RE = re.compile(r"[a-z0-9_]+")
+_VOWEL_RE = re.compile(r"[aeiouy]")
 _PUNCT_RE = re.compile(r"[^\w\s:/.-]+")
 _ARTICLE_RE = re.compile(r"^(?:(?:the|a|an)\s+)+", re.IGNORECASE)
 _SINGLE_VALUED_RELATIONS = {
@@ -233,9 +233,10 @@ _FIRST_PERSON_FORMS = frozenset(
 # plural/singular surface forms ("data breach" vs "data breaches", "kit" vs
 # "kits" → off-by-one counts). Lightweight, dependency-free; only the LAST word
 # is touched (multi-word entities + proper-noun heads are rarely plural). A
-# singular head is itself singular, so a second pass changes nothing.
-# Changing canonical_entity reshapes the whole graph plane: `loom
-# recanonicalize-entities --apply` moves the stored rows; re-bench after.
+# singular head is itself singular, so a second pass changes nothing. A head
+# without a vowel is an acronym (`https`, `dns`), never a plural.
+# Changing canonical_entity reshapes the whole graph plane, so re-ingest and
+# re-bench before relying on this.
 _SINGULAR_UNCHANGED = frozenset(
     {
         "series",
@@ -267,7 +268,7 @@ def _singularize_head(text: str) -> str:
 
 
 def _singular(w: str) -> str:
-    if len(w) <= 3 or w in _SINGULAR_UNCHANGED or w.endswith("ss"):
+    if len(w) <= 3 or w in _SINGULAR_UNCHANGED or w.endswith("ss") or not _VOWEL_RE.search(w):
         return w
     if w.endswith("ies") and len(w) > 4:
         return w[:-3] + "y"  # parties -> party
@@ -370,10 +371,9 @@ def canonical_entity(raw: str) -> CanonicalEntity:
 
     original = str(raw or "").strip()
     text = original.lower()
-    for _ in range(4):  # until a pass changes nothing (`re.S` -> `re.` -> `re`)
-        again = _normalise(text)
-        if again == text:
-            break
+    # until a pass changes nothing (`re.S` -> `re.` -> `re`); a pass only drops or blanks
+    # characters, so this ends
+    while (again := _normalise(text)) != text:
         text = again
     entity_id = text.replace(" ", "_")
     return CanonicalEntity(text=text, entity_id=entity_id, aliases=[original] if original else [])
@@ -384,22 +384,6 @@ def canonical_entity_text(raw: str) -> str:
     possessives and punctuation and folds first-person forms to "user", so a
     query seed and the stored node land on identical text. Idempotent."""
     return canonical_entity(raw).text
-
-
-def migrated_entity(stored: str, texts: Iterable[str]) -> str:
-    """Today's form of entity text an earlier normaliser stored, decided by `texts` (the
-    values of the memories that name it): a head the old plural rule may have cut
-    (`respons`, `siz`) is read as a stem only when a text says its plural (`responses`),
-    and a plural (`kits`) is singularised only when a text says it; a name with no such
-    evidence (`dns`, `cas`) is kept as stored."""
-    head = stored.rsplit(" ", 1)[-1]
-    words = {w for t in texts for w in _WORD_RE.findall(t.lower())}
-    if head.endswith(("s", "z")) and head + "es" in words:
-        return canonical_entity_text(stored + "es")
-    now = canonical_entity_text(stored)
-    if now == stored or _singular(head) == head:
-        return now  # unchanged, or changed by articles and punctuation alone
-    return now if head in words else stored
 
 
 def canonical_entities(values: Iterable[str]) -> list[str]:
