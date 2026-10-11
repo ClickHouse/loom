@@ -248,7 +248,9 @@ Every arrow is a new version; the old one stays in `loom.memory_versions`.
 - `tags` are free labels (`case:1234`, `kind:evidence`). A search filters on them
   (`tags`), boosts with them (`tags_soft`), or sinks them (`demote_tags`). A namespace's
   `tag_registry` can attach retention, dedup and conflict policy to a tag.
-- `entities` are the named things the value mentions, lowercased. A writer may pass
+- `entities` are the named things the value mentions, stored in the canonical form search
+  reads them in (lowercased; articles, possessives and punctuation dropped; the head noun
+  singular), so `Billing Services` and `billing service` are one entity. A writer may pass
   them; otherwise the `entity_extractor` worker fills them. They drive the entity boost
   and the [entity graph](../features/entity-graph.md).
 - `files` are repository paths the memory is about; `memory.for_file` serves them before

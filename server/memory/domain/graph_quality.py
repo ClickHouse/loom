@@ -14,8 +14,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 _SPACE_RE = re.compile(r"\s+")
+_VOWELS = frozenset("aeiouy")
 _PUNCT_RE = re.compile(r"[^\w\s:/.-]+")
-_ARTICLE_RE = re.compile(r"^(the|a|an)\s+", re.IGNORECASE)
+_ARTICLE_RE = re.compile(r"(?:the|a|an)\s+")
 _SINGLE_VALUED_RELATIONS = {
     "works_at",
     "employed_by",
@@ -231,7 +232,9 @@ _FIRST_PERSON_FORMS = frozenset(
 # Singularize the head noun so distinct-thing COUNTs don't split on
 # plural/singular surface forms ("data breach" vs "data breaches", "kit" vs
 # "kits" → off-by-one counts). Lightweight, dependency-free; only the LAST word
-# is touched (multi-word entities + proper-noun heads are rarely plural).
+# is touched (multi-word entities + proper-noun heads are rarely plural). A
+# singular head is itself singular, so a second pass changes nothing. A head
+# without a vowel is an acronym (`https`, `dns`), never a plural.
 # Changing canonical_entity reshapes the whole graph plane, so re-ingest and
 # re-bench before relying on this.
 _SINGULAR_UNCHANGED = frozenset(
@@ -243,6 +246,11 @@ _SINGULAR_UNCHANGED = frozenset(
         "analysis",
         "status",
         "bus",
+        "gas",
+        "alias",
+        "atlas",
+        "bias",
+        "canvas",
         "lens",
         "physics",
         "mathematics",
@@ -252,27 +260,66 @@ _SINGULAR_UNCHANGED = frozenset(
         "iris",
     }
 )
+_LONGEST_UNCHANGED = max(map(len, _SINGULAR_UNCHANGED))
 
 
-def _singularize_head(text: str) -> str:
-    if not text or " " in text and not text.rsplit(" ", 1)[-1]:
-        return text
-    head = text.rsplit(" ", 1)[-1] if " " in text else text
-    prefix = text[: len(text) - len(head)]
-    w = head
-    if len(w) <= 3 or w in _SINGULAR_UNCHANGED or w.endswith("ss"):
-        return text
-    if w.endswith("ies") and len(w) > 4:
-        s = w[:-3] + "y"  # parties -> party
-    elif w.endswith(("ches", "shes", "xes", "zes", "ses")):
-        s = w[:-2]  # breaches -> breach, boxes -> box
-    elif w.endswith("ves"):
-        s = w[:-3] + "f"  # shelves -> shelf
-    elif w.endswith("s") and not w.endswith(("us", "is", "ss")):
-        s = w[:-1]  # kits -> kit, doctors -> doctor
-    else:
-        return text
-    return prefix + s
+def _lead(text: str) -> str:
+    """`text` from past its leading dots, spaces and articles, which uncover each other
+    (`the .the .net` -> `net`); one forward scan."""
+    i = 0
+    while True:
+        while i < len(text) and text[i] in " .":
+            i += 1
+        article = _ARTICLE_RE.match(text, i)
+        if article is None:
+            return text[i:]
+        i = article.end()
+
+
+def _settle(text: str) -> str:
+    """`text` without its trailing dots and spaces and with its last segment singular
+    (`api responses` -> `api response`, `system.databases` -> `system.database`); a
+    segment ends at a space or `./_-:`, so `node.js` and `foo.rs` keep their suffix."""
+    end = len(text)
+    while end and text[end - 1] in " .":
+        end -= 1
+    start = max(map(lambda sep: text.rfind(sep, 0, end), _SEGMENT_ENDS)) + 1
+    vowel = any(text[i] in _VOWELS for i in range(start, end))
+    cut = _singular_cut(text, start, end, vowel)
+    if cut is None:
+        return text[:end]
+    end, suffix = cut
+    return text[:end] + suffix
+
+
+_SEGMENT_ENDS = " ./_-:"
+
+
+def _singular_cut(text: str, s: int, e: int, has_vowel: bool) -> tuple[int, str] | None:
+    """The singular of the word `text[s:e]` as (its new end, what follows it); None when
+    it is singular already."""
+    n = e - s
+    if n <= 3 or not has_vowel or text.endswith("ss", s, e):
+        return None
+    if n <= _LONGEST_UNCHANGED and text[s:e] in _SINGULAR_UNCHANGED:
+        return None
+    if text.endswith("ies", s, e) and n > 4:
+        return e - 3, "y"  # parties -> party
+    if text.endswith(("ches", "shes", "xes"), s, e):
+        return e - 2, ""  # breaches -> breach, boxes -> box
+    if text.endswith(("ses", "zes"), s, e):
+        # buses -> bus, classes -> class, buzzes -> buzz; else only the `s`
+        # (responses -> response, sizes -> size)
+        stem = n - 2
+        kept = (stem <= _LONGEST_UNCHANGED and text[s : e - 2] in _SINGULAR_UNCHANGED) or (
+            stem > 3 and text.endswith(("us", "is", "ss", "zz", "tz"), s, e - 2)
+        )
+        return (e - 2, "") if kept else (e - 1, "")
+    if text.endswith("ves", s, e):
+        return e - 3, "f"  # shelves -> shelf
+    if text.endswith("s", s, e) and not text.endswith(("us", "is"), s, e):
+        return e - 1, ""  # kits -> kit, doctors -> doctor
+    return None
 
 
 # Tokens that are never an entity, whatever the corpus — pronouns and function words,
@@ -339,6 +386,13 @@ def is_lexical_junk_entity(text: str) -> bool:
     return len(words) > 1 and all(w in _LEXICAL_JUNK or len(w) < 3 for w in words)
 
 
+def _normalise(lowered: str) -> str:
+    text = lowered.replace("'s", "").replace("’s", "")
+    text = _PUNCT_RE.sub(" ", text)
+    text = _settle(_lead(_SPACE_RE.sub(" ", text)))
+    return "user" if text in _FIRST_PERSON_FORMS else text
+
+
 def canonical_entity(raw: str) -> CanonicalEntity:
     """Return stable canonical entity text + ID for storage/search.
 
@@ -347,14 +401,7 @@ def canonical_entity(raw: str) -> CanonicalEntity:
     surface form is preserved in `aliases` for provenance and recall."""
 
     original = str(raw or "").strip()
-    lowered = original.lower()
-    lowered = lowered.replace("'s", "").replace("’s", "")
-    lowered = _ARTICLE_RE.sub("", lowered)
-    lowered = _PUNCT_RE.sub(" ", lowered)
-    text = _SPACE_RE.sub(" ", lowered).strip(" .")
-    text = _singularize_head(text)
-    if text in _FIRST_PERSON_FORMS:
-        text = "user"
+    text = _normalise(original.lower())
     entity_id = text.replace(" ", "_")
     return CanonicalEntity(text=text, entity_id=entity_id, aliases=[original] if original else [])
 
@@ -364,6 +411,12 @@ def canonical_entity_text(raw: str) -> str:
     possessives and punctuation and folds first-person forms to "user", so a
     query seed and the stored node land on identical text. Idempotent."""
     return canonical_entity(raw).text
+
+
+def canonical_entities(values: Iterable[str]) -> list[str]:
+    """`values` in canonical form, in order, each once: what a row's `entities` holds, so
+    a search's canonical entity filter meets the stored text."""
+    return list(dict.fromkeys(c for v in values if (c := canonical_entity_text(v))))
 
 
 def canonical_relation(

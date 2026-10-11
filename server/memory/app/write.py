@@ -35,6 +35,7 @@ from server.memory.app.set_commit import (
 from server.memory.domain import lock as _lock
 from server.memory.domain import provenance as _prov
 from server.memory.domain.files import files_for_set
+from server.memory.domain.graph_quality import canonical_entities
 from server.memory.domain.procedural_contract import retype_for as _procedural_retype
 from server.memory.domain.value_shape import value_shape_advisories
 from server.memory.store import key_write_lock
@@ -562,13 +563,14 @@ def _set_build_memory_row(w: _SetWrite) -> None:
         "on_expire": _sens_on_expire,
         "expire_reason": (input.expire_reason or "")[:512]
         or ((getattr(existing, "expire_reason", "") or "") if existing is not None else ""),
-        # Same lowercasing as the embedding row below. This key must be present: `ch.insert`
-        # derives its column list from `rows[0].keys()`, so an omission silently writes the
-        # schema default. `find_unentitied_memories` selects on `empty(loom.memory.entities)`,
-        # so a row without the caller's entities looks unentitied to the entity_extractor
-        # worker, which re-extracts, finds nothing for a short value, and writes its
-        # `["_none_"]` sentinel to BOTH tables — destroying the caller's entities.
-        "entities": [e.lower() for e in (input.entities or [])],
+        # Canonical, as search reads them; the embedding row copies them. This key must be
+        # present: `ch.insert` derives its column list from `rows[0].keys()`, so an omission
+        # silently writes the schema default. `find_unentitied_memories` selects on
+        # `empty(loom.memory.entities)`, so a row without the caller's entities looks
+        # unentitied to the entity_extractor worker, which re-extracts, finds nothing for a
+        # short value, and writes its `["_none_"]` sentinel to BOTH tables — destroying the
+        # caller's entities.
+        "entities": canonical_entities(input.entities or []),
         # The caller's files, else those the value names, else the row's.
         "files": files_for_set(input.files, input.value, serialized_value, existing),
         "concepts": [],

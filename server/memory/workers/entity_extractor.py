@@ -21,6 +21,7 @@ from typing import Any
 
 from server.memory.app.drops import record_drop
 from server.memory.domain.entity_sentinels import NONE_SENTINEL, PARSE_FAILED_SENTINEL
+from server.memory.domain.graph_quality import canonical_entity_text
 from server.observability.budget import namespaces_over_cap
 from server.observability.genai import staged
 from server.workers import pass_context
@@ -121,7 +122,7 @@ def _note_parse_failure(row_key: tuple[str, ...]) -> int:
 
 
 def _parse_entities(text: str) -> list[str] | None:
-    """First JSON array in the response, lowercased + deduped.
+    """First JSON array in the response, canonical (`canonical_entity_text`) + deduped.
 
     Returns None when the reply contains no parseable JSON array — a
     PARSE FAILURE, distinct from `[]` ("the model said there are none").
@@ -141,7 +142,7 @@ def _parse_entities(text: str) -> list[str] | None:
     for v in raw:
         if not isinstance(v, str):
             continue
-        norm = v.strip().lower()
+        norm = canonical_entity_text(v)
         if not norm or norm in seen:
             continue
         seen.add(norm)
