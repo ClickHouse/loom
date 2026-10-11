@@ -127,6 +127,9 @@ def _wire_run(
 def test_every_entrys_commits_run_before_any_bootstrap_slice_before_any_walk(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from server.code.app.index import sandbox
+
+    monkeypatch.setattr(sandbox, "_available", True)  # a self-registered entry is served
     clock = _Clock()
     a, b, c = _cfg("code-a"), _cfg("code-b", source="registry"), _cfg("code-c")
     plans = {

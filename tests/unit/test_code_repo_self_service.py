@@ -351,6 +351,26 @@ async def test_code_repo_add_is_refused_without_the_sandbox(plane, monkeypatch) 
 
 
 @pytest.mark.asyncio
+async def test_the_sandbox_probe_runs_off_the_event_loop(plane, monkeypatch) -> None:
+    """The first probe runs bwrap for up to 20 s; on the loop it would stall every
+    request the process serves."""
+    import threading
+
+    from server.code.app.index import sandbox
+
+    threads: list[threading.Thread] = []
+
+    def probe() -> bool:
+        threads.append(threading.current_thread())
+        return False
+
+    monkeypatch.setattr(sandbox, "sandbox_available", probe)
+    with pytest.raises(ValidationError):
+        await admin.handle_code_repo_add(CodeRepoAddInput(org=ORG, repo="acme/w", branch="main"))
+    assert threads and threads[0] is not threading.main_thread()
+
+
+@pytest.mark.asyncio
 async def test_code_repo_add_refuses_another_org(plane) -> None:
     from server.core.errors import AuthInsufficientError
 

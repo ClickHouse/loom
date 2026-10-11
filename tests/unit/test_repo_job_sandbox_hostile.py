@@ -219,6 +219,24 @@ async def test_unshare_is_refused_inside(tmp_path: Path) -> None:
     assert b"ESCAPED" not in done.stdout and b"refused" in done.stdout
 
 
+async def test_a_raw_clone_into_a_new_user_namespace_is_refused(monkeypatch) -> None:
+    """clone(CLONE_NEWUSER) is unshare by another name; refused by seccomp even
+    on a bwrap too old for --disable-userns."""
+    monkeypatch.setattr(sandbox, "_disable_userns", False)
+    done = await _python(
+        """
+        import ctypes, os, signal
+        libc = ctypes.CDLL(None, use_errno=True)
+        nr = 220 if os.uname().machine == "aarch64" else 56
+        pid = libc.syscall(nr, 0x10000000 | signal.SIGCHLD, 0, 0, 0, 0)
+        if pid == 0:
+            os._exit(0)
+        print("ESCAPED" if pid > 0 else f"refused {ctypes.get_errno()}")
+        """
+    )
+    assert b"ESCAPED" not in done.stdout and b"refused" in done.stdout, done.stdout
+
+
 async def test_a_fork_bomb_is_bounded_and_nothing_survives(monkeypatch) -> None:
     monkeypatch.setattr(sandbox.settings, "code_sandbox_max_pids", 64)
     marker = "bomb-31337"

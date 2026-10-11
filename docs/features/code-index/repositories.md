@@ -19,9 +19,10 @@ Needs `LOOM_CODE_SELF_SERVICE_ENABLED` and the `code_ingest` worker. Both are en
 the stock development Compose deployment; custom deployments can disable either.
 
 It also needs the [repository-job sandbox](../../operations/code-index-operations.md#repository-job-sandbox):
-a repository added here gets compiler tiers that execute its own build code, so without
-the sandbox the add is refused (`SANDBOX_UNAVAILABLE`) and entries already added get the
-parser tier only. Each org holds at most `LOOM_CODE_SELF_SERVICE_MAX_REPOS` (20) entries.
+a repository added here gets compiler tiers that execute its own build code, and its
+clone talks to a host the person chose, so without the sandbox the add is refused
+(`SANDBOX_UNAVAILABLE`) and entries already added are no longer fetched or indexed.
+No shipped Compose stack enables the sandbox by default. Each org holds at most `LOOM_CODE_SELF_SERVICE_MAX_REPOS` (20) entries.
 
 Any signed-in member of an org can add a repository and becomes its first maintainer.
 The remote can be `owner/name` (GitHub shorthand), an HTTPS URL, or an SSH/scp-style

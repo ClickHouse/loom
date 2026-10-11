@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from server.code.app.index.entry_lock import EntryLockHeld, entry_lock
+from server.code.app.index.gitrepo import is_local_remote
 from server.code.app.index.producer_inference import worker_owns
 from server.code.app.index.sandbox import run_job, sandbox_available
 from server.code.domain.index.repos import checkout_for
@@ -73,7 +74,8 @@ async def run_tier[R: TierResult](
     `entry_locked` the entry's lock is taken without waiting: a full re-index moving
     the checkout makes the entry a skip, not an error. `runs_repo_code` marks a tier
     that executes the repository's own build (C++ CMake configure): a self-registered
-    entry gets it only inside the sandbox."""
+    entry gets it only inside the sandbox. Without the sandbox a self-registered
+    entry with a network remote gets no tier at all (`unsandboxed_skip`)."""
     from server.code.domain.index.repos import configured_repos
     from server.code.store.index import CodeRepo
 
@@ -84,8 +86,8 @@ async def run_tier[R: TierResult](
         for cfg in configured_repos():
             if not await worker_owns(repo, cfg, producer):
                 continue
-            if runs_repo_code and not may_build(cfg, worker):
-                result.skipped.append(f"{cfg.namespace}: {UNSANDBOXED_SKIP}")
+            if skip := unsandboxed_skip(cfg, worker, runs_repo_code=runs_repo_code):
+                result.skipped.append(f"{cfg.namespace}: {skip}")
                 continue
             result.repos_checked += 1
             pass_context.set_namespace(cfg.namespace)  # Where a cut pass stopped
@@ -111,21 +113,34 @@ async def run_tier[R: TierResult](
 
 
 UNSANDBOXED_SKIP = "self-registered repository, no build tier without the sandbox"
+UNSANDBOXED_NETWORK_SKIP = (
+    "self-registered repository with a network remote, no clone, fetch or tier "
+    "without the sandbox (nothing would vet the hosts it connects to)"
+)
 _unsandboxed_logged: set[tuple[str, str, str]] = set()
 
 
-def may_build(cfg: RepoConfig, worker: str) -> bool:
-    """Whether a tier that runs the repository's own build may run this entry.
-    An entry a viewer added from the Repositories page (`source == "registry"`)
-    gets one only inside the sandbox; an operator's entry runs either way.
-    Logged once per entry and tier."""
+def unsandboxed_skip(cfg: RepoConfig, worker: str, *, runs_repo_code: bool = False) -> str:
+    """Why `worker` must not run this entry's repository jobs, '' when it may.
+    Only a host without the sandbox refuses, and only an entry a viewer added
+    from the Repositories page (`source == "registry"`): a job running its own
+    build, or any job of an entry whose remote is reached over the network,
+    since the plain-process fallback has no egress proxy. An operator's entry,
+    and a self-registered local mirror's non-build jobs, run either way.
+    Logged once per entry and worker."""
     if cfg.source != "registry" or sandbox_available():
-        return True
+        return ""
+    if runs_repo_code:
+        reason = UNSANDBOXED_SKIP
+    elif not is_local_remote(cfg.git_remote):
+        reason = UNSANDBOXED_NETWORK_SKIP
+    else:
+        return ""
     key = (worker, cfg.org, cfg.namespace)
     if key not in _unsandboxed_logged:
         _unsandboxed_logged.add(key)
-        logger.warning("%s: %s/%s skipped: %s", worker, cfg.org, cfg.namespace, UNSANDBOXED_SKIP)
-    return False
+        logger.warning("%s: %s/%s skipped: %s", worker, cfg.org, cfg.namespace, reason)
+    return reason
 
 
 def tier_outcome(result: TierResult, **extra: Any) -> dict[str, Any]:

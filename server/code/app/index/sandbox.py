@@ -13,7 +13,9 @@ program). `run_job` runs each of them inside bubblewrap when the host supports i
   environment, credentials, host HOME or Docker socket;
 - rlimits on CPU, memory, processes and file size, and a wall-clock timeout that
   kills the whole tree: when bwrap dies its pid namespace dies with it, so no
-  process the job started survives it;
+  process the job started survives it. The rlimits are per process (CPU, address
+  space, file size) and per uid (processes), not a cgroup: they bound each process
+  of a job, not the job's total;
 - no network unless the caller asks for it, and then the only way out is the
   egress proxy (`egress.py`), which allows public addresses only.
 
@@ -24,13 +26,11 @@ Without a usable bwrap the job runs as a plain child process, as it always has;
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import os
 import platform
 import resource
 import shutil
-import signal
 import struct
 import subprocess
 import sys
@@ -38,7 +38,9 @@ import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Required, TypedDict, Unpack
 
+from server.code.app.index.gitrepo import communicate_or_kill
 from server.settings import settings
 
 logger = logging.getLogger("loom.code_index.sandbox")
@@ -94,15 +96,24 @@ _DENIED_SYSCALLS = {
     "process_vm_readv": (310, 270),
     "process_vm_writev": (311, 271),
 }
+# clone is allowed unless its flags ask for a new user namespace (unshare's
+# loophole); clone3 passes its flags in memory seccomp cannot read, so it gets
+# ENOSYS and glibc falls back to clone.
+_CLONE = (56, 220)
+_CLONE3 = (435, 435)
+CLONE_NEWUSER = 0x10000000
 _MACHINES = ("x86_64", "aarch64")
 _AUDIT_ARCH = {"x86_64": 0xC000003E, "aarch64": 0xC00000B7}
 _X32_SYSCALL_BIT = 0x40000000
 _BPF_LD_W_ABS = 0x20
 _BPF_JEQ = 0x15
 _BPF_JGE = 0x35
+_BPF_JSET = 0x45
 _BPF_RET = 0x06
+_ARG0_LOW = 16  # seccomp_data.args[0], low 32 bits (little-endian)
 SECCOMP_RET_KILL_PROCESS = 0x80000000
 SECCOMP_RET_ERRNO_EPERM = 0x00050000 | 1
+SECCOMP_RET_ERRNO_ENOSYS = 0x00050000 | 38
 SECCOMP_RET_ALLOW = 0x7FFF0000
 
 
@@ -116,7 +127,8 @@ class JobResult:
 def seccomp_filter(machine: str = "") -> bytes:
     """The classic-BPF program bwrap installs with `--seccomp`: kill a process
     calling with another architecture's numbers (and x32 ones on x86_64, which
-    would bypass the list), EPERM for each denied syscall, allow the rest."""
+    would bypass the list), EPERM for each denied syscall and for a clone with
+    CLONE_NEWUSER, ENOSYS for clone3, allow the rest."""
     machine = machine or platform.machine()
     prog = [
         (_BPF_LD_W_ABS, 0, 0, 4),  # seccomp_data.arch
@@ -130,6 +142,13 @@ def seccomp_filter(machine: str = "") -> bytes:
     for numbers in _DENIED_SYSCALLS.values():
         nr = numbers[column]
         prog += [(_BPF_JEQ, 0, 1, nr), (_BPF_RET, 0, 0, SECCOMP_RET_ERRNO_EPERM)]
+    prog += [(_BPF_JEQ, 0, 1, _CLONE3[column]), (_BPF_RET, 0, 0, SECCOMP_RET_ERRNO_ENOSYS)]
+    prog += [
+        (_BPF_JEQ, 0, 3, _CLONE[column]),
+        (_BPF_LD_W_ABS, 0, 0, _ARG0_LOW),
+        (_BPF_JSET, 0, 1, CLONE_NEWUSER),
+        (_BPF_RET, 0, 0, SECCOMP_RET_ERRNO_EPERM),
+    ]
     prog.append((_BPF_RET, 0, 0, SECCOMP_RET_ALLOW))
     return b"".join(struct.pack("=HBBI", *ins) for ins in prog)
 
@@ -237,19 +256,20 @@ def tool_root(path: Path) -> Path:
 
 
 def _readonly_paths(env: Mapping[str, str], readonly: Sequence[Path]) -> list[Path]:
-    """The caller's read-only paths (absolute), the server's python (harness converters and
-    the relay run it) and the toolchains on the job's PATH — except anything
-    under the server's HOME, which may hold credentials."""
+    """The caller's read-only paths, the server's python (harness converters and
+    the relay run it) and the toolchains on the job's PATH (absolute entries
+    only). Never the server's HOME or a directory above it, and no toolchain
+    found under HOME: it may hold credentials."""
     home = Path.home()
-    found = [Path(p) for p in env.get("PATH", "").split(":") if p]
-    from_path = [tool_root(p) for p in found if p != home and not p.is_relative_to(home)]
+    found = [Path(p) for p in env.get("PATH", "").split(":") if p.startswith("/")]
+    from_path = [root for root in map(tool_root, found) if not root.is_relative_to(home)]
     paths = [*readonly, Path(sys.prefix), Path(sys.base_prefix), *from_path]
     out: list[Path] = []
     for p in paths:
         p = p.absolute()
+        holds_home = home.is_relative_to(p)
         system = any(p.is_relative_to(d) for d in _SYSTEM_PATHS)
-        covered = system or p in out or p == Path("/")
-        if not covered and p.exists():
+        if not (holds_home or system or p in out) and p.exists():
             out.append(p)
     return out
 
@@ -289,157 +309,131 @@ def _network_env(env: dict[str, str]) -> None:
     )
 
 
-def _limits() -> Callable[[], None]:
-    """The rlimits the child sets before it execs bwrap; the job inherits them."""
+def _rlimits() -> list[tuple[int, str, int]]:
+    """(resource, prlimit option, value) for each job rlimit. Per process (CPU,
+    address space, file size) and per uid (processes): one job's processes are
+    bounded each, not in total."""
     mib = 1024 * 1024
-    limits = (
-        (resource.RLIMIT_CPU, settings.code_sandbox_cpu_seconds),
-        (resource.RLIMIT_AS, settings.code_sandbox_memory_mb * mib),
-        (resource.RLIMIT_NPROC, settings.code_sandbox_max_pids),
-        (resource.RLIMIT_FSIZE, settings.code_sandbox_max_file_mb * mib),
-    )
+    return [
+        (resource.RLIMIT_CPU, "--cpu", settings.code_sandbox_cpu_seconds),
+        (resource.RLIMIT_AS, "--as", settings.code_sandbox_memory_mb * mib),
+        (resource.RLIMIT_NPROC, "--nproc", settings.code_sandbox_max_pids),
+        (resource.RLIMIT_FSIZE, "--fsize", settings.code_sandbox_max_file_mb * mib),
+    ]
+
+
+def _prlimit_argv() -> list[str]:
+    """`prlimit` (util-linux, in the image) setting the rlimits before it execs
+    bwrap; the job inherits them. [] where prlimit is missing: the child then
+    sets them itself (`_limits`), which runs Python between fork and exec."""
+    prlimit = shutil.which("prlimit")
+    if not prlimit:
+        return []
+    return [prlimit, *(f"{option}={value}:{value}" for _, option, value in _rlimits()), "--"]
+
+
+def _limits() -> Callable[[], None]:
+    """The rlimits the child sets before it execs bwrap, without prlimit."""
+    limits = _rlimits()
 
     def apply() -> None:
-        for kind, value in limits:
+        for kind, _, value in limits:
             resource.setrlimit(kind, (value, value))
 
     return apply
 
 
-async def run_sandboxed(
-    argv: Sequence[str],
-    *,
-    env: Mapping[str, str],
-    timeout_s: float,
-    writable: Sequence[Path] = (),
-    readonly: Sequence[Path] = (),
-    cwd: Path | None = None,
-    network: bool = False,
-    allow_remote_port: int | None = None,
-    stdin: bytes | None = None,
-    merge_stderr: bool = False,
-) -> JobResult:
-    """Run `argv` inside the sandbox. `writable` and `readonly` are host paths
-    mounted at the same place; they must exist. With `network` the job reaches
-    public hosts on 443, 22 and `allow_remote_port` through the egress proxy.
-    The environment is exactly `env` (HOME and TMPDIR point into the job's
-    scratch directory). TimeoutError past `timeout_s`, the tree killed."""
+class JobOptions(TypedDict, total=False):
+    """`run_job`'s options. `writable` and `readonly` are host paths mounted at
+    the same place; they must exist. With `network` the job reaches public
+    hosts on 443, 22 and `allow_remote_port` through the egress proxy. The
+    environment is exactly `env` (inside the sandbox HOME and TMPDIR point into
+    the job's scratch directory). `timeout_s` kills the tree (TimeoutError)."""
+
+    env: Required[Mapping[str, str]]
+    timeout_s: Required[float]
+    writable: Sequence[Path]
+    readonly: Sequence[Path]
+    cwd: Path | None
+    network: bool
+    allow_remote_port: int | None
+    stdin: bytes | None
+    merge_stderr: bool
+
+
+async def run_sandboxed(argv: Sequence[str], **job: Unpack[JobOptions]) -> JobResult:
+    """Run `argv` inside the sandbox."""
     from server.code.app.index import egress
 
+    network = job.get("network", False)
     outer = await asyncio.to_thread(tempfile.mkdtemp, prefix="loom-job-")
     scratch = os.path.join(outer, "tmp")
     egress_dir = os.path.join(outer, "egress") if network else ""
-    job_env = {**env, "HOME": _HOME_INSIDE, "TMPDIR": "/tmp"}
+    job_env = {**job["env"], "HOME": _HOME_INSIDE, "TMPDIR": "/tmp"}
     proxy = None
     try:
         await asyncio.to_thread(os.mkdir, scratch, 0o700)
         if network:
             await asyncio.to_thread(os.mkdir, egress_dir, 0o700)
-            proxy = await egress.start_proxy(f"{egress_dir}/proxy.sock", allow_remote_port)
+            proxy = await egress.start_proxy(
+                f"{egress_dir}/proxy.sock", job.get("allow_remote_port")
+            )
             _network_env(job_env)
             relay = [sys.executable, "-I", _RELAY_INSIDE, "serve", str(RELAY_PORT)]
             argv = [*relay, f"{_EGRESS_INSIDE}/proxy.sock", "--", *argv]
-        binds = _binds(writable, _readonly_paths(env, readonly), egress_dir)
-        if cwd is not None:
+        readonly = _readonly_paths(job["env"], job.get("readonly", ()))
+        binds = _binds(job.get("writable", ()), readonly, egress_dir)
+        if (cwd := job.get("cwd")) is not None:
             binds += ["--chdir", str(cwd)]
         fd = _seccomp_fd()
         try:
+            limits = _prlimit_argv()
             proc = await asyncio.create_subprocess_exec(
+                *limits,
                 *_bwrap_argv(argv, scratch=scratch, binds=binds, fd=fd),
                 env=job_env,
-                stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT if merge_stderr else asyncio.subprocess.PIPE,
                 pass_fds=(fd,),
-                start_new_session=True,
-                preexec_fn=_limits(),
+                preexec_fn=None if limits else _limits(),
+                **_pipes(job),
             )
         finally:
             os.close(fd)
-        out, err = await _communicate_or_kill(proc, stdin, timeout_s)
-        return JobResult(proc.returncode or 0, out, err)
+        return await _result(proc, job)
     finally:
         if proxy is not None:
             await proxy.close()
         await asyncio.to_thread(shutil.rmtree, outer, True)
 
 
-async def _run_plain(
-    argv: Sequence[str],
-    *,
-    env: Mapping[str, str],
-    timeout_s: float,
-    cwd: Path | None,
-    stdin: bytes | None,
-    merge_stderr: bool,
-) -> JobResult:
-    proc = await asyncio.create_subprocess_exec(
-        *argv,
-        env=dict(env),
-        cwd=cwd,
-        stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT if merge_stderr else asyncio.subprocess.PIPE,
-        start_new_session=True,
+def _pipes(job: JobOptions) -> dict[str, Any]:
+    """The child's stdio, and its own session so a kill reaches its whole tree."""
+    pipe = asyncio.subprocess.PIPE
+    stdin = pipe if job.get("stdin") is not None else asyncio.subprocess.DEVNULL
+    stderr = asyncio.subprocess.STDOUT if job.get("merge_stderr") else pipe
+    return {"stdin": stdin, "stdout": pipe, "stderr": stderr, "start_new_session": True}
+
+
+async def _result(proc: asyncio.subprocess.Process, job: JobOptions) -> JobResult:
+    out, err = await communicate_or_kill(
+        proc, job.get("stdin"), timeout_s=job["timeout_s"], group=True
     )
-    out, err = await _communicate_or_kill(proc, stdin, timeout_s)
-    return JobResult(proc.returncode or 0, out, err)
+    return JobResult(proc.returncode or 0, out or b"", err or b"")
 
 
-async def _communicate_or_kill(
-    proc: asyncio.subprocess.Process, stdin: bytes | None, timeout_s: float
-) -> tuple[bytes, bytes]:
-    """Output of a child started in its own session; on timeout, cancellation or
-    any error its whole process group is killed and the child reaped."""
-    try:
-        talk = proc.communicate(stdin) if stdin is not None else proc.communicate()
-        out, err = await asyncio.wait_for(talk, timeout=timeout_s)
-    except BaseException:
-        with contextlib.suppress(ProcessLookupError, PermissionError):
-            os.killpg(proc.pid, signal.SIGKILL)
-        if proc.returncode is None:
-            with contextlib.suppress(ProcessLookupError):
-                proc.kill()
-        await proc.wait()
-        raise
-    return out or b"", err or b""
-
-
-async def run_job(
-    argv: Sequence[str],
-    *,
-    env: Mapping[str, str],
-    timeout_s: float,
-    writable: Sequence[Path] = (),
-    readonly: Sequence[Path] = (),
-    cwd: Path | None = None,
-    network: bool = False,
-    allow_remote_port: int | None = None,
-    stdin: bytes | None = None,
-    merge_stderr: bool = False,
-) -> JobResult:
+async def run_job(argv: Sequence[str], **job: Unpack[JobOptions]) -> JobResult:
     """A repository job: inside the sandbox when the host has one, else a plain
     child process with the same environment, timeout and process-group kill."""
     if sandbox_available():
-        return await run_sandboxed(
-            argv,
-            env=env,
-            timeout_s=timeout_s,
-            writable=writable,
-            readonly=readonly,
-            cwd=cwd,
-            network=network,
-            allow_remote_port=allow_remote_port,
-            stdin=stdin,
-            merge_stderr=merge_stderr,
-        )
-    return await _run_plain(
-        argv, env=env, timeout_s=timeout_s, cwd=cwd, stdin=stdin, merge_stderr=merge_stderr
+        return await run_sandboxed(argv, **job)
+    proc = await asyncio.create_subprocess_exec(
+        *argv, env=dict(job["env"]), cwd=job.get("cwd"), **_pipes(job)
     )
+    return await _result(proc, job)
 
 
 __all__ = [
     "RELAY_URL",
+    "JobOptions",
     "JobResult",
     "run_job",
     "run_sandboxed",

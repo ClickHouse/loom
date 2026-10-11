@@ -182,22 +182,27 @@ async def pinned_target(url: str) -> tuple[str, str, str, str]:
     return "", pinned, name + suffix, host
 
 
-async def _post(client: httpx.AsyncClient, url: str, headers: dict[str, str], body: bytes) -> int:
+async def _post(
+    transport: httpx.AsyncBaseTransport | None, url: str, headers: dict[str, str], body: bytes
+) -> int:
     """The HTTP status, or 0 when the URL is refused or no answer arrived inside
-    the ack window. Redirects are not followed."""
+    the ack window. Redirects are not followed. Each delivery has its own client:
+    a pooled connection is keyed by the pinned address, so a second inbox on the
+    same address would reuse a TLS session verified for another name."""
     refusal, pinned, host_header, server_name = await pinned_target(url)
     if refusal:
         log.warning("task webhook: %s refused: %s", url, refusal)
         return 0
     try:
-        response = await client.post(
-            pinned,
-            content=body,
-            headers={**headers, "Host": host_header},
-            timeout=ACK_TIMEOUT_SECONDS,
-            follow_redirects=False,
-            extensions={"sni_hostname": server_name},
-        )
+        async with httpx.AsyncClient(transport=transport, follow_redirects=False) as client:
+            response = await client.post(
+                pinned,
+                content=body,
+                headers={**headers, "Host": host_header},
+                timeout=ACK_TIMEOUT_SECONDS,
+                follow_redirects=False,
+                extensions={"sni_hostname": server_name},
+            )
     except httpx.HTTPError as e:
         log.info("task webhook: no answer from %s: %s", url, type(e).__name__)
         return 0
@@ -224,7 +229,7 @@ def _secret_for(inbox_row: WebhookInboxRow, env: Mapping[str, str]) -> bytes | N
 
 
 async def _deliver_inbox(
-    client: httpx.AsyncClient,
+    transport: httpx.AsyncBaseTransport | None,
     inbox_row: WebhookInboxRow,
     cursor: WebhookCursorRow | None,
     *,
@@ -252,7 +257,7 @@ async def _deliver_inbox(
     body = notice_body(org, inbox, last_seq, rows)
     msg_id = str(int(rows[-1]["seq"]))
     headers = signed_headers(secret, msg_id=msg_id, timestamp=int(time.time()), body=body)
-    status = await _post(client, str(inbox_row["webhook_url"]), headers, body)
+    status = await _post(transport, str(inbox_row["webhook_url"]), headers, body)
     if 200 <= status < 300:
         await repo.insert_webhook_cursor(
             _cursor_row(
@@ -292,11 +297,12 @@ async def _record_failure(
 
 async def deliver_once(
     *,
-    client: httpx.AsyncClient,
+    transport: httpx.AsyncBaseTransport | None = None,
     now: datetime | None = None,
     env: Mapping[str, str] | None = None,
 ) -> DeliverResult:
-    """One pass over every inbox with a webhook_url."""
+    """One pass over every inbox with a webhook_url. `transport` replaces the
+    network (tests); each delivery gets a fresh client on it."""
     now = now or datetime.now(UTC)
     env = os.environ if env is None else env
     inboxes = await repo.list_webhook_inboxes()
@@ -316,7 +322,7 @@ async def deliver_once(
         org, inbox = str(row["org"]), str(row["inbox"])
         cursor = cursors.get((org, inbox))
         try:
-            outcome = await _deliver_inbox(client, row, cursor, now=now, env=env)
+            outcome = await _deliver_inbox(transport, row, cursor, now=now, env=env)
         except Exception as e:  # noqa: BLE001 — one inbox's bad URL or secret must not stop the rest
             # Type only: the message of a secret-decoding error must not reach a log line.
             log.warning("task webhook: inbox %s/%s failed: %s", org, inbox, type(e).__name__)
@@ -336,8 +342,7 @@ async def deliver_once(
 
 async def run_pass() -> DeliverResult:
     with record_pass("task_webhook_deliver") as rec:
-        async with httpx.AsyncClient(follow_redirects=False) as client:
-            result = await deliver_once(client=client)
+        result = await deliver_once()
         rec.outcome = {
             "delivered": result.delivered,
             "failed": result.failed,

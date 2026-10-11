@@ -55,7 +55,8 @@ def _cpp(tmp: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[], Awaitable[A
 
 def _go(tmp: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[], Awaitable[Any]]:
     monkeypatch.setattr(code_scip_go_delta, "_harness_env", lambda *a: {})
-    cfg: Any = SimpleNamespace()
+    monkeypatch.setattr(code_scip_go_delta.settings, "code_scip_go_modcache", str(tmp / "gomod"))
+    cfg: Any = SimpleNamespace(org="o", namespace="ns")
     return lambda: code_scip_go_delta._run_harness(tmp, "a", "b", tmp, [], cfg)
 
 
