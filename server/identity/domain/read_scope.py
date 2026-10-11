@@ -35,6 +35,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from server.core.errors import AuthInsufficientError, IdentityIncompleteError
+
 # Higher = narrower. The effective scope is the narrowest of the request and
 # the token's ceiling. The keys are the token claim's values
 # (`server.auth.jwt.READ_SCOPES`), widest first.
@@ -97,8 +99,6 @@ def resolve_read_filters(
     refuses a different one — silently substituting would hide the client bug
     that put the wrong user in the body.
     """
-    from server.core.errors import IdentityIncompleteError
-
     scope = effective_read_scope(requested, auth)
     uid = _clean(user_id)
     sid = _clean(session_id)
@@ -106,8 +106,6 @@ def resolve_read_filters(
     pinned = (getattr(auth, "read_user_id", "") or "").strip() if auth is not None else ""
     if pinned:
         if uid is not None and uid != pinned:
-            from server.core.errors import AuthInsufficientError
-
             raise AuthInsufficientError(
                 f"token is pinned to user_id {pinned!r}; the request named {uid!r}"
             )
@@ -127,8 +125,6 @@ def resolve_read_filters(
         )
     # `*` is the readers' "every user / every session" wildcard.
     if (scope != "namespace" and uid == "*") or (scope == "own_session" and sid == "*"):
-        from server.core.errors import AuthInsufficientError
-
         raise AuthInsufficientError(f"read_scope={scope} does not allow the '*' wildcard")
     return ReadFilters(scope=scope, user_id=uid, session_id=sid)
 
@@ -256,6 +252,8 @@ SCOPED_OPS = frozenset(
 # Ops that return no memory content, with the reason. A key ending in "." names
 # an op group.
 NO_MEMORY_CONTENT: dict[str, str] = {
+    # code.symbol attaches no lessons under a narrowed scope; code.search's
+    # tie-break reads the files named by the scope's own user's memories.
     "code.": "the code index: repository content, no user's memory",
     "tracker.": "tracker records: issues and their sources, no user's memory",
     "knowledge.": "namespace documents: the plane has no user or session axis",
@@ -289,7 +287,9 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     "namespace.list_ontology": "the registered ontology",
     "namespace.register_ontology": "registers an ontology",
     # Writes that answer with what they wrote (ids, versions, counts); a
-    # conflict verdict names only peers inside the read scope.
+    # conflict verdict names only peers inside the read scope, and the
+    # transport refuses a body naming a user other than the token's pin
+    # (`server.transport.gates.read_scope`).
     "memory.set": "a write",
     "memory.pin": "a write",
     "memory.bulk_set": "a write",

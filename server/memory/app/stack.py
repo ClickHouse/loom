@@ -112,14 +112,14 @@ async def _stack_pinned(ch: Any, input: MemoryStackInput, fill: _StackFill) -> N
     }
     scope = scope_and(request_read_filters(current_auth()), params)
     pinned_rows = await ch.query_all(
-        """
+        f"""
         SELECT memory_key, memory_type, value, recall_count, last_recalled_at, actor
         FROM loom.memory FINAL
-        WHERE org = {org:String}
-          AND namespace = {ns:String}
-          AND agent = {agent:String}
-          AND user_id = {uid:String}
-          AND session_id = {sid:String}
+        WHERE org = {{org:String}}
+          AND namespace = {{ns:String}}
+          AND agent = {{agent:String}}
+          AND user_id = {{uid:String}}
+          AND session_id = {{sid:String}}
           AND pinned = 1
           AND tombstoned_at IS NULL
           AND (expires_at IS NULL OR expires_at > now())
@@ -127,8 +127,8 @@ async def _stack_pinned(ch: Any, input: MemoryStackInput, fill: _StackFill) -> N
           AND sensitivity != 'high'
           {scope}
         ORDER BY version DESC
-        LIMIT {lim:UInt32}
-        """.replace("{scope}", scope),
+        LIMIT {{lim:UInt32}}
+        """,
         params=params,
     )
     for r in pinned_rows:
@@ -173,27 +173,27 @@ async def _stack_recent(ch: Any, input: MemoryStackInput, fill: _StackFill) -> s
     }
     scope = scope_and(request_read_filters(current_auth()), params)
     recent_rows = await ch.query_all(
-        """
+        f"""
         SELECT memory_key, memory_type, value, recall_count,
                evidence_count, last_recalled_at, actor
         FROM loom.memory FINAL
-        WHERE org = {org:String}
-          AND namespace = {ns:String}
-          AND agent = {agent:String}
-          AND user_id = {uid:String}
-          AND session_id = {sid:String}
+        WHERE org = {{org:String}}
+          AND namespace = {{ns:String}}
+          AND agent = {{agent:String}}
+          AND user_id = {{uid:String}}
+          AND session_id = {{sid:String}}
           AND tombstoned_at IS NULL
           AND (expires_at IS NULL OR expires_at > now())
           AND status IN ('active', 'conflicted')
           AND sensitivity != 'high'
-          AND (sensitivity != 'medium' OR {medium_ok:UInt8} = 1)
+          AND (sensitivity != 'medium' OR {{medium_ok:UInt8}} = 1)
           AND pinned = 0
           AND recall_count > 0
           {scope}
         ORDER BY (recall_count + evidence_count * 0.5) DESC,
                  coalesce(last_recalled_at, created_at) DESC
-        LIMIT {lim:UInt32}
-        """.replace("{scope}", scope),
+        LIMIT {{lim:UInt32}}
+        """,
         params=params,
     )
     most_recent_excerpt = ""

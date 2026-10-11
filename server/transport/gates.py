@@ -169,14 +169,15 @@ async def policy(
 def read_scope(op: Operation, auth: AuthInfo | None, input_obj: Any) -> Any:
     """Resolve the call's read scope from the token and the validated input and
     bind it for the request (`server.identity.domain.read_scope`). Every store
-    reader that returns memory rows requires it. A refusal (a body user the
-    token is not pinned to, a missing user, a `*` under a narrowed scope) is
-    bound too: a read op (`SCOPED_OPS`) is refused with it here, any other op
-    by its first read, so a write is not refused for a body the read rules do
-    not fit.
+    reader that returns memory rows requires it. A body user the token is not
+    pinned to, or a `*` under a narrowed scope, is refused for every op. A
+    missing user under an unpinned `own_user` token is bound as the refusal: a
+    read op (`SCOPED_OPS`) is refused with it here, any other op by its first
+    read.
 
-    Returns the input the handler runs with: a scoped read names the user
-    (and session) its scope binds. Raises AuthInsufficientError (or
+    Returns the input the handler runs with: under a narrowed scope it names
+    the user (and session) the scope binds, so a write that names none writes
+    as the token's pinned user. Raises AuthInsufficientError (or
     IdentityIncompleteError) for a scoped read that does not resolve, and
     AuthInsufficientError when the token bounds reads below the namespace
     and the op cannot keep its answer inside that bound."""
@@ -205,10 +206,14 @@ def read_scope(op: Operation, auth: AuthInfo | None, input_obj: Any) -> Any:
             f"{op.name} cannot keep its answer inside this token's read scope "
             "(read_scope / read_user_id); call it with a namespace-scoped token"
         )
-    if op.name not in SCOPED_OPS:
-        return input_obj
+    # A body naming another user than the token's pin (or `*`) is refused for
+    # every op, writes included: a pinned token never writes as someone else.
+    if isinstance(result, AuthInsufficientError):
+        raise result
     if isinstance(result, Exception):
-        raise result  # a read whose scope does not resolve is refused here
+        if op.name in SCOPED_OPS:
+            raise result  # a read whose scope does not resolve is refused here
+        return input_obj
     return with_read_identity(input_obj, result)
 
 

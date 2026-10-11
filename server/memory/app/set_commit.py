@@ -90,6 +90,23 @@ def _peer_in_read_scope(peer: Any) -> bool:
     return row_in_read_scope(scope, getattr(peer, "user_id", ""), getattr(peer, "session_id", ""))
 
 
+def _peer_id_in_read_scope(conflict_result: Any, memory_id: str) -> str:
+    """`memory_id` when the verdict peer it names is inside the read scope,
+    else "". An id that names no peer is shown only to an unbounded read."""
+    peer = next(
+        (
+            p
+            for p in [
+                *list(getattr(conflict_result, "refined_peers", None) or []),
+                *list(getattr(conflict_result, "peers", None) or []),
+            ]
+            if str(getattr(p, "memory_id", "") or "") == memory_id
+        ),
+        None,
+    )
+    return memory_id if memory_id and _peer_in_read_scope(peer) else ""
+
+
 def _set_peers(conflict_result: Any) -> list[Any]:
     """The rows a verdict was reached against, as the wire shape memory.set
     returns: closest first, at most SET_PEERS_MAX, the value
@@ -354,18 +371,18 @@ async def _set_conflict_verdict(
         )
     if conflict_result.verdict == "rejected":
         # Counted at the handler boundary via _WRITE_OUTCOME_BY_ERROR_CODE.
+        # A blocker outside the read scope still blocks but is not named.
+        blocker = _peer_id_in_read_scope(conflict_result, conflict_result.pinned_blocker_id or "")
         raise HTTPException(
             status_code=409,
             detail={
                 "code": "PINNED_CONFLICT",
                 "message": (
-                    "write conflicts with a pinned memory "
-                    f"({conflict_result.pinned_blocker_id!r}); update "
-                    f"the pinned row explicitly via memory.update_by_id "
-                    f"or unpin it first"
+                    f"write conflicts with a pinned memory{f' ({blocker!r})' if blocker else ''}; "
+                    "update the pinned row explicitly via memory.update_by_id or unpin it first"
                 ),
-                "pinned_blocker_id": conflict_result.pinned_blocker_id,
-                "peer_ids": [p.memory_id for p in conflict_result.peers],
+                "pinned_blocker_id": blocker,
+                "peer_ids": [p.memory_id for p in peers_out],
             },
         )
     return _cfg, conflict_result, peers_out, None
@@ -404,6 +421,11 @@ async def _set_merge(
         strong=True,  # the conflict check just saw it; read the latest head
         scope=WHOLE_NAMESPACE,
     )
+    # A row outside the caller's read scope (or one a bounded read could not
+    # check) still absorbs the write, but the answer names no id, hash or key of it.
+    merged_into_id = conflict_result.existing_memory_id or ""
+    if not _peer_in_read_scope(existing):
+        existing, merged_into_id = None, ""
     existing_sha = (
         _content_sha256_of_stored(json.dumps(existing.value, default=str))
         if existing is not None and existing.value is not None
@@ -420,7 +442,7 @@ async def _set_merge(
         )
     )
     merge_peers = peers_out
-    if not merge_peers and existing is not None and _peer_in_read_scope(existing):
+    if not merge_peers and existing is not None:
         # The canonical match may not be among the cosine peers list (a same-content match
         # under another identity); name the row the write merged into.
         from server.memory.api.models_common import MemorySetPeer, set_peer_excerpt
@@ -441,7 +463,7 @@ async def _set_merge(
             retyped_from=retyped_from,
             version=0,
             pinned=input.pinned,
-            memory_id=conflict_result.existing_memory_id or "",
+            memory_id=merged_into_id,
             content_sha256=existing_sha,
             namespace=input.namespace,
             memory_key=input.memory_key,
@@ -455,7 +477,8 @@ async def _set_merge(
         )
     # Auto-reinforce: bump evidence_count on the existing row when the
     # namespace policy is "auto_reinforce". Fire-and-forget.
-    await _cf.auto_reinforce_peer(input, conflict_result.existing_memory_id or "", ch=ch, cfg=_cfg)
+    if merged_into_id:  # never a row outside the read scope
+        await _cf.auto_reinforce_peer(input, merged_into_id, ch=ch, cfg=_cfg)
     # Canonical-form match: the caller restated a memory Loom already had.
     # No row was inserted, so this is the outcome that separates "still
     # ingesting" from "only ever hearing the same things again".
@@ -464,7 +487,7 @@ async def _set_merge(
         retyped_from=retyped_from,
         version=version,
         pinned=input.pinned,
-        memory_id=conflict_result.existing_memory_id or "",
+        memory_id=merged_into_id,
         content_sha256=existing_sha,
         namespace=input.namespace,
         memory_key=input.memory_key,
@@ -493,7 +516,7 @@ def _set_dry_run_answer(
         pinned=input.pinned,
         memory_id=memory_id,
         content_sha256=new_sha,
-        duplicate_of=duplicate_of_id,
+        duplicate_of=_peer_id_in_read_scope(conflict_result, duplicate_of_id),
         namespace=input.namespace,
         memory_key=input.memory_key,
         degraded=_degradations.current(),
@@ -661,7 +684,7 @@ async def _set_after_write(
         pinned=input.pinned,
         memory_id=memory_id,
         content_sha256=new_sha,
-        duplicate_of=duplicate_of_id,
+        duplicate_of=_peer_id_in_read_scope(conflict_result, duplicate_of_id),
         namespace=input.namespace,
         memory_key=input.memory_key,
         degraded=_degradations.current(),

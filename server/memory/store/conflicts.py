@@ -73,6 +73,15 @@ async def list_conflicted(
     )
     if not located:
         return []
+    if scope.narrowed:
+        # A peer outside the scope is not named, not even by its id.
+        visible = await _ids_in_scope(
+            ch, org, namespace, [str(p) for r in located for p in r["conflict_with"]], scope
+        )
+        located = [
+            {**r, "conflict_with": [p for p in r["conflict_with"] if str(p) in visible]}
+            for r in located
+        ]
     pairs = [(str(r["memory_id"]), int(r["version"])) for r in located]
     values = await ch.query_all(
         """
@@ -92,6 +101,26 @@ async def list_conflicted(
         row["value"] = by_pair.get((str(r["memory_id"]), int(r["version"])))
         out.append(row)
     return out
+
+
+async def _ids_in_scope(
+    ch: _CHClient, org: str, namespace: str, memory_ids: list[str], scope: ReadFilters
+) -> set[str]:
+    """The ids among `memory_ids` whose rows lie inside `scope`."""
+    if not memory_ids:
+        return set()
+    params: dict[str, Any] = {"org": org, "ns": namespace, "ids": sorted(set(memory_ids))}
+    rows = await ch.query_all(
+        f"""
+        SELECT DISTINCT toString(memory_id) AS mid
+        FROM loom.memory
+        WHERE org = {{org:String}}
+          AND namespace = {{ns:String}}
+          AND memory_id IN {{ids:Array(UUID)}}{scope_and(scope, params)}
+        """,
+        params=params,
+    )
+    return {str(r["mid"]) for r in rows}
 
 
 async def count_conflicted(
