@@ -45,18 +45,10 @@ async def claim_release(
     input: ClaimReleaseInput,
     request: Request,
 ) -> ClaimReleaseOutput:
-    from server.insights.app.admin_routes import require_org_admin
+    from server.insights.app.admin_routes import refuse_foreign_org, require_org_admin
 
     info = await require_org_admin(request)
-    if info is not None:
-        if not info.has_role(Role.PLATFORM_ADMIN) and info.org != input.org:
-            raise HTTPException(
-                status_code=403,
-                detail={
-                    "code": "ORG_MISMATCH",
-                    "message": f"ORG_ADMIN role bound to {info.org!r}, cannot release in {input.org!r}",  # noqa: E501
-                },
-            )
+    refuse_foreign_org(info, input.org, "release a claim in")
     actor_subject = info.subject if info is not None else "local"
     not_found = HTTPException(
         status_code=404,

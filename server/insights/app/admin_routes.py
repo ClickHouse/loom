@@ -787,7 +787,7 @@ async def admin_token_mint(
     # Redundant with the router-level dependency; kept so the gate holds even
     # if this handler is ever mounted on another router.
     info = await require_org_admin(request)
-    _refuse_foreign_org(info, input.org, "mint a token for")
+    refuse_foreign_org(info, input.org, "mint a token for")
 
     jti = new_jti()
     if info is None:
@@ -836,7 +836,7 @@ async def admin_token_mint(
     )
 
 
-def _refuse_foreign_org(info: AuthInfo | None, org: str, action: str) -> None:
+def refuse_foreign_org(info: AuthInfo | None, org: str, action: str) -> None:
     """An admin token acts inside its own org; only a platform admin crosses orgs."""
     if info is not None and org != info.org and not info.has_role(Role.PLATFORM_ADMIN):
         raise HTTPException(
@@ -880,7 +880,7 @@ async def admin_namespace_adopt(
     # Redundant with the router-level dependency; kept because this handler
     # also needs the verified subject as the audit actor.
     info = await require_org_admin(request)
-    _refuse_foreign_org(info, input.org, "adopt a namespace in")
+    refuse_foreign_org(info, input.org, "adopt a namespace in")
     actor = info.subject if info is not None else "dev-admin"
 
     from server.identity.app.grants import adopt_namespace

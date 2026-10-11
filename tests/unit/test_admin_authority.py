@@ -3,8 +3,8 @@ the org-scoped ones (token.mint, namespace.adopt, claim_release) need ORG_ADMIN
 pinned to the caller's own org. A per-namespace admin, flat or scoped, never
 passes. Every route of the two admin routers and of the model-setup router
 (`/v1/admin/models`) is iterated, so a new one there cannot be missed;
-`/v1/admin/claim_release` checks inside its handler and is covered by the
-cross-org test below."""
+`/v1/admin/claim_release` checks inside its handler and has its own tests
+below."""
 
 from __future__ import annotations
 
@@ -101,6 +101,28 @@ def test_an_org_admin_of_another_org_is_refused(
     app.include_router(claim_release.router)
     r = TestClient(app).post(
         path, json=body, headers={"Authorization": f"Bearer {_token('org-admin')}"}
+    )
+    assert r.status_code == 403, r.text
+    assert r.json()["detail"]["code"] == "AUTH_INSUFFICIENT"
+
+
+@pytest.mark.parametrize("caller", ["namespace-admin", "scoped-admin"])
+def test_claim_release_admits_no_namespace_admin(
+    monkeypatch: pytest.MonkeyPatch, caller: str
+) -> None:
+    from server.identity.app import claim_release
+
+    def no_client() -> object:
+        raise AssertionError("refused before any read or write")
+
+    monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: True)
+    monkeypatch.setattr("server.core.ch.get_client", no_client)
+    app = FastAPI()
+    app.include_router(claim_release.router)
+    r = TestClient(app).post(
+        "/v1/admin/claim_release",
+        json={"org": "acme", "namespace": "n"},
+        headers={"Authorization": f"Bearer {_token(caller)}"},
     )
     assert r.status_code == 403, r.text
 
