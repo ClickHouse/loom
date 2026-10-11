@@ -18,7 +18,11 @@ from fastapi import HTTPException
 from server.auth.context import current_auth
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
-from server.identity.domain.read_scope import WHOLE_NAMESPACE, request_read_filters
+from server.identity.domain.read_scope import (
+    WHOLE_NAMESPACE,
+    request_read_filters,
+    row_in_read_scope,
+)
 from server.memory.api.models_session_brief import (
     SessionBriefDeleteInput,
     SessionBriefDeleteOutput,
@@ -226,6 +230,23 @@ async def _recording_off(inp: Any) -> bool:
     return not await namespace_recording_enabled(inp.org, inp.namespace)
 
 
+async def _own_brief(ch: Any, org: str, namespace: str, key: str) -> dict[str, Any] | None:
+    """The stored brief under `key`, or None. A brief key is one row per namespace, so a
+    token bounded to one user that names a key another user holds is refused: it may
+    neither read that brief nor write over it. The refusal does not describe the row."""
+    scope = request_read_filters(current_auth())
+    row = await repo.current(ch, org, namespace, key, scope=WHOLE_NAMESPACE)
+    if row and not row_in_read_scope(scope, row.get("user_id"), row.get("session_id")):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "BRIEF_KEY_TAKEN",
+                "message": f"{key!r} is held outside this token's read scope; use another key",
+            },
+        )
+    return row
+
+
 async def handle_session_brief_save(inp: SessionBriefSaveInput) -> SessionBriefSaveOutput:
     from server.memory.app.provenance import writer_actor
 
@@ -233,7 +254,7 @@ async def handle_session_brief_save(inp: SessionBriefSaveInput) -> SessionBriefS
     if not sb.brief_key_ok(key):
         raise HTTPException(status_code=422, detail={"code": "BAD_BRIEF_KEY", "message": key})
     ch = get_client()
-    row = await repo.current(ch, inp.org, inp.namespace, key, scope=WHOLE_NAMESPACE)
+    row = await _own_brief(ch, inp.org, inp.namespace, key)
     live = row if row and row.get("tombstoned_at") is None else None
     stored_rev = int(row.get("revision") or 0) if row else 0
     if inp.if_revision is not None and inp.if_revision != (stored_rev if live else 0):
@@ -487,7 +508,9 @@ async def handle_session_brief_list(inp: SessionBriefListInput) -> SessionBriefL
 
 async def handle_session_brief_delete(inp: SessionBriefDeleteInput) -> SessionBriefDeleteOutput:
     ch = get_client()
-    row = await repo.current(ch, inp.org, inp.namespace, inp.brief_key, scope=WHOLE_NAMESPACE)
+    row = await repo.current(
+        ch, inp.org, inp.namespace, inp.brief_key, scope=request_read_filters(current_auth())
+    )
     if row is None or row.get("tombstoned_at") is not None:
         return SessionBriefDeleteOutput(deleted=False, brief_key=inp.brief_key)
     from server.memory.app.provenance import writer_actor

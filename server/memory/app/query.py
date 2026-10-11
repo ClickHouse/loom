@@ -819,7 +819,6 @@ async def _handle_memory_bulk_get(
             verification=_trust.verification_state(r.verified_by, r.verified_sha256, sha),
         )
         results[r.memory_key]._projection = keep
-        results[r.memory_key]._user_id = str(getattr(r, "user_id", "") or "")
     for chunk_id, parent in parent_of.items():
         if parent in results and chunk_id not in results:
             parent_row = results[parent]

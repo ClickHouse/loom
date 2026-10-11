@@ -67,18 +67,31 @@ async def lessons_matching(
 
 
 async def user_file_paths(
-    org: str, user_id: str, *, limit: int = 200, ch: _CHClient | None = None
+    org: str,
+    user_id: str,
+    namespaces: Sequence[str] | None,
+    *,
+    limit: int = 200,
+    ch: _CHClient | None = None,
 ) -> list[str]:
-    """The distinct files the user's live memories name, sorted, at most `limit`."""
+    """The distinct files the user's live memories in `namespaces` name, sorted, at most
+    `limit`. `namespaces=None` reads every namespace of the org (no caller to bound it)."""
+    if namespaces is not None and not namespaces:
+        return []
     ch = ch or _default_client()
+    params: dict[str, Any] = {"org": org, "uid": user_id, "lim": int(limit)}
+    in_namespaces = ""
+    if namespaces is not None:
+        in_namespaces = "AND namespace IN {nss:Array(String)}"
+        params["nss"] = list(namespaces)
     rows = await ch.query_all(
-        """
+        f"""
         SELECT DISTINCT arrayJoin(files) AS f FROM loom.memory FINAL
-        WHERE org = {org:String}
-          AND user_id = {uid:String} AND notEmpty(files)
+        WHERE org = {{org:String}} {in_namespaces}
+          AND user_id = {{uid:String}} AND notEmpty(files)
           AND tombstoned_at IS NULL
-        ORDER BY f LIMIT {lim:UInt32}
+        ORDER BY f LIMIT {{lim:UInt32}}
         """,
-        {"org": org, "uid": user_id, "lim": int(limit)},
+        params,
     )
     return [str(r["f"]) for r in rows]

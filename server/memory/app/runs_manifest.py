@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from server.memory.domain.context_layout import one_item
+from server.memory.domain.context_layout import label_part, one_item
 
 log = logging.getLogger(__name__)
 
@@ -119,7 +119,7 @@ def render_manifest(rows: list[SessionRow]) -> str:
     out: list[str] = []
     for r in rows:
         when = r.when.strftime("%Y-%m-%d %H:%M") if r.when else "undated"
-        parts = [f"- {when} session={r.session_id[:24]}"]
+        parts = [f"- {when} session={label_part(r.session_id[:24])}"]
         if r.actors:
             parts.append("by=" + ",".join(r.actors))
         if r.run_id or r.status:

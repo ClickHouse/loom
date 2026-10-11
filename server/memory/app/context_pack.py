@@ -37,6 +37,7 @@ from server.memory.domain.context_layout import (
     _trim,
     author_label,
     escape_data,
+    label_part,
     one_item,
 )
 from server.memory.domain.evidence_pack import EvidenceItem, pack_evidence
@@ -256,7 +257,8 @@ async def _pack_memory_stack(st: _PackState) -> None:
         cite = f"stack:{layer}/{entry.memory_key or entry.memory_type}"
         citations.append(cite)
         author = author_label([entry.actor]) if layer in _STACK_MEMORY_LAYERS else ""
-        lines.append(one_item(f"- [{layer}/{entry.memory_key}{author}] {entry.value}"))
+        label = label_part(f"{layer}/{entry.memory_key}")
+        lines.append(one_item(f"- [{label}{author}] {entry.value}"))
     st.put(
         "memory_stack",
         "\n".join(lines),
@@ -409,7 +411,27 @@ def _hit_row_key(input: ContextPackInput, h: Any) -> tuple[str, str]:
     return (getattr(h, "namespace", "") or input.namespace, str(key))
 
 
-async def _hit_actors(input: ContextPackInput, hits: list[Any]) -> dict[tuple[str, str], list[str]]:
+_KeyWriters = dict[tuple[str, str], list[dict[str, str]]]
+
+
+def _hit_author(actors: _KeyWriters, input: ContextPackInput, h: Any) -> str:
+    """` by=` for the row a hit came from. Rows under the hit's key are narrowed by the
+    identity the hit carries (user, session, agent, where the leg read them); when the rows
+    left were written by more than one actor the label says `unknown`, never a writer whose
+    row this may not be."""
+    rows = actors.get(_hit_row_key(input, h)) or []
+    for col, value in (
+        ("user_id", getattr(h, "user_id", "")),
+        ("session_id", getattr(h, "session_id", "")),
+        ("agent", getattr(h, "_row_agent", None)),
+    ):
+        if value:
+            rows = [r for r in rows if r[col] == value]
+    names = {r["actor"] for r in rows}
+    return author_label(names if len(names) == 1 else [])
+
+
+async def _hit_actors(input: ContextPackInput, hits: list[Any]) -> _KeyWriters:
     """Each hit's recorded writers, read inside the request's read scope. {} when the
     read fails: the lines then say by=unknown rather than naming anyone."""
     import server.memory.store as memory_repo
@@ -426,7 +448,7 @@ async def _hit_actors(input: ContextPackInput, hits: list[Any]) -> dict[tuple[st
 
 
 async def _pack_decisions_from_hits(
-    st: _PackState, decision_hits: list[Any], actors: dict[tuple[str, str], list[str]]
+    st: _PackState, decision_hits: list[Any], actors: _KeyWriters
 ) -> None:
     """Decision-typed hits leave the memories block and render as their
     own tagged section with the structured record (scenario, outcome,
@@ -458,8 +480,9 @@ async def _pack_decisions_from_hits(
         realized = str(rec.get("realized_outcome") or "").strip()
         reasoning = str(rec.get("reasoning") or "").strip()
         made = str(rec.get("made_at") or "")[:10]
-        author = author_label(actors.get(_hit_row_key(input, h)))
-        line = f"- [{ns}/{h.memory_key}{author}]" + (f" {made}" if made else "") + f" {scenario}"
+        author = _hit_author(actors, input, h)
+        line = f"- [{label_part(f'{ns}/{h.memory_key}')}{author}]"
+        line += (f" {made}" if made else "") + f" {scenario}"
         if outcome:
             line += f" → decided: {outcome}"
         if reasoning:
@@ -558,7 +581,7 @@ async def _pack_memories(st: _PackState) -> None:
                     ),
                     # the row state rides `status`; `memory_type` is never "conflicted"
                     conflict=getattr(h, "status", "") == "conflicted",
-                    author=author_label(actors.get(_hit_row_key(input, h))),
+                    author=_hit_author(actors, input, h),
                     derived_from=tuple(getattr(h, "derived_from", None) or ()),
                 )
             )

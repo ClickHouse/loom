@@ -139,8 +139,6 @@ class _ProcedureMatch(BaseModel):
     # Who wrote the procedure (`human:<subject>` / `process:<subject>`); "" when unrecorded.
     # context.pack and memory.stack auto-inject only the caller's own.
     actor: str = ""
-    # The row's user_id, off the wire: whose a mined procedure (no actor) is.
-    _user_id: str = ""
 
 
 class ProcedureMatchOutput(BaseModel):

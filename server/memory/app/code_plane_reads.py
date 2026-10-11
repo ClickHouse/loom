@@ -24,10 +24,10 @@ async def lessons_matching(
     return await reads.lessons_matching(org, namespaces, token=token, paths=paths, limit=limit)
 
 
-async def user_file_dirs(org: str, user_id: str) -> list[str]:
-    """The parent directories of the files the user's live memories name, in
-    path order, each once."""
+async def user_file_dirs(org: str, user_id: str, namespaces: Sequence[str] | None) -> list[str]:
+    """The parent directories of the files the user's live memories in
+    `namespaces` (None: every namespace) name, in path order, each once."""
     dirs: dict[str, None] = {}
-    for f in await reads.user_file_paths(org, user_id):
+    for f in await reads.user_file_paths(org, user_id, namespaces):
         dirs.setdefault(f.rsplit("/", 1)[0] if "/" in f else f, None)
     return list(dirs)

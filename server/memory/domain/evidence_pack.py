@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from server.memory.domain.context_layout import one_item
+from server.memory.domain.context_layout import label_part, one_item
 
 
 @dataclass(frozen=True)
@@ -50,7 +50,7 @@ def _derived(item: EvidenceItem) -> str:
     if not keys:
         return ""
     more = f"+{len(keys) - 3}" if len(keys) > 3 else ""
-    return f" derived_from={','.join(keys[:3])}{more}"
+    return f" derived_from={','.join(label_part(k) for k in keys[:3])}{more}"
 
 
 def pack_evidence(
@@ -102,7 +102,7 @@ def pack_evidence(
         marker = " conflict=true" if item.conflict else ""
         date = f" date={item.temporal_anchor[:10]}" if item.temporal_anchor else ""
         labels = f"source={item.source}{item.author}{_derived(item)}{date}{marker}"
-        line = one_item(f"- [{item.citation} {labels}] {item.text}")
+        line = one_item(f"- [{label_part(item.citation)} {labels}] {item.text}")
         tentative = "\n".join([*lines, line])
         if len(tentative) > char_budget:
             truncated = True

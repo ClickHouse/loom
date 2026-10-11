@@ -361,7 +361,10 @@ class _MemCH:
     async def query_one(self, sql: str, params: dict[str, Any] | None = None):
         p = params or {}
         if "FROM loom.session_briefs FINAL" in sql:
-            return self._newest().get(p["key"])
+            row = self._newest().get(p["key"])
+            if row and "scope_uid" in p and row["user_id"] != p["scope_uid"]:
+                return None
+            return row
         if "uniqExact(revision)" in sql:
             return {"n": len({r["revision"] for r in self.revisions if r["brief_key"] == p["key"]})}
         if "FROM loom.session_brief_revisions" in sql:
@@ -675,6 +678,34 @@ def test_a_deleted_brief_serves_no_revision(mem, monkeypatch) -> None:
         h.handle_session_brief_get(SessionBriefGetInput(**IDENT, brief_key="gone", revision=1))
     )
     assert not past.found and past.deleted
+
+
+def test_a_token_bounded_to_one_user_cannot_read_or_replace_anothers_brief(
+    mem, monkeypatch
+) -> None:
+    from tests.unit.principals import acting_as, principal
+
+    _llm(monkeypatch, [])
+    _save(brief_key="auto/loom/main", user_id="u2", use_llm=False, events=_session())
+    pinned = principal("writer", org="o", namespaces=("ns",), read_user_id="u1")
+    with acting_as(pinned):
+        for kw in ({"events": []}, {"events": _session()}, {"if_revision": 0}):
+            with pytest.raises(HTTPException) as e:
+                _save(brief_key="auto/loom/main", user_id="u1", use_llm=False, **kw)
+            assert e.value.status_code == 409
+            assert e.value.detail["code"] == "BRIEF_KEY_TAKEN"
+            assert "revision" not in e.value.detail
+            assert "Never merge" not in str(e.value.detail)
+        gone = asyncio.run(
+            h.handle_session_brief_delete(
+                SessionBriefDeleteInput(**IDENT, user_id="u1", brief_key="auto/loom/main")
+            )
+        )
+        assert not gone.deleted and gone.revision == 0
+        mine = _save(brief_key="mine", user_id="u1", use_llm=False, events=_session())
+        assert mine.changed and mine.revision == 1
+    row = mem._newest()["auto/loom/main"]
+    assert (row["user_id"], row["revision"], row["tombstoned_at"]) == ("u2", 1, None)
 
 
 def test_registration() -> None:
