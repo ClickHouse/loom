@@ -26,9 +26,11 @@ From a checkout, `pip install -e .` installs the same CLI; it reads `LOOM_*` fro
 environment and `.env`. `loom <command> --help` documents every flag, and the
 [CLI reference](../reference/cli.md) lists them all.
 
-Org-wide views (cost across namespaces, `ops.health`, the `/v1/admin/*` routes) need
-`ORG_ADMIN` or `PLATFORM_ADMIN`, which only `LOOM_PLATFORM_ADMINS` grants
-([deployment](./deployment.md#required-environment)).
+Org-wide views (cost across namespaces, `ops.health`) need `ORG_ADMIN` or
+`PLATFORM_ADMIN`, which only `LOOM_PLATFORM_ADMINS` grants
+([deployment](./deployment.md#required-environment)). The deployment-wide `/v1/admin/*`
+routes need `PLATFORM_ADMIN`; `token.mint`, `namespace.adopt` and `claim_release` need
+`ORG_ADMIN` in the org they act on. A namespace `admin` reaches none of them.
 
 ## Health checks
 
@@ -69,7 +71,7 @@ curl -s 'http://localhost:7777/v1/health?include=workers' | jq '.workers_leader'
 | `main_loom_unreachable`                   | error                                                | a read-replica's main Loom did not answer its last call or check: blame, and the embeddings and LLM calls it sends there, fail                      |
 | `revocation_not_loaded`                   | error                                                | auth on and this process never read `loom.revoked_tokens`: every bearer gets 503                                                                    |
 | `revocation_stale`                        | warn                                                 | the revocation snapshot is older than max(300 s, 10 × `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS`): a token revoked since then still authenticates here |
-| `revocation_too_stale` | error | the snapshot is older than `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS` (600 s): every bearer gets 503 until a refresh lands |
+| `revocation_too_stale`                    | error                                                | the snapshot is older than `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS` (600 s): every bearer gets 503 until a refresh lands                             |
 | `pending_migrations`                      | error                                                | the schema lacks migrations this build expects                                                                                                      |
 | `instance_label_missing`                  | warn                                                 | a process outside the compose files has no `LOOM_INSTANCE_LABEL`                                                                                    |
 | `workers_lease_absent`                    | info                                                 | this process runs no workers (expected on a web-only container)                                                                                     |
