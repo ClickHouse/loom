@@ -1,10 +1,13 @@
-"""The statements that move stored entity text to a new canonical form: the graph tables
-rewrite the changed rows under their new text (the text is in their sort keys) and drop
-the old ones; `loom.memory` and its mirror re-emit each row one version up, so a write
-that lands meanwhile still wins."""
+"""The statements that move stored entity text to a new canonical form, one (org,
+namespace) at a time. Every step is safe to repeat: a graph row is copied under its new
+text only where the copy is not already there (`EXCEPT ALL`) before the old row is
+deleted; `loom.memory` and its mirror re-emit a row one version up, so a write that
+lands meanwhile still wins; entity degrees are rebuilt wherever they disagree with the
+edges."""
 
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Callable, Sequence
 
 from server.core.repo_base import _CHClient, _default_client
@@ -16,6 +19,8 @@ from server.memory.store.rows import (
     build_memory_version_row,
 )
 from server.memory.store.sql import _identity_key
+
+Scope = tuple[str, str]
 
 # (table, entity text columns, whether the two columns are an undirected pair in order)
 GRAPH_TABLES: tuple[tuple[str, tuple[str, ...], bool], ...] = (
@@ -32,43 +37,80 @@ GRAPH_TABLES: tuple[tuple[str, tuple[str, ...], bool], ...] = (
 MEMORY_TABLES = ("loom.memory", "loom.memory_embeddings")
 _CHUNK = 500
 _SYNC = "SETTINGS lightweight_deletes_sync = 2"
+_SCOPE = "org = {org:String} AND namespace = {ns:String}"
+_LIVE_NAMING = (
+    f"FINAL WHERE {_SCOPE} AND tombstoned_at IS NULL AND hasAny(entities, {{olds:Array(String)}})"
+)
 
 
-def _chunks(olds: Sequence[str]) -> list[list[str]]:
-    return [list(olds[i : i + _CHUNK]) for i in range(0, len(olds), _CHUNK)]
+def _chunks(values: Sequence[str]) -> list[list[str]]:
+    return [list(values[i : i + _CHUNK]) for i in range(0, len(values), _CHUNK)]
 
 
-async def graph_values(*, ch: _CHClient | None = None) -> set[str]:
+def _naming(cols: Sequence[str], key: str) -> str:
+    return "(" + " OR ".join(f"{c} IN {{{key}:Array(String)}}" for c in cols) + ")"
+
+
+async def stored_values(*, ch: _CHClient | None = None) -> dict[Scope, set[str]]:
+    """(org, namespace) -> every entity text its graph and memory rows hold."""
     ch = ch or _default_client()
-    out: set[str] = set()
-    for table, cols, _pair in GRAPH_TABLES:
-        for col in cols:
-            rows = await ch.query_all(f"SELECT DISTINCT toString({col}) AS v FROM {table}")
-            out.update(str(r["v"]) for r in rows)
-    return out
+    reads = [
+        f"SELECT DISTINCT org, namespace, toString({col}) AS v FROM {table}"
+        for table, cols, _pair in GRAPH_TABLES
+        for col in cols
+    ]
+    reads += [
+        f"SELECT DISTINCT org, namespace, arrayJoin(entities) AS v FROM {table}"
+        for table in MEMORY_TABLES
+    ]
+    out: dict[Scope, set[str]] = defaultdict(set)
+    for sql in reads:
+        for r in await ch.query_all(sql):
+            out[(str(r["org"]), str(r["namespace"]))].add(str(r["v"]))
+    return dict(out)
 
 
-async def memory_values(*, ch: _CHClient | None = None) -> set[str]:
+async def naming_texts(
+    scope: Scope, values: Sequence[str], *, ch: _CHClient | None = None
+) -> dict[str, list[str]]:
+    """value -> the values of the scope's live memories whose entities name it."""
     ch = ch or _default_client()
-    out: set[str] = set()
-    for table in MEMORY_TABLES:
-        rows = await ch.query_all(f"SELECT DISTINCT arrayJoin(entities) AS v FROM {table}")
-        out.update(str(r["v"]) for r in rows)
-    return out
-
-
-def _naming(cols: Sequence[str]) -> str:
-    return " OR ".join(f"{c} IN {{olds:Array(String)}}" for c in cols)
+    out: dict[str, list[str]] = defaultdict(list)
+    for part in _chunks(values):
+        rows = await ch.query_all(
+            "SELECT arrayJoin(arrayIntersect(entities, {olds:Array(String)})) AS v, value "
+            f"FROM loom.memory {_LIVE_NAMING}",
+            params={"org": scope[0], "ns": scope[1], "olds": part},
+        )
+        for r in rows:
+            out[str(r["v"])].append(str(r["value"]))
+    return dict(out)
 
 
 async def count_graph(
-    table: str, cols: Sequence[str], olds: Sequence[str], *, ch: _CHClient | None = None
+    table: str,
+    cols: Sequence[str],
+    scope: Scope,
+    olds: Sequence[str],
+    *,
+    ch: _CHClient | None = None,
 ) -> int:
+    return await _count(f"{table} WHERE {_SCOPE} AND {_naming(cols, 'olds')}", scope, olds, ch)
+
+
+async def count_memory(
+    table: str, scope: Scope, olds: Sequence[str], *, ch: _CHClient | None = None
+) -> int:
+    return await _count(f"{table} {_LIVE_NAMING}", scope, olds, ch)
+
+
+async def _count(source: str, scope: Scope, olds: Sequence[str], ch: _CHClient | None) -> int:
     ch = ch or _default_client()
     n = 0
     for part in _chunks(olds):
         row = await ch.query_one(
-            f"SELECT count() AS n FROM {table} WHERE {_naming(cols)}", params={"olds": part}
+            f"SELECT count() AS n FROM {source}",
+            params={"org": scope[0], "ns": scope[1], "olds": part},
         )
         n += int((row or {}).get("n") or 0)
     return n
@@ -78,14 +120,16 @@ async def rename_graph(
     table: str,
     cols: Sequence[str],
     pair: bool,
-    olds: Sequence[str],
-    news: Sequence[str],
+    scope: Scope,
+    mapping: dict[str, str],
     *,
     ch: _CHClient | None = None,
-) -> list[tuple[str, str]]:
-    """Rewrite `table`'s rows naming `olds` under `news` and drop the old rows; the
-    (org, namespace) pairs touched. `news` hold no value of `olds` (canonical text is a
-    fixed point), so the delete never meets a rewritten row."""
+) -> None:
+    """Copy the scope's rows naming a key of `mapping` under its value, then delete the
+    old rows. A copy an interrupted run already made is not made again; a pair whose two
+    ends become one entity is dropped, as graph writes never make a self-edge.
+    `mapping`'s values are canonical, so no copy names a key and the delete never meets
+    one."""
     ch = ch or _default_client()
     swap = "{olds:Array(String)}, {news:Array(String)}"
     mapped = {c: f"transform(toString({c}), {swap})" for c in cols}
@@ -93,72 +137,69 @@ async def rename_graph(
         a, b = cols
         mapped = {a: f"least({mapped[a]}, {mapped[b]})", b: f"greatest({mapped[a]}, {mapped[b]})"}
     replace = ", ".join(f"{expr} AS {c}" for c, expr in mapped.items())
-    touched: set[tuple[str, str]] = set()
-    by_old = dict(zip(olds, news, strict=True))
+    distinct = f" WHERE {cols[0]} != {cols[1]}" if pair else ""
+    old_rows = f"{_SCOPE} AND {_naming(cols, 'olds')}"
+    copies = (
+        f"SELECT * FROM (SELECT * REPLACE ({replace}) FROM "
+        f"(SELECT * FROM {table} WHERE {old_rows})){distinct}"
+    )
+    made = f"SELECT * FROM {table} WHERE {_SCOPE} AND {_naming(cols, 'news')}"
+    olds = sorted(mapping)
     for part in _chunks(olds):
-        params = {"olds": part, "news": [by_old[o] for o in part]}
-        where = _naming(cols)
-        rows = await ch.query_all(
-            f"SELECT DISTINCT org, namespace FROM {table} WHERE {where}", params=params
-        )
-        if not rows:
-            continue
-        touched.update((str(r["org"]), str(r["namespace"])) for r in rows)
+        params = {"org": scope[0], "ns": scope[1], "olds": part, "news": [mapping[o] for o in part]}
         await ch.execute(
-            f"INSERT INTO {table} SELECT * REPLACE ({replace}) "
-            f"FROM (SELECT * FROM {table} WHERE {where})",
-            params=params,
+            f"INSERT INTO {table} SELECT * FROM ({copies} EXCEPT ALL {made})", params=params
         )
-        await ch.execute(f"DELETE FROM {table} WHERE {where} {_SYNC}", params=params)
-    return sorted(touched)
+        await ch.execute(f"DELETE FROM {table} WHERE {old_rows} {_SYNC}", params=params)
 
 
-async def rebuild_degrees(
-    namespaces: Sequence[tuple[str, str]], *, ch: _CHClient | None = None
-) -> None:
-    """`loom.entity_degree` of these namespaces recomputed from their edges: the edge
-    rewrite added the new names' degrees but cannot take the old rows' back."""
-    if not namespaces:
-        return
+async def unsynced_degrees(*, ch: _CHClient | None = None) -> list[Scope]:
+    """The namespaces whose `loom.entity_degree` does not add up to their edges (each edge
+    counts `co_occur` at both ends): a rename moved them, or a rebuild was cut short."""
     ch = ch or _default_client()
-    params = {"nss": [tuple(n) for n in namespaces]}
-    scope = "(org, namespace) IN {nss:Array(Tuple(String, String))}"
-    await ch.execute(f"DELETE FROM loom.entity_degree WHERE {scope} {_SYNC}", params=params)
+    rows = await ch.query_all(
+        """
+        SELECT org, namespace FROM
+          (SELECT org, namespace, 2 * sum(co_occur) AS e FROM loom.entity_edges
+           GROUP BY org, namespace) AS x
+        FULL OUTER JOIN
+          (SELECT org, namespace, sum(degree) AS d FROM loom.entity_degree
+           GROUP BY org, namespace) AS y
+        USING (org, namespace)
+        WHERE e != d
+        ORDER BY org, namespace
+        """
+    )
+    return [(str(r["org"]), str(r["namespace"])) for r in rows]
+
+
+async def rebuild_degrees(scope: Scope, *, ch: _CHClient | None = None) -> None:
+    """The scope's `loom.entity_degree` recomputed from its edges."""
+    ch = ch or _default_client()
+    params = {"org": scope[0], "ns": scope[1]}
+    await ch.execute(f"DELETE FROM loom.entity_degree WHERE {_SCOPE} {_SYNC}", params=params)
     await ch.execute(
         "INSERT INTO loom.entity_degree SELECT org, namespace, "
         "arrayJoin([entity_a, entity_b]) AS entity, co_occur AS degree "
-        f"FROM loom.entity_edges WHERE {scope}",
+        f"FROM loom.entity_edges WHERE {_SCOPE}",
         params=params,
     )
 
 
-_LIVE_NAMING = "FINAL WHERE tombstoned_at IS NULL AND hasAny(entities, {olds:Array(String)})"
-
-
-async def count_memory(table: str, olds: Sequence[str], *, ch: _CHClient | None = None) -> int:
-    ch = ch or _default_client()
-    n = 0
-    for part in _chunks(olds):
-        row = await ch.query_one(
-            f"SELECT count() AS n FROM {table} {_LIVE_NAMING}", params={"olds": part}
-        )
-        n += int((row or {}).get("n") or 0)
-    return n
-
-
 async def reemit_memory(
+    scope: Scope,
     olds: Sequence[str],
     rename: Callable[[list[str]], list[str]],
     *,
     limit: int = 1000,
     ch: _CHClient | None = None,
 ) -> dict[str, int]:
-    """Re-emit every live `loom.memory` and `loom.memory_embeddings` row naming `olds`
-    with `rename(entities)`, one version above the row read."""
+    """Re-emit the scope's live `loom.memory` and `loom.memory_embeddings` rows naming
+    `olds` with `rename(entities)`, one version above the row read."""
     ch = ch or _default_client()
     written = dict.fromkeys(MEMORY_TABLES, 0)
     for part in _chunks(olds):
-        params = {"olds": part}
+        params = {"org": scope[0], "ns": scope[1], "olds": part}
         while keys := [
             _identity_key(r)
             for r in await ch.query_all(

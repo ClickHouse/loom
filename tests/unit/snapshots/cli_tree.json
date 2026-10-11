@@ -5508,6 +5508,7 @@
        "description": null,
        "dests": [
         "help",
+        "state",
         "dry_run",
         "dry_run"
        ]
@@ -5537,6 +5538,21 @@
        "type": null,
        "required": false,
        "help": "show this help message and exit",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--state"
+       ],
+       "dest": "state",
+       "action": "_StoreAction",
+       "default": "loom-recanonicalize-entities.json",
+       "const": null,
+       "choices": null,
+       "nargs": null,
+       "type": null,
+       "required": false,
+       "help": "where --apply keeps the mapping until it completes (default: %(default)s)",
        "metavar": null
       },
       {
@@ -10436,7 +10452,7 @@
     },
     {
      "dest": "recanonicalize-entities",
-     "help": "Rewrite stored entities (memory rows, their mirrors and the entity graph) in the current canonical form; run once after the entity normaliser changes. Dry run by default (rows per table); --apply writes.",
+     "help": "Rewrite stored entities (memory rows, their mirrors and the entity graph) in the current canonical form; run once after the entity normaliser changes. Dry run by default (rows per table); --apply writes, and resumes from --state when a run was interrupted.",
      "metavar": "recanonicalize-entities"
     },
     {

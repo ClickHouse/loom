@@ -80,19 +80,30 @@ def test_an_article_behind_punctuation_is_dropped_once(raw: str) -> None:
     assert canonical_entity_text(canonical_entity_text(raw)) == "ledger"
 
 
+@pytest.mark.parametrize("raw", ["re.S", "Re.S.", "v2.x's", "(the) Ledgers."])
+def test_punctuation_a_pass_exposes_is_taken_too(raw: str) -> None:
+    once = canonical_entity_text(raw)
+    assert canonical_entity_text(once) == once
+    assert canonical_entity_text("re.S") == "re"
+
+
 @pytest.mark.parametrize(
-    ("stored", "now"),
+    ("stored", "texts", "now"),
     [
-        ("api respons", "api response"),
-        ("payload siz", "payload size"),
-        ("cas", "case"),
-        ("the ledger", "ledger"),
-        ("bus", "bus"),
-        ("status", "status"),
-        ("kit", "kit"),
+        ("api respons", ["api responses page"], "api response"),  # an old stem, its plural said
+        ("payload siz", ["payload sizes grow"], "payload size"),
+        ("cas", ["two cases"], "case"),
+        ("kits", ["the kits"], "kit"),  # a lowercased plural, said as such
+        ("the ledger", [], "ledger"),  # articles need no evidence
+        ("dns", ["dns and tls"], "dns"),
+        ("tls", [], "tls"),
+        ("cas", ["CAS swaps"], "cas"),  # an acronym, no plural said
+        ("api respons", [], "api respons"),  # no evidence: kept
+        ("kit", ["kites"], "kit"),
+        ("lens", ["lenses"], "lens"),
     ],
 )
-def test_text_an_earlier_rule_stored_moves_to_todays_form(stored: str, now: str) -> None:
-    from server.memory.domain.graph_quality import recanonical
+def test_stored_text_moves_only_on_evidence(stored: str, texts: list[str], now: str) -> None:
+    from server.memory.domain.graph_quality import migrated_entity
 
-    assert recanonical(stored) == now
+    assert migrated_entity(stored, texts) == now

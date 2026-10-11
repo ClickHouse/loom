@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 _SPACE_RE = re.compile(r"\s+")
+_WORD_RE = re.compile(r"[a-z0-9_]+")
 _PUNCT_RE = re.compile(r"[^\w\s:/.-]+")
 _ARTICLE_RE = re.compile(r"^(?:(?:the|a|an)\s+)+", re.IGNORECASE)
 _SINGLE_VALUED_RELATIONS = {
@@ -351,6 +352,15 @@ def is_lexical_junk_entity(text: str) -> bool:
     return len(words) > 1 and all(w in _LEXICAL_JUNK or len(w) < 3 for w in words)
 
 
+def _normalise(lowered: str) -> str:
+    text = lowered.replace("'s", "").replace("’s", "")
+    text = _PUNCT_RE.sub(" ", text)
+    # articles after punctuation: punctuation can hide one (`"The Ledger"`)
+    text = _ARTICLE_RE.sub("", _SPACE_RE.sub(" ", text).strip(" ."))
+    text = _singularize_head(text)
+    return "user" if text in _FIRST_PERSON_FORMS else text
+
+
 def canonical_entity(raw: str) -> CanonicalEntity:
     """Return stable canonical entity text + ID for storage/search.
 
@@ -359,14 +369,12 @@ def canonical_entity(raw: str) -> CanonicalEntity:
     surface form is preserved in `aliases` for provenance and recall."""
 
     original = str(raw or "").strip()
-    lowered = original.lower()
-    lowered = lowered.replace("'s", "").replace("’s", "")
-    lowered = _PUNCT_RE.sub(" ", lowered)
-    # articles last: punctuation can hide one (`"The Ledger"`)
-    text = _ARTICLE_RE.sub("", _SPACE_RE.sub(" ", lowered).strip(" ."))
-    text = _singularize_head(text)
-    if text in _FIRST_PERSON_FORMS:
-        text = "user"
+    text = original.lower()
+    for _ in range(4):  # until a pass changes nothing (`re.S` -> `re.` -> `re`)
+        again = _normalise(text)
+        if again == text:
+            break
+        text = again
     entity_id = text.replace(" ", "_")
     return CanonicalEntity(text=text, entity_id=entity_id, aliases=[original] if original else [])
 
@@ -378,15 +386,20 @@ def canonical_entity_text(raw: str) -> str:
     return canonical_entity(raw).text
 
 
-def recanonical(stored: str) -> str:
-    """Today's canonical form of text an earlier normaliser stored as canonical: a head
-    that rule cut to a stem (`respons`, `siz`) takes the form its plural takes now."""
+def migrated_entity(stored: str, texts: Iterable[str]) -> str:
+    """Today's form of entity text an earlier normaliser stored, decided by `texts` (the
+    values of the memories that name it): a head the old plural rule may have cut
+    (`respons`, `siz`) is read as a stem only when a text says its plural (`responses`),
+    and a plural (`kits`) is singularised only when a text says it; a name with no such
+    evidence (`dns`, `cas`) is kept as stored."""
     head = stored.rsplit(" ", 1)[-1]
-    if head.endswith(("s", "z")) and not head.endswith(("ss", "zz")):
-        plural = canonical_entity_text(stored + "es")
-        if plural != stored:
-            return plural
-    return canonical_entity_text(stored)
+    words = {w for t in texts for w in _WORD_RE.findall(t.lower())}
+    if head.endswith(("s", "z")) and head + "es" in words:
+        return canonical_entity_text(stored + "es")
+    now = canonical_entity_text(stored)
+    if now == stored or _singular(head) == head:
+        return now  # unchanged, or changed by articles and punctuation alone
+    return now if head in words else stored
 
 
 def canonical_entities(values: Iterable[str]) -> list[str]:

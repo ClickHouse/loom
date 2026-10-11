@@ -1,52 +1,98 @@
-"""Move every stored entity to the current canonical form, once after the normaliser
-changes. The graph tables hold only canonical text, so each value is mapped by
-`recanonical` (a stem an earlier rule cut, `respons`, becomes `response`). `loom.memory`
-also holds text writers gave only lowercased, so a value the graph names takes the
-graph's mapping and any other is canonicalised as written."""
+"""Move stored entities to the current canonical form, once after the normaliser
+changes. The mapping is decided per (org, namespace) from the stored text and the
+memories that name it (`migrated_entity`: a name with no evidence is kept), saved to
+`state` before any table changes and reused until a run completes, so an interrupted run
+resumes with the same decisions after the rows that held the evidence were rewritten."""
 
 from __future__ import annotations
 
+import json
+import os
+from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
 from server.memory.domain.entity_sentinels import NONE_SENTINEL, PARSE_FAILED_SENTINEL
-from server.memory.domain.graph_quality import canonical_entity_text, recanonical
+from server.memory.domain.graph_quality import canonical_entity_text, migrated_entity
 from server.memory.store import entity_migration as store
 
 _SENTINELS = {NONE_SENTINEL, PARSE_FAILED_SENTINEL}
+Mapping = dict[store.Scope, dict[str, str]]
 
 
-def _changes(values: set[str], to: Any) -> dict[str, str]:
-    out = {}
-    for v in values - _SENTINELS:
-        new = to(v)
-        if new and new != v:
-            out[v] = new
+def _may_change(value: str) -> bool:
+    head = value.rsplit(" ", 1)[-1]
+    return canonical_entity_text(value) != value or head.endswith(("s", "z"))
+
+
+async def plan(*, ch: Any = None) -> Mapping:
+    """(org, namespace) -> old text -> new text, for every entity that changes."""
+    out: Mapping = {}
+    for scope, values in sorted((await store.stored_values(ch=ch)).items()):
+        candidates = sorted(v for v in values - _SENTINELS if _may_change(v))
+        if not candidates:
+            continue
+        texts = await store.naming_texts(scope, candidates, ch=ch)
+        changes = {
+            v: new
+            for v in candidates
+            if (new := migrated_entity(v, texts.get(v, []))) not in ("", v)
+        }
+        if changes:
+            out[scope] = changes
     return out
 
 
-async def migrate_entities(*, apply: bool, ch: Any = None) -> dict[str, int]:
-    """Rows per table whose entities change; with `apply`, rewritten."""
-    graph = _changes(await store.graph_values(ch=ch), recanonical)
-    memory = graph | _changes(await store.memory_values(ch=ch) - set(graph), canonical_entity_text)
-    counts: dict[str, int] = {}
-    olds = sorted(graph)
-    news = [graph[o] for o in olds]
-    touched: set[tuple[str, str]] = set()
-    for table, cols, pair in store.GRAPH_TABLES:
-        counts[table] = await store.count_graph(table, cols, olds, ch=ch)
-        if apply and counts[table]:
-            done = await store.rename_graph(table, cols, pair, olds, news, ch=ch)
-            if table == "loom.entity_edges":
-                touched.update(done)
+def _load(state: Path) -> Mapping | None:
+    if not state.exists():
+        return None
+    out: Mapping = defaultdict(dict)
+    for org, ns, old, new in json.loads(state.read_text())["mapping"]:
+        out[(org, ns)][old] = new
+    return dict(out)
+
+
+def _save(state: Path, mapping: Mapping) -> None:
+    rows = [
+        [*scope, old, new] for scope, m in sorted(mapping.items()) for old, new in sorted(m.items())
+    ]
+    tmp = state.with_suffix(state.suffix + ".tmp")
+    tmp.write_text(json.dumps({"mapping": rows}))
+    os.replace(tmp, state)
+
+
+async def migrate_entities(*, apply: bool, state: Path, ch: Any = None) -> dict[str, int]:
+    """Rows per table whose entities change (and namespaces whose degrees are rebuilt);
+    with `apply`, rewritten. A saved `state` is resumed rather than planned again."""
+    mapping = _load(state)
+    if mapping is None:
+        mapping = await plan(ch=ch)
+        if apply:
+            _save(state, mapping)
+    counts: dict[str, int] = defaultdict(int)
+    for scope, changes in mapping.items():
+        olds = sorted(changes)
+        for table, cols, pair in store.GRAPH_TABLES:
+            n = await store.count_graph(table, cols, scope, olds, ch=ch)
+            counts[table] += n
+            if apply and n:
+                await store.rename_graph(table, cols, pair, scope, changes, ch=ch)
+        for table in store.MEMORY_TABLES:
+            counts[table] += await store.count_memory(table, scope, olds, ch=ch)
+        if apply:
+
+            def rename(entities: list[str], changes: dict[str, str] = changes) -> list[str]:
+                return list(dict.fromkeys(changes.get(e, e) for e in entities))
+
+            await store.reemit_memory(scope, olds, rename, ch=ch)
+    unsynced = await store.unsynced_degrees(ch=ch)
+    counts["loom.entity_degree namespaces"] = len(unsynced)
     if apply:
-        await store.rebuild_degrees(sorted(touched), ch=ch)
-    mem_olds = sorted(memory)
-    for table in store.MEMORY_TABLES:
-        counts[table] = await store.count_memory(table, mem_olds, ch=ch)
-    if apply and mem_olds:
+        for scope in unsynced:
+            await store.rebuild_degrees(scope, ch=ch)
+        _clear(state)
+    return dict(counts)
 
-        def rename(entities: list[str]) -> list[str]:
-            return list(dict.fromkeys(memory.get(e, e) for e in entities))
 
-        counts |= await store.reemit_memory(mem_olds, rename, ch=ch)
-    return counts
+def _clear(state: Path) -> None:
+    state.unlink(missing_ok=True)
