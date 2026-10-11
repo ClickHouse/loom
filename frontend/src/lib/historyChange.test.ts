@@ -55,6 +55,12 @@ describe("historyChange", () => {
     ]);
   });
 
+  it("names a re-attestation of edited content by the same verifier within the same second", () => {
+    const v1 = next({ verified_at: "2026-01-02T00:00:00Z", verified_by: "human:r", verified_sha256: "s1" });
+    const edited = { ...v1, version: 3, value: "edited", content_sha256: "s2" };
+    expect(historyChange({ ...edited, version: 4, verified_sha256: "s2" }, edited)).toEqual(["re-verified by human:r"]);
+  });
+
   it("names a lock update that keeps its mode", () => {
     const finite = next({ lock_mode: "no_delete", lock_until: "2026-01-02T00:10:00Z", lock_reason: "audit" });
     expect(historyChange({ ...finite, version: 3, lock_until: null, lock_reason: "hold" }, finite)).toEqual([

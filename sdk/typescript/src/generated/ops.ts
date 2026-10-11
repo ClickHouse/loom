@@ -4456,6 +4456,7 @@ export interface MemoryHistoryRow {
   tags?: string[];
   verified_at?: string | null;
   verified_by?: string;
+  verified_sha256?: string;
   lock_mode?: string;
   lock_reason?: string;
   lock_until?: string | null;

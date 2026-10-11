@@ -187,6 +187,9 @@ class _MemoryHistoryRow(BaseModel):
     tags: list[str] = Field(default_factory=list)
     verified_at: datetime | None = None
     verified_by: str = ""
+    # The content hash the attestation covers: a re-attestation within the same
+    # second by the same verifier differs from the one before only here.
+    verified_sha256: str = ""
     lock_mode: str = ""
     lock_reason: str = ""
     lock_until: datetime | None = None

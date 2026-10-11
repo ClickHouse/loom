@@ -43,7 +43,12 @@ export function historyChange(h: MemoryHistoryEntry, prev: MemoryHistoryEntry | 
   const by = h.verified_by ? ` by ${h.verified_by}` : "";
   if (!!h.verified_at !== !!prev.verified_at) {
     out.push(h.verified_at ? `verified${by}` : "verification revoked");
-  } else if (h.verified_at && (h.verified_by !== prev.verified_by || h.verified_at !== prev.verified_at)) {
+  } else if (
+    h.verified_at &&
+    (h.verified_by !== prev.verified_by ||
+      h.verified_at !== prev.verified_at ||
+      h.verified_sha256 !== prev.verified_sha256)
+  ) {
     out.push(`re-verified${by}`);
   }
 

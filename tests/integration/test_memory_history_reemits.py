@@ -104,6 +104,21 @@ async def test_reemits_are_left_out_and_edits_stay(control_plane_url, mint_test_
         first, second = reviewed[1]["verified_by"], reviewed[0]["verified_by"]
         assert first and second and first != second, reviewed
 
+        # Verify, edit, verify again within one second: the same verifier and timestamp,
+        # a new attested hash.
+        await a.memory.set("e", "draft")
+        await _history(a, "e", 1)
+        assert (await a.memory.verify("e")).get("changed")
+        await a.memory.set("e", "final")
+        assert (await a.memory.verify("e")).get("changed")
+        edited = await _history(a, "e", 4)
+        assert edited[0]["verified_sha256"] == edited[0]["content_sha256"], edited
+        assert (
+            edited[1]["verified_sha256"]
+            == edited[2]["content_sha256"]
+            != edited[0]["content_sha256"]
+        ), edited
+
         await a.memory.set("l", "held")
         await a.memory.lock("l", reason="audit", mode="no_delete", ttl_seconds=600)
         await a.memory.lock("l", reason="legal hold", mode="no_delete")

@@ -389,6 +389,7 @@ async def handle_memory_history(input: MemoryHistoryInput) -> MemoryHistoryOutpu
             tags=list(r.tags),
             verified_at=r.verified_at,
             verified_by=r.verified_by,
+            verified_sha256=r.verified_sha256,
             lock_mode=r.lock_mode,
             lock_reason=r.lock_reason,
             lock_until=r.lock_until,

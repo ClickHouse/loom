@@ -920,7 +920,10 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                                 {h.redacted_at && <span className="ml-1 text-warn">· redacted</span>}
                               </div>
                               {changed.length > 0 && (
-                                <div className="text-2xs text-[var(--color-text-muted)] line-clamp-1">
+                                <div
+                                  data-testid="history-change"
+                                  className="text-2xs text-[var(--color-text-muted)] [overflow-wrap:anywhere]"
+                                >
                                   {changed.join(" · ")}
                                 </div>
                               )}
