@@ -218,7 +218,9 @@ request's own scheme and `Host`, validated as `http(s)://hostname[:port]`.
 `LOOM_ALLOW_INSECURE=1`. `LOOM_CORS_ORIGINS=*` refuses to start (CORS allows
 credentials). With auth off, a request whose `Host` is not `localhost`, `127.0.0.1`,
 `::1` or the public URL's host gets `421`, so a DNS-rebinding page cannot drive a
-local server. `loom doctor` and `/v1/health` report each of these.
+local server, and one whose `Origin` names another host (and is not in
+`LOOM_CORS_ORIGINS`) or whose `Sec-Fetch-Site` is `cross-site` gets `403`, so a page
+on another site cannot post to it either. `loom doctor` and `/v1/health` report each of these.
 
 **Browser.** Every response is `X-Content-Type-Options: nosniff`. `/me` carries a
 Content-Security-Policy whose `script-src` admits the bundle's origin and the one boot

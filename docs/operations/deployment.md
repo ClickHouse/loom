@@ -450,7 +450,11 @@ The image serves plain HTTP. Put a TLS-terminating proxy or load balancer in fro
 - A non-loopback `LOOM_BIND_HOST` refuses to start without `LOOM_PUBLIC_BASE_URL`, and
   with auth off or the dev JWT secret unless `LOOM_ALLOW_INSECURE=1`. With auth off, any
   request whose `Host` is not `localhost`, `127.0.0.1`, `::1` or the public URL's host
-  gets `421` (DNS rebinding).
+  gets `421` (DNS rebinding), and one from a page on another site (a foreign `Origin`
+  or `Sec-Fetch-Site: cross-site`) gets `403`.
+- In a container the server listens on every interface, so the check trusts the
+  declared `LOOM_BIND_HOST`, not the socket: it must match the address the compose
+  file publishes the port on.
 - Raise the file-descriptor limit on anything that holds many connections; the compose
   files set `nofile` to 65536.
 - `/docs`, `/redoc`, `/openapi.json` and `/v1/api/openapi.json` answer without a token.
