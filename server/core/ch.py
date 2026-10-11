@@ -9,6 +9,7 @@ idle connections) doesn't surface as a hard failure.
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import os
 import re
@@ -129,6 +130,16 @@ def _apply_caller_ceilings(out: dict[str, Any], sql: str) -> None:
         if asked <= 0 or asked > ceiling:
             out[name] = int(ceiling) if ceiling.is_integer() else ceiling
     out["read_overflow_mode"] = "throw"
+
+
+def _reader_auth() -> dict[str, Any]:
+    """Inside a `caller_shaped()` block with LOOM_CH_READER_USER set, the HTTP
+    auth header that sends the read as that read-only user instead of `ch_user`."""
+    user = settings.ch_reader_user
+    if not caller_shaped_var.get() or not user:
+        return {}
+    token = base64.b64encode(f"{user}:{settings.ch_password}".encode()).decode()
+    return {"transport_settings": {"Authorization": f"Basic {token}"}}
 
 
 # Caps a caller-shaped read hit: TOO_MANY_ROWS, TOO_MANY_BYTES, MEMORY_LIMIT_EXCEEDED.
@@ -694,7 +705,10 @@ class CHClient:
 
         async def _q(text: str) -> Any:
             res = await self.client.query(
-                text, parameters=params or {}, settings=statement_settings(text, cls="read")
+                text,
+                parameters=params or {},
+                settings=statement_settings(text, cls="read"),
+                **_reader_auth(),
             )
             note_result_summary(res)
             return res
