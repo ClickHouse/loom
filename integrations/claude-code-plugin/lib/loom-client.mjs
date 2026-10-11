@@ -606,12 +606,15 @@ export async function postBounded(opName, body, { token, serverUrl, timeoutMs } 
 // sweep are the next line.
 const PRIVATE_KEY_RE = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g;
 const TOKEN_SHAPES_RE =
-  /\b(?:(?:AKIA|ASIA)[0-9A-Z]{16}|(?:ghp|gho|ghs|ghu|ghr)_[A-Za-z0-9]{20,}|github_pat_\w{20,}|xox[abeprs]-[A-Za-z0-9-]{10,})\b/g;
+  /\b(?:(?:AKIA|ASIA)[0-9A-Z]{16}|(?:ghp|gho|ghs|ghu|ghr)_[A-Za-z0-9]{20,}|github_pat_\w{20,}|xox[abeprs]-[A-Za-z0-9-]{10,}|sk-(?:ant|proj)-[\w-]{20,}|glpat-[\w-]{20,})\b/g;
 // `password=…`, `"api_key": "…"`, `AWS_SECRET_ACCESS_KEY=…`: the name stays, the value goes.
 const SECRET_ASSIGNMENT_RE =
   /\b([\w.-]*?(?:password|passwd|secret|secret[_-]?key|token|api[_-]?key|access[_-]?key|private[_-]?key)\b["']?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s"'\\,;}]+)/gi;
 const JWT_RE = /\beyJ[\w-]*\.[\w-]+\.[\w-]*/g;
 const BEARER_RE = /\b(Bearer)\s+[^\s"'\\]+/gi;
+const BASIC_AUTH_RE = /(\bAuthorization["']?\s*[:=]\s*["']?Basic)\s+[^\s"'\\]+/gi;
+// `https://user:pass@host`: the scheme and host stay, the credentials go.
+const URL_CREDENTIALS_RE = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@"']+:[^\s/@"']*@/gi;
 
 /** `replacement` in the quotes `value` had, so redacted JSON still parses. */
 function quoted(value, replacement) {
@@ -619,8 +622,9 @@ function quoted(value, replacement) {
   return q + replacement + q;
 }
 
-/** `text` with private keys, cloud/GitHub/Slack tokens, secret assignments,
- *  bearer tokens, JWTs and the resolved token itself replaced. */
+/** `text` with private keys, cloud/GitHub/GitLab/Slack/OpenAI/Anthropic
+ *  tokens, secret assignments, bearer and basic credentials, URL passwords,
+ *  JWTs and the resolved token itself replaced. */
 export function redactSecrets(text, token = resolveToken()) {
   let s = String(text ?? "");
   if (token && token.length >= 8) s = s.split(token).join("[redacted]");
@@ -629,7 +633,9 @@ export function redactSecrets(text, token = resolveToken()) {
     .replace(TOKEN_SHAPES_RE, "[redacted]")
     .replace(SECRET_ASSIGNMENT_RE, (_, name, value) => name + quoted(value, "[redacted]"))
     .replace(JWT_RE, "[redacted]")
-    .replace(BEARER_RE, "$1 [redacted]");
+    .replace(BEARER_RE, "$1 [redacted]")
+    .replace(BASIC_AUTH_RE, "$1 [redacted]")
+    .replace(URL_CREDENTIALS_RE, "$1[redacted]@");
 }
 
 /**

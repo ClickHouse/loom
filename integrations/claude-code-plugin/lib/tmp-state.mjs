@@ -69,22 +69,26 @@ export function readJsonFile(file, fallback = {}) {
   }
 }
 
-/** Write (or append) `text` to `file` with mode 0600. Throws, writing
- *  nothing, when the path is a symlink, not a regular file, or owned by
- *  another user: someone else may have planted it in a shared tmp dir. */
+/** Write (or append) `text` to `file` with mode 0600. Throws, changing
+ *  nothing, when the path is a symlink, not a regular file, a hard link, or
+ *  owned by another user: someone else may have planted it in a shared tmp dir. */
 export function writePrivateFile(file, text, { append = false } = {}) {
   const c = fs.constants;
-  // O_NONBLOCK so a planted FIFO fails the open instead of hanging the hook.
-  const flags = c.O_WRONLY | c.O_CREAT | (append ? c.O_APPEND : c.O_TRUNC) | (c.O_NOFOLLOW ?? 0) | (c.O_NONBLOCK ?? 0);
+  // No O_TRUNC: truncate only after the checks, so a planted hard link to a
+  // file of ours is refused before it is emptied. O_NONBLOCK so a planted
+  // FIFO fails the open instead of hanging the hook.
+  const flags = c.O_WRONLY | c.O_CREAT | (append ? c.O_APPEND : 0) | (c.O_NOFOLLOW ?? 0) | (c.O_NONBLOCK ?? 0);
   const fd = fs.openSync(file, flags, 0o600);
   try {
     const st = fs.fstatSync(fd);
     if (!st.isFile()) throw new Error(`${file} is not a regular file`);
+    if (st.nlink !== 1) throw new Error(`${file} has other hard links`);
     if (typeof process.getuid === "function" && st.uid !== process.getuid()) {
       throw new Error(`${file} belongs to another user`);
     }
     // A file left by an older version keeps its mode on open; tighten it.
     fs.fchmodSync(fd, 0o600);
+    if (!append) fs.ftruncateSync(fd, 0);
     fs.writeSync(fd, text);
   } finally {
     fs.closeSync(fd);

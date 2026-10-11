@@ -71,6 +71,25 @@ test("diagnostics never carry a bearer token or a JWT", async () => {
   assert.equal(redactSecrets("nothing here", ""), "nothing here");
 });
 
+test("diagnostics never carry Anthropic, OpenAI or GitLab keys, basic auth or URL passwords", async () => {
+  const { redactSecrets } = await import("../lib/loom-client.mjs");
+  // Assembled at run time so the repo's own secret scanner does not flag the fixture.
+  const tail = "abcdefghijklmnopqrstuvwxyz0123";
+  for (const prefix of ["sk-" + "ant-api03-", "sk-" + "proj-", "glpat" + "-"]) {
+    assert.equal(redactSecrets(`key ${prefix}${tail} rejected`, ""), "key [redacted] rejected");
+  }
+  assert.equal(redactSecrets("Authorization: Basic dXNlcjpwYXNz sent", ""), "Authorization: Basic [redacted] sent");
+  assert.equal(redactSecrets('{"authorization": "Basic dXNlcjpwYXNz"}', ""), '{"authorization": "Basic [redacted]"}');
+  assert.equal(
+    redactSecrets("clone https://alice:hunter2@git.example.com/r.git failed", ""),
+    "clone https://[redacted]@git.example.com/r.git failed",
+  );
+  assert.equal(
+    redactSecrets("Basic setup at http://localhost:7777/v1 ok", ""),
+    "Basic setup at http://localhost:7777/v1 ok",
+  );
+});
+
 /** readStdinJson in a child process fed `input`; resolves the object it read. */
 async function readStdinIn(input) {
   const { spawn } = await import("node:child_process");
