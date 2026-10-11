@@ -64,9 +64,12 @@ boot and refreshes it every `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` (30 s), thro
 `jwt_revocation_refresh` worker on the leader or the process's own loop elsewhere.
 
 - Until the first load succeeds, every token gets 503 `AUTH_UNAVAILABLE`.
-- After that, a ClickHouse outage keeps the last good snapshot.
-- `/v1/health` reports `revocation_not_loaded` (error) and `revocation_stale` (warning,
-  once older than `max(300 s, 10 × the refresh interval)`).
+- After that, a ClickHouse outage keeps the last good snapshot for at most
+  `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS` (600 s); past it every token gets 503 again
+  until a refresh lands.
+- `/v1/health` reports `revocation_not_loaded` (error), `revocation_stale` (warning,
+  once older than `max(300 s, 10 × the refresh interval)`) and `revocation_too_stale`
+  (error, past the max-stale bound).
 
 **Why fail closed.** Admitting tokens before the list is loaded would accept a revoked
 token on every fresh process, which is when an operator restarts the fleet after

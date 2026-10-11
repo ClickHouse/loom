@@ -240,14 +240,27 @@ def _revocation_problems(settings: Any, state: HealthState) -> list[Problem]:
                 source="runtime",
             )
         ]
-    stale_after = max(300.0, 10 * float(settings.jwt_revocation_cache_ttl_seconds))
+    max_stale = float(settings.jwt_revocation_max_stale_seconds)
+    if age > max_stale:
+        return [
+            Problem(
+                "revocation_too_stale",
+                "error",
+                f"The token revocation list was last read {int(age)}s ago, past the "
+                f"{int(max_stale)}s bound: every bearer is refused with 503.",
+                fix,
+                source="runtime",
+            )
+        ]
+    stale_after = min(max_stale, max(300.0, 10 * float(settings.jwt_revocation_cache_ttl_seconds)))
     if age > stale_after:
         return [
             Problem(
                 "revocation_stale",
                 "warn",
                 f"The token revocation list was last read {int(age)}s ago: a token revoked "
-                "since then still authenticates on this process.",
+                "since then still authenticates on this process until the snapshot is "
+                f"{int(max_stale)}s old.",
                 fix,
                 source="runtime",
             )

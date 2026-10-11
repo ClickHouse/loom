@@ -72,9 +72,10 @@ def require_real_signing_secret(
 
 
 class RevocationUnavailable(TokenError):
-    """The token may be valid, but this process has not yet loaded the
-    revocation list, so it cannot tell whether the token was revoked.
-    Retryable: the list loads on the next refresh."""
+    """The token may be valid, but this process has not loaded the
+    revocation list, or its copy is older than
+    `jwt_revocation_max_stale_seconds`, so it cannot tell whether the token
+    was revoked. Retryable: the list loads on the next refresh."""
 
 
 @dataclass(frozen=True)
@@ -342,10 +343,12 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
     # or by `sub` with an issued-before cutoff (the
     # tokens minted before the cutoff die, a re-mint after it stays valid).
     # `iat` is in the required set above, so the cutoff always has an anchor.
-    from server.auth.revocation import is_revoked, loaded
+    from server.auth.revocation import is_revoked, loaded, snapshot_age_seconds
 
     if not loaded():
         raise RevocationUnavailable("token revocation list not loaded yet; retry shortly")
+    if snapshot_age_seconds() > settings.jwt_revocation_max_stale_seconds:
+        raise RevocationUnavailable("token revocation list is stale; retry shortly")
     jti = decoded.get("jti")
     if jti and is_revoked(str(jti)):
         raise TokenError(f"token jti {jti!r} is revoked")

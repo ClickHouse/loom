@@ -536,16 +536,16 @@ def _vector_read_state_not_probed() -> Iterator[None]:
 @pytest.fixture(autouse=True)
 def _revocation_snapshot_loaded() -> Iterator[None]:
     """A unit test models a booted process: the revocation snapshot has been
-    read (and is empty). Tests of the not-yet-loaded state
+    read just now (and is empty). Tests of the not-yet-loaded state
     set `_loaded` back to False. Saved and restored by hand, not through
     `monkeypatch`: requesting it here would set it up before
     `_settings_left_as_found` and so tear it down after that check."""
     import server.auth.revocation as rev
 
-    saved = rev._loaded
-    rev._loaded = True
+    saved = rev._loaded, rev._loaded_at
+    rev._loaded, rev._loaded_at = True, rev.time.monotonic()
     yield
-    rev._loaded = saved
+    rev._loaded, rev._loaded_at = saved
 
 
 # The scalar repository the code-plane fixtures model, with its repository-shaped
