@@ -47,6 +47,23 @@ test("a planted symlink is refused, and its target is untouched", { skip: !posix
   assert.equal(fs.readFileSync(target, "utf8"), "original");
 });
 
+test("a planted hard link to a file of ours is refused before it is truncated", { skip: !posix }, () => {
+  const dir = tmp();
+  const target = path.join(dir, "victim.txt");
+  fs.writeFileSync(target, "original");
+  fs.linkSync(target, path.join(dir, "loom-x.json"));
+  assert.equal(writeJsonFile(path.join(dir, "loom-x.json"), { a: 1 }), false);
+  assert.throws(() => writePrivateFile(path.join(dir, "loom-x.json"), "x", { append: true }));
+  assert.equal(fs.readFileSync(target, "utf8"), "original");
+});
+
+test("a rewrite replaces the whole file", { skip: !posix }, () => {
+  const file = path.join(tmp(), "loom-x.json");
+  assert.ok(writeJsonFile(file, { long: "a".repeat(100) }));
+  assert.ok(writeJsonFile(file, { a: 1 }));
+  assert.deepEqual(readJsonFile(file), { a: 1 });
+});
+
 test("a planted FIFO fails the write instead of hanging the hook", { skip: !posix }, () => {
   const fifo = path.join(tmp(), "loom-fifo");
   if (spawnSync("mkfifo", [fifo]).status !== 0) return;

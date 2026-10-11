@@ -44,14 +44,20 @@ through the stock stack.
 
 ClickHouse starts with the files in `deploy/clickhouse-config/`:
 
-| File                                    | Why                                                                                                                     |
-| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `lemmatizers.xml` + `deploy/lemmagen3/` | The English lemmatizer behind the stemmed lexical search leg.                                                           |
-| `nlp_user_settings.xml`                 | Enables ClickHouse's experimental NLP and AI SQL functions for ad-hoc queries; Loom sets the flags per statement.       |
-| `merge_tree_settings.xml`               | MergeTree defaults that let lightweight `UPDATE` (tombstone paths) work on OSS.                                         |
-| `keeper.xml`                            | An embedded single-node Keeper, so the `KeeperMap` task-inbox lease table works on OSS.                                 |
-| `named_collections.xml`                 | Named collections for ClickHouse's `ai*` SQL functions. Git-ignored; defines none as shipped; keys come via `from_env`. |
+| File                                    | Why                                                                                                                                                                             |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lemmatizers.xml` + `deploy/lemmagen3/` | The English lemmatizer behind the stemmed lexical search leg.                                                                                                                   |
+| `nlp_user_settings.xml`                 | Enables ClickHouse's experimental NLP and AI SQL functions for ad-hoc queries; Loom sets the flags per statement. Also the per-tenant quota and the `loom_reader` user (below). |
+| `merge_tree_settings.xml`               | MergeTree defaults that let lightweight `UPDATE` (tombstone paths) work on OSS.                                                                                                 |
+| `keeper.xml`                            | An embedded single-node Keeper, so the `KeeperMap` task-inbox lease table works on OSS.                                                                                         |
+| `named_collections.xml`                 | Named collections for ClickHouse's `ai*` SQL functions. Git-ignored; defines none as shipped; keys come via `from_env`.                                                         |
 
+- **Read-only user.** `nlp_user_settings.xml` defines `loom_reader`: SELECT on
+  `loom.*` and `system.*`, a read-only profile, the `loom` user's password
+  (`CLICKHOUSE_PASSWORD`). With `LOOM_CH_READER_USER=loom_reader` (set in the
+  shipped compose files) the reads a caller shapes (`code.grep`, a patterned
+  `code.search`, `memory.aggregate`, `memory.record.query`) run as that user, so
+  none of them can write, change schema or grant. Unset, they run as `LOOM_CH_USER`.
 - **Ports.** If `8123` or `9000` is taken, set `LOOM_CH_HOST_PORT` or
   `LOOM_CH_NATIVE_HOST_PORT` in `.env`. These are compose variables for the host side
   only; containers always talk to `clickhouse:8123`.

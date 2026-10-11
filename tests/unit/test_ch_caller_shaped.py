@@ -180,3 +180,44 @@ async def test_code_grep_and_a_patterned_code_search_run_caller_shaped(
     await search_mod.handle_code_search(CodeSearchInput(query="q", path_globs=["src/**"]))
     await search_mod.handle_code_search(CodeSearchInput(query="q"))
     assert seen == [True, True, True, False]
+
+
+class _RecordingDriver:
+    """The driver under CHClient: records the extra keyword arguments of each call."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def query(self, _sql: str, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+        return type("R", (), {"result_rows": [], "column_names": [], "summary": {}})()
+
+    async def command(self, _sql: str, **kwargs: Any) -> None:
+        self.calls.append(kwargs)
+
+
+@pytest.mark.asyncio
+async def test_only_caller_shaped_reads_go_as_the_reader_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import base64
+
+    monkeypatch.setattr(settings, "ch_reader_user", "loom_reader")
+    monkeypatch.setattr(settings, "ch_password", "pw")
+    driver = _RecordingDriver()
+    client = ch.CHClient.__new__(ch.CHClient)
+    client._client = driver  # type: ignore[assignment]
+    await client.query_all(_SELECT)
+    with ch.caller_shaped():
+        await client.query_all(_SELECT)
+        await client.execute("INSERT INTO loom.code_traces VALUES")
+    outside, shaped, write = driver.calls
+    assert "transport_settings" not in outside and "transport_settings" not in write
+    auth = shaped["transport_settings"]["Authorization"]
+    assert base64.b64decode(auth.removeprefix("Basic ")).decode() == "loom_reader:pw"
+
+
+def test_no_reader_user_means_no_auth_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "ch_reader_user", "")
+    with ch.caller_shaped():
+        assert ch._reader_auth() == {}

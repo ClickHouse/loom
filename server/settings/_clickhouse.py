@@ -61,6 +61,9 @@ class ClickHouseSettings(BaseModel):
     ch_caller_shaped_max_memory_bytes: int = 4_000_000_000
     # Rows one such read may scan; past it the read fails (422), never a partial answer.
     ch_caller_shaped_max_rows_to_read: int = 500_000_000
+    # ClickHouse user the caller-shaped reads run as, with `ch_password`; the
+    # shipped config defines `loom_reader` (SELECT only). Empty = `ch_user`.
+    ch_reader_user: str = ""
 
     # JSON map {traffic class: ClickHouse settings} applied by
     # `server.core.ch.statement_settings` to every read (an explicit per-call

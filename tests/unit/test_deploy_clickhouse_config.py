@@ -31,3 +31,18 @@ def test_the_named_collections_template_carries_no_key() -> None:
     text = path.read_text(encoding="utf-8")
     assert '<api_key from_env="OPENAI_API_KEY"/>' in text
     assert "<api_key>" not in text and "REPLACE_WITH" not in text
+
+
+def test_the_reader_user_can_only_select() -> None:
+    """Caller-shaped reads run as loom_reader: no access management, read-only
+    profile, and grants of SELECT alone."""
+    root = ET.parse(CFG / "nlp_user_settings.xml").getroot()
+    reader = root.find("users/loom_reader")
+    assert reader is not None
+    assert reader.find("access_management") is None
+    assert reader.find("named_collection_control") is None
+    assert reader.find("password").get("from_env") == "CLICKHOUSE_PASSWORD"
+    assert root.findtext(f"profiles/{reader.findtext('profile')}/readonly") == "2"
+    assert reader.findtext("quota") == "loom_tenant"
+    grants = [q.text for q in reader.findall("grants/query")]
+    assert grants and all(g.startswith("GRANT SELECT ON ") for g in grants)
