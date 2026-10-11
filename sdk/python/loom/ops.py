@@ -12485,6 +12485,7 @@ class StackEntry(TypedDict, total=False):
     pinned: NotRequired[bool]
     recall_count: NotRequired[int]
     last_recalled_at: NotRequired[Optional[str]]
+    actor: NotRequired[str]
 
 
 class MemorySweepExpiredInput(TypedDict, total=False):
@@ -14471,6 +14472,7 @@ class ProcedureMatch(TypedDict, total=False):
     goal_similarity: NotRequired[Optional[float]]
     for_agent: NotRequired[dict[str, int]]
     run_stats_by_agent: NotRequired[dict[str, dict[str, int]]]
+    actor: NotRequired[str]
 
 
 class ProcedureRecordRunInput(TypedDict, total=False):

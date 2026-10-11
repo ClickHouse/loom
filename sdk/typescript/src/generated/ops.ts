@@ -5615,6 +5615,7 @@ export interface StackEntry {
   pinned?: boolean;
   recall_count?: number;
   last_recalled_at?: string | null;
+  actor?: string;
 }
 
 export interface MemoryStackOutput {
@@ -6995,6 +6996,7 @@ export interface ProcedureMatch {
   goal_similarity?: number | null;
   for_agent?: Record<string, number>;
   run_stats_by_agent?: Record<string, Record<string, number>>;
+  actor?: string;
 }
 
 export interface ProcedureMatchOutput {

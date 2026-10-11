@@ -39,6 +39,7 @@ Source: `server/settings/_auth.py`
 | `LOOM_JWT_PUBLIC_KEYS_JSON` | `str` | *(unset)* | JSON (or base64 JSON) map kid → PEM public key: this deployment's own keys under RS256, and a gateway's keys whose RS256 tokens it accepts. |
 | `LOOM_JWT_LEEWAY_SECONDS` | `int` | `30` | Clock-skew tolerance on iat/exp, seconds; small enough to give replay no useful post-exp window. |
 | `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` | `float` | `30.0` | Seconds the `loom.revoked_tokens` snapshot is cached; verify checks both jti and sub against it, so a revoke takes effect within this TTL. |
+| `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS` | `float` | `600.0` | Oldest revocation snapshot a process still trusts, seconds. Past it (refreshes keep failing) every bearer is refused with a retryable 503. |
 | `LOOM_SELF_SIGNUP` | `'off' \| 'open'` | `'off'` | Browser self-signup: "off" (endpoint 404s) or "open" (/v1/auth/self-signup mints JWTs scoped to the requested namespace). |
 | `LOOM_SELF_SIGNUP_ORG` | `str` | `'dev'` | Default org for self-signed tokens. |
 | `LOOM_IDENTITY_PROVIDER` | `'' \| 'single-user' \| 'trust-network' \| 'gateway'` | `''` | Identity mode; decides how callers authenticate. single-user    — no auth, one anonymous identity. trust-network  — self-signup, first-claim-wins. gateway        — an upstream proxy mints short-lived Loom JWTs with the shared HS256 secret; Loom only validates. Empty = inferred from auth_required + self_signup at boot. |
@@ -75,6 +76,9 @@ Source: `server/settings/_clickhouse.py`
 | `LOOM_CH_TIMEOUT_WRITE_S` | `float` | `60.0` | Deadline, seconds, for INSERT and UPDATE statements; 0 = no bound. |
 | `LOOM_CH_TIMEOUT_DDL_S` | `float` | `300.0` | Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound. |
 | `LOOM_CH_POOL_WAIT_MS` | `int` | `500` | Max wait, ms, for a pool slot before failing fast with 503 OVERLOADED. 0 = no slot gate. |
+| `LOOM_CH_CALLER_SHAPED_MAX_EXECUTION_S` | `float` | `30.0` | Ceilings for the reads a caller shapes (code.grep, code.search with a pattern or globs, memory.aggregate, memory.record.query). A ceiling only lowers the statement's own value, so no request can widen it; 0 = none. Seconds one such read may run (the read class default). |
+| `LOOM_CH_CALLER_SHAPED_MAX_MEMORY_BYTES` | `int` | `4000000000` | Bytes of memory one such read may use. |
+| `LOOM_CH_CALLER_SHAPED_MAX_ROWS_TO_READ` | `int` | `500000000` | Rows one such read may scan; past it the read fails (422), never a partial answer. |
 | `LOOM_CH_SETTINGS_BY_TRAFFIC_CLASS` | `str` | `'{"production": {"priority": 1}, "interactive": {"priorit…` | JSON map {traffic class: ClickHouse settings} applied by `server.core.ch.statement_settings` to every read (an explicit per-call setting wins). `priority`: 1 served first, larger waits, 0 opts out; `max_threads` caps CPU per statement. Neither changes the rows returned. `background` (workers, operator CLIs) bypasses the filesystem cache on a miss so a backfill scan does not evict interactive data. |
 | `LOOM_BOOT_MIGRATE_LOCK_PATH` | `str` | `'/tmp/loom-migrate.lock'` | Advisory flock that serialises boot migrations across the processes of one host. |
 | `LOOM_BOOT_MIGRATE` | `bool` | `True` | Apply pending migrations at boot. Set False for any server started from a branch against a shared service, or it applies unmerged migrations. |
@@ -381,7 +385,7 @@ Source: `server/settings/_code.py`
 | `LOOM_CODE_SEARCH_CARD_LEG_MODE` | `'skeleton' \| 'best_chunk'` | `'skeleton'` | What a voted file contributes: `skeleton` (its class skeletons) or `best_chunk` (its source chunks nearest the query by exact cosine). |
 | `LOOM_CODE_SEARCH_CARD_LEG_CAP` | `float` | `1.0` | Max share of the best two-leg RRF score a card row contributes. |
 | `LOOM_CODE_SEARCH_CARD_LEG_KINDS` | `str` | `'responsibility'` | CSV of prose question kinds the card leg votes on; `any` = all. |
-| `LOOM_CODE_SEARCH_RERANK_DEFAULT` | `str` | `''` | Rerank endpoint code.search and code.ask use when the request names none (same values as the per-request `rerank`; rerank="none" turns it off). Empty = no default rerank. |
+| `LOOM_CODE_SEARCH_RERANK_DEFAULT` | `str` | `''` | Reranker code.search and code.ask use when the request names none (same values as the per-request `rerank`: a builtin or a name in LOOM_RERANK_ENDPOINTS_JSON; rerank="none" turns it off). Empty = no default rerank. |
 | `LOOM_CODE_SEARCH_RERANK_KINDS` | `str` | `'responsibility'` | Prose question kinds the default rerank applies to (`any` = all); symbol-shaped or constrained searches are never default-reranked. |
 | `LOOM_CODE_SEARCH_RERANK_TOP` | `int` | `20` | How many fused units the default rerank reads. |
 | `LOOM_CODE_SEARCH_RERANK_EXCERPT_CHARS` | `int` | `300` | Characters of each candidate shown to the default rerank (path and signature first, then the body head). |
@@ -1038,6 +1042,7 @@ Source: `server/settings/_providers.py`
 | `LOOM_LLM_HIDDEN_REASONING_RESERVE_MAX` | `int` | `16384` | Most output tokens a call adds over the caller's cap for a model's hidden reasoning. The reserve per model is learned from the reasoning tokens its replies report (twice the most it has spent) and capped here. |
 | `LOOM_LLM_REQUEST_TIMEOUT_S` | `float` | `300.0` | Seconds an LLM call waits for its reply before the client retries. Generous on purpose: it only catches a hung connection, so a slow model or a long output never hits it. Calls that must be fast set their own, shorter deadline (HyDE, search budgets). |
 | `LOOM_LLM_POLICY_BY_TRAFFIC_CLASS` | `str` | `'{"bench": {"llm_cache": true}}'` | JSON {class: {"llm_cache": bool, "strong": bool, "mid": bool}}: `llm_cache` overrides the class's cache default (a per-request pin wins); `strong`/`mid` false bars the cascade from that tier. Unlisted = every tier eligible. |
+| `LOOM_RERANK_ENDPOINTS_JSON` | `str` | `'{}'` | JSON {name: url}: the rerank endpoints a request's `rerank`, a namespace's `rerank_endpoint` and LOOM_CODE_SEARCH_RERANK_DEFAULT may name. Names are short identifiers, URLs http(s). Loom posts candidate text only to these. |
 | `LOOM_LLM_RERANK_SKIP_ABOVE` | `float` | `0.62` | Skip the rerank when the vector top hit's cosine is ≥ this (strong matches rank reliably; the rerank costs ~500 ms). Fallback when the adaptive gate has no probe. |
 | `LOOM_EMBEDDING_WORKER_ENABLED` | `bool` | `True` | Recovery worker: retries failed embeds and reconciles orphan scope='shared' rows (the write path embeds inline). |
 | `LOOM_EMBEDDING_WORKER_INTERVAL_SECONDS` | `int` | `5` | Seconds between recovery worker passes while there is work. |
@@ -1059,6 +1064,7 @@ Source: `server/settings/_ratelimit.py`
 | `LOOM_RATELIMIT_SHARED_PATH` | `str` | `''` | Bucket file; "" = <runtime dir>/loom-ratelimit-<parent pid>.buckets ($XDG_RUNTIME_DIR/loom, else /run/loom, else /tmp). The file is 0600 and never opened through a symlink. Set it for two servers sharing one cap. |
 | `LOOM_RATELIMIT_SHARED_SLOTS` | `int` | `16384` | Table slots (32 bytes each). Every process of a server must agree; a mismatch falls back to per-process buckets and shows in /v1/health. |
 | `LOOM_RATELIMIT_CLASS_FRACTIONS` | `str` | `'{"bench": 0.5}'` | JSON {class: fraction}: a traffic class carved into its own bucket of the base cap × fraction, so a bench sweep never spends production's budget. Class = token `traffic_class` claim, else namespace row, else request hint, else interactive. Absent class = 1.0 (base bucket). |
+| `LOOM_TENANT_MAX_CONCURRENT_REQUESTS` | `int` | `256` | Requests one org may have in flight at once, deployment-wide. Each process holds its share (divided by replicas × web workers, at least 1); a call over it gets 429 RATE_LIMITED. 0 = no cap. |
 
 ## ReadReplica
 
@@ -1098,7 +1104,10 @@ Source: `server/settings/_runtime.py`
 | `LOOM_DEPLOYMENT` | `bool` | `False` | The deployment's compose files set LOOM_DEPLOYMENT=1; every other process must set LOOM_INSTANCE_LABEL (e.g. `iso:<worktree>:<port>`, `ci:integration`). A process with neither refuses to start, so every ledger row is attributable. |
 | `LOOM_BUDGET_VIOLATION_AUDIT_INTERVAL_S` | `float` | `60.0` | At most one `budget.violated` audit row per op per this many seconds (the row carries `suppressed_since_last`). 0 = a row per violation. |
 | `LOOM_BUDGET_VIOLATION_AUDIT_BURST` | `int` | `5` | Violations per window that still write their own row before the rest are folded into the next: a short burst stays visible, a storm costs at most this many inserts a minute per (op, org, namespace). |
-| `LOOM_PUBLIC_BASE_URL` | `str` | `''` | The address the server hands to clients — the Setup page's config block, `claude mcp add`, a bot's claim_url. Empty = derive it from the request's X-Forwarded-Proto/Host. Set it when a proxy in front cannot be trusted to forward the client-facing scheme. |
+| `LOOM_PUBLIC_BASE_URL` | `str` | `''` | The address the server hands to clients — the Setup page's config block, `claude mcp add`, a bot's claim_url, OAuth metadata. Empty = the request's own Host and scheme, which only a loopback bind may rely on: a non-loopback bind_host refuses to start without it. |
+| `LOOM_BIND_HOST` | `str` | `'127.0.0.1'` | The address Loom is reachable on: `loom serve` and `make server` bind it; in a container (which listens on all its interfaces) it is the address the port is published on. Anything but loopback turns on the startup checks for the dev secret, auth-off and public_base_url. |
+| `LOOM_TRUSTED_PROXIES` | `str` | `'127.0.0.1'` | Comma-separated peer addresses or CIDRs whose X-Forwarded-For/Proto headers uvicorn applies; any other peer's are ignored. "*" trusts all. |
+| `LOOM_ALLOW_INSECURE` | `bool` | `False` | True lets a non-loopback bind start with the dev signing secret or with auth off. Only for a port that is not actually reachable by others. |
 
 ## Storage
 

@@ -25,7 +25,7 @@ Read back a parked result by key: a character slice (offset/limit) or only the l
 | `blob_key` | `str` | required | The key `context.offload` returned. |
 | `offset` | `int` | `0` | Character offset to start the slice at; with `pattern`, how many matches to skip. |
 | `limit` | `int` | `4000` | At most this many characters of content per call (1-64000). |
-| `pattern` | `str` | `''` | Regex (Python syntax, case-insensitive). |
+| `pattern` | `str` | `''` | Regex (RE2 syntax, case-insensitive; no backreferences or lookaround). |
 | `context_lines` | `int` | `0` | With `pattern`, lines of context shown around each match (0-10); context lines are numbered `lineno-` and matches `lineno:`. |
 
 | Output field | Type | Meaning |

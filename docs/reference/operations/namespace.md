@@ -122,7 +122,7 @@ Fetch one namespace's metadata + settings (owner, visibility, feature flags, ret
 | `join_policy` | `str \| None` | The stored word and the resolved one (inherit folded). |
 | `effective_join_policy` | `str \| None` | `open`, `approval` or `closed`: the join rule in force once `inherit` is resolved. |
 | `retrieval_defaults` | `dict[str, Any] \| None` | The set retrieval knobs; None when the namespace has none. |
-| `rerank_endpoint` | `str \| None` | URL `memory.search` posts its candidates to for reranking; empty when none. |
+| `rerank_endpoint` | `str \| None` | The reranker `memory.search` uses (a builtin or a configured endpoint's name); empty when none. |
 | `classify_endpoint` | `str \| None` | URL `memory.set(classify=true)` calls to classify a write; empty when none. |
 | `default_conflict_policy` | `str \| None` | How close writes are settled: `auto_reinforce` (the default when unset), `manual_review`, `newest_wins` or `append_only`. |
 | `proposal_policy` | `ProposalPolicy \| None` | How proposals (`memory.set proposed=true`) are decided; the manual default when unset. |
@@ -283,7 +283,7 @@ Create a shared memory workspace within an org; caller becomes admin.
 | `requires_approval` | `bool \| None` | `None` | When true, writer/admin self-joins go pending; viewer stays auto-approved. |
 | `join_policy` | `Literal['inherit', 'open', 'approval', 'closed'] \| None` | `None` | How the namespace is joined. |
 | `retrieval_defaults` | `NamespaceRetrievalDefaults \| None` | `None` | The retrieval knobs an unpinned memory.search on this namespace runs with (mode, k, auto_touch, include_tags, bodies, reinforcement_weight). |
-| `rerank_endpoint` | `str \| None` | `None` | Optional pluggable reranker. |
+| `rerank_endpoint` | `str \| None` | `None` | Optional reranker for memory.search: "builtin:openai[:<model>]", "builtin:cohere[:<model>]" or the name of an endpoint in LOOM_RERANK_ENDPOINTS_JSON (a URL is refused); empty ⇒ cosine + entity_boost. |
 | `rerank_prompt_template` | `str \| None` | `None` | Text forwarded as `prompt_template` in every call to `rerank_endpoint`. |
 | `classify_endpoint` | `str \| None` | `None` | Optional pluggable classifier for memory.set(classify=True). |
 | `classify_prompt_template` | `str \| None` | `None` | Text forwarded as `prompt_template` in every call to `classify_endpoint`. |

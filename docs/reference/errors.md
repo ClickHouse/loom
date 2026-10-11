@@ -151,10 +151,6 @@ Each code below is an anchor: `errors.md#<code in lowercase>` is the address an 
 
 Raised in `server/memory/app/profile.py`.
 
-#### `ADMIN_REQUIRED`
-
-Raised in `server/identity/app/claim_release.py`.
-
 #### `AMBIGUOUS_KEY`
 
 Raised in `server/memory/app/update.py`.
@@ -427,6 +423,10 @@ Raised in `server/memory/domain/lock.py`. What to do: [common errors](#common-er
 
 Raised in `server/tracker/app/sources.py`.
 
+#### `MISDIRECTED_REQUEST`
+
+Raised in `server/main.py`.
+
 #### `MISSING_IDENTITY_FIELD`
 
 Raised in `server/memory/app/records.py`.
@@ -517,7 +517,7 @@ HTTP 409, raised as `server.core.errors.PreconditionFailedError`. 409 — `if_ma
 
 #### `RATE_LIMITED`
 
-Raised in `server/auth/login.py`, `server/auth/self_signup.py`, `server/transport/mcp_call.py`. What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 429, raised as `server.core.errors.RateLimitedError`. 429 — the caller is over one of its admission limits (the org's in-flight requests); `retry_after_s` is the hint the SDK's retry layer honours. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `RECALL_REQUIRES_FILTER`
 
@@ -642,10 +642,6 @@ Raised in `server/memory/domain/record_values.py`.
 #### `VALIDATION`
 
 Raised in `server/memory/app/apply.py`, `server/memory/app/lock.py`, `server/memory/app/verify.py`.
-
-#### `VALIDATION_ERROR`
-
-Raised in `server/insights/app/admin_routes.py`.
 
 #### `VALIDATION_FAILED`
 
