@@ -40,11 +40,17 @@ def _codes(age: float | None, *, auth_on: bool = True) -> set[str]:
     ],
 )
 def test_revocation_problems(age: float | None, want: set[str]) -> None:
-    assert _codes(age) & {"revocation_stale", "revocation_too_stale", "revocation_not_loaded"} == want
+    assert (
+        _codes(age) & {"revocation_stale", "revocation_too_stale", "revocation_not_loaded"} == want
+    )
 
 
 def test_auth_off_reports_nothing() -> None:
-    assert not _codes(math.inf, auth_on=False) & {"revocation_stale", "revocation_too_stale", "revocation_not_loaded"}
+    assert not _codes(math.inf, auth_on=False) & {
+        "revocation_stale",
+        "revocation_too_stale",
+        "revocation_not_loaded",
+    }
 
 
 def test_snapshot_age_tracks_the_last_good_refresh(monkeypatch: pytest.MonkeyPatch) -> None:
