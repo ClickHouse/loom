@@ -15,6 +15,8 @@ from datetime import datetime
 
 _SPACE_RE = re.compile(r"\s+")
 _VOWEL_RE = re.compile(r"[aeiouy]")
+# Text past this many characters is not part of an entity's name.
+_MAX_ENTITY_CHARS = 200
 _PUNCT_RE = re.compile(r"[^\w\s:/.-]+")
 _ARTICLE_RE = re.compile(r"^(?:(?:the|a|an)\s+)+", re.IGNORECASE)
 _SINGLE_VALUED_RELATIONS = {
@@ -370,7 +372,8 @@ def canonical_entity(raw: str) -> CanonicalEntity:
     surface form is preserved in `aliases` for provenance and recall."""
 
     original = str(raw or "").strip()
-    text = original.lower()
+    # a name, not a passage: the passes below cost the length times the passes taken
+    text = original[:_MAX_ENTITY_CHARS].lower()
     # until a pass changes nothing (`re.S` -> `re.` -> `re`); a pass only drops or blanks
     # characters, so this ends
     while (again := _normalise(text)) != text:

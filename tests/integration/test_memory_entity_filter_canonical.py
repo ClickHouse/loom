@@ -236,3 +236,26 @@ async def test_a_dotted_name_given_in_canonical_form_keeps_its_boost(ch_client, 
     )
     (hit,) = [h for h in out.results if h.memory_key == "flags"]
     assert hit.score_components["entity_boost_sql"] == 0.5
+
+
+async def test_a_huge_entity_neither_slows_a_write_nor_a_search(ch_client) -> None:
+    import time
+
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.api.models_search import MemorySearchInput
+    from server.memory.app.search.handler import handle_memory_search
+    from server.memory.app.write import handle_memory_set
+
+    await _connected()
+    ns = f"agent-entcanon-{os.urandom(3).hex()}"
+    huge = "re" + ".S" * 16000
+    started = time.perf_counter()
+    await handle_memory_set(
+        MemorySetInput(
+            org=ORG, namespace=ns, agent="a", memory_key="huge", value="flags", entities=[huge]
+        )
+    )
+    await handle_memory_search(
+        MemorySearchInput(org=ORG, namespace=ns, agent="*", query="flags", entity_filter=[huge])
+    )
+    assert time.perf_counter() - started < 3  # was ~14 s, the worker blocked throughout

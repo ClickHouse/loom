@@ -93,3 +93,13 @@ def test_punctuation_a_pass_exposes_is_taken_too(raw: str) -> None:
 def test_an_acronym_is_not_a_plural(raw: str, canonical: str) -> None:
     assert canonical_entity_text(raw) == canonical
     assert canonical_entities(["HTTP", "HTTPS"]) == ["http", "https"]
+
+
+def test_normalising_a_huge_entity_is_bounded() -> None:
+    import time
+
+    started = time.perf_counter()
+    for raw in ("re" + ".S" * 16000, "x" * 32000, "the " * 8000):
+        once = canonical_entity_text(raw)
+        assert len(once) <= 200 and canonical_entity_text(once) == once
+    assert time.perf_counter() - started < 0.5  # was seconds per call
