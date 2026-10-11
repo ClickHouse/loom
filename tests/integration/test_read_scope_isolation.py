@@ -9,7 +9,13 @@ registry holds:
 * an op in `SCOPED_OPS` answers, and no answer carries V's nonce;
 * the same op asked for `user_id="*"` or `user_id=V` is refused (403);
 * every other op that does not return memory-free data is refused (403), so
-  the entity graph, conversations and exports never answer such a token.
+  the entity graph, conversations and exports never answer such a token;
+* every write a bounded token may call, aimed at V's keys, ids and brief by a
+  token pinned to a third user W, answers without V's nonce and leaves V's
+  rows as they were.
+
+An op the walks cannot build a body for fails the test unless `_UNBUILDABLE`
+names it with the reason.
 
 A positive control proves U's token finds U's own canary and a
 namespace-scoped token finds V's, so an empty answer cannot pass by accident.
@@ -32,8 +38,17 @@ import pytest
 from tests.integration._eventually import wait_until
 from tests.integration._resources import unique_org
 
-U, V = "user-u", "user-v"
+U, V, W = "user-u", "user-v", "user-w"
 _OK = {200, 404}
+
+# Ops no walk can build a body for, with the reason. Any other unbuildable op fails.
+_UNBUILDABLE = {
+    "memory.apply": "its target is a nested selector over many rows",
+    "memory.record.write": "needs a registered record schema",
+    "namespace.restore": "its payload is a whole namespace snapshot",
+    "namespace.rollback": "would rewind the seeded namespace if its refusal regressed",
+    "procedure.revise": "its graph is a nested procedure graph",
+}
 
 
 @dataclass
@@ -183,6 +198,7 @@ def tokens(seed: _Seed) -> dict[str, str]:
         "namespace": _mint(seed.org, seed.ns),
         "pinned_u": _mint(seed.org, seed.ns, read_scope="own_user", read_user_id=U),
         "pinned_v": _mint(seed.org, seed.ns, read_scope="own_user", read_user_id=V),
+        "pinned_w": _mint(seed.org, seed.ns, read_scope="own_user", read_user_id=W),
     }
 
 
@@ -213,9 +229,17 @@ def _payload(model: type, seed: _Seed, user_id: str) -> dict[str, Any] | None:
         "label": "canary",
         "thread": "",
         "namespace_scope": "this",
+        "value": "canary",
+        "steps": ["canary", "turn the dial"],
+        "ttl_seconds": 3600,
+        "messages": [{"role": "user", "content": "canary"}],
+        "entries": [{"memory_key": seed.keys_v[0], "value": "canary"}],
     }
     out: dict[str, Any] = {}
-    for name, f in model.model_fields.items():
+    fields = model.model_fields
+    for name, f in fields.items():
+        if name == "memory_keys" and "memory_key" in fields:
+            continue  # an op taking either names one key
         if name in hints:
             out[name] = hints[name]
         elif f.is_required():
@@ -224,6 +248,8 @@ def _payload(model: type, seed: _Seed, user_id: str) -> dict[str, Any] | None:
                 out[name] = "canary"
             elif ann is int:
                 out[name] = 1
+            elif ann is bool:
+                out[name] = False
             elif typing.get_origin(ann) is typing.Literal:
                 out[name] = typing.get_args(ann)[0]
             else:
@@ -231,11 +257,30 @@ def _payload(model: type, seed: _Seed, user_id: str) -> dict[str, Any] | None:
     return out
 
 
+def _writes(op: Any) -> bool:
+    from server.operations.base import Role
+
+    return op.required_role >= Role.WRITER or op.audit or op.writes
+
+
 def _scoped_ops() -> list[Any]:
+    """The reads of SCOPED_OPS; its writes are walked by the write walk."""
     from server.identity.domain.read_scope import SCOPED_OPS
     from server.operations.registry import OPERATIONS_BY_NAME
 
-    return [OPERATIONS_BY_NAME[n] for n in sorted(SCOPED_OPS)]
+    return [OPERATIONS_BY_NAME[n] for n in sorted(SCOPED_OPS) if not _writes(OPERATIONS_BY_NAME[n])]
+
+
+def _bounded_writes() -> list[Any]:
+    """The writes a token bounded to one user may call: those in SCOPED_OPS and those
+    NO_MEMORY_CONTENT names as a write. A group key (`code.`) is not walked: its writes
+    reach no memory row."""
+    from server.identity.domain.read_scope import NO_MEMORY_CONTENT, SCOPED_OPS
+    from server.operations.registry import OPERATIONS_BY_NAME
+
+    names = {n for n, why in NO_MEMORY_CONTENT.items() if why.startswith("a write")}
+    names |= {n for n in SCOPED_OPS if _writes(OPERATIONS_BY_NAME[n])}
+    return [OPERATIONS_BY_NAME[n] for n in sorted(names)]
 
 
 def _refused_ops() -> list[Any]:
@@ -279,9 +324,7 @@ def test_every_scoped_op_keeps_v_out_of_us_answers(
             leaks[op.name] = r.text[:300]
     assert not leaks, f"V's canary reached U's token: {leaks}"
     assert not bad, f"unexpected statuses: {bad}"
-    # The core surfaces must have been exercised, or the walk proves nothing.
-    core = {"memory.get", "memory.list", "memory.bulk_get", "memory.search", "context.pack"}
-    assert not core & set(unbuildable), unbuildable
+    assert set(unbuildable) <= set(_UNBUILDABLE), unbuildable
 
 
 def test_the_walk_reaches_vs_rows_without_the_bound(
@@ -337,15 +380,55 @@ def test_ops_that_cannot_bound_their_answer_are_refused(
     control_plane_url: str, seed: _Seed, tokens: dict[str, str]
 ) -> None:
     served: dict[str, int] = {}
+    unbuildable: list[str] = []
     for op in _refused_ops():
         body = _payload(op.input_model, seed, "-")
         if body is None:
+            unbuildable.append(op.name)
             continue
         r = _post(control_plane_url, tokens["pinned_u"], op.name, body)
         assert seed.nonce_v not in r.text, op.name
         if r.status_code not in (403, 422):
             served[op.name] = r.status_code
     assert not served, f"served to a token bounded to one user: {served}"
+    assert set(unbuildable) <= set(_UNBUILDABLE), unbuildable
+
+
+def test_writes_aimed_at_vs_rows_never_answer_or_change_them(
+    control_plane_url: str, seed: _Seed, tokens: dict[str, str]
+) -> None:
+    """A token pinned to W (who holds nothing) sends every write a bounded token may
+    call at V's keys, ids and brief. No answer carries V's nonce, a refusal is a 409 or
+    a 423 (W's own lock) at most, and V's rows read back unchanged afterwards."""
+    leaks: dict[str, str] = {}
+    bad: dict[str, int] = {}
+    unbuildable: list[str] = []
+    walked: set[str] = set()
+    for op in _bounded_writes():
+        body = _payload(op.input_model, seed, "-")
+        if body is None:
+            unbuildable.append(op.name)
+            continue
+        r = _post(control_plane_url, tokens["pinned_w"], op.name, body)
+        if r.status_code == 422:
+            unbuildable.append(op.name)
+            continue
+        walked.add(op.name)
+        if r.status_code not in {200, 404, 409, 423}:  # 409/423: a refused write
+            bad[op.name] = r.status_code
+        if seed.nonce_v in r.text:
+            leaks[op.name] = r.text[:300]
+    assert not leaks, f"V's canary reached W's token: {leaks}"
+    assert not bad, f"unexpected statuses: {bad}"
+    assert set(unbuildable) <= set(_UNBUILDABLE), unbuildable
+    assert {"session.brief_save", "session.brief_delete", "memory.set"} <= walked
+    ident = {"org": seed.org, "namespace": seed.ns, "agent": "*", "user_id": "*"}
+    for op, body in [
+        ("memory.list", {**ident, "session_id": "*"}),
+        ("session.brief_get", {**ident, "brief_key": f"{seed.brief_key}-{V}"}),
+    ]:
+        r = _post(control_plane_url, tokens["namespace"], op, body)
+        assert r.status_code == 200 and seed.nonce_v in r.text, f"{op}: {r.text[:300]}"
 
 
 def test_a_pinned_token_cannot_write_as_another_user(
