@@ -125,9 +125,9 @@ Source: `server/settings/_code.py`
 | `LOOM_CODE_BOOTSTRAP_FILES_PER_PASS` | `int` | `400` | Files indexed per pass while a new entry's initial index builds; the cursor persists in code_index_state (400 ≈ 1 min at the live rate). |
 | `LOOM_CODE_REPOS_REFRESH_SECONDS` | `int` | `30` | Seconds between re-reads of loom.code_repos. |
 | `LOOM_CODE_BOOTSTRAP_CLONE_TIMEOUT_S` | `float` | `1800.0` | Seconds a bare clone may take before the worker gives up for the pass and retries next pass. |
-| `LOOM_CODE_SANDBOX_CPU_SECONDS` | `int` | `7200` | Limits for each process of a sandboxed repository job (clone, fetch, dependency install, compiler-tier harness; code/app/index/sandbox.py). CPU seconds a process may use. |
+| `LOOM_CODE_SANDBOX_CPU_SECONDS` | `int` | `7200` | rlimits for each process of a sandboxed repository job (clone, fetch, dependency install, compiler-tier harness; code/app/index/sandbox.py). They bound each process, not a job's total: there is no cgroup. CPU seconds a process may use. |
 | `LOOM_CODE_SANDBOX_MEMORY_MB` | `int` | `16384` | Address space a process may map, in MiB. |
-| `LOOM_CODE_SANDBOX_MAX_PIDS` | `int` | `2048` | Processes and threads the job's user may run at once. |
+| `LOOM_CODE_SANDBOX_MAX_PIDS` | `int` | `2048` | Processes and threads the server's uid may run at once (RLIMIT_NPROC): shared by every job running at the time, not one job's own. |
 | `LOOM_CODE_SANDBOX_MAX_FILE_MB` | `int` | `32768` | Largest file a process may write, in MiB (a pack or index.scip). |
 | `LOOM_CODE_GIT_DIR` | `str` | `''` | Bare clone the ingest worker fetches into (created by `loom code init`) and its remote. Empty = derived from code_repo: `var/code_repos/<name>.git` and `https://github.com/<owner>/<name>.git`. |
 | `LOOM_CODE_GIT_REMOTE` | `str` | `''` | The scalar entry's fetch remote; empty = `https://github.com/<owner>/<name>.git`. |
@@ -188,7 +188,7 @@ Source: `server/settings/_code.py`
 | `LOOM_CODE_SCIP_GO_BIN_DIR` | `str` | `''` | Where `go` and scip-go live when not on PATH |
 | `LOOM_CODE_SCIP_GO_DELTA_TIMEOUT_SECONDS` | `int` | `7200` | Seconds the Go delta harness may run before it is killed; also the pass deadline. |
 | `LOOM_CODE_SCIP_GO_JOBS` | `int` | `2` | Parallel module builds (~4 GB each) |
-| `LOOM_CODE_SCIP_GO_MODCACHE` | `str` | `'var/gocache'` | GOMODCACHE across passes |
+| `LOOM_CODE_SCIP_GO_MODCACHE` | `str` | `'var/gocache'` | Root of the Go module caches kept across passes: one per entry beneath it (<root>/<org>/<namespace>), never shared between repositories. |
 | `LOOM_CODE_SCIP_GO_PRIVATE` | `str` | `''` | GOPRIVATE / GONOSUMDB (a vanity import host) |
 | `LOOM_CODE_PR_HISTORY_ENABLED` | `bool` | `False` | Merged-PR history sync (GitHub REST, cursor-resumable). |
 | `LOOM_CODE_PR_HISTORY_INTERVAL_SECONDS` | `int` | `900` | Seconds between PR-history sync passes. |

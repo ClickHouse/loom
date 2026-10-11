@@ -92,8 +92,8 @@ async def _public(host: str) -> tuple[str, str]:
     return "", PUBLIC
 
 
-def _client(handler) -> httpx.AsyncClient:
-    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+def _client(handler) -> httpx.MockTransport:
+    return httpx.MockTransport(handler)
 
 
 # ------------------------------------------------------------ signing
@@ -144,7 +144,7 @@ async def test_a_2xx_advances_the_cursor_and_resets_attempts(fake: FakeRepo, cap
     caplog.set_level(logging.DEBUG)
     async with _client(handler) as client:
         result = await wd.deliver_once(
-            client=client, now=NOW, env={"LOOM_WEBHOOK_SECRET_PRIVATE_BOT": SECRET}
+            transport=client, now=NOW, env={"LOOM_WEBHOOK_SECRET_PRIVATE_BOT": SECRET}
         )
     assert result.delivered == 1 and result.failed == 0
     assert len(seen) == 1
@@ -175,18 +175,18 @@ async def test_a_5xx_keeps_the_cursor_and_backs_off(fake: FakeRepo) -> None:
 
     env = {"LOOM_WEBHOOK_SECRET_PRIVATE_BOT": SECRET}
     async with _client(handler) as client:
-        r1 = await wd.deliver_once(client=client, now=NOW, env=env)
+        r1 = await wd.deliver_once(transport=client, now=NOW, env=env)
         cur = fake.cursors[("acme", "private-bot")]
         assert r1.failed == 1 and cur["attempts"] == 1 and cur["last_seq"] == 0
         assert cur["next_try_at"] == NOW.replace(tzinfo=None)  # immediate: next pass
-        r2 = await wd.deliver_once(client=client, now=NOW, env=env)
+        r2 = await wd.deliver_once(transport=client, now=NOW, env=env)
         cur = fake.cursors[("acme", "private-bot")]
         assert r2.failed == 1 and cur["attempts"] == 2
         assert cur["next_try_at"] == (NOW + timedelta(seconds=5)).replace(tzinfo=None)
         # not due yet: skipped without a request
-        r3 = await wd.deliver_once(client=client, now=NOW + timedelta(seconds=2), env=env)
+        r3 = await wd.deliver_once(transport=client, now=NOW + timedelta(seconds=2), env=env)
         assert r3.skipped == 1 and r3.failed == 0
-        r4 = await wd.deliver_once(client=client, now=NOW + timedelta(seconds=6), env=env)
+        r4 = await wd.deliver_once(transport=client, now=NOW + timedelta(seconds=6), env=env)
         cur = fake.cursors[("acme", "private-bot")]
         assert r4.failed == 1 and cur["attempts"] == 3
         assert cur["next_try_at"] == (NOW + timedelta(seconds=6 + 300)).replace(tzinfo=None)
@@ -201,7 +201,7 @@ async def test_no_answer_in_the_ack_window_counts_as_status_0(fake: FakeRepo) ->
 
     async with _client(handler) as client:
         r = await wd.deliver_once(
-            client=client, now=NOW, env={"LOOM_WEBHOOK_SECRET_PRIVATE_BOT": SECRET}
+            transport=client, now=NOW, env={"LOOM_WEBHOOK_SECRET_PRIVATE_BOT": SECRET}
         )
     assert r.failed == 1
     assert fake.cursors[("acme", "private-bot")]["last_status"] == 0
@@ -218,8 +218,8 @@ async def test_a_missing_secret_holds_the_notice_and_warns_once(fake: FakeRepo, 
 
     caplog.set_level(logging.WARNING)
     async with _client(handler) as client:
-        r1 = await wd.deliver_once(client=client, now=NOW, env={})
-        r2 = await wd.deliver_once(client=client, now=NOW, env={})
+        r1 = await wd.deliver_once(transport=client, now=NOW, env={})
+        r2 = await wd.deliver_once(transport=client, now=NOW, env={})
     assert r1.skipped == 1 and r2.skipped == 1 and calls == 0 and not fake.writes
     assert sum("no secret in env" in rec.message for rec in caplog.records) == 1
 
@@ -241,7 +241,7 @@ async def test_nothing_new_makes_no_request(fake: FakeRepo) -> None:
 
     async with _client(handler) as client:
         r = await wd.deliver_once(
-            client=client, now=NOW, env={"LOOM_WEBHOOK_SECRET_PRIVATE_BOT": "x"}
+            transport=client, now=NOW, env={"LOOM_WEBHOOK_SECRET_PRIVATE_BOT": "x"}
         )
     assert r.skipped == 1 and r.total == 0
 
@@ -283,7 +283,7 @@ async def test_one_broken_inbox_does_not_stop_the_next(
 
     env = {"LOOM_WEBHOOK_SECRET_PRIVATE_BOT": SECRET, "LOOM_WEBHOOK_SECRET_BAD": bad_secret}
     async with _client(handler) as client:
-        r = await wd.deliver_once(client=client, now=NOW, env=env)
+        r = await wd.deliver_once(transport=client, now=NOW, env=env)
     assert seen == ["good.example.invalid"]
     assert r.delivered == 1 and r.failed == 1
     assert fake.cursors[("acme", "good-bot")]["last_seq"] == 103
@@ -325,7 +325,7 @@ async def test_a_failure_row_that_cannot_be_written_does_not_stop_the_next(
     fake.insert_webhook_cursor = insert  # type: ignore[method-assign]
     async with _client(lambda request: httpx.Response(204)) as client:
         r = await wd.deliver_once(
-            client=client,
+            transport=client,
             now=NOW,
             env={"LOOM_WEBHOOK_SECRET_PRIVATE_BOT": SECRET, "LOOM_WEBHOOK_SECRET_BAD": SECRET},
         )
@@ -350,11 +350,36 @@ async def test_a_pass_posts_at_most_the_cap_and_the_rest_go_first_next_pass(
 
     env = {"LOOM_WEBHOOK_SECRET_PRIVATE_BOT": SECRET}
     async with _client(handler) as client:
-        r1 = await wd.deliver_once(client=client, now=NOW, env=env)
-        r2 = await wd.deliver_once(client=client, now=NOW + timedelta(seconds=5), env=env)
+        r1 = await wd.deliver_once(transport=client, now=NOW, env=env)
+        r2 = await wd.deliver_once(transport=client, now=NOW + timedelta(seconds=5), env=env)
     assert (r1.delivered, r1.deferred) == (2, 3) and r1.total == 5
     # the three not reached come before the two just delivered
     assert posted == ["100", "101", "102", "103"] and r2.deferred == 3
+
+
+@pytest.mark.asyncio
+async def test_each_delivery_has_its_own_client(
+    fake: FakeRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Connections pool by the pinned address: two inboxes on one address must
+    not share a TLS connection verified for the other's name."""
+    base = fake.inboxes[0]
+    fake.inboxes[:] = [{**base, "inbox": f"bot-{i}"} for i in range(2)]
+    fake.events[:] = [{**_event(100 + i), "inbox": f"bot-{i}"} for i in range(2)]
+    clients: list[httpx.AsyncClient] = []
+
+    class Recorded(httpx.AsyncClient):
+        def __init__(self, **kw: Any) -> None:
+            super().__init__(**kw)
+            clients.append(self)
+
+    monkeypatch.setattr(wd.httpx, "AsyncClient", Recorded)
+    env = {"LOOM_WEBHOOK_SECRET_PRIVATE_BOT": SECRET}
+    r = await wd.deliver_once(
+        transport=_client(lambda request: httpx.Response(204)), now=NOW, env=env
+    )
+    assert r.delivered == 2
+    assert len(clients) == 2 and all(c.is_closed for c in clients)
 
 
 # ------------------------------------------------------------ outbound guard
@@ -382,7 +407,7 @@ async def test_a_webhook_to_a_non_public_address_is_never_sent(
     seen: list[httpx.Request] = []
     async with _client(lambda r: seen.append(r) or httpx.Response(204)) as client:
         r = await wd.deliver_once(
-            client=client, now=NOW, env={"LOOM_WEBHOOK_SECRET_PRIVATE_BOT": SECRET}
+            transport=client, now=NOW, env={"LOOM_WEBHOOK_SECRET_PRIVATE_BOT": SECRET}
         )
     assert seen == [] and r.failed == 1
     assert fake.cursors[("acme", "private-bot")]["last_status"] == 0
@@ -413,7 +438,7 @@ async def test_a_secret_ref_outside_the_prefix_is_never_read(fake: FakeRepo) -> 
     fake.inboxes[0]["webhook_secret_ref"] = "LOOM_JWT_SECRET"
     seen: list[httpx.Request] = []
     async with _client(lambda r: seen.append(r) or httpx.Response(204)) as client:
-        r = await wd.deliver_once(client=client, now=NOW, env={"LOOM_JWT_SECRET": SECRET})
+        r = await wd.deliver_once(transport=client, now=NOW, env={"LOOM_JWT_SECRET": SECRET})
     assert seen == [] and r.skipped == 1
 
 

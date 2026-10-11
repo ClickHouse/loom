@@ -476,7 +476,8 @@ def _replica_problems(settings: Any, state: HealthState) -> list[Problem]:
 def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
     """Repository jobs run without the sandbox: an operator's repositories still
     get their build-based tiers, which execute the repository's code on this
-    host; self-registered ones get none and adding one is refused."""
+    host; self-registered ones get none, are not fetched over the network, and
+    adding one is refused."""
     if state.repo_sandbox is not False or not settings.code_ingest_enabled:
         return []
     return [
@@ -485,8 +486,9 @@ def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
             "warn",
             "Repository jobs (clone, fetch, dependency installs, compiler tiers) run "
             "unsandboxed: operator repositories' build tiers execute repository code on "
-            "this host; self-registered repositories get no build tier and adding one "
-            "from the page is refused.",
+            "this host; self-registered repositories get no build tier, those with a "
+            "network remote are not cloned or fetched, and adding one from the page is "
+            "refused.",
             "Install bubblewrap and allow unprivileged user namespaces (in a container: a "
             "seccomp profile that permits them) — 'Repository-job sandbox' in "
             "docs/operations/code-index-operations.md.",

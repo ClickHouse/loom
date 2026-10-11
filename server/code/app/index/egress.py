@@ -12,13 +12,16 @@ or a package download gets the same answer:
 - the proxy connects to the address it vetted, never to the name again, so a
   second DNS answer cannot point the tunnel inward.
 
-Anything that is not CONNECT (plain http) is refused.
+Anything that is not CONNECT (plain http) is refused. One job holds at most
+`MAX_TUNNELS` connections at a time (more wait their turn), and a tunnel with
+no bytes either way for `_IDLE_TIMEOUT_S` is closed.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 from server.core.hosts import vet_host
 
@@ -26,6 +29,8 @@ logger = logging.getLogger("loom.code_index.egress")
 
 ALLOWED_PORTS = frozenset({443, 22})
 _CONNECT_TIMEOUT_S = 15.0
+_IDLE_TIMEOUT_S = 300.0
+MAX_TUNNELS = 32
 
 
 async def vet_connect(
@@ -38,10 +43,10 @@ async def vet_connect(
         return 405, "only CONNECT is allowed", "", 0
     host, _, port_text = parts[1].rpartition(":")
     host = host.strip("[]")
-    if not host or not port_text.isdigit():
+    if not host or not (port_text.isascii() and port_text.isdigit()):
         return 400, "target must be host:port", "", 0
     port = int(port_text)
-    if port not in allowed_ports:
+    if not 1 <= port <= 65535 or port not in allowed_ports:
         return 403, f"port {port} is not allowed", "", 0
     refusal, address = await vet_host(host)
     if refusal:
@@ -49,9 +54,23 @@ async def vet_connect(
     return 200, "", address, port
 
 
-async def _splice(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+async def _splice(
+    reader: asyncio.StreamReader, writer: asyncio.StreamWriter, last_active: list[float]
+) -> None:
+    """Copy `reader` to `writer` until EOF, or until neither direction of the
+    tunnel has moved a byte for `_IDLE_TIMEOUT_S` (`last_active[0]` is shared by
+    both directions, so a long download with a silent client stays open)."""
     try:
-        while data := await reader.read(65536):
+        while True:
+            try:
+                data = await asyncio.wait_for(reader.read(65536), timeout=_IDLE_TIMEOUT_S)
+            except TimeoutError:
+                if time.monotonic() - last_active[0] >= _IDLE_TIMEOUT_S:
+                    return
+                continue
+            if not data:
+                break
+            last_active[0] = time.monotonic()
             writer.write(data)
             await writer.drain()
         if writer.can_write_eof():
@@ -67,13 +86,15 @@ class EgressProxy:
         self.allowed_ports = allowed_ports
         self.server: asyncio.Server | None = None
         self._tunnels: set[asyncio.Task[None]] = set()
+        self._slots = asyncio.Semaphore(MAX_TUNNELS)
 
     async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         task = asyncio.current_task()
         if task is not None:
             self._tunnels.add(task)
         try:
-            await self._tunnel(reader, writer)
+            async with self._slots:
+                await self._tunnel(reader, writer)
         finally:
             if task is not None:
                 self._tunnels.discard(task)
@@ -100,16 +121,23 @@ class EgressProxy:
             await writer.drain()
             return
         writer.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
+        last_active = [time.monotonic()]
         try:
-            await asyncio.gather(_splice(reader, up_writer), _splice(up_reader, writer))
+            await asyncio.gather(
+                _splice(reader, up_writer, last_active), _splice(up_reader, writer, last_active)
+            )
         finally:
             up_writer.close()
 
     async def close(self) -> None:
+        tunnels = list(self._tunnels)
         if self.server is not None:
             self.server.close()
-        for task in list(self._tunnels):
+        for task in tunnels:
             task.cancel()
+        await asyncio.gather(*tunnels, return_exceptions=True)
+        if self.server is not None:
+            await self.server.wait_closed()
 
 
 async def start_proxy(path: str, remote_port: int | None) -> EgressProxy:
@@ -121,4 +149,4 @@ async def start_proxy(path: str, remote_port: int | None) -> EgressProxy:
     return proxy
 
 
-__all__ = ["ALLOWED_PORTS", "EgressProxy", "start_proxy", "vet_connect"]
+__all__ = ["ALLOWED_PORTS", "MAX_TUNNELS", "EgressProxy", "start_proxy", "vet_connect"]

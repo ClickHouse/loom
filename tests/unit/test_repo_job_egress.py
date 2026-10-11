@@ -51,6 +51,8 @@ ALLOWED = egress.ALLOWED_PORTS
         ("CONNECT [::1]:443 HTTP/1.1", 403),
         ("CONNECT mapped.example:443 HTTP/1.1", 403),
         ("CONNECT public.example HTTP/1.1", 400),
+        ("CONNECT public.example:\xb2 HTTP/1.1", 400),  # a digit to isdigit(), not to int()
+        ("CONNECT public.example:0 HTTP/1.1", 403),
     ],
 )
 async def test_the_proxy_refuses_every_non_public_or_non_allowed_target(
@@ -138,6 +140,73 @@ async def test_an_allowed_tunnel_splices_bytes_both_ways(
         head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=5)
         assert head.startswith(b"HTTP/1.1 200")
         assert await asyncio.wait_for(reader.read(100), timeout=5) == b"echo:ping"
+        writer.close()
+    finally:
+        await proxy.close()
+        server.close()
+
+
+async def test_a_port_out_of_range_is_refused_even_when_the_remote_names_it() -> None:
+    # remote_port() reads `https://host:70000/` as 70000; the dial would raise.
+    status, _reason, _address, _port = await egress.vet_connect(
+        "CONNECT public.example:70000 HTTP/1.1", ALLOWED | {70000}
+    )
+    assert status == 403
+
+
+async def test_a_job_holds_at_most_max_tunnels_and_close_ends_every_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each waiting connection would otherwise put a getaddrinfo on the shared
+    thread pool; close() returns only once every handler has finished."""
+    in_flight = 0
+    gate = asyncio.Event()
+
+    async def slow_vet(host: str) -> tuple[str, str]:
+        nonlocal in_flight
+        in_flight += 1
+        await gate.wait()
+        return "refused", ""
+
+    monkeypatch.setattr(egress, "vet_host", slow_vet)
+    sock = str(tmp_path / "p.sock")
+    proxy = await egress.start_proxy(sock, None)
+    writers = []
+    for _ in range(egress.MAX_TUNNELS + 20):
+        _reader, writer = await asyncio.open_unix_connection(sock)
+        writer.write(b"CONNECT public.example:443 HTTP/1.1\r\n\r\n")
+        writers.append(writer)
+    await asyncio.sleep(0.3)
+    assert in_flight == egress.MAX_TUNNELS
+    await proxy.close()
+    assert not proxy._tunnels
+    for writer in writers:
+        writer.close()
+
+
+async def test_a_tunnel_with_no_bytes_either_way_is_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def silent(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.read()  # never answers
+
+    server = await asyncio.start_server(silent, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    real_open = asyncio.open_connection
+
+    async def open_connection(_host: str, _port: int, **kw: Any) -> Any:
+        return await real_open("127.0.0.1", port, **kw)
+
+    monkeypatch.setattr(egress.asyncio, "open_connection", open_connection)
+    monkeypatch.setattr(egress, "_IDLE_TIMEOUT_S", 0.2)
+    sock = str(tmp_path / "p.sock")
+    proxy = await egress.start_proxy(sock, None)
+    try:
+        reader, writer = await asyncio.open_unix_connection(sock)
+        writer.write(b"CONNECT public.example:443 HTTP/1.1\r\n\r\n")
+        head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=5)
+        assert head.startswith(b"HTTP/1.1 200")
+        assert await asyncio.wait_for(reader.read(), timeout=5) == b""  # the proxy hung up
         writer.close()
     finally:
         await proxy.close()

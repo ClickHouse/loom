@@ -103,13 +103,15 @@ class CodeSettings(BaseModel):
     # Seconds a bare clone may take before the worker gives up for the pass
     # and retries next pass.
     code_bootstrap_clone_timeout_s: float = 1800.0
-    # Limits for each process of a sandboxed repository job (clone, fetch,
+    # rlimits for each process of a sandboxed repository job (clone, fetch,
     # dependency install, compiler-tier harness; code/app/index/sandbox.py).
+    # They bound each process, not a job's total: there is no cgroup.
     # CPU seconds a process may use.
     code_sandbox_cpu_seconds: int = 7200
     # Address space a process may map, in MiB.
     code_sandbox_memory_mb: int = 16384
-    # Processes and threads the job's user may run at once.
+    # Processes and threads the server's uid may run at once (RLIMIT_NPROC):
+    # shared by every job running at the time, not one job's own.
     code_sandbox_max_pids: int = 2048
     # Largest file a process may write, in MiB (a pack or index.scip).
     code_sandbox_max_file_mb: int = 32768
@@ -279,7 +281,9 @@ class CodeSettings(BaseModel):
     # pass deadline.
     code_scip_go_delta_timeout_seconds: int = 7200
     code_scip_go_jobs: int = 2  # Parallel module builds (~4 GB each)
-    code_scip_go_modcache: str = "var/gocache"  # GOMODCACHE across passes
+    # Root of the Go module caches kept across passes: one per entry beneath it
+    # (<root>/<org>/<namespace>), never shared between repositories.
+    code_scip_go_modcache: str = "var/gocache"
     code_scip_go_private: str = ""  # GOPRIVATE / GONOSUMDB (a vanity import host)
 
     # Merged-PR history sync (GitHub REST, cursor-resumable).

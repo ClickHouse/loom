@@ -251,30 +251,41 @@ dependency installs and the compiler-tier harnesses) inside one boundary built o
 
 - its own user, pid, network, mount, ipc and uts namespaces, no capabilities, no new user
   namespaces, and a seccomp filter that refuses `ptrace`, `mount`, `unshare`, `setns`,
-  `bpf`, `perf_event_open`, kernel keyrings, module and kexec loading, `userfaultfd`,
-  `open_by_handle_at` and `process_vm_readv`/`writev`;
+  a `clone` with `CLONE_NEWUSER`, `bpf`, `perf_event_open`, kernel keyrings, module and
+  kexec loading, `userfaultfd`, `open_by_handle_at` and `process_vm_readv`/`writev`
+  (`clone3` answers `ENOSYS`, so the C library falls back to `clone`);
 - only system directories, the toolchains and the job's own paths are mounted: the
   checkout (or the bare mirror, for a fetch) and the output directory are writable, the
   checkout's `.git` and the harness scripts are read-only, and `/tmp` and `HOME` are a
   fresh directory removed after the job. No server environment, credentials, host
   `HOME`, Docker socket or other host paths;
-- per-process limits: `LOOM_CODE_SANDBOX_CPU_SECONDS` (7200),
-  `LOOM_CODE_SANDBOX_MEMORY_MB` (16384), `LOOM_CODE_SANDBOX_MAX_PIDS` (2048) and
-  `LOOM_CODE_SANDBOX_MAX_FILE_MB` (32768), plus each job's wall-clock timeout. A timeout
-  kills the job's whole tree; the job's pid namespace guarantees no process it started
-  outlives it;
+- rlimits, set by `prlimit` before bwrap starts: `LOOM_CODE_SANDBOX_CPU_SECONDS` (7200),
+  `LOOM_CODE_SANDBOX_MEMORY_MB` (16384) and `LOOM_CODE_SANDBOX_MAX_FILE_MB` (32768)
+  bound **each process** of a job (CPU time, address space, file size), not the job's
+  total, and `LOOM_CODE_SANDBOX_MAX_PIDS` (2048) bounds the processes of the server's
+  uid, so one job's fork bomb can starve concurrent jobs of processes. Loom sets no
+  cgroup; give the container its own memory and pids limits for a hard total. Each job
+  also has a wall-clock timeout that kills its whole tree; the job's pid namespace
+  guarantees no process it started outlives it;
 - no network, except for clones, fetches, submodules and dependency downloads, and then
   only through an egress proxy outside the sandbox. It accepts `CONNECT` to ports 443,
   22 and the remote's own port, resolves the name, refuses it unless **every** address
   is public (loopback, private ranges, link-local and the cloud metadata address are
   refused, including when reached through a redirect or a `.gitmodules` URL) and
-  connects to the address it vetted. Plain HTTP has no route.
+  connects to the address it vetted. Plain HTTP has no route. One job holds at most 32
+  tunnels at a time, and a tunnel idle for 5 minutes is closed.
 
 Every git a repository job runs reads no system or global git config and allows only
 the `https` and `ssh` transports (`protocol.allow=never`); `ext::` and `file://` are
 refused, so are URL rewrites. The entry's access token reaches only its clone and
 fetches, never a build or `go mod download`. Inside the sandbox an `ssh` remote has no
 host SSH key: use an HTTPS remote with an access token.
+
+**No shipped stack runs the sandbox by default.** The image installs `bwrap`, but none
+of the Compose files (`dev/docker-compose*.yml`, `deploy/standalone/compose.yaml`) sets
+the container options below, so under Docker's defaults the probe fails and every
+repository job runs as a plain process (see _Without the sandbox_). A source run
+(`make server`) has the sandbox only where the host passes the same requirements.
 
 **Requirements.** `bwrap` on `PATH` (the image installs it) and unprivileged user
 namespaces. Docker's default seccomp profile blocks user namespaces, so a container
@@ -292,9 +303,17 @@ sandbox.
 
 - operator repositories (`LOOM_CODE_REPOS_JSON`) keep every tier, and their build steps
   run as plain processes on the host, as before;
-- self-registered repositories keep the parser tier but get no build-based tier
-  (`workers.status` names the skip), and adding a repository or a branch from the page
-  is refused with `SANDBOX_UNAVAILABLE`.
+- self-registered repositories whose remote is a network URL are not cloned or fetched
+  and get no compiler tier: without the egress proxy nothing would vet the hosts and
+  ports a job connects to. The ingest pass note and `workers.status` name the skip; the
+  entry resumes once the sandbox is available;
+- self-registered repositories on a local path keep the parser tier and the static
+  compiler tiers but get no build-based tier (C/C++);
+- adding a repository or a branch from the page is refused with `SANDBOX_UNAVAILABLE`.
+
+Each Go entry has its own module cache under `LOOM_CODE_SCIP_GO_MODCACHE`
+(`<root>/<org>/<namespace>`): `go` does not re-check the sums of modules already in its
+cache, so a cache one repository's job wrote is never another's.
 
 ### Host cron
 

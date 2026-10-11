@@ -15,9 +15,10 @@ import fnmatch
 import logging
 import os
 import re
+import signal
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
 
 logger = logging.getLogger("loom.code_index.git")
 
@@ -77,8 +78,12 @@ def add_git_config(env: dict[str, str], key: str, value: str) -> None:
 
 
 def is_local_remote(remote: str) -> bool:
-    """A remote that is a path on this host (an operator's local mirror)."""
-    return remote.startswith(("/", "file://", "./", "../"))
+    """A remote that is a path on this host (an operator's local mirror). As git
+    reads it: no `scheme://` and no `host:` before the first slash (`mirror.git`
+    and `dir/repo` are relative paths, `git@host:a/b` is ssh)."""
+    if remote.startswith("file://"):
+        return True
+    return bool(remote) and "://" not in remote and ":" not in remote.split("/", 1)[0]
 
 
 def auth_env(token: str = "", remote: str = "https://github.com/") -> dict[str, str]:
@@ -122,7 +127,15 @@ def git_config_env() -> dict[str, str]:
     return {k: v for k, v in auth_env().items() if k.startswith("GIT_")}
 
 
-def remote_access(remote: str) -> dict[str, Any]:
+class RemoteAccess(TypedDict, total=False):
+    """The `sandbox.JobOptions` a job talking to a remote needs."""
+
+    readonly: list[Path]
+    network: bool
+    allow_remote_port: int | None
+
+
+def remote_access(remote: str) -> RemoteAccess:
     """`sandbox.run_job` arguments for a job talking to `remote`: a local mirror is
     mounted read-only, any other remote is reached through the egress proxy."""
     if is_local_remote(remote):
@@ -145,16 +158,24 @@ def remote_port(remote: str) -> int | None:
 
 
 async def communicate_or_kill(
-    proc: asyncio.subprocess.Process, stdin: bytes | None = None, *, timeout_s: float
+    proc: asyncio.subprocess.Process,
+    stdin: bytes | None = None,
+    *,
+    timeout_s: float,
+    group: bool = False,
 ) -> tuple[bytes, bytes]:
     """`proc.communicate(stdin)` bounded by `timeout_s` (TimeoutError past it). On
     any exit that is not a normal finish — the timeout, the caller's cancellation (a
     `code.refresh` whose wait gave up, a dropped fan-out), any error — the child is
-    killed and reaped, so no git process outlives the call that started it."""
+    killed and reaped, so no git process outlives the call that started it. With
+    `group` (a child started in its own session) its whole process group is killed."""
     talk = proc.communicate(stdin) if stdin is not None else proc.communicate()
     try:
         return await asyncio.wait_for(talk, timeout=timeout_s)
     except BaseException:
+        if group:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(proc.pid, signal.SIGKILL)
         await _kill(proc)
         raise
 

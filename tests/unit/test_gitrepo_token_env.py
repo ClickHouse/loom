@@ -49,6 +49,24 @@ def test_only_a_local_remote_allows_the_file_transport() -> None:
     assert "protocol.file.allow" not in _config(gitrepo.auth_env("", "git@github.com:o/r.git"))
 
 
+@pytest.mark.parametrize(
+    ("remote", "local"),
+    [
+        ("/srv/mirror.git", True),
+        ("file:///srv/mirror.git", True),
+        ("./mirror.git", True),
+        ("mirror.git", True),  # git reads a bare relative path as local too
+        ("mirrors/a.git", True),
+        ("git@github.com:o/r.git", False),
+        ("host:r.git", False),
+        ("https://github.com/o/r.git", False),
+        ("", False),  # no remote: a submodule update must not get the file transport
+    ],
+)
+def test_a_remote_is_local_exactly_when_git_reads_it_as_a_path(remote: str, local: bool) -> None:
+    assert gitrepo.is_local_remote(remote) is local
+
+
 def test_git_inherits_no_server_environment(monkeypatch) -> None:
     monkeypatch.setenv("LOOM_JWT_SECRET", "server-secret")
     monkeypatch.setenv("GIT_SSH_COMMAND", "evil")
