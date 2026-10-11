@@ -17,7 +17,9 @@ The table is ReplacingMergeTree ORDER BY jti: the newest row per key governs.
 Failure semantics: until the first successful read `loaded()` is False and
 `verify_token` refuses every token (503, retryable) — an empty set would let
 revoked tokens through. After it, a failed refresh keeps the last good
-snapshot, so a ClickHouse outage does not take authentication down with it.
+snapshot for up to `jwt_revocation_max_stale_seconds`, so a short ClickHouse
+outage does not take authentication down with it; past that bound every
+token is refused again (503) until a refresh lands.
 """
 
 from __future__ import annotations

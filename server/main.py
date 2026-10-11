@@ -292,9 +292,11 @@ _claim_release.attach(app)
 _oauth.attach(app)
 
 from server.insights.app.admin_routes import admin_router as _admin_router  # noqa: E402
+from server.insights.app.admin_routes import org_admin_router as _org_admin_router  # noqa: E402
 from server.insights.app.provider_routes import provider_router as _provider_router  # noqa: E402
 
 app.include_router(_admin_router)
+app.include_router(_org_admin_router)
 app.include_router(_provider_router)
 
 # attach() mounts the StaticFiles assets dir before including the router so the

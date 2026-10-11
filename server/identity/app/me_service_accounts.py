@@ -10,10 +10,12 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Request
 
+from server.auth.delegation import delegate
+from server.auth.jwt import AuthInfo
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.grant_sql import LIVE_GRANT
 from server.identity.app import me_callers, token_grants
-from server.operations.base import GRANT_ROLES, grant_rank
+from server.operations.base import GRANT_ROLES, Role, grant_rank
 from server.settings import settings
 
 router = APIRouter()
@@ -27,11 +29,11 @@ def json_int(value: object) -> int:
     return int(value)
 
 
-def _parse_sa_ttl(ttl_raw: object) -> tuple[int, int | None]:
-    """`ttl_days` of a scoped token: None = no expiry (0, None); else 1..3650
-    days as (days, seconds); anything else is a 422."""
+def _parse_sa_ttl(ttl_raw: object) -> int | None:
+    """`ttl_days` of a scoped token in seconds: None = the delegation default
+    (90 days); else 1..3650 days; anything else is a 422."""
     if ttl_raw is None:
-        return 0, None
+        return None
     try:
         ttl_days = json_int(ttl_raw)
         if ttl_days < 1 or ttl_days > 3650:
@@ -44,7 +46,19 @@ def _parse_sa_ttl(ttl_raw: object) -> tuple[int, int | None]:
                 "message": "ttl_days must be 1..3650 or null",
             },
         ) from e
-    return ttl_days, ttl_days * 86400
+    return ttl_days * 86400
+
+
+def dev_parent(payload: dict[str, object]) -> AuthInfo:
+    """The parent a token is delegated from in dev mode (no auth, no bearer): a
+    flat writer for the body's subject and org."""
+    return AuthInfo(
+        subject=str(payload.get("subject") or "dev"),
+        org=str(payload.get("org") or "default"),
+        namespaces=("*",),
+        roles=(Role.WRITER,),
+        is_service_account=False,
+    )
 
 
 @router.post("/v1/me/service_accounts.create")
@@ -63,25 +77,26 @@ async def me_service_accounts_create(
                           #   defaults to the top-level `role`, else the
                           #   caller's live grant on that namespace.
       role: str|null      # default role for bare entries (viewer|writer|admin)
-      ttl_days: int|null  # null = no expiry; default 90
+      ttl_days: int|null  # default and null: 90 days
 
-    Each namespace's effective role = min(caller's live grant, requested) —
-    the caller may DOWNGRADE (or keep) but never escalate. The token carries an
-    `ns_roles` claim (authoritative per-namespace role) and an ordered
-    `namespaces` claim (the read priority). Returns the JWT exactly once.
+    Each namespace's role is delegated from the caller's token
+    (`server.auth.delegation.delegate`): at most the caller's token allows and
+    the caller's live grant — the caller may DOWNGRADE (or keep) but never
+    escalate. The token carries an `ns_roles` claim (authoritative
+    per-namespace role) and an ordered `namespaces` claim (the read priority).
+    Returns the JWT exactly once.
     """
     import hashlib
     import json as _json
     import time as _time
 
-    from server.auth.jwt import mint_token
     from server.core.ch import get_client
 
     if settings.auth_actually_required():
-        subject, org = me_callers.require_authed_caller(request)
+        parent = me_callers.require_authed_info(request)
     else:
-        subject = str(payload.get("subject") or "dev")
-        org = str(payload.get("org") or "default")
+        parent = dev_parent(payload)
+    subject, org = parent.subject, parent.org
 
     name = str(payload.get("name") or "").strip()
     if not name or not (1 <= len(name) <= 64):
@@ -149,60 +164,25 @@ async def me_service_accounts_create(
             },
         )
 
-    ttl_days, ttl_seconds = _parse_sa_ttl(payload.get("ttl_days", 90))
-
-    # Per-namespace role = min(caller's live grant, requested). No requested
-    # role => default to the caller's current grant (express "whatever my perms
-    # are"). A requested role ABOVE the grant is a privilege-escalation → 403;
-    # equal or below (downgrade) is allowed.
-    ns_roles: dict[str, str] = {}
-    for ns in ordered_ns:
-        caller_role = await me_callers.caller_role_on(org, ns, subject)
-        if caller_role is None:
-            raise HTTPException(
-                status_code=403,
-                detail={
-                    "code": "AUTH_INSUFFICIENT",
-                    "message": f"caller has no active grant on {ns}",
-                },
-            )
-        req = requested_role.get(ns)
-        if req is None:
-            effective = caller_role
-        elif grant_rank(req) > grant_rank(caller_role):
-            raise HTTPException(
-                status_code=403,
-                detail={
-                    "code": "AUTH_INSUFFICIENT",
-                    "message": (
-                        f"caller is {caller_role} on {ns} — cannot mint a "
-                        f"{req} token there (would be privilege escalation)"
-                    ),
-                },
-            )
-        else:
-            effective = req
-        ns_roles[ns] = effective
+    delegated = await delegate(
+        parent,
+        org=org,
+        requested=requested_role,
+        scoped=True,
+        ttl_seconds=_parse_sa_ttl(payload.get("ttl_days")),
+        is_service_account=True,
+    )
+    ordered_ns = delegated.namespaces
+    ns_roles = delegated.ns_roles or {}
 
     sa_hash = hashlib.sha1(
         f"{org}:{name}:{subject}:{_time.time_ns()}".encode(),
     ).hexdigest()[:6]
     sa_subject = f"sa:{name}-{sa_hash}"
-
-    minted = mint_token(
-        subject=sa_subject,
-        org=org,
-        # Ordered = read priority + the authoritative (restricted) read set.
-        namespaces=ordered_ns,
-        # Per-namespace roles govern; no flat role applies across the token.
-        roles=[],
-        ns_roles=ns_roles,
-        ttl_seconds=ttl_seconds,
-        is_service_account=True,
-    )
+    minted = delegated.mint(sa_subject)
 
     now = naive_utc_now_seconds()
-    expires_at = now + timedelta(seconds=ttl_seconds) if ttl_seconds is not None else None
+    expires_at = now + timedelta(seconds=delegated.ttl_seconds)
 
     # `roles` column keeps the distinct effective roles for the list view;
     # `ns_roles` persists the authoritative per-namespace map (JSON).
@@ -219,7 +199,7 @@ async def me_service_accounts_create(
                 "namespaces": ordered_ns,
                 "roles": distinct_roles,
                 "ns_roles": _json.dumps(ns_roles),
-                "ttl_days": ttl_days,
+                "ttl_days": delegated.ttl_seconds // 86400,
                 "created_by": subject,
                 "created_at": now,
                 "expires_at": expires_at,

@@ -169,6 +169,9 @@ class AuthSettings(BaseModel):
     # Seconds the `loom.revoked_tokens` snapshot is cached; verify checks both
     # jti and sub against it, so a revoke takes effect within this TTL.
     jwt_revocation_cache_ttl_seconds: float = 30.0
+    # Oldest revocation snapshot a process still trusts, seconds. Past it
+    # (refreshes keep failing) every bearer is refused with a retryable 503.
+    jwt_revocation_max_stale_seconds: float = 600.0
 
     # Browser self-signup: "off" (endpoint 404s) or "open"
     # (/v1/auth/self-signup mints JWTs scoped to the requested namespace).

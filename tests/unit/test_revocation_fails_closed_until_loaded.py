@@ -4,7 +4,8 @@ An empty snapshot at boot (the first load failed or has not run) must not
 let a revoked token authenticate until a refresh lands. `verify_token`
 raises RevocationUnavailable (a TokenError, so every
 caller fails closed) until the first good load; HTTP answers it with a
-retryable 503. After that, a failed refresh keeps the last good snapshot.
+retryable 503. After that, a failed refresh keeps the last good snapshot,
+but only until it is `jwt_revocation_max_stale_seconds` old.
 """
 
 from __future__ import annotations
@@ -60,6 +61,30 @@ async def test_the_first_good_load_opens_the_door_and_a_later_glitch_keeps_it_op
     monkeypatch.setattr(ch_mod, "get_client", lambda: _CH(fail=True))
     await rev.refresh()
     assert rev.loaded()  # last good snapshot kept; no outage from a glitch
+
+
+@pytest.mark.asyncio
+async def test_a_snapshot_past_the_stale_bound_refuses_until_a_refresh_lands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import server.core.ch as ch_mod
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "jwt_revocation_max_stale_seconds", 600.0)
+    monkeypatch.setattr(rev, "_loaded_at", rev.time.monotonic() - 599)
+    assert verify_token(_token(), secret=SECRET).subject == "alice"
+
+    monkeypatch.setattr(rev, "_loaded_at", rev.time.monotonic() - 601)
+    with pytest.raises(RevocationUnavailable):
+        verify_token(_token(), secret=SECRET)
+    monkeypatch.setattr(ch_mod, "get_client", lambda: _CH(fail=True))
+    await rev.refresh()
+    with pytest.raises(RevocationUnavailable):
+        verify_token(_token(), secret=SECRET)
+
+    monkeypatch.setattr(ch_mod, "get_client", lambda: _CH(rows=[]))
+    await rev.refresh()
+    assert verify_token(_token(), secret=SECRET).subject == "alice"
 
 
 def test_http_answers_an_unloaded_list_with_a_retryable_503(

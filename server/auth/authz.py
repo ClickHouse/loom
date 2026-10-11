@@ -80,6 +80,9 @@ async def check_authorized(
     if not isinstance(auth, AuthInfo):  # defensive
         raise PermissionError("invalid auth principal")
 
+    if auth.creator:
+        await _check_creator_active(auth, org)
+
     # A scoped token carries its authority in ns_roles keyed by
     # (org, namespace). A request that omits either leaves it unaddressable:
     # answer 400 IDENTITY_INCOMPLETE, not a misleading 403.
@@ -104,6 +107,10 @@ async def check_authorized(
             "(the token's authority is per-namespace and cannot be applied "
             "without knowing which namespace the request targets)"
         )
+
+    if auth.creator and org is not None and namespace is not None:
+        await _check_delegated(auth, required_role, org, namespace)
+        return
 
     # A restricted namespace is decided here and nowhere
     # below — none of the widening rules that follow may apply to it.
@@ -213,6 +220,46 @@ async def check_authorized(
         org,
         namespace,
     )
+
+
+async def _check_creator_active(auth: AuthInfo, org: str | None) -> None:
+    """A delegated token stops when its creator's account is disabled."""
+    from server.auth.delegation import creator_account_active
+
+    account_org = org or auth.org
+    if not await creator_account_active(account_org, auth.creator):
+        raise PermissionError(f"the account that created this token is not active in {account_org}")
+
+
+async def _check_delegated(auth: AuthInfo, required_role: Role, org: str, namespace: str) -> None:
+    """The namespace gate for a delegated token (it carries `creator`). Its
+    own claim is the ceiling and its creator's live grant must also reach the
+    role, so the token never outlasts or outgrows what the creator holds now.
+    The subject's own grants do not widen it. A restricted namespace also
+    needs its two-factor check; an org-readable code namespace is read by
+    anyone in the org; on any other code namespace the creator's grant alone
+    admits a read (the join is the read)."""
+    from server.auth.delegation import ceiling_role
+
+    if not may_act_in_org(auth, org):
+        raise PermissionError(
+            f"principal {auth.subject!r} (org {auth.org!r}) cannot act in org {org!r}"
+        )
+    refusal = _refused(
+        f"principal {auth.subject!r} cannot access {org}/{namespace}", org, namespace
+    )
+    is_read = required_role.value <= Role.VIEWER.value
+    if await _is_restricted(org, namespace):
+        await _check_restricted(auth, required_role, org, namespace)
+    elif is_read and auth.org == org and await _is_org_readable_code_namespace(org, namespace):
+        return
+    elif not (is_read and _is_code_namespace(org, namespace)):
+        ceiling = ceiling_role(auth, org, namespace, write=not is_read)
+        if ceiling is None or ceiling.value < required_role.value:
+            raise refusal
+    grant = await _grant_role_for(org, namespace, auth.creator)
+    if grant is None or grant.value < required_role.value:
+        raise refusal
 
 
 async def _is_restricted(org: str, namespace: str) -> bool:

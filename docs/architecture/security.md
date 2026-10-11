@@ -64,9 +64,12 @@ boot and refreshes it every `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` (30 s), thro
 `jwt_revocation_refresh` worker on the leader or the process's own loop elsewhere.
 
 - Until the first load succeeds, every token gets 503 `AUTH_UNAVAILABLE`.
-- After that, a ClickHouse outage keeps the last good snapshot.
-- `/v1/health` reports `revocation_not_loaded` (error) and `revocation_stale` (warning,
-  once older than `max(300 s, 10 × the refresh interval)`).
+- After that, a ClickHouse outage keeps the last good snapshot for at most
+  `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS` (600 s); past it every token gets 503 again
+  until a refresh lands.
+- `/v1/health` reports `revocation_not_loaded` (error), `revocation_stale` (warning,
+  once older than `max(300 s, 10 × the refresh interval)`) and `revocation_too_stale`
+  (error, past the max-stale bound).
 
 **Why fail closed.** Admitting tokens before the list is loaded would accept a revoked
 token on every fresh process, which is when an operator restarts the fleet after
@@ -102,13 +105,17 @@ authenticated call, from `gates.authorize` in both transports:
 1. A scoped token (with `ns_roles`) on a request missing its org or namespace gets 400
    `IDENTITY_INCOMPLETE`, unless the op is `deployment_scoped` or `row_scoped`; those pass
    on the token's best namespace role in its own org.
-2. A restricted namespace goes to the restricted gate only.
-3. A viewer read of an org-readable code namespace (`LOOM_CODE_ORG_READABLE` or the
+2. A delegated token (a `creator` claim, minted by `server/auth/delegation.py`) is refused
+   when its creator's account is disabled, and on a namespace needs its own claim to reach
+   the role and the creator's live grant to reach it too (`_check_delegated`; restricted
+   namespaces also take the restricted gate). Nothing below applies to it.
+3. A restricted namespace goes to the restricted gate only.
+4. A viewer read of an org-readable code namespace (`LOOM_CODE_ORG_READABLE` or the
    entry's `org_readable`) passes for any principal of that org.
-4. A scoped token's `ns_roles` decide for the namespaces they name, in the token's org
+5. A scoped token's `ns_roles` decide for the namespaces they name, in the token's org
    only. Grants are not consulted for them, except viewer reads of a code namespace.
-5. A token acts in its own org only (or `*`, or as platform admin).
-6. A flat token's roles apply to every namespace its claims cover. Otherwise a live grant
+6. A token acts in its own org only (or `*`, or as platform admin).
+7. A flat token's roles apply to every namespace its claims cover. Otherwise a live grant
    in `loom.namespace_grants` decides: unrevoked and `active` (`grant_sql.LIVE_GRANT`); a
    `pending` join request grants nothing. A service account with no grant reads its
    creator's. A grant raises a flat token's role, never lowers it. A failed grant read

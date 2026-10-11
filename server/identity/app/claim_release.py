@@ -45,19 +45,10 @@ async def claim_release(
     input: ClaimReleaseInput,
     request: Request,
 ) -> ClaimReleaseOutput:
-    from server.insights.app.admin_routes import require_admin
+    from server.insights.app.admin_routes import require_org_admin
 
-    info = await require_admin(request)
+    info = await require_org_admin(request)
     if info is not None:
-        # has_role is hierarchical: ORG_ADMIN matches ORG_ADMIN or PLATFORM_ADMIN.
-        if not info.has_role(Role.ORG_ADMIN):
-            raise HTTPException(
-                status_code=403,
-                detail={
-                    "code": "ADMIN_REQUIRED",
-                    "message": "claim_release requires PLATFORM_ADMIN or ORG_ADMIN role",
-                },
-            )
         if not info.has_role(Role.PLATFORM_ADMIN) and info.org != input.org:
             raise HTTPException(
                 status_code=403,
