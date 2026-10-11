@@ -65,8 +65,14 @@ def test_reads_outside_the_scope_and_writes_inside_it_are_untouched() -> None:
     assert "max_rows_to_read" not in insert and "read_overflow_mode" not in insert
 
 
-def test_a_row_cap_hit_inside_the_scope_is_a_422() -> None:
-    err = RuntimeError("Code: 158. DB::Exception: Limit for rows exceeded")
+@pytest.mark.parametrize(
+    "err",
+    [
+        RuntimeError("Code: 158. DB::Exception: Limit for rows exceeded"),
+        RuntimeError("Code: 241. DB::Exception: Memory limit (for query) exceeded"),
+    ],
+)
+def test_a_row_or_memory_cap_hit_inside_the_scope_is_a_422(err: RuntimeError) -> None:
     with ch.caller_shaped(), pytest.raises(ValidationError, match="narrow it"):
         ch._raise_if_caller_cap(err)
     ch._raise_if_caller_cap(err)  # outside the scope: left to the caller as before

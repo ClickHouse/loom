@@ -131,13 +131,13 @@ def _apply_caller_ceilings(out: dict[str, Any], sql: str) -> None:
     out["read_overflow_mode"] = "throw"
 
 
-# Row and byte caps a caller-shaped read hit: TOO_MANY_ROWS, TOO_MANY_BYTES.
-_CALLER_CAP_CODES = (158, 307)
+# Caps a caller-shaped read hit: TOO_MANY_ROWS, TOO_MANY_BYTES, MEMORY_LIMIT_EXCEEDED.
+_CALLER_CAP_CODES = (158, 307, 241)
 
 
 def _raise_if_caller_cap(e: BaseException) -> None:
-    """A caller-shaped read that hit its row cap is the request's breadth, not a
-    server fault: a 422 that says how to narrow it."""
+    """A caller-shaped read that hit its row or memory cap is the request's breadth,
+    not a server fault: a 422 that says how to narrow it."""
     if caller_shaped_var.get() and error_code(e) in _CALLER_CAP_CODES:
         from server.core.errors import ValidationError
 
