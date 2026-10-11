@@ -779,6 +779,13 @@ export interface MemoryHistoryEntry {
   redacted_at: string | null;
   source_trace: string;
   confidence?: number;
+  pinned?: boolean;
+  // State a version can change with the value unchanged.
+  status?: string;
+  conflict_with?: string[];
+  tags?: string[];
+  verified_at?: string | null;
+  lock_mode?: string;
 }
 
 /** Version-by-version timeline for a single memory key. */

@@ -79,11 +79,13 @@ async def test_reemits_are_left_out_and_edits_stay(control_plane_url, mint_test_
         # A tag change is a caller's edit.
         await a.memory.set("t", "owned", tags=["owner:old"])
         await a.memory.set("t", "owned", tags=["owner:new"])
-        assert len(await _history(a, "t", 2)) == 2
+        tagged = await _history(a, "t", 2)
+        assert [r["tags"] for r in tagged] == [["owner:new"], ["owner:old"]], tagged
 
         # Attest, then revoke: three versions.
         await a.memory.set("a", "attested")
         await _history(a, "a", 1)
         assert (await a.memory.verify("a")).get("changed")
         assert (await a.memory.verify("a", revoke=True)).get("changed")
-        assert len(await _history(a, "a", 3)) == 3
+        attested = await _history(a, "a", 3)
+        assert [bool(r["verified_at"]) for r in attested] == [False, True, False], attested
