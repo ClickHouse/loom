@@ -252,9 +252,7 @@ Every arrow is a new version; the old one stays in `loom.memory_versions`.
   reads them in (lowercased; articles, possessives and punctuation dropped; the head noun
   singular), so `Billing Services` and `billing service` are one entity. A writer may pass
   them; otherwise the `entity_extractor` worker fills them. They drive the entity boost
-  and the [entity graph](../features/entity-graph.md). Rows and graph edges stored
-  before an entity was canonical keep the form they were written in, and lookups by the
-  canonical form do not find them.
+  and the [entity graph](../features/entity-graph.md).
 - `files` are repository paths the memory is about; `memory.for_file` serves them before
   an edit of those files.
 

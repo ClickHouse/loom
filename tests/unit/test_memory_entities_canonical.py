@@ -81,10 +81,10 @@ def test_an_article_behind_punctuation_is_dropped_once(raw: str) -> None:
 
 
 @pytest.mark.parametrize("raw", ["re.S", "re.S.S.S.S.S", "Re.S.", "v2.x's", "(the) Ledgers."])
-def test_punctuation_a_pass_exposes_is_taken_too(raw: str) -> None:
+def test_trailing_punctuation_is_taken_and_a_dotted_name_kept(raw: str) -> None:
     once = canonical_entity_text(raw)
     assert canonical_entity_text(once) == once
-    assert canonical_entity_text("re.S") == "re"
+    assert canonical_entity_text("re.S") == "re.s"
 
 
 @pytest.mark.parametrize(
@@ -141,3 +141,21 @@ def test_canonical_text_is_a_fixed_point_for_any_mix_of_its_edge_pieces() -> Non
         raw = "".join(rng.choice(pieces) for _ in range(rng.randint(1, 8)))
         once = canonical_entity_text(raw)
         assert canonical_entity_text(once) == once, raw
+
+
+@pytest.mark.parametrize(
+    ("raw", "canonical"),
+    [
+        ("node.js", "node.js"),
+        ("foo.rs", "foo.rs"),
+        ("cyclic_aliases", "cyclic_alias"),
+        ("system.databases", "system.database"),
+        ("flaky-tests", "flaky-test"),
+        ("Part::setColumnsSizes", "part::setcolumnssize"),
+        ("my_status", "my_status"),
+        ("foo/", "foo/"),
+    ],
+)
+def test_only_the_last_segment_of_a_name_is_singular(raw: str, canonical: str) -> None:
+    assert canonical_entity_text(raw) == canonical
+    assert canonical_entity_text(canonical) == canonical

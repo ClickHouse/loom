@@ -277,28 +277,22 @@ def _lead(text: str) -> str:
 
 
 def _settle(text: str) -> str:
-    """`text` with its trailing dots and spaces dropped and its last word singular, again
-    and again until neither changes (`re.s.s` -> `re.s.` -> `re.s` -> `re.` -> `re`):
-    one fixed point, read by moving an end index, so linear in the text."""
-    end = _trimmed(text, len(text), 0)
-    start = text.rfind(" ", 0, end) + 1
-    vowel = next((i for i in range(start, end) if text[i] in _VOWELS), end)
-    while True:
-        cut = _singular_cut(text, start, end, vowel < end)
-        if cut is None:
-            return text[:end]
-        end, suffix = cut
-        if suffix:
-            return text[:end] + suffix  # -y, -f: no `s` or `.` to expose
-        end = _trimmed(text, end, start)
-        if end <= start:  # the last word went: its predecessor is the head now
-            return _settle(text[:end])
-
-
-def _trimmed(text: str, end: int, start: int) -> int:
-    while end > start and text[end - 1] in " .":
+    """`text` without its trailing dots and spaces and with its last segment singular
+    (`api responses` -> `api response`, `system.databases` -> `system.database`); a
+    segment ends at a space or `./_-:`, so `node.js` and `foo.rs` keep their suffix."""
+    end = len(text)
+    while end and text[end - 1] in " .":
         end -= 1
-    return end
+    start = max(map(lambda sep: text.rfind(sep, 0, end), _SEGMENT_ENDS)) + 1
+    vowel = any(text[i] in _VOWELS for i in range(start, end))
+    cut = _singular_cut(text, start, end, vowel)
+    if cut is None:
+        return text[:end]
+    end, suffix = cut
+    return text[:end] + suffix
+
+
+_SEGMENT_ENDS = " ./_-:"
 
 
 def _singular_cut(text: str, s: int, e: int, has_vowel: bool) -> tuple[int, str] | None:
