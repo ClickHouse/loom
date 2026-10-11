@@ -98,7 +98,7 @@ async def test_a_register_that_names_one_setting_keeps_the_rest(
             description="team facts",
             visibility="public",
             conflict_threshold=0.7,
-            rerank_endpoint="https://rerank.example/v1",
+            rerank_endpoint="builtin:cohere",
             default_conflict_policy="manual_review",
         )
         await a.namespaces.register(owner_email="t@example.com", warm_days=3)
@@ -108,7 +108,7 @@ async def test_a_register_that_names_one_setting_keeps_the_rest(
         assert info["description"] == "team facts"
         assert info["visibility"] == "public"
         assert info["conflict_threshold"] == pytest.approx(0.7)
-        assert info["rerank_endpoint"] == "https://rerank.example/v1"
+        assert info["rerank_endpoint"] == "builtin:cohere"
         assert info["default_conflict_policy"] == "manual_review"
         # An explicit null is a value: the namespace goes back to the server's threshold.
         await a.call("namespace.register", owner_email="t@example.com", conflict_threshold=None)

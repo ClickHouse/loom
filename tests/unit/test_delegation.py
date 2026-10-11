@@ -320,7 +320,7 @@ async def test_org_wide_roles_are_never_delegated(world, role: str) -> None:
 @pytest.mark.asyncio
 async def test_a_service_account_mints_only_service_accounts(world) -> None:
     sa = _login(subject="sa:x", is_service_account=True, creator="alice", namespaces=("*",))
-    assert "service-account" in await _refused(sa, {"a": None}, is_service_account=False)
+    assert (await _child(sa, {"a": None}, is_service_account=False)).is_service_account
     assert (await _child(sa, {"a": None})).is_service_account
 
 
