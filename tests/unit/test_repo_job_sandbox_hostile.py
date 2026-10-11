@@ -4,7 +4,8 @@ through the egress proxy, through a redirect and through a .gitmodules URL), esc
 with `unshare`, fork-bomb, and leave a process behind. Every attempt fails and
 nothing outlives the job.
 
-Needs a host where bubblewrap can create user namespaces; skipped elsewhere."""
+Needs a host where bubblewrap can create user namespaces; skipped elsewhere, and
+a failure where LOOM_TEST_REQUIRE_SANDBOX=1 (the CI sandbox job)."""
 
 from __future__ import annotations
 
@@ -21,13 +22,15 @@ import server.core.hosts as hosts
 from server.code.app.index import compiler_tier, egress, sandbox
 from server.code.app.index.gitrepo import auth_env
 
-pytestmark = pytest.mark.skipif(
-    not sandbox.sandbox_available(), reason="bubblewrap cannot create namespaces here"
-)
+_HAS_SANDBOX = sandbox.sandbox_available()
 
 
 @pytest.fixture(autouse=True)
 def _real_sandbox(monkeypatch: pytest.MonkeyPatch) -> None:
+    if not _HAS_SANDBOX:
+        if os.environ.get("LOOM_TEST_REQUIRE_SANDBOX") == "1":
+            pytest.fail("bubblewrap cannot create namespaces here")
+        pytest.skip("bubblewrap cannot create namespaces here")
     monkeypatch.setattr(sandbox, "_available", True)
 
 
@@ -277,3 +280,58 @@ async def test_the_ssh_relay_is_refused_a_private_host(monkeypatch) -> None:
         merge_stderr=True,
     )
     assert done.returncode == 1 and b"refused" in done.stdout
+
+
+async def test_a_toolchain_mount_shows_no_loom_data(tmp_path: Path, monkeypatch) -> None:
+    """The C++ tier with the default paths: scip-clang at var/bin/scip-clang, the
+    blobs and other entries' mirrors and checkouts beside it in var/."""
+    from server.settings import settings
+
+    monkeypatch.chdir(tmp_path)
+    for field in ("code_repos_root", "blob_dir", "code_scip_checkout_dir"):
+        monkeypatch.setattr(settings, field, type(settings).model_fields[field].default)
+    canaries = [
+        tmp_path / "var/blobs/blob",
+        tmp_path / "var/code_repos/self/checkout-other/secret",
+        tmp_path / "var/env-backup-1",
+    ]
+    for path in canaries:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(CANARY)
+    scip_clang = tmp_path / "var/bin/scip-clang"
+    scip_clang.parent.mkdir(parents=True)
+    scip_clang.write_text("#!/bin/sh\necho scip-clang-ran\n")
+    scip_clang.chmod(0o755)
+    reads = " ".join(f"cat {p} 2>/dev/null;" for p in canaries)
+    for given in (scip_clang, scip_clang.parent):
+        done = await sandbox.run_sandboxed(
+            ["sh", "-c", f"{scip_clang} 2>&1; {reads} ls -R {tmp_path}/var 2>&1"],
+            env=ENV,
+            timeout_s=30,
+            readonly=sandbox.tool_mounts(given),
+        )
+        assert CANARY.encode() not in done.stdout, done.stdout
+        assert b"blob" not in done.stdout and b"checkout-other" not in done.stdout
+    assert (
+        b"scip-clang-ran"
+        in (
+            await sandbox.run_sandboxed(
+                [str(scip_clang)], env=ENV, timeout_s=30, readonly=sandbox.tool_mounts(scip_clang)
+            )
+        ).stdout
+    )
+
+
+async def test_the_checkout_stays_writable_under_a_read_only_parent(tmp_path: Path) -> None:
+    checkout = tmp_path / "tools" / "repos" / "checkout"
+    (checkout / ".git").mkdir(parents=True)
+    done = await sandbox.run_sandboxed(
+        ["sh", "-c", f"echo built > {checkout}/out && touch {checkout}/.git/hook; echo $?"],
+        env=ENV,
+        timeout_s=30,
+        writable=[checkout],
+        readonly=[tmp_path / "tools", checkout / ".git"],
+        merge_stderr=True,
+    )
+    assert (checkout / "out").read_text() == "built\n"
+    assert not (checkout / ".git" / "hook").exists(), done.stdout

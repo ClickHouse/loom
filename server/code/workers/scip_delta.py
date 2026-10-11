@@ -39,7 +39,7 @@ from server.code.app.index.compiler_tier import (
     run_tier,
 )
 from server.code.app.index.gitrepo import git_config_env
-from server.code.app.index.sandbox import tool_root
+from server.code.app.index.sandbox import tool_mounts
 from server.core.paths import SCIP_HARNESS_DIR
 from server.settings import settings
 
@@ -131,7 +131,7 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult
             },
             out_dir=Path(tmp),
             timeout_s=settings.code_scip_delta_timeout_seconds,
-            readonly=[tool_root(Path(scip_clang_abs).parent)],
+            readonly=tool_mounts(Path(scip_clang_abs)),
         )
         if returncode != 0:
             raise RuntimeError(f"harness exit {returncode}: {out[-2000:]}")

@@ -4,7 +4,7 @@ A compiler-tier worker (`server/code/workers/scip_{delta,ts_delta,py_delta,go_de
 owns only its producer's `_run_repo`: which harness it runs, with what environment,
 and the outcome counters it adds. The loop over configured entries, the ownership
 test, failure isolation, the watermark reset after a vanished base commit, the
-checkout / bare-clone resolution and the subprocess helpers live here.
+checkout / bare-clone resolution and the git and harness helpers live here.
 
 House rule: the server never parses protobuf. Every indexer and the protobuf → JSON
 conversion run in subprocesses; the tiers consume the JSON delta.
@@ -12,11 +12,8 @@ conversion run in subprocesses; the tiers consume the JSON delta.
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import logging
 import os
-import signal
 import subprocess
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
@@ -261,32 +258,6 @@ def resolve_binary(configured: str) -> Path:
         if found:
             return Path(found).absolute()
     return Path(configured).absolute()
-
-
-async def communicate_or_kill(
-    proc: asyncio.subprocess.Process, timeout_s: float, *, group: bool = False
-) -> bytes:
-    """`proc`'s stdout, or TimeoutError after `timeout_s`. The process is killed
-    on any early exit, its own timeout or the pass cancelled (the supervisor's
-    deadline is shorter than the harness timeouts; shutdown): otherwise it
-    keeps running in the checkout the next pass checks out again.
-
-    `group=True` is for a process started with `start_new_session=True`: the
-    kill goes to its whole process group, because a harness is a bash script
-    whose compiler and indexer children (scip-clang, node, scip-python) would
-    outlive a kill of bash alone. The group is killed even when bash already
-    exited, since a child still holding the pipe is what kept the wait open."""
-    try:
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
-    except BaseException:
-        if group:
-            with contextlib.suppress(ProcessLookupError, PermissionError):
-                os.killpg(proc.pid, signal.SIGKILL)
-        elif proc.returncode is None:
-            with contextlib.suppress(ProcessLookupError):
-                proc.kill()
-        raise
-    return out or b""
 
 
 # The ref a checkout's fetched target lands on. A fetch negotiates from the

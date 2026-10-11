@@ -151,6 +151,40 @@ jobs:
           name: coverage-xml
           path: coverage.xml
 
+  sandbox:
+    name: repository-job sandbox (real bubblewrap)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # The hostile suite skips where bwrap cannot create namespaces;
+    # LOOM_TEST_REQUIRE_SANDBOX=1 turns that skip into a failure here.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        id: python
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install Loom from uv.lock (dev, code extras)
+        run: |
+          uv sync --locked --python "${{ steps.python.outputs.python-path }}" --extra dev --extra code
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      # prlimit comes with util-linux. Ubuntu 24.04 restricts unprivileged user
+      # namespaces through AppArmor; the sandbox needs them.
+      - name: Install bubblewrap and allow user namespaces
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bubblewrap util-linux
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          bwrap --unshare-user --ro-bind / / true
+      - name: pytest hostile sandbox suite
+        env:
+          LOOM_TEST_REQUIRE_SANDBOX: "1"
+        run: pytest tests/unit/test_repo_job_sandbox_hostile.py -q -p randomly --randomly-seed="${{ github.run_id }}${{ github.run_attempt }}"
+
   schema-check:
     name: schema.sql in sync with migrations
     runs-on: ubuntu-latest

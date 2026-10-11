@@ -7,19 +7,20 @@ program). `run_job` runs each of them inside bubblewrap when the host supports i
 - its own user, pid, network, mount, ipc and uts namespaces, no capabilities, no
   new user namespaces, and a seccomp filter that refuses the syscalls a job never
   needs (`seccomp_filter`);
-- only the system directories, the toolchains and the paths the caller names are
-  mounted; the caller's work directories are writable, everything else read-only.
-  /tmp and HOME are a fresh directory removed after the job. No server
-  environment, credentials, host HOME or Docker socket;
-- rlimits on CPU, memory, processes and file size, and a wall-clock timeout that
+- only the system directories, the toolchains (never a directory holding Loom's
+  data, `tool_mounts`) and the paths the caller names are mounted; the caller's
+  work directories are writable, everything else read-only. /tmp and HOME are a
+  fresh directory removed after the job. No server environment, credentials, host
+  HOME or Docker socket;
+- rlimits on CPU, data memory, processes and file size, and a wall-clock timeout that
   kills the whole tree: when bwrap dies its pid namespace dies with it, so no
-  process the job started survives it. The rlimits are per process (CPU, address
-  space, file size) and per uid (processes), not a cgroup: they bound each process
+  process the job started survives it. The rlimits are per process (CPU, data
+  memory, file size) and per uid (processes), not a cgroup: they bound each process
   of a job, not the job's total;
 - no network unless the caller asks for it, and then the only way out is the
   egress proxy (`egress.py`), which allows public addresses only.
 
-Without a usable bwrap the job runs as a plain child process, as it always has;
+Without a usable bwrap (or without prlimit) the job runs as a plain child process, as it always has;
 `sandbox_available()` says which, and the callers decide what may run then.
 """
 
@@ -29,13 +30,12 @@ import asyncio
 import logging
 import os
 import platform
-import resource
 import shutil
 import struct
 import subprocess
 import sys
 import tempfile
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Required, TypedDict, Unpack
@@ -158,8 +158,8 @@ _disable_userns = False
 
 
 def sandbox_available() -> bool:
-    """Whether repository jobs run inside the sandbox on this host: bwrap is
-    installed, the architecture has a seccomp table, and a trivial job runs.
+    """Whether repository jobs run inside the sandbox on this host: bwrap and
+    prlimit are installed, the architecture has a seccomp table, and a trivial job runs.
     Probed once per process."""
     global _available
     if _available is None:
@@ -181,7 +181,7 @@ def sandbox_state() -> bool | None:
 def _probe() -> bool:
     global _disable_userns
     bwrap = shutil.which("bwrap")
-    if not bwrap or platform.machine() not in _AUDIT_ARCH:
+    if not bwrap or not shutil.which("prlimit") or platform.machine() not in _AUDIT_ARCH:
         return False
     try:
         help_text = subprocess.run(
@@ -249,20 +249,54 @@ def _bwrap_argv(argv: Sequence[str], *, scratch: str, binds: list[str], fd: int)
     return [*args, "--", *argv]
 
 
-def tool_root(path: Path) -> Path:
-    """The directory to mount for a tool found in `path`: a `bin` directory's
-    parent (node's lib, go's pkg sit beside it), `path` itself otherwise."""
-    return path.parent if path.name in ("bin", ".bin") else path
+def tool_mounts(path: Path) -> list[Path]:
+    """What to mount for a tool at `path` (a binary or its directory): a `bin`
+    directory's parent when that is safe (node's lib, go's pkg sit beside it),
+    else `path` itself, else nothing (logged)."""
+    candidates = [path.parent, path] if path.name in ("bin", ".bin") else [path]
+    for candidate in candidates:
+        if not _exposes_data(candidate):
+            return [candidate]
+    logger.info("toolchain %s not mounted: it holds or sits in Loom's data", path)
+    return []
+
+
+def _data_paths() -> list[Path]:
+    """Where Loom keeps what no job may read: repository mirrors and
+    checkouts, blobs and the env file."""
+    from server.core.env_file import env_file_path
+
+    named = [settings.code_repos_root, settings.blob_dir, settings.code_scip_checkout_dir]
+    return [Path(p).absolute() for p in [*named, env_file_path() or ""] if p]
+
+
+def _exposes_data(path: Path) -> bool:
+    """Whether mounting `path` as a toolchain could show a job Loom's data: it
+    is or holds a data path, var/, the install root or HOME, or it sits inside
+    a data path. A directory may not sit in var/ or under HOME either (a file,
+    such as var/bin/scip-clang, may)."""
+    from server.core.paths import REPO_ROOT
+
+    data = _data_paths()
+    home = Path.home().absolute()
+    var = [Path("var").absolute(), REPO_ROOT / "var"]
+    for p in {path.absolute(), path.resolve()}:
+        if any(q.is_relative_to(p) for q in [*data, *var, REPO_ROOT, home]):
+            return True
+        if any(p.is_relative_to(q) for q in data):
+            return True
+        if p.is_dir() and any(p.is_relative_to(q) for q in [*var, home]):
+            return True
+    return False
 
 
 def _readonly_paths(env: Mapping[str, str], readonly: Sequence[Path]) -> list[Path]:
     """The caller's read-only paths, the server's python (harness converters and
     the relay run it) and the toolchains on the job's PATH (absolute entries
-    only). Never the server's HOME or a directory above it, and no toolchain
-    found under HOME: it may hold credentials."""
+    only, through `tool_mounts`). Never the server's HOME or a directory above it."""
     home = Path.home()
     found = [Path(p) for p in env.get("PATH", "").split(":") if p.startswith("/")]
-    from_path = [root for root in map(tool_root, found) if not root.is_relative_to(home)]
+    from_path = [mount for p in found for mount in tool_mounts(p)]
     paths = [*readonly, Path(sys.prefix), Path(sys.base_prefix), *from_path]
     out: list[Path] = []
     for p in paths:
@@ -275,13 +309,16 @@ def _readonly_paths(env: Mapping[str, str], readonly: Sequence[Path]) -> list[Pa
 
 
 def _binds(writable: Sequence[Path], readonly: Sequence[Path], egress_dir: str) -> list[str]:
-    """Writable binds first, so a read-only path inside one (a checkout's .git)
-    stays read-only."""
+    """Parents before children (bwrap mounts in order, and a later mount hides
+    what it covers): a read-only parent cannot hide a writable checkout, and a
+    read-only path inside a writable one (a checkout's .git) stays read-only.
+    At equal depth a read-only bind comes last and wins."""
+    binds = [("--bind", os.path.abspath(p)) for p in writable]
+    binds += [("--ro-bind", os.path.abspath(p)) for p in readonly]
+    binds.sort(key=lambda bind: len(Path(bind[1]).parts))
     out: list[str] = []
-    for p in map(os.path.abspath, writable):
-        out += ["--bind", p, p]
-    for p in map(os.path.abspath, readonly):
-        out += ["--ro-bind", p, p]
+    for flag, p in binds:
+        out += [flag, p, p]
     if egress_dir:
         out += [
             "--ro-bind",
@@ -309,38 +346,25 @@ def _network_env(env: dict[str, str]) -> None:
     )
 
 
-def _rlimits() -> list[tuple[int, str, int]]:
-    """(resource, prlimit option, value) for each job rlimit. Per process (CPU,
-    address space, file size) and per uid (processes): one job's processes are
-    bounded each, not in total."""
+def _rlimits() -> list[tuple[str, int]]:
+    """(prlimit option, value) for each job rlimit. Per process (CPU, data, file
+    size) and per uid (processes): one job's processes are bounded each, not in
+    total. Memory is RLIMIT_DATA, not RLIMIT_AS: node (scip-typescript,
+    scip-python, npm) reserves far more address space than it uses."""
     mib = 1024 * 1024
     return [
-        (resource.RLIMIT_CPU, "--cpu", settings.code_sandbox_cpu_seconds),
-        (resource.RLIMIT_AS, "--as", settings.code_sandbox_memory_mb * mib),
-        (resource.RLIMIT_NPROC, "--nproc", settings.code_sandbox_max_pids),
-        (resource.RLIMIT_FSIZE, "--fsize", settings.code_sandbox_max_file_mb * mib),
+        ("--cpu", settings.code_sandbox_cpu_seconds),
+        ("--data", settings.code_sandbox_memory_mb * mib),
+        ("--nproc", settings.code_sandbox_max_pids),
+        ("--fsize", settings.code_sandbox_max_file_mb * mib),
     ]
 
 
 def _prlimit_argv() -> list[str]:
-    """`prlimit` (util-linux, in the image) setting the rlimits before it execs
-    bwrap; the job inherits them. [] where prlimit is missing: the child then
-    sets them itself (`_limits`), which runs Python between fork and exec."""
-    prlimit = shutil.which("prlimit")
-    if not prlimit:
-        return []
-    return [prlimit, *(f"{option}={value}:{value}" for _, option, value in _rlimits()), "--"]
-
-
-def _limits() -> Callable[[], None]:
-    """The rlimits the child sets before it execs bwrap, without prlimit."""
-    limits = _rlimits()
-
-    def apply() -> None:
-        for kind, _, value in limits:
-            resource.setrlimit(kind, (value, value))
-
-    return apply
+    """`prlimit` (util-linux, in the image; the probe requires it) setting the
+    rlimits before it execs bwrap; the job inherits them."""
+    prlimit = shutil.which("prlimit") or "prlimit"
+    return [prlimit, *(f"{option}={value}:{value}" for option, value in _rlimits()), "--"]
 
 
 class JobOptions(TypedDict, total=False):
@@ -387,13 +411,11 @@ async def run_sandboxed(argv: Sequence[str], **job: Unpack[JobOptions]) -> JobRe
             binds += ["--chdir", str(cwd)]
         fd = _seccomp_fd()
         try:
-            limits = _prlimit_argv()
             proc = await asyncio.create_subprocess_exec(
-                *limits,
+                *_prlimit_argv(),
                 *_bwrap_argv(argv, scratch=scratch, binds=binds, fd=fd),
                 env=job_env,
                 pass_fds=(fd,),
-                preexec_fn=None if limits else _limits(),
                 **_pipes(job),
             )
         finally:
@@ -440,5 +462,5 @@ __all__ = [
     "sandbox_available",
     "sandbox_state",
     "seccomp_filter",
-    "tool_root",
+    "tool_mounts",
 ]
