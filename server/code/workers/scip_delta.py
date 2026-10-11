@@ -72,6 +72,7 @@ async def run_pass() -> CodeScipDeltaResult:
         CodeScipDeltaResult(),
         _run_repo,
         entry_locked=True,
+        runs_repo_code=True,
     )
 
 

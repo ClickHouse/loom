@@ -36,6 +36,7 @@ async def test_setup_mcp_config_claude_desktop(control_plane_url: str) -> None:
         org="clickhouse",
         namespaces=["personal-alice"],
         roles=["WRITER"],
+        is_service_account=False,
     )
     r = await _post(control_plane_url, token, {"client": "claude-desktop"})
     assert r.status_code == 200, r.text
@@ -96,6 +97,7 @@ async def test_setup_mcp_config_vscode_uses_servers_key(control_plane_url: str) 
         org="clickhouse",
         namespaces=["personal-alice"],
         roles=["WRITER"],
+        is_service_account=False,
     )
     r = await _post(control_plane_url, token, {"client": "vscode"})
     assert r.status_code == 200, r.text
@@ -117,6 +119,7 @@ async def test_setup_mcp_config_claude_code_uses_http_type(
         org="clickhouse",
         namespaces=["personal-alice"],
         roles=["WRITER"],
+        is_service_account=False,
     )
     r = await _post(control_plane_url, token, {"client": "claude-code"})
     assert r.status_code == 200, r.text
@@ -136,6 +139,7 @@ async def test_setup_mcp_config_explicit_namespace(control_plane_url: str) -> No
         org="clickhouse",
         namespaces=["personal-alice", "team-shared"],
         roles=["WRITER"],
+        is_service_account=False,
     )
     r = await _post(
         control_plane_url,
@@ -159,6 +163,7 @@ async def test_setup_mcp_config_ttl_days(control_plane_url: str) -> None:
         org="clickhouse",
         namespaces=["personal-alice"],
         roles=["WRITER"],
+        is_service_account=False,
     )
     r = await _post(
         control_plane_url,
@@ -188,6 +193,7 @@ async def test_setup_mcp_config_rejects_unknown_client(control_plane_url: str) -
         org="clickhouse",
         namespaces=["personal-alice"],
         roles=["WRITER"],
+        is_service_account=False,
     )
     r = await _post(control_plane_url, token, {"client": "emacs"})
     assert r.status_code == 422
@@ -228,6 +234,7 @@ async def test_restricted_namespaces_must_be_restricted_and_persisted(
         org="clickhouse",
         namespaces=["personal-alice"],
         roles=["WRITER"],
+        is_service_account=False,
     )
     r = await _post(
         control_plane_url,

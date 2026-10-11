@@ -95,8 +95,8 @@ async def delegate(
     otherwise a flat token whose one role is the lowest role allowed on any
     requested namespace. Raises 403 AUTH_INSUFFICIENT naming what was refused."""
     child_org = _child_org(parent, org)
-    # A child is never less of a service account than its parent.
-    is_service_account = is_service_account or parent.is_service_account
+    if parent.is_service_account and not is_service_account:
+        raise _refuse("a service-account token can only mint service-account tokens")
     parents = [*parent.parents, parent.token_id] if parent.token_id else list(parent.parents)
     if len(parents) > MAX_CHAIN_DEPTH:
         raise _refuse(f"delegation chain is limited to {MAX_CHAIN_DEPTH} tokens")

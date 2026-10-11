@@ -62,6 +62,7 @@ async def run_tier[R: TierResult](
     run_repo: Callable[[CodeRepo, RepoConfig, R], Awaitable[None]],
     *,
     entry_locked: bool = False,
+    runs_repo_code: bool = False,
     extras: Callable[[R], dict[str, Any]] | None = None,
 ) -> R:
     """One pass of a compiler tier over every configured entry it owns.
@@ -70,7 +71,9 @@ async def run_tier[R: TierResult](
     tier's `watermark` so the next run indexes in full; any other failure is isolated
     to its entry, recorded in `result.errors` and noted on the pass. With
     `entry_locked` the entry's lock is taken without waiting: a full re-index moving
-    the checkout makes the entry a skip, not an error."""
+    the checkout makes the entry a skip, not an error. `runs_repo_code` marks a tier
+    that executes the repository's own build (C++ CMake configure): a self-registered
+    entry gets it only inside the sandbox."""
     from server.code.domain.index.repos import configured_repos
     from server.code.store.index import CodeRepo
 
@@ -81,7 +84,7 @@ async def run_tier[R: TierResult](
         for cfg in configured_repos():
             if not await worker_owns(repo, cfg, producer):
                 continue
-            if not may_build(cfg, worker):
+            if runs_repo_code and not may_build(cfg, worker):
                 result.skipped.append(f"{cfg.namespace}: {UNSANDBOXED_SKIP}")
                 continue
             result.repos_checked += 1
@@ -112,11 +115,10 @@ _unsandboxed_logged: set[tuple[str, str, str]] = set()
 
 
 def may_build(cfg: RepoConfig, worker: str) -> bool:
-    """Whether a compiler tier may run this entry's build. A tier runs the
-    repository's own code (CMake, Go modules, package installs), so an entry a
-    viewer added from the Repositories page (`source == "registry"`) gets one
-    only inside the sandbox; an operator's entry runs either way. Logged once
-    per entry and tier."""
+    """Whether a tier that runs the repository's own build may run this entry.
+    An entry a viewer added from the Repositories page (`source == "registry"`)
+    gets one only inside the sandbox; an operator's entry runs either way.
+    Logged once per entry and tier."""
     if cfg.source != "registry" or sandbox_available():
         return True
     key = (worker, cfg.org, cfg.namespace)

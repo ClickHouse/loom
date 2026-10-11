@@ -160,9 +160,10 @@ async def test_a_self_registered_repo_gets_no_build_tier_without_the_sandbox(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Every build-based tier (C++ CMake, Go, TypeScript install + index, Python)
-    runs the repository's own code; a self-registered entry gets none of them
-    unless the sandbox holds. An operator's entry runs either way."""
+    """The C++ tier runs the repository's CMake configure, so a self-registered
+    entry gets it only when the sandbox holds; an operator's entry runs either
+    way. The other tiers run static indexers (installs skip lifecycle scripts)
+    and are not gated."""
     from server.code.app.index import sandbox
 
     w = importlib.import_module(module)
@@ -174,6 +175,7 @@ async def test_a_self_registered_repo_gets_no_build_tier_without_the_sandbox(
 
     monkeypatch.setattr(w, "_run_repo", run_repo)
     result, _ = await _run(w, cfg_type(tmp_path), _repo(watermark), owns=True)
+    builds = builds or worker != "code_scip_delta"
     assert ran == (["code-x"] if builds else [])
     if not builds:
         assert result.skipped == [f"code-x: {compiler_tier.UNSANDBOXED_SKIP}"]
