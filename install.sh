@@ -62,6 +62,10 @@ rm -rf "$INSTALL_DIR/clickhouse-config" "$INSTALL_DIR/lemmagen3"
 cp -R "$bundle/clickhouse-config" "$INSTALL_DIR/clickhouse-config"
 cp -R "$bundle/lemmagen3" "$INSTALL_DIR/lemmagen3"
 
+# .env holds the JWT secret, so it is never world-readable, not even
+# between the write and the chmod (kept as belt and braces).
+saved_umask=$(umask)
+umask 077
 if [ ! -f "$INSTALL_DIR/.env" ]; then
   secret=$(LC_ALL=C od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
   project="loom-local-$(LC_ALL=C od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"
@@ -83,6 +87,7 @@ else
   mv "$tmp_dir/env.updated" "$INSTALL_DIR/.env"
   chmod 600 "$INSTALL_DIR/.env"
 fi
+umask "$saved_umask"
 
 if [ "$SKIP_START" = 1 ]; then
   printf 'Installed Loom %s stack files in %s\n' "$version" "$INSTALL_DIR"
