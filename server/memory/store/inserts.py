@@ -7,16 +7,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
-from server.memory.domain.graph_quality import canonical_entities
 from server.memory.store.rows import MEMORY_PERSISTED_COLS
-
-
-def _canonical(row: Mapping[str, Any]) -> dict[str, Any]:
-    """The row with its `entities` in canonical form, as the search side reads them."""
-    out = dict(row)
-    if out.get("entities"):
-        out["entities"] = canonical_entities(out["entities"])
-    return out
 
 
 def check_memory_rows(rows: Sequence[Mapping[str, Any]]) -> None:
@@ -55,7 +46,7 @@ async def insert_memory_versions(
     ch = ch or _default_client()
     await ch.insert(
         "loom.memory",
-        [_canonical(r) for r in rows],
+        [dict(r) for r in rows],
         settings={"async_insert": 0, "wait_for_async_insert": 1},
     )
     return len(rows)
@@ -80,6 +71,6 @@ async def insert_embedding_rows(
     ch = ch or _default_client()
     await ch.insert(
         "loom.memory_embeddings",
-        [_canonical(r) for r in rows],
+        rows,
         settings={"async_insert": 0, "wait_for_async_insert": 1},
     )

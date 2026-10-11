@@ -68,21 +68,11 @@ def test_memory_row_carries_the_shared_fact_columns() -> None:
     )
 
 
-def test_entities_are_lowercased_the_same_way_in_both_rows() -> None:
-    """Both rows must normalise identically, or `has(entities, 'x')` matches one
-    table and not the other."""
-    src = HANDLER.read_text() + COMMIT.read_text()
-    # The two rows are built differently — one is a dict literal, the other a
-    # keyword argument — so match the normalisation EXPRESSION rather than either
-    # surrounding syntax.
-    normalisation = "[e.lower() for e in (input.entities or [])]"
-    found = src.count(normalisation)
-    assert found >= 2, (
-        "expected the same entity normalisation in both the loom.memory row and "
-        f"the loom.memory_embeddings row; found {found} occurrence(s). Divergent "
-        "normalisation makes the timeline's has(entities, ...) filter match one "
-        "table but not the other."
-    )
+def test_the_embedding_row_copies_the_memory_rows_entities() -> None:
+    """One canonical form in both rows, or `has(entities, 'x')` matches one table and
+    not the other: the memory row canonicalises the input, the embedding row copies it."""
+    assert '"entities": canonical_entities(input.entities or [])' in HANDLER.read_text()
+    assert 'entities=memory_row["entities"]' in COMMIT.read_text()
 
 
 def test_sentinel_is_only_written_for_genuinely_empty_extraction() -> None:

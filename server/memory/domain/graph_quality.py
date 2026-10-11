@@ -231,7 +231,8 @@ _FIRST_PERSON_FORMS = frozenset(
 # Singularize the head noun so distinct-thing COUNTs don't split on
 # plural/singular surface forms ("data breach" vs "data breaches", "kit" vs
 # "kits" → off-by-one counts). Lightweight, dependency-free; only the LAST word
-# is touched (multi-word entities + proper-noun heads are rarely plural).
+# is touched (multi-word entities + proper-noun heads are rarely plural). A
+# singular head never ends in a lone `s`, so a second pass changes nothing.
 # Changing canonical_entity reshapes the whole graph plane, so re-ingest and
 # re-bench before relying on this.
 _SINGULAR_UNCHANGED = frozenset(
@@ -264,8 +265,10 @@ def _singularize_head(text: str) -> str:
         return text
     if w.endswith("ies") and len(w) > 4:
         s = w[:-3] + "y"  # parties -> party
-    elif w.endswith(("ches", "shes", "xes", "zes", "ses")):
-        s = w[:-2]  # breaches -> breach, boxes -> box
+    elif w.endswith(("ches", "shes", "sses", "xes", "zzes")):
+        s = w[:-2]  # breaches -> breach, classes -> class, boxes -> box
+    elif w.endswith("es") and w[-3] in "sz":
+        s = w[:-1]  # responses -> response, sizes -> size
     elif w.endswith("ves"):
         s = w[:-3] + "f"  # shelves -> shelf
     elif w.endswith("s") and not w.endswith(("us", "is", "ss")):

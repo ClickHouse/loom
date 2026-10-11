@@ -530,7 +530,7 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
         created_at=naive_utc_now(),
         tags=list(input.tags or []),
         files=memory_row["files"],
-        entities=[e.lower() for e in (input.entities or [])],
+        entities=memory_row["entities"],
         source_resource_id=input.source_resource_id,
         valid_at=input.valid_at,
         valid_to=input.valid_to,
