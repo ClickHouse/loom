@@ -4,7 +4,9 @@ program, the mounts a job gets, and the fallback when the host has no sandbox.""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
+import signal
 import struct
 import sys
 from pathlib import Path
@@ -200,18 +202,26 @@ async def test_a_job_past_its_timeout_is_killed(monkeypatch) -> None:
         await sandbox.run_job(["sleep", "30"], env={"PATH": "/usr/bin:/bin"}, timeout_s=0.2)
 
 
-async def test_a_detached_process_holding_stdout_does_not_outlast_the_timeout(monkeypatch) -> None:
+async def test_a_detached_process_holding_stdout_does_not_outlast_the_timeout(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(sandbox, "_available", False)
     monkeypatch.setattr(sandbox, "_REAP_GRACE_S", 0.3)
+    pidfile = tmp_path / "pid"
     loop = asyncio.get_running_loop()
     started = loop.time()
-    with pytest.raises(TimeoutError):
-        await sandbox.run_job(
-            ["sh", "-c", "setsid sleep 30 & echo hi; sleep 30"],
-            env={"PATH": "/usr/bin:/bin"},
-            timeout_s=0.2,
-        )
-    assert loop.time() - started < 5
+    try:
+        with pytest.raises(TimeoutError):
+            await sandbox.run_job(
+                ["sh", "-c", f"setsid sleep 30 & echo $! > {pidfile}; echo hi; sleep 30"],
+                env={"PATH": "/usr/bin:/bin"},
+                timeout_s=0.2,
+            )
+        assert loop.time() - started < 5
+    finally:
+        # outside the sandbox nothing kills a process that left the session
+        with contextlib.suppress(OSError, ValueError):
+            os.kill(int(pidfile.read_text()), signal.SIGKILL)
 
 
 def test_the_probe_says_no_without_bwrap(monkeypatch) -> None:
@@ -371,6 +381,16 @@ def test_a_python_prefix_that_is_or_sits_in_loom_data_is_refused(
         sandbox._readonly_paths({"PATH": "/usr/bin"}, [])
 
 
+def test_a_system_path_inside_loom_data_is_refused(tmp_path: Path, monkeypatch) -> None:
+    from server.settings import settings
+
+    (tmp_path / "blobs" / "usr").mkdir(parents=True)
+    monkeypatch.setattr(settings, "blob_dir", str(tmp_path / "blobs"))
+    monkeypatch.setattr(sandbox, "_SYSTEM_PATHS", (str(tmp_path / "blobs" / "usr"),))
+    with pytest.raises(PermissionError):
+        sandbox._readonly_paths({"PATH": "/usr/bin"}, [])
+
+
 async def test_a_job_that_closes_its_output_still_dies_at_its_timeout(monkeypatch) -> None:
     monkeypatch.setattr(sandbox, "_available", False)
     loop = asyncio.get_running_loop()
@@ -404,3 +424,22 @@ async def test_cancelling_a_job_that_closed_its_output_kills_and_reaps_it(monkey
         await job
     with pytest.raises(ProcessLookupError):  # killed and reaped: no such pid any more
         os.kill(pids[0], 0)
+
+
+def test_a_refused_layout_is_a_health_problem(tmp_path: Path, monkeypatch) -> None:
+    from server.observability.problems import HealthState, collect_problems
+    from server.settings import settings
+
+    (tmp_path / "blobs").mkdir()
+    monkeypatch.setattr(settings, "blob_dir", str(tmp_path / "blobs"))
+    monkeypatch.setattr(settings, "code_ingest_enabled", True)
+    assert sandbox.layout_refusal() == ""
+    monkeypatch.setattr(sys, "prefix", str(tmp_path / "blobs"))
+    refusal = sandbox.layout_refusal()
+    assert "inside Loom's data" in refusal
+    problems = collect_problems(
+        settings, HealthState(repo_sandbox=True, repo_sandbox_refusal=refusal)
+    )
+    assert [p.code for p in problems if p.code.startswith("repo_")] == [
+        "repo_sandbox_layout_refused"
+    ]

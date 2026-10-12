@@ -208,7 +208,7 @@ def _doctor_problems() -> list[Any]:
     only — no probed dim, breaker, lease or ledger before boot. Empty when
     settings do not load (the `settings_load` check already says so)."""
     try:
-        from server.code.app.index.sandbox import sandbox_available
+        from server.code.app.index.sandbox import layout_refusal, sandbox_available
         from server.observability.problems import HealthState, Problem, collect_problems
         from server.settings import settings
 
@@ -217,6 +217,7 @@ def _doctor_problems() -> list[Any]:
             settings,
             HealthState(
                 repo_sandbox=sandbox_available(),
+                repo_sandbox_refusal=layout_refusal(),
                 ch_reader_ok={"ok": True, "failing": False}.get(status),
                 ch_reader_error=detail if status == "failing" else "",
             ),

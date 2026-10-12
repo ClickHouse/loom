@@ -72,6 +72,8 @@ class HealthState:
     # Whether repository jobs run inside the sandbox (code/app/index/sandbox.py):
     # None = not probed yet in this process.
     repo_sandbox: bool | None = None
+    # Why the host layout refuses sandboxed jobs ('' = it does not).
+    repo_sandbox_refusal: str = ""
     # Whether a read as LOOM_CH_READER_USER worked: None = not probed or unset.
     ch_reader_ok: bool | None = None
     # ClickHouse's answer when that read failed.
@@ -489,7 +491,22 @@ def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
     get their build-based tiers, which execute the repository's code on this
     host; self-registered ones get none, are not fetched over the network, and
     adding one is refused."""
-    if state.repo_sandbox is not False or not settings.code_ingest_enabled:
+    if not settings.code_ingest_enabled:
+        return []
+    if state.repo_sandbox is not False and state.repo_sandbox_refusal:
+        return [
+            Problem(
+                "repo_sandbox_layout_refused",
+                "error",
+                f"Repository jobs fail: {state.repo_sandbox_refusal}. The server's Python "
+                "or a system path lies in Loom's data, and no sandbox mount could hide it.",
+                "Move the data paths (LOOM_BLOB_DIR, LOOM_CODE_REPOS_ROOT, "
+                "LOOM_CODE_SCIP_CHECKOUT_DIR, LOOM_ENV_FILE) out of the Python install and "
+                "system directories.",
+                source="runtime",
+            )
+        ]
+    if state.repo_sandbox is not False:
         return []
     return [
         Problem(

@@ -272,13 +272,13 @@ def _exposes_data(path: Path) -> bool:
     from server.core.paths import REPO_ROOT
 
     data = _data_paths()
-    kept_from_files = _var_and_home()
+    no_dirs_under = _var_and_home()
     for p in {path.absolute(), path.resolve()}:
-        if any(q.is_relative_to(p) for q in [*_protected_paths(), REPO_ROOT]):
+        if any(q.is_relative_to(p) for q in [*data, *no_dirs_under, REPO_ROOT]):
             return True
         if any(p.is_relative_to(q) for q in data):
             return True
-        if p.is_dir() and any(p.is_relative_to(q) for q in kept_from_files):
+        if p.is_dir() and any(p.is_relative_to(q) for q in no_dirs_under):
             return True
     return False
 
@@ -315,6 +315,16 @@ def _refuse_in_data(paths: Sequence[Path]) -> None:
                 raise PermissionError(
                     f"sandbox: {path} is inside Loom's data; refusing to mount it"
                 )
+
+
+def layout_refusal() -> str:
+    """Why this host's layout runs no sandboxed job ('' when it may): path checks
+    only, so `/v1/health` can ask."""
+    try:
+        _refuse_in_data([Path(sys.prefix), Path(sys.base_prefix), *map(Path, _SYSTEM_PATHS)])
+    except PermissionError as e:
+        return str(e)
+    return ""
 
 
 def _binds(writable: Sequence[Path], readonly: Sequence[Path], egress_dir: str) -> list[str]:
@@ -597,7 +607,9 @@ async def _drain_and_wait(proc: asyncio.subprocess.Process) -> None:
 
 async def run_job(argv: Sequence[str], **job: Unpack[JobOptions]) -> JobResult:
     """A repository job: inside the sandbox when the host has one, else a plain
-    child process with the same environment, timeout and process-group kill."""
+    child process with the same environment, timeout and process-group kill.
+    Without the sandbox a process that left the job's session (setsid) is not
+    killed, and while it holds the job's output the job ends as a timeout."""
     if sandbox_available():
         return await run_sandboxed(argv, **job)
     proc = await asyncio.create_subprocess_exec(
@@ -610,6 +622,7 @@ __all__ = [
     "RELAY_URL",
     "JobOptions",
     "JobResult",
+    "layout_refusal",
     "run_job",
     "run_sandboxed",
     "sandbox_available",
