@@ -298,6 +298,54 @@ def test_a_hit_does_not_pay_for_the_identifier_proposal(env: dict[str, Any]) -> 
     assert llm.expand_calls == 0 and llm.synth_calls == 0 and env["searches"] == 1
 
 
+def test_a_narrowed_memory_reader_neither_reads_nor_writes_the_cache(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.identity.domain.read_scope import (
+        WHOLE_NAMESPACE,
+        bind_request_read_filters,
+        resolve_read_filters,
+    )
+
+    canary = "CANARY-u2-memory"
+
+    async def _mem(q: str) -> list[str]:
+        return [f"[u2/decision] {canary}"]
+
+    async def _public() -> bool:
+        return True  # a public memory namespace does not lift the token's ceiling
+
+    monkeypatch.setattr(settings, "code_ask_memory_namespace", "decisions")
+    monkeypatch.setattr(ca, "_inject_memory_context", _mem)
+    monkeypatch.setattr(ca, "_memory_context_cacheable", _public)
+    repo, q = env["repo"], "how does TTL drop old parts?"
+    # A namespace-wide reader warms the cache with an answer citing u2's memory.
+    warm = _ask(repo, q, llm=_LLM(f"{canary} in [src/a.cpp:1-10].\nCOVERAGE: full"))
+    assert canary in warm.answer and len(repo.inserts) == 1
+    pinned = AuthInfo(
+        subject="sa:bot",
+        org=ORG,
+        namespaces=(NS,),
+        roles=(),
+        is_service_account=True,
+        read_user_id="u1",
+    )
+    try:
+        set_current_auth(pinned)
+        bind_request_read_filters(
+            pinned, resolve_read_filters(requested=None, user_id=None, session_id=None, auth=pinned)
+        )
+        out = _ask(repo, q)
+    finally:
+        set_current_auth(None)
+        bind_request_read_filters(None, WHOLE_NAMESPACE)
+    assert out.source == "synthesized" and out.cache == "bypassed"
+    assert canary not in out.answer
+    assert len(repo.inserts) == 1  # nothing written for the narrowed caller either
+
+
 # ---- 2. the identifier guard ---------------------------------------------------
 
 

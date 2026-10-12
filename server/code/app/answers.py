@@ -89,7 +89,8 @@ async def ask(
     and shown file unchanged; an abstain is cached briefly for its exact text under
     `index_head`; a release branch reuses its trunk's entry when the files agree.
     `no_cache` skips the reads (the fresh answer still refreshes the entry); an
-    unresolved namespace skips reads and writes."""
+    unresolved namespace, or a caller whose memory read is narrowed, skips reads and
+    writes."""
     from server.llm.cache import exact_cache_scope
 
     qvec = await embedder.embed(question)
@@ -105,7 +106,7 @@ async def ask(
         started=time.monotonic(),
         cost_at_start=_request_cost(),
     )
-    cacheable = cache_namespace_ok(ns)
+    cacheable = cache_namespace_ok(ns) and not _memory_read_narrowed()
     outcome = "bypassed"
     if cacheable and not no_cache:
         looked = await _serve_from_cache(ctx)
@@ -454,6 +455,24 @@ async def _inject_memory_context(question: str) -> list[str]:
         if text:
             items.append(f"[{key}] {text}" if key else text)
     return items
+
+
+def _memory_read_narrowed() -> bool:
+    """Whether memory enrichment reads below the whole namespace for this caller. The
+    answer cache is shared by every reader of the code namespace and its key has no user
+    or session, so such an ask neither reads nor writes it, even when the memory
+    namespace is public: the token's narrower ceiling still applies."""
+    from server.auth.context import current_auth
+    from server.core.errors import AuthInsufficientError, IdentityIncompleteError
+    from server.identity.domain.read_scope import request_read_filters
+    from server.settings import settings as _s
+
+    if not _s.code_ask_memory_namespace.strip():
+        return False
+    try:
+        return request_read_filters(current_auth()).narrowed
+    except (AuthInsufficientError, IdentityIncompleteError):
+        return True  # an unresolved narrowed scope: fail closed
 
 
 async def _memory_context_cacheable() -> bool:

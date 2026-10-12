@@ -720,3 +720,12 @@ async def test_a_bounded_write_treats_another_users_row_as_absent() -> None:
     _bind(None, WHOLE_NAMESPACE)
     wide = await _verdict([_candidate("theirs", "u2", "vault 1234")], "vault 1234")
     assert (wide.verdict, wide.existing_memory_id) == ("merge", "theirs")
+
+
+def test_every_code_op_is_classified_by_name() -> None:
+    # Some code ops read memory, so a new one must be classified on its own.
+    assert "code." not in NO_MEMORY_CONTENT
+    code_ops = {op.name for op in ALL_OPERATIONS if op.name.startswith("code.")}
+    unclassified = sorted(n for n in code_ops if n not in NO_MEMORY_CONTENT and n not in SCOPED_OPS)
+    assert not unclassified, unclassified
+    assert "narrowed" in NO_MEMORY_CONTENT["code.ask"]

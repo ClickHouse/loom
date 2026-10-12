@@ -251,12 +251,74 @@ SCOPED_OPS = frozenset(
     }
 )
 
+_CODE_INDEX = "the code index: repository content, no user's memory"
+
 # Ops that return no memory content, with the reason. A key ending in "." names
-# an op group.
+# an op group. Code ops are listed one by one: some read memory (code.ask,
+# code.search, code.symbol), so a new one stays refused until someone
+# classifies it.
 NO_MEMORY_CONTENT: dict[str, str] = {
-    # code.symbol attaches no lessons under a narrowed scope; code.search's
-    # tie-break reads the files named by the scope's own user's memories.
-    "code.": "the code index: repository content, no user's memory",
+    # The shared answer cache has no user or session in its key
+    # (`server.code.app.answers._memory_read_narrowed`).
+    "code.ask": (
+        "code answers; memory enrichment searches under the caller's scope, and a caller "
+        "whose memory read is narrowed neither reads nor writes the shared answer cache, "
+        "even when the memory namespace is public"
+    ),
+    "code.backport_gap": _CODE_INDEX,
+    "code.backport_gaps": _CODE_INDEX,
+    "code.bisect_candidates": _CODE_INDEX,
+    "code.blame_range": _CODE_INDEX,
+    "code.calibrate": _CODE_INDEX,
+    "code.callees": _CODE_INDEX,
+    "code.callers": _CODE_INDEX,
+    "code.context_pack": _CODE_INDEX,
+    "code.context_packs": _CODE_INDEX,
+    "code.conventions": _CODE_INDEX,
+    "code.coverage": _CODE_INDEX,
+    "code.coverage.unwatch": _CODE_INDEX,
+    "code.coverage.watch": _CODE_INDEX,
+    "code.coverage_claim": _CODE_INDEX,
+    "code.enclosing": _CODE_INDEX,
+    "code.examples": _CODE_INDEX,
+    "code.files": _CODE_INDEX,
+    "code.first_build": _CODE_INDEX,
+    "code.grep": _CODE_INDEX,
+    "code.history": _CODE_INDEX,
+    "code.impact": _CODE_INDEX,
+    "code.index_errors": _CODE_INDEX,
+    "code.index_status": _CODE_INDEX,
+    "code.map": _CODE_INDEX,
+    "code.outcome": _CODE_INDEX,
+    "code.outline": _CODE_INDEX,
+    "code.path_guards": _CODE_INDEX,
+    "code.pr_check": _CODE_INDEX,
+    "code.recent_commits": _CODE_INDEX,
+    "code.refresh": _CODE_INDEX,
+    "code.reindex": _CODE_INDEX,
+    "code.repo.add": _CODE_INDEX,
+    "code.repo.add_branch": _CODE_INDEX,
+    "code.repo.remote_branches": _CODE_INDEX,
+    "code.repo.remove": _CODE_INDEX,
+    "code.repo.set_access": _CODE_INDEX,
+    "code.repo.set_source": _CODE_INDEX,
+    "code.repos": _CODE_INDEX,
+    "code.review_brief": _CODE_INDEX,
+    "code.scip_ingest": _CODE_INDEX,
+    "code.scip_status": _CODE_INDEX,
+    # The tie-break reads the files named by the scope's own user's memories.
+    "code.search": _CODE_INDEX,
+    "code.setting_facts": _CODE_INDEX,
+    # Attaches no lessons under a narrowed scope.
+    "code.symbol": _CODE_INDEX,
+    "code.symbol_history": _CODE_INDEX,
+    "code.test_gate": _CODE_INDEX,
+    "code.test_home": _CODE_INDEX,
+    "code.tests_for": _CODE_INDEX,
+    "code.trace": _CODE_INDEX,
+    "code.verify": _CODE_INDEX,
+    "code.verify_citations": _CODE_INDEX,
+    # The groups below are planes with no path to memory rows.
     "tracker.": "tracker records: issues and their sources, no user's memory",
     "knowledge.": "namespace documents: the plane has no user or session axis",
     "task.": "the task inbox: tasks, not memory",
