@@ -117,11 +117,13 @@ each delivery resolves it, refuses loopback, private, link-local (cloud metadata
 multicast addresses, connects to the address it checked (the name stays the `Host`
 header and TLS SNI) and follows no redirect. `webhook_secret_ref` must name one of the
 inbox org's own variables, `LOOM_WEBHOOK_SECRET_<ORG>__<NAME>`: ORG is the org id
-upper-cased with every character other than a letter or digit written `_` (org
-`acme-corp` → `LOOM_WEBHOOK_SECRET_ACME_CORP__ALERTS`), NAME is letters and digits.
+with lower-case letters upper-cased, digits kept and every other byte (upper-case
+letters included) written `_` and two hex digits (org `acme-corp` →
+`LOOM_WEBHOOK_SECRET_ACME_2DCORP__ALERTS`, `acme_corp` → `ACME_5FCORP`), NAME is
+letters and digits.
 `inbox.register` refuses any other name (422), and a row that names one is never read,
-so no tenant can have Loom sign with another tenant's secret. Orgs whose ids differ only
-in case or punctuation share the ORG part; give them distinct ids.
+so no tenant can have Loom sign with another tenant's secret. No two org ids share an
+ORG part.
 
 ### Post a task
 

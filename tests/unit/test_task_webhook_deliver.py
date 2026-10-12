@@ -463,16 +463,27 @@ async def test_another_orgs_secret_is_never_read(fake: FakeRepo) -> None:
     ("org", "ref", "ok"),
     [
         ("acme", "LOOM_WEBHOOK_SECRET_ACME__BOT", True),
-        ("acme-corp", "LOOM_WEBHOOK_SECRET_ACME_CORP__BOT", True),
-        ("acme", "LOOM_WEBHOOK_SECRET_ACME__CORP__BOT", False),  # org acme--corp's
-        ("acme", "LOOM_WEBHOOK_SECRET_ACME___BOT", False),  # org acme_'s
-        ("acme_", "LOOM_WEBHOOK_SECRET_ACME___BOT", True),
+        ("acme-corp", "LOOM_WEBHOOK_SECRET_ACME_2DCORP__BOT", True),
+        ("acme_corp", "LOOM_WEBHOOK_SECRET_ACME_5FCORP__BOT", True),
+        ("Acme", "LOOM_WEBHOOK_SECRET__41CME__BOT", True),
+        ("acme", "LOOM_WEBHOOK_SECRET_ACME_2DCORP__BOT", False),  # org acme-corp's
+        ("acme-corp", "LOOM_WEBHOOK_SECRET_ACME_5FCORP__BOT", False),  # org acme_corp's
+        ("acme", "LOOM_WEBHOOK_SECRET__41CME__BOT", False),  # org Acme's
     ],
 )
 def test_a_secret_ref_is_bound_to_one_org(org: str, ref: str, ok: bool) -> None:
     from server.tasks.domain.states import webhook_secret_ref_ok
 
     assert webhook_secret_ref_ok(org, ref) is ok
+
+
+def test_orgs_that_differ_only_in_punctuation_or_case_get_distinct_prefixes() -> None:
+    from server.tasks.domain.states import webhook_secret_org_prefix
+
+    orgs = ["acme-x", "acme_x", "acme.x", "ACME-X", "acme_2dx", "acmex"]
+    assert len({webhook_secret_org_prefix(o) for o in orgs}) == len(orgs)
+    assert webhook_secret_org_prefix("acme-x") == "LOOM_WEBHOOK_SECRET_ACME_2DX__"
+    assert webhook_secret_org_prefix("acme_x") == "LOOM_WEBHOOK_SECRET_ACME_5FX__"
 
 
 @pytest.mark.parametrize(
