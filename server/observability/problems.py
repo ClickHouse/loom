@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
@@ -486,6 +487,31 @@ def _replica_problems(settings: Any, state: HealthState) -> list[Problem]:
     ]
 
 
+def _layout_problems(state: HealthState) -> list[Problem]:
+    """A host layout the sandbox refuses: jobs fail only where they would run
+    sandboxed. Before the first job probes, bwrap on PATH stands in for the probe
+    (no process is spawned from a health check)."""
+    if not state.repo_sandbox_refusal:
+        return []
+    sandboxed = state.repo_sandbox is True or (
+        state.repo_sandbox is None and shutil.which("bwrap") is not None
+    )
+    fix = (
+        "Move the data paths (LOOM_BLOB_DIR, LOOM_CODE_REPOS_ROOT, "
+        "LOOM_CODE_SCIP_CHECKOUT_DIR, LOOM_ENV_FILE) out of the Python install and "
+        "system directories."
+    )
+    why = (
+        "The server's Python or a system path lies in Loom's data, and no sandbox mount "
+        "could hide it."
+    )
+    if sandboxed:
+        message = f"Repository jobs fail: {state.repo_sandbox_refusal}. {why}"
+        return [Problem("repo_sandbox_layout_refused", "error", message, fix, source="runtime")]
+    message = f"Sandboxed repository jobs would be refused: {state.repo_sandbox_refusal}. {why}"
+    return [Problem("repo_sandbox_layout_refused", "warn", message, fix, source="runtime")]
+
+
 def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
     """Repository jobs run without the sandbox: an operator's repositories still
     get their build-based tiers, which execute the repository's code on this
@@ -493,22 +519,11 @@ def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
     adding one is refused."""
     if not settings.code_ingest_enabled:
         return []
-    if state.repo_sandbox is not False and state.repo_sandbox_refusal:
-        return [
-            Problem(
-                "repo_sandbox_layout_refused",
-                "error",
-                f"Repository jobs fail: {state.repo_sandbox_refusal}. The server's Python "
-                "or a system path lies in Loom's data, and no sandbox mount could hide it.",
-                "Move the data paths (LOOM_BLOB_DIR, LOOM_CODE_REPOS_ROOT, "
-                "LOOM_CODE_SCIP_CHECKOUT_DIR, LOOM_ENV_FILE) out of the Python install and "
-                "system directories.",
-                source="runtime",
-            )
-        ]
+    problems = _layout_problems(state)
     if state.repo_sandbox is not False:
-        return []
+        return problems
     return [
+        *problems,
         Problem(
             "repo_jobs_unsandboxed",
             "warn",
@@ -521,7 +536,7 @@ def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
             "seccomp profile that permits them) — 'Repository-job sandbox' in "
             "docs/operations/code-index-operations.md.",
             source="runtime",
-        )
+        ),
     ]
 
 
