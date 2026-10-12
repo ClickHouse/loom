@@ -90,6 +90,33 @@ test("diagnostics never carry Anthropic, OpenAI or GitLab keys, basic auth or UR
   );
 });
 
+test("redaction is linear: an 80 KB adversarial output takes well under 200 ms per shape", async () => {
+  const { redactSecrets } = await import("../lib/loom-client.mjs");
+  const n = 80_000;
+  const shapes = {
+    url: "a://" + "x:".repeat(n / 2),
+    dotted: "a.".repeat(n / 2),
+    urlDots: "https://" + "a.b:".repeat(n / 4),
+    jwt: "eyJ-".repeat(n / 4),
+  };
+  for (const [name, text] of Object.entries(shapes)) {
+    const started = performance.now();
+    redactSecrets(text, "");
+    const ms = performance.now() - started;
+    assert.ok(ms < 200, `${name} took ${Math.round(ms)} ms`);
+  }
+});
+
+test("redactHead scans only the head its caller keeps, and a secret on the cut is still matched", async () => {
+  const { redactHead } = await import("../lib/loom-client.mjs");
+  const secret = "ghp_" + "a".repeat(36);
+  const text = "x".repeat(94) + " " + secret + " " + "y".repeat(200_000);
+  const head = redactHead(text, 100, "");
+  assert.ok(head.length < 100 + 17 * 1024);
+  assert.ok(!head.slice(0, 100).includes("ghp_"));
+  assert.ok(head.startsWith("x".repeat(94) + " [redacted] y"));
+});
+
 /** readStdinJson in a child process fed `input`; resolves the object it read. */
 async function readStdinIn(input) {
   const { spawn } = await import("node:child_process");

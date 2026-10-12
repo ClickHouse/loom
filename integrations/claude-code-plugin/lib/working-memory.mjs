@@ -15,7 +15,7 @@
 // and this block is never embedded or ranked (CLAUDE.md: "working memory is
 // not retrieval memory").
 
-import { contentText, redactSecrets, resolveToken } from "./loom-client.mjs";
+import { contentText, redactHead, resolveToken } from "./loom-client.mjs";
 
 export const BLOCK_CHAR_LIMIT = 3000;
 const GOAL_MAX = 300;
@@ -108,7 +108,7 @@ export function buildSessionState({ goal, files, git, lastText, cwd, writtenAt, 
   lines.push(`# Session state — written by the ${reason || "Stop"} hook at ${when}`);
   lines.push(BOOKMARK_FRAME);
   const token = resolveToken();
-  const g = redactSecrets(goal, token).trim();
+  const g = redactHead(goal, GOAL_MAX, token).trim();
   if (g) lines.push(`goal: ${g.length > GOAL_MAX ? g.slice(0, GOAL_MAX) + "…" : g}`);
   const st = git || { branch: "", changed: [] };
   if (st.branch || (st.changed && st.changed.length)) {
@@ -123,7 +123,7 @@ export function buildSessionState({ goal, files, git, lastText, cwd, writtenAt, 
     const shown = fs.slice(0, FILES_MAX).join(", ");
     lines.push(`edited this session: ${shown}${fs.length > FILES_MAX ? `, … ${fs.length - FILES_MAX} more` : ""}`);
   }
-  const last = redactSecrets(lastText, token).replace(/\s+/g, " ").trim();
+  const last = redactHead(lastText, LAST_MAX, token).replace(/\s+/g, " ").trim();
   if (last)
     lines.push(
       `last reply (the previous turn's words, not a fact): ${last.length > LAST_MAX ? last.slice(0, LAST_MAX) + "…" : last}`,
@@ -194,7 +194,7 @@ export function scratchpadAppendBody(scope, runId, line, writtenAt) {
     agent: scope.agent,
     run_id: String(runId || "-"),
     block_key: SCRATCHPAD_BLOCK,
-    addition: `- ${when}Z ${redactSecrets(line).slice(0, SCRATCHPAD_LINE_MAX)}`,
+    addition: `- ${when}Z ${redactHead(line, SCRATCHPAD_LINE_MAX).slice(0, SCRATCHPAD_LINE_MAX)}`,
     separator: "\n",
   };
 }

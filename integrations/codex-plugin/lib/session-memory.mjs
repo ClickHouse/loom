@@ -41,7 +41,7 @@ const ASK_FIELDS = new Set([
  *  becomes a "[image: …]" placeholder; tool results are skipped unless a tool
  *  returned an image, which leaves one `tool` placeholder turn; system-injected
  *  turns start with "<"), assistant text blocks joined. Sidechains skipped. */
-import { contentText, hookClient, redactSecrets, resolveToken, toolImageTurn } from "./loom-client.mjs";
+import { contentText, hookClient, redactHead, resolveToken, toolImageTurn } from "./loom-client.mjs";
 import { runIdFor } from "./run-hook.mjs";
 
 export function transcriptTurns(objs) {
@@ -104,7 +104,7 @@ export function sessionToolEchoes(objs) {
   // Redact before the cut, so a clipped secret cannot slip past its pattern.
   const token = resolveToken();
   const push = (text) => {
-    const t = redactSecrets(text, token).trim();
+    const t = redactHead(text, ECHO_MAX_CHARS, token).trim();
     if (t.length >= ECHO_MIN_CHARS) values.push(t.slice(0, ECHO_MAX_CHARS));
   };
   const walkArgs = (v, depth = 0) => {
@@ -193,7 +193,7 @@ export function sessionMemoryBody(scope, payload, turns, opts = {}) {
   // Redact each captured turn (transcript or journal) before it is clipped and sent.
   const maxChars = opts.maxMessageChars || MAX_MESSAGE_CHARS;
   const token = resolveToken();
-  const clipped = tail.map((t) => ({ ...t, content: clip(redactSecrets(t.content, token), maxChars) }));
+  const clipped = tail.map((t) => ({ ...t, content: clip(redactHead(t.content, maxChars, token), maxChars) }));
   let total = clipped.reduce((n, t) => n + t.content.length, 0);
   let start = 0;
   while (total > maxTotal && clipped.length - start > MIN_TURNS) {
