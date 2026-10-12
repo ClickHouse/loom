@@ -117,6 +117,22 @@ test("redactHead scans only the head its caller keeps, and a secret on the cut i
   assert.ok(head.startsWith("x".repeat(94) + " [redacted] y"));
 });
 
+test("redactHead never keeps a token split by its cut, even after an earlier secret shrinks", async () => {
+  const { redactHead } = await import("../lib/loom-client.mjs");
+  const key = "-----BEGIN " + "PRIVATE KEY-----\n" + "A".repeat(20_000) + "\n-----END PRIVATE KEY-----";
+  const max = 8000;
+  // At max + 16 KiB - 16, 16 of the token's 36 characters sit before the old cut.
+  const tokenAt = (at) => {
+    const filler = "word ".repeat(Math.ceil(at / 5)).slice(0, at - key.length - 2) + " ";
+    return key + " " + filler + "ghp_Z9y8X7w6V5u4T3s2" + "q".repeat(20) + " tail".repeat(20_000);
+  };
+  for (let at = max + 16 * 1024 - 40; at < 90_000; at += at < max + 16 * 1024 ? 1 : 97) {
+    const head = redactHead(tokenAt(at), max, "").slice(0, max);
+    assert.ok(head.startsWith("[redacted private key] word"), `token at ${at}`);
+    assert.ok(!head.includes("ghp_") && !head.includes("Z9y8"), `token at ${at}`);
+  }
+});
+
 /** readStdinJson in a child process fed `input`; resolves the object it read. */
 async function readStdinIn(input) {
   const { spawn } = await import("node:child_process");
