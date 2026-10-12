@@ -174,8 +174,9 @@ class InboxRegisterInput(_Caller):
     # sends none.
     webhook_url: str = Field(default="", max_length=2048, pattern=r"^(https?://\S+)?$")
     # Name of the environment variable holding the webhook signing secret (never
-    # stored): `LOOM_WEBHOOK_SECRET_<ORG>__<NAME>`, ORG the org id upper-cased with
-    # every other character as `_`, NAME letters and digits. Without it no notice
+    # stored): `LOOM_WEBHOOK_SECRET_<ORG>__<NAME>`, ORG the org id with a-z
+    # upper-cased, digits kept and any other byte as `_` and two hex digits
+    # (`acme-corp` → `ACME_2DCORP`), NAME letters and digits. Without it no notice
     # is sent.
     webhook_secret_ref: str = Field(
         default="", max_length=256, pattern=rf"^({WEBHOOK_SECRET_PREFIX}[A-Za-z0-9_]+)?$"

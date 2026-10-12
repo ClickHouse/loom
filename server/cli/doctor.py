@@ -167,6 +167,23 @@ def _doctor_otel_erasure_index_check(settings: Any) -> tuple[str, str, str]:
 _GRADE_BY_SEVERITY = {"error": FAIL, "warn": WARN, "info": PASS}
 
 
+def _doctor_reader_ok(settings: Any) -> bool | None:
+    """Whether ClickHouse accepts a read as LOOM_CH_READER_USER; None when it is
+    unset or ClickHouse does not answer (`clickhouse_reachable` says so)."""
+    import httpx
+
+    if not settings.ch_reader_user or not settings.ch_host:
+        return None
+    base, _ = _doctor_ch_endpoint(settings)
+    auth = (str(settings.ch_reader_user), str(settings.ch_password))
+    try:
+        with httpx.Client(timeout=10.0) as c:
+            r = c.post(f"{base}/", content="SELECT currentUser()", auth=auth)
+    except httpx.HTTPError:
+        return None
+    return r.status_code == 200 and r.text.strip() == settings.ch_reader_user
+
+
 def _doctor_problems() -> list[Any]:
     """The shared problem list as the doctor sees it: settings
     only — no probed dim, breaker, lease or ledger before boot. Empty when
@@ -176,7 +193,10 @@ def _doctor_problems() -> list[Any]:
         from server.observability.problems import HealthState, collect_problems
         from server.settings import settings
 
-        return collect_problems(settings, HealthState(repo_sandbox=sandbox_available()))
+        return collect_problems(
+            settings,
+            HealthState(repo_sandbox=sandbox_available(), ch_reader_ok=_doctor_reader_ok(settings)),
+        )
     except Exception:  # noqa: BLE001 — a doctor line must never crash the doctor
         return []
 

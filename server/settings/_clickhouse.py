@@ -55,6 +55,8 @@ class ClickHouseSettings(BaseModel):
     # Ceilings for the reads a caller shapes (code.grep, code.search with a
     # pattern or globs, memory.aggregate, memory.record.query). A ceiling only
     # lowers the statement's own value, so no request can widen it; 0 = none.
+    # The shipped loom_reader profile (nlp_user_settings.xml) caps these three at
+    # their defaults: raising one above it needs the profile raised too.
     # Seconds one such read may run (the read class default).
     ch_caller_shaped_max_execution_s: float = 30.0
     # Bytes of memory one such read may use.

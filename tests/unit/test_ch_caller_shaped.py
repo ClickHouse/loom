@@ -72,7 +72,12 @@ def test_reads_outside_the_scope_and_writes_inside_it_are_untouched() -> None:
     "err",
     [
         RuntimeError("Code: 158. DB::Exception: Limit for rows exceeded"),
-        RuntimeError("Code: 241. DB::Exception: Memory limit (for query) exceeded"),
+        # captured from ClickHouse 26.5.1.882 with max_memory_usage=5000000
+        RuntimeError(
+            "Code: 241. DB::Exception: Query memory limit exceeded: would use 7.61 MiB "
+            "(attempt to allocate chunk of 6.00 MiB), maximum: 4.77 MiB: While executing "
+            "AggregatingTransform. (MEMORY_LIMIT_EXCEEDED) (version 26.5.1.882 (official build))"
+        ),
         RuntimeError("Code: 159. DB::Exception: Timeout exceeded: elapsed 30.1 seconds"),
     ],
 )
@@ -83,7 +88,14 @@ def test_a_row_or_memory_cap_hit_inside_the_scope_is_a_422(err: RuntimeError) ->
 
 
 def test_the_server_wide_memory_limit_stays_a_server_error() -> None:
-    err = RuntimeError("Code: 241. DB::Exception: Memory limit (total) exceeded")
+    # captured from ClickHouse 26.5.1.882 with max_server_memory_usage=1000000000
+    err = RuntimeError(
+        "Code: 241. DB::Exception: (total) memory limit exceeded: would use 1000.04 MiB "
+        "(attempt to allocate chunk of 512.00 MiB), current RSS: 702.20 MiB, maximum: "
+        "953.67 MiB. OvercommitTracker decision: Query was selected to stop by "
+        "OvercommitTracker: While executing AggregatingTransform. (MEMORY_LIMIT_EXCEEDED) "
+        "(version 26.5.1.882 (official build))"
+    )
     with ch.caller_shaped():
         ch._raise_if_caller_cap(err)
 
@@ -221,3 +233,59 @@ def test_no_reader_user_means_no_auth_override(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(settings, "ch_reader_user", "")
     with ch.caller_shaped():
         assert ch._reader_auth() == {}
+
+
+class _RefusingClient:
+    async def query_one(self, *_: Any, **__: Any) -> dict[str, Any]:
+        raise RuntimeError(
+            "Code: 516. DB::Exception: loom_reader: Authentication failed: password is "
+            "incorrect, or there is no user with such name. (AUTHENTICATION_FAILED)"
+        )
+
+
+class _ReaderClient:
+    async def query_one(self, *_: Any, **__: Any) -> dict[str, Any]:
+        assert ch.caller_shaped_var.get()  # so the read goes out as the reader user
+        return {"u": "loom_reader"}
+
+
+async def test_a_reader_user_clickhouse_refuses_is_a_problem(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.observability.problems import HealthState, collect_problems
+
+    monkeypatch.setattr(settings, "ch_reader_user", "loom_reader")
+    monkeypatch.setattr(ch, "_reader_user_ok", None)
+    await ch.probe_reader_user(_RefusingClient())
+    assert ch.reader_user_state() is False
+    codes = [p.code for p in collect_problems(settings, HealthState(ch_reader_ok=False))]
+    assert "ch_reader_user_failing" in codes
+
+    await ch.probe_reader_user(_ReaderClient())
+    assert ch.reader_user_state() is True
+    codes = [p.code for p in collect_problems(settings, HealthState(ch_reader_ok=True))]
+    assert "ch_reader_user_failing" not in codes
+
+
+async def test_no_reader_user_no_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "ch_reader_user", "")
+    monkeypatch.setattr(ch, "_reader_user_ok", None)
+    await ch.probe_reader_user(_RefusingClient())
+    assert ch.reader_user_state() is None
+
+
+def test_the_doctor_reports_a_refused_reader_user(monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpx
+
+    from server.cli import doctor
+
+    def _refuse(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(516, text="Code: 516. AUTHENTICATION_FAILED")
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        httpx, "Client", lambda **kw: real_client(transport=httpx.MockTransport(_refuse), **kw)
+    )
+    monkeypatch.setattr(settings, "ch_reader_user", "loom_reader")
+    assert doctor._doctor_reader_ok(settings) is False
+    assert "ch_reader_user_failing" in [p.code for p in doctor._doctor_problems()]
