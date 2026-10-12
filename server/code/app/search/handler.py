@@ -38,6 +38,7 @@ from server.code.app.spans import (
 from server.code.domain import deadline as code_deadline
 from server.code.store.index import CodeRepo
 from server.core.ch import caller_shaped
+from server.identity.domain.read_scope import ReadFilters
 from server.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -799,16 +800,23 @@ def _search_trace_args(input: CodeSearchInput) -> dict[str, Any]:
 
 async def _user_recent_dirs(org: str, user_id: str) -> list[str]:
     """5-min-cached directory prefixes from the user's recent memories' files facets
-    (personalization — tie-break input only), from the namespaces the caller may read."""
+    (personalization — tie-break input only), from the namespaces the caller may read
+    and inside the request's read scope."""
     from server.auth.context import current_auth, resolve_my_namespaces
+    from server.core.errors import AuthInsufficientError, IdentityIncompleteError
+    from server.identity.domain.read_scope import request_read_filters
 
     try:
         auth = current_auth()
+        # A scope that does not resolve personalizes nothing (fail closed).
+        scope = request_read_filters(auth)
         namespaces = tuple(await resolve_my_namespaces(org)) if auth is not None else None
+    except (AuthInsufficientError, IdentityIncompleteError):
+        return []
     except Exception as e:  # noqa: BLE001 — personalization is best-effort
         logger.debug("code.search: caller namespaces unavailable: %s", e)
         return []
-    key = (org, user_id, namespaces)
+    key = (org, user_id, namespaces, scope)
     now = time.monotonic()
     cached = _RECENT_DIR_CACHE.get(key)
     if cached is not None and now - cached[0] < 300:
@@ -817,7 +825,7 @@ async def _user_recent_dirs(org: str, user_id: str) -> list[str]:
     try:
         from server.memory.app.code_plane_reads import user_file_dirs
 
-        dirs = await user_file_dirs(org, user_id, namespaces)
+        dirs = await user_file_dirs(org, user_id, namespaces, scope=scope)
     except Exception as e:  # noqa: BLE001 — personalization is best-effort
         logger.debug("code.search: recent-dirs lookup failed: %s", e)
     if len(_RECENT_DIR_CACHE) > 2000:
@@ -826,4 +834,6 @@ async def _user_recent_dirs(org: str, user_id: str) -> list[str]:
     return dirs[:50]
 
 
-_RECENT_DIR_CACHE: dict[tuple[str, str, tuple[str, ...] | None], tuple[float, list[str]]] = {}
+_RECENT_DIR_CACHE: dict[
+    tuple[str, str, tuple[str, ...] | None, ReadFilters], tuple[float, list[str]]
+] = {}
