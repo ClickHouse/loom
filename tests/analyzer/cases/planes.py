@@ -404,6 +404,36 @@ _HANDLER_ROWS = rows_by_substring(
 )
 
 
+# A live row for the memory ops that resolve their target first (memory.outcome
+# looks it up in scope before it reads the evidence totals).
+_MEMORY_ROW = {
+    "memory_id": _UUID,
+    "org": ORG,
+    "namespace": NS,
+    "agent": AGENT,
+    "user_id": "-",
+    "session_id": "-",
+    "memory_key": "k1",
+    "memory_type": "fact",
+    "value": '"v"',
+    "value_text": '"v"',
+    "confidence": 0.9,
+    "version": 1,
+    "pinned": False,
+    "created_at": _DT,
+}
+_MEMORY_LOOKUPS = rows_by_substring(
+    {
+        "SELECT org, namespace, created_at, memory_key": [_MEMORY_ROW],
+        "value AS value_text": [_MEMORY_ROW],
+    }
+)
+
+
+def _memory_ops_rows(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+    return _MEMORY_LOOKUPS(sql, params) or _HANDLER_ROWS(sql, params)
+
+
 # --------------------------------------------------------------------------- repos
 
 
@@ -631,7 +661,7 @@ def cases() -> list[Case]:
             module,
             _handler_drive(module),
             {"filled": (False,) if name in _FILL_INERT else (False, True)},
-            rows=_HANDLER_ROWS,
+            rows=_memory_ops_rows if name == "_memory_ops" else _HANDLER_ROWS,
         )
         for name, module in HANDLER_MODULES
     ]

@@ -290,9 +290,10 @@ def _readonly_paths(env: Mapping[str, str], readonly: Sequence[Path]) -> list[Pa
     home = Path.home()
     found = [Path(p) for p in env.get("PATH", "").split(":") if p.startswith("/")]
     from_path = [mount for p in found for mount in tool_mounts(p)]
-    runtime = [Path(sys.prefix), Path(sys.base_prefix)]
-    _refuse_in_data(_own_mounts())
-    paths = [*readonly, *runtime, *from_path]
+    own = _own_mounts()
+    _refuse_in_data(own)
+    # The system paths in `own` are skipped below: the sandbox mounts them itself.
+    paths = [*readonly, *own, *from_path]
     out: list[Path] = []
     for p in paths:
         p = p.absolute()

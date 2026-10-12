@@ -647,7 +647,19 @@ const REDACT_MARGIN = 16 * 1024;
 /** `redactSecrets` over the head of `text` its caller keeps (`max` chars, plus
  *  a margin): a multi-megabyte tool output is not scanned only to be cut. */
 export function redactHead(text, max, token = resolveToken()) {
-  return redactSecrets(String(text ?? "").slice(0, max + REDACT_MARGIN), token);
+  const s = String(text ?? "");
+  let cut = max + REDACT_MARGIN;
+  // A secret split by the cut is not matched and stays, unredacted, at the
+  // very end. Earlier redactions shorten the text and could pull it inside
+  // `max`, so the last margin of the redacted text is always dropped; when
+  // that leaves less than `max`, scan further (a few times at most).
+  for (let tries = 0; tries < 4 && cut < s.length; tries++) {
+    const out = redactSecrets(s.slice(0, cut), token);
+    const keep = out.length - REDACT_MARGIN;
+    if (keep >= max || tries === 3) return out.slice(0, Math.max(0, keep));
+    cut += max - keep + REDACT_MARGIN;
+  }
+  return redactSecrets(s, token);
 }
 
 /**
