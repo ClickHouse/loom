@@ -13,7 +13,7 @@ _CANDIDATE_JOIN = """
           AND e.agent = m.agent"""
 
 
-def candidate_sql_many(n: int) -> str:
+def candidate_sql_many(n: int, in_scope: str = "") -> str:
     """The batched form of `check_on_commit`'s peer statement:
     one read of the namespace's vectors serves `n` facts. Each fact's distance
     is its own `cosineDistance` term — an `arrayMap` over the vector column
@@ -22,7 +22,9 @@ def candidate_sql_many(n: int) -> str:
     drops rows that match no fact, the per-fact `memory_type` / self-key
     predicates and distance ceiling ride in the filter, and `LIMIT 10 BY qidx`
     is the per-fact statement's `LIMIT 10`. Measured identical per-fact lists
-    at n = 1, 4, 6, 8, 12, 24 against the per-fact statement."""
+    at n = 1, 4, 6, 8, 12, 24 against the per-fact statement. `in_scope`: the
+    read-scope clause on `m` (`scope_and`), so other users' rows never take
+    the 10 places."""
     if n < 1:
         raise ValueError("candidate_sql_many needs at least one fact")
     terms = ", ".join(
@@ -46,14 +48,15 @@ def candidate_sql_many(n: int) -> str:
           AND m.status IN ('active', 'conflicted')
           AND e.tombstoned_at IS NULL
           AND e.embedding_dim = {{dim:UInt16}}
-          AND length(e.embedding) = {{dim:UInt16}}
+          AND length(e.embedding) = {{dim:UInt16}}{in_scope}
         ORDER BY qidx ASC, dist ASC
         LIMIT 10 BY qidx
         """
 
 
-def _peer_candidates_sql() -> str:
-    """Stage A: the namespace's nearest vectors, nothing else read."""
+def _peer_candidates_sql(in_scope: str = "") -> str:
+    """Stage A: the namespace's nearest vectors, nothing else read; `in_scope`
+    is the read-scope clause (`scope_and`)."""
     from server.core.vectors.search_settings import vector_search_settings
 
     return (
@@ -68,7 +71,9 @@ def _peer_candidates_sql() -> str:
           AND memory_key != {self_key:String}
           AND tombstoned_at IS NULL
           AND embedding_dim = {dim:UInt16}
-          AND embedding.size0 = {dim:UInt16}
+          AND embedding.size0 = {dim:UInt16}"""
+        + in_scope
+        + """
         ORDER BY dist ASC
         LIMIT {k:UInt32}
         """
@@ -89,3 +94,30 @@ _PEER_ROWS_SQL = """
           AND tombstoned_at IS NULL
           AND status IN ('active', 'conflicted')
         """
+
+
+# The pinned peers anywhere in the namespace: a pinned row outside the writer's
+# read scope still blocks a close write (pinned is a namespace-wide invariant).
+PINNED_PEERS_SQL = (
+    """
+        SELECT
+            m.memory_id, m.memory_key, m.value, m.pinned,
+            m.agent, m.user_id, m.session_id, m.run_id, m.valid_at,
+            cosineDistance(e.embedding, {emb:Array(Float32)}) AS dist"""
+    + _CANDIDATE_JOIN
+    + """
+        WHERE m.org = {org:String}
+          AND m.namespace = {ns:String}
+          AND m.memory_type = {mt:String}
+          AND m.memory_key != {self_key:String}
+          AND m.pinned = 1
+          AND m.tombstoned_at IS NULL
+          AND m.status IN ('active', 'conflicted')
+          AND e.tombstoned_at IS NULL
+          AND e.embedding_dim = {dim:UInt16}
+          AND length(e.embedding) = {dim:UInt16}
+          AND dist <= {max_dist:Float32}
+        ORDER BY dist ASC
+        LIMIT 10
+        """
+)

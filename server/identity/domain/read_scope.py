@@ -11,6 +11,8 @@ docs/concepts/identities-and-namespaces.md#read-scope-inside-a-namespace.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
@@ -151,6 +153,17 @@ _request_scope: ContextVar[tuple[Any, ReadFilters | Exception] | None] = Context
 
 def bind_request_read_filters(auth: Any, result: ReadFilters | Exception) -> None:
     _request_scope.set((auth, result))
+
+
+@contextmanager
+def read_filters_bound(auth: Any, scope: ReadFilters) -> Iterator[None]:
+    """Bind `scope` for `auth` inside the block only: a worker replaying a request
+    runs it under the scope the request had, and the next one starts clean."""
+    token = _request_scope.set((auth, scope))
+    try:
+        yield
+    finally:
+        _request_scope.reset(token)
 
 
 def request_read_filters(auth: Any) -> ReadFilters:

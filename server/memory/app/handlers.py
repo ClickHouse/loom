@@ -20,7 +20,7 @@ from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.embedding import get_embedder
-from server.identity.domain.read_scope import request_read_filters
+from server.identity.app.request_scope import request_scope
 from server.memory.api.models_crud import (
     MemoryClearInput,
     MemoryClearOutput,
@@ -39,7 +39,6 @@ from server.memory.api.models_crud import (
     MemoryUnpinOutput,
 )
 from server.memory.app import conflict_deferred as _cd
-from server.memory.app.provenance import request_scope
 from server.memory.app.write import handle_memory_set
 from server.memory.domain import lock as _lock
 from server.memory.domain import trust as _trust
@@ -200,7 +199,6 @@ async def _get_chunk_with_neighbors(input: MemoryGetInput) -> MemoryGetOutput:
     # (read_user_id; a body naming another user is refused, as memory.search
     # refuses it) — keeps the chunk and its neighbours to that user's rows;
     # chunks stamped '-' (no user) are not served under a bound.
-    from server.auth.context import current_auth
     from server.identity.domain.read_scope import resolve_read_filters
 
     bound = resolve_read_filters(
@@ -288,7 +286,7 @@ async def _point_lookup(identity: Any, input: MemoryGetInput) -> Any:
             fresh=True,  # the SDK pattern is set → get; a miss re-reads once
             strong=strong,
             include_expired=False,  # an expired fact reads as gone, like search
-            scope=request_read_filters(current_auth()),
+            scope=request_scope(),
         )
     if row is not None or identity.agent == "*":
         return row
@@ -308,7 +306,7 @@ async def _point_lookup(identity: Any, input: MemoryGetInput) -> Any:
             fresh=True,
             strong=strong,
             include_expired=False,
-            scope=request_read_filters(current_auth()),
+            scope=request_scope(),
         )
     return row if row is not None and same_user(row, identity) else None
 
@@ -318,7 +316,6 @@ async def handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
     # as search before constructing the point-lookup identity. Without this,
     # a token pinned to one end user could name another user in the body and
     # retrieve that row by key.
-    from server.auth.context import current_auth
     from server.identity.domain.read_scope import resolve_read_filters
     from server.operations import read_projection
 
@@ -855,7 +852,7 @@ async def handle_memory_get_by_id(input: MemoryGetByIdInput) -> MemoryGetByIdOut
         as_of=getattr(input, "as_of", None),
         include_usage_totals=True,
         fresh=True,
-        scope=request_read_filters(current_auth()),
+        scope=request_scope(),
     )
     if row is None:
         return MemoryGetByIdOutput(found=False)

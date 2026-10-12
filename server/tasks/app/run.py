@@ -23,9 +23,9 @@ from typing import Any
 from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now as _now
 from server.core.errors import AuthInsufficientError, IdentityIncompleteError, NotFoundError
+from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import row_in_read_scope
 from server.memory.app import run_feedback, run_retention
-from server.memory.app.provenance import request_scope
 from server.operations.read_projection import project_rows
 from server.tasks.api.models_run import (
     RunBeginInput,

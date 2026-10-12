@@ -13,9 +13,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from server.auth.context import current_auth
 from server.core.naming import SENTINEL as _WM_SENTINEL
-from server.identity.domain.read_scope import request_read_filters
+from server.identity.app.request_scope import request_scope
 from server.memory.api.models_context import ContextBlock, ContextPackInput, ContextPackOutput
 from server.memory.api.models_lifecycle import MemoryStackInput
 from server.memory.api.models_procedure import ProcedureMatchInput
@@ -339,14 +338,14 @@ async def _pack_startup_recall(st: _PackState) -> None:
             pinned_only=True,
             order_by="created_at_desc",
             limit=k,
-            scope=request_read_filters(current_auth()),
+            scope=request_scope(),
         )
         recent = await memory_repo.list_by_namespace(
             ident,
             exclude_high_sensitivity=True,
             order_by="created_at_desc",
             limit=k * 2,
-            scope=request_read_filters(current_auth()),
+            scope=request_scope(),
         )
     except Exception as e:  # noqa: BLE001 — recall is best-effort
         log.warning("context.pack startup recall failed: %s", e)
@@ -440,7 +439,7 @@ async def _hit_actors(input: ContextPackInput, hits: list[Any]) -> _KeyWriters:
         return await memory_repo.actors_by_key(
             input.org,
             [_hit_row_key(input, h) for h in hits],
-            scope=request_read_filters(current_auth()),
+            scope=request_scope(),
         )
     except Exception as e:  # noqa: BLE001 — authorship labels are best-effort; lines say by=unknown
         log.warning("context.pack: memory authors unavailable: %s", e)
@@ -458,7 +457,7 @@ async def _pack_decisions_from_hits(
     keys = [str(h.memory_key) for h in decision_hits]
     records: dict[str, dict[str, Any]] = {}
     # The records are read by key alone, across users: a bounded read keeps the hit's excerpt.
-    narrowed = request_read_filters(current_auth()).narrowed
+    narrowed = request_scope().narrowed
     try:
         from server.core.ch import get_client
         from server.memory.app.decision import _decision_records
@@ -736,7 +735,7 @@ async def _pack_conversations(st: _PackState) -> None:
         return
     if not input.include_conversations or not input.query:
         return
-    if request_read_filters(current_auth()).narrowed:
+    if request_scope().narrowed:
         return  # conversations carry no user bound this leg can apply
     from server.knowledge.api.models_conversations import ConversationSearchInput
     from server.knowledge.app.conversations import handle_conversation_search
@@ -789,7 +788,7 @@ async def _pack_runs(st: _PackState) -> None:
     # Opt-in; identity-scoped; fail-open inside runs_manifest.
     if not st.wanted("runs") or not input.include_runs:
         return
-    if request_read_filters(current_auth()).narrowed:
+    if request_scope().narrowed:
         return  # the manifest reads every session of a user, past a session bound
     from server.memory.app.runs_manifest import runs_manifest
 

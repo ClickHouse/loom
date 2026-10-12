@@ -14,13 +14,12 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from server.auth.context import current_auth
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.embedding import get_embedder
+from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import (
     WHOLE_NAMESPACE,
-    request_read_filters,
     row_in_read_scope,
 )
 from server.memory.api.models_common import (
@@ -84,7 +83,7 @@ def _peer_in_read_scope(peer: Any) -> bool:
     from server.core.errors import AuthInsufficientError, IdentityIncompleteError
 
     try:
-        scope = request_read_filters(current_auth())
+        scope = request_scope()
     except (AuthInsufficientError, IdentityIncompleteError):
         return False
     return row_in_read_scope(scope, getattr(peer, "user_id", ""), getattr(peer, "session_id", ""))

@@ -13,10 +13,10 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from server.auth.context import current_auth
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now as _now
-from server.identity.domain.read_scope import request_read_filters, row_in_read_scope
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import row_in_read_scope
 from server.memory.api.models_working_memory import (
     DEFAULT_CHAR_LIMIT,
     WorkingMemoryAppendInput,
@@ -92,7 +92,7 @@ def _row_identity(input: Any) -> dict[str, Any]:
 def _in_read_scope(input: Any) -> bool:
     """Blocks are read by their exact identity, so the request's own user and
     session decide whether the read scope admits them."""
-    scope = request_read_filters(current_auth())
+    scope = request_scope()
     return row_in_read_scope(scope, input.user_id, input.session_id)
 
 

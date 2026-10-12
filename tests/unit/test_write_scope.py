@@ -106,13 +106,13 @@ def store(monkeypatch):
 
 
 def test_request_scope_is_the_whole_namespace_without_auth() -> None:
-    from server.memory.app.provenance import request_scope
+    from server.identity.app.request_scope import request_scope
 
     assert contextvars.Context().run(request_scope).narrowed is False
 
 
 def test_request_scope_binds_the_pinned_user() -> None:
-    from server.memory.app.provenance import request_scope
+    from server.identity.app.request_scope import request_scope
 
     async def read():
         return request_scope()
@@ -439,7 +439,80 @@ def test_set_from_messages_skips_its_record_projection_when_narrowed(monkeypatch
     def project() -> Any:
         return _write_inline_record_projection(inp, {"f": "x"}, {"f": "string"}, evidence_ids=[])
 
-    _run_as(_pinned("U"), project)
+    assert _run_as(_pinned("U"), project) is False
     assert written == []
-    _run_as(None, project)
+    assert _run_as(None, project) is True
     assert [w.memory_key for w in written] == ["k"]
+
+
+class _PinnedV(_SqlCH):
+    """Stage A finds nothing in the writer's scope; the pinned-only statement
+    finds V's pinned row close to the write."""
+
+    async def query_all(self, sql, params=None):
+        await super().query_all(sql, params)
+        if "m.pinned = 1" not in sql:
+            return []
+        return [
+            {
+                "memory_id": "v1",
+                "memory_key": "v-fact",
+                "value": "V lives in Oslo",
+                "pinned": 1,
+                "agent": "bot",
+                "user_id": "V",
+                "session_id": "-",
+                "run_id": "-",
+                "valid_at": None,
+                "dist": 0.05,
+            }
+        ]
+
+
+def _check_on_commit(monkeypatch, ch: _SqlCH) -> Any:
+    from server.memory.app import conflicts
+
+    monkeypatch.setattr(conflicts, "get_client", lambda: ch)
+    return conflicts.check_on_commit(
+        org="o",
+        namespace="n",
+        agent="bot",
+        memory_type="semantic",
+        memory_key="k",
+        new_value="U lives in Lisbon",
+        new_embedding=[0.1, 0.2],
+        resolved_threshold=0.85,
+        resolved_policy="auto_reinforce",
+        allowlisted_keys=set(),
+    )
+
+
+def test_conflict_peers_are_the_writers_and_a_foreign_pinned_row_still_blocks(
+    monkeypatch,
+) -> None:
+    ch = _PinnedV()
+    out = _run_as(_pinned("U"), lambda: _check_on_commit(monkeypatch, ch))
+    stage_a = [s for s, _ in ch.sql if "m.pinned = 1" not in s]
+    assert stage_a and all("user_id = {scope_uid:String}" in s for s in stage_a)
+    assert out.verdict == "rejected" and out.pinned_blocker_id == "v1"
+    assert all(p.memory_id != "v1" for p in out.peers), "the foreign row is never named"
+
+
+def test_a_namespace_wide_writer_runs_no_separate_pinned_statement(monkeypatch) -> None:
+    ch = _PinnedV()
+    out = _run_as(None, lambda: _check_on_commit(monkeypatch, ch))
+    assert not any("m.pinned = 1" in s for s, _ in ch.sql)
+    assert out.verdict == "clear"
+
+
+def test_batched_conflict_candidates_are_the_writers_rows() -> None:
+    from server.memory.app.conflicts import candidate_rows_many
+
+    ch = _SqlCH()
+    _run_as(
+        _pinned("U"),
+        lambda: candidate_rows_many(
+            org="o", namespace="n", items=[("semantic", "k", [0.1], 0.3)], ch=ch
+        ),
+    )
+    assert len(ch.sql) == 1 and "m.user_id = {scope_uid:String}" in ch.sql[0][0]

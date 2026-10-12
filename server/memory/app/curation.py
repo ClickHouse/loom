@@ -14,14 +14,13 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from server.auth.context import current_auth
 from server.core.ch import CHClient, get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
+from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import (
     WHOLE_NAMESPACE,
     ReadFilters,
-    request_read_filters,
     scope_and,
     scope_where,
 )
@@ -126,7 +125,7 @@ async def handle_memory_digests(input: MemoryDigestsInput) -> MemoryDigestsOutpu
     if input.session_id and input.session_id != "*":
         where += " AND session_id = {s:String}"
         params["s"] = input.session_id
-    where += scope_and(request_read_filters(current_auth()), params)
+    where += scope_and(request_scope(), params)
     rows = await ch.query_all(
         "SELECT session_id, summary_text, key_facts, derived_from, valid_at, created_at, "
         "version FROM loom.session_summaries FINAL WHERE "
@@ -374,7 +373,7 @@ async def handle_memory_history(input: MemoryHistoryInput) -> MemoryHistoryOutpu
         ),
         input.memory_key,
         limit=input.limit,
-        scope=request_read_filters(current_auth()),
+        scope=request_scope(),
     )
     out_rows = [
         _MemoryHistoryRow(
@@ -514,7 +513,7 @@ async def handle_memory_timeline(input: MemoryTimelineInput) -> MemoryTimelineOu
         until=input.until,
         top_k=int(input.top_k),
         order=input.order,
-        scope=request_read_filters(current_auth()),
+        scope=request_scope(),
     )
 
     events = [

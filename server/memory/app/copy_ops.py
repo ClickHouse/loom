@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from server.auth.context import current_auth
 from server.core.datetimes import naive_utc_now
-from server.identity.domain.read_scope import request_read_filters
+from server.identity.app.request_scope import request_scope
 from server.memory.api.models_lifecycle import (
     MemoryCopyToInput,
     MemoryCopyToOutput,
@@ -128,7 +128,7 @@ async def handle_memory_cross_promote(
         input.from_memory_id,
         org=input.from_org,
         fresh=True,
-        scope=request_read_filters(current_auth()),
+        scope=request_scope(),
     )
     # The id is org-wide; the ADMIN check above covered from_namespace only. A row
     # in any other namespace reads as not found, so the copy can't reach it and
@@ -249,7 +249,7 @@ async def handle_memory_copy_to(
         session_id=input.from_session_id,
     )
     src = await memory_repo.get_by_key(
-        identity, input.memory_key, fresh=True, scope=request_read_filters(current_auth())
+        identity, input.memory_key, fresh=True, scope=request_scope()
     )
     if src is None:
         raise NotFoundError(
@@ -316,7 +316,6 @@ async def handle_memory_copy_to(
 
 def _resolve_subject_local() -> str:
     """Return the caller's subject from the auth ContextVar, or raise if absent."""
-    from server.auth.context import current_auth
     from server.core.errors import ValidationError
 
     auth = current_auth()

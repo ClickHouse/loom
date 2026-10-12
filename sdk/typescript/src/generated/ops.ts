@@ -5580,6 +5580,7 @@ export interface MemorySetFromMessagesOutput {
   pipeline_errors?: string[];
   value_updates_linked?: number;
   stubbed_fields?: string[];
+  degraded?: string[];
   deferred?: boolean;
   queue_id?: string;
   deferred_by?: string;

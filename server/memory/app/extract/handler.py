@@ -90,11 +90,15 @@ async def _enqueue_deferred(input: MemorySetFromMessagesInput) -> MemorySetFromM
     queue row (`failed` + `last_error`) rather than here. Fail-closed: a
     queue insert that fails is a 503, never a silent 200.
     """
+    from server.identity.app.request_scope import request_scope
     from server.memory.app import extraction_queue
 
+    # Resolved before the insert: a scope that does not resolve is refused as the
+    # inline call would refuse it, not reported as a queue outage.
+    scope = request_scope()
     try:
         with traced("extract.defer_enqueue", messages=len(input.messages)):
-            queue_id = await extraction_queue.enqueue(input)
+            queue_id = await extraction_queue.enqueue(input, scope=scope)
     except Exception as e:
         log.warning("memory_extraction_queue enqueue failed: %s", e)
         raise HTTPException(
@@ -229,13 +233,16 @@ async def _set_record_from_messages(
             memory_keys=[r.memory_key for r in bulk_out.written],
             payload={"evidence_ids": evidence_ids},
         )
+    degraded: list[str] = []
     try:
-        await _write_inline_record_projection(
+        projected = await _write_inline_record_projection(
             input,
             record.record,
             record_schema,
             evidence_ids=evidence_ids,
         )
+        if not projected:
+            degraded.append("records: projection_skipped (read scope below the namespace)")
     except Exception as e:  # noqa: BLE001 — a projection; the write stands
         log.warning("memory_records inline projection failed (non-fatal): %s", e)
         await record_input_projection_failure(
@@ -258,6 +265,7 @@ async def _set_record_from_messages(
         belief_source_links=belief_source_links,
         stubbed_fields=stubbed_fields,
         value_updates_linked=last_value_updates_linked.get(),
+        degraded=degraded,
     )
 
 

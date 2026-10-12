@@ -8,9 +8,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from server.auth.context import current_auth
 from server.core.ch import get_client
-from server.identity.domain.read_scope import request_read_filters, scope_and
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import scope_and
 from server.memory.api.models_lifecycle import MemoryStackInput, MemoryStackOutput, _StackEntry
 
 log = logging.getLogger(__name__)
@@ -110,7 +110,7 @@ async def _stack_pinned(ch: Any, input: MemoryStackInput, fill: _StackFill) -> N
         "sid": input.session_id or "-",
         "lim": int(input.pinned_limit),
     }
-    scope = scope_and(request_read_filters(current_auth()), params)
+    scope = scope_and(request_scope(), params)
     pinned_rows = await ch.query_all(
         f"""
         SELECT memory_key, memory_type, value, recall_count, last_recalled_at, actor
@@ -171,7 +171,7 @@ async def _stack_recent(ch: Any, input: MemoryStackInput, fill: _StackFill) -> s
         "lim": int(input.recent_limit),
         "medium_ok": 1 if medium_ok else 0,
     }
-    scope = scope_and(request_read_filters(current_auth()), params)
+    scope = scope_and(request_scope(), params)
     recent_rows = await ch.query_all(
         f"""
         SELECT memory_key, memory_type, value, recall_count,

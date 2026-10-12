@@ -704,10 +704,17 @@ async def _verdict(rows: list[dict[str, Any]], value: str) -> Any:
     )
 
 
-async def test_a_bounded_write_treats_another_users_row_as_absent() -> None:
+async def test_a_bounded_write_treats_another_users_row_as_absent(monkeypatch) -> None:
     """set and bulk_set (and set_from_messages through it) take their verdict
     here: another user's restatement is neither merged into, reinforced nor
     duplicated or marked; only their pinned row still blocks."""
+    from server.memory.app import conflicts
+
+    class _NoPinned:
+        async def query_all(self, sql, params=None):
+            return []  # the bounded writer's separate pinned-row statement
+
+    monkeypatch.setattr(conflicts, "get_client", lambda: _NoPinned())
     _bind(PINNED, U1)
     same = await _verdict([_candidate("theirs", "u2", "vault 1234")], "vault 1234")
     assert same.verdict not in ("merge", "duplicate", "conflict", "rejected"), same

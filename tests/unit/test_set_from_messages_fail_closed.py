@@ -104,11 +104,13 @@ async def test_pipeline_errors_surface_on_output(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("projected", [True, False])
 async def test_schema_mode_surfaces_stubbed_fields(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, projected: bool
 ) -> None:
     """Schema mode: fields the extractor gave up on are reported on the
-    output, so "extracted" and "gave up" are distinguishable to the caller."""
+    output, so "extracted" and "gave up" are distinguishable to the caller;
+    so is a records projection skipped for a caller bounded to one user."""
     import server.memory.app.extract.handler as mx
     from server.llm.client import LLMResult
     from server.memory.app.extract import ExtractedRecord
@@ -122,7 +124,7 @@ async def test_schema_mode_surfaces_stubbed_fields(
         return _Out()
 
     async def _fake_inline(*args, **kwargs):
-        return None
+        return projected
 
     async def _fake_typed(msgs, schema, *, max_tokens=1024, observation_date=None):
         return (
@@ -144,6 +146,7 @@ async def test_schema_mode_surfaces_stubbed_fields(
         )
     )
     assert out.stubbed_fields == ["category"]
+    assert bool(out.degraded) is not projected
 
 
 @pytest.mark.asyncio

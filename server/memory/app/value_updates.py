@@ -35,8 +35,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
-from server.memory.app.provenance import request_scope
 
 log = logging.getLogger(__name__)
 
@@ -318,30 +318,26 @@ async def _peers(
     }
     in_scope = scope_and(request_scope(), params, "m")
     rows = await ch.query_all(
-        """
+        f"""
         SELECT toString(m.memory_id) AS memory_id, m.memory_key AS memory_key,
                m.value AS value, m.valid_at AS valid_at, m.created_at AS created_at,
-               1 - """
-        + "cosineDistance(e.embedding, {emb:Array(Float32)})"
-        + """ AS cos
+               1 - cosineDistance(e.embedding, {{emb:Array(Float32)}}) AS cos
         FROM loom.memory m FINAL
         JOIN loom.memory_embeddings e FINAL
           ON  e.org = m.org AND e.namespace = m.namespace
           AND e.memory_key = m.memory_key
           AND e.user_id = m.user_id AND e.session_id = m.session_id
           AND e.agent = m.agent
-        WHERE m.org = {org:String}
-          AND m.namespace = {ns:String}
-          AND m.memory_type = {mt:String}
-          AND m.memory_key != {self_key:String}
+        WHERE m.org = {{org:String}}
+          AND m.namespace = {{ns:String}}
+          AND m.memory_type = {{mt:String}}
+          AND m.memory_key != {{self_key:String}}
           AND m.tombstoned_at IS NULL
           AND m.status IN ('active', 'conflicted')
           AND e.tombstoned_at IS NULL
-          AND e.embedding_dim = {dim:UInt16}
-          AND length(e.embedding) = {dim:UInt16}"""
-        + in_scope
-        + """
-        HAVING cos >= {min_cos:Float32}
+          AND e.embedding_dim = {{dim:UInt16}}
+          AND length(e.embedding) = {{dim:UInt16}}{in_scope}
+        HAVING cos >= {{min_cos:Float32}}
         ORDER BY cos DESC
         LIMIT 8
         """,

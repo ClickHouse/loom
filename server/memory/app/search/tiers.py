@@ -7,8 +7,7 @@ import json
 import logging
 from typing import Any
 
-from server.auth.context import current_auth
-from server.identity.domain.read_scope import request_read_filters
+from server.identity.app.request_scope import request_scope
 from server.memory.app.search_tag_filter import request_hard_tags as _request_hard_tags
 
 log = logging.getLogger(__package__)
@@ -80,7 +79,7 @@ async def _prepend_tier(hits: list[Any], input: Any, tier: str) -> list[Any]:
             order_by=_TIER_ORDER[tier],
             limit=n * 4 if run_id else n,
             **_tier_tag_kwargs(input),
-            scope=request_read_filters(current_auth()),
+            scope=request_scope(),
         )
     except Exception as e:  # noqa: BLE001 — a tier never fails a search
         log.debug("%s tier read failed: %s", tier, e)

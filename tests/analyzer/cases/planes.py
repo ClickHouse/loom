@@ -18,7 +18,7 @@ import types
 import typing
 from typing import Any
 
-from server.identity.domain.read_scope import WHOLE_NAMESPACE
+from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, scope_and
 from tests.analyzer.cases._common import AGENT, NS, ORG, SMALL_VEC, rows_by_substring
 from tests.analyzer.corpus import Case, RecordingCH, is_drive_defect
 
@@ -570,6 +570,12 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
         conflict_candidates._PEER_ROWS_SQL, params={**_peer, "ids": [(AGENT, "-", "-", "k2")]}
     )
     await CF._peer_rows_joined(ch, dict(_peer))
+    # A writer bounded to one user: its peers in its scope, others' pinned rows.
+    one_user = ReadFilters(scope="own_user", user_id="u1", session_id=None)
+    await CF._peer_rows(ch, dict(_peer), one_user)
+    scoped = dict(_peer)
+    await CF._peer_rows_joined(ch, scoped, scope_and(one_user, scoped, "m"))
+    await ch.query_all(conflict_candidates.PINNED_PEERS_SQL, params=_peer)
     await CF.check_against_shared(
         org=ORG, namespace=NS, target_key="k1", memory_type="preference", embedding=SMALL_VEC
     )

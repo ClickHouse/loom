@@ -1994,6 +1994,7 @@ Run LLM extraction on `messages` and write the extracted facts.
 | `pipeline_errors` | `list[str]` | Fail-open pipeline steps that logged-and-skipped (operator hook unreachable, fetch_existing failed, unknown step id, ...). |
 | `value_updates_linked` | `int` | Older memories this ingest marked superseded by a value update (memory.app.value_updates; 0 when detection is off). |
 | `stubbed_fields` | `list[str]` | Schema mode only: record_schema fields the extractor could not validate after its retries and wrote as null (never a fabricated value). |
+| `degraded` | `list[str]` | Schema mode only: what the response skipped and why, e.g. the memory_records projection for a caller bounded to one user. |
 | `deferred` | `bool` | defer=true: nothing extracted yet; `written` is empty and `queue_id` is the handle memory.extraction_status reports on. |
 | `queue_id` | `str` | The queued batch's id for `memory.extraction_status`; '' when inline. |
 | `deferred_by` | `str` | "" (inline) \| "flag" (the caller passed defer=true) \| "allowlist" (the deployment's extraction_defer_agents chose for the caller) |

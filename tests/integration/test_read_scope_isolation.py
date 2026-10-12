@@ -827,3 +827,91 @@ def test_writes_aimed_at_vs_runs_threads_records_and_blobs_leave_them_alone(
     assert not changed, f"V's rows changed: {changed}"
     assert not leaks, f"V's rows reached W's token: {leaks}"
     assert not bad, f"unexpected answers: {bad}"
+
+
+def _rows_by_user(ch: Any, org: str, ns: str) -> dict[str, list[tuple[Any, ...]]]:
+    rows = ch.query(
+        """
+        SELECT user_id, memory_key, toString(status), superseded_by
+        FROM loom.memory FINAL
+        WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL
+        ORDER BY user_id, memory_key
+        """,
+        parameters={"org": org, "ns": ns},
+    ).result_rows
+    out: dict[str, list[tuple[Any, ...]]] = {}
+    for r in rows:
+        out.setdefault(str(r[0]), []).append(tuple(r[1:]))
+    return out
+
+
+async def _drain_queue(org: str, ns: str) -> None:
+    """One worker pass over this namespace's queue, in-process (no auth bound, as
+    the worker runs); the CI server runs with LOOM_BACKGROUND_WORKERS=off."""
+    from server.core.ch import get_client
+    from server.memory.app import extraction_queue as q
+
+    ch = get_client()
+    await ch.connect()  # the in-process client, on this test's event loop
+    try:
+        rows = await q.claim_batch(limit=10, lease_seconds=120, org_filter=org, namespace_filter=ns)
+        assert rows, "nothing was queued"
+        for row in rows:
+            await q.mark_done(row, written=await q.replay_row(row))
+    finally:
+        await ch.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_a_deferred_extraction_replays_inside_the_writers_scope(
+    control_plane_url: str, seed: _Seed, ch_client: Any
+) -> None:
+    """Under `newest_wins` a same-key write supersedes the older row. W's pinned
+    token defers a set_from_messages whose fact lands on the key V holds: the replay
+    runs under W's scope, so V's row stays active. A namespace-wide writer's deferred
+    write of the same key does supersede it (the control)."""
+    ns = f"rs-defer-{uuid.uuid4().hex[:8]}"
+    ns_tok = _mint(seed.org, ns)
+    w_tok = _mint(seed.org, ns, read_scope="own_user", read_user_id=W)
+    base = {"org": seed.org, "namespace": ns, "agent": "a"}
+    _write(
+        control_plane_url,
+        ns_tok,
+        "namespace.register",
+        {**base, "owner_email": "rs@example.com", "default_conflict_policy": "newest_wins"},
+    )
+
+    def say(badge: str) -> list[dict[str, str]]:
+        # The fake extractor gives each of these the same key.
+        return [{"role": "user", "content": f"Quux keeps the badge number {badge} today."}]
+
+    v_out = _write(
+        control_plane_url,
+        ns_tok,
+        "memory.set_from_messages",
+        {**base, "user_id": V, "session_id": "sess-1", "messages": say("1111")},
+    )
+    assert v_out["written"], v_out
+    v_key = v_out["written"][0]["memory_key"]
+
+    deferred = _write(
+        control_plane_url,
+        w_tok,
+        "memory.set_from_messages",
+        {**base, "session_id": "sess-1", "messages": say("2222"), "defer": True},
+    )
+    assert deferred["deferred"] is True, deferred
+    await _drain_queue(seed.org, ns)
+    rows = _rows_by_user(ch_client, seed.org, ns)
+    assert any(r[0] == v_key for r in rows.get(W, [])), f"W's replay wrote nothing: {rows}"
+    assert rows[V] == [(v_key, "active", "")], f"W's deferred write changed V's row: {rows}"
+
+    _write(
+        control_plane_url,
+        ns_tok,
+        "memory.set_from_messages",
+        {**base, "user_id": "user-x", "messages": say("3333"), "defer": True},
+    )
+    await _drain_queue(seed.org, ns)
+    rows = _rows_by_user(ch_client, seed.org, ns)
+    assert rows[V][0][1] == "superseded", f"the control superseded nothing: {rows}"

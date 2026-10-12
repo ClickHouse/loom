@@ -35,8 +35,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from server.auth.context import current_auth
-from server.identity.domain.read_scope import request_read_filters, scope_and
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import scope_and
 
 log = logging.getLogger(__name__)
 
@@ -282,7 +282,7 @@ async def fetch_raw_evidence(
 
     client = ch or get_client()
     base: dict[str, Any] = {"org": org, "ns": namespace}
-    in_scope = scope_and(request_read_filters(current_auth()), base)
+    in_scope = scope_and(request_scope(), base)
     try:
         links = await client.query_all(
             _links_sql(in_scope), params={**base, "keys": list(memory_keys)}
@@ -434,7 +434,7 @@ async def fetch_session_turns(
     client = ch or get_client()
     # Session ids repeat across users: a narrowed read opens only its own.
     params: dict[str, Any] = {"org": org, "ns": namespace, "sids": list(session_ids)}
-    in_scope = scope_and(request_read_filters(current_auth()), params)
+    in_scope = scope_and(request_scope(), params)
     # Versioned, not FINAL: an evidence row's id is minted per
     # insert, so the only re-insert is a tombstone; the latest version by
     # `created_at` decides, as FINAL would, without the query-time merge

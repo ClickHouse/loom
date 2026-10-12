@@ -15,10 +15,10 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from server.auth.context import current_auth
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
-from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, request_read_filters
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
 from server.memory.api.models_session_brief import (
     SessionBriefDeleteInput,
     SessionBriefDeleteOutput,
@@ -266,7 +266,7 @@ async def handle_session_brief_save(inp: SessionBriefSaveInput) -> SessionBriefS
     if not sb.stored_key_ok(key):
         raise HTTPException(status_code=422, detail={"code": "BAD_BRIEF_KEY", "message": key})
     ch = get_client()
-    stored_key = _stored_key(key, request_read_filters(current_auth()))
+    stored_key = _stored_key(key, request_scope())
     # An owner prefix built from long ids could store a key get and delete refuse.
     if not sb.stored_key_ok(stored_key):
         raise HTTPException(
@@ -395,7 +395,7 @@ async def handle_session_brief_save(inp: SessionBriefSaveInput) -> SessionBriefS
 
 async def _find(inp: SessionBriefGetInput) -> dict[str, Any] | None:
     ch = get_client()
-    scope = request_read_filters(current_auth())
+    scope = request_scope()
     if inp.brief_key:
         key = _stored_key(inp.brief_key, scope)
         return await repo.current(ch, inp.org, inp.namespace, key, scope=scope)
@@ -425,7 +425,7 @@ async def handle_session_brief_get(inp: SessionBriefGetInput) -> SessionBriefGet
     row = await _find(inp)
     if row is None:
         return SessionBriefGetOutput(found=False, brief_key=inp.brief_key)
-    scope = request_read_filters(current_auth())
+    scope = request_scope()
     key = str(row["brief_key"])
     ch = get_client()
     revisions = await repo.revision_count(ch, inp.org, inp.namespace, key)
@@ -493,7 +493,7 @@ def _ago(seconds: int) -> str:
 
 
 async def handle_session_brief_list(inp: SessionBriefListInput) -> SessionBriefListOutput:
-    scope = request_read_filters(current_auth())
+    scope = request_scope()
     rows = await repo.listing(
         get_client(),
         inp.org,
@@ -535,7 +535,7 @@ async def handle_session_brief_list(inp: SessionBriefListInput) -> SessionBriefL
 
 async def handle_session_brief_delete(inp: SessionBriefDeleteInput) -> SessionBriefDeleteOutput:
     ch = get_client()
-    scope = request_read_filters(current_auth())
+    scope = request_scope()
     key = _stored_key(inp.brief_key, scope)
     row = await repo.current(ch, inp.org, inp.namespace, key, scope=scope)
     if row is None or row.get("tombstoned_at") is not None:

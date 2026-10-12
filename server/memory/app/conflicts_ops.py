@@ -5,10 +5,10 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from server.auth.context import current_auth
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value_json as _sha256
-from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, request_read_filters
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
 from server.memory.api.models_conflicts import (
     ConflictsAllowlistListInput,
     ConflictsAllowlistListOutput,
@@ -55,7 +55,7 @@ async def handle_conflicts_list(
     from server.memory.store import conflicts as conflicts_repo
     from server.memory.store import parse_memory_value
 
-    scope = request_read_filters(current_auth())
+    scope = request_scope()
     if input.keys_only:
         # Keys for the cards' chips, no value column.
         keys = await conflicts_repo.conflicted_keys(input.org, input.namespace, scope=scope)

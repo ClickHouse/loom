@@ -20,8 +20,8 @@ import contextvars
 import logging
 from typing import Any
 
-from server.auth.context import current_auth
-from server.identity.domain.read_scope import request_read_filters, scope_and
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import scope_and
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.domain.question_literals import question_literals
 
@@ -47,7 +47,7 @@ async def fetch_turns_with_literal(
 
     client = ch or get_client()
     params: dict[str, Any] = {"org": org, "ns": namespace, "lit": literal, "lim": int(limit)}
-    in_scope = scope_and(request_read_filters(current_auth()), params)
+    in_scope = scope_and(request_scope(), params)
     # Versioned, not FINAL.
     sql = f"""
         SELECT session_id, role, toString(observed_at) AS observed_at, content

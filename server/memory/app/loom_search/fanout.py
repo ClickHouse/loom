@@ -14,8 +14,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Literal
 
-from server.auth.context import current_auth
-from server.identity.domain.read_scope import ReadFilters, request_read_filters
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import ReadFilters
 from server.knowledge.app.repo_docs import knowledge_with_repo_docs
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app.loom_search.answer_first import answer_first
@@ -207,7 +207,7 @@ async def search_sections(
     from server.knowledge.api.models_knowledge import KnowledgeSearchInput
     from server.memory.app.search import handle_memory_search
 
-    scope = request_read_filters(current_auth())
+    scope = request_scope()
 
     profile_namespaces = (
         fanout_namespaces if namespace_scope == "all_mine" and fanout_namespaces else [namespace]

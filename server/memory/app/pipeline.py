@@ -452,8 +452,8 @@ async def _existing_keys_named(state: WorkflowState, tokens: set[str]) -> set[st
         return found
     try:
         from server.core.ch import get_client
+        from server.identity.app.request_scope import request_scope
         from server.identity.domain.read_scope import scope_and
-        from server.memory.app.provenance import request_scope
 
         params: dict[str, Any] = {"org": state.org, "ns": state.namespace, "keys": rest[:64]}
         # Only keys the caller may read count: another user's key is no echo.

@@ -12422,6 +12422,7 @@ class MemorySetFromMessagesOutput(TypedDict, total=False):
     pipeline_errors: NotRequired[list[str]]
     value_updates_linked: NotRequired[int]
     stubbed_fields: NotRequired[list[str]]
+    degraded: NotRequired[list[str]]
     deferred: NotRequired[bool]
     queue_id: NotRequired[str]
     deferred_by: NotRequired[str]

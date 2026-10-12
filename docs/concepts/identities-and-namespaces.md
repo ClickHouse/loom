@@ -206,7 +206,9 @@ than `namespace`:
 - A write's answer names no row outside the scope: a merge into, a duplicate of or a
   pinned conflict with another user's row reports the verdict without that row's id,
   hash or key, and `conflicts.list` drops such peers from `conflict_with`. A pinned row
-  still blocks a close write from any user (a namespace-wide invariant). `run.begin` with
+  still blocks a close write from any user (a namespace-wide invariant). A deferred
+  `memory.set_from_messages` (`defer=true`, or `extraction_defer_agents`) stores the
+  request's scope with it and replays under that scope. `run.begin` with
   another user's `run_id` starts a new run under a fresh id, and `run.complete` on it
   answers `NOT_FOUND`.
 - Session briefs are kept per user (per session under `own_session`): two users saving
@@ -220,7 +222,7 @@ than `namespace`:
   `AUTH_INSUFFICIENT`, and so is a write to a table keyed without a user, where it
   would overwrite another user's row: `memory.record.write`, `decision.record`,
   `procedure.record_run` and `context.offload`. `memory.set_from_messages` skips its
-  `record_schema` projection into records. The list is `server/identity/domain/read_scope.py`
+  `record_schema` projection into records and says so in `degraded`. The list is `server/identity/domain/read_scope.py`
   (`SCOPED_OPS`, `NARROW_SAFE_OPS`), and an op it does not name is refused.
 
 ## Agent-written rows and the shared layer

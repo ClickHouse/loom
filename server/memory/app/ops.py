@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
+from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_admin import (
     MemoryAgentsListInput,
@@ -34,7 +35,6 @@ from server.memory.api.models_temporal import (
     MemoryOutcomeRunInput,
     MemoryOutcomeRunOutput,
 )
-from server.memory.app.provenance import request_scope
 
 log = logging.getLogger(__name__)
 

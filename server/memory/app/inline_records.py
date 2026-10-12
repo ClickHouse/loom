@@ -23,15 +23,16 @@ async def _write_inline_record_projection(
     schema: Mapping[str, object],
     *,
     evidence_ids: list[str],
-) -> None:
-    """Project ad-hoc record_schema extraction into memory_records."""
+) -> bool:
+    """Project ad-hoc record_schema extraction into memory_records. False when
+    the projection is skipped for a caller bounded below the namespace."""
     from server.auth.context import current_auth
     from server.identity.domain.read_scope import request_read_narrowed
 
     # memory_records is keyed without a user: a caller bounded to one user would
     # fold into or supersede another user's record of the same key.
     if request_read_narrowed(current_auth()):
-        return
+        return False
 
     from server.memory.app.records import (
         handle_memory_record_write,
@@ -91,3 +92,4 @@ async def _write_inline_record_projection(
             valid_at=getattr(input, "valid_at", None),
         )
     )
+    return True

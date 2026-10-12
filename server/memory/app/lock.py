@@ -20,13 +20,13 @@ from fastapi import HTTPException
 from server.auth.context import current_auth
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now, to_naive_utc
+from server.identity.app.request_scope import request_scope
 from server.memory.api.models_lock import (
     MemoryLockInput,
     MemoryLockOutput,
     MemoryUnlockInput,
     MemoryUnlockOutput,
 )
-from server.memory.app.provenance import request_scope
 from server.memory.domain import lock as _lock
 from server.memory.domain import trust as _trust
 from server.memory.store.inserts import insert_memory_versions

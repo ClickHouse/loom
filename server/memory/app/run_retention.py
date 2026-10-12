@@ -79,8 +79,8 @@ async def load_run_rows(
     Locked rows are excluded in SQL (the lock refuses the value / expiry
     write) and count as retained by the caller."""
 
+    from server.identity.app.request_scope import request_scope
     from server.identity.domain.read_scope import scope_and
-    from server.memory.app.provenance import request_scope
     from server.memory.domain.lock import locked_predicate
 
     params: dict[str, Any] = {"org": org, "ns": namespace, "rid": run_id, "lim": int(limit)}

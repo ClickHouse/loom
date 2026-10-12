@@ -16,8 +16,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
-from server.memory.app.provenance import request_scope
 
 log = logging.getLogger(__name__)
 

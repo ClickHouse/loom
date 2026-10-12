@@ -129,7 +129,7 @@ async def test_handler_defer_short_circuits_before_extraction(
 ) -> None:
     import server.memory.app.extract.handler as mx
 
-    async def _enqueue(input, ch=None):
+    async def _enqueue(input, ch=None, scope=None):
         assert input.defer is True
         return "abc123"
 
@@ -150,7 +150,7 @@ async def test_handler_defer_short_circuits_before_extraction(
 async def test_handler_defer_enqueue_failure_is_503(monkeypatch: pytest.MonkeyPatch) -> None:
     import server.memory.app.extract.handler as mx
 
-    async def _enqueue(input, ch=None):
+    async def _enqueue(input, ch=None, scope=None):
         raise RuntimeError("ch down")
 
     monkeypatch.setattr(q, "enqueue", _enqueue)
@@ -162,6 +162,115 @@ async def test_handler_defer_enqueue_failure_is_503(monkeypatch: pytest.MonkeyPa
 
 def test_defer_defaults_off() -> None:
     assert _input().defer is False
+
+
+# ---------------------------------------------------------------- read scope
+
+
+def _pinned_auth(user: str, read_scope: str = "") -> Any:
+    from server.auth.jwt import AuthInfo
+
+    return AuthInfo(
+        subject="sa:bot",
+        org="o",
+        namespaces=("n",),
+        roles=("writer",),
+        is_service_account=True,
+        read_user_id=user,
+        read_scope=read_scope,
+    )
+
+
+def _in_context(auth: Any, fn: Any) -> Any:
+    """Run `fn()` with `auth` bound and its scope resolved, as the transport does."""
+    import contextvars
+
+    from server.auth.context import set_current_auth
+    from server.identity.domain.read_scope import (
+        bind_request_read_filters,
+        resolve_read_filters,
+    )
+
+    def go() -> Any:
+        set_current_auth(auth)
+        bind_request_read_filters(
+            auth, resolve_read_filters(requested=None, user_id=None, session_id=None, auth=auth)
+        )
+        return fn()
+
+    return contextvars.Context().run(go)
+
+
+def test_payload_stores_the_requests_read_scope() -> None:
+    payload, _, _ = _in_context(_pinned_auth("u1"), lambda: q.payload_for(_input()))
+    assert json.loads(payload)[q.READ_SCOPE_KEY] == {
+        "scope": "own_user",
+        "user_id": "u1",
+        "session_id": None,
+    }
+    assert q.READ_SCOPE_KEY not in queue.rebuild_input({"payload": payload}).model_dump()
+
+
+@pytest.mark.asyncio
+async def test_replay_runs_under_the_stored_scope_and_unbinds_after(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import server.memory.app.extract.handler as mx
+    from server.identity.app.request_scope import request_scope
+    from server.memory.api.models_bulk import MemorySetFromMessagesOutput
+
+    seen: list[Any] = []
+
+    async def _handler(input):
+        seen.append(request_scope())
+        return MemorySetFromMessagesOutput()
+
+    monkeypatch.setattr(mx, "handle_memory_set_from_messages", _handler)
+    payload, _, _ = _in_context(_pinned_auth("u1"), lambda: q.payload_for(_input()))
+    await queue.replay_row({"payload": payload})
+    assert (seen[0].scope, seen[0].user_id) == ("own_user", "u1")
+    assert request_scope().narrowed is False, "the next replay starts unbound"
+
+
+def test_a_payload_queued_before_scopes_were_stored_replays_namespace_wide() -> None:
+    payload, _, _ = q.payload_for(_input())
+    data = json.loads(payload)
+    data.pop(q.READ_SCOPE_KEY)
+    assert queue.replay_scope({"payload": json.dumps(data)}).narrowed is False
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        {"scope": "own_user", "user_id": None, "session_id": None},
+        {"scope": "own_session", "user_id": "u1", "session_id": None},
+        {"scope": "everyone", "user_id": "u1", "session_id": None},
+    ],
+)
+def test_an_incomplete_stored_scope_fails_the_row(stored: dict[str, Any]) -> None:
+    payload = json.dumps({**json.loads(q.payload_for(_input())[0]), q.READ_SCOPE_KEY: stored})
+    with pytest.raises(ValueError):
+        queue.replay_scope({"payload": payload})
+
+
+def test_defer_with_a_scope_that_does_not_resolve_is_refused_not_queued(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    import server.memory.app.extract.handler as mx
+    from server.core.errors import IdentityIncompleteError
+
+    async def _enqueue(input, ch=None, scope=None):
+        raise AssertionError("nothing is queued")
+
+    monkeypatch.setattr(q, "enqueue", _enqueue)
+    unpinned_own_user = _pinned_auth("", read_scope="own_user")
+    with pytest.raises(IdentityIncompleteError):
+        _in_context(
+            unpinned_own_user,
+            lambda: asyncio.run(mx.handle_memory_set_from_messages(_input(defer=True))),
+        )
 
 
 # ---------------------------------------------------------------- lifecycle

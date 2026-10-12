@@ -7,8 +7,8 @@ import json
 from datetime import datetime
 from typing import Any
 
-from server.auth.context import current_auth
-from server.identity.domain.read_scope import ReadFilters, request_read_filters, scope_and
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import ReadFilters, scope_and
 from server.memory.api.models_lifecycle import (
     MemoryEvidenceInput,
     MemoryEvidenceItem,
@@ -104,7 +104,7 @@ async def handle_memory_evidence(input: MemoryEvidenceInput) -> MemoryEvidenceOu
         user_id=input.user_id,
         session_id=input.session_id,
     )
-    scope = request_read_filters(current_auth())
+    scope = request_scope()
     row = await memory_repo.get_by_key(identity, input.memory_key, fresh=True, scope=scope)
     ch = _get_client()
     memory_id = str(getattr(row, "memory_id", "") or "") if row is not None else ""
@@ -241,7 +241,7 @@ async def handle_memory_provenance(
         session_id=input.session_id,
     )
     row = await memory_repo.get_by_key(
-        identity, input.memory_key, fresh=True, scope=request_read_filters(current_auth())
+        identity, input.memory_key, fresh=True, scope=request_scope()
     )
     if row is None:
         return MemoryProvenanceOutput(found=False)

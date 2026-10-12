@@ -14,6 +14,7 @@ from server.core.ch import get_client
 from server.core.hashing import hash_text
 from server.core.hashing import sha256_value as _content_sha256
 from server.embedding import get_embedder
+from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
 from server.memory.api.models_bulk import (
     MemoryBulkSetInput,
@@ -39,7 +40,7 @@ from server.memory.app.projections import (
     write_entity_triples,
     write_entity_vectors,
 )
-from server.memory.app.provenance import request_scope, writer_actor
+from server.memory.app.provenance import writer_actor
 
 if TYPE_CHECKING:
     from server.memory.app.search.clock import StageClock

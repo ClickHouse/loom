@@ -14,7 +14,8 @@ from server.core.ch import caller_shaped, get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import hash_text
 from server.core.hashing import sha256_value_json as _sha256_value_json
-from server.identity.domain.read_scope import request_read_filters, scope_where
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import scope_where
 from server.memory.api.models_bulk import MemoryBulkGetInput, MemoryBulkGetOutput
 from server.memory.api.models_crud import (
     MemoryGetOutput,
@@ -134,7 +135,6 @@ def _caller_is_below_writer(org: str, namespace: str) -> bool:
     roles (a grant that elevates a viewer is not consulted here — the cap is
     a page size, not an authorization decision, and a page is still
     readable)."""
-    from server.auth.context import current_auth
     from server.operations.base import Role
 
     auth = current_auth()
@@ -219,7 +219,7 @@ async def _hidden_under_prefix(
         include_duplicates=True,
         include_superseded=True,
         include_proposed=True,
-        scope=request_read_filters(current_auth()),
+        scope=request_scope(),
     )
     if every <= total:
         return {}
@@ -259,7 +259,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
         user_id=input.user_id,
         session_id=input.session_id,
     )
-    scope = request_read_filters(current_auth())
+    scope = request_scope()
     from server.memory.app.served_superseded import served_flags
 
     _served = served_flags(input)  # duplicates and superseded rows
@@ -429,7 +429,7 @@ async def _list_by_score(
         "org = {org:String}",
         "namespace = {ns:String}",
         "tombstoned_at IS NULL",
-        *scope_where(request_read_filters(current_auth()), params),
+        *scope_where(request_scope(), params),
     ]
     # `*` on an identity axis drops that axis from WHERE, the rule the recency path
     # (`memory_repo.list_by_namespace`) applies; comparing `agent = '*'` literally would return
@@ -640,7 +640,7 @@ async def handle_memory_aggregate(
         "agent": input.agent,
         "uid": input.user_id,
     }
-    where.extend(scope_where(request_read_filters(current_auth()), params))
+    where.extend(scope_where(request_scope(), params))
     for i, (k, v) in enumerate(input.filter.items()):
         ph = f"f{i}"
         where.append(f"{_json_string(k)} = {{{ph}:String}}")
@@ -699,7 +699,7 @@ async def follow_duplicate(input: Any, row: Any) -> tuple[Any, str | None]:
             as_of=input.as_of,
             include_usage_totals=True,
             fresh=True,
-            scope=request_read_filters(current_auth()),
+            scope=request_scope(),
         )
         if canon is None or getattr(canon, "tombstoned_at", None) is not None:
             break
@@ -781,9 +781,7 @@ async def _handle_memory_bulk_get(
         if parent:
             parent_of[k] = parent
     wanted = list(dict.fromkeys([parent_of.get(k, k) for k in input.memory_keys]))
-    rows = await memory_repo.get_many_by_keys(
-        identity, wanted, scope=request_read_filters(current_auth())
-    )
+    rows = await memory_repo.get_many_by_keys(identity, wanted, scope=request_scope())
     canonical = await _canonical_keys_for_rows(input.org, input.namespace, rows)
     # Same read shape as memory.get so a bulk reader (the OKF exporter, the
     # /me preload) sees identity, lifecycle and attestation without N gets.

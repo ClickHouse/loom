@@ -17,8 +17,8 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from server.auth.context import current_auth
-from server.identity.domain.read_scope import WHOLE_NAMESPACE, request_read_filters
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_graph import (
     MemoryDedupCollapseInput,
     MemoryDedupCollapseOutput,
@@ -425,13 +425,13 @@ async def handle_memory_related(input: MemoryRelatedInput) -> MemoryRelatedOutpu
             input.memory_key,
             top_k=input.top_k,
             min_overlap=input.min_overlap,
-            scope=request_read_filters(current_auth()),
+            scope=request_scope(),
         )
 
     if not source_entities:
         # Distinguish "row missing" from "row exists but no entities".
         src = await memory_repo.get_by_key(
-            identity, input.memory_key, fresh=True, scope=request_read_filters(current_auth())
+            identity, input.memory_key, fresh=True, scope=request_scope()
         )
         reason = "source_not_found" if src is None else "source_has_no_entities"
         return MemoryRelatedOutput(results=[], source_entities=[], reason=reason)
