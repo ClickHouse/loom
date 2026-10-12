@@ -166,7 +166,9 @@ async def _target_run(
     if isinstance(claim, runs_store.RunClaim) and not claim.won:
         holder: RunLedgerRow = {"user_id": claim.user_id, "session_id": claim.session_id}
         held_by_caller = not claim.unreadable and _owned_by(holder, _user_of(input))
-        if not held_by_caller and not (existing and _owned_by(existing, _user_of(input))):
+        if not held_by_caller and not (
+            existing is not None and _owned_by(existing, _user_of(input))
+        ):
             # Another user's claim, or one we cannot read, and no run of the caller's
             # under this id: a retry of the caller's own run keeps it (that holder
             # will read this row and go to a fresh id).
