@@ -167,7 +167,9 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   only when the index is not abstaining and retrieval_confidence ≥ 0.4.
 - **loom-run.** The run ledger. The first prompt opens a run (goal = the
   prompt, run_id = cc-<session_id>, cx- for Codex; when run.begin answers
-  another id, it is stored per session and every hook uses it); every prompt is also
+  another id, it is kept in the session's run state and every hook uses it;
+  the SessionStart primer and the first prompt's recall run before that answer,
+  so their context.pack exposure rows carry the derived id); every prompt is also
   appended to the turn journal, which clients without a parseable
   transcript read. SessionEnd closes the run with the last assistant text,
   `outcome: none` and the recalled keys, awaited and then exited at once;
