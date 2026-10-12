@@ -262,10 +262,8 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
 def _mirror_overrides(
     action: str, row: Any, version: int, *, now: datetime, cfg: ExpiryConfig
 ) -> dict[str, Any]:
-    """What the post-action changes on the key's embedding rows. A retire carries
-    the memory row's version; demote is a metadata copy (read + 1)."""
-    if action in ("tombstone", "anonymize"):
-        return {"tombstoned_at": now, "version": version}
+    """What demote changes on the key's embedding rows: a metadata copy (read + 1).
+    Tombstone and anonymize retire through `retire_vectors_for_keys` instead."""
     conf = max(cfg.demote_floor, min(1.0, float(row.confidence or 0.0) * cfg.demote_factor))
     return {"expires_at": None, "confidence": round(conf, 4)}
 
@@ -274,19 +272,28 @@ async def _mirror_embeddings_batch(
     mirrors: list[tuple[str, Any, int]], *, now: datetime, cfg: ExpiryConfig
 ) -> int:
     """Search reads loom.memory_embeddings, so the post-action lands there too:
-    tombstone and anonymize tombstone the keys' embedding rows; demote clears
-    their expiry and lowers confidence. Every mirror is a versioned re-emit of
-    the live rows (an UPDATE would leave a patch part), batched as one keyed
-    read and one insert per 500 keys instead of one of each per key."""
+    tombstone and anonymize retire the keys' vectors (memory_embeddings and
+    entity_vectors, at the memory row's version, so an anonymized key keeps no entity
+    names in search either); demote clears their expiry and lowers confidence.
+    Batched as one keyed read and one insert per 500 keys, never one per key."""
     import server.memory.store as memory_repo
 
     if not mirrors:
         return 0
-    items = [
+    retires = [
+        ((row.org, row.namespace, row.agent, row.user_id, row.session_id, row.memory_key), version)
+        for action, row, version in mirrors
+        if action in ("tombstone", "anonymize")
+    ]
+    copies = [
         (
             (row.org, row.namespace, row.agent, row.user_id, row.session_id, row.memory_key),
             _mirror_overrides(action, row, version, now=now, cfg=cfg),
         )
         for action, row, version in mirrors
+        if action not in ("tombstone", "anonymize")
     ]
-    return await memory_repo.reemit_embedding_rows_for_keys(items)
+    n = await memory_repo.retire_vectors_for_keys(retires) if retires else 0
+    if copies:
+        n += await memory_repo.reemit_embedding_rows_for_keys(copies)
+    return n
