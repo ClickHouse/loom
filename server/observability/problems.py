@@ -67,6 +67,8 @@ class HealthState:
     # Whether repository jobs run inside the sandbox (code/app/index/sandbox.py):
     # None = not probed yet in this process.
     repo_sandbox: bool | None = None
+    # Whether a read as LOOM_CH_READER_USER worked: None = not probed or unset.
+    ch_reader_ok: bool | None = None
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     # Saved keys take precedence over the environment, including explicit empty keys.
     saved_keys: Mapping[str, bool] = field(default_factory=saved_key_presence)
@@ -499,6 +501,27 @@ def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
     ]
 
 
+def _reader_user_problems(settings: Any, state: HealthState) -> list[Problem]:
+    """The caller-shaped reads (code.grep, code.search with a pattern or globs,
+    memory.aggregate, memory.record.query) run as the reader user, so they all
+    fail while ClickHouse refuses it."""
+    if state.ch_reader_ok is not False:
+        return []
+    user = settings.ch_reader_user
+    return [
+        Problem(
+            "ch_reader_user_failing",
+            "error",
+            f"A read as LOOM_CH_READER_USER={user} failed (the boot probe, or `loom doctor`): "
+            "code.grep, code.search with a pattern or globs, memory.aggregate and "
+            "memory.record.query fail while it does.",
+            f"Install deploy/clickhouse-config/nlp_user_settings.xml (it defines {user}) in "
+            "the server's users.d and restart ClickHouse, or unset LOOM_CH_READER_USER.",
+            source="runtime",
+        )
+    ]
+
+
 def collect_problems(settings: Any, state: HealthState | None = None) -> list[Problem]:
     """Every known problem for this process, worst-first. Pure: reads
     `settings`, `state` and `state.env` only."""
@@ -514,6 +537,7 @@ def collect_problems(settings: Any, state: HealthState | None = None) -> list[Pr
         + _otel_problems(settings, st)
         + _replica_problems(settings, st)
         + _sandbox_problems(settings, st)
+        + _reader_user_problems(settings, st)
     )
     return sorted(problems, key=lambda p: (SEVERITY_RANK.get(p.severity, 9), p.code))
 

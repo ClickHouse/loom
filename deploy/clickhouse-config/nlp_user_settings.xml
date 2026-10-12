@@ -32,10 +32,27 @@
                 </read_overflow_mode>
             </constraints>
         </default>
-        <!-- read-only; settings may still change, within the constraints above -->
+        <!-- read-only; settings may still change, within the constraints above.
+             The three caps equal the defaults of Loom's ch_caller_shaped_*
+             settings (LOOM_CH_CALLER_SHAPED_*): no statement may raise them, so a
+             deployment that raises one of those settings raises it here too. -->
         <loom_reader>
             <profile>default</profile>
             <readonly>2</readonly>
+            <max_execution_time>30</max_execution_time>
+            <max_memory_usage>4000000000</max_memory_usage>
+            <max_rows_to_read>500000000</max_rows_to_read>
+            <constraints>
+                <max_execution_time>
+                    <max>30</max>
+                </max_execution_time>
+                <max_memory_usage>
+                    <max>4000000000</max>
+                </max_memory_usage>
+                <max_rows_to_read>
+                    <max>500000000</max>
+                </max_rows_to_read>
+            </constraints>
         </loom_reader>
     </profiles>
     <!-- Keyed by the quota_key Loom sends per request (<org>:<subject>); every
@@ -67,7 +84,8 @@
         </loom>
         <!--
           Loom runs caller-shaped reads (a caller's regex, globs or aggregate)
-          as this user when LOOM_CH_READER_USER=loom_reader: SELECT only, no
+          as this user when LOOM_CH_READER_USER=loom_reader: SELECT on loom.*
+          only (no system tables beyond the ones every user may read), no
           access management, same password as the loom user.
         -->
         <loom_reader>
@@ -79,7 +97,6 @@
             </networks>
             <grants>
                 <query>GRANT SELECT ON loom.*</query>
-                <query>GRANT SELECT ON system.*</query>
             </grants>
         </loom_reader>
     </users>

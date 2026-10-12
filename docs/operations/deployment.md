@@ -53,11 +53,15 @@ ClickHouse starts with the files in `deploy/clickhouse-config/`:
 | `named_collections.xml`                 | Named collections for ClickHouse's `ai*` SQL functions. Git-ignored; defines none as shipped; keys come via `from_env`.                                                         |
 
 - **Read-only user.** `nlp_user_settings.xml` defines `loom_reader`: SELECT on
-  `loom.*` and `system.*`, a read-only profile, the `loom` user's password
-  (`CLICKHOUSE_PASSWORD`). With `LOOM_CH_READER_USER=loom_reader` (set in the
+  `loom.*` only (it cannot read `system.query_log`), a read-only profile whose
+  time, memory and rows-read caps no statement can raise, the `loom` user's password
+  (`CLICKHOUSE_PASSWORD`). The caps equal the `LOOM_CH_CALLER_SHAPED_*` defaults;
+  raising one of those settings needs the profile raised too. With `LOOM_CH_READER_USER=loom_reader` (set in the
   shipped compose files) the reads a caller shapes (`code.grep`, a patterned
   `code.search`, `memory.aggregate`, `memory.record.query`) run as that user, so
   none of them can write, change schema or grant. Unset, they run as `LOOM_CH_USER`.
+  The server probes the user at boot; `/v1/health` and `loom doctor` report
+  `ch_reader_user_failing` when ClickHouse refuses it.
 - **Ports.** If `8123` or `9000` is taken, set `LOOM_CH_HOST_PORT` or
   `LOOM_CH_NATIVE_HOST_PORT` in `.env`. These are compose variables for the host side
   only; containers always talk to `clickhouse:8123`.

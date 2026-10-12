@@ -46,3 +46,27 @@ def test_the_reader_user_can_only_select() -> None:
     assert reader.findtext("quota") == "loom_tenant"
     grants = [q.text for q in reader.findall("grants/query")]
     assert grants and all(g.startswith("GRANT SELECT ON ") for g in grants)
+    assert not any(" system." in g for g in grants)  # system.query_log holds every tenant's SQL
+
+
+@pytest.mark.parametrize(
+    ("ch_setting", "field"),
+    [
+        ("max_execution_time", "ch_caller_shaped_max_execution_s"),
+        ("max_memory_usage", "ch_caller_shaped_max_memory_bytes"),
+        ("max_rows_to_read", "ch_caller_shaped_max_rows_to_read"),
+    ],
+)
+def test_the_reader_profile_caps_equal_the_caller_shaped_defaults(
+    ch_setting: str, field: str
+) -> None:
+    """No statement may raise the reader's caps past Loom's own ceilings, so the
+    two must not drift apart."""
+    from server.settings import Settings
+
+    root = ET.parse(CFG / "nlp_user_settings.xml").getroot()
+    profile = root.find("profiles/loom_reader")
+    assert profile is not None
+    default = Settings.model_fields[field].default
+    assert float(profile.findtext(f"constraints/{ch_setting}/max") or "nan") == default
+    assert float(profile.findtext(ch_setting) or "nan") == default

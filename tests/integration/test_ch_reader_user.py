@@ -52,3 +52,22 @@ async def test_a_caller_shaped_statement_cannot_write_or_grant(client: Any, sql:
 
     with caller_shaped(), pytest.raises(Exception, match=r"ACCESS_DENIED|READONLY"):
         await client.query_all(sql)
+
+
+async def test_the_reader_cannot_read_the_query_log(client: Any) -> None:
+    from server.core.ch import caller_shaped
+
+    with caller_shaped(), pytest.raises(Exception, match="ACCESS_DENIED"):
+        await client.query_all("SELECT count() FROM system.query_log")
+
+
+async def test_a_read_over_its_memory_cap_is_a_422(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.core.ch import caller_shaped
+    from server.core.errors import ValidationError
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "ch_caller_shaped_max_memory_bytes", 5_000_000)
+    with caller_shaped(), pytest.raises(ValidationError, match="narrow it"):
+        await client.query_all("SELECT groupArray(number) AS a FROM numbers(10000000)")

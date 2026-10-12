@@ -26,7 +26,7 @@ from server.auth.public_url import (
     public_base_url,
     same_origin,
 )
-from server.core.ch import get_client
+from server.core.ch import get_client, probe_reader_user
 from server.core.logging_config import configure_logging
 from server.observability import get_emitter
 from server.operations.capabilities import operation_rows
@@ -155,6 +155,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # revoked set now and keeps it fresh itself unless the supervisor's
     # jwt_revocation_refresh worker runs here.
     revocation_loop = await boot.start_revocation(lease.held)
+    await probe_reader_user(ch)
     tracker_sources_loop = boot.start_tracker_sources_refresher(ch)
     lease_retry: asyncio.Task[None] | None = None
     if lease.held:

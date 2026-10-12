@@ -142,6 +142,30 @@ def _reader_auth() -> dict[str, Any]:
     return {"transport_settings": {"Authorization": f"Basic {token}"}}
 
 
+# Whether the boot probe could run a read as LOOM_CH_READER_USER: None = not
+# probed (or no reader user set). False means every caller-shaped read fails.
+_reader_user_ok: bool | None = None
+
+
+async def probe_reader_user(client: Any) -> None:
+    """At boot, run one read as the reader user, so a ClickHouse whose users.d
+    lacks it shows up in the problem list instead of as failing reads later."""
+    global _reader_user_ok
+    if not settings.ch_reader_user:
+        return
+    try:
+        with caller_shaped():
+            row = await client.query_one("SELECT currentUser() AS u")
+        _reader_user_ok = bool(row) and row["u"] == settings.ch_reader_user
+    except Exception as e:  # noqa: BLE001 — a failed probe is reported, never fatal to boot
+        log.warning("LOOM_CH_READER_USER=%s cannot read: %s", settings.ch_reader_user, e)
+        _reader_user_ok = False
+
+
+def reader_user_state() -> bool | None:
+    return _reader_user_ok
+
+
 # Caps a caller-shaped read hit: TOO_MANY_ROWS, TOO_MANY_BYTES, TIMEOUT_EXCEEDED.
 _CALLER_CAP_CODES = (158, 307, 159)
 _MEMORY_LIMIT_EXCEEDED = 241
@@ -150,9 +174,9 @@ _MEMORY_LIMIT_EXCEEDED = 241
 def _is_caller_cap(e: BaseException) -> bool:
     code = error_code(e)
     if code == _MEMORY_LIMIT_EXCEEDED:
-        # Only the per-query limit is this request's breadth; the server-wide
-        # total ("(total)") is the server running short, not the caller.
-        return "(for query)" in str(e)
+        # The per-query limit is this request's breadth; the server-wide total
+        # ("(total) memory limit exceeded") is the server running short.
+        return "(total)" not in str(e)
     return code in _CALLER_CAP_CODES
 
 
