@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
+from server.erasure.store import mutations as erasure_mutations
 from server.erasure.store.mutations import delete_scoped, tombstone_scoped
 from server.erasure.store.predicates import NS_EQ, NS_IN, UID
 
@@ -235,9 +236,11 @@ async def _delete_run_claims(
     )
     if not found or not int(found["n"]):
         return
-    await ch.execute(
-        f"ALTER TABLE loom.agent_run_claims DELETE WHERE org = {{org:String}} AND {scope_where}",
+    await erasure_mutations.run_keeper_delete(
+        "loom.agent_run_claims",
+        where=f"org = {{org:String}} AND {scope_where}",
         params={"org": org, **params},
+        ch=ch,
     )
 
 

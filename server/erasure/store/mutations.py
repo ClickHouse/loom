@@ -226,6 +226,17 @@ async def run_lightweight_delete(
     )
 
 
+async def run_keeper_delete(
+    table: str, *, where: str, params: dict[str, Any], ch: _CHClient | None = None
+) -> None:
+    """`ALTER TABLE {table} DELETE WHERE {where}` on a KeeperMap table: a key drop
+    that Keeper applies at once and that never appears in system.mutations, so
+    there is nothing to tag or wait for."""
+    await (ch or _default_client()).execute(
+        f"ALTER TABLE {table} DELETE WHERE {where}", params=params
+    )
+
+
 async def wait_for_mutation(
     table: str,
     tag: str,

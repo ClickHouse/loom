@@ -1399,6 +1399,7 @@ async def test_uncounted_table_erasure_statements_pass_the_analyzer(ch_client, m
 
     monkeypatch.setattr(erasure_mutations, "run_mutation", _rec)
     monkeypatch.setattr(erasure_mutations, "run_lightweight_delete", _rec)
+    monkeypatch.setattr(erasure_mutations, "run_keeper_delete", _rec)
     ch = _One()
     ns = ["a", "b"]
     for fn in (
