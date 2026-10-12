@@ -63,6 +63,7 @@ Load a brief: by `brief_key`, else the newest brief a given session wrote (`from
 | `head_sha` | `str` | Commit the checkout was at when this revision was saved. |
 | `author` | `str` | Who wrote the revision: `llm`, `deterministic` or `model` (the calling agent). |
 | `trigger` | `str` | What prompted the revision's save (`precompact`, `session_end`, `stop`, `manual` or `model`). |
+| `actor` | `str` | The principal that saved the revision (`human:<subject>` / `process:<subject>`): a namespace-wide writer may save to a user's own `~<user>~` brief. |
 | `source_sessions` | `list[str]` | Session ids that contributed to the brief, oldest first (the last 20). |
 | `updated_at` | `datetime \| None` | When the returned revision was saved. |
 | `age_seconds` | `int` | Seconds since `updated_at`. |
