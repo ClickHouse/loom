@@ -242,6 +242,7 @@ async def _network_git(
             timeout_s=timeout_s,
             writable=[Path(git_dir)],
             stdin=stdin,
+            keep_stdout=True,
             **remote_access(remote),
         )
     except TimeoutError:

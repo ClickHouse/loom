@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from server.code.app.index import gitrepo
+from server.code.app.index import gitrepo, sandbox
 from server.code.app.index import pass_budget as ingest_budget
 from server.code.app.index import pass_fetch as ingest_fetch
 from server.code.domain.index import conventions as cv
@@ -73,19 +73,11 @@ def test_only_moved_tips_are_fetched_and_the_configured_branch_is_skipped() -> N
 def test_fetch_branches_sends_refspecs_on_stdin_without_prune(monkeypatch) -> None:
     seen: dict[str, Any] = {}
 
-    class _Proc:
-        returncode = 0
+    async def _job(argv, **kw):
+        seen.update(argv=tuple(argv), env=kw.get("env") or {}, stdin=kw.get("stdin"))
+        return sandbox.JobResult(0, b"", b"")
 
-        async def communicate(self, stdin=None):
-            seen["stdin"] = stdin
-            return b"", b""
-
-    async def _exec(*argv, **kw):
-        seen["argv"] = argv
-        seen["env"] = kw.get("env") or {}
-        return _Proc()
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", _exec)
+    monkeypatch.setattr(sandbox, "run_job", _job)
     n = asyncio.run(
         gitrepo.fetch_branches(
             "/x.git", "https://github.com/o/r.git", ["25.8", "26.3", "25.8", ""], token="tok"
@@ -102,18 +94,11 @@ def test_fetch_branches_sends_refspecs_on_stdin_without_prune(monkeypatch) -> No
 def test_fetch_shas_pins_each_commit_under_refs_loom_merges(monkeypatch) -> None:
     seen: dict[str, Any] = {}
 
-    class _Proc:
-        returncode = 0
+    async def _job(argv, **kw):
+        seen.update(argv=tuple(argv), stdin=kw.get("stdin"))
+        return sandbox.JobResult(0, b"", b"")
 
-        async def communicate(self, stdin=None):
-            seen["stdin"] = stdin
-            return b"", b""
-
-    async def _exec(*argv, **kw):
-        seen["argv"] = argv
-        return _Proc()
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", _exec)
+    monkeypatch.setattr(sandbox, "run_job", _job)
     n = asyncio.run(gitrepo.fetch_shas("/x.git", "r", [SHA_A.upper(), SHA_A, "nope", SHA_B]))
     assert n == 2 and _subcommand(seen["argv"])[:2] == ("fetch", "--stdin")
     assert seen["stdin"] == (
