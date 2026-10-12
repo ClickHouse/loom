@@ -147,6 +147,7 @@ COPY schemas ./schemas
 # relative to server/ — without this COPY every in-container pass reports the
 # harness missing, whatever toolchain the image carries.
 COPY scripts/scip_harness ./scripts/scip_harness
+COPY scripts/serve.sh ./scripts/serve.sh
 # code.calibrate reads its probe corpus from bench/fixtures at a path
 # hard-coded relative to the handler — without this COPY the op 422s
 # in-container ("probe corpus missing").
@@ -180,8 +181,9 @@ EXPOSE 7777
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD python -c "import urllib.request, sys; r=urllib.request.urlopen('http://127.0.0.1:'+__import__('os').environ.get('PORT','7777')+'/v1/health', timeout=3); sys.exit(0 if r.status==200 else 1)" || exit 1
 
-# LOOM_WEB_WORKERS processes share the port; one of them
-# takes the supervisor lock and runs the background workers.
+# scripts/serve.sh starts LOOM_WEB_WORKERS uvicorn processes, one per CPU the
+# container may use when unset; they share the port and one of them takes the
+# supervisor lock and runs the background workers.
 # LOOM_UVICORN_LOOP: uvicorn's --loop (auto|asyncio|uvloop). `auto` picks uvloop
 # when installed; `asyncio` is the switch back to CPython's event loop and SSL
 # transport without rebuilding the image.
@@ -197,4 +199,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 # foreground child, so uvicorn never sees the stop, the graceful timeout
 # never starts, and docker SIGKILLs the tree at stop_grace_period (exit 137,
 # with tens of seconds of refused connections during a colour swap).
-CMD ["sh", "-c", "exec uvicorn server.main:app --host 0.0.0.0 --port ${PORT} --workers ${LOOM_WEB_WORKERS:-1} --loop ${LOOM_UVICORN_LOOP:-auto} --timeout-graceful-shutdown ${LOOM_GRACEFUL_SHUTDOWN_S:-10} --proxy-headers --forwarded-allow-ips=\"${LOOM_TRUSTED_PROXIES:-127.0.0.1}\""]
+CMD ["/app/scripts/serve.sh"]

@@ -198,13 +198,13 @@ and the `LOOM_OIDC_*` settings ([auth settings](../reference/configuration.md#au
 
 ### Process and scale
 
-| Variable                         | Default | Set it when                                                                                                  |
-| -------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------ |
-| `LOOM_BACKGROUND_WORKERS`        | `auto`  | `off` on web replicas, `on` in the one workers container. `auto` elects one process per host by a file lock. |
-| `LOOM_WEB_WORKERS`               | `1`     | A busy host: about `min(4, cores)` uvicorn processes per container.                                          |
-| `LOOM_REPLICA_COUNT`             | `1`     | Several web replicas: rate limits are per replica and divided by this count.                                 |
-| `LOOM_LATENCY_BUDGET_MULTIPLIER` | `1.0`   | ClickHouse is across a WAN: about `20`, or every call reports a budget violation.                            |
-| `LOOM_LOG_FORMAT`                | `text`  | `json` for a log pipeline.                                                                                   |
+| Variable                         | Default     | Set it when                                                                                                                                                                                                                         |
+| -------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LOOM_BACKGROUND_WORKERS`        | `auto`      | `off` on web replicas, `on` in the one workers container. `auto` elects one process per host by a file lock.                                                                                                                        |
+| `LOOM_WEB_WORKERS`               | one per CPU | uvicorn processes per container. Unset, the image starts one per CPU the container may use (its cpuset, lowered by a `--cpus` quota). Set a number to leave cores for ClickHouse on a shared host; each process holds about 150 MB. |
+| `LOOM_REPLICA_COUNT`             | `1`         | Several web replicas: rate limits are per replica and divided by this count.                                                                                                                                                        |
+| `LOOM_LATENCY_BUDGET_MULTIPLIER` | `1.0`       | ClickHouse is across a WAN: about `20`, or every call reports a budget violation.                                                                                                                                                   |
+| `LOOM_LOG_FORMAT`                | `text`      | `json` for a log pipeline.                                                                                                                                                                                                          |
 
 A process started outside the compose files (`make server`, `loom serve`, a test server)
 must set `LOOM_INSTANCE_LABEL=<who>:<what>:<port>` or it refuses to boot. The compose
@@ -523,9 +523,10 @@ The repository [`Dockerfile`](../../Dockerfile) builds the one image every rung 
 | runtime            | Python 3.12, non-root user `loom` (uid/gid 999), `git`, the `dev/` operator tools, the migrations, `bench/fixtures` for `code.calibrate` |
 
 The runtime exposes 7777, has a built-in `/v1/health` healthcheck (30 s interval), and
-runs `uvicorn server.main:app --workers ${LOOM_WEB_WORKERS:-1}`. `LOOM_UVICORN_LOOP`
+runs `scripts/serve.sh`, which starts `uvicorn server.main:app` with `LOOM_WEB_WORKERS`
+processes (unset: one per CPU the container may use). `LOOM_UVICORN_LOOP`
 (`auto`, `asyncio`, `uvloop`) and `LOOM_GRACEFUL_SHUTDOWN_S` (default 10) are read by
-that command line. `LOOM_BUILD_COMMIT`, stamped at build time, is what `/v1/health`
+that script. `LOOM_BUILD_COMMIT`, stamped at build time, is what `/v1/health`
 reports as `build_commit`.
 
 Every release publishes a multi-arch image (linux/amd64 and linux/arm64) to
