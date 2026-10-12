@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from server.auth.context import set_current_auth
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.app import extraction_queue as queue
 from server.memory.app import sensitivity_sweep as sweep
 from server.memory.app.extraction_queue import ENQUEUED_BY_KEY, enqueued_actor, payload_for
@@ -56,7 +57,7 @@ def _input(**kw: Any):
 def test_the_queue_payload_carries_the_enqueuer_and_the_rebuild_strips_it() -> None:
     set_current_auth(SimpleNamespace(org="o", subject="b5-memo-bench", is_service_account=True))
     try:
-        payload, n_msgs, _chars = payload_for(_input())
+        payload, n_msgs, _chars = payload_for(_input(), scope=WHOLE_NAMESPACE)
     finally:
         set_current_auth(None)
     data = json.loads(payload)
@@ -69,11 +70,16 @@ def test_the_queue_payload_carries_the_enqueuer_and_the_rebuild_strips_it() -> N
     assert queue.replay_actor(row) == "process:b5-memo-bench"
     # no token at enqueue time → no key → the worker's own principal
     set_current_auth(None)
-    payload2, _, _ = payload_for(_input())
+    payload2, _, _ = payload_for(_input(), scope=WHOLE_NAMESPACE)
     assert ENQUEUED_BY_KEY not in json.loads(payload2)
     assert queue.replay_actor({"payload": payload2}) == "process:extraction-worker"
     assert queue.replay_actor({"payload": "not json"}) == "process:extraction-worker"
-    assert payload_for(_input(), enqueued_by="human:op")[0].count('"enqueued_by":"human:op"') == 1
+    assert (
+        payload_for(_input(), scope=WHOLE_NAMESPACE, enqueued_by="human:op")[0].count(
+            '"enqueued_by":"human:op"'
+        )
+        == 1
+    )
 
 
 @pytest.mark.asyncio
@@ -88,9 +94,11 @@ async def test_replay_runs_the_handler_under_the_enqueuers_principal(monkeypatch
 
     monkeypatch.setattr(extract_handler_mod, "handle_memory_set_from_messages", _fake_handler)
     set_current_auth(None)
-    payload, _, _ = payload_for(_input(), enqueued_by="process:b5-memo-bench")
+    payload, _, _ = payload_for(
+        _input(), scope=WHOLE_NAMESPACE, enqueued_by="process:b5-memo-bench"
+    )
     assert await queue.replay_row({"payload": payload}) == 2
-    payload_old, _, _ = payload_for(_input(), enqueued_by="")
+    payload_old, _, _ = payload_for(_input(), scope=WHOLE_NAMESPACE, enqueued_by="")
     assert await queue.replay_row({"payload": payload_old}) == 2
     assert seen == ["process:b5-memo-bench", "process:extraction-worker"]
     assert writer_actor() == ""  # the stage's principal does not leak out

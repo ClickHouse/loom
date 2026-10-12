@@ -229,6 +229,7 @@ SCOPED_OPS = frozenset(
         "memory.bulk_get",
         "memory.digests",
         "memory.evidence",
+        "memory.extraction_status",
         "memory.get",
         "memory.get_by_id",
         "memory.history",

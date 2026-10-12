@@ -39,6 +39,7 @@ from server.memory.app.chunk_projection import write_memory_chunks
 from server.memory.app.projection_errors import (
     record_input_projection_failure,
 )
+from server.observability import degradations as _degradations
 from server.observability.otel import traced
 
 log = logging.getLogger(__name__)
@@ -233,7 +234,7 @@ async def _set_record_from_messages(
             memory_keys=[r.memory_key for r in bulk_out.written],
             payload={"evidence_ids": evidence_ids},
         )
-    degraded: list[str] = []
+    skip_notes: list[str] = []
     try:
         projected = await _write_inline_record_projection(
             input,
@@ -242,7 +243,7 @@ async def _set_record_from_messages(
             evidence_ids=evidence_ids,
         )
         if not projected:
-            degraded.append("records: projection_skipped (read scope below the namespace)")
+            skip_notes.append("records: projection_skipped (read scope below the namespace)")
     except Exception as e:  # noqa: BLE001 — a projection; the write stands
         log.warning("memory_records inline projection failed (non-fatal): %s", e)
         await record_input_projection_failure(
@@ -265,7 +266,7 @@ async def _set_record_from_messages(
         belief_source_links=belief_source_links,
         stubbed_fields=stubbed_fields,
         value_updates_linked=last_value_updates_linked.get(),
-        degraded=degraded,
+        degraded=[*_degradations.current(), *skip_notes],
     )
 
 

@@ -22,6 +22,7 @@ from typing import Any
 import pytest
 from fastapi import HTTPException
 
+from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
 from server.memory.api.models_bulk import MemorySetFromMessagesInput, _Message
 from server.memory.app import extraction_queue as q
 from server.memory.app import extraction_queue as queue
@@ -81,7 +82,7 @@ def _fresh_state():
 
 
 def test_payload_excludes_defer_and_rebuild_forces_inline() -> None:
-    payload, n_msgs, chars = q.payload_for(_input(defer=True))
+    payload, n_msgs, chars = q.payload_for(_input(defer=True), scope=WHOLE_NAMESPACE)
     data = json.loads(payload)
     assert "defer" not in data
     assert n_msgs == 2
@@ -105,7 +106,7 @@ def test_payload_excludes_defer_and_rebuild_forces_inline() -> None:
 @pytest.mark.asyncio
 async def test_enqueue_writes_one_full_pending_row() -> None:
     ch = StubCH()
-    qid = await q.enqueue(_input(defer=True), ch=ch)
+    qid = await q.enqueue(_input(defer=True), scope=WHOLE_NAMESPACE, ch=ch)
     assert len(qid) == 32
     assert len(ch.inserts) == 1
     table, rows, settings = ch.inserts[0]
@@ -129,7 +130,7 @@ async def test_handler_defer_short_circuits_before_extraction(
 ) -> None:
     import server.memory.app.extract.handler as mx
 
-    async def _enqueue(input, ch=None, scope=None):
+    async def _enqueue(input, *, scope, ch=None):
         assert input.defer is True
         return "abc123"
 
@@ -150,7 +151,7 @@ async def test_handler_defer_short_circuits_before_extraction(
 async def test_handler_defer_enqueue_failure_is_503(monkeypatch: pytest.MonkeyPatch) -> None:
     import server.memory.app.extract.handler as mx
 
-    async def _enqueue(input, ch=None, scope=None):
+    async def _enqueue(input, *, scope, ch=None):
         raise RuntimeError("ch down")
 
     monkeypatch.setattr(q, "enqueue", _enqueue)
@@ -202,7 +203,9 @@ def _in_context(auth: Any, fn: Any) -> Any:
 
 
 def test_payload_stores_the_requests_read_scope() -> None:
-    payload, _, _ = _in_context(_pinned_auth("u1"), lambda: q.payload_for(_input()))
+    payload, _, _ = q.payload_for(
+        _input(), scope=ReadFilters(scope="own_user", user_id="u1", session_id=None)
+    )
     assert json.loads(payload)[q.READ_SCOPE_KEY] == {
         "scope": "own_user",
         "user_id": "u1",
@@ -226,14 +229,16 @@ async def test_replay_runs_under_the_stored_scope_and_unbinds_after(
         return MemorySetFromMessagesOutput()
 
     monkeypatch.setattr(mx, "handle_memory_set_from_messages", _handler)
-    payload, _, _ = _in_context(_pinned_auth("u1"), lambda: q.payload_for(_input()))
+    payload, _, _ = q.payload_for(
+        _input(), scope=ReadFilters(scope="own_user", user_id="u1", session_id=None)
+    )
     await queue.replay_row({"payload": payload})
     assert (seen[0].scope, seen[0].user_id) == ("own_user", "u1")
     assert request_scope().narrowed is False, "the next replay starts unbound"
 
 
 def test_a_payload_queued_before_scopes_were_stored_replays_namespace_wide() -> None:
-    payload, _, _ = q.payload_for(_input())
+    payload, _, _ = q.payload_for(_input(), scope=WHOLE_NAMESPACE)
     data = json.loads(payload)
     data.pop(q.READ_SCOPE_KEY)
     assert queue.replay_scope({"payload": json.dumps(data)}).narrowed is False
@@ -248,7 +253,9 @@ def test_a_payload_queued_before_scopes_were_stored_replays_namespace_wide() -> 
     ],
 )
 def test_an_incomplete_stored_scope_fails_the_row(stored: dict[str, Any]) -> None:
-    payload = json.dumps({**json.loads(q.payload_for(_input())[0]), q.READ_SCOPE_KEY: stored})
+    payload = json.dumps(
+        {**json.loads(q.payload_for(_input(), scope=WHOLE_NAMESPACE)[0]), q.READ_SCOPE_KEY: stored}
+    )
     with pytest.raises(ValueError):
         queue.replay_scope({"payload": payload})
 
@@ -261,7 +268,7 @@ def test_defer_with_a_scope_that_does_not_resolve_is_refused_not_queued(
     import server.memory.app.extract.handler as mx
     from server.core.errors import IdentityIncompleteError
 
-    async def _enqueue(input, ch=None, scope=None):
+    async def _enqueue(input, *, scope, ch=None):
         raise AssertionError("nothing is queued")
 
     monkeypatch.setattr(q, "enqueue", _enqueue)
@@ -277,7 +284,7 @@ def test_defer_with_a_scope_that_does_not_resolve_is_refused_not_queued(
 
 
 def _stored_row(**kw: Any) -> dict[str, Any]:
-    payload, n, chars = q.payload_for(_input())
+    payload, n, chars = q.payload_for(_input(), scope=WHOLE_NAMESPACE)
     row = {
         "org": "o",
         "namespace": "n",
@@ -512,6 +519,18 @@ async def test_extraction_status_counts_pending_and_failed(
     assert [b.queue_id for b in out.batches] == ["q1", "q2", "q3"]
     assert captured["queue_id"] is None and captured["status"] is None
     assert captured["agent"] == "*"
+
+
+def test_extraction_status_for_a_user_bound_token_lists_only_its_users_batches() -> None:
+    import asyncio
+
+    ch = StubCH()
+    _in_context(
+        _pinned_auth("u1"),
+        lambda: asyncio.run(q.list_status(org="o", namespace="n", user_id="u2", ch=ch)),
+    )
+    sql, params = ch.query_all_calls[0]
+    assert "user_id = {scope_uid:String}" in sql and params["scope_uid"] == "u1"
 
 
 # ------------------------------------------------- ordering

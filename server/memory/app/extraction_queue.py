@@ -25,7 +25,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from server.core.datetimes import utc_now as _now
-from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, scope_and
 from server.memory.api.models_bulk import MemorySetFromMessagesInput
 from server.memory.store.rows import next_version
 
@@ -74,17 +75,14 @@ READ_SCOPE_KEY = "read_filters"
 
 
 def payload_for(
-    input: Any, *, enqueued_by: str | None = None, scope: ReadFilters | None = None
+    input: Any, *, scope: ReadFilters, enqueued_by: str | None = None
 ) -> tuple[str, int, int]:
     """Serialize a MemorySetFromMessagesInput for storage: the request minus
     `defer` (the replay must run inline), plus the enqueuing principal
-    (`enqueued_by`, else the current request's `writer_actor()`) and read scope
-    (`scope`, else the current request's; raises when it does not resolve).
-    Returns (json, messages, chars)."""
-    from server.identity.app.request_scope import request_scope
+    (`enqueued_by`, else the current request's `writer_actor()`) and the
+    request's resolved read `scope`. Returns (json, messages, chars)."""
     from server.memory.app.provenance import writer_actor
 
-    scope = request_scope() if scope is None else scope
     data = input.model_dump(mode="json", exclude={"defer"})
     msgs = data.get("messages") or []
     chars = sum(len(str(m.get("content", ""))) for m in msgs)
@@ -108,7 +106,7 @@ def enqueued_actor(row: dict[str, Any]) -> str:
         return ""
 
 
-async def enqueue(input: Any, ch: Any | None = None, scope: ReadFilters | None = None) -> str:
+async def enqueue(input: Any, *, scope: ReadFilters, ch: Any | None = None) -> str:
     """Persist one deferred set_from_messages request. Returns the queue_id
     the caller can poll with `memory.extraction_status`."""
     from server.core.ch import get_client
@@ -327,6 +325,7 @@ async def list_status(
     if status:
         scope += " AND status = {st:String}"
         params["st"] = status
+    scope += scope_and(request_scope(), params)
     rows = await ch.query_all(
         f"""
         SELECT queue_id, agent, user_id, session_id, status, attempts,
