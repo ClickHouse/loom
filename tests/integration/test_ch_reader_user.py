@@ -80,3 +80,19 @@ async def test_a_reader_statement_cannot_lift_a_cap_with_0(client: Any, cap: str
 
     with caller_shaped(), pytest.raises(Exception, match=r"Code: 452"):
         await client.query_all(f"SELECT count() FROM numbers(10) SETTINGS {cap} = 0")
+
+
+async def test_a_ceiling_above_the_reader_profile_fails_the_boot_probe(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.core import ch
+    from server.settings import settings
+
+    monkeypatch.setattr(ch, "_reader_user_ok", None)
+    monkeypatch.setattr(ch, "_reader_user_error", "")
+    await ch.probe_reader_user(client)
+    assert ch.reader_user_state() is True
+    monkeypatch.setattr(settings, "ch_caller_shaped_max_rows_to_read", 600_000_000)
+    await ch.probe_reader_user(client)
+    assert ch.reader_user_state() is False
+    assert "Code: 452" in ch.reader_user_error()

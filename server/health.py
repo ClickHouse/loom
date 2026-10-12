@@ -50,7 +50,7 @@ def _health_provider_fields(
     """
     from server.auth import revocation
     from server.code.app.index.sandbox import sandbox_state
-    from server.core.ch import reader_user_state
+    from server.core.ch import reader_user_error, reader_user_state
     from server.embedding.embedder import effective_embedding_dim
     from server.llm.client import provider_key_missing
     from server.observability import instance as _instance
@@ -81,6 +81,7 @@ def _health_provider_fields(
             main_error=str(main.get("error") or ""),
             repo_sandbox=sandbox_state(),
             ch_reader_ok=reader_user_state(),
+            ch_reader_error=reader_user_error(),
         ),
     )
     return {

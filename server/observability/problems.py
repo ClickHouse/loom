@@ -12,10 +12,12 @@ doctor runs before boot) and skips that check rather than guessing.
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
+from server.core.ch_errors import error_code
 from server.core.provider_keys import saved_key_presence
 
 Severity = Literal["info", "warn", "error"]
@@ -69,6 +71,8 @@ class HealthState:
     repo_sandbox: bool | None = None
     # Whether a read as LOOM_CH_READER_USER worked: None = not probed or unset.
     ch_reader_ok: bool | None = None
+    # ClickHouse's answer when that read failed.
+    ch_reader_error: str = ""
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     # Saved keys take precedence over the environment, including explicit empty keys.
     saved_keys: Mapping[str, bool] = field(default_factory=saved_key_presence)
@@ -508,6 +512,16 @@ def _reader_user_problems(settings: Any, state: HealthState) -> list[Problem]:
     if state.ch_reader_ok is not False:
         return []
     user = settings.ch_reader_user
+    fix = (
+        f"Install deploy/clickhouse-config/nlp_user_settings.xml (it defines {user}) in "
+        "the server's users.d and restart ClickHouse, or unset LOOM_CH_READER_USER."
+    )
+    if error_code(state.ch_reader_error) == _SETTING_CONSTRAINT_VIOLATION:
+        fix = (
+            f"A LOOM_CH_CALLER_SHAPED_* ceiling is above the {user} profile's cap "
+            f"(ClickHouse: {_constraint_message(state.ch_reader_error)}). Lower it, or "
+            "raise the cap in nlp_user_settings.xml to match."
+        )
     return [
         Problem(
             "ch_reader_user_failing",
@@ -515,11 +529,19 @@ def _reader_user_problems(settings: Any, state: HealthState) -> list[Problem]:
             f"A read as LOOM_CH_READER_USER={user} failed (the boot probe, or `loom doctor`): "
             "code.grep, code.search with a pattern or globs, memory.aggregate and "
             "memory.record.query fail while it does.",
-            f"Install deploy/clickhouse-config/nlp_user_settings.xml (it defines {user}) in "
-            "the server's users.d and restart ClickHouse, or unset LOOM_CH_READER_USER.",
+            fix,
             source="runtime",
         )
     ]
+
+
+_SETTING_CONSTRAINT_VIOLATION = 452
+
+
+def _constraint_message(error: str) -> str:
+    """`Setting max_execution_time shouldn't be greater than 30` out of the error text."""
+    m = re.search(r"Setting \w+ [^.(]*", error)
+    return m.group(0).strip() if m else error[:200]
 
 
 def collect_problems(settings: Any, state: HealthState | None = None) -> list[Problem]:

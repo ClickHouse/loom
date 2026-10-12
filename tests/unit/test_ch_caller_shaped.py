@@ -244,9 +244,10 @@ class _RefusingClient:
 
 
 class _ReaderClient:
-    async def query_one(self, *_: Any, **__: Any) -> dict[str, Any]:
+    async def query_one(self, sql: str, *_: Any, **__: Any) -> dict[str, Any]:
         assert ch.caller_shaped_var.get()  # so the read goes out as the reader user
-        return {"u": "loom_reader"}
+        assert "FROM loom.memory" in sql  # so a missing grant fails the probe
+        return {"u": "loom_reader", "n": 0}
 
 
 async def test_a_reader_user_clickhouse_refuses_is_a_problem(
@@ -256,15 +257,37 @@ async def test_a_reader_user_clickhouse_refuses_is_a_problem(
 
     monkeypatch.setattr(settings, "ch_reader_user", "loom_reader")
     monkeypatch.setattr(ch, "_reader_user_ok", None)
+    monkeypatch.setattr(ch, "_reader_user_error", "")
     await ch.probe_reader_user(_RefusingClient())
     assert ch.reader_user_state() is False
+    assert "AUTHENTICATION_FAILED" in ch.reader_user_error()
     codes = [p.code for p in collect_problems(settings, HealthState(ch_reader_ok=False))]
     assert "ch_reader_user_failing" in codes
 
     await ch.probe_reader_user(_ReaderClient())
     assert ch.reader_user_state() is True
+    assert ch.reader_user_error() == ""
     codes = [p.code for p in collect_problems(settings, HealthState(ch_reader_ok=True))]
     assert "ch_reader_user_failing" not in codes
+
+
+def test_a_ceiling_above_the_reader_profile_names_the_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.observability.problems import HealthState, collect_problems
+
+    monkeypatch.setattr(settings, "ch_reader_user", "loom_reader")
+    # captured from ClickHouse 26.5.1.882 as loom_reader with max_execution_time=31
+    err = (
+        "Code: 452. DB::Exception: Setting max_execution_time shouldn't be greater than 30. "
+        "(SETTING_CONSTRAINT_VIOLATION) (version 26.5.1.882 (official build))"
+    )
+    state = HealthState(ch_reader_ok=False, ch_reader_error=err)
+    (problem,) = [
+        p for p in collect_problems(settings, state) if p.code == "ch_reader_user_failing"
+    ]
+    assert "max_execution_time shouldn't be greater than 30" in problem.fix
+    assert "LOOM_CH_CALLER_SHAPED_" in problem.fix and "Install" not in problem.fix
 
 
 async def test_no_reader_user_no_probe(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -279,7 +302,10 @@ def test_the_doctor_reports_a_refused_reader_user(monkeypatch: pytest.MonkeyPatc
 
     from server.cli import doctor
 
-    def _refuse(_: httpx.Request) -> httpx.Response:
+    sent: list[httpx.Request] = []
+
+    def _refuse(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
         return httpx.Response(516, text="Code: 516. AUTHENTICATION_FAILED")
 
     real_client = httpx.Client
@@ -287,5 +313,9 @@ def test_the_doctor_reports_a_refused_reader_user(monkeypatch: pytest.MonkeyPatc
         httpx, "Client", lambda **kw: real_client(transport=httpx.MockTransport(_refuse), **kw)
     )
     monkeypatch.setattr(settings, "ch_reader_user", "loom_reader")
-    assert doctor._doctor_reader_ok(settings) is False
+    assert doctor._doctor_reader_probe(settings) == (False, "Code: 516. AUTHENTICATION_FAILED")
     assert "ch_reader_user_failing" in [p.code for p in doctor._doctor_problems()]
+    # the boot probe's read, under the caps the caller-shaped reads carry
+    assert b"FROM loom.memory" in sent[0].content
+    assert sent[0].url.params["max_execution_time"] == "30"
+    assert sent[0].url.params["max_rows_to_read"] == "500000000"

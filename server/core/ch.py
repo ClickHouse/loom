@@ -143,27 +143,41 @@ def _reader_auth() -> dict[str, Any]:
 
 
 # Whether the boot probe could run a read as LOOM_CH_READER_USER: None = not
-# probed (or no reader user set). False means every caller-shaped read fails.
+# probed (or no reader user set). False means every caller-shaped read fails,
+# and `_reader_user_error` holds ClickHouse's answer.
 _reader_user_ok: bool | None = None
+_reader_user_error = ""
+
+# Reads a loom table under the caller-shaped caps, so a missing grant or a cap
+# above the reader profile's fails the probe as it would fail the reads.
+READER_PROBE_SQL = (
+    "SELECT currentUser() AS u, count() AS n FROM (SELECT 1 FROM loom.memory LIMIT 0)"
+)
 
 
 async def probe_reader_user(client: Any) -> None:
     """At boot, run one read as the reader user, so a ClickHouse whose users.d
     lacks it shows up in the problem list instead of as failing reads later."""
-    global _reader_user_ok
+    global _reader_user_ok, _reader_user_error
     if not settings.ch_reader_user:
         return
     try:
         with caller_shaped():
-            row = await client.query_one("SELECT currentUser() AS u")
+            row = await client.query_one(READER_PROBE_SQL)
         _reader_user_ok = bool(row) and row["u"] == settings.ch_reader_user
+        _reader_user_error = ""
     except Exception as e:  # noqa: BLE001 — a failed probe is reported, never fatal to boot
         log.warning("LOOM_CH_READER_USER=%s cannot read: %s", settings.ch_reader_user, e)
         _reader_user_ok = False
+        _reader_user_error = str(e)
 
 
 def reader_user_state() -> bool | None:
     return _reader_user_ok
+
+
+def reader_user_error() -> str:
+    return _reader_user_error
 
 
 # Caps a caller-shaped read hit: TOO_MANY_ROWS, TOO_MANY_BYTES, TIMEOUT_EXCEEDED.
