@@ -144,7 +144,13 @@ async def check_authorized(
     # (org-level) ops fall through to the flat-role check below.
     if auth.has_ns_roles() and org is not None and namespace is not None:
         eff = auth.effective_role(org, namespace)
-        if eff is not None and eff.value >= required_role.value:
+        # An `ns_write` claim (inherited by a delegated child) binds writes too.
+        outside_write_claim = (
+            required_role.value >= Role.WRITER.value
+            and bool(auth.write_namespaces)
+            and not auth.can_write(org, namespace)
+        )
+        if eff is not None and eff.value >= required_role.value and not outside_write_claim:
             return
         # On a repository the join IS the read. A scoped
         # token's map caps what it writes and which memory it reads; a code
