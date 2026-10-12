@@ -18,7 +18,13 @@ import types
 import typing
 from typing import Any
 
-from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, scope_and
+from server.auth.context import current_auth
+from server.identity.domain.read_scope import (
+    WHOLE_NAMESPACE,
+    ReadFilters,
+    read_filters_bound,
+    scope_and,
+)
 from tests.analyzer.cases._common import AGENT, NS, ORG, SMALL_VEC, rows_by_substring
 from tests.analyzer.corpus import Case, RecordingCH, is_drive_defect
 
@@ -606,6 +612,10 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
     scoped = dict(_peer)
     await CF._peer_rows_joined(ch, scoped, scope_and(one_user, scoped, "m"))
     await ch.query_all(conflict_candidates.PINNED_PEERS_SQL, params=_peer)
+    with read_filters_bound(current_auth(), one_user):  # the batch with others' pinned rows
+        await CF.candidate_rows_many(
+            org=ORG, namespace=NS, items=[("k1", "preference", SMALL_VEC, 0.5)], ch=ch
+        )
     await CF.check_against_shared(
         org=ORG, namespace=NS, target_key="k1", memory_type="preference", embedding=SMALL_VEC
     )

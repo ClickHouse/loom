@@ -445,6 +445,20 @@ def test_set_from_messages_skips_its_record_projection_when_narrowed(monkeypatch
     assert [w.memory_key for w in written] == ["k"]
 
 
+_V_PINNED_ROW = {
+    "memory_id": "v1",
+    "memory_key": "v-fact",
+    "value": "V lives in Oslo",
+    "pinned": 1,
+    "agent": "bot",
+    "user_id": "V",
+    "session_id": "-",
+    "run_id": "-",
+    "valid_at": None,
+    "dist": 0.05,
+}
+
+
 class _PinnedV(_SqlCH):
     """Stage A finds nothing in the writer's scope; the pinned-only statement
     finds V's pinned row close to the write."""
@@ -453,20 +467,7 @@ class _PinnedV(_SqlCH):
         await super().query_all(sql, params)
         if "m.pinned = 1" not in sql:
             return []
-        return [
-            {
-                "memory_id": "v1",
-                "memory_key": "v-fact",
-                "value": "V lives in Oslo",
-                "pinned": 1,
-                "agent": "bot",
-                "user_id": "V",
-                "session_id": "-",
-                "run_id": "-",
-                "valid_at": None,
-                "dist": 0.05,
-            }
-        ]
+        return [dict(_V_PINNED_ROW)]
 
 
 def _check_on_commit(monkeypatch, ch: _SqlCH) -> Any:
@@ -516,3 +517,40 @@ def test_batched_conflict_candidates_are_the_writers_rows() -> None:
         ),
     )
     assert len(ch.sql) == 1 and "m.user_id = {scope_uid:String}" in ch.sql[0][0]
+    assert "m.pinned = 1 OR (" in ch.sql[0][0], "other users' pinned rows ride the batch"
+
+
+def test_a_bulk_fact_with_prefetched_rows_runs_no_pinned_statement(monkeypatch) -> None:
+    from server.memory.app import conflicts
+
+    ch = _PinnedV()
+    monkeypatch.setattr(conflicts, "get_client", lambda: ch)
+
+    def check() -> Any:
+        return conflicts.check_on_commit(
+            org="o",
+            namespace="n",
+            agent="bot",
+            memory_type="semantic",
+            memory_key="k",
+            new_value="U lives in Lisbon",
+            new_embedding=[0.1, 0.2],
+            candidate_rows=[dict(_V_PINNED_ROW)],
+            resolved_threshold=0.85,
+            resolved_policy="auto_reinforce",
+            allowlisted_keys=set(),
+        )
+
+    out = _run_as(_pinned("U"), check)
+    assert ch.sql == [], "one pinned read per batch, never one per fact"
+    assert out.verdict == "rejected" and out.pinned_blocker_id == "v1"
+    assert all(p.memory_id != "v1" for p in out.peers)
+
+
+def test_the_pinned_statement_reads_only_the_pinned_rows_vectors() -> None:
+    from server.memory.store.conflict_candidates import PINNED_PEERS_SQL
+
+    vectors = PINNED_PEERS_SQL.split("FROM loom.memory_embeddings FINAL", 1)[1]
+    assert "(agent, user_id, session_id, memory_key) IN (" in vectors
+    assert "m.pinned = 1" in vectors.split(") e", 1)[0]
+

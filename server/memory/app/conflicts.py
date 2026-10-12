@@ -26,6 +26,7 @@ from server.identity.domain.read_scope import (
     ReadFilters,
     row_in_read_scope,
     scope_and,
+    scope_where,
 )
 from server.memory.domain.conflicts import (
     APPEND_ONLY_POLICY,
@@ -165,8 +166,9 @@ async def candidate_rows_many(
             "keys": [items[i][1] for i in idxs],
             "max_dists": [float(items[i][3]) for i in idxs],
         }
-        in_scope = scope_and(scope, params, "m")
-        rows = await ch.query_all(candidate_sql_many(len(idxs), in_scope), params=params)
+        rows = await ch.query_all(
+            candidate_sql_many(len(idxs), _scope_or_pinned(scope, params)), params=params
+        )
         for i in idxs:
             out[i] = []
         for r in rows:
@@ -307,6 +309,16 @@ async def _peer_rows_joined(
         params=params,
     )
     return rows
+
+
+def _scope_or_pinned(scope: ReadFilters, params: dict[str, Any]) -> str:
+    """The batched statement's scope clause: the writer's rows, and for a
+    narrowed writer also every pinned row (another user's pinned row still
+    blocks the write; `check_on_commit` keeps it outside the scope)."""
+    preds = scope_where(scope, params, "m")
+    if not preds:
+        return ""
+    return f" AND (m.pinned = 1 OR ({' AND '.join(preds)}))"
 
 
 def _scope_or_none() -> ReadFilters | None:
@@ -496,7 +508,8 @@ async def check_on_commit(
         rows = []
     else:
         rows = await _peer_rows(ch, params, scope)
-    rows += await _foreign_pinned_rows(ch, params, scope, rows)
+    if candidate_rows is None:  # a bulk caller's rows already hold the pinned ones
+        rows += await _foreign_pinned_rows(ch, params, scope, rows)
     if not rows:
         return ConflictResult(verdict="clear", peers=[])
 
