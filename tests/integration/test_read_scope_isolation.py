@@ -273,12 +273,12 @@ def _scoped_ops() -> list[Any]:
 
 def _bounded_writes() -> list[Any]:
     """The writes a token bounded to one user may call: those in SCOPED_OPS and those
-    NO_MEMORY_CONTENT names as a write. A group key (`code.`) is not walked: its writes
+    NARROW_SAFE_OPS names as a write. A group key (`code.`) is not walked: its writes
     reach no memory row."""
-    from server.identity.domain.read_scope import NO_MEMORY_CONTENT, SCOPED_OPS
+    from server.identity.domain.read_scope import NARROW_SAFE_OPS, SCOPED_OPS
     from server.operations.registry import OPERATIONS_BY_NAME
 
-    names = {n for n, why in NO_MEMORY_CONTENT.items() if why.startswith("a write")}
+    names = {n for n, why in NARROW_SAFE_OPS.items() if why.startswith("a write")}
     names |= {n for n in SCOPED_OPS if _writes(OPERATIONS_BY_NAME[n])}
     return [OPERATIONS_BY_NAME[n] for n in sorted(names)]
 

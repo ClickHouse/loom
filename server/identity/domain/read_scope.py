@@ -262,11 +262,12 @@ SCOPED_OPS = frozenset(
 
 _CODE_INDEX = "the code index: repository content, no user's memory"
 
-# Ops that return no memory content, with the reason. A key ending in "." names
-# an op group. Code ops are listed one by one: some read memory (code.ask,
-# code.search, code.symbol), so a new one stays refused until someone
-# classifies it.
-NO_MEMORY_CONTENT: dict[str, str] = {
+# Ops a narrowed token may call as they are, with the reason: they return no
+# other user's memory, either none at all or only what they read under the
+# caller's own scope (code.ask, code.search, code.symbol). A key ending in "."
+# names an op group. Code ops are listed one by one, so a new one stays refused
+# until someone classifies it.
+NARROW_SAFE_OPS: dict[str, str] = {
     # Memory enrichment searches under the caller's scope. The shared answer cache
     # has no user or session in its key, so a narrowed caller skips it (answers.ask).
     "code.ask": "code answers; memory excerpts read under the caller's scope",
@@ -404,6 +405,6 @@ def with_read_identity[M: BaseModel](input: M, scope: ReadFilters) -> M:
 
 def honours_read_scope(op_name: str) -> bool:
     """Whether `op_name` may be served to a token bounded below the namespace."""
-    if op_name in SCOPED_OPS or op_name in NO_MEMORY_CONTENT:
+    if op_name in SCOPED_OPS or op_name in NARROW_SAFE_OPS:
         return True
-    return any(k.endswith(".") and op_name.startswith(k) for k in NO_MEMORY_CONTENT)
+    return any(k.endswith(".") and op_name.startswith(k) for k in NARROW_SAFE_OPS)

@@ -17,7 +17,7 @@ from server.auth.context import set_current_auth
 from server.auth.jwt import AuthInfo
 from server.core.errors import AuthInsufficientError, IdentityIncompleteError
 from server.identity.domain.read_scope import (
-    NO_MEMORY_CONTENT,
+    NARROW_SAFE_OPS,
     SCOPED_OPS,
     WHOLE_NAMESPACE,
     ReadFilters,
@@ -137,10 +137,10 @@ def test_an_unbound_unpinned_own_user_token_is_refused() -> None:
 def test_every_classified_name_is_a_registered_op() -> None:
     names = {op.name for op in ALL_OPERATIONS}
     assert SCOPED_OPS <= names, sorted(SCOPED_OPS - names)
-    exact = {k for k in NO_MEMORY_CONTENT if not k.endswith(".")}
+    exact = {k for k in NARROW_SAFE_OPS if not k.endswith(".")}
     assert exact <= names, sorted(exact - names)
     assert not SCOPED_OPS & exact
-    for group in (k for k in NO_MEMORY_CONTENT if k.endswith(".")):
+    for group in (k for k in NARROW_SAFE_OPS if k.endswith(".")):
         assert any(n.startswith(group) for n in names), group
 
 
@@ -725,7 +725,7 @@ async def test_a_bounded_write_treats_another_users_row_as_absent() -> None:
 
 def test_every_code_op_is_classified_by_name() -> None:
     # Some code ops read memory, so a new one must be classified on its own.
-    assert "code." not in NO_MEMORY_CONTENT
+    assert "code." not in NARROW_SAFE_OPS
     code_ops = {op.name for op in ALL_OPERATIONS if op.name.startswith("code.")}
-    unclassified = sorted(n for n in code_ops if n not in NO_MEMORY_CONTENT and n not in SCOPED_OPS)
+    unclassified = sorted(n for n in code_ops if n not in NARROW_SAFE_OPS and n not in SCOPED_OPS)
     assert not unclassified, unclassified

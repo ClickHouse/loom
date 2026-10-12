@@ -215,7 +215,7 @@ than `namespace`:
 - An op that cannot bound its answer to one user (the entity graph `facts.*`,
   `conversation.*` reads, namespace exports, admin and curation ops) is refused with
   `AUTH_INSUFFICIENT`. The list is `server/identity/domain/read_scope.py`
-  (`SCOPED_OPS`, `NO_MEMORY_CONTENT`), and an op it does not name is refused.
+  (`SCOPED_OPS`, `NARROW_SAFE_OPS`), and an op it does not name is refused.
 
 ## Agent-written rows and the shared layer
 
