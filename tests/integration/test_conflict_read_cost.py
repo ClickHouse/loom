@@ -24,17 +24,25 @@ def _vec(seed: str) -> str:
     return f"arrayMap(j -> toFloat32((cityHash64({seed}, j) % 2000) / 1000.0 - 1.0), range({_DIM}))"
 
 
-async def _seed(ch: Any, org: str) -> None:
+# All semantic, or a quarter semantic (number % 4 = 3: row 47 and every u3 row are).
+_TYPES = {
+    "one_type": "'semantic'",
+    "mixed_types": "if(number % 4 = 3, 'semantic', 'episodic')",
+}
+
+
+async def _seed(ch: Any, org: str, types: str) -> None:
     """20 users x 500 rows, every 47th row pinned: 47 is coprime with 20, so the
     pinned rows spread over every user (and every vector granule)."""
     user = f"concat('u', toString(number % {_USERS}))"
+    mt = _TYPES[types]
     key = "concat('k', toString(number))"
     await ch.execute(
         f"""
         INSERT INTO loom.memory
             (org, namespace, agent, user_id, session_id, memory_key, memory_type,
              value, version, pinned)
-        SELECT '{org}', '{_NS}', 'bot', {user}, '-', {key}, 'semantic',
+        SELECT '{org}', '{_NS}', 'bot', {user}, '-', {key}, {mt},
                concat('fact ', toString(number)), 1, number % 47 = 0
         FROM numbers({_USERS * _ROWS_PER_USER})
         """
@@ -44,7 +52,7 @@ async def _seed(ch: Any, org: str) -> None:
         INSERT INTO loom.memory_embeddings
             (org, namespace, agent, user_id, session_id, memory_key, memory_type, scope,
              content_excerpt, embedding_model, embedding_dim, embedding)
-        SELECT '{org}', '{_NS}', 'bot', {user}, '-', {key}, 'semantic', 'private',
+        SELECT '{org}', '{_NS}', 'bot', {user}, '-', {key}, {mt}, 'private',
                concat('fact ', toString(number)), 'fake', {_DIM}, {_vec("number")}
         FROM numbers({_USERS * _ROWS_PER_USER})
         """
@@ -79,8 +87,9 @@ def _cost(logged: list[dict[str, Any]]) -> dict[str, int]:
     return {k: sum(int(q[k]) for q in logged) for k in ("read_rows", "read_bytes", "memory_usage")}
 
 
+@pytest.mark.parametrize("types", sorted(_TYPES))
 async def test_a_narrowed_writers_conflict_reads_cost_at_most_two_namespace_reads(
-    ch: Any,
+    ch: Any, types: str
 ) -> None:
     from server.auth.context import set_current_auth
     from server.auth.jwt import AuthInfo
@@ -89,7 +98,7 @@ async def test_a_narrowed_writers_conflict_reads_cost_at_most_two_namespace_read
     from server.memory.app import conflicts
 
     org = unique_org("conflict-cost")
-    await _seed(ch, org)
+    await _seed(ch, org, types)
     # Row 47 is u7's and pinned, so it is the write's nearest row. Rounded so four
     # facts' vectors fit in ClickHouse's HTTP form-field limit.
     emb = [round(float(x), 3) for x in (await ch.query_one(f"SELECT {_vec('47')} AS v"))["v"]]

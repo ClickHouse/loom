@@ -105,6 +105,30 @@ def test_the_widening_cap_falls_back_to_the_join(monkeypatch: pytest.MonkeyPatch
     assert _run(ch) == [{"memory_key": "from-join", "dist": 0.02}] and joined
 
 
+def test_the_foreign_pinned_arm_asks_for_its_own_window_typed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ch = _TwoStageCH([(f"d{i:04d}", 0.01) for i in range(3000)], set())
+    keeps: list[int] = []
+
+    async def _joined(
+        ch_: Any, params: dict[str, Any], in_scope: str = "", keep: int = 10
+    ) -> list[dict[str, Any]]:
+        keeps.append(keep)
+        return []
+
+    monkeypatch.setattr(cf, "_peer_rows_joined", _joined)
+    asyncio.run(cf._foreign_pinned_rows(ch, dict(_BASE), None, []))
+    assert keeps == [cf._FOREIGN_PINNED_K]
+    stage_a = [sql for sql, p in ch.calls if "k" in p]
+    assert stage_a and all("memory_type = {mt:String}" in sql for sql in stage_a)
+
+
+def test_the_gates_own_stage_a_reads_every_type() -> None:
+    assert "memory_type" not in conflict_candidates._peer_candidates_sql()
+    assert "memory_type = {mt:String}" in conflict_candidates._peer_candidates_sql(typed=True)
+
+
 def test_stage_a_keeps_the_codes_first_shape_and_never_decodes_the_column() -> None:
     sql = conflict_candidates._peer_candidates_sql()
     assert "ORDER BY dist ASC" in sql and "LIMIT {k:UInt32}" in sql

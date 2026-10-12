@@ -226,11 +226,16 @@ _PEER_MAX_K = 2048
 
 
 async def _peer_rows(
-    ch: Any, params: dict[str, Any], scope: ReadFilters = WHOLE_NAMESPACE, keep: int = _PEER_LIMIT
+    ch: Any,
+    params: dict[str, Any],
+    scope: ReadFilters = WHOLE_NAMESPACE,
+    keep: int = _PEER_LIMIT,
+    *,
+    typed: bool = False,
 ) -> list[dict[str, Any]]:
     """The gate's peers: this fact's cosine neighbours under the same type,
     excluding its own key (a re-write is LWW by version, not a conflict), at
-    most `_PEER_LIMIT`, nearest first.
+    most `keep`, nearest first.
 
     Two statements instead of the `memory FINAL JOIN memory_embeddings FINAL` scan.
     Stage A ranks the namespace's vectors alone, in the shape the `Quantized` codec
@@ -241,17 +246,21 @@ async def _peer_rows(
     the row-side filters (type, status, tombstone), which is where the two tables can
     disagree (vectors of non-live rows, live rows whose vector says otherwise), so stage
     A filters nothing the join did not filter on the vector side. When fewer than
-    `_PEER_LIMIT` survive while stage A's last candidate is still inside `max_dist`,
+    `keep` survive while stage A's last candidate is still inside `max_dist`,
     stage A widens (x4) — the answer is the join's, not an approximation of it. Ties
     sort by memory_key (the join's order among equal distances is arbitrary).
     Both stages stay inside `scope`, so other users' rows never take the places.
     `keep`: how many peers of the type to find and return; stage A widens until it
-    has them (the foreign-pinned arm asks for `_FOREIGN_PINNED_K`)."""
+    has them. `typed` filters the type in stage A too, so a mixed-type namespace
+    does not make the widening rescan it (the foreign-pinned arm, which asks for
+    `_FOREIGN_PINNED_K`)."""
     params = dict(params)
     in_scope = scope_and(scope, params)
     k = _PEER_FIRST_K
     while True:
-        cand = await ch.query_all(_peer_candidates_sql(in_scope), params={**params, "k": k})
+        cand = await ch.query_all(
+            _peer_candidates_sql(in_scope, typed=typed), params={**params, "k": k}
+        )
         inside = [c for c in cand if float(c["dist"]) <= float(params["max_dist"])]
         live: dict[tuple[str, str, str, str], dict[str, Any]] = {}
         if inside:
@@ -341,14 +350,14 @@ async def _foreign_pinned_rows(
 ) -> list[dict[str, Any]]:
     """The pinned peers the scoped peer query cannot see, for a writer bounded
     below the namespace: a pinned row of another user still blocks its write.
-    It is the peer read a namespace-wide writer runs (no pinned-rows join, which
-    read every pinned vector), keeping the pinned rows outside the scope among
-    the namespace's nearest `_FOREIGN_PINNED_K` of the write's type, so the writer's own closer rows
-    cannot push a pinned row out of the 10 places."""
+    It is the peer read a namespace-wide writer runs, type-filtered in stage A (no
+    pinned-rows join, which read every pinned vector), keeping the pinned rows
+    outside the scope among the namespace's nearest `_FOREIGN_PINNED_K` of the
+    write's type: up to that many of the writer's own closer rows cannot hide one."""
     if scope is not None and not scope.narrowed:
         return []
     seen = {str(r.get("memory_id")) for r in rows}
-    near = await _peer_rows(ch, params, WHOLE_NAMESPACE, keep=_FOREIGN_PINNED_K)
+    near = await _peer_rows(ch, params, WHOLE_NAMESPACE, keep=_FOREIGN_PINNED_K, typed=True)
     return [
         dict(r) for r in near if _foreign_pinned(r, scope) and str(r.get("memory_id")) not in seen
     ]
