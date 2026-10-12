@@ -433,6 +433,30 @@ async def tombstone_embeddings_for_key(
     )
 
 
+async def tombstone_vectors_of(previous: Any, *, ch: _CHClient | None = None) -> int:
+    """A new version that is not embedded ('high', or a non-searchable type) retires
+    the vectors of the version it replaces: no search leg may keep serving the old
+    vector or excerpt. `previous` is that version's loom.memory row; a key that was
+    never embedded has nothing to drop."""
+    from server.core.datetimes import naive_utc_now
+    from server.memory.domain.memory_types import is_embedded
+
+    if previous is None or not is_embedded(
+        previous.memory_type, getattr(previous, "sensitivity", "")
+    ):
+        return 0
+    return await tombstone_embeddings_for_key(
+        previous.org,
+        previous.namespace,
+        previous.agent,
+        previous.user_id,
+        previous.session_id,
+        previous.memory_key,
+        ts=naive_utc_now(),
+        ch=ch,
+    )
+
+
 async def unsupersede_embeddings(
     org: str,
     namespace: str,

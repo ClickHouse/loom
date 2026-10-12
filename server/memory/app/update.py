@@ -396,25 +396,6 @@ def _update_sensitivity(
     return level, [*tags, *sensitivity_tags(level, tags)]
 
 
-async def _drop_embedding_rows(existing: MemoryRow, ch: Any) -> None:
-    """A revision that leaves the row unembedded ('high') tombstones the key's
-    embedding rows: no search leg may serve the old vector or excerpt."""
-    import server.memory.store as memory_repo
-
-    if not is_embedded(existing.memory_type, getattr(existing, "sensitivity", "")):
-        return  # never embedded
-    await memory_repo.tombstone_embeddings_for_key(
-        existing.org,
-        existing.namespace,
-        existing.agent,
-        existing.user_id,
-        existing.session_id,
-        existing.memory_key,
-        ts=naive_utc_now(),
-        ch=ch,
-    )
-
-
 def _revised_fields(input: Any, existing: MemoryRow) -> tuple[Any, str, str, list[str], list[str]]:
     """The revision's value (serialized and hashed), tags and concepts; a field
     the input leaves None keeps the row's own."""
@@ -686,7 +667,7 @@ async def _write_revision(
     await asyncio.gather(
         insert_memory_versions([memory_row], ch=ch),
         *([memory_repo.insert_embedding_rows(emb_rows, ch=ch)] if emb_rows else []),
-        *([] if searchable else [_drop_embedding_rows(existing, ch)]),
+        *([] if searchable else [memory_repo.tombstone_vectors_of(existing, ch=ch)]),
     )
     cfg = await cfg_task
     _cd.schedule_settle(

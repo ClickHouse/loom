@@ -56,6 +56,7 @@ from server.memory.store.embeddings import (
     restamp_embedding_rows,
     status_divergence_sql,
     tombstone_embeddings_for_key,
+    tombstone_vectors_of,
     unsupersede_embeddings,
 )
 from server.memory.store.entities import (
@@ -248,6 +249,7 @@ __all__ = [
     "tombstone_by_id",
     "tombstone_cascade_by_ids",
     "tombstone_embeddings_for_key",
+    "tombstone_vectors_of",
     "unsupersede_embeddings",
     "uuid_or_none",
     "write_versions_by_ids",

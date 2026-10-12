@@ -150,3 +150,43 @@ def test_a_high_row_is_written_without_an_embedding_row_and_the_gauge_reads_zero
         )
 
     _wait(lambda: _sensitive_reads() >= 1)
+
+
+@pytest.mark.parametrize("op", ["memory.set", "memory.bulk_set"])
+def test_re_setting_an_embedded_key_as_high_retires_its_old_vector(
+    control_plane_url: str, ch_client, token: str, op: str
+) -> None:
+    key = f"vault_reset_{uuid.uuid4().hex[:6]}"
+    ident = {"org": ORG, "namespace": NAMESPACE, "agent": "canary"}
+    # Unique per case: a restatement of another case's row would merge into it.
+    plain = f"the {op} staging vault {key} is rotated every friday by the platform team"
+    r = _post(control_plane_url, token, "memory.set", {**ident, "memory_key": key, "value": plain})
+    assert r.status_code == 200, r.text
+
+    def _embedding_rows() -> int:
+        return int(
+            ch_client.query(
+                "SELECT count() FROM loom.memory_embeddings FINAL WHERE org = {o:String} "
+                "AND namespace = {n:String} AND memory_key = {k:String} AND tombstoned_at IS NULL",
+                parameters={"o": ORG, "n": NAMESPACE, "k": key},
+            ).result_rows[0][0]
+        )
+
+    _wait(lambda: _embedding_rows() == 1)
+    secret = f"the {key} staging vault token is {_CANARY_SECRET}"
+    body = {"memory_key": key, "value": secret}
+    if op == "memory.set":
+        r = _post(control_plane_url, token, op, {**ident, **body})
+    else:
+        r = _post(control_plane_url, token, op, {**ident, "entries": [body]})
+    assert r.status_code == 200, r.text
+    _wait(lambda: _embedding_rows() == 0)
+    r = _post(
+        control_plane_url,
+        token,
+        "memory.search",
+        {**ident, "query": "staging vault rotated friday platform team", "top_k": 5, "fresh": True},
+    )
+    assert r.status_code == 200, r.text
+    assert _CANARY_SECRET not in r.text
+    assert key not in [h.get("memory_key") for h in r.json().get("results", [])]

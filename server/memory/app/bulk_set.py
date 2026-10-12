@@ -297,6 +297,14 @@ async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
         _insert_memory_rows(),
         memory_repo.insert_embedding_rows(state.embedding_rows, ch=ch),
     )
+    # A row that lands unembedded retires the vectors of the version it replaces.
+    embedded = {str(r.get("memory_key")) for r in state.embedding_rows}
+    await asyncio.gather(
+        *(
+            memory_repo.tombstone_vectors_of(state.existing_rows.get(key), ch=ch)
+            for key in {str(r.get("memory_key")) for r in state.memory_rows} - embedded
+        )
+    )
 
 
 async def _bulk_post_insert_links(

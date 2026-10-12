@@ -237,7 +237,6 @@ async def test_an_update_that_writes_a_credential_is_labelled_high_and_leaves_se
     """memory.set never embeds a 'high' row (the missing embedding row is what keeps a
     credential out of every search leg); a revision that puts one into a plain row gets
     the same label, no embedding row, and the key's old embedding rows tombstoned."""
-    from server.memory import store as memory_repo
     from server.settings import settings
 
     monkeypatch.setattr(settings, "memory_sensitivity_autodetect", True)
@@ -248,7 +247,9 @@ async def test_an_update_that_writes_a_credential_is_labelled_high_and_leaves_se
         dropped.append(key)
         return 1
 
-    monkeypatch.setattr(memory_repo, "tombstone_embeddings_for_key", _tomb)
+    from server.memory.store import embeddings as embeddings_store
+
+    monkeypatch.setattr(embeddings_store, "tombstone_embeddings_for_key", _tomb)
     out = await update_mod.handle_memory_update(
         MemoryUpdateInput(
             org="test",

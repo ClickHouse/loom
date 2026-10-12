@@ -57,8 +57,9 @@ def candidate_sql_many(n: int, in_scope: str = "", limit: int = 10) -> str:
 def _peer_candidates_sql(in_scope: str = "", *, typed: bool = False) -> str:
     """Stage A: the namespace's nearest vectors, nothing else read; `in_scope`
     is the read-scope clause (`scope_and`). `typed` also filters the vector row's
-    `memory_type`, so a window asked for N peers of a type holds N of that type
-    (stage B stays the authority on type)."""
+    `memory_type`, so a window asked for N peers of a type holds N of that type.
+    Typed, stage A decides which rows are considered at all; stage B still drops a
+    row whose memory row is another type."""
     from server.core.vectors.search_settings import vector_search_settings
 
     return (

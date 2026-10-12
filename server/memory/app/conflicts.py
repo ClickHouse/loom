@@ -220,7 +220,7 @@ async def _policy_before_gate(
 _PEER_LIMIT = 10
 _PEER_FIRST_K = 32
 # Another user's pinned row blocks a narrowed write when it is among the namespace's
-# nearest this many peers of the write's type, so 10 closer own rows cannot hide it.
+# nearest this many peers of the write's type: 31 or fewer closer own rows cannot hide it.
 _FOREIGN_PINNED_K = 32
 _PEER_MAX_K = 2048
 
@@ -244,16 +244,17 @@ async def _peer_rows(
     decodes the full-precision column and turns codes-first off (read volume roughly 4x
     higher). Stage B reads the candidates' `loom.memory` rows by sort key and applies
     the row-side filters (type, status, tombstone), which is where the two tables can
-    disagree (vectors of non-live rows, live rows whose vector says otherwise), so stage
-    A filters nothing the join did not filter on the vector side. When fewer than
+    disagree (vectors of non-live rows, live rows whose vector says otherwise). Untyped,
+    stage A filters nothing the join did not filter on the vector side. When fewer than
     `keep` survive while stage A's last candidate is still inside `max_dist`,
-    stage A widens (x4) — the answer is the join's, not an approximation of it. Ties
+    stage A widens (x4) — untyped, the answer is the join's, not an approximation. Ties
     sort by memory_key (the join's order among equal distances is arbitrary).
     Both stages stay inside `scope`, so other users' rows never take the places.
     `keep`: how many peers of the type to find and return; stage A widens until it
-    has them. `typed` filters the type in stage A too, so a mixed-type namespace
-    does not make the widening rescan it (the foreign-pinned arm, which asks for
-    `_FOREIGN_PINNED_K`)."""
+    has them. `typed` also filters the vector row's type in stage A, so a mixed-type
+    namespace does not make the widening rescan it (the foreign-pinned arm, which asks
+    for `_FOREIGN_PINNED_K`); a vector row's type follows its memory row's, since every
+    retype re-embeds the key or retires its vectors (`tombstone_vectors_of`)."""
     params = dict(params)
     in_scope = scope_and(scope, params)
     k = _PEER_FIRST_K
@@ -353,7 +354,7 @@ async def _foreign_pinned_rows(
     It is the peer read a namespace-wide writer runs, type-filtered in stage A (no
     pinned-rows join, which read every pinned vector), keeping the pinned rows
     outside the scope among the namespace's nearest `_FOREIGN_PINNED_K` of the
-    write's type: up to that many of the writer's own closer rows cannot hide one."""
+    write's type: fewer than that many of the writer's own closer rows cannot hide one."""
     if scope is not None and not scope.narrowed:
         return []
     seen = {str(r.get("memory_id")) for r in rows}

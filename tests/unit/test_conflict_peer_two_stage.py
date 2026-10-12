@@ -105,7 +105,7 @@ def test_the_widening_cap_falls_back_to_the_join(monkeypatch: pytest.MonkeyPatch
     assert _run(ch) == [{"memory_key": "from-join", "dist": 0.02}] and joined
 
 
-def test_the_foreign_pinned_arm_asks_for_its_own_window_typed(
+def test_foreign_pinned_arm_types_stage_a_and_keeps_32_in_the_join_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ch = _TwoStageCH([(f"d{i:04d}", 0.01) for i in range(3000)], set())
