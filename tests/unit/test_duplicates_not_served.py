@@ -98,7 +98,7 @@ def truth(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     env = SimpleNamespace(status={}, canon={}, status_calls=0, canon_calls=0)
 
     async def status_by_keys(
-        org: str, nss: list[str], keys: list[str], *, ch: Any = None
+        org: str, nss: list[str], keys: list[str], *, scope: Any = None, ch: Any = None
     ) -> list[DuplicateStatus]:
         env.status_calls += 1
         return [
@@ -111,7 +111,7 @@ def truth(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         ]
 
     async def canonical_rows_by_ids(
-        org: str, nss: list[str], ids: list[str], *, ch: Any = None
+        org: str, nss: list[str], ids: list[str], *, scope: Any = None, ch: Any = None
     ) -> list[CanonicalRow]:
         env.canon_calls += 1
         return [
@@ -252,7 +252,7 @@ async def test_cross_namespace_pool_keys_the_truth_per_namespace(
     from server.memory import store as memory_repo
 
     async def status_by_keys(
-        org: str, nss: list[str], keys: list[str], *, ch: Any = None
+        org: str, nss: list[str], keys: list[str], *, scope: Any = None, ch: Any = None
     ) -> list[DuplicateStatus]:
         assert nss == ["ns", "other"]
         return [
@@ -261,7 +261,7 @@ async def test_cross_namespace_pool_keys_the_truth_per_namespace(
         ]
 
     async def canonical_rows_by_ids(
-        org: str, nss: list[str], ids: list[str], *, ch: Any = None
+        org: str, nss: list[str], ids: list[str], *, scope: Any = None, ch: Any = None
     ) -> list[CanonicalRow]:
         assert nss == ["other"] and ids == ["c-9"]
         return [
@@ -434,7 +434,7 @@ def get_env(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         return [e.row]
 
     async def canonical_rows_by_ids(
-        org: str, nss: list[str], ids: list[str], *, ch: Any = None
+        org: str, nss: list[str], ids: list[str], *, scope: Any = None, ch: Any = None
     ) -> list[CanonicalRow]:
         e.canon_calls += 1
         return [
@@ -504,7 +504,7 @@ def collapse_env(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         ]
 
     async def canonical_rows_by_ids(
-        org: str, nss: list[str], ids: list[str], *, ch: Any = None
+        org: str, nss: list[str], ids: list[str], *, scope: Any = None, ch: Any = None
     ) -> list[CanonicalRow]:
         return [
             CanonicalRow.from_row(x)
@@ -607,6 +607,66 @@ def test_collapse_is_a_writer_op_hidden_from_mcp() -> None:
     assert "memory.dedup_collapse" in _MCP_HIDDEN_OPS
 
 
+@pytest.mark.asyncio
+async def test_a_canonical_outside_the_read_scope_is_never_seated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """U's duplicate (its embedding still `active`) pointing at V's canonical:
+    a search pinned to U drops the duplicate and never shows V's key or text."""
+    from server.identity.domain.read_scope import ReadFilters, row_in_read_scope
+    from server.memory import store as memory_repo
+
+    only_u = ReadFilters(scope="own_user", user_id="u", session_id=None)
+    seen: list[Any] = []
+
+    async def status_by_keys(
+        org: str, nss: list[str], keys: list[str], *, scope: Any = None, ch: Any = None
+    ) -> list[DuplicateStatus]:
+        seen.append(scope)
+        return [DuplicateStatus.from_row({"namespace": nss[0], "memory_key": "k", **_dup("c-v")})]
+
+    async def canonical_rows_by_ids(
+        org: str, nss: list[str], ids: list[str], *, scope: Any = None, ch: Any = None
+    ) -> list[CanonicalRow]:
+        seen.append(scope)
+        row = dict(_canon("v_key", "v private text"), namespace=nss[0], canonical_id="c-v")
+        row["user_id"] = "v"
+        if scope is not None and not row_in_read_scope(scope, row["user_id"], row["session_id"]):
+            return []
+        return [CanonicalRow.from_row(row)]
+
+    monkeypatch.setattr(memory_repo, "status_by_keys", status_by_keys)
+    monkeypatch.setattr(memory_repo, "canonical_rows_by_ids", canonical_rows_by_ids)
+    monkeypatch.setattr(sd, "request_scope", lambda: only_u)
+    ctx = _ctx([_hit("k", rank=0.9), _hit("b", rank=0.5)])
+    await sd.hide_pool_duplicates(ctx)
+    assert seen == [only_u, only_u]
+    assert [h.memory_key for h in ctx.all_hits] == ["b"]
+    dumped = json.dumps([h.model_dump() for h in ctx.all_hits], default=str)
+    assert "v_key" not in dumped and "v private text" not in dumped
+
+
+@pytest.mark.asyncio
+async def test_repo_duplicate_reads_carry_the_read_scope() -> None:
+    from server.identity.domain.read_scope import ReadFilters
+    from server.memory import store as memory_repo
+
+    sqls: list[tuple[str, dict]] = []
+
+    class _CH:
+        async def query_all(self, sql: str, params: Any = None) -> list[dict]:
+            sqls.append((sql, params or {}))
+            return []
+
+    one_session = ReadFilters(scope="own_session", user_id="u", session_id="s")
+    cid = "11111111-1111-1111-1111-111111111111"
+    await memory_repo.status_by_keys("o", ["n"], ["k"], scope=one_session, ch=_CH())
+    await memory_repo.canonical_rows_by_ids("o", ["n"], [cid], scope=one_session, ch=_CH())
+    for sql, params in sqls:
+        assert "user_id = {scope_uid:String}" in sql and "session_id = {scope_sid:String}" in sql
+        assert params["scope_uid"] == "u" and params["scope_sid"] == "s"
+
+
 # ---------------------------------------------------------------- repo statements
 
 
@@ -622,11 +682,12 @@ async def test_repo_readers_never_alias_an_aggregate_to_its_source_column() -> N
             return []
 
     ch = _CH()
-    await memory_repo.status_by_keys("o", ["n"], ["k2", "k1", "k1", ""], ch=ch)
+    whole = WHOLE_NAMESPACE
+    await memory_repo.status_by_keys("o", ["n"], ["k2", "k1", "k1", ""], scope=whole, ch=ch)
     await memory_repo.canonical_rows_by_ids(
-        "o", ["n"], ["not-a-uuid", "11111111-1111-1111-1111-111111111111"], ch=ch
+        "o", ["n"], ["not-a-uuid", "11111111-1111-1111-1111-111111111111"], scope=whole, ch=ch
     )
-    assert await memory_repo.canonical_rows_by_ids("o", ["n"], ["junk"], ch=ch) == []
+    assert await memory_repo.canonical_rows_by_ids("o", ["n"], ["junk"], scope=whole, ch=ch) == []
     await memory_repo.find_duplicate_pairs("o", "n", key_prefix="lesson_", ch=ch)
     await memory_repo.embedding_mirror_for_keys("o", "n", ["k"], ch=ch)
     assert len(sqls) == 4

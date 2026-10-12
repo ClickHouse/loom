@@ -460,7 +460,7 @@ def follow_env(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         return e.by_id.get(memory_id)
 
     async def canonical_rows_by_ids(
-        org: str, nss: list[str], ids: list[str], *, ch: Any = None
+        org: str, nss: list[str], ids: list[str], *, scope: Any = None, ch: Any = None
     ) -> list[CanonicalRow]:
         return [
             CanonicalRow.from_row(x)
@@ -617,3 +617,51 @@ def test_event_loop_is_clean() -> None:
     assert cd.pending_count() == 0
     assert not [t for t in cd._TASKS if not t.done()]
     asyncio.get_event_loop_policy()
+
+
+@pytest.mark.asyncio
+async def test_get_never_names_a_canonical_outside_the_read_scope(
+    follow_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """U's duplicate pointing at V's canonical: a read pinned to U gets neither
+    V's key nor V's id."""
+    from server.identity.domain.read_scope import ReadFilters
+    from server.memory import store as memory_repo
+    from server.memory.app import handlers as mem
+
+    only_u = ReadFilters(scope="own_user", user_id="u", session_id=None)
+    seen: list[Any] = []
+
+    async def canonical_rows_by_ids(
+        org: str, nss: list[str], ids: list[str], *, scope: Any = None, ch: Any = None
+    ) -> list[CanonicalRow]:
+        seen.append(scope)
+        if scope is not None and scope.narrowed:
+            return []  # V's canonical is outside U's scope
+        row = {"namespace": nss[0], "canonical_id": _CANON_ID, "memory_key": "v_secret_key"}
+        return [CanonicalRow.from_row(row)]
+
+    monkeypatch.setattr(memory_repo, "canonical_rows_by_ids", canonical_rows_by_ids)
+    monkeypatch.setattr("server.memory.app.served_duplicates.request_scope", lambda: only_u)
+    monkeypatch.setattr(mem, "request_narrowed", lambda: True)
+    follow_env.row = _row("k", "duplicate", _CANON_ID)
+
+    out = await mem.handle_memory_get(
+        MemoryGetInput(org="o", namespace="n", agent="a", memory_key="k", user_id="u")
+    )
+    assert seen == [only_u]
+    dumped = json.dumps(out.model_dump(), default=str)
+    assert "v_secret_key" not in dumped and _CANON_ID not in dumped
+    assert out.status == "duplicate" and out.value == {"t": 1}
+
+
+@pytest.mark.asyncio
+async def test_get_names_the_canonical_id_to_an_unbounded_read(follow_env) -> None:
+    from server.memory.app import handlers as mem
+
+    follow_env.row = _row("k", "duplicate", _CANON_ID)
+    out = await mem.handle_memory_get(
+        MemoryGetInput(org="o", namespace="n", agent="a", memory_key="k")
+    )
+    # Gone to a whole-namespace read too, but nothing there is foreign: the id stays.
+    assert out.duplicate_of == _CANON_ID and out.model_dump()["canonical_key"] == ""

@@ -964,3 +964,90 @@ async def test_a_deferred_extraction_replays_inside_the_writers_scope(
     await _drain_queue(seed.org, ns)
     rows = _rows_by_user(ch_client, seed.org, ns)
     assert rows[V][0][1] == "superseded", f"the control superseded nothing: {rows}"
+
+
+def _mark_duplicate_of(ch: Any, org: str, ns: str, memory_id: str, canonical_id: str) -> None:
+    """A newer loom.memory version of the row as `duplicate` of `canonical_id`.
+    Its memory_embeddings row stays `active`: the divergence older duplicates carry."""
+    ch.command(
+        """
+        INSERT INTO loom.memory
+        SELECT * REPLACE ('duplicate' AS status, {cid:String} AS duplicate_of,
+                          version + 1 AS version)
+        FROM loom.memory FINAL
+        WHERE org = {org:String} AND namespace = {ns:String} AND memory_id = {mid:UUID}
+        """,
+        parameters={"org": org, "ns": ns, "mid": memory_id, "cid": canonical_id},
+    )
+
+
+@pytest.mark.parametrize(
+    ("canon_user", "canon_session", "claims", "dup_session"),
+    [
+        (V, "sess-1", {"read_scope": "own_user", "read_user_id": U}, "sess-1"),
+        (U, "sess-1", {"read_scope": "own_session", "read_user_id": U}, "sess-2"),
+    ],
+    ids=["cross_user", "cross_session"],
+)
+def test_a_duplicate_never_resolves_to_a_canonical_outside_the_scope(
+    control_plane_url: str,
+    seed: _Seed,
+    ch_client: Any,
+    canon_user: str,
+    canon_session: str,
+    claims: dict[str, str],
+    dup_session: str,
+) -> None:
+    """U's duplicate names a canonical U's token may not read (V's row, or U's
+    row in another session): memory.search and memory.get under that token show
+    neither the canonical's key, id nor text."""
+    ns = f"rs-dup-{uuid.uuid4().hex[:8]}"
+    ns_tok = _mint(seed.org, ns)
+    nonce = f"CANON{uuid.uuid4().hex[:10]}"
+    base = {"org": seed.org, "namespace": ns, "agent": "a"}
+    canon_key = f"canon-{uuid.uuid4().hex[:6]}"
+    canon = _write(
+        control_plane_url,
+        ns_tok,
+        "memory.set",
+        {
+            **base,
+            "user_id": canon_user,
+            "session_id": canon_session,
+            "memory_key": canon_key,
+            "value": f"the private canonical text {nonce}",
+        },
+    )
+    dup = _write(
+        control_plane_url,
+        ns_tok,
+        "memory.set",
+        {
+            **base,
+            "user_id": U,
+            "session_id": dup_session,
+            "memory_key": "u-dup",
+            "value": "Glimmerfox keeps the lantern in the attic",
+        },
+    )
+    canon_id = str(canon["memory_id"])
+    _mark_duplicate_of(ch_client, seed.org, ns, str(dup["memory_id"]), canon_id)
+    get = {**base, "memory_key": "u-dup", "user_id": U, "session_id": dup_session}
+
+    # Control: a namespace-wide read does resolve the duplicate to the canonical.
+    whole = _write(control_plane_url, ns_tok, "memory.get", get)
+    assert whole["canonical_key"] == canon_key and whole["duplicate_of"] == canon_id, whole
+
+    tok = _mint(seed.org, ns, **claims)
+    search = {**base, "session_id": dup_session, "query": "Glimmerfox lantern attic", "top_k": 10}
+
+    def _u_dup_searched() -> bool:
+        r = _post(control_plane_url, tok, "memory.search", {**search, "include_duplicates": True})
+        return r.status_code == 200 and "u-dup" in r.text
+
+    wait_until(_u_dup_searched, max_wait=30.0, description="U's duplicate to reach the pool")
+    for op, body in (("memory.search", search), ("memory.get", get)):
+        r = _post(control_plane_url, tok, op, body)
+        assert r.status_code == 200, f"{op}: {r.status_code} {r.text}"
+        for secret in (canon_key, canon_id, nonce):
+            assert secret not in r.text, f"{op} named {secret}: {r.text}"

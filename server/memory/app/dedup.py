@@ -477,7 +477,11 @@ async def handle_memory_dedup_collapse(
         input.org, input.namespace, key_prefix=input.prefix or "", limit=input.limit
     )
     canon_rows = await memory_repo.canonical_rows_by_ids(
-        input.org, [input.namespace], [p.duplicate_of for p in pairs]
+        input.org,
+        [input.namespace],
+        [p.duplicate_of for p in pairs],
+        # The pairs are the whole namespace's; the canonicals must be too.
+        scope=WHOLE_NAMESPACE,
     )
     canonical_key = {r.canonical_id: r.memory_key for r in canon_rows}
     live = [p for p in pairs if p.duplicate_of in canonical_key]

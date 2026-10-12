@@ -12,7 +12,8 @@ takes its slot when it is active and not already in the pool, disclosed as
 exact row and names the canonical. The status of a row is read from
 `loom.memory`, not from the search leg's mirror: older duplicates carry
 `active` in `memory_embeddings`, so the leg's own predicate — tightened here as
-well — cannot see them.
+well — cannot see them. Both lookups stay inside the request's read scope: a
+canonical another user (or session) owns is treated as gone, never named.
 """
 
 from __future__ import annotations
@@ -20,6 +21,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import ReadFilters
 from server.memory.store.dedup import CanonicalRow, DuplicateStatus
 
 log = logging.getLogger(__name__)
@@ -87,17 +90,19 @@ _Truth = dict[tuple[str, str], DuplicateStatus]
 _Canon = dict[tuple[str, str], CanonicalRow]
 
 
-async def _truth(org: str, namespaces: list[str], keys: list[str]) -> _Truth:
+async def _truth(org: str, namespaces: list[str], keys: list[str], scope: ReadFilters) -> _Truth:
     import server.memory.store as memory_repo
 
-    rows = await memory_repo.status_by_keys(org, namespaces, keys)
+    rows = await memory_repo.status_by_keys(org, namespaces, keys, scope=scope)
     return {(r.namespace, r.memory_key): r for r in rows}
 
 
-async def _canonicals(org: str, namespaces: list[str], ids: list[str]) -> _Canon:
+async def _canonicals(
+    org: str, namespaces: list[str], ids: list[str], scope: ReadFilters
+) -> _Canon:
     import server.memory.store as memory_repo
 
-    rows = await memory_repo.canonical_rows_by_ids(org, namespaces, ids)
+    rows = await memory_repo.canonical_rows_by_ids(org, namespaces, ids, scope=scope)
     return {(r.namespace, r.canonical_id): r for r in rows}
 
 
@@ -124,11 +129,13 @@ async def hide_pool_duplicates(ctx: Any) -> None:
     if not facts:
         return
     ns_default = str(input.namespace)
+    scope = request_scope()
     try:
         truth = await _truth(
             input.org,
             sorted({_hit_ns(h, ns_default) for h in facts}),
             [str(h.memory_key) for h in facts],
+            scope,
         )
     except Exception as e:  # noqa: BLE001 — hiding is a filter, never a failure
         log.warning("memory.search: duplicate status read failed: %s", e)
@@ -143,7 +150,7 @@ async def hide_pool_duplicates(ctx: Any) -> None:
         ids = [truth[(_hit_ns(h, ns_default), str(h.memory_key))].canonical_id for h in dups]
         try:
             canon = await _canonicals(
-                input.org, sorted({_hit_ns(h, ns_default) for h in dups}), ids
+                input.org, sorted({_hit_ns(h, ns_default) for h in dups}), ids, scope
             )
         except Exception as e:  # noqa: BLE001 — hiding is a filter, never a failure
             log.warning("memory.search: canonical read failed: %s", e)
@@ -181,12 +188,13 @@ def _rewrite_pool(
 
 async def canonical_keys_for(org: str, namespace: str, canonical_ids: list[str]) -> dict[str, str]:
     """`duplicate_of` id → the canonical's memory_key, for the ids whose row
-    is live and active; a missing id means the canonical is gone (the
-    orphan case `memory.resolve_orphan_duplicates` re-activates)."""
+    is live, active and inside the request's read scope; a missing id means
+    the canonical is gone to this read (the orphan case
+    `memory.resolve_orphan_duplicates` re-activates, or another user's row)."""
     ids = sorted({str(i) for i in canonical_ids if i})
     if not ids:
         return {}
     import server.memory.store as memory_repo
 
-    rows = await memory_repo.canonical_rows_by_ids(org, [namespace], ids)
+    rows = await memory_repo.canonical_rows_by_ids(org, [namespace], ids, scope=request_scope())
     return {r.canonical_id: r.memory_key for r in rows}

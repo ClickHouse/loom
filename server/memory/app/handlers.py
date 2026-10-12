@@ -20,7 +20,7 @@ from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.embedding import get_embedder
-from server.identity.app.request_scope import request_scope
+from server.identity.app.request_scope import request_narrowed, request_scope
 from server.memory.api.models_crud import (
     MemoryClearInput,
     MemoryClearOutput,
@@ -455,6 +455,7 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
     from server.memory.app.query import _canonical_keys_for_rows
 
     canonical = await _canonical_keys_for_rows(input.org, input.namespace, [row])
+    duplicate_of = _duplicate_of_shown(row, canonical.get(input.memory_key))
     return MemoryGetOutput(
         found=True,
         canonical_key=(
@@ -481,9 +482,9 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
         agent=getattr(row, "agent", "") or "",
         status=getattr(row, "status", None),
         superseded_by=str(getattr(row, "superseded_by", "") or ""),
-        duplicate_of=str(getattr(row, "duplicate_of", "") or ""),
+        duplicate_of=duplicate_of,
         conflict_verdict=_cd.verdict_from_row(
-            str(row.memory_id), getattr(row, "status", None), getattr(row, "duplicate_of", "")
+            str(row.memory_id), getattr(row, "status", None), duplicate_of
         ),
         content_sha256=sha,
         tags=list(getattr(row, "tags", None) or []),
@@ -500,6 +501,16 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
             getattr(row, "verified_by", ""), getattr(row, "verified_sha256", ""), sha
         ),
     )
+
+
+def _duplicate_of_shown(row: Any, canonical_key: str | None) -> str:
+    """The row's `duplicate_of` id as memory.get shows it. A read bounded to one
+    user or session sees it only when the canonical resolved inside that scope:
+    otherwise the id may name another user's row, and gone and foreign look alike."""
+    dup_of = str(getattr(row, "duplicate_of", "") or "")
+    if dup_of and not canonical_key and request_narrowed():
+        return ""
+    return dup_of
 
 
 async def handle_memory_pin(input: MemorySetInput) -> MemorySetOutput:
