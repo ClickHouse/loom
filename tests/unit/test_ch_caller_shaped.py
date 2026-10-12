@@ -341,7 +341,7 @@ def test_the_doctor_reports_a_refused_reader_user(monkeypatch: pytest.MonkeyPatc
         httpx, "Client", lambda **kw: real_client(transport=httpx.MockTransport(_refuse), **kw)
     )
     monkeypatch.setattr(settings, "ch_reader_user", "loom_reader")
-    assert doctor._doctor_reader_probe(settings) == (False, "Code: 516. AUTHENTICATION_FAILED")
+    assert doctor._doctor_reader_probe(settings) == ("failing", "Code: 516. AUTHENTICATION_FAILED")
     assert "ch_reader_user_failing" in [p.code for p in doctor._doctor_problems()]
     # the boot probe's read, under the caps the caller-shaped reads carry
     assert b"FROM loom.memory" in sent[0].content
@@ -382,7 +382,10 @@ def test_before_migrations_the_doctor_does_not_blame_the_reader_user(
     no_table = httpx.MockTransport(lambda _: httpx.Response(404, text=_NO_TABLE))
     monkeypatch.setattr(httpx, "Client", lambda **kw: real_client(transport=no_table, **kw))
     monkeypatch.setattr(settings, "ch_reader_user", "loom_reader")
-    assert doctor._doctor_reader_probe(settings)[0] is None
+    assert doctor._doctor_reader_probe(settings) == (
+        "not_probed",
+        "reader user not probed: loom.memory missing",
+    )
     lines = doctor._problem_checks(doctor._doctor_problems())
     assert "problem:ch_reader_user_failing" not in [name for name, _, _ in lines]
     (line,) = [ln for ln in lines if ln[0] == "problem:ch_reader_user_not_probed"]
@@ -390,6 +393,16 @@ def test_before_migrations_the_doctor_does_not_blame_the_reader_user(
         doctor.PASS,
         "reader user not probed: loom.memory missing Fix: run `loom migrate`.",
     )
+
+
+def test_the_doctor_does_not_probe_an_unset_reader_user(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.cli import doctor
+
+    monkeypatch.setattr(settings, "ch_reader_user", "")
+    assert doctor._doctor_reader_probe(settings) == ("not_probed", "")
+    codes = [p.code for p in doctor._doctor_problems()]
+    assert "ch_reader_user_not_probed" not in codes
+    assert "ch_reader_user_failing" not in codes
 
 
 def test_a_ceiling_below_the_reader_profile_is_not_advised_lower(

@@ -167,14 +167,12 @@ def _doctor_otel_erasure_index_check(settings: Any) -> tuple[str, str, str]:
 _GRADE_BY_SEVERITY = {"error": FAIL, "warn": WARN, "info": PASS}
 
 
-_READER_NOT_PROBED = "reader user not probed: loom.memory missing"
-
-
-def _doctor_reader_probe(settings: Any) -> tuple[bool | None, str]:
+def _doctor_reader_probe(settings: Any) -> tuple[str, str]:
     """Whether ClickHouse accepts the boot probe's read as LOOM_CH_READER_USER,
-    under the caller-shaped caps, and its error text when not; None when it is
-    unset or ClickHouse does not answer (`clickhouse_reachable` says so), or,
-    with `_READER_NOT_PROBED`, before migrations created loom.memory."""
+    under the caller-shaped caps: `("ok", "")`, `("failing", <error>)`, or
+    `("not_probed", <reason>)`. The reason is empty when the user is unset or
+    ClickHouse does not answer (`clickhouse_reachable` says so), and names the
+    missing table before migrations created loom.memory."""
     import httpx
 
     from server.core.ch import (
@@ -186,7 +184,7 @@ def _doctor_reader_probe(settings: Any) -> tuple[bool | None, str]:
     from server.core.ch_errors import error_code
 
     if not settings.ch_reader_user or not settings.ch_host:
-        return None, ""
+        return "not_probed", ""
     base, _ = _doctor_ch_endpoint(settings)
     auth = (str(settings.ch_reader_user), str(settings.ch_password))
     with caller_shaped():
@@ -195,12 +193,14 @@ def _doctor_reader_probe(settings: Any) -> tuple[bool | None, str]:
         with httpx.Client(timeout=10.0) as c:
             r = c.post(f"{base}/", params=query, content=READER_PROBE_SQL, auth=auth)
     except httpx.HTTPError:
-        return None, ""
+        return "not_probed", ""
     if r.status_code != 200:
         if error_code(r.text) in BEFORE_MIGRATIONS_CODES:
-            return None, _READER_NOT_PROBED
-        return False, r.text.strip()
-    return r.text.split("\t")[0] == settings.ch_reader_user, ""
+            return "not_probed", "reader user not probed: loom.memory missing"
+        return "failing", r.text.strip()
+    if r.text.split("\t")[0] != settings.ch_reader_user:
+        return "failing", ""
+    return "ok", ""
 
 
 def _doctor_problems() -> list[Any]:
@@ -212,18 +212,18 @@ def _doctor_problems() -> list[Any]:
         from server.observability.problems import HealthState, Problem, collect_problems
         from server.settings import settings
 
-        reader_ok, reader_error = _doctor_reader_probe(settings)
+        status, detail = _doctor_reader_probe(settings)
         problems = collect_problems(
             settings,
             HealthState(
                 repo_sandbox=sandbox_available(),
-                ch_reader_ok=reader_ok,
-                ch_reader_error=reader_error,
+                ch_reader_ok={"ok": True, "failing": False}.get(status),
+                ch_reader_error=detail if status == "failing" else "",
             ),
         )
-        if reader_error == _READER_NOT_PROBED:
+        if status == "not_probed" and detail:
             problems.append(
-                Problem("ch_reader_user_not_probed", "info", reader_error, "run `loom migrate`.")
+                Problem("ch_reader_user_not_probed", "info", detail, "run `loom migrate`.")
             )
         return problems
     except Exception:  # noqa: BLE001 — a doctor line must never crash the doctor
