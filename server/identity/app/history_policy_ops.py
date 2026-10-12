@@ -62,6 +62,7 @@ async def _audit_widened(org: str, namespace: str, policy_id: str, reasons: list
 
 
 def _actor() -> str:
+    from server.auth.context import current_auth
 
     auth = current_auth()
     return auth.subject if auth is not None else ""
