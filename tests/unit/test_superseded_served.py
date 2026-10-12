@@ -137,10 +137,11 @@ def successors(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     env = SimpleNamespace(rows=[], calls=0, fail=False)
 
     async def superseded_successors(
-        org: str, nss: list[str], keys: list[str], *, ch: Any = None
+        org: str, nss: list[str], keys: list[str], *, scope: Any = None, ch: Any = None
     ) -> list[SupersededSuccessor]:
         env.calls += 1
         env.last = (org, nss, keys)
+        env.scope = scope
         if env.fail:
             raise RuntimeError("boom")
         return [SupersededSuccessor.from_row(x) for x in list(env.rows)]
@@ -192,6 +193,52 @@ async def test_annotation_names_the_successor_and_counts_only_when_asked(
     )  # successor gone: the id
     assert c.superseded_by is None and d.superseded_by is None
     assert ctx.actual_work == {"superseded_served": 2}
+
+
+@pytest.mark.asyncio
+async def test_a_bounded_read_names_no_successor_outside_its_scope(
+    successors: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The successor read gets the request scope, and a successor it did not
+    resolve (another user's row) is not named by its raw id either."""
+    from server.identity.domain.read_scope import ReadFilters
+
+    only_u = ReadFilters(scope="own_user", user_id="u", session_id=None)
+    monkeypatch.setattr(ss, "request_scope", lambda: only_u)
+    successors.rows = [
+        {
+            "namespace": "ns",
+            "memory_key": "db_engine",
+            "superseded_by": "v-successor-id",
+            "successor_key": "",
+            "superseded_at": "2026-09-01 08:00:00",
+        }
+    ]
+    ctx = _ctx([_hit("db_engine", rank=0.8, status="superseded")], include_superseded=True)
+    await ss.annotate_pool_superseded(ctx)
+    assert successors.scope is only_u
+    assert ctx.all_hits[0].superseded_by == "" and ctx.all_hits[0].superseded_at
+
+
+@pytest.mark.asyncio
+async def test_successor_statement_scopes_both_reads() -> None:
+    from server.identity.domain.read_scope import ReadFilters
+    from server.memory import store as memory_repo
+
+    sqls: list[tuple[str, dict]] = []
+
+    class _CH:
+        async def query_all(self, sql: str, params: Any = None) -> list[dict]:
+            sqls.append((sql, params or {}))
+            return []
+
+    one_session = ReadFilters(scope="own_session", user_id="u", session_id="s")
+    await memory_repo.superseded_successors("o", ["n"], ["k"], scope=one_session, ch=_CH())
+    [(sql, params)] = sqls
+    # once in the superseded-row read, once in the successor join
+    assert sql.count("user_id = {scope_uid:String}") == 2
+    assert sql.count("session_id = {scope_sid:String}") == 2
+    assert params["scope_uid"] == "u" and params["scope_sid"] == "s"
 
 
 @pytest.mark.asyncio

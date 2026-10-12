@@ -486,44 +486,50 @@ async def superseded_successors(
     namespaces: list[str],
     memory_keys: list[str],
     *,
+    scope: ReadFilters,
     ch: _CHClient | None = None,
 ) -> list[SupersededSuccessor]:
     """Per superseded (namespace, memory_key) in one search's pool: the row's
     `superseded_by` id, the successor's memory_key when that row is still
     live, and the retirement instant (`invalid_at`, else the row's own
     `updated_at`). One statement, the served keys only; the
-    newest superseded version of a key answers for it."""
+    newest superseded version of a key answers for it. Both the superseded
+    row and its successor are read inside `scope`: another user's row under
+    the same key never answers, and a successor outside it is unnamed ('').
+    """
     keys = sorted({str(k) for k in memory_keys if k})
     nss = sorted({str(n) for n in namespaces if n})
     if not keys or not nss:
         return []
     ch = ch or _default_client()
+    params: dict[str, Any] = {"org": org, "nss": nss, "keys": keys}
+    in_scope = scope_and(scope, params)
     rows = await ch.query_all(
-        """
+        f"""
         SELECT m.namespace AS namespace, m.memory_key AS memory_key,
                m.superseded_by AS superseded_by, s.memory_key AS successor_key,
                toString(coalesce(m.invalid_at, m.updated_at, m.created_at)) AS superseded_at
         FROM (
             SELECT namespace, memory_key, superseded_by, invalid_at, updated_at, created_at
             FROM loom.memory FINAL
-            WHERE org = {org:String}
-              AND namespace IN {nss:Array(String)}
-              AND memory_key IN {keys:Array(String)}
+            WHERE org = {{org:String}}
+              AND namespace IN {{nss:Array(String)}}
+              AND memory_key IN {{keys:Array(String)}}
               AND status = 'superseded'
-              AND tombstoned_at IS NULL
+              AND tombstoned_at IS NULL{in_scope}
             ORDER BY namespace, memory_key, version DESC
             LIMIT 1 BY namespace, memory_key
         ) AS m
         LEFT JOIN (
             SELECT namespace, toString(memory_id) AS mid, memory_key
             FROM loom.memory FINAL
-            WHERE org = {org:String}
-              AND namespace IN {nss:Array(String)}
-              AND tombstoned_at IS NULL
+            WHERE org = {{org:String}}
+              AND namespace IN {{nss:Array(String)}}
+              AND tombstoned_at IS NULL{in_scope}
         ) AS s ON s.namespace = m.namespace AND s.mid = m.superseded_by
         SETTINGS select_sequential_consistency = 0
         """,
-        params={"org": org, "nss": nss, "keys": keys},
+        params=params,
     )
     return [SupersededSuccessor.from_row(r) for r in rows]
 

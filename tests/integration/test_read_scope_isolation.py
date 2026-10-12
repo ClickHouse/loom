@@ -1051,3 +1051,74 @@ def test_a_duplicate_never_resolves_to_a_canonical_outside_the_scope(
         assert r.status_code == 200, f"{op}: {r.status_code} {r.text}"
         for secret in (canon_key, canon_id, nonce):
             assert secret not in r.text, f"{op} named {secret}: {r.text}"
+
+
+def _mark_superseded(
+    ch: Any, org: str, ns: str, user: str, key: str, successor_id: str, bump: int
+) -> None:
+    """A newer version of the user's row under `key` (both tables) as `superseded`
+    by `successor_id`; `bump` orders two users' versions of one key."""
+    where = (
+        "org = {org:String} AND namespace = {ns:String}"
+        " AND user_id = {uid:String} AND memory_key = {key:String}"
+    )
+    params = {"org": org, "ns": ns, "uid": user, "key": key, "sid": successor_id, "b": bump}
+    ch.command(
+        f"""
+        INSERT INTO loom.memory
+        SELECT * REPLACE ('superseded' AS status, {{sid:String}} AS superseded_by,
+                          version + {{b:UInt64}} AS version)
+        FROM loom.memory FINAL WHERE {where}
+        """,
+        parameters=params,
+    )
+    ch.command(
+        f"""
+        INSERT INTO loom.memory_embeddings
+        SELECT * REPLACE ('superseded' AS status, version + {{b:UInt64}} AS version)
+        FROM loom.memory_embeddings FINAL WHERE {where}
+        """,
+        parameters=params,
+    )
+
+
+def test_a_superseded_hit_never_names_a_successor_outside_the_scope(
+    control_plane_url: str, seed: _Seed, ch_client: Any
+) -> None:
+    """U's row superseded by V's row, and V's row superseded under a key U also
+    holds superseded: a search pinned to U that asks for superseded rows names
+    none of V's keys or ids."""
+    ns = f"rs-sup-{uuid.uuid4().hex[:8]}"
+    ns_tok = _mint(seed.org, ns)
+    nonce = f"SUCC{uuid.uuid4().hex[:10]}"
+    base = {"org": seed.org, "namespace": ns, "agent": "a", "session_id": "sess-1"}
+
+    def put(user: str, key: str, value: str) -> str:
+        body = {**base, "user_id": user, "memory_key": key, "value": value}
+        return str(_write(control_plane_url, ns_tok, "memory.set", body)["memory_id"])
+
+    v_succ_key, v_next_key = f"v-succ-{nonce}", f"v-next-{nonce}"
+    v_succ = put(V, v_succ_key, f"V's successor text {nonce}")
+    v_next = put(V, v_next_key, f"V's other successor {nonce}")
+    u_succ = put(U, "u-succ", "U's own successor note")
+    put(U, "u-old", "Quillbeak stores the compass in the cellar")
+    put(U, "both", "Quillbeak hides the map in the barn")
+    put(V, "both", f"Quillbeak V copy {nonce}")
+    # U's row retired by V's; and under "both", V's retirement is the newer one.
+    _mark_superseded(ch_client, seed.org, ns, U, "u-old", v_succ, 1)
+    _mark_superseded(ch_client, seed.org, ns, U, "both", u_succ, 1)
+    _mark_superseded(ch_client, seed.org, ns, V, "both", v_next, 10**12)
+
+    search = {**base, "query": "Quillbeak compass map", "top_k": 10, "include_superseded": True}
+    # Control: a namespace-wide read names V's successor on U's retired row.
+    wait_until(
+        lambda: v_succ_key in _post(control_plane_url, ns_tok, "memory.search", search).text,
+        max_wait=30.0,
+        description="the superseded rows to be searchable",
+    )
+    tok = _mint(seed.org, ns, read_scope="own_user", read_user_id=U)
+    r = _post(control_plane_url, tok, "memory.search", search)
+    assert r.status_code == 200, r.text
+    assert "u-old" in r.text and '"both"' in r.text, r.text
+    for secret in (nonce, v_succ, v_next):
+        assert secret not in r.text, f"memory.search named {secret}: {r.text}"
