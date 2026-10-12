@@ -816,9 +816,7 @@ def test_writes_aimed_at_vs_runs_threads_records_and_blobs_leave_them_alone(
     bulk = _post(control_plane_url, w_tok, "memory.bulk_set", {**w, "entries": [near]})
     if bulk.status_code != 200:
         bad["memory.bulk_set near a pinned row"] = (bulk.status_code, bulk.text[:200])
-    pinned_id = next(
-        i for i, row in _v_rows(ch_client, seed).items() if row[0] == f"pinned/{tag}"
-    )
+    pinned_id = next(i for i, row in _v_rows(ch_client, seed).items() if row[0] == f"pinned/{tag}")
     for name, r in (("run.begin", begun), ("run.complete", done), ("set", probe), ("bulk", bulk)):
         named = [m for m in (seed.nonce_v, "4417", f"pinned/{tag}", pinned_id) if m and m in r.text]
         if named:

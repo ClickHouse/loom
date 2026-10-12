@@ -937,7 +937,6 @@ a0be1210dc79	SELECT count() AS n FROM loom.memory_ask_precedents WHERE org = {or
 a0e30a489601	SELECT * EXCEPT (embedding) FROM loom.code_chunks FINAL WHERE org = {org:String} AND namespace = {ns:String} AND path = {path:String} AND embedding_model = {model:String} AND tombstoned_at IS NULL
 a102e41e05d8	SELECT entity, substring(summary_text, ?, ?) AS content_excerpt, cosineDistance(summary_embedding, {q:Array(Float32)}) AS distance, -- alias must NOT be `valid_from`: it would shadow the base column -
 a15d0e5f4626	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
-a15f5abcdc5f	SELECT sum(evidence_count) AS evidence_count FROM loom.memory_usage_totals WHERE org = {org:String} AND namespace = {ns:String} AND memory_id = {mid:String}
 a175ce2b58cf	ALTER TABLE loom.memory_extraction_queue DELETE WHERE (org = {org:String} AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 a1a207d3416d	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 a1a7eaa261ae	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
