@@ -147,6 +147,9 @@ class SessionBriefGetOutput(BaseModel):
     # What prompted the revision's save (`precompact`, `session_end`, `stop`,
     # `manual` or `model`).
     trigger: str = ""
+    # The principal that saved the revision (`human:<subject>` / `process:<subject>`):
+    # a namespace-wide writer may save to a user's own `~<user>~` brief.
+    actor: str = ""
     # Session ids that contributed to the brief, oldest first (the last 20).
     source_sessions: list[str] = Field(default_factory=list)
     # When the returned revision was saved.

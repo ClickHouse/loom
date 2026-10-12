@@ -7395,6 +7395,7 @@ export interface SessionBriefGetOutput {
   head_sha?: string;
   author?: string;
   trigger?: string;
+  actor?: string;
   source_sessions?: string[];
   updated_at?: string | null;
   age_seconds?: number;

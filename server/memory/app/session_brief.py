@@ -471,6 +471,7 @@ async def handle_session_brief_get(inp: SessionBriefGetInput) -> SessionBriefGet
         head_sha=str(row.get("head_sha") or ""),
         author=str(row.get("author") or ""),
         trigger=str(row.get("trigger") or ""),
+        actor=str(row.get("actor") or ""),
         updated_at=row.get("updated_at"),
         age_seconds=_age(row.get("updated_at")),
         events_total=int(row.get("events_total") or 0),

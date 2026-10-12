@@ -56,7 +56,7 @@ BRIEF_KEY_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:/@+-]{0,159}$"
 _BRIEF_KEY_RE = re.compile(BRIEF_KEY_PATTERN)
 # A key as stored: a requested key, optionally behind the owner prefix of
 # `owner_key_prefix`. A namespace-wide token lists and addresses briefs this way.
-STORED_KEY_PATTERN = r"^(~[A-Za-z0-9_.%-]*~([A-Za-z0-9_.%-]*~)?)?" + BRIEF_KEY_PATTERN[1:]
+STORED_KEY_PATTERN = r"^(~[A-Za-z0-9_.%-]+~([A-Za-z0-9_.%-]+~)?)?" + BRIEF_KEY_PATTERN[1:]
 STORED_KEY_MAX = 600
 _STORED_KEY_RE = re.compile(STORED_KEY_PATTERN)
 
@@ -181,7 +181,12 @@ def brief_key_ok(key: str) -> bool:
 
 
 def stored_key_ok(key: str) -> bool:
-    return len(key or "") <= STORED_KEY_MAX and bool(_STORED_KEY_RE.match(key or ""))
+    """A key as stored, whose owner prefix (if any) is exactly what
+    `owner_key_prefix` writes for that owner, so the owner's reads find it."""
+    if len(key or "") > STORED_KEY_MAX or not _STORED_KEY_RE.match(key or ""):
+        return False
+    owner = key_owner(key)
+    return owner is None or key.startswith(owner_key_prefix(*owner))
 
 
 def owner_key_prefix(user_id: str, session_id: str | None = None) -> str:

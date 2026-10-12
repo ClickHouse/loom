@@ -854,8 +854,31 @@ def test_a_namespace_wide_save_to_an_owner_key_keeps_the_owner(mem, monkeypatch)
     assert out.changed
     got = alice_get()
     assert got.found and got.revision == 2 and "ops" in got.rendered
+    assert got.actor == "process:session_brief"  # alice's reads name who wrote it
     row = mem._newest()["~alice~k"]
     assert (row["user_id"], row["session_id"]) == ("alice", "s1")
+
+
+@pytest.mark.parametrize("key", ["~%61lice~k6", "~alice~%73~k", "~%7e~k"])
+def test_a_save_to_an_owner_prefix_not_in_canonical_form_is_refused(
+    mem, monkeypatch, key: str
+) -> None:
+    """The owner's reads look the prefix up as owner_key_prefix writes it, so a row
+    under another spelling would carry her identity where she cannot reach it."""
+    _llm(monkeypatch, [])
+    with pytest.raises(HTTPException) as e:
+        _save(brief_key=key, use_llm=False, events=_session())
+    assert e.value.status_code == 422 and e.value.detail["code"] == "BAD_BRIEF_KEY"
+    assert mem.rows == []
+
+
+@pytest.mark.parametrize("key", ["~~k2", "~bob~~k3", "~~~k"])
+def test_an_owner_prefix_with_an_empty_user_or_session_is_refused(key: str) -> None:
+    from pydantic import ValidationError
+
+    assert not sb.stored_key_ok(key)
+    with pytest.raises(ValidationError):
+        SessionBriefSaveInput(**IDENT, brief_key=key)
 
 
 def test_registration() -> None:

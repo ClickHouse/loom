@@ -15048,6 +15048,7 @@ class SessionBriefGetOutput(TypedDict, total=False):
     head_sha: NotRequired[str]
     author: NotRequired[str]
     trigger: NotRequired[str]
+    actor: NotRequired[str]
     source_sessions: NotRequired[list[str]]
     updated_at: NotRequired[Optional[str]]
     age_seconds: NotRequired[int]
