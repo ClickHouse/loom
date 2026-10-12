@@ -468,6 +468,11 @@ def _ident_only(r: dict[str, Any]) -> dict[str, Any]:
     return {k: r[k] for k in ("agent", "user_id", "session_id", "memory_key", "dist")}
 
 
+def _vector_type(r: dict[str, Any]) -> str:
+    """The type on the row's embedding row; it can disagree with the memory row's."""
+    return str(r.get("vector_type") or _type(r))
+
+
 class _NamespaceCH(_SqlCH):
     """Answers the peer statements from `rows` (the namespace) the way ClickHouse
     would: a scoped statement sees only U's rows, each statement keeps its own
@@ -481,6 +486,10 @@ class _NamespaceCH(_SqlCH):
         rows = sorted(self.rows, key=lambda r: r["dist"])
         if "scope_uid" in sql:
             rows = [r for r in rows if r["user_id"] == p.get("scope_uid")]
+        if "m.pinned = 1" in sql:  # every pinned memory row of the type, by distance
+            pinned = [r for r in rows if r["pinned"] and _type(r) == "semantic"]
+            pinned = [r for r in pinned if r["dist"] <= 0.3][:10]
+            return [{**r, "qidx": 0} for r in pinned] if "BY qidx" in sql else pinned
         if "IN {ids:" in sql:  # stage B filters the type
             ids = {tuple(i) for i in p["ids"]}
             return [
@@ -489,6 +498,8 @@ class _NamespaceCH(_SqlCH):
                 if tuple(_ident_only(r).values())[:4] in ids and _type(r) == p.get("mt")
             ]
         if "LIMIT {k:UInt32}" in sql:  # stage A ranks every vector, any type
+            if "memory_type = {mt:String}" in sql:  # a vector-side type filter
+                rows = [r for r in rows if _vector_type(r) == p.get("mt")]
             return [_ident_only(r) for r in rows[: int(p["k"])]]
         by_qidx = re.search(r"LIMIT (\d+) BY qidx", sql)
         if by_qidx:  # the batched candidates filter the type before the LIMIT
@@ -516,6 +527,7 @@ def _check_on_commit(monkeypatch, ch: _SqlCH) -> Any:
         new_value="U lives in Lisbon",
         new_embedding=[0.1, 0.2],
         resolved_threshold=0.85,
+        resolved_duplicate_threshold=0.9,
         resolved_policy="auto_reinforce",
         allowlisted_keys=set(),
     )
@@ -527,10 +539,10 @@ def test_conflict_peers_are_the_writers_and_a_foreign_pinned_row_still_blocks(
     ch = _PinnedV()
     out = _run_as(_pinned("U"), lambda: _check_on_commit(monkeypatch, ch))
     stage_a = [s for s, _ in ch.sql if "LIMIT {k:UInt32}" in s]
-    # The writer's own stage A, then the one a namespace-wide writer runs; no
-    # statement that reads every pinned row's vector.
-    assert ["scope_uid" in s for s in stage_a] == [True, False]
-    assert not any("pinned = 1" in s for s, _ in ch.sql)
+    # The writer's own stage A, then the namespace's pinned rows, unscoped.
+    assert ["scope_uid" in s for s in stage_a] == [True]
+    pinned = [s for s, _ in ch.sql if "m.pinned = 1" in s]
+    assert len(pinned) == 1 and "scope_uid" not in pinned[0]
     assert out.verdict == "rejected" and out.pinned_blocker_id == "v1"
     assert all(p.memory_id != "v1" for p in out.peers), "the foreign row is never named"
 
@@ -556,8 +568,9 @@ def test_batched_conflict_candidates_are_the_writers_rows() -> None:
     assert (
         "m.user_id = {scope_uid:String}" in candidates[0] and "m.pinned = 1 OR" not in candidates[0]
     )
-    # Other users' pinned rows come from the namespace-wide writer's statement.
-    assert "scope_uid" not in pinned[0] and "LIMIT 32 BY qidx" in pinned[0]
+    # Other users' pinned rows come from their own unscoped statement.
+    assert "scope_uid" not in pinned[0] and "m.pinned = 1" in pinned[0]
+    assert "LIMIT 10 BY qidx" in pinned[0]
 
 
 def test_a_namespace_wide_bulk_writer_runs_no_pinned_statement() -> None:
@@ -592,6 +605,19 @@ class _CloserOwnRows(_NamespaceCH):
     rows = [_own_row(i) for i in range(10)] + [_V_PINNED_ROW]
 
 
+class _ManyCloserOwnRows(_NamespaceCH):
+    """40 of U's own rows sit closer than V's pinned row: more than any nearest-N window."""
+
+    rows = [_own_row(i) for i in range(40)] + [_V_PINNED_ROW]
+
+
+class _PinnedRowWithAnotherTypesVector(_NamespaceCH):
+    """V's live pinned memory row is semantic, its embedding row says episodic: the
+    memory row decides the type, so it still blocks a semantic write."""
+
+    rows = [{**_V_PINNED_ROW, "vector_type": "episodic"}]
+
+
 class _CloserOwnRowsOfBothTypes(_NamespaceCH):
     """Ten of U's semantic rows and 22 of its episodic rows sit closer than V's pinned
     semantic row: stage A's first window (32, any type) holds none of V's row."""
@@ -603,7 +629,15 @@ class _CloserOwnRowsOfBothTypes(_NamespaceCH):
     )
 
 
-@pytest.mark.parametrize("namespace_rows", [_CloserOwnRows, _CloserOwnRowsOfBothTypes])
+@pytest.mark.parametrize(
+    "namespace_rows",
+    [
+        _CloserOwnRows,
+        _ManyCloserOwnRows,
+        _CloserOwnRowsOfBothTypes,
+        _PinnedRowWithAnotherTypesVector,
+    ],
+)
 def test_bulk_and_single_both_reject_a_write_close_to_a_foreign_pinned_row(
     monkeypatch, namespace_rows: type[_NamespaceCH]
 ) -> None:
@@ -638,6 +672,45 @@ def test_bulk_and_single_both_reject_a_write_close_to_a_foreign_pinned_row(
     batched = _run_as(_pinned("U"), bulk)
     assert single.verdict == batched.verdict == "rejected"
     assert single.pinned_blocker_id == batched.pinned_blocker_id == "v1"
+
+
+class _OwnPinnedRowBeyondTen(_NamespaceCH):
+    """Ten of U's rows sit nearest, U's own pinned row is the 11th."""
+
+    rows = [_own_row(i) for i in range(10)] + [
+        {**_own_row(10), "memory_id": "u-pinned", "pinned": 1, "dist": 0.05}
+    ]
+
+
+class _OwnPinnedRowBeyondTenAndVs(_NamespaceCH):
+    rows = _OwnPinnedRowBeyondTen.rows + [{**_V_PINNED_ROW, "dist": 0.06}]
+
+
+def test_a_narrowed_writers_own_rows_get_the_namespace_wide_verdict(monkeypatch) -> None:
+    """The pinned arm adds only other users' pinned rows: the writer's own pinned
+    row past its 10 places does not block, as it does not for a namespace-wide
+    writer; V's pinned row still does."""
+    wide = _run_as(None, lambda: _check_on_commit(monkeypatch, _OwnPinnedRowBeyondTen()))
+    own = _run_as(_pinned("U"), lambda: _check_on_commit(monkeypatch, _OwnPinnedRowBeyondTen()))
+    assert own.verdict == wide.verdict != "rejected"
+    assert [p.memory_id for p in own.peers] == [p.memory_id for p in wide.peers]
+    out = _run_as(
+        _pinned("U"), lambda: _check_on_commit(monkeypatch, _OwnPinnedRowBeyondTenAndVs())
+    )
+    assert out.verdict == "rejected" and out.pinned_blocker_id == "v1"
+
+    async def bulk() -> Any:
+        from server.memory.app import conflicts
+
+        rows = await conflicts.candidate_rows_many(
+            org="o",
+            namespace="n",
+            items=[("semantic", "k", [0.1, 0.2], 0.3)],
+            ch=_OwnPinnedRowBeyondTen(),
+        )
+        return rows[0]
+
+    assert all(r["memory_id"] != "u-pinned" for r in _run_as(_pinned("U"), bulk))
 
 
 def test_a_bulk_fact_with_prefetched_rows_runs_no_pinned_statement(monkeypatch) -> None:

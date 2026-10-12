@@ -1,6 +1,7 @@
 """A writer narrowed to one user pays, in the conflict check, its own scoped read
-plus the read a namespace-wide writer makes (where other users' pinned rows come
-from), so at most about twice a namespace-wide writer's cost. Measured from
+plus a read of the namespace's pinned rows' vectors, so at most about twice a
+namespace-wide writer's cost; and another user's pinned row blocks it whatever its
+vector row says and however many of the writer's rows sit closer. Measured from
 system.query_log on the configured ClickHouse; skips without LOOM_CH_HOST."""
 
 from __future__ import annotations
@@ -166,11 +167,93 @@ async def test_a_narrowed_writers_conflict_reads_cost_at_most_two_namespace_read
     }
     for phase, c in cost.items():
         print(f"{phase}: {c['read_rows']} rows, {c['read_bytes']} B, {c['memory_usage']} B mem")
-    # The pinned arm is the namespace-wide writer's read, so a narrowed write
-    # costs its own scoped read on top of what any other writer pays. Without a
-    # vector index that read is every vector in the namespace (a brute-force
-    # stage A), the same as before read scopes existed.
+    # With pins spread over every granule the pinned arm reads about as much as
+    # the namespace-wide stage A (every vector, brute force, no vector index), so a
+    # narrowed write costs its own scoped read on top of what any other writer pays.
     single = cost["scoped"]["read_bytes"] + cost["pinned"]["read_bytes"]
     assert single <= 2 * cost["wide"]["read_bytes"]
     assert cost["scoped"]["read_bytes"] < cost["wide"]["read_bytes"] / 5
     assert cost["bulk"]["read_bytes"] <= 2 * cost["wide_bulk"]["read_bytes"]
+
+
+def _small(i: int) -> str:
+    """A 4-dim vector at angle i/1000 from [1, 0, 0, 0]: a larger i is farther."""
+    return f"[cos({i} / 1000), sin({i} / 1000), 0, 0]"
+
+
+async def _seed_close_rows(ch: Any, org: str, own_rows: int, vector_type: str) -> None:
+    """V's pinned semantic memory row, its embedding row typed `vector_type`, and
+    `own_rows` of U's own semantic rows closer to the write than V's."""
+    rows = [("V", "v-fact", "V lives in Oslo", 1, 50, vector_type)] + [
+        ("U", f"u-{i}", f"U note number {i}", 0, i % 40, "semantic") for i in range(own_rows)
+    ]
+    for user, key, value, pinned, angle, vtype in rows:
+        await ch.execute(
+            f"""
+            INSERT INTO loom.memory
+                (org, namespace, agent, user_id, session_id, memory_key, memory_type,
+                 value, version, pinned)
+            VALUES ('{org}', '{_NS}', 'bot', '{user}', '-', '{key}', 'semantic',
+                    '{value}', 1, {pinned})
+            """
+        )
+        await ch.execute(
+            f"""
+            INSERT INTO loom.memory_embeddings
+                (org, namespace, agent, user_id, session_id, memory_key, memory_type, scope,
+                 content_excerpt, embedding_model, embedding_dim, embedding)
+            VALUES ('{org}', '{_NS}', 'bot', '{user}', '-', '{key}', '{vtype}', 'private',
+                    '{value}', 'fake', 4, {_small(angle)})
+            """
+        )
+
+
+@pytest.mark.parametrize(("own_rows", "vector_type"), [(0, "episodic"), (40, "semantic")])
+async def test_a_foreign_pinned_row_blocks_a_narrowed_write_single_and_bulk(
+    ch: Any, monkeypatch: pytest.MonkeyPatch, own_rows: int, vector_type: str
+) -> None:
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.memory.app import conflicts
+
+    org = unique_org("conflict-pinned")
+    await _seed_close_rows(ch, org, own_rows, vector_type)
+    monkeypatch.setattr(conflicts, "get_client", lambda: ch)
+    emb = [1.0, 0.0, 0.0, 0.0]
+
+    def check(candidate_rows: Any) -> Any:
+        return conflicts.check_on_commit(
+            org=org,
+            namespace=_NS,
+            agent="bot",
+            memory_type="semantic",
+            memory_key="new",
+            new_value="U lives in Lisbon",
+            new_embedding=emb,
+            candidate_rows=candidate_rows,
+            resolved_threshold=0.85,
+            resolved_duplicate_threshold=0.9,
+            resolved_policy="auto_reinforce",
+            allowlisted_keys=set(),
+        )
+
+    set_current_auth(
+        AuthInfo(
+            subject="sa:bot",
+            org=org,
+            namespaces=(_NS,),
+            roles=("writer",),
+            is_service_account=True,
+            read_user_id="U",
+        )
+    )
+    try:
+        single = await check(None)
+        rows = await conflicts.candidate_rows_many(
+            org=org, namespace=_NS, items=[("semantic", "new", emb, 0.3)], ch=ch
+        )
+        batched = await check(rows[0])
+    finally:
+        set_current_auth(None)
+    assert single.verdict == batched.verdict == "rejected"
+    assert all(p.user_id == "U" for p in single.peers + batched.peers), "V's row is never named"

@@ -206,9 +206,11 @@ than `namespace`:
 - A write's answer names no row outside the scope: a merge into, a duplicate of or a
   pinned conflict with another user's row reports the verdict without that row's id,
   hash or key, and `conflicts.list` drops such peers from `conflict_with`. A pinned row
-  still blocks a close write from any user (a namespace-wide invariant) when it is among
-  the namespace's 32 nearest rows to the write; the narrowed writer's check reads them
-  the way a namespace-wide writer's does, so it costs at most about twice that. A deferred
+  still blocks a close write from any user (a namespace-wide invariant): a foreign pinned
+  row within the conflict distance refuses the write, unnamed, however many of the
+  writer's own rows sit closer. The narrowed writer's check reads the namespace's pinned
+  rows (their type taken from the memory row) beside its own scoped read, so it costs at
+  most about twice a namespace-wide writer's. A deferred
   `memory.set_from_messages` (`defer=true`, or `extraction_defer_agents`) stores the
   request's scope with it and replays under that scope. `run.begin` with
   another user's `run_id` starts a new run under a fresh id, and `run.complete` on it
