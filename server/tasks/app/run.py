@@ -159,16 +159,18 @@ async def _target_run(
 ) -> tuple[str, RunLedgerRow | None]:
     """`run_id` and its row when the caller may (re)open it, else a fresh id.
     `claim` is this begin's claim on `run_id`, made before this is called."""
-    if isinstance(claim, runs_store.RunClaim) and not claim.won:
-        holder: RunLedgerRow = {"user_id": claim.user_id, "session_id": claim.session_id}
-        held_by_caller = not claim.unreadable and _owned_by(holder, _user_of(input))
-        if not held_by_caller:
-            # Another user's begin on this id is between its claim and its row.
-            return uuid.uuid4().hex, None
     # Sequential: it must see the synchronous insert of a begin that has
     # already dropped its claim.
     with sequential_reads():
         existing = await runs_store.fetch_run(ch, input.org, input.namespace, run_id)
+    if isinstance(claim, runs_store.RunClaim) and not claim.won:
+        holder: RunLedgerRow = {"user_id": claim.user_id, "session_id": claim.session_id}
+        held_by_caller = not claim.unreadable and _owned_by(holder, _user_of(input))
+        if not held_by_caller and not (existing and _owned_by(existing, _user_of(input))):
+            # Another user's claim, or one we cannot read, and no run of the caller's
+            # under this id: a retry of the caller's own run keeps it (that holder
+            # will read this row and go to a fresh id).
+            return uuid.uuid4().hex, None
     if existing is not None and not _owned_by(existing, _user_of(input)):
         # Another user's run: start a new run instead of taking that one over.
         return uuid.uuid4().hex, None

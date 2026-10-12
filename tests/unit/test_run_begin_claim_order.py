@@ -139,7 +139,7 @@ async def _begin(sched: _Schedule, me: str, user: str) -> str:
 
 
 # Each begin makes at most four turns (claim, read, write, drop; a lost claim
-# makes claim, read-claim, write), so eight turns cover every interleaving.
+# makes claim, read-claim, read, write), so eight turns cover every interleaving.
 _SCHEDULES = ["".join(p) for p in itertools.product("AB", repeat=8)]
 
 
@@ -180,6 +180,25 @@ def test_two_begins_by_one_user_share_the_run_under_any_schedule(ledger) -> None
         ids = contextvars.Context().run(lambda: asyncio.run(both()))
         assert ids == ["shared", "shared"], (order, ids)
         assert rows["shared"]["user_id"] == "U", order
+
+
+def test_a_stale_foreign_claim_does_not_fork_the_owners_retry(ledger) -> None:
+    """V's crashed begin left its claim on U's id: U's re-begin still re-opens U's run,
+    and V's next begin still goes to a fresh id."""
+    rows, state = ledger
+
+    async def go() -> tuple[str, str, str]:
+        sched = _Schedule("")
+        state["ch"] = ch = _KeeperCH(sched)
+        first = await _begin(sched, "A", "U")
+        ch.claims['["o", "n", "shared"]'] = {"user_id": "V", "session_id": "-"}
+        retry = await _begin(sched, "B", "U")
+        other = await _begin(sched, "C", "V")
+        return first, retry, other
+
+    first, retry, other = contextvars.Context().run(lambda: asyncio.run(go()))
+    assert first == retry == "shared" and other != "shared"
+    assert rows["shared"]["user_id"] == "U"
 
 
 def test_a_finished_begin_leaves_no_claim_and_its_row_refuses_another_user(ledger) -> None:
