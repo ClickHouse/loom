@@ -167,20 +167,15 @@ async def policy(
 
 
 def read_scope(op: Operation, auth: AuthInfo | None, input_obj: Any) -> Any:
-    """Resolve the call's read scope from the token and the validated input and
-    bind it for the request (`server.identity.domain.read_scope`). Every store
-    reader that returns memory rows requires it. A body user the token is not
-    pinned to, or a `*` under a narrowed scope, is refused for every op. A
-    missing user under an unpinned `own_user` token is bound as the refusal: a
-    read op (`SCOPED_OPS`) is refused with it here, any other op by its first
-    read.
+    """Resolve the call's read scope and bind it for the request
+    (`server.identity.domain.read_scope`; the rules are in
+    docs/concepts/identities-and-namespaces.md). Returns the input the handler runs with:
+    under a narrowed scope it names the bound user (and session).
 
-    Returns the input the handler runs with: under a narrowed scope it names
-    the user (and session) the scope binds, so a write that names none writes
-    as the token's pinned user. Raises AuthInsufficientError (or
-    IdentityIncompleteError) for a scoped read that does not resolve, and
-    AuthInsufficientError when the token bounds reads below the namespace
-    and the op cannot keep its answer inside that bound."""
+    Not obvious: a body user the token is not pinned to, or `*` under a narrowed scope, is
+    refused for every op, writes included. A scope that does not resolve is refused here for
+    a read op (`SCOPED_OPS`) and by the first read for any other op. An op that cannot keep
+    its answer inside a narrowed scope is refused with AuthInsufficientError."""
     from server.core.errors import AuthInsufficientError
     from server.identity.domain.read_scope import (
         SCOPED_OPS,
