@@ -790,3 +790,13 @@ def next_version() -> int:
     cross-host clock skew (sub-ms under NTP).
     """
     return time.time_ns()
+
+
+def reemit_version(row: dict[str, Any]) -> int:
+    """The version for a re-emit of a memory_embeddings row read earlier: one above it.
+
+    It replaces exactly the row that was read. A write that landed after the read
+    (a new vector, or a retire tombstone stamped with a later memory version) has a
+    nanosecond version far above it and keeps winning, so a late copy can never bring
+    back a vector or excerpt that was retired in between."""
+    return int(row.get("version") or 0) + 1

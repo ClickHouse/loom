@@ -79,7 +79,7 @@ async def test_reemit_carries_every_persisted_column_and_applies_the_overrides()
         ]
         assert row["expires_at"] is None and row["confidence"] == 0.45
         assert row["reinforcement_count"] == 4 and row["tags"] == ["t"]
-        assert row["version"] != 11 and row["version"] > 0
+        assert row["version"] == 12  # one above the row it read
     assert {r["embedding_model"] for r in rows} == {"m", "m2"}
 
 
@@ -286,3 +286,86 @@ async def test_an_older_high_set_paused_after_its_insert_does_not_retire_a_newer
     await set_commit._set_plain_insert(w, ch)
     assert [r["content_excerpt"] for r in ch.live_emb()] == ["B"]
     assert [r["entity_text"] for r in ch.live_ent()] == ["new"]
+
+
+_KEY = ("o", "n", "a", "u", "s", "k")
+
+
+class _RetireAfterReadCH(_RMTCH):
+    """FINAL fake where a retire (a tombstone at a newer memory version) commits
+    right after the first read: the window a delayed metadata re-emit sits in."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.retired = False
+
+    async def query_all(self, sql, params=None):
+        rows = await super().query_all(sql, params)
+        if not self.retired:
+            self.retired = True
+            self.emb.append({**_LIVE, "version": M.next_version(), "tombstoned_at": datetime.now()})
+        return rows
+
+
+async def _touch(ch):
+    await M.reemit_embedding_rows_for_key(*_KEY, ch=ch, expires_at=None)
+
+
+async def _verify(ch):
+    await M.reemit_embedding_rows_for_key(*_KEY, ch=ch, verified=1)
+
+
+async def _touch_many(ch):
+    await M.reemit_embedding_rows_for_keys([(_KEY, {"expires_at": None})], ch=ch)
+
+
+async def _status_mirror(ch):
+    await M.mirror_status_to_embeddings([{**_LIVE, "status": "superseded"}], ch=ch)
+
+
+async def _unsupersede(ch):
+    await M.unsupersede_embeddings(*_KEY, ch=ch)
+
+
+async def _restamp(ch):
+    await M.restamp_embedding_rows(
+        await ch.query_all("memory_embeddings"), status="duplicate", ch=ch
+    )
+
+
+async def _repair_dim(ch):
+    from server.memory.store.integrity import repair_dim0_rows
+
+    await repair_dim0_rows(await ch.query_all("memory_embeddings"), ch=ch)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reemit", [_touch, _verify, _touch_many, _status_mirror, _unsupersede, _restamp, _repair_dim]
+)
+async def test_a_reemit_read_before_a_retire_does_not_bring_the_vector_back(reemit) -> None:
+    ch = _RetireAfterReadCH()
+    ch.emb.append({**_LIVE, "version": M.next_version()})
+    await reemit(ch)
+    assert ch.retired and ch.live_emb() == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reemit", [_touch, _status_mirror, _unsupersede, _restamp])
+async def test_a_reemit_still_replaces_the_row_it_read(reemit) -> None:
+    ch = _RMTCH()
+    ch.emb.append({**_LIVE, "status": "superseded" if reemit is _unsupersede else "active"})
+    await reemit(ch)
+    (live,) = ch.live_emb()
+    assert live["version"] == _LIVE["version"] + 1
+    assert live["status"] == {_status_mirror: "superseded", _restamp: "duplicate"}.get(
+        reemit, "active"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_version_override_is_kept() -> None:
+    ch = _CH([dict(_LIVE)])
+    await M.reemit_embedding_rows_for_key(*_KEY, ch=ch, tombstoned_at=datetime.now(), version=99)
+    ((_, rows, _),) = ch.insert_calls
+    assert rows[0]["version"] == 99

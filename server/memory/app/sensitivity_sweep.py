@@ -204,7 +204,7 @@ async def _tag_embeddings(c: SweepCandidate, *, ch: _CHClient) -> int:
         build_embedding_row,
         insert_embedding_rows,
         live_embedding_rows_for_key,
-        next_version,
+        reemit_version,
     )
 
     rows = await live_embedding_rows_for_key(
@@ -226,7 +226,7 @@ async def _tag_embeddings(c: SweepCandidate, *, ch: _CHClient) -> int:
             build_embedding_row(
                 **(
                     {col: val for col, val in r.items() if col in EMBEDDING_PERSISTED_COLS}
-                    | {"tags": [*tags, *extra], "version": next_version()}
+                    | {"tags": [*tags, *extra], "version": reemit_version(r)}
                 )
             )
         )

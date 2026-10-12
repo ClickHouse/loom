@@ -17,6 +17,7 @@ from server.memory.store.rows import (
     build_embedding_row,
     build_memory_version_row,
     next_version,
+    reemit_version,
 )
 from server.memory.store.sql import _IDENTITY_KEY_TUPLE, _identity_key
 
@@ -244,7 +245,7 @@ async def apply_entities_batch(
                 build_embedding_row(
                     **(
                         {k: v for k, v in r.items() if k in EMBEDDING_PERSISTED_COLS}
-                        | {"entities": list(wanted[_identity_key(r)]), "version": version}
+                        | {"entities": list(wanted[_identity_key(r)]), "version": reemit_version(r)}
                     )
                 )
                 for r in emb_rows
@@ -263,7 +264,7 @@ async def heal_divergent_entities(*, limit: int = 200, ch: _CHClient | None = No
     gauge counts pairs that disagree and should read 0; a mirror can miss the
     entity update when it is not yet visible to apply_entities_batch (see there).
     This is the self-heal: find the divergent pairs, re-emit
-    each mirror row with memory's entities and a bumped version. Bounded per
+    each mirror row with memory's entities at its version + 1. Bounded per
     pass; idempotent; returns rows re-emitted."""
     ch = ch or _default_client()
     pairs = await ch.query_all(
@@ -290,7 +291,6 @@ async def heal_divergent_entities(*, limit: int = 200, ch: _CHClient | None = No
         return 0
     # One keyed FINAL read for every pair and one insert, not a read and an
     # insert per pair.
-    version = next_version()
     entities_by_key = {_identity_key(pr): list(pr["entities"] or []) for pr in pairs}
     emb_rows = await ch.query_all(
         f"""
@@ -309,7 +309,7 @@ async def heal_divergent_entities(*, limit: int = 200, ch: _CHClient | None = No
             build_embedding_row(
                 **(
                     {k: v for k, v in r.items() if k in EMBEDDING_PERSISTED_COLS}
-                    | {"entities": entities_by_key[_identity_key(r)], "version": version}
+                    | {"entities": entities_by_key[_identity_key(r)], "version": reemit_version(r)}
                 )
             )
             for r in emb_rows

@@ -14,7 +14,7 @@ from server.memory.store.inserts import insert_embedding_rows
 from server.memory.store.rows import (
     EMBEDDING_PERSISTED_COLS,
     build_embedding_row,
-    next_version,
+    reemit_version,
 )
 
 _log = logging.getLogger(__name__)
@@ -77,7 +77,7 @@ async def mirror_status_to_embeddings(
 ) -> int:
     """Re-emit each identity's live memory_embeddings rows with the memory
     row's `status` (and `invalid_at` / `superseded_by`-implied retirement),
-    version bumped — the same re-emit `supersede_duplicates` does, for every
+    at the read row's version + 1 — the same re-emit `supersede_duplicates` does, for every
     path that flips status through `write_versions_by_ids`. Returns the number
     of embedding rows re-emitted (or, with `dry_run`, the number that would
     be); a row already carrying the status is left alone. The mirror is read
@@ -121,7 +121,7 @@ async def mirror_status_to_embeddings(
                     **(
                         {c: val for c, val in r.items() if c in EMBEDDING_PERSISTED_COLS}
                         | want
-                        | {"version": next_version()}
+                        | {"version": reemit_version(r)}
                     )
                 )
             )
@@ -260,7 +260,9 @@ async def reemit_embedding_rows_for_key(
 ) -> int:
     """Re-emit every live memory_embeddings row of one (identity, memory_key)
     as a new version with `overrides` applied — the RMT rule: every persisted
-    column carried forward, the vectors included, a fresh `version`. This is
+    column carried forward, the vectors included, the read row's version + 1
+    (`reemit_version`: a write that lands after the read keeps winning; a
+    `version` in `overrides` replaces it). This is
     the ONLY way a state-of-row column (expires_at, confidence, tags,
     tombstoned_at, status) changes on the vector table: a lightweight UPDATE
     leaves a patch part, and one patch part switches the codes-first lazy
@@ -294,7 +296,7 @@ async def reemit_embedding_rows_for_keys(
     read and one committed insert per `batch` keys, instead of one of each
     per key (one-row parts from a sweep of ~1,000 keys a pass would dominate
     memory_embeddings' part count). Each key keeps its own overrides (a
-    `version` among them replaces the fresh one, and only rows older than it are
+    `version` among them replaces the read row's + 1, and only rows older than it are
     re-emitted); a key listed twice takes the last. Returns the rows re-emitted."""
     ch = ch or _default_client()
     by_key: dict[EmbeddingKey, dict[str, Any]] = {k: dict(o) for k, o in items}
@@ -315,7 +317,7 @@ async def reemit_embedding_rows_for_keys(
                 build_embedding_row(
                     **(
                         {c: val for c, val in r.items() if c in EMBEDDING_PERSISTED_COLS}
-                        | {"version": next_version()}
+                        | {"version": reemit_version(r)}
                         | overrides
                     )
                 )
@@ -369,8 +371,8 @@ async def _reemit_rows(
         build_embedding_row(
             **(
                 {c: val for c, val in r.items() if c in EMBEDDING_PERSISTED_COLS}
+                | {"version": reemit_version(r)}
                 | dict(overrides)
-                | {"version": next_version()}
             )
         )
         for r in rows
@@ -431,7 +433,7 @@ async def tombstone_embeddings_for_key(
 ) -> int:
     """Mirror a loom.memory tombstone onto every live memory_embeddings row
     of one key: same identity, every persisted column carried, tombstoned_at
-    set, fresh version. Search reads the embeddings table, so a memory
+    set, the read row's version + 1. Search reads the embeddings table, so a memory
     tombstoned only in loom.memory keeps surfacing. Returns rows re-emitted."""
     return await reemit_embedding_rows_for_key(
         org, namespace, agent, user_id, session_id, memory_key, ch=ch, tombstoned_at=ts
@@ -575,7 +577,7 @@ async def unsupersede_embeddings(
         build_embedding_row(
             **(
                 {c: val for c, val in r.items() if c in EMBEDDING_PERSISTED_COLS}
-                | {"status": "active", "invalid_at": None, "version": next_version()}
+                | {"status": "active", "invalid_at": None, "version": reemit_version(r)}
             )
         )
         for r in rows
@@ -618,7 +620,7 @@ async def restamp_embedding_rows(
     status: str,
     ch: _CHClient | None = None,
 ) -> int:
-    """Re-emit mirror rows with `status` and a bumped version — an insert,
+    """Re-emit mirror rows with `status` at each row's version + 1 — an insert,
     never an in-place ALTER (those diverge under FINAL). Every other
     persisted column is carried forward. Returns the rows written."""
     if not rows:
@@ -627,7 +629,7 @@ async def restamp_embedding_rows(
         build_embedding_row(
             **(
                 {c: val for c, val in r.items() if c in EMBEDDING_PERSISTED_COLS}
-                | {"status": status, "version": next_version()}
+                | {"status": status, "version": reemit_version(r)}
             )
         )
         for r in rows

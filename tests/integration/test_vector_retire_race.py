@@ -157,3 +157,89 @@ async def test_a_paused_older_high_write_keeps_the_newer_writes_vectors(ch: Any)
                 f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
                 params={"o": ORG, "n": ns},
             )
+
+
+class _PauseAfterRead:
+    """The store's client, with `on_read` run once after the first read: a delayed
+    metadata re-emit that read the live row, then sat while another write landed."""
+
+    def __init__(self, ch: Any, on_read: Any) -> None:
+        self._ch, self._on_read = ch, on_read
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._ch, name)
+
+    async def query_all(self, sql: str, params: Any = None) -> Any:
+        rows = await self._ch.query_all(sql, params=params)
+        if self._on_read is not None:
+            hook, self._on_read = self._on_read, None
+            await hook()
+        return rows
+
+
+async def test_a_metadata_reemit_paused_across_a_high_set_does_not_restore_the_vector(
+    ch: Any, control_plane_url: str
+) -> None:
+    import httpx
+
+    from server.auth.jwt import mint_token
+    from server.memory import store as M
+
+    ns = f"itest-{uuid.uuid4().hex[:12]}"
+    key = f"vault_reemit_{uuid.uuid4().hex[:6]}"
+    secret = "sk-proj-" + uuid.uuid4().hex + uuid.uuid4().hex[:8]  # labelled 'high'
+    plain = f"the {key} staging vault is rotated every friday by the platform team"
+    token = mint_token(
+        subject="reemit-race", org=ORG, namespaces=[ns], roles=["writer"], ttl_seconds=600
+    )
+    ident = {"org": ORG, "namespace": ns, "agent": AGENT}
+
+    async def post(http: httpx.AsyncClient, op: str, body: dict[str, Any]) -> Any:
+        r = await http.post(f"/v1/{op}", json={**ident, **body})
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    async def live_vectors() -> int:
+        row = await ch.query_one(
+            "SELECT count() AS n FROM loom.memory_embeddings FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND memory_key = {k:String} AND tombstoned_at IS NULL",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        return int(row["n"])
+
+    async def wait_for(n: int) -> None:
+        for _ in range(60):
+            if await live_vectors() == n:
+                return
+            await asyncio.sleep(0.5)
+        assert await live_vectors() == n
+
+    headers = {"Authorization": f"Bearer {token}"}
+    async with httpx.AsyncClient(base_url=control_plane_url, headers=headers, timeout=30) as http:
+        try:
+            await post(http, "memory.set", {"memory_key": key, "value": plain})
+            await wait_for(1)
+
+            async def high_set_lands() -> None:
+                await post(http, "memory.set", {"memory_key": key, "value": f"token {secret}"})
+                await wait_for(0)
+
+            # The verification mirror reads the live vector, the high set retires it,
+            # then the mirror's copy is written.
+            await M.reemit_embedding_rows_for_key(
+                ORG, ns, AGENT, "-", "-", key, ch=_PauseAfterRead(ch, high_set_lands), verified=1
+            )
+            assert await live_vectors() == 0
+            out = await post(
+                http,
+                "memory.search",
+                {"query": "staging vault rotated friday platform team", "top_k": 5, "fresh": True},
+            )
+            assert secret not in json.dumps(out)
+            assert key not in [h.get("memory_key") for h in out.get("results", [])]
+        finally:
+            for table in ("memory", "memory_embeddings", "entity_vectors"):
+                await ch.execute(
+                    f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
+                    params={"o": ORG, "n": ns},
+                )

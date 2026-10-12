@@ -28,6 +28,7 @@ from server.memory.store.rows import (
     build_embedding_row,
     build_memory_version_row,
     next_version,
+    reemit_version,
 )
 
 _log = logging.getLogger(__name__)
@@ -149,7 +150,11 @@ async def supersede_duplicates(
             build_embedding_row(
                 **(
                     {c: val for c, val in r.items() if c in EMBEDDING_PERSISTED_COLS}
-                    | {"status": "superseded", "version": next_version(), "invalid_at": retired_at}
+                    | {
+                        "status": "superseded",
+                        "version": reemit_version(r),
+                        "invalid_at": retired_at,
+                    }
                 )
             )
             for r in rows
@@ -200,7 +205,7 @@ async def live_source_count(
 async def _reemit_embedding_rows(
     org: str, victims: list[dict[str, Any]], delta: dict[str, Any], *, ch: _CHClient
 ) -> None:
-    """Re-emit each victim's embedding rows with `delta` and a bumped version
+    """Re-emit each victim's embedding rows with `delta` at their version + 1
     (the supersede_duplicates pattern — recall reads this table)."""
     for v in victims:
         rows = await live_embedding_rows_for_key(
@@ -217,7 +222,7 @@ async def _reemit_embedding_rows(
                 **(
                     {c: val for c, val in r.items() if c in EMBEDDING_PERSISTED_COLS}
                     | dict(delta)
-                    | {"version": next_version()}
+                    | {"version": reemit_version(r)}
                 )
             )
             for r in rows
