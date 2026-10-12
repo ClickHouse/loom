@@ -98,9 +98,9 @@ async def _code_search(input: CodeSearchInput) -> CodeSearchOutput:
     embedder, embedding_model = _search_embedder(input)
 
     recent_dirs: list[str] = []
-    tie_break_user = _personalisation_user(input.user_id)
-    if tie_break_user and tie_break_user != "-":
-        recent_dirs = await _user_recent_dirs(org, tie_break_user)
+    # The transport's read-scope gate pins user_id to a narrowed token's user.
+    if input.user_id and input.user_id != "-":
+        recent_dirs = await _user_recent_dirs(org, input.user_id)
 
     extra_terms: list[str] | None = None
     expand_calls = 0
@@ -795,20 +795,6 @@ def _search_trace_args(input: CodeSearchInput) -> dict[str, Any]:
         fresh=input.fresh or None,
         paged=bool(input.cursor) or None,
     )
-
-
-def _personalisation_user(body_user: str | None) -> str | None:
-    """The user whose recent files break ties: under a token bounded to one user, that
-    user whatever the body says; none when the scope does not resolve."""
-    from server.auth.context import current_auth
-    from server.core.errors import AuthInsufficientError, IdentityIncompleteError
-    from server.identity.domain.read_scope import request_read_filters
-
-    try:
-        scope = request_read_filters(current_auth())
-    except (AuthInsufficientError, IdentityIncompleteError):
-        return None
-    return scope.user_id if scope.narrowed else body_user
 
 
 async def _user_recent_dirs(org: str, user_id: str) -> list[str]:
