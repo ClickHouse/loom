@@ -25,6 +25,13 @@ async def _write_inline_record_projection(
     evidence_ids: list[str],
 ) -> None:
     """Project ad-hoc record_schema extraction into memory_records."""
+    from server.auth.context import current_auth
+    from server.identity.domain.read_scope import request_read_narrowed
+
+    # memory_records is keyed without a user: a caller bounded to one user would
+    # fold into or supersede another user's record of the same key.
+    if request_read_narrowed(current_auth()):
+        return
 
     from server.memory.app.records import (
         handle_memory_record_write,

@@ -707,14 +707,15 @@ async def _verdict(rows: list[dict[str, Any]], value: str) -> Any:
 async def test_a_bounded_write_treats_another_users_row_as_absent() -> None:
     """set and bulk_set (and set_from_messages through it) take their verdict
     here: another user's restatement is neither merged into, reinforced nor
-    duplicated or marked; only their pinned row still blocks."""
+    duplicated, marked or blocked by it, even when it is pinned."""
     _bind(PINNED, U1)
     same = await _verdict([_candidate("theirs", "u2", "vault 1234")], "vault 1234")
     assert same.verdict not in ("merge", "duplicate", "conflict", "rejected"), same
     assert not same.existing_memory_id and not same.duplicate_of_id
     assert all(p.user_id == "u1" for p in same.peers)
     blocked = await _verdict([_candidate("theirs", "u2", "vault 9", pinned=True)], "vault 1234")
-    assert blocked.verdict == "rejected" and blocked.peers == []
+    assert blocked.verdict != "rejected" and blocked.peers == []
+    assert not blocked.pinned_blocker_id
     # The writer's own restatement still merges, and unbounded writes see every row.
     mine = await _verdict([_candidate("mine", "u1", "vault 1234")], "vault 1234")
     assert (mine.verdict, mine.existing_memory_id) == ("merge", "mine")

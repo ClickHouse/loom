@@ -294,22 +294,16 @@ async def _peer_rows_joined(ch: Any, params: dict[str, Any]) -> list[dict[str, A
     return rows
 
 
-def _split_by_read_scope(
-    peers: list[ConflictPeer],
-) -> tuple[list[ConflictPeer], list[ConflictPeer]]:
-    """(peers inside the request's read scope, peers outside it). A writer
-    bounded to one user never merges into, reinforces, supersedes or marks
-    another user's row; only a pinned one still blocks it. A scope the
-    request cannot resolve keeps no peer inside."""
+def _peers_in_read_scope(peers: list[ConflictPeer]) -> list[ConflictPeer]:
+    """The peers inside the request's read scope. A writer bounded to one user
+    treats another user's row as absent, pinned or not: it never merges into,
+    reinforces, supersedes, marks or is blocked by it, so no verdict tells it
+    that row exists. A scope the request cannot resolve keeps no peer."""
     try:
         scope = request_read_filters(current_auth())
     except (AuthInsufficientError, IdentityIncompleteError):
-        return [], peers
-    inside: list[ConflictPeer] = []
-    outside: list[ConflictPeer] = []
-    for p in peers:
-        (inside if row_in_read_scope(scope, p.user_id, p.session_id) else outside).append(p)
-    return inside, outside
+        return []
+    return [p for p in peers if row_in_read_scope(scope, p.user_id, p.session_id)]
 
 
 def _peer_of(r: dict[str, Any]) -> ConflictPeer:
@@ -474,13 +468,11 @@ async def check_on_commit(
         return ConflictResult(verdict="clear", peers=[])
 
     new_canonical = canonical(new_value)
-    all_peers, foreign = _split_by_read_scope([_peer_of(r) for r in rows])
+    all_peers = _peers_in_read_scope([_peer_of(r) for r in rows])
     # Flagged peers reach the cosine verdicts below; band peers only the judge.
     peers = [p for p in all_peers if p.similarity >= threshold]
     band_peers = [p for p in all_peers if p.similarity < threshold]
-    # A pinned row outside the writer's read scope still blocks it.
-    foreign_blocker = next((p for p in foreign if p.pinned and p.similarity >= threshold), None)
-    if not peers and foreign_blocker is None:
+    if not peers:
         pj = PendingJudge(
             org,
             namespace,
@@ -502,7 +494,7 @@ async def check_on_commit(
             return merge_or_run_duplicate(p, peers, new_run_id=new_run_id)
 
     # Step 4 (checked before 3 — pinned short-circuit takes priority).
-    pinned_blocker = next((p for p in peers if p.pinned), None) or foreign_blocker
+    pinned_blocker = next((p for p in peers if p.pinned), None)
     if pinned_blocker is not None:
         return ConflictResult(
             verdict="rejected",

@@ -351,3 +351,95 @@ def test_bulk_dedup_keeper_is_in_the_callers_session(monkeypatch) -> None:
     contextvars.Context().run(go)
     sql, params = ch.sql[0]
     assert "session_id = {scope_sid:String}" in sql and params["scope_sid"] == "S"
+
+
+@pytest.mark.parametrize(
+    "op",
+    [
+        "memory.record.write",
+        "decision.record",
+        "procedure.record_run",
+        "conversation.create",
+        "conversation.append",
+        "context.offload",
+    ],
+)
+def test_writes_to_tables_keyed_without_a_user_are_refused_when_narrowed(op: str) -> None:
+    from server.identity.domain.read_scope import honours_read_scope
+
+    assert not honours_read_scope(op)
+
+
+@pytest.fixture
+def runs(monkeypatch):
+    """A run ledger holding V's run `r-v`."""
+    from server.tasks.app import run as run_app
+
+    v_run = {"run_id": "r-v", "user_id": "V", "session_id": "-", "agent": "bot"}
+    v_run["started_at"] = run_app._now()
+    inserted: list[dict[str, Any]] = []
+
+    async def fetch_run(ch, org, ns, run_id):
+        return dict(v_run) if run_id == "r-v" else None
+
+    async def insert_runs(ch, rows):
+        inserted.extend(rows)
+
+    monkeypatch.setattr(run_app, "get_client", lambda: None)
+    monkeypatch.setattr(run_app.runs_store, "fetch_run", fetch_run)
+    monkeypatch.setattr(run_app.runs_store, "insert_runs", insert_runs)
+    return inserted
+
+
+def test_run_begin_on_another_users_run_starts_a_new_run(runs) -> None:
+    from server.tasks.api.models_run import RunBeginInput
+    from server.tasks.app.run import handle_run_begin
+
+    inp = RunBeginInput(org="o", namespace="n", agent="bot", user_id="U", run_id="r-v", goal="g")
+    out = _run_as(_pinned("U"), lambda: handle_run_begin(inp))
+    assert out.run_id != "r-v"
+    assert [r["run_id"] for r in runs] == [out.run_id] and runs[0]["user_id"] == "U"
+    # V itself (and an unbounded caller) re-begins its own run.
+    out = _run_as(_pinned("V"), lambda: handle_run_begin(inp.model_copy(update={"user_id": "V"})))
+    assert out.run_id == "r-v"
+
+
+def test_run_complete_on_another_users_run_is_not_found(runs) -> None:
+    from server.core.errors import NotFoundError
+    from server.tasks.api.models_run import RunCompleteInput
+    from server.tasks.app.run import handle_run_complete
+
+    inp = RunCompleteInput(org="o", namespace="n", run_id="r-v", status="completed")
+    with pytest.raises(NotFoundError) as foreign:
+        _run_as(_pinned("U"), lambda: handle_run_complete(inp))
+    with pytest.raises(NotFoundError) as missing:
+        _run_as(_pinned("U"), lambda: handle_run_complete(inp.model_copy(update={"run_id": "x"})))
+    assert str(foreign.value).replace("r-v", "x") == str(missing.value)
+    assert runs == []
+
+
+def test_set_from_messages_skips_its_record_projection_when_narrowed(monkeypatch) -> None:
+    from server.memory.app import records
+    from server.memory.app.inline_records import _write_inline_record_projection
+
+    written: list[Any] = []
+
+    async def record_write(inp):
+        written.append(inp)
+
+    async def schema_register(inp):
+        return None
+
+    monkeypatch.setattr(records, "handle_memory_record_write", record_write)
+    monkeypatch.setattr(records, "handle_memory_schema_register", schema_register)
+    inp = SimpleNamespace(
+        org="o", namespace="n", agent="a", user_id="U", session_id="-", memory_key="k"
+    )
+
+    def project() -> Any:
+        return _write_inline_record_projection(inp, {"f": "x"}, {"f": "string"}, evidence_ids=[])
+
+    _run_as(_pinned("U"), project)
+    assert written == []
+    _run_as(None, project)
+    assert [w.memory_key for w in written] == ["k"]

@@ -338,10 +338,12 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "namespace.register_category": "registers a category",
     "namespace.list_ontology": "the registered ontology",
     "namespace.register_ontology": "registers an ontology",
-    # Writes that answer with what they wrote (ids, versions, counts); a
-    # conflict verdict names only peers inside the read scope, and the
-    # transport refuses a body naming a user other than the token's pin
-    # (`server.transport.gates.read_scope`).
+    # Writes that answer with what they wrote (ids, versions, counts). Each looks
+    # its target row up inside the read scope, so another user's row is absent,
+    # and the transport refuses a body naming a user other than the token's pin.
+    # Not here: writes to tables keyed without a user (records, decisions,
+    # procedure_runs, conversation threads, context blobs), which would fold
+    # into or overwrite another user's row.
     "memory.set": "a write",
     "memory.pin": "a write",
     "memory.bulk_set": "a write",
@@ -350,7 +352,6 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "memory.touch": "a write",
     "memory.lock": "a write",
     "memory.outcome": "a write",
-    "memory.record.write": "a write",
     "working_memory.set": "a write",
     "working_memory.append": "a write",
     "working_memory.replace": "a write",
@@ -359,14 +360,9 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "profile.append": "a write",
     "profile.replace": "a write",
     "procedure.add": "a write",
-    "procedure.record_run": "a write",
     "observe.record": "a write",
-    "run.begin": "a write",
-    "run.complete": "a write: the run's own counters",
-    "decision.record": "a write",
-    "conversation.create": "a write",
-    "conversation.append": "a write",
-    "context.offload": "a write: stores the caller's own text",
+    "run.begin": "a write: another user's run_id starts a new run",
+    "run.complete": "a write: completes only a run inside the read scope",
 }
 
 

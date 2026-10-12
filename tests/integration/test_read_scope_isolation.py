@@ -668,3 +668,159 @@ def test_an_answer_cached_for_v_is_never_served_to_u(
     assert _post(control_plane_url, tokens["namespace"], "memory.list", listing).status_code == 200
     r = _post(control_plane_url, tokens["pinned_u"], "memory.list", {**listing, "user_id": "-"})
     assert r.status_code == 200 and seed.nonce_v not in r.text
+
+
+def _v_ledgers(ch: Any, seed: _Seed, tags: dict[str, str]) -> dict[str, list[tuple[Any, ...]]]:
+    """V's run, thread, messages, record, blob and procedure runs, row by row."""
+    p = {"org": seed.org, "ns": seed.ns, **tags}
+    where = "org = {org:String} AND namespace = {ns:String}"
+    statements = {
+        "run": f"SELECT user_id, status, goal, toString(completed_at), metadata "
+        f"FROM loom.agent_runs FINAL WHERE {where} AND run_id = {{run:String}}",
+        "thread": f"SELECT user_id, title, metadata FROM loom.conversation_threads FINAL "
+        f"WHERE {where} AND thread_id = {{thread:String}}",
+        "messages": f"SELECT user_id, msg_id, content FROM loom.conversations "
+        f"WHERE {where} AND thread_id = {{thread:String}} ORDER BY msg_id",
+        "record": f"SELECT user_id, status, record_json, version FROM loom.memory_records FINAL "
+        f"WHERE {where} AND schema_name = {{schema:String}} ORDER BY version",
+        "blob": f"SELECT user_id, content, toString(expires_at) FROM loom.context_blobs FINAL "
+        f"WHERE {where} AND blob_key = {{blob:String}}",
+        "procedure_runs": f"SELECT session_id, ok, note FROM loom.procedure_runs "
+        f"WHERE {where} AND memory_key = {{proc:String}} ORDER BY ts",
+    }
+    return {
+        name: [tuple(r) for r in ch.query(sql, parameters=p).result_rows]
+        for name, sql in statements.items()
+    }
+
+
+def test_writes_aimed_at_vs_runs_threads_records_and_blobs_leave_them_alone(
+    control_plane_url: str, seed: _Seed, tokens: dict[str, str], ch_client: Any
+) -> None:
+    """W's token aims run.begin / run.complete at V's run, the conversation writes at V's
+    thread, records and decisions at V's record key, procedure.record_run at V's
+    procedure, context.offload at V's blob, and a set / bulk_set at V's pinned fact. The
+    run moves start a new run or answer not-found; the others are refused; nothing
+    names V's pinned row (no rejected_pinned); V's rows read back unchanged."""
+    ns_tok, w_tok = tokens["namespace"], tokens["pinned_w"]
+    tag = uuid.uuid4().hex[:8]
+    tags = {
+        "run": f"run-v-{tag}",
+        "thread": f"thread-v-{tag}",
+        "schema": f"schema_v_{tag}",
+        "blob": f"blob/v-{tag}",
+    }
+    v = {"org": seed.org, "namespace": seed.ns, "agent": "a", "user_id": V, "session_id": "sess-1"}
+    w = {"org": seed.org, "namespace": seed.ns, "agent": "a", "user_id": "-"}
+    ns = {"org": seed.org, "namespace": seed.ns}
+
+    _write(control_plane_url, ns_tok, "run.begin", {**v, "run_id": tags["run"], "goal": "v's run"})
+    _write(control_plane_url, ns_tok, "conversation.set_logging", {**ns, "enabled": True})
+    _write(
+        control_plane_url,
+        ns_tok,
+        "conversation.create",
+        {**v, "thread_id": tags["thread"], "title": "v's"},
+    )
+    _write(
+        control_plane_url,
+        ns_tok,
+        "conversation.append",
+        {**v, "thread_id": tags["thread"], "role": "user", "content": f"v says {seed.nonce_v}"},
+    )
+    _write(
+        control_plane_url,
+        ns_tok,
+        "memory_schema.register",
+        {**ns, "name": tags["schema"], "fields": [{"name": "code", "identity": True}]},
+    )
+    record = {"schema_name": tags["schema"], "memory_key": f"rec/{tag}"}
+    _write(
+        control_plane_url,
+        ns_tok,
+        "memory.record.write",
+        {**v, **record, "fields": {"code": {"value": seed.nonce_v}}},
+    )
+    _write(
+        control_plane_url,
+        ns_tok,
+        "context.offload",
+        {**v, "blob_key": tags["blob"], "content": f"v's blob {seed.nonce_v}"},
+    )
+    procs = _write(
+        control_plane_url,
+        ns_tok,
+        "procedure.list",
+        {**v, "agent": "*"},
+    )
+    tags["proc"] = next(
+        p["memory_key"] for p in procs["procedures"] if V in str(p.get("name") or p)
+    )
+    _write(control_plane_url, ns_tok, "procedure.record_run", {**v, "memory_key": tags["proc"]})
+    pinned_text = f"the vault on pier {tag} stays shut on sundays and its alarm code is 4417"
+    _write(
+        control_plane_url,
+        ns_tok,
+        "memory.set",
+        {**v, "memory_key": f"pinned/{tag}", "value": pinned_text, "pinned": True},
+    )
+    near = {"memory_key": f"near/{tag}", "value": pinned_text.replace("4417", "unknown")}
+    # Control: an unbounded writer is blocked by the pinned row, so the probe can see it.
+    control = _write(
+        control_plane_url,
+        ns_tok,
+        "memory.set",
+        {**w, "user_id": W, **near, "dry_run": True},
+    )
+    assert control["conflict_verdict"] == "rejected", control
+
+    before = _v_ledgers(ch_client, seed, tags)
+    assert all(before[k] for k in before), before
+
+    leaks: dict[str, str] = {}
+    bad: dict[str, Any] = {}
+    begun = _post(control_plane_url, w_tok, "run.begin", {**w, "run_id": tags["run"], "goal": "x"})
+    if begun.status_code != 200 or begun.json().get("run_id") == tags["run"]:
+        bad["run.begin"] = (begun.status_code, begun.text[:200])
+    done = _post(
+        control_plane_url,
+        w_tok,
+        "run.complete",
+        {**ns, "run_id": tags["run"], "status": "failed", "reflection": {"what_worked": ["x"]}},
+    )
+    if done.status_code != 404:
+        bad["run.complete"] = (done.status_code, done.text[:200])
+    refused = [
+        ("conversation.create", {**w, "thread_id": tags["thread"], "title": "taken"}),
+        (
+            "conversation.append",
+            {**w, "thread_id": tags["thread"], "role": "user", "content": f"v says {seed.nonce_v}"},
+        ),
+        ("memory.record.write", {**w, **record, "fields": {"code": {"value": "overwritten"}}}),
+        (
+            "decision.record",
+            {**w, "category": "c", "scenario": "s", "reasoning": "r", "outcome": "o"},
+        ),
+        ("procedure.record_run", {**w, "memory_key": tags["proc"], "ok": False}),
+        ("context.offload", {**w, "blob_key": tags["blob"], "content": "overwritten"}),
+        ("context.offload", {**w, "content": f"v's blob {seed.nonce_v}", "ttl_seconds": 60}),
+    ]
+    for op, body in refused:
+        r = _post(control_plane_url, w_tok, op, body)
+        if r.status_code != 403:
+            bad[op] = (r.status_code, r.text[:200])
+    probe = _post(control_plane_url, w_tok, "memory.set", {**w, **near, "dry_run": True})
+    if probe.status_code != 200 or probe.json().get("conflict_verdict") == "rejected":
+        bad["memory.set near a pinned row"] = (probe.status_code, probe.text[:200])
+    bulk = _post(control_plane_url, w_tok, "memory.bulk_set", {**w, "entries": [near]})
+    if bulk.status_code != 200 or bulk.json().get("rejected_pinned"):
+        bad["memory.bulk_set near a pinned row"] = (bulk.status_code, bulk.text[:200])
+    for name, r in (("run.begin", begun), ("run.complete", done), ("set", probe), ("bulk", bulk)):
+        if seed.nonce_v in r.text or "4417" in r.text:
+            leaks[name] = r.text[:300]
+
+    after = _v_ledgers(ch_client, seed, tags)
+    changed = {k: (before[k], after[k]) for k in before if before[k] != after[k]}
+    assert not changed, f"V's rows changed: {changed}"
+    assert not leaks, f"V's rows reached W's token: {leaks}"
+    assert not bad, f"unexpected answers: {bad}"

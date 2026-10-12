@@ -371,7 +371,7 @@ async def _set_conflict_verdict(
         )
     if conflict_result.verdict == "rejected":
         # Counted at the handler boundary via _WRITE_OUTCOME_BY_ERROR_CODE.
-        # A blocker outside the read scope still blocks but is not named.
+        # Never names a blocker outside the read scope (the check already ignores one).
         blocker = _peer_id_in_read_scope(conflict_result, conflict_result.pinned_blocker_id or "")
         raise HTTPException(
             status_code=409,

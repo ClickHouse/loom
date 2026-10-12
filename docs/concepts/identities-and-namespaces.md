@@ -203,9 +203,11 @@ than `namespace`:
 - A token pinned with `read_user_id` acts only as that user, on writes too: a body naming
   another `user_id` is refused with `AUTH_INSUFFICIENT` on every op, and a body that names
   none (or `-`) runs as the pinned user.
-- A write's answer names no row outside the scope: a merge into, a duplicate of or a
-  pinned conflict with another user's row reports the verdict without that row's id,
-  hash or key, and `conflicts.list` drops such peers from `conflict_with`.
+- A write treats another user's row as absent: it is not merged into, marked as a
+  duplicate or conflict, or rejected by (even when pinned), the write's answer names no
+  such row, and `conflicts.list` drops such peers from `conflict_with`. `run.begin` with
+  another user's `run_id` starts a new run under a fresh id, and `run.complete` on it
+  answers `NOT_FOUND`.
 - Session briefs are kept per user (per session under `own_session`): two users saving
   the same `brief_key` get two briefs, each sees only its own, and a namespace-wide
   token lists them under keys prefixed `~<user>~` (or `~<user>~<session>~`).
@@ -213,8 +215,11 @@ than `namespace`:
   `user_id` the body names.
 - A leg whose rows carry no user (conversations, runs) answers nothing.
 - An op that cannot bound its answer to one user (the entity graph `facts.*`,
-  `conversation.*` reads, namespace exports, admin and curation ops) is refused with
-  `AUTH_INSUFFICIENT`. The list is `server/identity/domain/read_scope.py`
+  `conversation.*`, namespace exports, admin and curation ops) is refused with
+  `AUTH_INSUFFICIENT`, and so is a write to a table keyed without a user, where it
+  would overwrite another user's row: `memory.record.write`, `decision.record`,
+  `procedure.record_run` and `context.offload`. `memory.set_from_messages` skips its
+  `record_schema` projection into records. The list is `server/identity/domain/read_scope.py`
   (`SCOPED_OPS`, `NARROW_SAFE_OPS`), and an op it does not name is refused.
 
 ## Agent-written rows and the shared layer

@@ -23,6 +23,7 @@ from typing import Any
 from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now as _now
 from server.core.errors import AuthInsufficientError, IdentityIncompleteError, NotFoundError
+from server.identity.domain.read_scope import row_in_read_scope
 from server.memory.app import run_feedback, run_retention
 from server.memory.app.provenance import request_scope
 from server.operations.read_projection import project_rows
@@ -137,6 +138,16 @@ async def _recalled_keys(ch: Any, org: str, ns: str, run_id: str) -> list[str] |
     return await runs_store.traced_recall_keys(ch, org, ns, run_id)
 
 
+def _run_in_scope(run: RunLedgerRow) -> bool:
+    """Whether the caller's read scope covers `run` (the whole namespace with no
+    auth bound). A scope that does not resolve covers no run."""
+    try:
+        scope = request_scope()
+    except (AuthInsufficientError, IdentityIncompleteError):
+        return False
+    return row_in_read_scope(scope, run.get("user_id"), run.get("session_id"))
+
+
 # ------------------------------------------------------------------- handlers
 
 
@@ -148,9 +159,13 @@ async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:
     # for a bare client).
     from server.observability.run_context import set_ledger_run
 
+    existing = await runs_store.fetch_run(ch, input.org, input.namespace, run_id)
+    if existing is not None and not _run_in_scope(existing):
+        # Another user's run: start a new run instead of taking that one over.
+        run_id = uuid.uuid4().hex
+        existing = None
     set_ledger_run(run_id)
     started = _now()
-    existing = await runs_store.fetch_run(ch, input.org, input.namespace, run_id)
     if existing is not None and existing.get("started_at"):
         # Same run_id re-sent (hook retry, tracing id reuse): a replace that
         # keeps the original start so duration stays honest.
@@ -296,7 +311,8 @@ async def handle_run_complete(input: RunCompleteInput) -> RunCompleteOutput:
     # synchronous insert that preceded it.
     with sequential_reads():
         existing = await runs_store.fetch_run(ch, input.org, input.namespace, input.run_id)
-    if existing is None:
+    # Another user's run answers like a missing one.
+    if existing is None or not _run_in_scope(existing):
         raise NotFoundError(
             f"run {input.run_id!r} not found in {input.org}/{input.namespace}; "
             "call run.begin first",
