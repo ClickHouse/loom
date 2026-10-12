@@ -34,7 +34,7 @@ from server.code.app.spans import (
 from server.code.domain import deadline as code_deadline
 from server.code.store.index import CodeRepo
 from server.core.caller_regex import compile_caller_regex
-from server.core.ch import caller_shaped
+from server.core.ch import caller_shaped, class_timeout_s
 from server.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -207,8 +207,9 @@ async def _bounded_scan(
     if budget is None:
         return await read(*args, **kw)
     limit_s = budget.statement_s(_GREP_RESERVE_MS)
-    # The statement's own SETTINGS win over the URL ceiling, so clamp here.
-    ceiling_s = settings.ch_caller_shaped_max_execution_s
+    # The statement's own SETTINGS win over the URL ceiling, so clamp here. With no
+    # caller-shaped ceiling, the read class timeout (the reader profile's cap) holds.
+    ceiling_s = settings.ch_caller_shaped_max_execution_s or class_timeout_s("read")
     if ceiling_s > 0:
         limit_s = min(limit_s, ceiling_s)
     t0 = time.monotonic()

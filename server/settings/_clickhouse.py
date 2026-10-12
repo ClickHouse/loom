@@ -59,7 +59,8 @@ class ClickHouseSettings(BaseModel):
     # their defaults, with a floor no statement can go under (time: 0.05 s,
     # code.grep's statement floor), so none can be set to 0 even in the SQL.
     # Raising a setting above its cap needs the profile raised too; a 0 sends
-    # no ceiling, so the profile's cap applies.
+    # no ceiling, so the profile's cap applies (code.grep's deadline is then
+    # clamped to ch_timeout_read_s, which the profile's cap matches).
     # Seconds one such read may run (the read class default).
     ch_caller_shaped_max_execution_s: float = 30.0
     # Bytes of memory one such read may use.
