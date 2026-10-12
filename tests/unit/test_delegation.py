@@ -681,6 +681,40 @@ async def test_read_scope_and_write_namespaces_are_inherited(world) -> None:
     assert await _reaches(child, "a", Role.WRITER) and not await _reaches(child, "b", Role.WRITER)
 
 
+@pytest.mark.asyncio
+async def test_a_scoped_child_cannot_write_outside_the_parents_write_claim(world) -> None:
+    """Reads a and b, writes only a: a scoped writer child for b is refused at
+    mint, and one that carries writer on b anyway is refused writing b."""
+    parent = _login(
+        creator="alice", parents=("login-1",), namespaces=("a", "b"), write_namespaces=("a",)
+    )
+    assert not await _reaches(parent, "b", Role.WRITER)
+    assert "b" in await _refused(parent, {"b": "writer"}, scoped=True)
+    child = await _child(parent, {"b": None}, scoped=True)
+    assert child.ns_roles == (("b", "writer"),) and child.write_namespaces == ("a",)
+    assert await _reaches(child, "b") and not await _reaches(child, "b", Role.WRITER)
+    minted = _login(
+        roles=(),
+        ns_roles=(("a", "writer"), ("b", "writer")),
+        namespaces=("a", "b"),
+        write_namespaces=("a",),
+        creator="alice",
+        parents=("dl-1",),
+        subject="sa:bot",
+    )
+    assert await _reaches(minted, "a", Role.WRITER)
+    assert not await _reaches(minted, "b", Role.WRITER)
+
+
+@pytest.mark.asyncio
+async def test_a_primary_scoped_token_writes_by_its_role_map(world) -> None:
+    token = _login(roles=(), ns_roles=(("a", "writer"), ("b", "viewer")), namespaces=("a", "b"))
+    assert await _reaches(token, "a", Role.WRITER)
+    assert await _reaches(token, "b") and not await _reaches(token, "b", Role.WRITER)
+    bound = _login(**{**token.__dict__, "write_namespaces": ("b",)})
+    assert not await _reaches(bound, "a", Role.WRITER)
+
+
 def test_setup_parent_in_dev_mode_is_a_flat_writer(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.identity.app import me_setup
     from server.settings import settings

@@ -107,7 +107,7 @@ async def delegate(
         # The child's revocation check needs the parent's age (jwt.parent_iats).
         raise _refuse("the parent token carries no issue time")
     creator = parent.creator or parent.subject
-    roles = await _allowed_roles(parent, child_org, creator, requested)
+    roles = await _allowed_roles(parent, child_org, creator, requested, scoped)
     if scoped:
         ns_roles: dict[str, str] | None = {ns: r.name.lower() for ns, r in roles.items()}
         flat: list[str] = []
@@ -151,16 +151,18 @@ def _child_ttl(parent: AuthInfo, ttl_seconds: int | None) -> int:
 
 
 async def _allowed_roles(
-    parent: AuthInfo, org: str, creator: str, requested: dict[str, str | None]
+    parent: AuthInfo, org: str, creator: str, requested: dict[str, str | None], scoped: bool
 ) -> dict[str, Role]:
     """The role the child gets on each namespace. A namespace the caller named
     and may not have is refused; one that came from expanding `*` over a
-    narrow parent's list is left out instead."""
+    narrow parent's list is left out instead. A scoped child asking to write
+    a namespace needs the parent to be able to write it."""
     expanded = _expand_wildcard(parent, requested)
     out: dict[str, Role] = {}
     for ns, asked in expanded.items():
         want = delegable_role(asked)
-        allowed = ceiling_role(parent, org, ns)
+        writes = scoped and want is not None and want >= Role.WRITER
+        allowed = ceiling_role(parent, org, ns, write=writes)
         if ns != "*":
             allowed = _lower(allowed, await authz.grant_role_for(org, ns, creator))
         if allowed is None or (want is not None and want > allowed):
@@ -215,8 +217,11 @@ def ceiling_role(token: AuthInfo, org: str, namespace: str, *, write: bool = Fal
     """The most `token` itself allows on `namespace`, at most admin. A scoped
     token's `ns_roles` entry; a delegated flat token's role where its claim
     covers the namespace (`write`: its write claim); a primary flat token's
-    role anywhere, since it reads through its subject's grants by design."""
+    role anywhere, since it reads through its subject's grants by design.
+    A write also stays inside a scoped token's `ns_write` claim when it has one."""
     if token.has_ns_roles():
+        if write and token.write_namespaces and not token.can_write(org, namespace):
+            return None
         return token.effective_role(org, namespace)
     flat = max(token.roles, default=None)
     if flat is None:

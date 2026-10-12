@@ -113,8 +113,9 @@ A call on `(org, namespace)` is allowed when:
 
 1. the namespace is not restricted (otherwise see
    [restricted namespaces](#restricted-namespaces-classificationrestricted));
-2. for a **scoped** token (`ns_roles`): its role for that namespace reaches the op's role.
-   Nothing else widens it, except that a viewer grant lets it read a code namespace;
+2. for a **scoped** token (`ns_roles`): its role for that namespace reaches the op's role,
+   and a write also needs the namespace in `ns_write` when the token has one. Nothing else
+   widens it, except that a viewer grant lets it read a code namespace;
 3. for a **flat** token: the token covers the namespace (`namespaces` for reads, `ns_write`
    for writes) and a role in `roles` reaches the op's role, or a live grant on the
    namespace does.
@@ -206,7 +207,9 @@ what was asked for, cut to what the caller's token allows and to the caller's li
   grant; a namespace without one is refused (403 naming it);
 - `*` only from a sign-in token or a delegated `*` token, and it means "wherever the person
   holds a grant"; from a narrower token it becomes that token's own namespace list;
-- the caller's `read_scope`, `read_user_id` and `ns_write`;
+- the caller's `read_scope`, `read_user_id` and `ns_write`; a per-namespace child asking for
+  `writer` or `admin` on a namespace outside the caller's `ns_write` is refused, and the
+  inherited `ns_write` binds the child's writes whatever its `ns_roles` say;
 - a service-account caller mints only service-account tokens (on the Setup page: send
   `persist=true`);
 - an expiry: `ttl_days`/`ttl_seconds`, 90 days when unset, and never past the caller's own

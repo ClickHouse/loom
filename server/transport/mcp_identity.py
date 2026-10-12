@@ -182,9 +182,10 @@ def _scoped(auth_info: Any) -> bool:
 
 def token_can_write(auth_info: Any, org: str, namespace: str) -> bool:
     """Whether THIS token may write `namespace`. A scoped token's `ns_roles` entry is
-    authoritative (viewer there is not a write default); a token with an explicit write
-    scope (`ns_write`) answers by it; any other token writes wherever its grants do, so
-    the grant role decides (the JWT-only `can_write` does not see grants)."""
+    authoritative (viewer there is not a write default) inside its `ns_write` claim; a
+    token with an explicit write scope (`ns_write`) answers by it; any other token writes
+    wherever its grants do, so the grant role decides (the JWT-only `can_write` does not
+    see grants)."""
     if auth_info is None:
         return True
     try:
@@ -192,7 +193,9 @@ def token_can_write(auth_info: Any, org: str, namespace: str) -> bool:
             from server.operations.base import Role
 
             role = auth_info.effective_role(org, namespace)
-            return role is not None and role >= Role.WRITER
+            if role is None or role < Role.WRITER:
+                return False
+            return not auth_info.write_namespaces or bool(auth_info.can_write(org, namespace))
         if getattr(auth_info, "write_namespaces", None):
             return bool(auth_info.can_write(org, namespace))
         return True
