@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { accept, renderPack, shouldAsk, SEEN_CAP } from "../lib/prompt-pack.mjs";
+import { accept, renderPack, searchBody, shouldAsk, SEEN_CAP } from "../lib/prompt-pack.mjs";
 
 const RES = {
   abstain: false,
@@ -79,4 +79,14 @@ test("a question about a change in history gets no code pointers", async () => {
   ]) {
     assert.equal(shouldAsk(q), true, q);
   }
+});
+
+test("searchBody sends the prompt redacted: code.search keeps its query in code_search_trace", () => {
+  const body = searchBody({ org: "o", namespace: "code-x" }, "why does login fail with password=hunter2 here", {
+    topK: 2,
+    token: "",
+  });
+  assert.equal(body.query, "why does login fail with password=[redacted] here");
+  assert.equal(body.top_k, 2);
+  assert.equal(body.namespace, "code-x");
 });

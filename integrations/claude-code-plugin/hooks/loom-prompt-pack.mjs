@@ -23,7 +23,7 @@ import {
   scheduleExit,
 } from "../lib/loom-client.mjs";
 import { resolveIndexedRepo } from "../lib/repo-scope.mjs";
-import { accept, packPayload, renderPack, searchQuery, shouldAsk } from "../lib/prompt-pack.mjs";
+import { accept, packPayload, renderPack, searchBody, shouldAsk } from "../lib/prompt-pack.mjs";
 import { readJsonFile, sessionStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
 
 const ENABLED = envSwitch("LOOM_PROMPT_PACK", true);
@@ -67,20 +67,11 @@ async function main() {
     return;
   }
 
-  const res = await postBounded(
-    "code.search",
-    {
-      org: repo.org,
-      namespace: repo.namespace,
-      query: searchQuery(prompt).slice(0, 2000),
-      top_k: TOP_K,
-      token_budget: 600,
-      bodies: "none",
-      annotate: false,
-      consumer: "claude-code-prompt-pack",
-    },
-    { token, serverUrl: resolveServerUrl(), timeoutMs: TIMEOUT_MS },
-  );
+  const res = await postBounded("code.search", searchBody(repo, prompt, { topK: TOP_K, token }), {
+    token,
+    serverUrl: resolveServerUrl(),
+    timeoutMs: TIMEOUT_MS,
+  });
   if (!accept(res, MIN_CONF)) {
     scheduleExit(0);
     return;

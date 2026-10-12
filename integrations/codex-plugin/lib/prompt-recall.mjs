@@ -12,6 +12,7 @@
 // prompt, tagged by plane, without having to ask. Pull (the agent calling
 // memory.search itself) stays the correctness lever; this is the cost lever.
 
+import { redactHead } from "./loom-client.mjs";
 import { runIdFor } from "./run-hook.mjs";
 export const RECALL_SECTIONS = ["memories", "decisions", "procedures"];
 export const SEEN_CAP = 60;
@@ -90,7 +91,8 @@ export function recallBody(scope, payload, prompt, { budget = 600, topK = 3 } = 
     org: scope.org,
     namespace: scope.namespace,
     agent: scope.agent,
-    query: String(prompt || "").slice(0, 2000),
+    // Redacted like every text the plugin sends (search_trace_log may keep it).
+    query: redactHead(prompt || "", 2000).slice(0, 2000),
     mode: "task",
     token_budget: budget,
     top_k: topK,
