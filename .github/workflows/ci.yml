@@ -443,6 +443,12 @@ jobs:
           tests/integration/test_read_scope_isolation.py
           tests/integration/test_me_setup_mcp_config.py
           tests/integration/test_onboard_tenant.py
+          tests/integration/test_session_briefs.py
+          tests/integration/test_blacklist.py
+          tests/integration/test_conflict_read_cost.py
+          tests/integration/test_sensitivity_high_canary.py
+          tests/integration/test_run_begin_claims.py
+          tests/integration/test_vector_retire_race.py
       # The statement corpus: every builder's shapes through
       # EXPLAIN QUERY TREE on the migrated service, and shapes.txt in step
       # with the builders. ~10 s; a rejection here is a statement that would

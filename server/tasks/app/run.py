@@ -154,16 +154,15 @@ def _owned_by(row: RunLedgerRow, user: str) -> bool:
     return str(row.get("user_id") or "-") == user and _run_in_scope(row)
 
 
-def _claim_is_callers(claim: runs_store.RunClaim, user: str) -> bool:
-    return _owned_by({"user_id": claim.user_id, "session_id": claim.session_id}, user)
-
-
 async def _target_run(
     ch: Any, input: RunBeginInput, run_id: str, claim: runs_store.RunClaim | None
 ) -> tuple[str, RunLedgerRow | None]:
     """`run_id` and its row when the caller may (re)open it, else a fresh id.
     `claim` is this begin's claim on `run_id`, made before this is called."""
-    if claim is not None and not claim.won and not _claim_is_callers(claim, _user_of(input)):
+    claimant: RunLedgerRow = (
+        {"user_id": claim.user_id, "session_id": claim.session_id} if claim is not None else {}
+    )
+    if claim is not None and not claim.won and not _owned_by(claimant, _user_of(input)):
         # Another user's begin on this id is between its claim and its row.
         return uuid.uuid4().hex, None
     # Sequential: it must see the synchronous insert of a begin that has
@@ -185,10 +184,12 @@ def _user_of(input: RunBeginInput) -> str:
 
 async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:
     """Open a run. A caller-supplied run_id is claimed in Keeper, then checked
-    against its row, then written, then released. The claim only has to cover
-    two first begins racing: one that finds it held by another user, or that
-    takes it after the holder released it and so reads the holder's row, goes
-    to a fresh id. That is why the row read comes after the claim."""
+    against its row, then written, then released. A begin that finds the claim
+    held by another user goes to a fresh id. A begin that takes the claim after
+    the holder released it reads the holder's row, so it goes to a fresh id too:
+    that is why the row read comes after the claim. The claim is released only
+    once the row is written; a begin that fails first keeps it, so no other
+    user's begin can take the id before a row holds it."""
     ch = get_client()
     supplied = (input.run_id or "").strip()
     if not supplied:
@@ -197,12 +198,11 @@ async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:
     claim = await runs_store.claim_run(
         ch, input.org, input.namespace, supplied, _user_of(input), input.session_id or "-"
     )
-    try:
-        run_id, existing = await _target_run(ch, input, supplied, claim)
-        return await _open_run(ch, input, run_id, existing)
-    finally:
-        if claim is not None and claim.won:
-            await runs_store.delete_claim(ch, input.org, input.namespace, supplied)
+    run_id, existing = await _target_run(ch, input, supplied, claim)
+    opened = await _open_run(ch, input, run_id, existing)
+    if claim is not None and claim.won:
+        await runs_store.delete_claim(ch, input.org, input.namespace, supplied)
+    return opened
 
 
 async def _open_run(
@@ -414,8 +414,13 @@ async def handle_run_complete(input: RunCompleteInput) -> RunCompleteOutput:
     if outcome in ("positive", "negative") and session_id != "-":
         await _label_session(ch, existing, input, outcome, session_id)
 
-    written = await runs_store.written_keys(ch, input.org, input.namespace, input.run_id)
-    observations = await runs_store.observation_count(ch, input.org, input.namespace, input.run_id)
+    scope = request_scope()
+    written = await runs_store.written_keys(
+        ch, input.org, input.namespace, input.run_id, scope=scope
+    )
+    observations = await runs_store.observation_count(
+        ch, input.org, input.namespace, input.run_id, scope=scope
+    )
     recalled = await _recalled_keys(ch, input.org, input.namespace, input.run_id)
     retain_mode, retention = await _retain_run_rows(ch, input, now)
 
@@ -721,8 +726,13 @@ async def handle_run_get(input: RunGetInput) -> RunGetOutput:
     if existing is None:
         return RunGetOutput(found=False)
     run = _row_to_model(existing)
-    written = await runs_store.written_keys(ch, input.org, input.namespace, input.run_id)
-    observations = await runs_store.observation_count(ch, input.org, input.namespace, input.run_id)
+    scope = request_scope()
+    written = await runs_store.written_keys(
+        ch, input.org, input.namespace, input.run_id, scope=scope
+    )
+    observations = await runs_store.observation_count(
+        ch, input.org, input.namespace, input.run_id, scope=scope
+    )
     recalled = await _recalled_keys(ch, input.org, input.namespace, input.run_id)
     # The keys the plugin's hooks saw served under this session join the trace-derived
     # set (MCP reads are ledgered under the connection's own run and never reach the

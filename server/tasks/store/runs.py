@@ -132,12 +132,12 @@ async def probe_claims(ch: Any) -> None:
         log.warning("run claims: could not read system.tables: %s", e)
 
 
-def _keeper_failed(e: BaseException) -> None:
-    """The claim could not be written: run.begin falls back to the row check."""
+def _keeper_failed(e: BaseException, what: str = "Keeper claim failed") -> None:
+    """The claim could not be made: run.begin falls back to the row check."""
     global _keeper_error_logged
     if not _keeper_error_logged:
         _keeper_error_logged = True
-        log.warning("run.begin: Keeper claim failed, checking the run row only: %s", e)
+        log.warning("run.begin: %s, checking the run row only: %s", what, e)
     with provider_health.unrecorded():
         degradations.note("run_claims", "row_check_only", e)
 
@@ -149,8 +149,13 @@ async def claim_run(
     already holds it. None where the server has no Keeper or Keeper failed."""
     key = json.dumps([org, ns, run_id])
     try:
-        if not await _claims_available(ch):
-            return None
+        available = await _claims_available(ch)
+    except Exception as e:  # noqa: BLE001 — an unknown claims table falls back to the row check
+        _keeper_failed(e, "could not read system.tables for the claims table")
+        return None
+    if not available:
+        return None
+    try:
         await ch.execute(
             "INSERT INTO loom.agent_run_claims "
             "(claim_key, org, namespace, run_id, user_id, session_id, claimed_at) "
@@ -265,35 +270,39 @@ async def recent_run_heads(
 # ---------------------------------------------------------------- derivations
 
 
-async def written_keys(ch: Any, org: str, ns: str, run_id: str) -> list[str]:
-    """memory_keys written under this run_id. Episodic observations are
-    counted separately and the run's own reflection is reported as
+async def written_keys(ch: Any, org: str, ns: str, run_id: str, *, scope: ReadFilters) -> list[str]:
+    """memory_keys written under this run_id inside `scope`. Episodic observations
+    are counted separately and the run's own reflection is reported as
     `reflection_key`: neither is a fact the run produced."""
+    params: dict[str, Any] = {"org": org, "ns": ns, "rid": run_id, "lim": DERIVED_LIMIT}
+    in_scope = scope_and(scope, params)
     rows = await ch.query_all(
-        """
+        f"""
         SELECT DISTINCT memory_key
         FROM loom.memory FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND run_id = {rid:String}
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND run_id = {{rid:String}}
           AND memory_type NOT IN ('episodic', 'reflection')
-          AND tombstoned_at IS NULL
+          AND tombstoned_at IS NULL{in_scope}
         ORDER BY memory_key
-        LIMIT {lim:UInt32}
+        LIMIT {{lim:UInt32}}
         """,
-        params={"org": org, "ns": ns, "rid": run_id, "lim": DERIVED_LIMIT},
+        params=params,
     )
     return [str(r["memory_key"]) for r in rows if r.get("memory_key")]
 
 
-async def observation_count(ch: Any, org: str, ns: str, run_id: str) -> int:
+async def observation_count(ch: Any, org: str, ns: str, run_id: str, *, scope: ReadFilters) -> int:
+    params: dict[str, Any] = {"org": org, "ns": ns, "rid": run_id}
+    in_scope = scope_and(scope, params)
     row = await ch.query_one(
-        """
+        f"""
         SELECT count() AS n FROM loom.memory FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND run_id = {rid:String} AND memory_type = 'episodic'
-          AND tombstoned_at IS NULL
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND run_id = {{rid:String}} AND memory_type = 'episodic'
+          AND tombstoned_at IS NULL{in_scope}
         """,
-        params={"org": org, "ns": ns, "rid": run_id},
+        params=params,
     )
     return int((row or {}).get("n") or 0)
 

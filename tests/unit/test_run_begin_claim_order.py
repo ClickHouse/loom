@@ -14,6 +14,7 @@ import asyncio
 import contextvars
 import itertools
 import logging
+import random
 from typing import Any
 
 import pytest
@@ -194,6 +195,49 @@ def test_a_server_made_or_fresh_id_is_never_claimed(ledger) -> None:
 
     inserts, run_id = contextvars.Context().run(lambda: asyncio.run(go()))
     assert inserts == 1 and run_id != "shared"
+
+
+def _three_begins_with_a_failed_insert(order: str, rows: dict, state: dict) -> dict[str, str]:
+    """A (user U) holds the claim and its row insert fails; C is U again, B is V."""
+
+    async def go() -> dict[str, str]:
+        sched = _Schedule(order)
+        state["ch"] = _KeeperCH(sched)
+
+        async def safe(me: str, user: str) -> tuple[str, str]:
+            try:
+                return me, await _begin(sched, me, user)
+            except RuntimeError:
+                return me, ""
+
+        done = await asyncio.gather(safe("A", "U"), safe("B", "V"), safe("C", "U"))
+        return dict(done)
+
+    return contextvars.Context().run(lambda: asyncio.run(go()))
+
+
+def test_a_failed_begin_keeps_its_claim_so_no_other_user_takes_the_id(ledger, monkeypatch) -> None:
+    rows, state = ledger
+    real = runs_store.insert_runs
+
+    async def insert_runs(ch, new):
+        if _who.get() == "A":
+            await ch.sched.turn()
+            raise RuntimeError("insert failed")
+        await real(ch, new)
+
+    monkeypatch.setattr(runs_store, "insert_runs", insert_runs)
+    users = {"A": "U", "B": "V", "C": "U"}
+    rng = random.Random(25)
+    orders = ["ACCAAABBCBCB"] + ["".join(rng.choice("ABC") for _ in range(12)) for _ in range(3000)]
+    for order in orders:
+        rows.clear()
+        runs_store._claims_atomic = None
+        ids = _three_begins_with_a_failed_insert(order, rows, state)
+        on_shared = {users[me] for me, run_id in ids.items() if run_id == "shared"}
+        assert len(on_shared) <= 1, (order, ids)
+        if on_shared:
+            assert rows["shared"]["user_id"] in on_shared, (order, ids, rows["shared"])
 
 
 class _BrokenKeeperCH(_KeeperCH):

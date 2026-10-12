@@ -501,3 +501,29 @@ def test_procedural_memories_used_land_a_procedure_run(env, monkeypatch) -> None
         )
     )
     assert out.procedure_runs_recorded == 0 and recorded == []
+
+
+def test_a_narrowed_runs_written_keys_and_observations_stay_in_its_scope() -> None:
+    import asyncio
+
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
+    from server.tasks.store import runs as runs_store
+
+    class _CH:
+        sql: list[str] = []
+
+        async def query_all(self, sql, params=None):
+            self.sql.append(sql)
+            return []
+
+        async def query_one(self, sql, params=None):
+            self.sql.append(sql)
+            return {"n": 0}
+
+    only_u = ReadFilters(scope="own_user", user_id="u", session_id=None)
+    for scope, bounded in ((only_u, True), (WHOLE_NAMESPACE, False)):
+        ch = _CH()
+        ch.sql = []
+        asyncio.run(runs_store.written_keys(ch, "o", "n", "r", scope=scope))
+        asyncio.run(runs_store.observation_count(ch, "o", "n", "r", scope=scope))
+        assert all(("scope_uid" in s) is bounded for s in ch.sql), ch.sql
