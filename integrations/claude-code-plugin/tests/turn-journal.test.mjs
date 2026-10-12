@@ -75,3 +75,9 @@ test("appendTurn / readJournal round-trip in a session file; paths hash the sess
   assert.equal(readJournalCursor("sess/1", { dir }), 2);
   assert.deepEqual(readJournal("other", { dir }), []);
 });
+
+test("journalRow redacts before it clips, so a secret on the cut is still found", () => {
+  const secret = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
+  const row = journalRow("user", "x ".repeat((JOURNAL_MAX_CHARS - 10) / 2) + secret);
+  assert.ok(!row.content.includes(secret.slice(4, 10)), row.content.slice(-40));
+});

@@ -122,3 +122,13 @@ test("the recalled stash accumulates per session and reads back deduped", () => 
   assert.deepEqual(readRecalledStash("sess-1", tmp), ["coffee_type", "where_i_live"]);
   assert.deepEqual(readRecalledStash("sess-2", tmp), [], "another session sees nothing");
 });
+
+test("run.begin and run.complete bodies carry no secret the session typed", () => {
+  const secret = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
+  const begin = JSON.stringify(beginBody(scope, { session_id: "s1" }, `deploy with ${secret}`));
+  const done = JSON.stringify(completeBody(scope, { session_id: "s1", reason: "exit" }, `used ${secret}`));
+  for (const body of [begin, done]) {
+    assert.ok(!body.includes(secret.slice(4)), body);
+    assert.ok(body.includes("[redacted]"), body);
+  }
+});

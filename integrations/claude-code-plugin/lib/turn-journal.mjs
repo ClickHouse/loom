@@ -17,6 +17,7 @@
 
 import fs from "node:fs";
 import os from "node:os";
+import { redactSecrets } from "./loom-client.mjs";
 import { readCursor, readPrivateFile, sessionStatePath, writePrivateFile } from "./tmp-state.mjs";
 
 export const JOURNAL_MAX_CHARS = 8000;
@@ -32,7 +33,8 @@ export function journalCursorPath(sessionId, dir = os.tmpdir()) {
 
 /** One journal row from a role + text, or null when there is nothing to keep. */
 export function journalRow(role, content, at = new Date().toISOString()) {
-  const text = String(content || "").trim();
+  // Redact before the cut, so a clipped secret cannot slip past its pattern.
+  const text = redactSecrets(content).trim();
   if (!text) return null;
   const r = role === "assistant" ? "assistant" : "user";
   return { role: r, content: text.length > JOURNAL_MAX_CHARS ? text.slice(0, JOURNAL_MAX_CHARS) : text, at };

@@ -11,7 +11,7 @@
 import os from "node:os";
 import path from "node:path";
 
-import { contentText, hookClient, runPrefixFor } from "./loom-client.mjs";
+import { contentText, hookClient, redactSecrets, runPrefixFor } from "./loom-client.mjs";
 import { readPrivateFile, writeJsonFile } from "./tmp-state.mjs";
 
 const GOAL_MAX = 2000;
@@ -27,7 +27,7 @@ export function runIdFor(sessionId, client = hookClient()) {
 
 /** Body for run.begin from the first UserPromptSubmit of a session. */
 export function beginBody(scope, payload, prompt) {
-  const text = String(prompt || "").trim();
+  const text = redactSecrets(String(prompt || "")).trim();
   return {
     org: scope.org,
     namespace: scope.namespace,
@@ -75,7 +75,7 @@ export function completeBody(scope, payload, finalText, env = process.env, recal
     namespace: scope.namespace,
     run_id: runIdFor(payload.session_id),
     status: statusFor(payload.reason),
-    final_response: String(finalText || "").slice(0, FINAL_MAX),
+    final_response: redactSecrets(finalText).slice(0, FINAL_MAX),
     outcome: "none",
     metadata: { session_end_reason: String(payload.reason || "") },
   };
