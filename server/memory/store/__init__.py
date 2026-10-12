@@ -39,6 +39,7 @@ from server.memory.store.dedup import (
     find_orphan_duplicates,
     find_row_by_key_namespace,
     get_canonical_row,
+    live_ids_in_scope,
     status_by_keys,
     superseded_successors,
 )
@@ -220,6 +221,7 @@ __all__ = [
     "list_by_namespace",
     "list_history",
     "live_embedding_rows_for_key",
+    "live_ids_in_scope",
     "live_shared_embedding_rows_for_key",
     "live_source_count",
     "MEMORY_PERSISTED_COLS",

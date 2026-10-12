@@ -128,8 +128,8 @@ async def shown_successors(org: str, namespace: str, rows: list[Any]) -> dict[st
         return ids
     import server.memory.store as memory_repo
 
-    visible = await memory_repo.canonical_rows_by_ids(
+    # Any live status: a successor that is itself superseded is still a row this read sees.
+    seen = await memory_repo.live_ids_in_scope(
         org, [namespace], [s for s in ids.values() if s], scope=request_scope()
     )
-    seen = {str(v.canonical_id) for v in visible}
     return {mid: (s if s in seen else "") for mid, s in ids.items()}

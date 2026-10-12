@@ -393,6 +393,9 @@ async def _memory_finders(ch: RecordingCH, c: dict[str, Any]) -> None:
         ORG, [NS], ["00000000-0000-0000-0000-000000000001"], scope=dup_scope, ch=ch
     )
     await M.superseded_successors(ORG, [NS], ["k1"], scope=dup_scope, ch=ch)
+    await M.live_ids_in_scope(
+        ORG, [NS], ["00000000-0000-0000-0000-000000000001"], scope=dup_scope, ch=ch
+    )
     await M.find_duplicate_pairs(ORG, NS, key_prefix="user_" if c["vector"] else "", ch=ch)
     await M.embedding_mirror_for_keys(ORG, NS, ["k1"], ch=ch)
     await M.divergent_namespaces(ORG, since_days=7 if c["vector"] else 0, ch=ch)
