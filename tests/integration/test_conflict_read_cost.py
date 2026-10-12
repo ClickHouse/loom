@@ -137,6 +137,9 @@ async def test_a_narrowed_writers_conflict_statements_read_a_bounded_slice(ch: A
         assert len(qs) == 1, name
         q = qs[0]
         print(f"{name}: {q['read_rows']} rows, {q['read_bytes']} B, {q['memory_usage']} B mem")
-        # A whole-namespace read is `total_rows` rows and `vector_bytes` of vectors.
-        assert int(q["read_bytes"]) < vector_bytes / 5, name
+        # A whole-namespace read is `total_rows` rows and `vector_bytes` of vectors. The
+        # pinned arms read whole granules around every pinned key (every 50th row here),
+        # so their share depends on the part layout; the regression read all of it.
+        bound = vector_bytes / 5 if name == "batched candidates" else vector_bytes / 2
+        assert int(q["read_bytes"]) < bound, name
     assert int(kinds["batched candidates"][0]["read_rows"]) < total_rows / 5
