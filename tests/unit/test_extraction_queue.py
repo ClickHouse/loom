@@ -519,15 +519,20 @@ async def test_extraction_status_counts_pending_and_failed(
     assert [b.queue_id for b in out.batches] == ["q1", "q2", "q3"]
     assert captured["queue_id"] is None and captured["status"] is None
     assert captured["agent"] == "*"
+    assert captured["scope"] == WHOLE_NAMESPACE  # the handler resolves and passes it
 
 
 def test_extraction_status_for_a_user_bound_token_lists_only_its_users_batches() -> None:
     import asyncio
 
+    from server.identity.app.request_scope import request_scope
+
     ch = StubCH()
     _in_context(
         _pinned_auth("u1"),
-        lambda: asyncio.run(q.list_status(org="o", namespace="n", user_id="u2", ch=ch)),
+        lambda: asyncio.run(
+            q.list_status(org="o", namespace="n", scope=request_scope(), user_id="u2", ch=ch)
+        ),
     )
     sql, params = ch.query_all_calls[0]
     assert "user_id = {scope_uid:String}" in sql and params["scope_uid"] == "u1"

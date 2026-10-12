@@ -568,9 +568,9 @@ def test_writes_aimed_at_vs_rows_never_answer_or_change_them(
 def test_a_sweep_by_another_user_neither_removes_nor_counts_vs_rows(
     control_plane_url: str, seed: _Seed, tokens: dict[str, str], ch_client: Any
 ) -> None:
-    """W adds a pattern holding the first chars of V's nonce with sweep=true, then
-    sweeps with it again: V's rows stay live, and both counts are 0, as for a
-    pattern nobody's content holds (so the count is no substring oracle)."""
+    """W adds a pattern holding the first chars of V's nonce with sweep=true: V's rows
+    stay live, and the count is 0, as for a pattern nobody's content holds (so the
+    count is no substring oracle)."""
 
     def _stable() -> dict[str, tuple[Any, ...]] | None:
         first = _v_rows(ch_client, seed)
@@ -586,14 +586,7 @@ def test_a_sweep_by_another_user_neither_removes_nor_counts_vs_rows(
     )
     try:
         assert added["swept"] == 0 and not added["swept_truncated"], added
-        swept = _write(
-            control_plane_url,
-            tokens["pinned_w"],
-            "blacklist.sweep",
-            {**w, "pattern_id": added["pattern_id"]},
-        )
-        assert (swept["matched"], swept["tombstoned"]) == (0, 0), swept
-        assert seed.nonce_v not in str(added) + str(swept)
+        assert seed.nonce_v not in str(added)
     finally:
         # The pattern would also refuse and hide V's nonce for the tests after this one.
         _write(
@@ -605,27 +598,26 @@ def test_a_sweep_by_another_user_neither_removes_nor_counts_vs_rows(
     assert _v_rows(ch_client, seed) == before
 
 
-def test_another_users_blacklist_pattern_is_neither_listed_nor_removed(
+def test_a_narrowed_token_cannot_list_remove_or_sweep_patterns(
     control_plane_url: str, seed: _Seed, tokens: dict[str, str]
 ) -> None:
-    """W lists without V's pattern, reason or id, and removing it by id is a miss. The
-    pattern still refuses W's write: a pattern is a Refuse for the whole namespace."""
+    """A pattern has no user axis, so W's list, remove and sweep by id are refused. V's
+    pattern still refuses W's write (a namespace-wide Refuse), and the 422 names
+    neither its id nor V's reason."""
     w = {"org": seed.org, "namespace": seed.ns}
-    listed = _post(control_plane_url, tokens["pinned_w"], "blacklist.list", w)
-    assert listed.status_code == 200, listed.text
-    for secret in (seed.pattern_v, seed.nonce_v, seed.pattern_id_v):
-        assert secret not in listed.text, listed.text[:300]
-    gone = _write(
-        control_plane_url,
-        tokens["pinned_w"],
-        "blacklist.remove",
-        {"org": seed.org, "pattern_id": seed.pattern_id_v},
-    )
-    assert gone["removed"] is False, gone
-    # V's own token and a namespace-wide one still see it.
-    for tok in (seed.token_v, tokens["namespace"]):
-        r = _post(control_plane_url, tok, "blacklist.list", w)
-        assert r.status_code == 200 and seed.pattern_id_v in r.text, r.text[:300]
+    by_id = {"pattern_id": seed.pattern_id_v}
+    for op, body in (
+        ("blacklist.list", w),
+        ("blacklist.remove", {"org": seed.org, **by_id}),
+        ("blacklist.sweep", {**w, **by_id}),
+    ):
+        r = _post(control_plane_url, tokens["pinned_w"], op, body)
+        assert r.status_code == 403, f"{op}: {r.status_code} {r.text[:300]}"
+        for secret in (seed.pattern_v, seed.nonce_v, seed.pattern_id_v):
+            assert secret not in r.text, f"{op}: {r.text[:300]}"
+    # A namespace-wide token still sees it.
+    r = _post(control_plane_url, tokens["namespace"], "blacklist.list", w)
+    assert r.status_code == 200 and seed.pattern_id_v in r.text, r.text[:300]
     r = _post(
         control_plane_url,
         tokens["pinned_w"],
@@ -639,6 +631,7 @@ def test_another_users_blacklist_pattern_is_neither_listed_nor_removed(
         },
     )
     assert r.status_code == 422 and "BLACKLISTED" in r.text, f"{r.status_code} {r.text[:300]}"
+    assert seed.nonce_v not in r.text and seed.pattern_id_v not in r.text, r.text[:300]
 
 
 def test_pinned_users_keep_their_own_brief_under_one_key(

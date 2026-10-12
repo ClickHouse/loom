@@ -71,17 +71,6 @@ async def test_list_for_scope_global_filters_to_scope_field() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_for_scope_filters_by_author_when_asked() -> None:
-    ch = StubCH()
-    ch.query_all_returns.extend([[], []])
-    await list_for_scope("clickhouse", "ns", created_by="human:w", ch=ch)
-    await list_for_scope("clickhouse", "ns", ch=ch)
-    (sql, params), (plain, _) = ch.query_all_calls
-    assert "created_by = {author:String}" in sql and params["author"] == "human:w"
-    assert "created_by =" not in plain
-
-
-@pytest.mark.asyncio
 async def test_find_active_pattern_falls_back_to_global() -> None:
     """The blacklist.remove path tries org-scoped lookup first, then
     a global one. Each call here is org-or-not-supplied."""

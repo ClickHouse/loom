@@ -90,25 +90,14 @@ def _stamped_author(body_value: str) -> str:
     return writer_actor(fallback=body_value)
 
 
-def _narrowed_author() -> str | None:
-    """The author whose patterns a token narrowed to one user may list and remove (its
-    own stamp, as `created_by` holds it; "" owns nothing). None for a namespace-wide
-    caller. Another user's pattern text and reason are that user's content."""
-    from server.identity.app.request_scope import request_narrowed
-    from server.memory.app.provenance import writer_actor
-
-    if not request_narrowed():
-        return None
-    return writer_actor()
-
-
 async def _require_admin_if_narrowed(org: str, namespace: str) -> None:
     """A pattern refuses every user's writes in the namespace, so a token narrowed to
     one user needs ADMIN there to add one; a namespace-wide WRITER keeps the right."""
     from server.auth.authz import Role, row_in_scope
     from server.core.errors import AuthInsufficientError
+    from server.identity.app.request_scope import request_narrowed
 
-    if _narrowed_author() is None:
+    if not request_narrowed():
         return
     if not await row_in_scope(org, namespace, Role.ADMIN):
         raise AuthInsufficientError(
@@ -237,19 +226,13 @@ async def handle_blacklist_sweep(input: BlacklistSweepInput) -> BlacklistSweepOu
 async def handle_blacklist_list(
     input: BlacklistListInput,
 ) -> BlacklistListOutput:
-    author = _narrowed_author()
-    if author == "":
-        return BlacklistListOutput(rows=[])
+    # A token narrowed to one user never reaches here (NARROW_SAFE_OPS).
     rows = await blacklist_repo.list_for_scope(
         input.org,
         input.namespace,
         scope=input.scope,
-        created_by=author,
         limit=input.limit,
     )
-    # Hits count refused writes from every user, so a pattern's hit count would tell a
-    # token narrowed to one user what other users tried to write.
-    hide_hits = author is not None
     return BlacklistListOutput(
         rows=[
             _BlacklistRow(
@@ -261,8 +244,8 @@ async def handle_blacklist_list(
                 scope=r["scope"],
                 reason=r["reason"],
                 created_by=r["created_by"],
-                hit_count=0 if hide_hits else int(r["hit_count"]),
-                last_hit_at=None if hide_hits else r.get("last_hit_at"),
+                hit_count=int(r["hit_count"]),
+                last_hit_at=r.get("last_hit_at"),
                 created_at=r["created_at"],
             )
             for r in rows
@@ -285,10 +268,6 @@ async def handle_blacklist_remove(
     now = naive_utc_now_seconds()
     existing = await blacklist_repo.find_active_pattern(input.pattern_id)
     if existing is None:
-        return BlacklistRemoveOutput(removed=False)
-    author = _narrowed_author()
-    if author is not None and (not author or existing.get("created_by") != author):
-        # Another user's pattern: hidden from a narrowed token, as if absent.
         return BlacklistRemoveOutput(removed=False)
     row_org = str(existing.get("org") or "")
     row_ns = str(existing.get("namespace") or "")
