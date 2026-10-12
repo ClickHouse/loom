@@ -97,17 +97,19 @@ async def insert_runs(ch: Any, rows: list[RunLedgerRow]) -> None:
 # Whether loom.agent_run_claims exists here (its migration ran on a server with a
 # Keeper): None until the boot probe or the first run.begin asks.
 _claims_atomic: bool | None = None
-# A Keeper error on a claim is logged once per process, then only noted.
-_keeper_errors_logged: set[str] = set()  # one warning per kind of failure
+# A Keeper error is logged once per kind of failure, then only noted.
+_keeper_errors_logged: set[str] = set()
 
 
 @dataclass(frozen=True)
 class RunClaim:
-    """Who holds the claim on a run id. `won`: this call's insert made it."""
+    """Who holds the claim on a run id. `won`: this call's insert made it.
+    `unreadable`: the key is held but its holder could not be read."""
 
     won: bool
     user_id: str
     session_id: str
+    unreadable: bool = False
 
 
 def claims_atomic() -> bool | None:
@@ -145,7 +147,8 @@ async def claim_run(
     ch: Any, org: str, ns: str, run_id: str, user_id: str, session_id: str
 ) -> RunClaim | None:
     """Claim (org, ns, run_id) for this user and session, or read the claim that
-    already holds it. None where the server has no Keeper or Keeper failed."""
+    already holds it. None where the server has no Keeper, Keeper failed, or the
+    claim was released again before it could be read: the row check decides then."""
     key = json.dumps([org, ns, run_id])
     try:
         available = await _claims_available(ch)
@@ -178,8 +181,10 @@ async def claim_run(
     return await _claim_holder(ch, key)
 
 
-async def _claim_holder(ch: Any, key: str) -> RunClaim:
-    """Who holds `key`. A key that exists but cannot be read is never the caller's."""
+async def _claim_holder(ch: Any, key: str) -> RunClaim | None:
+    """Who holds `key`, after our insert found it taken. None when the key is gone
+    again (its holder wrote its row and released it): the row check then decides.
+    A key that cannot be read is never the caller's."""
     try:
         row = await ch.query_one(
             "SELECT user_id, session_id FROM loom.agent_run_claims WHERE claim_key = {k:String}",
@@ -189,9 +194,9 @@ async def _claim_holder(ch: Any, key: str) -> RunClaim:
         log.debug("run.begin: claim %s not readable: %s", key, e)
         with provider_health.unrecorded():
             degradations.note("run_claims", "claim_unreadable", e)
-        row = None
+        return RunClaim(won=False, user_id="", session_id="", unreadable=True)
     if row is None:
-        return RunClaim(won=False, user_id="", session_id="")
+        return None
     return RunClaim(won=False, user_id=str(row["user_id"]), session_id=str(row["session_id"]))
 
 

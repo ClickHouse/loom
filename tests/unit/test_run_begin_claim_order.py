@@ -161,6 +161,26 @@ def test_two_users_first_begins_never_share_an_id_under_any_schedule(ledger) -> 
             assert rows[run_id]["user_id"] == user, (order, run_id)
 
 
+def test_two_begins_by_one_user_share_the_run_under_any_schedule(ledger) -> None:
+    """A hook retry: the second begin re-opens the first's run, never a second run,
+    whether it finds the claim held, released, or the row already written."""
+    rows, state = ledger
+    for order in _SCHEDULES:
+        rows.clear()
+        runs_store._claims_atomic = None
+
+        async def both(order: str = order) -> list[str]:
+            sched = _Schedule(order)
+            state["ch"] = ch = _KeeperCH(sched)
+            ids = list(await asyncio.gather(_begin(sched, "A", "U"), _begin(sched, "B", "U")))
+            assert ch.claims == {}, (order, ch.claims)
+            return ids
+
+        ids = contextvars.Context().run(lambda: asyncio.run(both()))
+        assert ids == ["shared", "shared"], (order, ids)
+        assert rows["shared"]["user_id"] == "U", order
+
+
 def test_a_finished_begin_leaves_no_claim_and_its_row_refuses_another_user(ledger) -> None:
     rows, state = ledger
 
