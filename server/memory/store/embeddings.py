@@ -6,7 +6,7 @@ override), and the status reconciliation against loom.memory.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
@@ -294,8 +294,8 @@ async def reemit_embedding_rows_for_keys(
     read and one committed insert per `batch` keys, instead of one of each
     per key (one-row parts from a sweep of ~1,000 keys a pass would dominate
     memory_embeddings' part count). Each key keeps its own overrides (a
-    `version` among them replaces the fresh one); a key listed twice takes the
-    last. Returns the rows re-emitted."""
+    `version` among them replaces the fresh one, and only rows older than it are
+    re-emitted); a key listed twice takes the last. Returns the rows re-emitted."""
     ch = ch or _default_client()
     by_key: dict[EmbeddingKey, dict[str, Any]] = {k: dict(o) for k, o in items}
     keys = list(by_key)
@@ -306,6 +306,10 @@ async def reemit_embedding_rows_for_keys(
         for r in rows:
             overrides = by_key.get(_embedding_key(r))
             if overrides is None:
+                continue
+            pinned = overrides.get("version")
+            if pinned is not None and int(r.get("version") or 0) >= int(pinned):
+                # A newer write's row: a copy at the older pinned version must not retire it.
                 continue
             out.append(
                 build_embedding_row(
@@ -459,10 +463,11 @@ async def tombstone_vectors_of(previous: Any, *, version: int, ch: _CHClient | N
 async def retire_vectors_for_keys(
     items: list[tuple[EmbeddingKey, int]], *, ch: _CHClient | None = None
 ) -> int:
-    """Tombstone every live vector of each key: its memory_embeddings rows and its
-    entity_vectors rows. The embedding tombstones take the given version, the one of
-    the unembedded memory row that replaces them, so a concurrent embedded write that
-    lands a newer version keeps its vector. Returns the memory_embeddings rows retired."""
+    """Tombstone the live vectors each key had before the given version, the one of
+    the unembedded memory row that replaces them: its memory_embeddings rows below
+    that version and its entity_vectors rows created no later than that second. A
+    concurrent embedded write that lands a newer version keeps its vectors. Returns
+    the memory_embeddings rows retired."""
     from server.core.datetimes import naive_utc_now
 
     if not items:
@@ -472,34 +477,64 @@ async def retire_vectors_for_keys(
     n = await reemit_embedding_rows_for_keys(
         [(key, {"tombstoned_at": now, "version": int(v)}) for key, v in items], ch=ch
     )
-    await tombstone_entity_vectors_for_keys([key for key, _ in items], ts=now, ch=ch)
+    # entity_vectors has no version, only a created_at in whole seconds.
+    cutoffs = {key: _version_second(v) for key, v in items}
+    await tombstone_entity_vectors_for_keys(list(cutoffs), ts=now, ch=ch, created_by=cutoffs)
     return n
 
 
+def _version_second(version: int) -> datetime:
+    """The naive-UTC second a next_version() stamp (epoch ns) was drawn in."""
+    return datetime.fromtimestamp(int(version) // 1_000_000_000, UTC).replace(tzinfo=None)
+
+
+def _naive_utc(ts: datetime) -> datetime:
+    return ts.astimezone(UTC).replace(tzinfo=None) if ts.tzinfo else ts
+
+
 async def tombstone_entity_vectors_for_keys(
-    keys: list[EmbeddingKey], *, ts: datetime, ch: _CHClient | None = None
+    keys: list[EmbeddingKey],
+    *,
+    ts: datetime,
+    ch: _CHClient | None = None,
+    created_by: dict[EmbeddingKey, datetime] | None = None,
 ) -> int:
     """Re-emit the live loom.entity_vectors rows of each key with `tombstoned_at`
     (the table is RMT on created_at, so the copy keeps it and wins as the later
     insert). That table has no session column: a key's rows are matched on
-    (agent, user_id, memory_key). One read per namespace. Returns rows re-emitted."""
+    (agent, user_id, memory_key). `created_by` keeps a key's rows created after its
+    cutoff (a newer write's). One read per namespace. Returns rows re-emitted."""
     from server.memory.store.sweeps import entity_vectors_live_sql
 
     ch = ch or _default_client()
-    by_ns: dict[tuple[str, str], set[tuple[str, str, str]]] = {}
-    for org, ns, agent, user_id, _session, key in keys:
-        by_ns.setdefault((org, ns), set()).add((agent, user_id, key))
+    by_ns: dict[tuple[str, str], dict[tuple[str, str, str], datetime | None]] = {}
+    for full in keys:
+        org, ns, agent, user_id, _session, key = full
+        wanted = by_ns.setdefault((org, ns), {})
+        cutoff = created_by.get(full) if created_by else None
+        prior = wanted.get((agent, user_id, key))
+        if prior is not None and cutoff is not None:
+            cutoff = max(prior, cutoff)  # two sessions share these rows: retire the most
+        wanted[(agent, user_id, key)] = cutoff
     written = 0
     for (org, ns), wanted in by_ns.items():
         live = await ch.query_all(
             entity_vectors_live_sql(),
             params={"org": org, "ns": ns, "keys": sorted({k for _, _, k in wanted})},
         )
-        rows = [
-            {**r, "tombstoned_at": ts}
-            for r in live
-            if (str(r.get("agent")), str(r.get("user_id")), str(r.get("memory_key"))) in wanted
-        ]
+        rows = []
+        for r in live:
+            ident = (str(r.get("agent")), str(r.get("user_id")), str(r.get("memory_key")))
+            if ident not in wanted:
+                continue
+            cutoff, created = wanted[ident], r.get("created_at")
+            if (
+                cutoff is not None
+                and isinstance(created, datetime)
+                and _naive_utc(created) > cutoff
+            ):
+                continue
+            rows.append({**r, "tombstoned_at": ts})
         if rows:
             await ch.insert(
                 "loom.entity_vectors",

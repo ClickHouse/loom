@@ -4,8 +4,9 @@ UPDATE — and no statement under server/ UPDATEs the vector table."""
 
 from __future__ import annotations
 
+import asyncio
 import re
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -174,3 +175,114 @@ def test_nothing_under_server_updates_the_vector_table() -> None:
         if _UPDATE_RE.search(text):
             offenders.append(str(path.relative_to(ROOT)))
     assert offenders == [], offenders
+
+
+@pytest.mark.asyncio
+async def test_retiring_leaves_a_newer_writes_vectors_alone() -> None:
+    """Rows a newer write landed after the retiring version was drawn (an embedding
+    at or above it, an entity vector created in a later second) are not re-emitted."""
+    v = 1_800_000_000 * 10**9 + 5  # drawn at second 1_800_000_000
+    second = datetime.fromtimestamp(1_800_000_000, UTC).replace(tzinfo=None)
+    newer_emb = {**_LIVE, "embedding_model": "m2", "version": v + 1}
+    ent = {"org": "o", "namespace": "n", "agent": "a", "user_id": "u", "memory_key": "k"}
+    old_ent = {**ent, "entity_text": "old", "created_at": second}
+    new_ent = {**ent, "entity_text": "new", "created_at": second + timedelta(seconds=1)}
+    ch = _VectorsCH([dict(_LIVE), newer_emb], [old_ent, new_ent])
+    assert await M.retire_vectors_for_keys([(("o", "n", "a", "u", "s", "k"), v)], ch=ch) == 1
+    (_, emb_rows, _), (_, ent_rows, _) = ch.insert_calls
+    assert [r["embedding_model"] for r in emb_rows] == ["m"]
+    assert [r["entity_text"] for r in ent_rows] == ["old"]
+
+
+class _RMTCH:
+    """A memory_embeddings / entity_vectors store that answers reads as FINAL does
+    (per sort key the highest version, or the later insert on a tie)."""
+
+    def __init__(self) -> None:
+        self.emb: list[dict[str, Any]] = []
+        self.ent: list[dict[str, Any]] = []
+
+    @staticmethod
+    def _final(rows: list[dict[str, Any]], key: Any, ver: Any) -> list[dict[str, Any]]:
+        best: dict[Any, dict[str, Any]] = {}
+        for r in rows:
+            if key(r) not in best or ver(r) >= ver(best[key(r)]):
+                best[key(r)] = r
+        return [r for r in best.values() if r.get("tombstoned_at") is None]
+
+    def live_emb(self) -> list[dict[str, Any]]:
+        return self._final(
+            self.emb,
+            lambda r: (r["agent"], r["embedding_model"], r["memory_key"]),
+            lambda r: r["version"],
+        )
+
+    def live_ent(self) -> list[dict[str, Any]]:
+        return self._final(
+            self.ent, lambda r: (r["entity_text"], r["memory_key"]), lambda r: r["created_at"]
+        )
+
+    async def query_all(self, sql, params=None):
+        return [dict(r) for r in (self.live_ent() if "entity_vectors" in sql else self.live_emb())]
+
+    async def insert(self, table, rows, settings=None):
+        (self.ent if table == "loom.entity_vectors" else self.emb).extend(dict(r) for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_an_older_high_set_paused_after_its_insert_does_not_retire_a_newer_vector(
+    monkeypatch,
+) -> None:
+    """Writer A re-sets the key as 'high' and pauses after its memory insert; writer B
+    lands a newer embedded version (its vector and an entity vector a second later);
+    A then retires. B's vectors stay live, the old generation's are retired."""
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import set_commit
+
+    ch = _RMTCH()
+    v_old = M.next_version()
+    ent = {"org": "o", "namespace": "n", "agent": "a", "user_id": "u", "memory_key": "k"}
+    a_second = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    ch.emb.append({**_LIVE, "version": v_old})
+    ch.ent.append({**ent, "entity_text": "old", "created_at": a_second - timedelta(seconds=5)})
+    v_a = M.next_version()
+
+    async def insert_then_writer_b_lands(rows, **_kw):
+        assert rows[0]["version"] == v_a
+        await asyncio.sleep(0)  # A pauses here; B's whole write lands
+        ch.emb.append({**_LIVE, "content_excerpt": "B", "version": M.next_version()})
+        ch.ent.append({**ent, "entity_text": "new", "created_at": a_second + timedelta(seconds=1)})
+        return 1
+
+    async def no_projection(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(set_commit, "insert_memory_versions", insert_then_writer_b_lands)
+    monkeypatch.setattr(set_commit, "_project_set_entities_fail_open", no_projection)
+    existing = SimpleNamespace(
+        **{
+            k: _LIVE[k]
+            for k in ("org", "namespace", "agent", "user_id", "session_id", "memory_key")
+        },
+        memory_type="semantic",
+        sensitivity="",
+    )
+    w = set_commit._SetWrite(
+        input=MemorySetInput(
+            org="o",
+            namespace="n",
+            agent="a",
+            user_id="u",
+            session_id="s",
+            memory_key="k",
+            value="secret",
+        ),
+        version=v_a,
+        retyped_from="",
+        existing=existing,
+        expires_at=None,
+        memory_row={"version": v_a},
+    )
+    await set_commit._set_plain_insert(w, ch)
+    assert [r["content_excerpt"] for r in ch.live_emb()] == ["B"]
+    assert [r["entity_text"] for r in ch.live_ent()] == ["new"]
