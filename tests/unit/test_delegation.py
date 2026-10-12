@@ -684,14 +684,16 @@ async def test_read_scope_and_write_namespaces_are_inherited(world) -> None:
 @pytest.mark.asyncio
 async def test_a_scoped_child_cannot_write_outside_the_parents_write_claim(world) -> None:
     """Reads a and b, writes only a: a scoped writer child for b is refused at
-    mint, and one that carries writer on b anyway is refused writing b."""
+    mint, one naming no role on b is minted viewer there, and one that carries
+    writer on b anyway is refused writing b."""
     parent = _login(
         creator="alice", parents=("login-1",), namespaces=("a", "b"), write_namespaces=("a",)
     )
     assert not await _reaches(parent, "b", Role.WRITER)
     assert "b" in await _refused(parent, {"b": "writer"}, scoped=True)
-    child = await _child(parent, {"b": None}, scoped=True)
-    assert child.ns_roles == (("b", "writer"),) and child.write_namespaces == ("a",)
+    child = await _child(parent, {"a": None, "b": None}, scoped=True)
+    assert child.ns_roles == (("a", "writer"), ("b", "viewer")), child.ns_roles
+    assert child.write_namespaces == ("a",)
     assert await _reaches(child, "b") and not await _reaches(child, "b", Role.WRITER)
     minted = _login(
         roles=(),
