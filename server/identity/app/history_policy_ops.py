@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from server.auth.context import current_auth
 from server.core.errors import ValidationError
 from server.identity.api.models_policy import (
     PolicyCheckInput,
@@ -22,9 +21,9 @@ from server.identity.api.models_policy import (
     PolicySetOutput,
 )
 from server.identity.app import history_policy as _policy
+from server.identity.app.request_scope import request_scope
 from server.identity.domain import policy_rules
 from server.identity.domain.policy_change import ChangeVerdict, classify_change
-from server.identity.domain.read_scope import request_read_filters
 from server.identity.store import policy as policy_repo
 from server.memory.app.provenance import writer_actor
 
@@ -63,7 +62,6 @@ async def _audit_widened(org: str, namespace: str, policy_id: str, reasons: list
 
 
 def _actor() -> str:
-    from server.auth.context import current_auth
 
     auth = current_auth()
     return auth.subject if auth is not None else ""
@@ -209,7 +207,7 @@ async def handle_policy_decisions(input: PolicyDecisionsInput) -> PolicyDecision
         input.namespace,
         limit=input.limit,
         decision=input.decision,
-        scope=request_read_filters(current_auth()),
+        scope=request_scope(),
     )
     return PolicyDecisionsOutput(
         rows=[

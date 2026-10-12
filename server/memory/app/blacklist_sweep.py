@@ -23,9 +23,9 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from server.auth.context import current_auth
 from server.core.datetimes import naive_utc_now
-from server.identity.domain.read_scope import request_read_filters, scope_and
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import scope_and
 
 log = logging.getLogger(__name__)
 
@@ -73,7 +73,7 @@ async def sweep_pattern(
     ch = ch or _default_client()
     where, params = sweep_where(pattern_type, scope, namespace)
     params.update({"org": org, "pat": pattern, "lim": int(limit) + 1})
-    where += scope_and(request_read_filters(current_auth()), params)
+    where += scope_and(request_scope(), params)
     try:
         rows = await ch.query_all(
             f"""
