@@ -130,6 +130,16 @@ function stop(env, payload) {
   });
 }
 
+// The detached flusher may still be writing its job file here when a test
+// ends, so the temp dir is removed best-effort.
+function removeTmp(dir) {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  } catch {
+    /* left for the OS to clear */
+  }
+}
+
 async function until(pred, ms = 8000) {
   const t0 = Date.now();
   while (Date.now() - t0 < ms) {
@@ -155,7 +165,7 @@ test("a Stop with more than fifty new turns sends fifty and leaves the rest for 
     assert.ok(await until(() => appended.length === 60), `after two Stops: ${appended.length}`);
     assert.deepEqual(new Set(appended).size, 60, "no turn sent twice, none skipped");
   });
-  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  removeTmp(dir);
 });
 
 test("a turn still being written when Stop fires is sent by the next Stop", async () => {
@@ -174,7 +184,7 @@ test("a turn still being written when Stop fires is sent by the next Stop", asyn
     await stop(env, payload);
     assert.ok(await until(() => appended.includes("a3")), `sent: ${appended.join(",")}`);
   });
-  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  removeTmp(dir);
 });
 
 test("a Stop redacts a secret in each turn it sends, from the transcript and from the event", async () => {
@@ -194,5 +204,5 @@ test("a Stop redacts a secret in each turn it sends, from the transcript and fro
       assert.ok(body.includes("[redacted]"), body);
     }
   });
-  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  removeTmp(dir);
 });
