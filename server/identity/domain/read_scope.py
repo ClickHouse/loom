@@ -1,30 +1,12 @@
-"""Read scope: how far one read may reach inside a namespace it holds.
+"""Read scope: how far one read may reach inside a namespace it holds
+(`namespace` | `own_user` | `own_session`). Why it exists and what each op does under it:
+docs/concepts/identities-and-namespaces.md#read-scope-inside-a-namespace.
 
-Membership is the read boundary (docs/concepts/identities-and-namespaces.md): a token that
-holds a namespace reads every row in it, whoever wrote it. That is the right
-shape for a team's shared memory. It is the wrong shape for one agent that
-serves many end users through one token, because a prompt from one user then
-retrieves — and can be induced to echo — another user's memories. A few dozen
-prompts can extract a large share of such a memory; user- and session-level
-isolation is the mitigation that works.
-
-Loom already stores `user_id` and `session_id` on every row and keeps both in
-the sort key of `loom.memory_embeddings`. This module turns them into a
-read-time bound:
-
-* the request asks for a scope (`namespace` | `own_user` | `own_session`);
-* the token may carry a `read_scope` claim, which is a ceiling — the request
-  may narrow further, never widen;
-* the token may carry a `read_user_id` claim, which pins the read to one end
-  user whatever the body says, and refuses a body that names another.
-
-The result is a pair of predicates (`user_id`, `session_id`) that every
-retrieval leg's WHERE carries (server/memory/domain/search_sql._build_where).
-
-Both transports resolve the scope once at admission
-(`server.transport.gates.read_scope`) and bind it for the request; every
-store reader that returns memory rows takes it as a required `scope`
-argument and adds `scope_where`'s predicates, so no op can skip it.
+* The token's `read_scope` claim is a ceiling: a request may narrow it, never widen it.
+* A `read_user_id` claim pins the read to one user and refuses a body naming another.
+* The result is a (`user_id`, `session_id`) pair of predicates. Both transports resolve it
+  once at admission (`server.transport.gates.read_scope`); every store reader of memory
+  rows takes it as a required `scope` argument, so no op can skip it.
 """
 
 from __future__ import annotations

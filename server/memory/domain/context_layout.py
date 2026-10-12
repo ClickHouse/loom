@@ -29,13 +29,13 @@ def escape_data(text: Any) -> str:
     return str(text or "").replace("<", "&lt;").replace(">", "&gt;")
 
 
-_LABEL_UNSAFE = re.compile(r'[\s\[\]=%"]')
+_LABEL_UNSAFE = re.compile(r'[\s\[\]=%",]')
 
 
 def label_part(text: Any) -> str:
-    """Stored text placed inside an item's label (a key, a name, a session id): whitespace,
-    brackets, `=`, `"` and `%` are percent-escaped, so it can neither close the label nor
-    add an attribute such as `by=`."""
+    """Stored text placed inside an item's label (a key, a name, a session id, an actor):
+    whitespace, brackets, `=`, `"`, `%` and `,` are percent-escaped, so it can neither close
+    the label, add an attribute such as `by=`, nor add an entry to a comma list."""
     return _LABEL_UNSAFE.sub(lambda m: "".join(f"%{b:02X}" for b in m[0].encode()), str(text))
 
 
@@ -46,8 +46,9 @@ def one_item(line: str) -> str:
 
 
 def author_label(actors: Any) -> str:
-    """` by=<actor>` for an item's writer(s): `unknown` when the row has none recorded."""
-    names = sorted({str(a) for a in (actors or []) if a})
+    """` by=<actor>` for an item's writer(s): `unknown` when the row has none recorded.
+    An actor carries a caller-chosen service-account name, so each one is escaped."""
+    names = sorted({label_part(a) for a in (actors or []) if a})
     return f" by={','.join(names[:3]) or 'unknown'}"
 
 
