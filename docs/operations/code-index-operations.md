@@ -263,7 +263,8 @@ dependency installs and the compiler-tier harnesses) inside one boundary built o
   prefix, `var/` under a system path), an empty mount covers it inside the sandbox.
   The install root is the exception, since the server's Python may run from it. A host
   whose Python prefix or a system path is, or sits inside, one of Loom's data paths
-  runs no sandboxed job: no empty mount could hide that data. The checkout (or the
+  runs no sandboxed job: no empty mount could hide that data, and `/v1/health` and
+  `loom doctor` report `repo_sandbox_layout_refused`. The checkout (or the
   bare mirror, for a fetch) and the output directory are writable, the checkout's
   `.git` and the harness scripts are read-only, and `/tmp` and `HOME` are a fresh
   directory removed after the job. No server environment, credentials, host `HOME`,

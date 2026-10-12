@@ -467,3 +467,13 @@ def test_a_refused_layout_before_the_probe_is_an_error_only_with_bwrap(
     assert _layout_codes(monkeypatch, tmp_path, None, bwrap_on_path=False) == warn
     assert _layout_codes(monkeypatch, tmp_path, True, bwrap_on_path=False) == error
 
+
+def test_the_layout_check_and_the_mount_refusal_read_one_list(tmp_path: Path, monkeypatch) -> None:
+    from server.settings import settings
+
+    (tmp_path / "blobs").mkdir()
+    monkeypatch.setattr(settings, "blob_dir", str(tmp_path / "blobs"))
+    monkeypatch.setattr(sandbox, "_own_mounts", lambda: [tmp_path / "blobs"])
+    assert "inside Loom's data" in sandbox.layout_refusal()
+    with pytest.raises(PermissionError):
+        sandbox._readonly_paths({"PATH": "/usr/bin"}, [])

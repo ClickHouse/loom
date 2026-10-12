@@ -291,7 +291,7 @@ def _readonly_paths(env: Mapping[str, str], readonly: Sequence[Path]) -> list[Pa
     found = [Path(p) for p in env.get("PATH", "").split(":") if p.startswith("/")]
     from_path = [mount for p in found for mount in tool_mounts(p)]
     runtime = [Path(sys.prefix), Path(sys.base_prefix)]
-    _refuse_in_data([*runtime, *map(Path, _SYSTEM_PATHS)])
+    _refuse_in_data(_own_mounts())
     paths = [*readonly, *runtime, *from_path]
     out: list[Path] = []
     for p in paths:
@@ -301,6 +301,11 @@ def _readonly_paths(env: Mapping[str, str], readonly: Sequence[Path]) -> list[Pa
         if not (holds_home or system or p in out) and p.exists():
             out.append(p)
     return out
+
+
+def _own_mounts() -> list[Path]:
+    """The mounts Loom adds on its own: the server's python and the system paths."""
+    return [Path(sys.prefix), Path(sys.base_prefix), *map(Path, _SYSTEM_PATHS)]
 
 
 def _refuse_in_data(paths: Sequence[Path]) -> None:
@@ -321,7 +326,7 @@ def layout_refusal() -> str:
     """Why this host's layout runs no sandboxed job ('' when it may): path checks
     only, so `/v1/health` can ask."""
     try:
-        _refuse_in_data([Path(sys.prefix), Path(sys.base_prefix), *map(Path, _SYSTEM_PATHS)])
+        _refuse_in_data(_own_mounts())
     except PermissionError as e:
         return str(e)
     return ""
