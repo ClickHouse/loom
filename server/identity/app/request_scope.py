@@ -3,7 +3,11 @@ the identity domain layer may not import, so it lives in app."""
 
 from __future__ import annotations
 
-from server.identity.domain.read_scope import ReadFilters, request_read_filters
+from server.identity.domain.read_scope import (
+    ReadFilters,
+    request_read_filters,
+    request_read_narrowed,
+)
 
 
 def request_scope() -> ReadFilters:
@@ -16,3 +20,11 @@ def request_scope() -> ReadFilters:
     from server.auth.context import current_auth
 
     return request_read_filters(current_auth())
+
+
+def request_narrowed() -> bool:
+    """Whether the current request reads below the whole namespace (a scope
+    that does not resolve counts as narrowed)."""
+    from server.auth.context import current_auth
+
+    return request_read_narrowed(current_auth())

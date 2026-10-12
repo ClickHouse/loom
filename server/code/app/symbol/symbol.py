@@ -9,7 +9,6 @@ import logging
 import time
 from typing import Any
 
-from server.auth.context import current_auth
 from server.code.api.models_symbol import CodeSymbolInput, CodeSymbolOutput
 from server.code.app import symbol_uses as _uses_brief
 from server.code.app.common import (
@@ -44,7 +43,7 @@ from server.code.app.symbol.resolve import (
 )
 from server.code.app.symbol.uses import _mention_leg, _symbol_uses
 from server.code.store.index import CodeRepo
-from server.identity.domain.read_scope import request_read_narrowed
+from server.identity.app.request_scope import request_narrowed
 from server.observability.budget_shape import note_budget_shape
 from server.settings import settings
 
@@ -276,7 +275,7 @@ async def _enrichment(
 
     async def lessons() -> list[dict[str, Any]]:
         lesson_nss = [s.strip() for s in settings.code_lesson_namespaces.split(",") if s.strip()]
-        if not lesson_nss or request_read_narrowed(current_auth()):
+        if not lesson_nss or request_narrowed():
             return []  # no lesson namespaces, or a token that may not read every user's lessons
         return await code_enrich.lessons_for_symbol(
             org,

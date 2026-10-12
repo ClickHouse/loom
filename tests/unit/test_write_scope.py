@@ -554,3 +554,12 @@ def test_the_pinned_statement_reads_only_the_pinned_rows_vectors() -> None:
     assert "(agent, user_id, session_id, memory_key) IN (" in vectors
     assert "m.pinned = 1" in vectors.split(") e", 1)[0]
 
+
+def test_request_narrowed_follows_the_bound_scope() -> None:
+    from server.identity.app.request_scope import request_narrowed
+
+    async def narrowed() -> bool:
+        return request_narrowed()
+
+    assert _run_as(None, narrowed) is False
+    assert _run_as(_pinned("U"), narrowed) is True

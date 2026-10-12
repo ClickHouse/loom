@@ -462,11 +462,10 @@ def _memory_read_narrowed() -> bool:
     answer cache is shared by every reader of the code namespace and its key has no user
     or session, so such an ask neither reads nor writes it, even when the memory
     namespace is public: the token's narrower ceiling still applies."""
-    from server.auth.context import current_auth
-    from server.identity.domain.read_scope import request_read_narrowed
+    from server.identity.app.request_scope import request_narrowed
     from server.settings import settings as _s
 
-    return bool(_s.code_ask_memory_namespace.strip()) and request_read_narrowed(current_auth())
+    return bool(_s.code_ask_memory_namespace.strip()) and request_narrowed()
 
 
 async def _memory_context_cacheable() -> bool:

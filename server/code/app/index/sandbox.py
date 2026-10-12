@@ -290,10 +290,8 @@ def _readonly_paths(env: Mapping[str, str], readonly: Sequence[Path]) -> list[Pa
     home = Path.home()
     found = [Path(p) for p in env.get("PATH", "").split(":") if p.startswith("/")]
     from_path = [mount for p in found for mount in tool_mounts(p)]
-    own = _own_mounts()
-    _refuse_in_data(own)
-    # The system paths in `own` are skipped below: the sandbox mounts them itself.
-    paths = [*readonly, *own, *from_path]
+    _refuse_in_data(_own_mounts())
+    paths = [*readonly, *_python_mounts(), *from_path]
     out: list[Path] = []
     for p in paths:
         p = p.absolute()
@@ -304,9 +302,14 @@ def _readonly_paths(env: Mapping[str, str], readonly: Sequence[Path]) -> list[Pa
     return out
 
 
+def _python_mounts() -> list[Path]:
+    """The server's python (harness converters and the relay run it)."""
+    return [Path(sys.prefix), Path(sys.base_prefix)]
+
+
 def _own_mounts() -> list[Path]:
     """The mounts Loom adds on its own: the server's python and the system paths."""
-    return [Path(sys.prefix), Path(sys.base_prefix), *map(Path, _SYSTEM_PATHS)]
+    return [*_python_mounts(), *map(Path, _SYSTEM_PATHS)]
 
 
 def _refuse_in_data(paths: Sequence[Path]) -> None:
