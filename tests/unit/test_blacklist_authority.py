@@ -245,21 +245,14 @@ def _pinned(role: str, user: str) -> AuthInfo:
     )
 
 
-def test_a_narrowed_writer_cannot_add_a_pattern_but_a_narrowed_admin_can(repo: _Repo) -> None:
-    """The pattern refuses every user's writes in the namespace."""
-    set_current_auth(_pinned("WRITER", "w"))
-    with pytest.raises(AuthInsufficientError):
-        asyncio.run(h.handle_blacklist_add(_add("namespace")))
-    assert repo.inserted == []
-    set_current_auth(_pinned("ADMIN", "w"))
-    asyncio.run(h.handle_blacklist_add(_add("namespace")))
-    assert [r["created_by"] for r in repo.inserted] == ["human:admin@x"]
-
-
-@pytest.mark.parametrize("name", ["blacklist.list", "blacklist.remove", "blacklist.sweep"])
-def test_a_narrowed_token_cannot_list_remove_or_sweep_by_id(name: str) -> None:
+@pytest.mark.parametrize(
+    "name", ["blacklist.add", "blacklist.list", "blacklist.remove", "blacklist.sweep"]
+)
+def test_a_narrowed_token_cannot_reach_any_blacklist_op(name: str) -> None:
     """A backend mints one token per end user under one subject, so `created_by`
-    (the subject) cannot tell alice's pattern from bob's: these ops are refused."""
+    (the subject) cannot tell alice's pattern from bob's: list, remove and sweep
+    would reach the other's patterns, and an add would be a namespace-wide Refuse
+    its author could never list or remove. Even an ADMIN is refused."""
     from types import SimpleNamespace
 
     from server.operations.registry import OPERATIONS_BY_NAME
@@ -280,7 +273,6 @@ def test_a_narrowed_token_cannot_list_remove_or_sweep_by_id(name: str) -> None:
     for tok in (alice, bob):
         with pytest.raises(AuthInsufficientError):
             gates.read_scope(OPERATIONS_BY_NAME[name], tok, body)
-        gates.read_scope(OPERATIONS_BY_NAME["blacklist.add"], tok, body)
     # A namespace-wide token keeps them.
     wide = AuthInfo(
         subject="sa:backend",

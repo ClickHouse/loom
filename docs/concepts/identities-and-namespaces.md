@@ -217,22 +217,22 @@ than `namespace`:
 - `code.search` breaks ties with the scope's own user's recent files, whatever
   `user_id` the body names.
 - A leg whose rows carry no user (conversations, runs) answers nothing.
-- A blacklist pattern still refuses every user's writes, so `blacklist.add` needs
-  `admin` on the namespace, and `blacklist.add(sweep=true)` tombstones and counts
-  only the caller's own rows. A pattern records no user (its `created_by` is the
-  token subject, which every per-user token of one backend shares), so
-  `blacklist.list`, `blacklist.remove` and `blacklist.sweep` are refused with
-  `AUTH_INSUFFICIENT`, and a refused write's 422 names no pattern id or reason.
-  `policy.decisions` lists only the caller's own decisions. `memory.unlock` and `memory.unpin` (admin)
-  reach only the caller's own rows, like `memory.lock`.
+- A blacklist pattern refuses every user's writes but records no user (its
+  `created_by` is the token subject, which every per-user token of one backend
+  shares), so every `blacklist.*` op is refused with `AUTH_INSUFFICIENT`: patterns
+  are added, listed, removed and swept with a namespace-wide token. A pattern still
+  refuses a narrowed token's write, and that 422 names no pattern id or reason.
+- `policy.decisions` lists only the caller's own decisions. `memory.unlock` and
+  `memory.unpin` (admin) reach only the caller's own rows, like `memory.lock`.
 - An op that cannot bound its answer to one user (the entity graph `facts.*`,
   `conversation.*`, namespace exports, admin and curation ops,
   `ops.projection_failures.*`) is refused with
   `AUTH_INSUFFICIENT`, and so is a write to a table keyed without a user, where it
   would overwrite another user's row: `memory.record.write`, `decision.record`,
   `procedure.record_run` and `context.offload`. `memory.set_from_messages` skips its
-  `record_schema` projection into records and says so in `degraded`. The list is `server/identity/domain/read_scope.py`
-  (`SCOPED_OPS`, `NARROW_SAFE_OPS`), and an op it does not name is refused.
+  `record_schema` projection into records and says so in `degraded`. The list is
+  `server/identity/domain/read_scope.py` (`SCOPED_OPS`, `NARROW_SAFE_OPS`), and an op
+  it does not name is refused.
 
 ## Agent-written rows and the shared layer
 

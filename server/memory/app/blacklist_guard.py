@@ -316,26 +316,17 @@ async def enforce_on_insert(
     await note_hit(hit.pattern_id)
     from server.identity.app.request_scope import request_narrowed
 
-    if request_narrowed():
-        # The pattern may be another user's: its id and reason are theirs.
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "BLACKLISTED",
-                "message": f"value matches a blacklist pattern (scope={hit.scope})",
-                "scope": hit.scope,
-            },
+    detail: dict[str, str] = {
+        "code": "BLACKLISTED",
+        "message": f"value matches a blacklist pattern (scope={hit.scope})",
+        "scope": hit.scope,
+    }
+    # Under a narrowed token the pattern may be another user's: its id and reason are theirs.
+    if not request_narrowed():
+        detail["message"] = (
+            f"value matches blacklist pattern {hit.pattern_id!r} "
+            f"(scope={hit.scope}, reason={hit.reason!r})"
         )
-    raise HTTPException(
-        status_code=422,
-        detail={
-            "code": "BLACKLISTED",
-            "message": (
-                f"value matches blacklist pattern {hit.pattern_id!r} "
-                f"(scope={hit.scope}, reason={hit.reason!r})"
-            ),
-            "pattern_id": hit.pattern_id,
-            "scope": hit.scope,
-            "reason": hit.reason,
-        },
-    )
+        detail["pattern_id"] = hit.pattern_id
+        detail["reason"] = hit.reason
+    raise HTTPException(status_code=422, detail=detail)

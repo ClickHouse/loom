@@ -62,10 +62,9 @@ class _Seed:
     keys_v: list[str] = field(default_factory=list)
     memory_ids_v: list[str] = field(default_factory=list)
     brief_key: str = ""
-    # A blacklist pattern added by a token pinned to V (its reason carries V's nonce).
+    # A blacklist pattern added by a namespace-wide token (its reason carries V's nonce).
     pattern_v: str = ""
     pattern_id_v: str = ""
-    token_v: str = ""
 
 
 def _post(base: str, token: str, op: str, payload: dict[str, Any]) -> httpx.Response:
@@ -183,11 +182,10 @@ def seed(control_plane_url: str) -> _Seed:
     _seed_user(control_plane_url, writer, s, U, s.nonce_u)
     s.memory_ids_v = _seed_user(control_plane_url, writer, s, V, s.nonce_v)
     s.keys_v = [f"canary/{V}/0", f"canary/{V}/1", "canary/shared"]
-    s.token_v = _mint(org, s.ns, read_scope="own_user", read_user_id=V)
     s.pattern_v = f"BLKV{uuid.uuid4().hex[:10]}"
     s.pattern_id_v = _write(
         control_plane_url,
-        s.token_v,
+        writer,
         "blacklist.add",
         {"org": org, "namespace": s.ns, "pattern": s.pattern_v, "reason": f"my {s.nonce_v}"},
     )["pattern_id"]
@@ -565,48 +563,17 @@ def test_writes_aimed_at_vs_rows_never_answer_or_change_them(
     assert r.status_code == 200 and seed.nonce_v in r.text, f"brief: {r.text[:300]}"
 
 
-def test_a_sweep_by_another_user_neither_removes_nor_counts_vs_rows(
-    control_plane_url: str, seed: _Seed, tokens: dict[str, str], ch_client: Any
-) -> None:
-    """W adds a pattern holding the first chars of V's nonce with sweep=true: V's rows
-    stay live, and the count is 0, as for a pattern nobody's content holds (so the
-    count is no substring oracle)."""
-
-    def _stable() -> dict[str, tuple[Any, ...]] | None:
-        first = _v_rows(ch_client, seed)
-        return first if first == _v_rows(ch_client, seed) else None
-
-    before = wait_until(_stable, max_wait=30.0, description="V's rows to settle")
-    w = {"org": seed.org, "namespace": seed.ns}
-    added = _write(
-        control_plane_url,
-        tokens["pinned_w"],
-        "blacklist.add",
-        {**w, "pattern": seed.nonce_v[:10], "reason": "probe", "sweep": True},
-    )
-    try:
-        assert added["swept"] == 0 and not added["swept_truncated"], added
-        assert seed.nonce_v not in str(added)
-    finally:
-        # The pattern would also refuse and hide V's nonce for the tests after this one.
-        _write(
-            control_plane_url,
-            tokens["namespace"],
-            "blacklist.remove",
-            {"org": seed.org, "pattern_id": added["pattern_id"]},
-        )
-    assert _v_rows(ch_client, seed) == before
-
-
-def test_a_narrowed_token_cannot_list_remove_or_sweep_patterns(
+def test_a_narrowed_token_cannot_reach_any_blacklist_op(
     control_plane_url: str, seed: _Seed, tokens: dict[str, str]
 ) -> None:
-    """A pattern has no user axis, so W's list, remove and sweep by id are refused. V's
-    pattern still refuses W's write (a namespace-wide Refuse), and the 422 names
-    neither its id nor V's reason."""
+    """A pattern has no user axis, so W's add, list, remove and sweep are refused (an
+    add would be a namespace-wide Refuse W could never manage, and its sweep would
+    reach V's rows). The namespace-wide pattern still refuses W's write, and the 422
+    names neither its id nor V's reason."""
     w = {"org": seed.org, "namespace": seed.ns}
     by_id = {"pattern_id": seed.pattern_id_v}
     for op, body in (
+        ("blacklist.add", {**w, "pattern": seed.nonce_v[:10], "reason": "probe", "sweep": True}),
         ("blacklist.list", w),
         ("blacklist.remove", {"org": seed.org, **by_id}),
         ("blacklist.sweep", {**w, **by_id}),
