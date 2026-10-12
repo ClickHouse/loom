@@ -370,6 +370,9 @@ STEP_ONLY_TABLES: dict[str, tuple[str, ...]] = {
     "session_outcomes.delete": SESSION_OUTCOME_TABLES,
     "term_aggregates.delete": TERM_AGGREGATE_TABLES,
     "code_index.purge": CODE_INDEX_STEP_ONLY_TABLES,
+    # Who began each still-open run (KeeperMap: ids and user ids, no run text);
+    # dropped beside the runs, not counted (absent on a server without a Keeper).
+    "agent_runs.delete": ("loom.agent_run_claims",),
 }
 
 # Every other `loom.*` table in schemas/schema.sql, with the reason it holds
@@ -412,11 +415,6 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     "loom.task_leases": (
         "The live lease per task in ClickHouse Keeper (task id, owner "
         "label, fence, lease_until) — identifiers only, deleted on the terminal transition."
-    ),
-    "loom.agent_run_claims": (
-        "Who began each run id, in ClickHouse Keeper (org, namespace, run id, user and "
-        "session id, time) — identifiers only; the run's goal and text live in "
-        "loom.agent_runs, which the saga deletes."
     ),
     "loom.task_claims": (
         "The append-only claim arbitration log where no Keeper exists "

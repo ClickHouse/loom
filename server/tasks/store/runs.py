@@ -162,6 +162,17 @@ async def claim_run(
     return RunClaim(won=False, user_id=str(row["user_id"]), session_id=str(row["session_id"]))
 
 
+async def delete_claim(ch: Any, org: str, ns: str, run_id: str) -> None:
+    """Drop the run id's claim once its run row is closed: from then on the row
+    itself keeps other users off the id. A Keeper key drop, not a part mutation."""
+    if not await _claims_available(ch):
+        return
+    await ch.execute(
+        "ALTER TABLE loom.agent_run_claims DELETE WHERE claim_key = {k:String}",
+        params={"k": json.dumps([org, ns, run_id])},
+    )
+
+
 async def runs_to_grade(
     ch: Any, org: str, ns: str, *, run_id: str, session_id: str, limit: int
 ) -> list[RunLedgerRow]:

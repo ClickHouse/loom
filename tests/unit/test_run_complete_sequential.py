@@ -52,9 +52,9 @@ async def test_begin_labels_its_ledger_row_with_the_run_id(monkeypatch):
     )
     assert out.run_id
     assert current_ledger_run() == out.run_id
-    # the begin's own existence check is not the consistency-sensitive read
-    # (a retry of the same run_id): it keeps the default read
-    assert client.sequential_reads == [False]
+    # A closed run drops its Keeper claim, so the begin's existence check is what
+    # keeps another user off the id: it must see the close's insert.
+    assert client.sequential_reads == [True]
 
 
 @pytest.mark.asyncio

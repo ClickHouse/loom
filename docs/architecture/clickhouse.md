@@ -396,6 +396,9 @@ with `purge=true` and runner state.
   previous owner stopped and residual queries, mutations and asynchronous inserts
   have drained. This is a Keeper operation, not a MergeTree content mutation;
   elapsed TTL alone never permits provider-lock takeover.
+- **Run id claims** (`loom.agent_run_claims`, KeeperMap) are deleted by `run.complete`
+  once the closed run row guards its id, and by the erasure saga's `agent_runs.delete`
+  step. Both are Keeper key drops, not MergeTree mutations.
 
 **Classification for erasure.** `server/erasure/store/census.py` puts every table in
 `schemas/schema.sql` in exactly one list, and `tests/unit/test_every_table_is_classified.py`

@@ -44,6 +44,13 @@ class _FakeCH:
     async def insert(self, table, rows, settings=None):
         self.inserted.append((table, rows))
 
+    async def execute(self, sql, params=None):
+        self.calls.append(("execute", sql, params or {}))
+        if self.execute_error is not None:
+            raise self.execute_error
+
+    execute_error: Exception | None = None
+
 
 def _run_row(**over: Any) -> dict[str, Any]:
     row: dict[str, Any] = {
@@ -140,6 +147,32 @@ def test_complete_unknown_run_is_not_found(env) -> None:
             )
         )
     assert fake.inserted == []
+
+
+def _complete_r1(h) -> Any:
+    return asyncio.run(
+        h.handle_run_complete(
+            RunCompleteInput(org="o", namespace="n", run_id="r1", status="completed")
+        )
+    )
+
+
+def test_complete_drops_the_runs_claim_after_closing_it(env, monkeypatch) -> None:
+    fake, _, h = env
+    monkeypatch.setattr(runs_store, "_claims_atomic", True)
+    fake.one.append(_run_row())
+    _complete_r1(h)
+    drops = [c for c in fake.calls if c[0] == "execute" and "agent_run_claims DELETE" in c[1]]
+    assert [c[2] for c in drops] == [{"k": '["o", "n", "r1"]'}]
+    assert fake.inserted, "the closed row lands before the claim goes"
+
+
+def test_a_failed_claim_drop_does_not_fail_the_close(env, monkeypatch) -> None:
+    fake, _, h = env
+    monkeypatch.setattr(runs_store, "_claims_atomic", True)
+    fake.execute_error = RuntimeError("Keeper unavailable")
+    fake.one.append(_run_row())
+    assert _complete_r1(h).status == "completed"
 
 
 def test_complete_credits_used_memories_and_positive_evidence(env, monkeypatch) -> None:
