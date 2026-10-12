@@ -85,6 +85,24 @@ def same_origin(origin: str, own_base: str) -> bool:
     return mine is not None and _origin_parts(origin) == mine
 
 
+def origin_matches_host(origin: str, host_header: str) -> bool:
+    """Whether a browser Origin names the host and port the request was sent to.
+    Used when no public URL is configured: behind a TLS proxy whose
+    X-Forwarded-Proto isn't trusted the request looks like http, so the scheme
+    is not compared. A Host without a port matches the Origin's default port."""
+    host_header = host_header.strip()
+    theirs = _origin_parts(origin)
+    if theirs is None or not _HOST.fullmatch(host_header):
+        return False
+    scheme, origin_host, origin_port = theirs
+    parts = urlsplit(f"//{host_header}")
+    try:
+        port = parts.port or _DEFAULT_PORTS.get(scheme)
+    except ValueError:
+        return False
+    return parts.hostname == origin_host and port == origin_port
+
+
 def cors_origin_list(raw: str) -> list[str]:
     """LOOM_CORS_ORIGINS as a list. `*` is refused: CORS here allows
     credentials, so it would let every site make credentialed calls."""

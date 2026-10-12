@@ -172,6 +172,17 @@ def test_auth_off_serves_a_configured_cors_origin(monkeypatch: pytest.MonkeyPatc
     assert _post(origin="https://evil.example").status_code == 403
 
 
+@pytest.mark.usefixtures("auth_off")
+def test_auth_off_lets_a_cross_site_link_to_a_page_through() -> None:
+    nav = {"sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate"}
+    assert _get("http://localhost:7777", **nav, **{"sec-fetch-dest": "document"}) == 200
+    assert _get("http://localhost:7777", **nav, **{"sec-fetch-dest": "iframe"}) == 403
+    assert _get("http://localhost:7777", **{"sec-fetch-site": "cross-site"}) == 403
+    # A form submitted from another site is a navigation too, but a POST.
+    form = {**nav, "sec-fetch-dest": "document", "origin": "https://evil.example"}
+    assert _post(**form).status_code == 403
+
+
 @pytest.fixture
 def auth_on(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "auth_required", True)
@@ -223,6 +234,32 @@ def test_auth_on_serves_same_origin_listed_and_originless_posts(
     monkeypatch.setattr(settings, "public_base_url", "https://loom.example")
     assert _post(origin="https://loom.example:443").status_code == 200
     assert _post(origin="http://localhost:7777").status_code == 403
+
+
+def _post_to(base_url: str, **headers: str) -> int:
+    client = _gated_client(base_url)
+    return client.post("/v1/memory.list", content=b"{}", headers=headers).status_code
+
+
+@pytest.mark.usefixtures("auth_on")
+def test_auth_on_without_a_public_url_compares_the_origin_to_the_host() -> None:
+    # Behind a TLS proxy whose X-Forwarded-Proto isn't trusted the request looks
+    # like http, so only the host and port must match.
+    assert _post_to("http://loom.example", origin="https://loom.example") == 200
+    assert _post_to("http://loom.example:8080", origin="http://loom.example:8080") == 200
+    assert _post_to("http://loom.example", origin="https://evil.example") == 403
+    assert _post_to("http://loom.example", origin="https://loom.example:8443") == 403
+    cross = {"origin": "https://loom.example", "sec-fetch-site": "cross-site"}
+    assert _post_to("http://loom.example", **cross) == 403
+
+
+@pytest.mark.usefixtures("auth_on")
+def test_auth_on_with_a_public_url_compares_the_scheme_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "public_base_url", "https://loom.example")
+    assert _post_to("http://loom.example", origin="https://loom.example") == 200
+    assert _post_to("http://loom.example", origin="http://loom.example") == 403
 
 
 def test_every_response_is_nosniff() -> None:

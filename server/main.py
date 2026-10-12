@@ -23,7 +23,7 @@ from server import __version__, boot
 from server.auth.public_url import (
     cors_origin_list,
     host_header_allowed,
-    public_base_url,
+    origin_matches_host,
     same_origin,
 )
 from server.core.ch import get_client
@@ -305,13 +305,28 @@ def _refused(status: int, *, code: str, message: str) -> Response:
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 
+def _own_origin(origin: str, request: Request) -> bool:
+    if settings.public_base_url.strip():
+        return same_origin(origin, settings.public_base_url.strip().rstrip("/"))
+    return origin_matches_host(origin, request.headers.get("host", ""))
+
+
+def _is_navigation(request: Request) -> bool:
+    """A top-level page load, such as following a link to /me from another site."""
+    return (
+        request.method in ("GET", "HEAD")
+        and request.headers.get("sec-fetch-mode") == "navigate"
+        and request.headers.get("sec-fetch-dest") == "document"
+    )
+
+
 def web_refusal(request: Request) -> Response | None:
     """What stops a page on another site from driving this server, or None to let the
     request through. A cross-origin POST with a text/plain body needs no preflight, and
     in proxy mode the front proxy adds the bearer itself, so a foreign Origin or a
     cross-site / same-site fetch is refused (403) unless LOOM_CORS_ORIGINS lists it.
-    curl and the SDKs send neither header. With auth off every method is checked, and
-    a foreign Host is DNS rebinding (421)."""
+    curl and the SDKs send neither header. With auth off every method is checked except
+    a top-level navigation, and a foreign Host is DNS rebinding (421)."""
     auth_off = not settings.auth_actually_required()
     if auth_off and not host_header_allowed(
         request.headers.get("host", ""), settings.public_base_url
@@ -323,10 +338,12 @@ def web_refusal(request: Request) -> Response | None:
         )
     if not auth_off and request.method in _SAFE_METHODS:
         return None
+    if _is_navigation(request):
+        return None
     origin = request.headers.get("origin")
     if origin is not None and origin in cors_origin_list(settings.cors_origins):
         return None
-    foreign_origin = origin is not None and not same_origin(origin, public_base_url(request))
+    foreign_origin = origin is not None and not _own_origin(origin, request)
     fetch_site = request.headers.get("sec-fetch-site")
     if foreign_origin or fetch_site in ("cross-site", "same-site"):
         return _refused(
