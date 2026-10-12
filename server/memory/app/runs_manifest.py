@@ -121,7 +121,7 @@ def render_manifest(rows: list[SessionRow]) -> str:
         when = r.when.strftime("%Y-%m-%d %H:%M") if r.when else "undated"
         parts = [f"- {when} session={label_part(r.session_id[:24])}"]
         if r.actors:
-            parts.append("by=" + ",".join(r.actors))
+            parts.append("by=" + ",".join(label_part(a) for a in r.actors))
         if r.run_id or r.status:
             dur = f" {r.duration_ms / 1000:.0f}s" if r.duration_ms else ""
             parts.append(f"run={r.status or 'active'}{dur}")
