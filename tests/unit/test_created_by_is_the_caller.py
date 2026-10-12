@@ -90,6 +90,23 @@ async def test_policy_set_stamps_the_caller(alice: None, monkeypatch: pytest.Mon
     assert rows and {r["created_by"] for r in rows} <= _CALLER
 
 
+async def test_a_policy_widening_audit_row_names_the_caller(
+    alice: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The audit write is best-effort, so a broken actor lookup would vanish silently."""
+    from server.identity.app import history_policy_ops as h
+    from server.observability import audit
+
+    emitted: list[dict[str, Any]] = []
+
+    async def _emit(event: str, **kw: Any) -> None:
+        emitted.append({"event": event, **kw})
+
+    monkeypatch.setattr(audit, "emit", _emit)
+    await h._audit_widened("o", "n", "p1", ["wider"])
+    assert [(e["event"], e["actor"]) for e in emitted] == [("policy.widened", "alice")]
+
+
 async def test_memory_schema_register_stamps_the_caller(
     alice: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
