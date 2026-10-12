@@ -229,3 +229,53 @@ async def test_schema_mode_reports_the_fallbacks_noted_during_the_call(
     )
     assert out.degraded[0] == "embed: fake_vector_kept (timeout)"
     assert out.degraded[1].startswith("records: projection_skipped")
+
+
+@pytest.mark.asyncio
+async def test_a_scope_skipped_record_projection_leaves_provider_health_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A narrowed caller's skipped record projection is a scope decision, not a
+    provider failure: it is noted on the response but must not flip /v1/health."""
+    import server.memory.app.extract.handler as mx
+    from server.llm.client import LLMResult
+    from server.memory.app.extract import ExtractedRecord
+    from server.observability import degradations, provider_health
+
+    _stub_projections(monkeypatch)
+    provider_health.reset()
+    degradations.begin()
+
+    async def _fake_bulk(bulk_input):
+        class _Out:
+            written: list = []
+
+        return _Out()
+
+    async def _fake_inline(*args, **kwargs):
+        return False
+
+    async def _fake_typed(msgs, schema, *, max_tokens=1024, observation_date=None):
+        return (
+            ExtractedRecord(record={"amount": 4.5}),
+            LLMResult(text="", tokens_in=0, tokens_out=0, provider="p", model="m"),
+        )
+
+    monkeypatch.setattr(mx, "handle_memory_bulk_set", _fake_bulk)
+    monkeypatch.setattr(mx, "_write_inline_record_projection", _fake_inline)
+    monkeypatch.setattr("server.memory.app.extract.extract_typed_record_iterative", _fake_typed)
+    try:
+        out = await mx.handle_memory_set_from_messages(
+            MemorySetFromMessagesInput(
+                org="dev",
+                namespace="ns",
+                agent="a",
+                messages=[{"role": "user", "content": "Spent 4.50 on snacks."}],
+                memory_key="rec1",
+                record_schema={"amount": "number"},
+            )
+        )
+        assert out.degraded == ["records: projection_skipped (read scope below the namespace)"]
+        assert provider_health.status()["degraded"] is False
+    finally:
+        provider_health.reset()

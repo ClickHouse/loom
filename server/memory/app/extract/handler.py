@@ -40,6 +40,7 @@ from server.memory.app.projection_errors import (
     record_input_projection_failure,
 )
 from server.observability import degradations as _degradations
+from server.observability import provider_health
 from server.observability.otel import traced
 
 log = logging.getLogger(__name__)
@@ -244,7 +245,11 @@ async def _set_record_from_messages(
             evidence_ids=evidence_ids,
         )
         if not projected:
-            _degradations.note("records", "projection_skipped", "read scope below the namespace")
+            # A scope skip, not a provider failure: keep it off /v1/health.
+            with provider_health.unrecorded():
+                _degradations.note(
+                    "records", "projection_skipped", "read scope below the namespace"
+                )
     except Exception as e:  # noqa: BLE001 — a projection; the write stands
         log.warning("memory_records inline projection failed (non-fatal): %s", e)
         await record_input_projection_failure(
