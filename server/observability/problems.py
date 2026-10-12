@@ -25,6 +25,9 @@ Severity = Literal["info", "warn", "error"]
 # Ordered so a rendered list reads worst-first.
 SEVERITY_RANK: dict[str, int] = {"error": 0, "warn": 1, "info": 2}
 
+# ClickHouse's error code for a setting outside a profile's constraints.
+_SETTING_CONSTRAINT_VIOLATION = 452
+
 
 @dataclass(frozen=True)
 class Problem:
@@ -518,9 +521,9 @@ def _reader_user_problems(settings: Any, state: HealthState) -> list[Problem]:
     )
     if error_code(state.ch_reader_error) == _SETTING_CONSTRAINT_VIOLATION:
         fix = (
-            f"A LOOM_CH_CALLER_SHAPED_* ceiling is above the {user} profile's cap "
-            f"(ClickHouse: {_constraint_message(state.ch_reader_error)}). Lower it, or "
-            "raise the cap in nlp_user_settings.xml to match."
+            f"A LOOM_CH_CALLER_SHAPED_* ceiling is outside the {user} profile's bounds "
+            f"(ClickHouse: {_constraint_message(state.ch_reader_error)}). Bring it within "
+            "them, or change the bounds in nlp_user_settings.xml to match."
         )
     return [
         Problem(
@@ -533,9 +536,6 @@ def _reader_user_problems(settings: Any, state: HealthState) -> list[Problem]:
             source="runtime",
         )
     ]
-
-
-_SETTING_CONSTRAINT_VIOLATION = 452
 
 
 def _constraint_message(error: str) -> str:

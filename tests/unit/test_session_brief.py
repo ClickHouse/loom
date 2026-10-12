@@ -813,6 +813,49 @@ def test_owner_key_prefixes_never_collide() -> None:
     assert sb.owner_key_prefix("a~b", "c") != sb.owner_key_prefix("a", "b~c")
     assert not sb.brief_key_ok(sb.owner_key_prefix("u") + "k")
     assert sb.stored_key_ok(sb.owner_key_prefix("a~/b", "s 1") + "k")
+    assert sb.key_owner(sb.owner_key_prefix("a~/b", "s 1") + "k") == ("a~/b", "s 1")
+    assert sb.key_owner(sb.owner_key_prefix("a~/b") + "k") == ("a~/b", None)
+    assert sb.key_owner("k") is None
+
+
+def test_a_narrowed_save_whose_stored_key_runs_past_the_cap_is_refused(mem, monkeypatch) -> None:
+    """Get and delete refuse a stored key over STORED_KEY_MAX, so a save must not store one."""
+    from server.identity.domain.read_scope import ReadFilters, bind_request_read_filters
+    from tests.unit.principals import acting_as, principal
+
+    _llm(monkeypatch, [])
+    sid = "s" * 700
+    token = principal("writer", org="o", namespaces=("ns",), read_scope="own_session")
+    with acting_as(token) as auth:
+        bind_request_read_filters(auth, ReadFilters("own_session", "u1", sid))
+        with pytest.raises(HTTPException) as e:
+            _save(brief_key="k", user_id="u1", session_id=sid, use_llm=False, events=_session())
+    assert e.value.status_code == 422 and e.value.detail["code"] == "BAD_BRIEF_KEY"
+    assert mem.rows == []
+
+
+def test_a_namespace_wide_save_to_an_owner_key_keeps_the_owner(mem, monkeypatch) -> None:
+    from tests.unit.principals import acting_as, principal
+
+    _llm(monkeypatch, [])
+    alice = principal("writer", org="o", namespaces=("ns",), read_user_id="alice")
+
+    def alice_get() -> Any:
+        with acting_as(alice):
+            return asyncio.run(
+                h.handle_session_brief_get(
+                    SessionBriefGetInput(**IDENT, user_id="alice", brief_key="k")
+                )
+            )
+
+    with acting_as(alice):
+        _save(brief_key="k", user_id="alice", sections={"goal": "alice-goal"})
+    out = _save(brief_key="~alice~k", user_id="-", session_id="-", sections={"goal": "ops"})
+    assert out.changed
+    got = alice_get()
+    assert got.found and got.revision == 2 and "ops" in got.rendered
+    row = mem._newest()["~alice~k"]
+    assert (row["user_id"], row["session_id"]) == ("alice", "s1")
 
 
 def test_registration() -> None:

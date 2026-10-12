@@ -44,7 +44,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from pydantic import BaseModel, Field
 
@@ -196,6 +196,17 @@ def owner_key_prefix(user_id: str, session_id: str | None = None) -> str:
     if session_id is None:
         return f"~{tag(user_id)}~"
     return f"~{tag(user_id)}~{tag(session_id)}~"
+
+
+def key_owner(stored_key: str) -> tuple[str, str | None] | None:
+    """The (user, session) an `owner_key_prefix` names on a stored key (session
+    None for a `~<user>~` prefix), or None for a key with no prefix."""
+    if not stored_key.startswith("~"):
+        return None
+    parts = stored_key.split("~")
+    if len(parts) == 4:
+        return unquote(parts[1]), unquote(parts[2])
+    return unquote(parts[1]), None
 
 
 def auto_brief_key(project: str, branch: str) -> str:

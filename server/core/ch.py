@@ -120,13 +120,16 @@ def _caller_shaped_ceilings() -> dict[str, float]:
 
 def _apply_caller_ceilings(out: dict[str, Any], sql: str) -> None:
     """Lower each limit to its ceiling inside a `caller_shaped()` block (0 in
-    ClickHouse means unlimited, so an unset or 0 value takes the ceiling)."""
+    ClickHouse means unlimited, so an unset or 0 value takes the ceiling; with no
+    ceiling a 0 is dropped, so the reader profile's own cap applies)."""
     if not caller_shaped_var.get() or not is_read_statement(sql):
         return
     for name, ceiling in _caller_shaped_ceilings().items():
-        if ceiling <= 0:
-            continue
         asked = float(out.get(name) or 0)
+        if ceiling <= 0:
+            if name in out and asked <= 0:
+                del out[name]
+            continue
         if asked <= 0 or asked > ceiling:
             out[name] = int(ceiling) if ceiling.is_integer() else ceiling
     out["read_overflow_mode"] = "throw"
@@ -148,6 +151,9 @@ def _reader_auth() -> dict[str, Any]:
 _reader_user_ok: bool | None = None
 _reader_user_error = ""
 
+# How ClickHouse answers a read of loom.memory before migrations created it.
+BEFORE_MIGRATIONS_CODES = frozenset({60, 81})  # UNKNOWN_TABLE, UNKNOWN_DATABASE
+
 # Reads a loom table under the caller-shaped caps, so a missing grant or a cap
 # above the reader profile's fails the probe as it would fail the reads.
 READER_PROBE_SQL = (
@@ -167,6 +173,8 @@ async def probe_reader_user(client: Any) -> None:
         _reader_user_ok = bool(row) and row["u"] == settings.ch_reader_user
         _reader_user_error = ""
     except Exception as e:  # noqa: BLE001 — a failed probe is reported, never fatal to boot
+        if error_code(e) in BEFORE_MIGRATIONS_CODES:
+            return  # no loom.memory yet: migrations have not run, nothing to probe
         log.warning("LOOM_CH_READER_USER=%s cannot read: %s", settings.ch_reader_user, e)
         _reader_user_ok = False
         _reader_user_error = str(e)

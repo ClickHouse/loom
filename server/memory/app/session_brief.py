@@ -247,6 +247,18 @@ def _shown_key(stored: str, scope: ReadFilters) -> str:
     return stored.removeprefix(_key_prefix(scope))
 
 
+def _row_owner(inp: Any, key: str, live: dict[str, Any] | None) -> tuple[str, str]:
+    """The user_id / session_id the saved row carries. A namespace-wide save to an
+    owner's `~<user>~…` key keeps that owner, so the owner's own reads still find it."""
+    owner = sb.key_owner(key)
+    if owner is None:
+        return inp.user_id, inp.session_id
+    user, session = owner
+    if session is None:
+        session = str(live["session_id"]) if live else "-"
+    return user, session
+
+
 async def handle_session_brief_save(inp: SessionBriefSaveInput) -> SessionBriefSaveOutput:
     from server.memory.app.provenance import writer_actor
 
@@ -255,6 +267,12 @@ async def handle_session_brief_save(inp: SessionBriefSaveInput) -> SessionBriefS
         raise HTTPException(status_code=422, detail={"code": "BAD_BRIEF_KEY", "message": key})
     ch = get_client()
     stored_key = _stored_key(key, request_read_filters(current_auth()))
+    # An owner prefix built from long ids could store a key get and delete refuse.
+    if not sb.stored_key_ok(stored_key):
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "BAD_BRIEF_KEY", "message": "user_id or session_id is too long"},
+        )
     # The stored key names its owner, so the row under it is the caller's own.
     row = await repo.current(ch, inp.org, inp.namespace, stored_key, scope=WHOLE_NAMESPACE)
     live = row if row and row.get("tombstoned_at") is None else None
@@ -318,14 +336,15 @@ async def handle_session_brief_save(inp: SessionBriefSaveInput) -> SessionBriefS
         latest_session=sid,
     )
     rendered = sb_render.render_brief(rev.sections, meta)
+    user_id, session_id = _row_owner(inp, key, live)
     new_row = repo.build_brief_row(
         live,
         org=inp.org,
         namespace=inp.namespace,
         brief_key=stored_key,
         agent=inp.agent,
-        user_id=inp.user_id,
-        session_id=inp.session_id,
+        user_id=user_id,
+        session_id=session_id,
         source_sessions=sessions,
         project=meta.project,
         repo=inp.repo or (live or {}).get("repo", ""),

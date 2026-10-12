@@ -56,9 +56,8 @@ class ClickHouseSettings(BaseModel):
     # pattern or globs, memory.aggregate, memory.record.query). A ceiling only
     # lowers the statement's own value, so no request can widen it; 0 = none.
     # The shipped loom_reader profile (nlp_user_settings.xml) caps these three at
-    # their defaults: raising one above it needs the profile raised too. Under
-    # that user a 0 sends no ceiling, so the profile's cap applies (the profile
-    # refuses a statement's own 0).
+    # their defaults: raising one above it needs the profile raised too. A 0
+    # sends no ceiling (and drops a statement's own 0), so the profile's cap applies.
     # Seconds one such read may run (the read class default).
     ch_caller_shaped_max_execution_s: float = 30.0
     # Bytes of memory one such read may use.

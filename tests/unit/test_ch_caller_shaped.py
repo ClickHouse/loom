@@ -56,6 +56,16 @@ def test_a_per_call_value_cannot_widen_a_ceiling_but_may_lower_it() -> None:
     assert _caller_shaped_settings(_SELECT, {"max_execution_time": 2})["max_execution_time"] == 2
 
 
+def test_with_no_ceiling_a_0_is_dropped_so_the_profile_cap_applies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reader profile has no min on max_execution_time, so a 0 must never leave Loom."""
+    monkeypatch.setattr(settings, "ch_caller_shaped_max_execution_s", 0.0)
+    out = _caller_shaped_settings(_SELECT, {"max_execution_time": 0})
+    assert "max_execution_time" not in out
+    assert _caller_shaped_settings(_SELECT, {"max_execution_time": 2})["max_execution_time"] == 2
+
+
 def test_a_statement_timeout_scope_cannot_widen_it() -> None:
     with ch.statement_timeout(3600):
         assert _caller_shaped_settings(_SELECT)["max_execution_time"] == 30
@@ -331,3 +341,59 @@ def test_the_doctor_reports_a_refused_reader_user(monkeypatch: pytest.MonkeyPatc
     assert b"FROM loom.memory" in sent[0].content
     assert sent[0].url.params["max_execution_time"] == "30"
     assert sent[0].url.params["max_rows_to_read"] == "500000000"
+
+
+# captured from ClickHouse 26.5.1.882 as loom_reader before migrations
+_NO_TABLE = (
+    "Code: 60. DB::Exception: Unknown table expression identifier 'loom.memory' in scope "
+    "SELECT 1 FROM loom.memory LIMIT 0. (UNKNOWN_TABLE) (version 26.5.1.882 (official build))"
+)
+
+
+class _NoTableClient:
+    async def query_one(self, *_: Any, **__: Any) -> dict[str, Any]:
+        raise RuntimeError(_NO_TABLE)
+
+
+async def test_before_migrations_the_boot_probe_reports_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "ch_reader_user", "loom_reader")
+    monkeypatch.setattr(ch, "_reader_user_ok", None)
+    monkeypatch.setattr(ch, "_reader_user_error", "")
+    await ch.probe_reader_user(_NoTableClient())
+    assert ch.reader_user_state() is None
+
+
+def test_before_migrations_the_doctor_does_not_blame_the_reader_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx
+
+    from server.cli import doctor
+
+    real_client = httpx.Client
+    no_table = httpx.MockTransport(lambda _: httpx.Response(404, text=_NO_TABLE))
+    monkeypatch.setattr(httpx, "Client", lambda **kw: real_client(transport=no_table, **kw))
+    monkeypatch.setattr(settings, "ch_reader_user", "loom_reader")
+    assert doctor._doctor_reader_probe(settings) == (None, "")
+    assert "ch_reader_user_failing" not in [p.code for p in doctor._doctor_problems()]
+
+
+def test_a_ceiling_below_the_reader_profile_is_not_advised_lower(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.observability.problems import HealthState, collect_problems
+
+    monkeypatch.setattr(settings, "ch_reader_user", "loom_reader")
+    err = (
+        "Code: 452. DB::Exception: Setting max_rows_to_read shouldn't be less than 1. "
+        "(SETTING_CONSTRAINT_VIOLATION) (version 26.5.1.882 (official build))"
+    )
+    state = HealthState(ch_reader_ok=False, ch_reader_error=err)
+    (problem,) = [
+        p for p in collect_problems(settings, state) if p.code == "ch_reader_user_failing"
+    ]
+    assert "max_rows_to_read shouldn't be less than 1" in problem.fix
+    assert "outside the loom_reader profile's bounds" in problem.fix
+    assert "Lower it" not in problem.fix

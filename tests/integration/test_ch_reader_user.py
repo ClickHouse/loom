@@ -73,13 +73,45 @@ async def test_a_read_over_its_memory_cap_is_a_422(
         await client.query_all("SELECT groupArray(number) AS a FROM numbers(10000000)")
 
 
-@pytest.mark.parametrize("cap", ["max_execution_time", "max_memory_usage", "max_rows_to_read"])
+@pytest.mark.parametrize("cap", ["max_memory_usage", "max_rows_to_read"])
 async def test_a_reader_statement_cannot_lift_a_cap_with_0(client: Any, cap: str) -> None:
-    """0 means no limit in ClickHouse; the reader profile refuses it."""
+    """0 means no limit in ClickHouse; the reader profile refuses it. Time has no
+    min (sub-second deadlines must pass): Loom alone writes it and never sends 0."""
     from server.core.ch import caller_shaped
 
     with caller_shaped(), pytest.raises(Exception, match=r"Code: 452"):
         await client.query_all(f"SELECT count() FROM numbers(10) SETTINGS {cap} = 0")
+
+
+@pytest.mark.parametrize("limit_s", [0.05, 0.5, 1.25])
+async def test_a_deadline_bounded_grep_scan_runs_as_the_reader(client: Any, limit_s: float) -> None:
+    """code.grep with deadline_ms bounds each scan below a second."""
+    from server.code.domain.search_scope import build_scope
+    from server.code.store.index import CodeRepo
+    from server.core.ch import caller_shaped
+
+    with caller_shaped():
+        hits = await CodeRepo(client).grep_chunks(
+            "reader-probe",
+            "none",
+            "needle",
+            scope=build_scope(pattern="needle"),
+            max_execution_s=limit_s,
+        )
+    assert list(hits) == []
+
+
+def test_code_grep_with_a_deadline_answers_over_http(control_plane_url: str) -> None:
+    """The server under test runs its caller-shaped reads as LOOM_CH_READER_USER."""
+    from tests.integration._resources import unique_org
+    from tests.integration.test_read_scope_isolation import _mint, _post
+
+    if not os.environ.get("LOOM_CH_READER_USER"):
+        pytest.skip("LOOM_CH_READER_USER is not set")
+    org, ns = unique_org("grep-deadline"), "code-reader-probe"
+    body = {"org": org, "namespace": ns, "agent": "a", "pattern": "needle", "deadline_ms": 300}
+    r = _post(control_plane_url, _mint(org, ns), "code.grep", body)
+    assert r.status_code == 200, r.text[:400]
 
 
 async def test_a_ceiling_above_the_reader_profile_fails_the_boot_probe(

@@ -173,7 +173,13 @@ def _doctor_reader_probe(settings: Any) -> tuple[bool | None, str]:
     unset or ClickHouse does not answer (`clickhouse_reachable` says so)."""
     import httpx
 
-    from server.core.ch import READER_PROBE_SQL, caller_shaped, statement_settings
+    from server.core.ch import (
+        BEFORE_MIGRATIONS_CODES,
+        READER_PROBE_SQL,
+        caller_shaped,
+        statement_settings,
+    )
+    from server.core.ch_errors import error_code
 
     if not settings.ch_reader_user or not settings.ch_host:
         return None, ""
@@ -187,6 +193,8 @@ def _doctor_reader_probe(settings: Any) -> tuple[bool | None, str]:
     except httpx.HTTPError:
         return None, ""
     if r.status_code != 200:
+        if error_code(r.text) in BEFORE_MIGRATIONS_CODES:
+            return None, ""  # no loom.memory yet: migrations have not run, nothing to probe
         return False, r.text.strip()
     return r.text.split("\t")[0] == settings.ch_reader_user, ""
 
