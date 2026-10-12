@@ -22,7 +22,7 @@ Delete a session brief by brief_key when the user asks for it to be forgotten.
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
-| `brief_key` | `str` | required | The brief to delete. |
+| `brief_key` | `str` | required | The brief to delete, as session.brief_list shows it. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

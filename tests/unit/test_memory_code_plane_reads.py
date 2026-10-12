@@ -56,19 +56,26 @@ async def test_user_file_dirs_read_only_the_callers_namespaces(
     assert len(ch.calls) == 1
 
 
-def test_code_search_personalises_by_the_scopes_user_not_the_bodys() -> None:
-    from server.code.app.search import handler
-    from tests.unit.principals import acting_as, principal
+def test_code_search_runs_as_the_pinned_user_whatever_the_body_says() -> None:
+    from server.code.api.models_search import CodeSearchInput
+    from server.core.errors import AuthInsufficientError
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE, bind_request_read_filters
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import gates
+    from tests.unit.principals import principal
 
+    op = OPERATIONS_BY_NAME["code.search"]
     pinned = principal("viewer", org="o", namespaces=("ns1",), read_user_id="u1")
-    with acting_as(pinned):
-        assert handler._personalisation_user("u2") == "u1"
-        assert handler._personalisation_user(None) == "u1"
-    unpinned = principal("viewer", org="o", namespaces=("ns1",), read_scope="own_user")
-    with acting_as(unpinned):
-        assert handler._personalisation_user("u2") is None  # scope unresolved: no tie-break
-    with acting_as(principal("viewer", org="o", namespaces=("ns1",))):
-        assert handler._personalisation_user("u2") == "u2"
+    try:
+        out = gates.read_scope(op, pinned, CodeSearchInput(query="q"))
+        assert out.user_id == "u1"  # the user whose recent files break ties
+        with pytest.raises(AuthInsufficientError):
+            gates.read_scope(op, pinned, CodeSearchInput(query="q", user_id="u2"))
+        body = CodeSearchInput(query="q", user_id="u2")
+        unpinned = principal("viewer", org="o", namespaces=("ns1",))
+        assert gates.read_scope(op, unpinned, body) is body
+    finally:
+        bind_request_read_filters(None, WHOLE_NAMESPACE)
 
 
 @pytest.mark.asyncio

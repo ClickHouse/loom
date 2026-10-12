@@ -389,7 +389,12 @@ class _MemCH:
         if "scope_uid" in p:
             rows = [r for r in rows if r["user_id"] == p["scope_uid"]]
         if "key_prefix" in p:
-            rows = [r for r in rows if r["brief_key"].startswith(p["key_prefix"])]
+            px = p["key_prefix"]
+            rows = [
+                r
+                for r in rows
+                if r["brief_key"].startswith(px) and "~" not in r["brief_key"][len(px) :]
+            ]
         rows.sort(key=lambda r: r["updated_at"], reverse=True)
         return rows[: p.get("lim", 1)]
 
@@ -756,11 +761,58 @@ def test_sessions_bounded_to_themselves_keep_separate_briefs(mem, monkeypatch) -
     assert {k for k in mem._newest()} == {"~u1~s1~auto/loom/main", "~u1~s2~auto/loom/main"}
 
 
+def test_every_listed_key_opens_and_deletes_under_the_token_that_listed_it(
+    mem, monkeypatch
+) -> None:
+    from server.identity.domain.read_scope import ReadFilters, bind_request_read_filters
+    from tests.unit.principals import acting_as, principal
+
+    _llm(monkeypatch, [])
+
+    def save(key: str) -> None:
+        _save(brief_key=key, user_id="u1", session_id="s1", use_llm=False, events=_session())
+
+    def listed() -> list[str]:
+        out = asyncio.run(h.handle_session_brief_list(SessionBriefListInput(**IDENT)))
+        return [b.brief_key for b in out.briefs]
+
+    def round_trip(keys: list[str]) -> None:
+        for key in keys:
+            assert asyncio.run(
+                h.handle_session_brief_get(SessionBriefGetInput(**IDENT, brief_key=key))
+            ).found
+            assert asyncio.run(
+                h.handle_session_brief_delete(SessionBriefDeleteInput(**IDENT, brief_key=key))
+            ).deleted
+
+    session_token = principal("writer", org="o", namespaces=("ns",), read_scope="own_session")
+    with acting_as(session_token) as auth:
+        bind_request_read_filters(auth, ReadFilters("own_session", "u1", "s1"))
+        save("sess")
+        assert listed() == ["sess"]
+    user_token = principal("writer", org="o", namespaces=("ns",), read_user_id="u1")
+    with acting_as(user_token):
+        save("mine")
+        assert listed() == ["mine"]  # not the own_session brief, which it can't address
+        for bad in ("~u2~mine", "~u1~mine"):
+            with pytest.raises(HTTPException) as e:
+                asyncio.run(
+                    h.handle_session_brief_get(SessionBriefGetInput(**IDENT, brief_key=bad))
+                )
+            assert e.value.status_code == 422
+        round_trip(["mine"])
+    save("plain")
+    assert sorted(listed()) == ["plain", "~u1~s1~sess"]
+    round_trip(listed())
+    assert listed() == []
+
+
 def test_owner_key_prefixes_never_collide() -> None:
     assert sb.owner_key_prefix("a~b") != sb.owner_key_prefix("a", "b")
     assert sb.owner_key_prefix("a/b") + "c" != sb.owner_key_prefix("a") + "b/c"
     assert sb.owner_key_prefix("a~b", "c") != sb.owner_key_prefix("a", "b~c")
     assert not sb.brief_key_ok(sb.owner_key_prefix("u") + "k")
+    assert sb.stored_key_ok(sb.owner_key_prefix("a~/b", "s 1") + "k")
 
 
 def test_registration() -> None:

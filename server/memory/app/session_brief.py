@@ -229,7 +229,7 @@ async def _recording_off(inp: Any) -> bool:
 # A brief key is one row per namespace. A token bounded to one user (or session) stores
 # its briefs under a prefix naming that owner, so two users saving the same key get two
 # briefs, and neither can see or overwrite the other's. A namespace-wide token uses the
-# key as given.
+# key as given, and may name a stored `~<user>~…` key as session.brief_list shows it.
 def _key_prefix(scope: ReadFilters) -> str:
     if not scope.narrowed:
         return ""
@@ -238,6 +238,8 @@ def _key_prefix(scope: ReadFilters) -> str:
 
 
 def _stored_key(key: str, scope: ReadFilters) -> str:
+    if key.startswith("~") and scope.narrowed:
+        raise HTTPException(status_code=422, detail={"code": "BAD_BRIEF_KEY", "message": key})
     return _key_prefix(scope) + key
 
 
@@ -249,7 +251,7 @@ async def handle_session_brief_save(inp: SessionBriefSaveInput) -> SessionBriefS
     from server.memory.app.provenance import writer_actor
 
     key = resolve_key(inp)
-    if not sb.brief_key_ok(key):
+    if not sb.stored_key_ok(key):
         raise HTTPException(status_code=422, detail={"code": "BAD_BRIEF_KEY", "message": key})
     ch = get_client()
     stored_key = _stored_key(key, request_read_filters(current_auth()))
