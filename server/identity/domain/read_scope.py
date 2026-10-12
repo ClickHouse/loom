@@ -332,8 +332,9 @@ NARROW_SAFE_OPS: dict[str, str] = {
     # other users' memory keys and payloads.
     "ops.capabilities": "the deployment's capabilities",
     "ops.health": "deployment health",
-    # A sweep tombstones and counts only the caller's rows; list hides hit counts.
-    "blacklist.": "refusal patterns; sweeps and counts only the caller's rows",
+    # A sweep tombstones and counts only the caller's rows; list and remove reach only
+    # the caller's own patterns, without hit counts; add needs ADMIN.
+    "blacklist.": "refusal patterns; only the caller's own patterns and rows",
     "memory_schema.": "value schemas",
     "admin.users": "the deployment's users",
     "agents.connected": "connected agent names",

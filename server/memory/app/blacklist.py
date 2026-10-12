@@ -90,6 +90,34 @@ def _stamped_author(body_value: str) -> str:
     return writer_actor(fallback=body_value)
 
 
+def _narrowed_author() -> str | None:
+    """The author whose patterns a token narrowed to one user may list and remove (its
+    own stamp, as `created_by` holds it; "" owns nothing). None for a namespace-wide
+    caller. Another user's pattern text and reason are that user's content."""
+    from server.auth.context import current_auth
+    from server.identity.domain.read_scope import request_read_narrowed
+    from server.memory.app.provenance import writer_actor
+
+    if not request_read_narrowed(current_auth()):
+        return None
+    return writer_actor()
+
+
+async def _require_admin_if_narrowed(org: str, namespace: str) -> None:
+    """A pattern refuses every user's writes in the namespace, so a token narrowed to
+    one user needs ADMIN there to add one; a namespace-wide WRITER keeps the right."""
+    from server.auth.authz import Role, row_in_scope
+    from server.core.errors import AuthInsufficientError
+
+    if _narrowed_author() is None:
+        return
+    if not await row_in_scope(org, namespace, Role.ADMIN):
+        raise AuthInsufficientError(
+            "blacklist.add from a token narrowed to one user requires role ADMIN: "
+            "the pattern refuses every user's writes in the namespace"
+        )
+
+
 def _reject_bad_regex(pattern: str) -> None:
     reason = validate_regex(pattern)
     if reason is None:
@@ -107,6 +135,7 @@ async def handle_blacklist_add(input: BlacklistAddInput) -> BlacklistAddOutput:
     # reads and blocks writes for other namespaces or other tenants, so it needs the role
     # whose reach matches.
     _require_scope_authority(input.scope, "add", row_org=input.org)
+    await _require_admin_if_narrowed(input.org, input.namespace)
     if input.pattern_type == "regex":
         _reject_bad_regex(input.pattern)
 
@@ -209,18 +238,19 @@ async def handle_blacklist_sweep(input: BlacklistSweepInput) -> BlacklistSweepOu
 async def handle_blacklist_list(
     input: BlacklistListInput,
 ) -> BlacklistListOutput:
-    from server.auth.context import current_auth
-    from server.identity.domain.read_scope import request_read_narrowed
-
+    author = _narrowed_author()
+    if author == "":
+        return BlacklistListOutput(rows=[])
     rows = await blacklist_repo.list_for_scope(
         input.org,
         input.namespace,
         scope=input.scope,
+        created_by=author,
         limit=input.limit,
     )
     # Hits count refused writes from every user, so a pattern's hit count would tell a
     # token narrowed to one user what other users tried to write.
-    hide_hits = request_read_narrowed(current_auth())
+    hide_hits = author is not None
     return BlacklistListOutput(
         rows=[
             _BlacklistRow(
@@ -256,6 +286,10 @@ async def handle_blacklist_remove(
     now = naive_utc_now_seconds()
     existing = await blacklist_repo.find_active_pattern(input.pattern_id)
     if existing is None:
+        return BlacklistRemoveOutput(removed=False)
+    author = _narrowed_author()
+    if author is not None and (not author or existing.get("created_by") != author):
+        # Another user's pattern: hidden from a narrowed token, as if absent.
         return BlacklistRemoveOutput(removed=False)
     row_org = str(existing.get("org") or "")
     row_ns = str(existing.get("namespace") or "")
