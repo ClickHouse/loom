@@ -325,10 +325,14 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "task.": "the task inbox: tasks, not memory",
     "inbox.": "inbox registrations and policies",
     "grants.": "namespace grants",
-    "policy.": "history policy rules and decisions",
+    "policy.": "history policy rules; decisions only the caller's own",
     "cost.": "cost and budget counters",
-    "ops.": "deployment health and projection failures",
-    "blacklist.": "refusal patterns and sweep counts",
+    # Not ops.projection_failures.*: a failure row has no user axis, and carries
+    # other users' memory keys and payloads.
+    "ops.capabilities": "the deployment's capabilities",
+    "ops.health": "deployment health",
+    # A sweep tombstones and counts only the caller's rows; list hides hit counts.
+    "blacklist.": "refusal patterns; sweeps and counts only the caller's rows",
     "memory_schema.": "value schemas",
     "admin.users": "the deployment's users",
     "agents.connected": "connected agent names",
@@ -364,6 +368,8 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "memory.delete": "a write",
     "memory.touch": "a write",
     "memory.lock": "a write",
+    "memory.unlock": "a write",
+    "memory.unpin": "a write",
     "memory.outcome": "a write",
     "working_memory.set": "a write",
     "working_memory.append": "a write",

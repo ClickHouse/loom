@@ -209,12 +209,18 @@ async def handle_blacklist_sweep(input: BlacklistSweepInput) -> BlacklistSweepOu
 async def handle_blacklist_list(
     input: BlacklistListInput,
 ) -> BlacklistListOutput:
+    from server.auth.context import current_auth
+    from server.identity.domain.read_scope import request_read_narrowed
+
     rows = await blacklist_repo.list_for_scope(
         input.org,
         input.namespace,
         scope=input.scope,
         limit=input.limit,
     )
+    # Hits count refused writes from every user, so a pattern's hit count would tell a
+    # token narrowed to one user what other users tried to write.
+    hide_hits = request_read_narrowed(current_auth())
     return BlacklistListOutput(
         rows=[
             _BlacklistRow(
@@ -226,8 +232,8 @@ async def handle_blacklist_list(
                 scope=r["scope"],
                 reason=r["reason"],
                 created_by=r["created_by"],
-                hit_count=int(r["hit_count"]),
-                last_hit_at=r.get("last_hit_at"),
+                hit_count=0 if hide_hits else int(r["hit_count"]),
+                last_hit_at=None if hide_hits else r.get("last_hit_at"),
                 created_at=r["created_at"],
             )
             for r in rows

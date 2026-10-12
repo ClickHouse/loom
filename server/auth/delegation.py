@@ -156,7 +156,8 @@ async def _allowed_roles(
     """The role the child gets on each namespace. A namespace the caller named
     and may not have is refused; one that came from expanding `*` over a
     narrow parent's list is left out instead. A scoped child asking to write
-    a namespace needs the parent to be able to write it."""
+    a namespace needs the parent to be able to write it; one naming no role
+    there gets at most viewer."""
     expanded = _expand_wildcard(parent, requested)
     out: dict[str, Role] = {}
     for ns, asked in expanded.items():
@@ -169,6 +170,9 @@ async def _allowed_roles(
             if ns not in requested:
                 continue
             raise _refuse(f"cannot delegate {want.name.lower() if want else 'access'} on {ns}")
+        if scoped and want is None and ceiling_role(parent, org, ns, write=True) is None:
+            # The parent can't write here, so neither can the child: say viewer.
+            allowed = min(allowed, Role.VIEWER)
         out[ns] = want or allowed
     if not out:
         raise _refuse("cannot delegate access to any of the requested namespaces")

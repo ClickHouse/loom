@@ -163,6 +163,9 @@ def test_a_pinned_token_reaches_only_ops_that_honour_its_scope(op: Any) -> None:
     "name",
     [
         "facts.traverse",  # entity_edges / entity_triples carry no user
+        "ops.projection_failures.list",  # failure rows carry no user, and others' keys
+        "ops.projection_failures.retry",
+        "ops.projection_failures.resolve",
         "facts.related",
         "conversation.get",
         "conversation.search",
@@ -357,6 +360,14 @@ async def test_history_conflicts_and_briefs_carry_the_scope() -> None:
     await session_briefs.current(ch, "o", "n", "b", scope=U1)
     await session_briefs.by_revision(ch, "o", "n", "b", 2, scope=U1)
     await session_briefs.listing(ch, "o", "n", scope=U1)
+    _bound_to_u1(ch)
+
+
+async def test_policy_decisions_carry_the_scope() -> None:
+    from server.identity.store import policy
+
+    ch = _CH()
+    await policy.list_decisions("o", "n", scope=U1, ch=ch)
     _bound_to_u1(ch)
 
 
@@ -728,6 +739,13 @@ async def test_a_bounded_write_treats_another_users_row_as_absent(monkeypatch) -
     _bind(None, WHOLE_NAMESPACE)
     wide = await _verdict([_candidate("theirs", "u2", "vault 1234")], "vault 1234")
     assert (wide.verdict, wide.existing_memory_id) == ("merge", "theirs")
+
+
+def test_a_bounded_token_may_lift_its_own_lock_and_pin() -> None:
+    # Their lookups are scoped, so another user's row is not found; authz still
+    # asks for the op's own role.
+    for name in ("memory.lock", "memory.unlock", "memory.unpin", "ops.health"):
+        gates.read_scope(OPERATIONS_BY_NAME[name], PINNED, SimpleNamespace(user_id="-"))
 
 
 def test_every_code_op_is_classified_by_name() -> None:
