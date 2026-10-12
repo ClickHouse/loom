@@ -36,7 +36,7 @@ import {
   scheduleExit,
   truncate,
 } from "../lib/loom-client.mjs";
-import { appendRecalledStash, runIdFor, servedMemoryKeys } from "../lib/run-hook.mjs";
+import { appendRecalledStash, sessionRunId, servedMemoryKeys } from "../lib/run-hook.mjs";
 import { readJsonFile, readPrivateFile, removeFile, sessionStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
 
 const OBSERVE_OP = "observe.record";
@@ -150,7 +150,7 @@ export function buildObservation(event, payload, scope) {
     session_id: payload.session_id || "-",
     // The session's run (loom-run.mjs opens it on the first prompt), so the
     // observation joins the run ledger without the agent doing anything.
-    run_id: runIdFor(payload.session_id) || "-",
+    run_id: sessionRunId(payload.session_id) || "-",
     // Heuristic, zero-token. Server defers embedding/extraction.
     memory_type: "episodic",
     action_type: actionType,

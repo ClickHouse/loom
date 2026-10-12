@@ -12,7 +12,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { contentText, hookClient, redactHead, runPrefixFor } from "./loom-client.mjs";
-import { readPrivateFile, writeJsonFile } from "./tmp-state.mjs";
+import { readPrivateFile, readSessionState, removeFile, sessionStatePath, writeJsonFile } from "./tmp-state.mjs";
 
 const GOAL_MAX = 2000;
 const REQUEST_MAX = 8000;
@@ -23,6 +23,29 @@ const FINAL_MAX = 4000;
 export function runIdFor(sessionId, client = hookClient()) {
   const s = String(sessionId || "").trim();
   return s ? `${runPrefixFor(client)}-${s}` : "";
+}
+
+// run.begin can answer another id than the one asked for (the server makes a
+// fresh one when the derived id is not ours to open). The run hook stores the
+// answer per session and every hook reads it before deriving.
+const RUN_ID_RE = /^[\w.:-]{1,128}$/;
+
+/** Forget the session's stored run id (a new run.begin is about to answer). */
+export function clearRunId(sessionId, tmp = os.tmpdir()) {
+  return removeFile(sessionStatePath("run-id", sessionId, { tmp }));
+}
+
+/** Keep the run id run.begin answered for this session; false when not kept. */
+export function storeRunId(sessionId, runId, tmp = os.tmpdir()) {
+  if (!String(sessionId || "").trim() || typeof runId !== "string" || !RUN_ID_RE.test(runId)) return false;
+  return writeJsonFile(sessionStatePath("run-id", sessionId, { tmp }), { run_id: runId });
+}
+
+/** The session's run id: the one run.begin answered, else runIdFor's. */
+export function sessionRunId(sessionId, { tmp = os.tmpdir(), client = hookClient() } = {}) {
+  if (!String(sessionId || "").trim()) return "";
+  const stored = readSessionState("run-id", sessionId, { tmp }).run_id;
+  return typeof stored === "string" && RUN_ID_RE.test(stored) ? stored : runIdFor(sessionId, client);
 }
 
 /** Body for run.begin from the first UserPromptSubmit of a session. */
@@ -73,7 +96,7 @@ export function completeBody(scope, payload, finalText, env = process.env, recal
   const body = {
     org: scope.org,
     namespace: scope.namespace,
-    run_id: runIdFor(payload.session_id),
+    run_id: sessionRunId(payload.session_id),
     status: statusFor(payload.reason),
     final_response: redactHead(finalText, FINAL_MAX).slice(0, FINAL_MAX),
     outcome: "none",

@@ -166,7 +166,8 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   agent how to work or answer; top 3, no bodies) and up to 3 unseen pointers,
   only when the index is not abstaining and retrieval_confidence ≥ 0.4.
 - **loom-run.** The run ledger. The first prompt opens a run (goal = the
-  prompt, run_id = cc-<session_id>, cx- for Codex); every prompt is also
+  prompt, run_id = cc-<session_id>, cx- for Codex; when run.begin answers
+  another id, it is stored per session and every hook uses it); every prompt is also
   appended to the turn journal, which clients without a parseable
   transcript read. SessionEnd closes the run with the last assistant text,
   `outcome: none` and the recalled keys, awaited and then exited at once;
