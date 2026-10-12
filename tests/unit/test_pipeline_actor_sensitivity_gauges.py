@@ -217,7 +217,14 @@ async def test_apply_relabels_tombstones_high_and_tags_medium(monkeypatch) -> No
     monkeypatch.setattr(memory_repo, "live_embedding_rows_for_key", _live)
     monkeypatch.setattr(memory_repo, "insert_embedding_rows", _ins)
     ch.rows = [
-        {"org": "clickhouse", "namespace": "n", "memory_key": "khigh", "tombstoned_at": None}
+        {
+            "org": "clickhouse",
+            "namespace": "n",
+            "agent": "a",
+            "user_id": "-",
+            "memory_key": "khigh",
+            "tombstoned_at": None,
+        }
     ]
     cands = [
         sweep.SweepCandidate(

@@ -241,15 +241,15 @@ async def test_an_update_that_writes_a_credential_is_labelled_high_and_leaves_se
 
     monkeypatch.setattr(settings, "memory_sensitivity_autodetect", True)
     ch = wired([_cand(_ID_A)], _row())
-    dropped: list[str] = []
+    dropped: list[tuple[str, int]] = []
 
-    async def _tomb(org, ns, agent, user_id, session_id, key, *, ts, ch=None):
-        dropped.append(key)
+    async def _retire(items, *, ch=None):
+        dropped.extend((key[5], version) for key, version in items)
         return 1
 
     from server.memory.store import embeddings as embeddings_store
 
-    monkeypatch.setattr(embeddings_store, "tombstone_embeddings_for_key", _tomb)
+    monkeypatch.setattr(embeddings_store, "retire_vectors_for_keys", _retire)
     out = await update_mod.handle_memory_update(
         MemoryUpdateInput(
             org="test",
@@ -263,4 +263,5 @@ async def test_an_update_that_writes_a_credential_is_labelled_high_and_leaves_se
     assert "loom.memory_embeddings" not in tables
     [written] = [r for t, rows in ch.inserts if t == "loom.memory" for r in rows]
     assert written["sensitivity"] == "high" and "sensitivity:high" in written["tags"]
-    assert dropped == ["deploy_day"]
+    # at the new row's version, so a concurrent embedded write's newer vector survives
+    assert dropped == [("deploy_day", written["version"])]

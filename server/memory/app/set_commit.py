@@ -243,7 +243,7 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
     with traced("ch.insert.memory", table="loom.memory"):
         await insert_memory_versions([memory_row], ch=ch)
     # The version this replaces may have been embedded (re-set as 'high', or retyped).
-    await memory_repo.tombstone_vectors_of(w.existing, ch=ch)
+    await memory_repo.tombstone_vectors_of(w.existing, version=memory_row["version"], ch=ch)
     await _project_set_entities_fail_open(input)
     # Non-searchable types skip the conflict check entirely, so there is no
     # verdict to map: the insert always happened.

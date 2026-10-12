@@ -667,7 +667,11 @@ async def _write_revision(
     await asyncio.gather(
         insert_memory_versions([memory_row], ch=ch),
         *([memory_repo.insert_embedding_rows(emb_rows, ch=ch)] if emb_rows else []),
-        *([] if searchable else [memory_repo.tombstone_vectors_of(existing, ch=ch)]),
+        *(
+            []
+            if searchable
+            else [memory_repo.tombstone_vectors_of(existing, version=new_version, ch=ch)]
+        ),
     )
     cfg = await cfg_task
     _cd.schedule_settle(

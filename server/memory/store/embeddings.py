@@ -293,8 +293,9 @@ async def reemit_embedding_rows_for_keys(
     """`reemit_embedding_rows_for_key` for many keys at once: one keyed FINAL
     read and one committed insert per `batch` keys, instead of one of each
     per key (one-row parts from a sweep of ~1,000 keys a pass would dominate
-    memory_embeddings' part count). Each key keeps its own overrides; a key
-    listed twice takes the last. Returns the rows re-emitted."""
+    memory_embeddings' part count). Each key keeps its own overrides (a
+    `version` among them replaces the fresh one); a key listed twice takes the
+    last. Returns the rows re-emitted."""
     ch = ch or _default_client()
     by_key: dict[EmbeddingKey, dict[str, Any]] = {k: dict(o) for k, o in items}
     keys = list(by_key)
@@ -310,8 +311,8 @@ async def reemit_embedding_rows_for_keys(
                 build_embedding_row(
                     **(
                         {c: val for c, val in r.items() if c in EMBEDDING_PERSISTED_COLS}
-                        | overrides
                         | {"version": next_version()}
+                        | overrides
                     )
                 )
             )
@@ -433,28 +434,80 @@ async def tombstone_embeddings_for_key(
     )
 
 
-async def tombstone_vectors_of(previous: Any, *, ch: _CHClient | None = None) -> int:
+async def tombstone_vectors_of(previous: Any, *, version: int, ch: _CHClient | None = None) -> int:
     """A new version that is not embedded ('high', or a non-searchable type) retires
     the vectors of the version it replaces: no search leg may keep serving the old
-    vector or excerpt. `previous` is that version's loom.memory row; a key that was
-    never embedded has nothing to drop."""
-    from server.core.datetimes import naive_utc_now
+    vector or excerpt. `previous` is that version's loom.memory row (a key that was
+    never embedded has nothing to drop); `version` is the new row's."""
     from server.memory.domain.memory_types import is_embedded
 
     if previous is None or not is_embedded(
         previous.memory_type, getattr(previous, "sensitivity", "")
     ):
         return 0
-    return await tombstone_embeddings_for_key(
+    key = (
         previous.org,
         previous.namespace,
         previous.agent,
         previous.user_id,
         previous.session_id,
         previous.memory_key,
-        ts=naive_utc_now(),
-        ch=ch,
     )
+    return await retire_vectors_for_keys([(key, version)], ch=ch)
+
+
+async def retire_vectors_for_keys(
+    items: list[tuple[EmbeddingKey, int]], *, ch: _CHClient | None = None
+) -> int:
+    """Tombstone every live vector of each key: its memory_embeddings rows and its
+    entity_vectors rows. The embedding tombstones take the given version, the one of
+    the unembedded memory row that replaces them, so a concurrent embedded write that
+    lands a newer version keeps its vector. Returns the memory_embeddings rows retired."""
+    from server.core.datetimes import naive_utc_now
+
+    if not items:
+        return 0
+    ch = ch or _default_client()
+    now = naive_utc_now()
+    n = await reemit_embedding_rows_for_keys(
+        [(key, {"tombstoned_at": now, "version": int(v)}) for key, v in items], ch=ch
+    )
+    await tombstone_entity_vectors_for_keys([key for key, _ in items], ts=now, ch=ch)
+    return n
+
+
+async def tombstone_entity_vectors_for_keys(
+    keys: list[EmbeddingKey], *, ts: datetime, ch: _CHClient | None = None
+) -> int:
+    """Re-emit the live loom.entity_vectors rows of each key with `tombstoned_at`
+    (the table is RMT on created_at, so the copy keeps it and wins as the later
+    insert). That table has no session column: a key's rows are matched on
+    (agent, user_id, memory_key). One read per namespace. Returns rows re-emitted."""
+    from server.memory.store.sweeps import entity_vectors_live_sql
+
+    ch = ch or _default_client()
+    by_ns: dict[tuple[str, str], set[tuple[str, str, str]]] = {}
+    for org, ns, agent, user_id, _session, key in keys:
+        by_ns.setdefault((org, ns), set()).add((agent, user_id, key))
+    written = 0
+    for (org, ns), wanted in by_ns.items():
+        live = await ch.query_all(
+            entity_vectors_live_sql(),
+            params={"org": org, "ns": ns, "keys": sorted({k for _, _, k in wanted})},
+        )
+        rows = [
+            {**r, "tombstoned_at": ts}
+            for r in live
+            if (str(r.get("agent")), str(r.get("user_id")), str(r.get("memory_key"))) in wanted
+        ]
+        if rows:
+            await ch.insert(
+                "loom.entity_vectors",
+                rows,
+                settings={"async_insert": 0, "wait_for_async_insert": 1},
+            )
+            written += len(rows)
+    return written
 
 
 async def unsupersede_embeddings(

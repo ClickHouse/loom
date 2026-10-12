@@ -253,8 +253,9 @@ async def _peer_rows(
     `keep`: how many peers of the type to find and return; stage A widens until it
     has them. `typed` also filters the vector row's type in stage A, so a mixed-type
     namespace does not make the widening rescan it (the foreign-pinned arm, which asks
-    for `_FOREIGN_PINNED_K`); a vector row's type follows its memory row's, since every
-    retype re-embeds the key or retires its vectors (`tombstone_vectors_of`)."""
+    for `_FOREIGN_PINNED_K`); a vector row's type follows its memory row's, since a
+    retype by memory.set, memory.update or memory.bulk_set re-embeds the key or retires
+    its vectors (`tombstone_vectors_of`, `retire_vectors_for_keys`)."""
     params = dict(params)
     in_scope = scope_and(scope, params)
     k = _PEER_FIRST_K

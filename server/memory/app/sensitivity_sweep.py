@@ -29,7 +29,6 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
@@ -196,23 +195,6 @@ class ApplyResult:
         }
 
 
-async def _tombstone_entity_vectors(c: SweepCandidate, *, now: datetime, ch: _CHClient) -> int:
-    from server.memory.store.sweeps import entity_vectors_live_sql
-
-    live = await ch.query_all(
-        entity_vectors_live_sql(),
-        params={"org": c.org, "ns": c.namespace, "keys": [c.memory_key]},
-    )
-    if not live:
-        return 0
-    await ch.insert(
-        "loom.entity_vectors",
-        [{**row, "tombstoned_at": now} for row in live],
-        settings={"async_insert": 0, "wait_for_async_insert": 1},
-    )
-    return len(live)
-
-
 async def _tag_embeddings(c: SweepCandidate, *, ch: _CHClient) -> int:
     """Re-emit a medium row's live embedding rows with the `sensitivity:`
     tag (the embeddings table has no sensitivity column; the ranking reads
@@ -288,8 +270,12 @@ async def apply(candidates: list[SweepCandidate], *, ch: _CHClient | None = None
                     ts=now,
                     ch=ch,
                 )
-                result.entity_vectors_tombstoned += await _tombstone_entity_vectors(
-                    c, now=now, ch=ch
+                result.entity_vectors_tombstoned += (
+                    await memory_repo.tombstone_entity_vectors_for_keys(
+                        [(c.org, c.namespace, c.agent, c.user_id, c.session_id, c.memory_key)],
+                        ts=now,
+                        ch=ch,
+                    )
                 )
             else:
                 result.medium += 1

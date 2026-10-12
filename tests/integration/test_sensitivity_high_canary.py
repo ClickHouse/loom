@@ -190,3 +190,55 @@ def test_re_setting_an_embedded_key_as_high_retires_its_old_vector(
     assert r.status_code == 200, r.text
     assert _CANARY_SECRET not in r.text
     assert key not in [h.get("memory_key") for h in r.json().get("results", [])]
+
+
+@pytest.mark.parametrize("high_last", [True, False])
+def test_one_bulk_batch_with_a_key_twice_keeps_a_vector_only_if_its_last_row_is_embedded(
+    control_plane_url: str, ch_client, token: str, high_last: bool
+) -> None:
+    key = f"vault_dup_{uuid.uuid4().hex[:6]}"
+    ident = {"org": ORG, "namespace": NAMESPACE, "agent": "canary"}
+    # Unique per case: a restatement of another case's row would merge into it.
+    plain = {"memory_key": key, "value": f"the {key} vault is audited each quarter by finance"}
+    high = {"memory_key": key, "value": f"the {key} vault token is {_CANARY_SECRET}"}
+    entries = [plain, high] if high_last else [high, plain]
+    r = _post(control_plane_url, token, "memory.bulk_set", {**ident, "entries": entries})
+    assert r.status_code == 200, r.text
+
+    def _sensitivity() -> list[tuple[str]]:
+        return ch_client.query(
+            "SELECT sensitivity FROM loom.memory FINAL WHERE org = {o:String} "
+            "AND namespace = {n:String} AND memory_key = {k:String} AND tombstoned_at IS NULL",
+            parameters={"o": ORG, "n": NAMESPACE, "k": key},
+        ).result_rows
+
+    _wait(lambda: len(_sensitivity()) == 1)
+    assert (_sensitivity()[0][0] == "high") is high_last
+    vectors = int(
+        ch_client.query(
+            "SELECT count() FROM loom.memory_embeddings FINAL WHERE org = {o:String} "
+            "AND namespace = {n:String} AND memory_key = {k:String} AND tombstoned_at IS NULL",
+            parameters={"o": ORG, "n": NAMESPACE, "k": key},
+        ).result_rows[0][0]
+    )
+    assert vectors == (0 if high_last else 1)
+    from server.memory.app.sensitivity_sweep import HIGH_WITH_EMBEDDING_SQL
+
+    gauge = int(
+        ch_client.query(
+            f"SELECT count() FROM ({HIGH_WITH_EMBEDDING_SQL}) WHERE org = {{o:String}} "
+            "AND namespace = {n:String} AND memory_key = {k:String}",
+            parameters={"o": ORG, "n": NAMESPACE, "k": key},
+        ).result_rows[0][0]
+    )
+    assert gauge == 0
+    r = _post(
+        control_plane_url,
+        token,
+        "memory.search",
+        {**ident, "query": "vault audited each quarter by finance", "top_k": 5, "fresh": True},
+    )
+    assert r.status_code == 200, r.text
+    assert _CANARY_SECRET not in r.text
+    found = key in [h.get("memory_key") for h in r.json().get("results", [])]
+    assert found is not high_last

@@ -41,6 +41,7 @@ from server.memory.app.projections import (
     write_entity_vectors,
 )
 from server.memory.app.provenance import writer_actor
+from server.memory.domain.memory_types import is_embedded
 
 if TYPE_CHECKING:
     from server.memory.app.search.clock import StageClock
@@ -293,18 +294,41 @@ async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
         # Full version rows (revision or first version), so the typed insert checks them.
         await memory_repo.insert_memory_versions(state.memory_rows, ch=ch)
 
+    retire = _vectors_to_retire(state)
+    # A key whose winning row is unembedded keeps no vector, not even one of this batch.
+    state.embedding_rows = [
+        r for r in state.embedding_rows if str(r.get("memory_key")) not in retire
+    ]
     await asyncio.gather(
         _insert_memory_rows(),
         memory_repo.insert_embedding_rows(state.embedding_rows, ch=ch),
     )
-    # A row that lands unembedded retires the vectors of the version it replaces.
-    embedded = {str(r.get("memory_key")) for r in state.embedding_rows}
-    await asyncio.gather(
-        *(
-            memory_repo.tombstone_vectors_of(state.existing_rows.get(key), ch=ch)
-            for key in {str(r.get("memory_key")) for r in state.memory_rows} - embedded
+    await memory_repo.retire_vectors_for_keys(list(retire.values()), ch=ch)
+
+
+def _vectors_to_retire(state: _BulkWriteState) -> dict[str, tuple[Any, int]]:
+    """memory_key -> (identity key, version) of each key whose winning row (the
+    highest version in the batch) lands unembedded and may have a live vector: the
+    batch embedded an earlier entry of it, the replaced version was embedded, or the
+    lookup failed and nobody knows."""
+    winners: dict[str, dict[str, Any]] = {}
+    for r in state.memory_rows:
+        key = str(r.get("memory_key"))
+        if key not in winners or int(r["version"]) >= int(winners[key]["version"]):
+            winners[key] = r
+    batch_embedded = {str(r.get("memory_key")) for r in state.embedding_rows}
+    out: dict[str, tuple[Any, int]] = {}
+    for key, r in winners.items():
+        if is_embedded(str(r.get("memory_type")), str(r.get("sensitivity") or "")):
+            continue
+        prev = state.existing_rows.get(key)
+        prev_embedded = prev is not None and is_embedded(
+            prev.memory_type, getattr(prev, "sensitivity", "")
         )
-    )
+        if key in batch_embedded or not state.existing_lookup_ok or prev_embedded:
+            ident = (r["org"], r["namespace"], r["agent"], r["user_id"], r["session_id"], key)
+            out[key] = (ident, int(r["version"]))
+    return out
 
 
 async def _bulk_post_insert_links(

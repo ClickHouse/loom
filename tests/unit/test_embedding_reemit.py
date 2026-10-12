@@ -7,6 +7,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -107,6 +108,53 @@ async def test_shared_reemit_reads_the_scope_shared_rows_of_the_key() -> None:
     assert params == {"org": "o", "ns": "n", "k": "k"}
     ((_, rows, _),) = ch.insert_calls
     assert rows[0]["scope"] == "shared" and rows[0]["tombstoned_at"] == ts
+
+
+class _VectorsCH(_CH):
+    """Answers the memory_embeddings read with `rows` and the entity_vectors read
+    with `entity_rows`."""
+
+    def __init__(self, rows: list[dict[str, Any]], entity_rows: list[dict[str, Any]]) -> None:
+        super().__init__(rows)
+        self.entity_rows = entity_rows
+
+    async def query_all(self, sql, params=None):
+        self.query_all_calls.append((sql, params or {}))
+        return list(self.entity_rows if "loom.entity_vectors" in sql else self.rows)
+
+
+@pytest.mark.asyncio
+async def test_retiring_a_key_tombstones_at_the_new_rows_version_and_its_entity_vectors() -> None:
+    """The tombstone copy takes the unembedded row's version, not a fresh one: a
+    concurrent embedded write's newer vector outranks it. The key's entity vectors
+    go too, and only this identity's (the table has no session column)."""
+    ent = {"org": "o", "namespace": "n", "agent": "a", "user_id": "u", "memory_key": "k"}
+    other = {**ent, "agent": "someone-else"}
+    ch = _VectorsCH([dict(_LIVE)], [dict(ent), dict(other)])
+    previous = SimpleNamespace(
+        org="o",
+        namespace="n",
+        agent="a",
+        user_id="u",
+        session_id="s",
+        memory_key="k",
+        memory_type="semantic",
+        sensitivity="",
+    )
+    assert await M.tombstone_vectors_of(previous, version=42, ch=ch) == 1
+    (emb_table, emb_rows, _), (ent_table, ent_rows, _) = ch.insert_calls
+    assert emb_table == "loom.memory_embeddings"
+    assert emb_rows[0]["version"] == 42 and emb_rows[0]["tombstoned_at"] is not None
+    assert ent_table == "loom.entity_vectors"
+    assert [r["agent"] for r in ent_rows] == ["a"] and ent_rows[0]["tombstoned_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_a_never_embedded_previous_version_reads_nothing() -> None:
+    ch = _VectorsCH([dict(_LIVE)], [])
+    previous = SimpleNamespace(memory_type="semantic", sensitivity="high")
+    assert await M.tombstone_vectors_of(previous, version=42, ch=ch) == 0
+    assert ch.query_all_calls == [] and ch.insert_calls == []
 
 
 _UPDATE_RE = re.compile(
