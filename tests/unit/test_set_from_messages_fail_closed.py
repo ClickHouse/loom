@@ -114,7 +114,9 @@ async def test_schema_mode_surfaces_stubbed_fields(
     import server.memory.app.extract.handler as mx
     from server.llm.client import LLMResult
     from server.memory.app.extract import ExtractedRecord
+    from server.observability import degradations
 
+    degradations.begin()  # the transport does this per request; a note left by an earlier test must not count
     _stub_projections(monkeypatch)
 
     async def _fake_bulk(bulk_input):
