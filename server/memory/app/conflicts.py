@@ -44,10 +44,8 @@ from server.memory.domain.conflicts import (
 from server.memory.store import conflicts as _conflicts_repo
 from server.memory.store.conflict_candidates import (
     _PEER_ROWS_SQL,
-    PINNED_PEERS_SQL,
     _peer_candidates_sql,
     candidate_sql_many,
-    pinned_sql_many,
 )
 from server.settings import settings
 
@@ -170,7 +168,10 @@ async def candidate_rows_many(
             candidate_sql_many(len(idxs), scope_and(scope, params, "m")), params=params
         )
         if scope.narrowed:  # other users' pinned rows still block; the scope hides them
-            rows += await ch.query_all(pinned_sql_many(len(idxs)), params=params)
+            near = await ch.query_all(
+                candidate_sql_many(len(idxs), limit=_PEER_FIRST_K), params=params
+            )
+            rows += [r for r in near if _foreign_pinned(r, scope)]
         for i in idxs:
             out[i] = []
         seen: set[tuple[int, str]] = set()
@@ -216,8 +217,13 @@ async def _policy_before_gate(
         return None
 
 
+_PEER_LIMIT = 10
+_PEER_FIRST_K = 32
+_PEER_MAX_K = 2048
+
+
 async def _peer_rows(
-    ch: Any, params: dict[str, Any], scope: ReadFilters = WHOLE_NAMESPACE
+    ch: Any, params: dict[str, Any], scope: ReadFilters = WHOLE_NAMESPACE, keep: int = _PEER_LIMIT
 ) -> list[dict[str, Any]]:
     """The gate's peers: this fact's cosine neighbours under the same type,
     excluding its own key (a re-write is LWW by version, not a conflict), at
@@ -235,7 +241,9 @@ async def _peer_rows(
     `_PEER_LIMIT` survive while stage A's last candidate is still inside `max_dist`,
     stage A widens (x4) — the answer is the join's, not an approximation of it. Ties
     sort by memory_key (the join's order among equal distances is arbitrary).
-    Both stages stay inside `scope`, so other users' rows never take the places."""
+    Both stages stay inside `scope`, so other users' rows never take the places.
+    `keep`: how many of the nearest peers to return (the foreign-pinned arm keeps
+    stage A's whole first window, not only the 10 places)."""
     params = dict(params)
     in_scope = scope_and(scope, params)
     k = _PEER_FIRST_K
@@ -257,12 +265,7 @@ async def _peer_rows(
             return await _peer_rows_joined(ch, params, scope_and(scope, params, "m"))
         k *= 4
     out.sort(key=lambda r: (r["dist"], str(r.get("memory_key") or "")))
-    return out[:_PEER_LIMIT]
-
-
-_PEER_LIMIT = 10
-_PEER_FIRST_K = 32
-_PEER_MAX_K = 2048
+    return out[:keep]
 
 
 def _ident(r: dict[str, Any]) -> tuple[str, str, str, str]:
@@ -323,16 +326,29 @@ def _scope_or_none() -> ReadFilters | None:
         return None
 
 
+def _foreign_pinned(r: Mapping[str, Any], scope: ReadFilters | None) -> bool:
+    """A pinned row outside `scope` (every row is outside a scope that did not resolve)."""
+    if not r.get("pinned"):
+        return False
+    return scope is None or not row_in_read_scope(scope, r.get("user_id"), r.get("session_id"))
+
+
 async def _foreign_pinned_rows(
     ch: Any, params: dict[str, Any], scope: ReadFilters | None, rows: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     """The pinned peers the scoped peer query cannot see, for a writer bounded
-    below the namespace: a pinned row of another user still blocks its write."""
+    below the namespace: a pinned row of another user still blocks its write.
+    It is the peer read a namespace-wide writer runs (no pinned-rows join, which
+    read every pinned vector), keeping the pinned rows outside the scope among
+    the namespace's nearest `_PEER_FIRST_K`, so the writer's own closer rows
+    cannot push a pinned row out of the 10 places."""
     if scope is not None and not scope.narrowed:
         return []
     seen = {str(r.get("memory_id")) for r in rows}
-    pinned = await ch.query_all(PINNED_PEERS_SQL, params=params)
-    return [dict(r) for r in pinned if str(r.get("memory_id")) not in seen]
+    near = await _peer_rows(ch, params, WHOLE_NAMESPACE, keep=_PEER_FIRST_K)
+    return [
+        dict(r) for r in near if _foreign_pinned(r, scope) and str(r.get("memory_id")) not in seen
+    ]
 
 
 def _split_by_read_scope(

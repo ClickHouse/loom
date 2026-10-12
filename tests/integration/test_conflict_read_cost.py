@@ -1,7 +1,7 @@
-"""A writer narrowed to one user pays for its own rows' vectors and the pinned
-rows' vectors in the conflict check, not for every vector in the namespace.
-Measured from system.query_log on the configured ClickHouse; skips without
-LOOM_CH_HOST."""
+"""A writer narrowed to one user pays, in the conflict check, its own scoped read
+plus the read a namespace-wide writer makes (where other users' pinned rows come
+from), so at most about twice a namespace-wide writer's cost. Measured from
+system.query_log on the configured ClickHouse; skips without LOOM_CH_HOST."""
 
 from __future__ import annotations
 
@@ -25,7 +25,8 @@ def _vec(seed: str) -> str:
 
 
 async def _seed(ch: Any, org: str) -> None:
-    """20 users x 500 rows, every 50th row pinned."""
+    """20 users x 500 rows, every 47th row pinned: 47 is coprime with 20, so the
+    pinned rows spread over every user (and every vector granule)."""
     user = f"concat('u', toString(number % {_USERS}))"
     key = "concat('k', toString(number))"
     await ch.execute(
@@ -34,7 +35,7 @@ async def _seed(ch: Any, org: str) -> None:
             (org, namespace, agent, user_id, session_id, memory_key, memory_type,
              value, version, pinned)
         SELECT '{org}', '{_NS}', 'bot', {user}, '-', {key}, 'semantic',
-               concat('fact ', toString(number)), 1, number % 50 = 0
+               concat('fact ', toString(number)), 1, number % 47 = 0
         FROM numbers({_USERS * _ROWS_PER_USER})
         """
     )
@@ -56,11 +57,11 @@ async def _logged(ch: Any, tag: str) -> list[dict[str, Any]]:
         """
         SELECT query, read_rows, read_bytes, memory_usage
         FROM system.query_log
-        WHERE type = 'QueryFinish' AND log_comment LIKE {tag:String}
-          AND query LIKE '%cosineDistance%'
+        WHERE type = 'QueryFinish'
+          AND (log_comment = {tag:String} OR startsWith(log_comment, {tag_sp:String}))
         ORDER BY event_time_microseconds
         """,
-        params={"tag": f"{tag}%"},
+        params={"tag": tag, "tag_sp": f"{tag} "},  # a statement digest may follow the tag
     )
 
 
@@ -74,16 +75,48 @@ async def ch() -> Any:
     await c.disconnect()
 
 
-async def test_a_narrowed_writers_conflict_statements_read_a_bounded_slice(ch: Any) -> None:
+def _cost(logged: list[dict[str, Any]]) -> dict[str, int]:
+    return {k: sum(int(q[k]) for q in logged) for k in ("read_rows", "read_bytes", "memory_usage")}
+
+
+async def test_a_narrowed_writers_conflict_reads_cost_at_most_two_namespace_reads(
+    ch: Any,
+) -> None:
     from server.auth.context import set_current_auth
     from server.auth.jwt import AuthInfo
     from server.core.ch import set_query_tag
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
     from server.memory.app import conflicts
 
     org = unique_org("conflict-cost")
     await _seed(ch, org)
-    # Rounded so four facts' vectors fit in ClickHouse's HTTP form-field limit.
-    emb = [round(float(x), 3) for x in (await ch.query_one(f"SELECT {_vec('7')} AS v"))["v"]]
+    # Row 47 is u7's and pinned, so it is the write's nearest row. Rounded so four
+    # facts' vectors fit in ClickHouse's HTTP form-field limit.
+    emb = [round(float(x), 3) for x in (await ch.query_one(f"SELECT {_vec('47')} AS v"))["v"]]
+    params = {
+        "org": org,
+        "ns": _NS,
+        "mt": "semantic",
+        "self_key": "new",
+        "emb": emb,
+        "max_dist": 2.0,
+        "dim": _DIM,
+    }
+    items = [("semantic", f"new{i}", emb, 2.0) for i in range(4)]
+    run = secrets.token_hex(4)
+
+    async def measured(phase: str, call: Any) -> Any:
+        set_query_tag(f"it.conflict_cost.{run}.{phase}")
+        try:
+            return await call()
+        finally:
+            set_query_tag("")
+
+    wide = await measured("wide", lambda: conflicts._peer_rows(ch, params))
+    wide_bulk = await measured(
+        "wide_bulk",
+        lambda: conflicts.candidate_rows_many(org=org, namespace=_NS, items=items, batch=4, ch=ch),
+    )
     set_current_auth(
         AuthInfo(
             subject="sa:bot",
@@ -94,52 +127,41 @@ async def test_a_narrowed_writers_conflict_statements_read_a_bounded_slice(ch: A
             read_user_id="u3",
         )
     )
-    tag = f"it.conflict_cost.{secrets.token_hex(4)}"
     try:
-        set_query_tag(tag)
-        params = {
-            "org": org,
-            "ns": _NS,
-            "mt": "semantic",
-            "self_key": "new",
-            "emb": emb,
-            "max_dist": 2.0,
-            "dim": _DIM,
-        }
-        single = await conflicts._foreign_pinned_rows(ch, params, conflicts._scope_or_none(), [])
-        items = [("semantic", f"new{i}", emb, 2.0) for i in range(4)]
-        batched = await conflicts.candidate_rows_many(
-            org=org, namespace=_NS, items=items, batch=4, ch=ch
+        scope = conflicts._scope_or_none()
+        own = await measured("scoped", lambda: conflicts._peer_rows(ch, params, scope))
+        pinned = await measured(
+            "pinned", lambda: conflicts._foreign_pinned_rows(ch, params, scope, own)
+        )
+        bulk = await measured(
+            "bulk",
+            lambda: conflicts.candidate_rows_many(
+                org=org, namespace=_NS, items=items, batch=4, ch=ch
+            ),
         )
     finally:
-        set_query_tag("")
         set_current_auth(None)
 
-    assert len(single) == 10 and all(r["pinned"] for r in single)
-    for rows in batched.values():
+    assert wide[0]["memory_key"] == "k47" and scope is not WHOLE_NAMESPACE
+    assert len(own) == 10 and all(r["user_id"] == "u3" for r in own)
+    assert [r["memory_key"] for r in pinned][:1] == ["k47"]
+    assert all(r["pinned"] and r["user_id"] != "u3" for r in pinned)
+    assert len(wide_bulk) == len(bulk) == 4
+    for rows in bulk.values():
         assert sum(1 for r in rows if r["user_id"] == "u3" and not r["pinned"]) == 10
-        assert any(r["pinned"] and r["user_id"] != "u3" for r in rows)
+        assert any(r["memory_key"] == "k47" for r in rows)
 
-    logged = await _logged(ch, tag)
-
-    # The logged text is cut short (the vectors are inlined); the head tells them apart.
-    def head(q: dict[str, Any]) -> str:
-        return " ".join(str(q["query"])[:400].split())
-
-    kinds = {
-        "single pinned": [q for q in logged if "qidx" not in head(q)],
-        "batched candidates": [q for q in logged if "qidx" in head(q) and "JOIN (" not in head(q)],
-        "batched pinned": [q for q in logged if "qidx" in head(q) and "JOIN (" in head(q)],
+    cost = {
+        phase: _cost(await _logged(ch, f"it.conflict_cost.{run}.{phase}"))
+        for phase in ("wide", "wide_bulk", "scoped", "pinned", "bulk")
     }
-    total_rows = 2 * _USERS * _ROWS_PER_USER  # memory + memory_embeddings
-    vector_bytes = _USERS * _ROWS_PER_USER * _DIM * 2  # BFloat16
-    for name, qs in kinds.items():
-        assert len(qs) == 1, name
-        q = qs[0]
-        print(f"{name}: {q['read_rows']} rows, {q['read_bytes']} B, {q['memory_usage']} B mem")
-        # A whole-namespace read is `total_rows` rows and `vector_bytes` of vectors. The
-        # pinned arms read whole granules around every pinned key (every 50th row here),
-        # so their share depends on the part layout; the regression read all of it.
-        bound = vector_bytes / 5 if name == "batched candidates" else vector_bytes / 2
-        assert int(q["read_bytes"]) < bound, name
-    assert int(kinds["batched candidates"][0]["read_rows"]) < total_rows / 5
+    for phase, c in cost.items():
+        print(f"{phase}: {c['read_rows']} rows, {c['read_bytes']} B, {c['memory_usage']} B mem")
+    # The pinned arm is the namespace-wide writer's read, so a narrowed write
+    # costs its own scoped read on top of what any other writer pays. Without a
+    # vector index that read is every vector in the namespace (a brute-force
+    # stage A), the same as before read scopes existed.
+    single = cost["scoped"]["read_bytes"] + cost["pinned"]["read_bytes"]
+    assert single <= 2 * cost["wide"]["read_bytes"]
+    assert cost["scoped"]["read_bytes"] < cost["wide"]["read_bytes"] / 5
+    assert cost["bulk"]["read_bytes"] <= 2 * cost["wide_bulk"]["read_bytes"]

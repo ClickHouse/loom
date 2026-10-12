@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import re
 from types import SimpleNamespace
 from typing import Any
 
@@ -459,15 +460,38 @@ _V_PINNED_ROW = {
 }
 
 
-class _PinnedV(_SqlCH):
-    """Stage A finds nothing in the writer's scope; the pinned-only statement
-    finds V's pinned row close to the write."""
+def _ident_only(r: dict[str, Any]) -> dict[str, Any]:
+    return {k: r[k] for k in ("agent", "user_id", "session_id", "memory_key", "dist")}
+
+
+class _NamespaceCH(_SqlCH):
+    """Answers the peer statements from `rows` (the namespace) the way ClickHouse
+    would: a scoped statement sees only U's rows, each statement keeps its own
+    LIMIT, stage B returns the ids it is asked for."""
+
+    rows: list[dict[str, Any]] = []
 
     async def query_all(self, sql, params=None):
         await super().query_all(sql, params)
-        if "m.pinned = 1" not in sql:
-            return []
-        return [dict(_V_PINNED_ROW)]
+        p = params or {}
+        rows = sorted(self.rows, key=lambda r: r["dist"])
+        if "scope_uid" in sql:
+            rows = [r for r in rows if r["user_id"] == p.get("scope_uid")]
+        if "IN {ids:" in sql:  # stage B
+            ids = {tuple(i) for i in p["ids"]}
+            return [r for r in self.rows if tuple(_ident_only(r).values())[:4] in ids]
+        if "LIMIT {k:UInt32}" in sql:  # stage A
+            return [_ident_only(r) for r in rows[: int(p["k"])]]
+        by_qidx = re.search(r"LIMIT (\d+) BY qidx", sql)
+        if by_qidx:  # the batched candidates
+            return [{**r, "qidx": 0} for r in rows[: int(by_qidx.group(1))]]
+        return []
+
+
+class _PinnedV(_NamespaceCH):
+    """The namespace holds only V's pinned row, close to the write."""
+
+    rows = [_V_PINNED_ROW]
 
 
 def _check_on_commit(monkeypatch, ch: _SqlCH) -> Any:
@@ -493,8 +517,11 @@ def test_conflict_peers_are_the_writers_and_a_foreign_pinned_row_still_blocks(
 ) -> None:
     ch = _PinnedV()
     out = _run_as(_pinned("U"), lambda: _check_on_commit(monkeypatch, ch))
-    stage_a = [s for s, _ in ch.sql if "m.pinned = 1" not in s]
-    assert stage_a and all("user_id = {scope_uid:String}" in s for s in stage_a)
+    stage_a = [s for s, _ in ch.sql if "LIMIT {k:UInt32}" in s]
+    # The writer's own stage A, then the one a namespace-wide writer runs; no
+    # statement that reads every pinned row's vector.
+    assert ["scope_uid" in s for s in stage_a] == [True, False]
+    assert not any("pinned = 1" in s for s, _ in ch.sql)
     assert out.verdict == "rejected" and out.pinned_blocker_id == "v1"
     assert all(p.memory_id != "v1" for p in out.peers), "the foreign row is never named"
 
@@ -502,8 +529,8 @@ def test_conflict_peers_are_the_writers_and_a_foreign_pinned_row_still_blocks(
 def test_a_namespace_wide_writer_runs_no_separate_pinned_statement(monkeypatch) -> None:
     ch = _PinnedV()
     out = _run_as(None, lambda: _check_on_commit(monkeypatch, ch))
-    assert not any("m.pinned = 1" in s for s, _ in ch.sql)
-    assert out.verdict == "clear"
+    assert len([s for s, _ in ch.sql if "LIMIT {k:UInt32}" in s]) == 1
+    assert out.verdict == "rejected" and out.pinned_blocker_id == "v1"
 
 
 def test_batched_conflict_candidates_are_the_writers_rows() -> None:
@@ -520,7 +547,8 @@ def test_batched_conflict_candidates_are_the_writers_rows() -> None:
     assert (
         "m.user_id = {scope_uid:String}" in candidates[0] and "m.pinned = 1 OR" not in candidates[0]
     )
-    assert "AS hits" in pinned[0], "other users' pinned rows come from their own statement"
+    # Other users' pinned rows come from the namespace-wide writer's statement.
+    assert "scope_uid" not in pinned[0] and "LIMIT 32 BY qidx" in pinned[0]
 
 
 def test_a_namespace_wide_bulk_writer_runs_no_pinned_statement() -> None:
@@ -533,7 +561,7 @@ def test_a_namespace_wide_bulk_writer_runs_no_pinned_statement() -> None:
             org="o", namespace="n", items=[("semantic", "k", [0.1], 0.3)], ch=ch
         ),
     )
-    assert len(ch.sql) == 1 and "AS hits" not in ch.sql[0][0]
+    assert len(ch.sql) == 1 and "LIMIT 10 BY qidx" in ch.sql[0][0]
 
 
 def _own_row(i: int) -> dict[str, Any]:
@@ -548,27 +576,11 @@ def _own_row(i: int) -> dict[str, Any]:
     }
 
 
-class _CloserOwnRows(_SqlCH):
-    """Ten of U's own rows sit closer to the write than V's pinned row, so any
-    statement that ranks them together keeps only U's rows."""
+class _CloserOwnRows(_NamespaceCH):
+    """Ten of U's own rows sit closer to the write than V's pinned row, so a
+    statement that keeps only the 10 nearest drops V's row."""
 
-    async def query_all(self, sql, params=None):
-        await super().query_all(sql, params)
-        own = [_own_row(i) for i in range(10)]
-        if "AS hits" in sql:  # the batched pinned statement
-            return [{**_V_PINNED_ROW, "qidx": 0}]
-        if "e.dist AS dist" in sql:  # the single write's pinned statement
-            return [dict(_V_PINNED_ROW)]
-        if "qidx" in sql:  # the batched candidates, 10 places
-            return [{**r, "qidx": 0} for r in own]
-        if "LIMIT {k:UInt32}" in sql:  # stage A
-            return [
-                {k: r[k] for k in ("agent", "user_id", "session_id", "memory_key", "dist")}
-                for r in own
-            ]
-        if "IN {ids:" in sql:  # stage B
-            return own
-        return []
+    rows = [_own_row(i) for i in range(10)] + [_V_PINNED_ROW]
 
 
 def test_bulk_and_single_both_reject_a_write_close_to_a_foreign_pinned_row(monkeypatch) -> None:

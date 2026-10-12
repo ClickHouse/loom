@@ -612,7 +612,7 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
     await CF._peer_rows(ch, dict(_peer), one_user)
     scoped = dict(_peer)
     await CF._peer_rows_joined(ch, scoped, scope_and(one_user, scoped, "m"))
-    await ch.query_all(conflict_candidates.PINNED_PEERS_SQL, params=_peer)
+    await CF._foreign_pinned_rows(ch, dict(_peer), one_user, [])
     with read_filters_bound(current_auth(), one_user):  # the narrowed batch and its pinned arm
         await CF.candidate_rows_many(
             org=ORG, namespace=NS, items=[("k1", "preference", SMALL_VEC, 0.5)], ch=ch

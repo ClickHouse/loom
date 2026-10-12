@@ -13,7 +13,7 @@ _CANDIDATE_JOIN = """
           AND e.agent = m.agent"""
 
 
-def candidate_sql_many(n: int, in_scope: str = "") -> str:
+def candidate_sql_many(n: int, in_scope: str = "", limit: int = 10) -> str:
     """The batched form of `check_on_commit`'s peer statement:
     one read of the namespace's vectors serves `n` facts. Each fact's distance
     is its own `cosineDistance` term — an `arrayMap` over the vector column
@@ -24,7 +24,7 @@ def candidate_sql_many(n: int, in_scope: str = "") -> str:
     is the per-fact statement's `LIMIT 10`. Measured identical per-fact lists
     at n = 1, 4, 6, 8, 12, 24 against the per-fact statement. `in_scope`: the
     read-scope clause on `m`, so other users' rows never take the 10 places
-    (their pinned rows come from `pinned_sql_many`)."""
+    (their pinned rows come from this statement unscoped). `limit`: peers per fact."""
     if n < 1:
         raise ValueError("candidate_sql_many needs at least one fact")
     terms = ", ".join(
@@ -50,7 +50,7 @@ def candidate_sql_many(n: int, in_scope: str = "") -> str:
           AND e.embedding_dim = {{dim:UInt16}}
           AND length(e.embedding) = {{dim:UInt16}}{in_scope}
         ORDER BY qidx ASC, dist ASC
-        LIMIT 10 BY qidx
+        LIMIT {int(limit)} BY qidx
         """
 
 
@@ -93,95 +93,4 @@ _PEER_ROWS_SQL = """
         WHERE memory_type = {mt:String}
           AND tombstoned_at IS NULL
           AND status IN ('active', 'conflicted')
-        """
-
-
-# The pinned peers anywhere in the namespace: a pinned row outside the writer's
-# read scope still blocks a close write (pinned is a namespace-wide invariant).
-# The pinned rows' keys come from `loom.memory` first, so only their vectors are
-# read (the IN prunes on the embeddings' sort key), not every vector in the namespace.
-_PINNED_ROW_FILTER = """m.org = {org:String}
-          AND m.namespace = {ns:String}
-          AND m.memory_type = {mt:String}
-          AND m.memory_key != {self_key:String}
-          AND m.pinned = 1
-          AND m.tombstoned_at IS NULL
-          AND m.status IN ('active', 'conflicted')"""
-
-PINNED_PEERS_SQL = f"""
-        SELECT
-            m.memory_id, m.memory_key, m.value, m.pinned,
-            m.agent, m.user_id, m.session_id, m.run_id, m.valid_at,
-            e.dist AS dist
-        FROM loom.memory m FINAL
-        JOIN (
-            SELECT agent, user_id, session_id, memory_key,
-                   cosineDistance(embedding, {{emb:Array(Float32)}}) AS dist
-            FROM loom.memory_embeddings FINAL
-            WHERE org = {{org:String}}
-              AND namespace = {{ns:String}}
-              AND (agent, user_id, session_id, memory_key) IN (
-                  SELECT m.agent, m.user_id, m.session_id, m.memory_key
-                  FROM loom.memory m FINAL
-                  WHERE {_PINNED_ROW_FILTER})
-              AND tombstoned_at IS NULL
-              AND embedding_dim = {{dim:UInt16}}
-              AND length(embedding) = {{dim:UInt16}}
-        ) e
-          ON  e.agent = m.agent AND e.user_id = m.user_id
-          AND e.session_id = m.session_id AND e.memory_key = m.memory_key
-        WHERE {_PINNED_ROW_FILTER}
-          AND e.dist <= {{max_dist:Float32}}
-        ORDER BY dist ASC
-        LIMIT 10
-        """
-
-
-def pinned_sql_many(n: int) -> str:
-    """The batched form of `PINNED_PEERS_SQL`, for a narrowed bulk writer: the
-    pinned peers of `n` facts anywhere in the namespace, at most 10 per fact.
-    Its own statement, so pinned rows never compete with the writer's own
-    rows for the 10 places, and it reads only the pinned rows' vectors."""
-    if n < 1:
-        raise ValueError("pinned_sql_many needs at least one fact")
-    terms = ", ".join(
-        f"({i}, cosineDistance(embedding, {{embs:Array(Array(Float32))}}[{i}]))"
-        for i in range(1, n + 1)
-    )
-    row_filter = """m.org = {org:String}
-          AND m.namespace = {ns:String}
-          AND m.memory_type IN {types:Array(String)}
-          AND m.pinned = 1
-          AND m.tombstoned_at IS NULL
-          AND m.status IN ('active', 'conflicted')"""
-    return f"""
-        SELECT
-            hit.1 - 1 AS qidx,
-            m.memory_id, m.memory_key, m.value, m.pinned,
-            m.agent, m.user_id, m.session_id, m.run_id, m.valid_at,
-            hit.2 AS dist
-        FROM loom.memory m FINAL
-        JOIN (
-            SELECT agent, user_id, session_id, memory_key,
-                   arrayFilter(x -> x.2 <= {{max_dists:Array(Float32)}}[x.1], [{terms}]) AS hits
-            FROM loom.memory_embeddings FINAL
-            WHERE org = {{org:String}}
-              AND namespace = {{ns:String}}
-              AND (agent, user_id, session_id, memory_key) IN (
-                  SELECT m.agent, m.user_id, m.session_id, m.memory_key
-                  FROM loom.memory m FINAL
-                  WHERE {row_filter})
-              AND tombstoned_at IS NULL
-              AND embedding_dim = {{dim:UInt16}}
-              AND length(embedding) = {{dim:UInt16}}
-        ) e
-          ON  e.agent = m.agent AND e.user_id = m.user_id
-          AND e.session_id = m.session_id AND e.memory_key = m.memory_key
-        ARRAY JOIN arrayFilter(
-            x -> {{types:Array(String)}}[x.1] = m.memory_type
-                 AND {{keys:Array(String)}}[x.1] != m.memory_key,
-            e.hits) AS hit
-        WHERE {row_filter}
-        ORDER BY qidx ASC, dist ASC
-        LIMIT 10 BY qidx
         """
