@@ -218,7 +218,8 @@ than `namespace`:
 - A blacklist pattern still refuses every user's writes, but its sweep
   (`blacklist.add(sweep=true)`, `blacklist.sweep`) tombstones and counts only the
   caller's own rows, and `blacklist.list` shows no hit counts. `policy.decisions`
-  lists only the caller's own decisions.
+  lists only the caller's own decisions. `memory.unlock` and `memory.unpin` (admin)
+  reach only the caller's own rows, like `memory.lock`.
 - An op that cannot bound its answer to one user (the entity graph `facts.*`,
   `conversation.*`, namespace exports, admin and curation ops,
   `ops.projection_failures.*`) is refused with

@@ -734,6 +734,13 @@ async def test_a_bounded_write_treats_another_users_row_as_absent() -> None:
     assert (wide.verdict, wide.existing_memory_id) == ("merge", "theirs")
 
 
+def test_a_bounded_token_may_lift_its_own_lock_and_pin() -> None:
+    # Their lookups are scoped, so another user's row is not found; authz still
+    # asks for the op's own role.
+    for name in ("memory.lock", "memory.unlock", "memory.unpin", "ops.health"):
+        gates.read_scope(OPERATIONS_BY_NAME[name], PINNED, SimpleNamespace(user_id="-"))
+
+
 def test_every_code_op_is_classified_by_name() -> None:
     # Some code ops read memory, so a new one must be classified on its own.
     assert "code." not in NARROW_SAFE_OPS

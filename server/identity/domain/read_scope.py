@@ -355,6 +355,8 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "memory.delete": "a write",
     "memory.touch": "a write",
     "memory.lock": "a write",
+    "memory.unlock": "a write",
+    "memory.unpin": "a write",
     "memory.outcome": "a write",
     "working_memory.set": "a write",
     "working_memory.append": "a write",
