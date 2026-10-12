@@ -6,6 +6,7 @@ filters — and it answers exactly what the one-statement join answered."""
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any
 
 import pytest
@@ -95,9 +96,7 @@ def test_the_widening_cap_falls_back_to_the_join(monkeypatch: pytest.MonkeyPatch
     ch = _TwoStageCH([(f"d{i:04d}", 0.01) for i in range(3000)], set())
     joined: list[dict[str, Any]] = []
 
-    async def _joined(
-        ch_: Any, params: dict[str, Any], in_scope: str = "", keep: int = 10
-    ) -> list[dict[str, Any]]:
+    async def _joined(ch_: Any, params: dict[str, Any], in_scope: str = "") -> list[dict[str, Any]]:
         joined.append(params)
         return [{"memory_key": "from-join", "dist": 0.02}]
 
@@ -105,28 +104,18 @@ def test_the_widening_cap_falls_back_to_the_join(monkeypatch: pytest.MonkeyPatch
     assert _run(ch) == [{"memory_key": "from-join", "dist": 0.02}] and joined
 
 
-def test_foreign_pinned_arm_types_stage_a_and_keeps_32_in_the_join_fallback(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    ch = _TwoStageCH([(f"d{i:04d}", 0.01) for i in range(3000)], set())
-    keeps: list[int] = []
-
-    async def _joined(
-        ch_: Any, params: dict[str, Any], in_scope: str = "", keep: int = 10
-    ) -> list[dict[str, Any]]:
-        keeps.append(keep)
-        return []
-
-    monkeypatch.setattr(cf, "_peer_rows_joined", _joined)
-    asyncio.run(cf._foreign_pinned_rows(ch, dict(_BASE), None, []))
-    assert keeps == [cf._FOREIGN_PINNED_K]
-    stage_a = [sql for sql, p in ch.calls if "k" in p]
-    assert stage_a and all("memory_type = {mt:String}" in sql for sql in stage_a)
-
-
 def test_the_gates_own_stage_a_reads_every_type() -> None:
     assert "memory_type" not in conflict_candidates._peer_candidates_sql()
-    assert "memory_type = {mt:String}" in conflict_candidates._peer_candidates_sql(typed=True)
+
+
+@pytest.mark.parametrize(
+    "sql", [conflict_candidates.PINNED_PEERS_SQL, conflict_candidates.pinned_sql_many(3)]
+)
+def test_the_pinned_arm_takes_type_from_the_memory_row_never_the_vector(sql: str) -> None:
+    assert "m.pinned = 1" in sql and "m.memory_type" in sql
+    # Every type read is the memory row's (`m.`); a bare one would be the vector row's.
+    assert not re.search(r"(?<![.\w])memory_type", sql)
+    assert "LIMIT 10" in sql
 
 
 def test_stage_a_keeps_the_codes_first_shape_and_never_decodes_the_column() -> None:
