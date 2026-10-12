@@ -59,6 +59,25 @@ export function readPrivateFile(file) {
   }
 }
 
+/** Set `file`'s mtime to now, with readPrivateFile's checks; true when done. */
+export function touchPrivateFile(file) {
+  try {
+    const c = fs.constants;
+    const fd = fs.openSync(file, c.O_RDONLY | (c.O_NOFOLLOW ?? 0) | (c.O_NONBLOCK ?? 0));
+    try {
+      const st = fs.fstatSync(fd);
+      if (!st.isFile() || (typeof process.getuid === "function" && st.uid !== process.getuid())) return false;
+      const now = new Date();
+      fs.futimesSync(fd, now, now);
+      return true;
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return false;
+  }
+}
+
 /** The parsed JSON in `file`, or `fallback` when it is missing, malformed or not ours. */
 export function readJsonFile(file, fallback = {}) {
   try {
