@@ -473,6 +473,7 @@ async def handle_memory_dedup_collapse(
     """
     import server.memory.store as memory_repo
 
+    version = memory_repo.next_version()  # before the scan: the restamp is a retire
     pairs = await memory_repo.find_duplicate_pairs(
         input.org, input.namespace, key_prefix=input.prefix or "", limit=input.limit
     )
@@ -498,7 +499,9 @@ async def handle_memory_dedup_collapse(
     ]
     restamped = 0
     if not input.dry_run and stale:
-        restamped = await memory_repo.restamp_embedding_rows(stale, status="duplicate")
+        restamped = await memory_repo.restamp_embedding_rows(
+            stale, status="duplicate", version=version
+        )
     sample = [
         _DedupCollapsePair(
             duplicate_key=p.memory_key,

@@ -179,7 +179,6 @@ class ApplyResult:
     high: int = 0
     medium: int = 0
     embeddings_tombstoned: int = 0  # high rows' embedding rows
-    entity_vectors_tombstoned: int = 0  # high rows' entity vectors
     embeddings_tagged: int = 0  # medium rows' embedding rows re-emitted with the tag
     errors: list[str] = field(default_factory=list)
 
@@ -189,7 +188,6 @@ class ApplyResult:
             "high": self.high,
             "medium": self.medium,
             "embeddings_tombstoned": self.embeddings_tombstoned,
-            "entity_vectors_tombstoned": self.entity_vectors_tombstoned,
             "embeddings_tagged": self.embeddings_tagged,
             "errors": len(self.errors),
         }
@@ -264,23 +262,9 @@ async def apply(candidates: list[SweepCandidate], *, ch: _CHClient | None = None
             result.relabelled += n
             if c.level == HIGH:
                 result.high += 1
-                result.embeddings_tombstoned += await memory_repo.tombstone_embeddings_for_key(
-                    c.org,
-                    c.namespace,
-                    c.agent,
-                    c.user_id,
-                    c.session_id,
-                    c.memory_key,
-                    ts=now,
-                    version=version,
-                    ch=ch,
-                )
-                result.entity_vectors_tombstoned += (
-                    await memory_repo.tombstone_entity_vectors_for_keys(
-                        [(c.org, c.namespace, c.agent, c.user_id, c.session_id, c.memory_key)],
-                        ts=now,
-                        ch=ch,
-                    )
+                key = (c.org, c.namespace, c.agent, c.user_id, c.session_id, c.memory_key)
+                result.embeddings_tombstoned += await memory_repo.retire_vectors_for_keys(
+                    [(key, version)], ch=ch
                 )
             else:
                 result.medium += 1

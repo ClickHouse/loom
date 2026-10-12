@@ -207,6 +207,7 @@ async def handle_memory_demote(input: MemoryDemoteInput) -> MemoryDemoteOutput:
 
     # Tombstone via higher-version INSERT, mirroring every live column except
     # tombstoned_at + version (omitting any column zeros it for FINAL readers).
+    version = next_version()  # the tombstone's, which the vector retire carries
     await shared_repo.insert_shared_row(
         {
             "org": input.org,
@@ -224,7 +225,7 @@ async def handle_memory_demote(input: MemoryDemoteInput) -> MemoryDemoteOutput:
             "reversible_until": row["reversible_until"],
             "superseded_by": None,
             "tombstoned_at": now_naive,
-            "version": next_version(),
+            "version": version,
         }
     )
 
@@ -234,6 +235,7 @@ async def handle_memory_demote(input: MemoryDemoteInput) -> MemoryDemoteOutput:
         input.namespace,
         input.memory_key,
         now_naive,
+        version=version,
     )
 
     return MemoryDemoteOutput(

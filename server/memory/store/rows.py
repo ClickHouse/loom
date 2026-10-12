@@ -795,9 +795,15 @@ def next_version() -> int:
 def reemit_version(row: dict[str, Any]) -> int:
     """The version for a re-emit of a memory_embeddings row read earlier: one above it.
 
-    For metadata copies only (touch, verify, tags, status). It replaces exactly the
-    row that was read; a new vector written after the read has a later version and
-    keeps winning. A retire must not use it: two copies of one read row would tie and
-    the later insert would win, so every retire is stamped with the version of the
-    loom.memory row that caused it, which is above any earlier read + 1."""
+    The rule for every vector write that copies a read row:
+    - a metadata copy (touch, verify, tags, entities) writes read + 1. It replaces
+      exactly the row it read; a vector written after the read is newer and keeps
+      winning.
+    - a retire (sets tombstoned_at, or a status search hides, on a memory_embeddings
+      or entity_vectors row) writes the version of the loom.memory (or loom.shared)
+      row that caused it and skips vector rows at or above it. Two copies of one read
+      row would tie at read + 1 and the later insert would win, so a retire must sit
+      above any earlier read + 1.
+    - a retire with no causing row (a reconcile or a sweep) uses one next_version()
+      drawn before its scan."""
     return int(row.get("version") or 0) + 1

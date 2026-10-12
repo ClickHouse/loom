@@ -91,6 +91,9 @@ async def run_pass(ch: _CHClient | None = None) -> OrphanReconcileResult:
     limit = int(settings.orphan_vector_reconcile_max_keys_per_pass)
     grace = max(0, int(settings.orphan_vector_reconcile_grace_seconds))
     now = naive_utc_now()
+    # Drawn before the scan: the retire must outrank a late copy of a row the scan
+    # saw (read + 1), and a row written after the scan is newer and is kept.
+    version = memory_repo.next_version()
 
     with record_pass("orphan_vector_reconcile") as rec:
         try:
@@ -120,7 +123,7 @@ async def run_pass(ch: _CHClient | None = None) -> OrphanReconcileResult:
         by_ns: dict[tuple[str, str], list[str]] = defaultdict(list)
         try:
             result.embeddings_healed += await memory_repo.reemit_embedding_rows_for_keys(
-                [(k, {"tombstoned_at": now}) for k in keys], ch=ch
+                [(k, {"tombstoned_at": now, "version": version}) for k in keys], ch=ch
             )
         except Exception as e:  # noqa: BLE001 — the scan repeats next pass; entity vectors wait
             result.errors.append(f"embeddings: {e}")

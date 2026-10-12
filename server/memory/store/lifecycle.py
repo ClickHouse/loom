@@ -15,20 +15,17 @@ from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.store.embeddings import (
-    live_embedding_rows_for_key,
     mirror_status_to_embeddings,
+    reemit_embedding_rows_for_keys,
     tombstone_embeddings_for_key,
 )
-from server.memory.store.inserts import insert_embedding_rows, insert_memory_versions
+from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.reads import get_by_id
 from server.memory.store.redaction import delete_by_key
 from server.memory.store.rows import (
-    EMBEDDING_PERSISTED_COLS,
     MemoryRow,
-    build_embedding_row,
     build_memory_version_row,
     next_version,
-    reemit_version,
 )
 
 _log = logging.getLogger(__name__)
@@ -109,6 +106,7 @@ async def supersede_duplicates(
 
     # 1) loom.memory — status + superseded_by, carrying every column forward.
     retired_at = naive_utc_now()
+    version = next_version()  # the supersede's, which the vector retire carries
     by_id = {str(v["memory_id"]): str(v.get("superseded_by") or "") for v in victims}
     skipped: set[str] = set()
 
@@ -127,40 +125,18 @@ async def supersede_duplicates(
             # record-axis retirement stamp: knowledge_time replay before this
             # instant still sees the row, after it does not
             "invalid_at": retired_at,
+            "version": version,
         },
         ch=ch,
         skip=_skip,
     )
     victims = [v for v in victims if str(v["memory_id"]) not in skipped]
 
-    # 2) loom.memory_embeddings — re-emit with status='superseded' + a bumped
-    #    version. This is the write recall
-    #    actually reads.
-    for v in victims:
-        rows = await live_embedding_rows_for_key(
-            ch,
-            org=org,
-            namespace=str(v["namespace"]),
-            agent=str(v["agent"]),
-            user_id=str(v["user_id"]),
-            session_id=str(v["session_id"]),
-            memory_key=str(v["memory_key"]),
-        )
-        out = [
-            build_embedding_row(
-                **(
-                    {c: val for c, val in r.items() if c in EMBEDDING_PERSISTED_COLS}
-                    | {
-                        "status": "superseded",
-                        "version": reemit_version(r),
-                        "invalid_at": retired_at,
-                    }
-                )
-            )
-            for r in rows
-        ]
-        if out:
-            await insert_embedding_rows(out, ch=ch)
+    # 2) loom.memory_embeddings — re-emit with status='superseded' at the
+    #    supersede's version. This is the write recall actually reads.
+    await _reemit_embedding_rows(
+        org, victims, {"status": "superseded", "invalid_at": retired_at, "version": version}, ch=ch
+    )
     return len(victims)
 
 
@@ -205,30 +181,24 @@ async def live_source_count(
 async def _reemit_embedding_rows(
     org: str, victims: list[dict[str, Any]], delta: dict[str, Any], *, ch: _CHClient
 ) -> None:
-    """Re-emit each victim's embedding rows with `delta` at their version + 1
-    (the supersede_duplicates pattern — recall reads this table)."""
-    for v in victims:
-        rows = await live_embedding_rows_for_key(
-            ch,
-            org=org,
-            namespace=str(v["namespace"]),
-            agent=str(v["agent"]),
-            user_id=str(v["user_id"]),
-            session_id=str(v["session_id"]),
-            memory_key=str(v["memory_key"]),
+    """Re-emit each victim's embedding rows with `delta`, at their version + 1 or at
+    the `version` in `delta` (a retire's; rows at or above it are kept). Recall reads
+    this table."""
+    items = [
+        (
+            (
+                org,
+                str(v["namespace"]),
+                str(v["agent"]),
+                str(v["user_id"]),
+                str(v["session_id"]),
+                str(v["memory_key"]),
+            ),
+            dict(delta),
         )
-        out = [
-            build_embedding_row(
-                **(
-                    {c: val for c, val in r.items() if c in EMBEDDING_PERSISTED_COLS}
-                    | dict(delta)
-                    | {"version": reemit_version(r)}
-                )
-            )
-            for r in rows
-        ]
-        if out:
-            await insert_embedding_rows(out, ch=ch)
+        for v in victims
+    ]
+    await reemit_embedding_rows_for_keys(items, ch=ch)
 
 
 async def downgrade_consolidated_dependents(
@@ -251,16 +221,17 @@ async def downgrade_consolidated_dependents(
         live = await live_source_count(org, namespace, srcs, ch=ch)
         (to_tomb if live == 0 else to_down).append(d)
     if to_tomb:
+        version = next_version()  # the tombstones', which the vector retire carries
         await write_versions_by_ids(
             org,
             [str(d["mid"]) for d in to_tomb],
-            lambda row: {"tombstoned_at": now, "invalid_at": now},
+            lambda row: {"tombstoned_at": now, "invalid_at": now, "version": version},
             ch=ch,
         )
         await _reemit_embedding_rows(
             org,
             to_tomb,
-            {"tombstoned_at": now, "invalid_at": now},
+            {"tombstoned_at": now, "invalid_at": now, "version": version},
             ch=ch,
         )
     if to_down:

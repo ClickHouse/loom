@@ -14,6 +14,7 @@ from server.memory.store.inserts import insert_embedding_rows
 from server.memory.store.rows import (
     EMBEDDING_PERSISTED_COLS,
     build_embedding_row,
+    next_version,
     reemit_version,
 )
 
@@ -76,9 +77,11 @@ async def mirror_status_to_embeddings(
     batch: int = 500,
 ) -> int:
     """Re-emit each identity's live memory_embeddings rows with the memory
-    row's `status` (and `invalid_at` / `superseded_by`-implied retirement),
-    at the read row's version + 1 — the same re-emit `supersede_duplicates` does, for every
-    path that flips status through `write_versions_by_ids`. Returns the number
+    row's `status` (and `invalid_at`, and `tombstoned_at` when the memory row is
+    a tombstone), at the memory row's `version` — a status that hides the row is
+    a retire — skipping embedding rows at or above it (a newer write's); a memory
+    row without a version falls back to read + 1. Every path that flips status
+    through `write_versions_by_ids` mirrors here. Returns the number
     of embedding rows re-emitted (or, with `dry_run`, the number that would
     be); a row already carrying the status is left alone. The mirror is read
     by the FULL identity tuple (org, namespace, agent, user_id, session_id,
@@ -101,6 +104,10 @@ async def mirror_status_to_embeddings(
         overrides: dict[str, Any] = {"status": m.get("status")}
         if m.get("invalid_at") is not None:
             overrides["invalid_at"] = m.get("invalid_at")
+        if m.get("tombstoned_at") is not None:
+            overrides["tombstoned_at"] = m.get("tombstoned_at")
+        if m.get("version"):
+            overrides["version"] = int(m["version"])
         wanted[key] = overrides
     keys = list(wanted)
     out: list[dict[str, Any]] = []
@@ -114,17 +121,13 @@ async def mirror_status_to_embeddings(
             continue
         for r in rows:
             want = wanted.get(_embedding_key(r))
-            if want is None or str(r.get("status") or "") == str(want["status"]):
+            if want is None or (
+                str(r.get("status") or "") == str(want["status"]) and "tombstoned_at" not in want
+            ):
                 continue  # not asked for, or already mirrored
-            out.append(
-                build_embedding_row(
-                    **(
-                        {c: val for c, val in r.items() if c in EMBEDDING_PERSISTED_COLS}
-                        | want
-                        | {"version": reemit_version(r)}
-                    )
-                )
-            )
+            row = _copy_row(r, want)
+            if row is not None:
+                out.append(row)
     if dry_run:
         return len(out)
     if out:
@@ -231,6 +234,7 @@ async def reconcile_embedding_status(
     the mirror is written in) and `mirrored` rows written (the same count on
     a dry run — what it WOULD write)."""
     ch = ch or _default_client()
+    version = next_version()  # before the scan: a row written after it is newer, and kept
     rows = await ch.query_all(
         status_divergence_sql(), params={"org": org, "ns": namespace, "lim": int(limit)}
     )
@@ -242,7 +246,7 @@ async def reconcile_embedding_status(
         counts["mirrored"] = 0
         return counts
     counts["mirrored"] = await mirror_status_to_embeddings(
-        [dict(r) for r in rows], ch=ch, dry_run=dry_run
+        [dict(r) | {"version": version} for r in rows], ch=ch, dry_run=dry_run
     )
     return counts
 
@@ -306,21 +310,9 @@ async def reemit_embedding_rows_for_keys(
         out = []
         for r in rows:
             overrides = by_key.get(_embedding_key(r))
-            if overrides is None:
-                continue
-            pinned = overrides.get("version")
-            if pinned is not None and int(r.get("version") or 0) >= int(pinned):
-                # A newer write's row: a copy at the older pinned version must not retire it.
-                continue
-            out.append(
-                build_embedding_row(
-                    **(
-                        {c: val for c, val in r.items() if c in EMBEDDING_PERSISTED_COLS}
-                        | {"version": reemit_version(r)}
-                        | overrides
-                    )
-                )
-            )
+            row = _copy_row(r, overrides) if overrides is not None else None
+            if row is not None:
+                out.append(row)
         if out:
             await insert_embedding_rows(out, ch=ch)
             written += len(out)
@@ -363,19 +355,26 @@ def _embedding_key(r: dict[str, Any]) -> EmbeddingKey:
     )
 
 
+def _copy_row(r: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any] | None:
+    """A new version of read row `r` with `overrides`: at read + 1, or at the `version`
+    the overrides pin (a retire's). None when the row is at or above that pin: it is a
+    newer write's, and an older retire must not touch it."""
+    pinned = overrides.get("version")
+    if pinned is not None and int(r.get("version") or 0) >= int(pinned):
+        return None
+    return build_embedding_row(
+        **(
+            {c: val for c, val in r.items() if c in EMBEDDING_PERSISTED_COLS}
+            | {"version": reemit_version(r)}
+            | dict(overrides)
+        )
+    )
+
+
 async def _reemit_rows(
     rows: list[dict[str, Any]], overrides: dict[str, Any], *, ch: _CHClient
 ) -> int:
-    out = [
-        build_embedding_row(
-            **(
-                {c: val for c, val in r.items() if c in EMBEDDING_PERSISTED_COLS}
-                | {"version": reemit_version(r)}
-                | dict(overrides)
-            )
-        )
-        for r in rows
-    ]
+    out = [row for r in rows if (row := _copy_row(r, overrides)) is not None]
     if out:
         await insert_embedding_rows(out, ch=ch)
     return len(out)
@@ -622,21 +621,16 @@ async def restamp_embedding_rows(
     rows: list[dict[str, Any]],
     *,
     status: str,
+    version: int,
     ch: _CHClient | None = None,
 ) -> int:
-    """Re-emit mirror rows with `status` at each row's version + 1 — an insert,
-    never an in-place ALTER (those diverge under FINAL). Every other
-    persisted column is carried forward. Returns the rows written."""
-    if not rows:
-        return 0
-    out = [
-        build_embedding_row(
-            **(
-                {c: val for c, val in r.items() if c in EMBEDDING_PERSISTED_COLS}
-                | {"status": status, "version": reemit_version(r)}
-            )
-        )
-        for r in rows
-    ]
-    await insert_embedding_rows(out, ch=ch)
+    """Re-emit mirror rows with `status` at `version` — an insert, never an
+    in-place ALTER (those diverge under FINAL). `duplicate` hides a row from
+    search, so this is a retire: `version` is the memory row's that caused it
+    (or one drawn before the caller's scan), and rows at or above it are kept.
+    Every other persisted column is carried forward. Returns the rows written."""
+    overrides = {"status": status, "version": int(version)}
+    out = [row for r in rows if (row := _copy_row(r, overrides)) is not None]
+    if out:
+        await insert_embedding_rows(out, ch=ch)
     return len(out)

@@ -192,7 +192,7 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
 
     now = naive_utc_now()
     version_rows: list[dict[str, Any]] = []
-    mirrors: list[tuple[str, Any]] = []  # (action, row) for the embeddings side
+    mirrors: list[tuple[str, Any, int]] = []  # (action, row, version) for the embeddings side
     for row in rows:
         res.scanned += 1
         action = effective_action(row)
@@ -219,12 +219,11 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
             res.anonymized += 1
         if cfg.dry_run:
             continue
-        version_rows.append(
-            memory_repo.build_memory_version_row(
-                row, version=memory_repo.next_version(), **overrides
-            )
-        )
-        mirrors.append((action, row))
+        # One version for the memory row and its vector retire, so a late copy of an
+        # older read (read + 1) stays below the retire.
+        version = memory_repo.next_version()
+        version_rows.append(memory_repo.build_memory_version_row(row, version=version, **overrides))
+        mirrors.append((action, row, version))
 
     if version_rows:
         ch = get_client()
@@ -260,16 +259,19 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
     return res
 
 
-def _mirror_overrides(action: str, row: Any, *, now: datetime, cfg: ExpiryConfig) -> dict[str, Any]:
-    """What the post-action changes on the key's embedding rows."""
+def _mirror_overrides(
+    action: str, row: Any, version: int, *, now: datetime, cfg: ExpiryConfig
+) -> dict[str, Any]:
+    """What the post-action changes on the key's embedding rows. A retire carries
+    the memory row's version; demote is a metadata copy (read + 1)."""
     if action in ("tombstone", "anonymize"):
-        return {"tombstoned_at": now}
+        return {"tombstoned_at": now, "version": version}
     conf = max(cfg.demote_floor, min(1.0, float(row.confidence or 0.0) * cfg.demote_factor))
     return {"expires_at": None, "confidence": round(conf, 4)}
 
 
 async def _mirror_embeddings_batch(
-    mirrors: list[tuple[str, Any]], *, now: datetime, cfg: ExpiryConfig
+    mirrors: list[tuple[str, Any, int]], *, now: datetime, cfg: ExpiryConfig
 ) -> int:
     """Search reads loom.memory_embeddings, so the post-action lands there too:
     tombstone and anonymize tombstone the keys' embedding rows; demote clears
@@ -283,8 +285,8 @@ async def _mirror_embeddings_batch(
     items = [
         (
             (row.org, row.namespace, row.agent, row.user_id, row.session_id, row.memory_key),
-            _mirror_overrides(action, row, now=now, cfg=cfg),
+            _mirror_overrides(action, row, version, now=now, cfg=cfg),
         )
-        for action, row in mirrors
+        for action, row, version in mirrors
     ]
     return await memory_repo.reemit_embedding_rows_for_keys(items)

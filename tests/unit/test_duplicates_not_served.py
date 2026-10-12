@@ -521,7 +521,9 @@ def collapse_env(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     ) -> list[dict]:
         return [r for r in e.mirror if r["memory_key"] in keys]
 
-    async def restamp_embedding_rows(rows: list[dict], *, status: str, ch: Any = None) -> int:
+    async def restamp_embedding_rows(
+        rows: list[dict], *, status: str, version: int, ch: Any = None
+    ) -> int:
         e.restamped.extend((r["memory_key"], status) for r in rows)
         return len(rows)
 
@@ -701,4 +703,4 @@ async def test_repo_readers_never_alias_an_aggregate_to_its_source_column() -> N
         assert "AS status" not in sql and "AS version" not in sql
     # the two search-path reads never pay the read-your-writes Keeper round-trip
     assert all("select_sequential_consistency = 0" in sqls[i][0] for i in (0, 1))
-    assert await memory_repo.restamp_embedding_rows([], status="duplicate", ch=ch) == 0
+    assert await memory_repo.restamp_embedding_rows([], status="duplicate", version=1, ch=ch) == 0

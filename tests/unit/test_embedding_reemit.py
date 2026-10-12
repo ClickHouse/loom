@@ -330,7 +330,8 @@ async def _touch_many(ch):
 
 
 async def _status_mirror(ch):
-    await M.mirror_status_to_embeddings([{**_LIVE, "status": "superseded"}], ch=ch)
+    memory_row = {**_LIVE, "status": "superseded", "version": M.next_version()}
+    await M.mirror_status_to_embeddings([memory_row], ch=ch)
 
 
 async def _unsupersede(ch):
@@ -338,9 +339,9 @@ async def _unsupersede(ch):
 
 
 async def _restamp(ch):
-    await M.restamp_embedding_rows(
-        await ch.query_all("memory_embeddings"), status="duplicate", ch=ch
-    )
+    version = M.next_version()  # a restamp's version is drawn before its read
+    rows = await ch.query_all("memory_embeddings")
+    await M.restamp_embedding_rows(rows, status="duplicate", version=version, ch=ch)
 
 
 async def _repair_dim(ch):
@@ -388,16 +389,29 @@ async def test_a_reemit_read_before_a_delete_mirror_does_not_bring_the_vector_ba
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("reemit", [_touch, _status_mirror, _unsupersede, _restamp])
-async def test_a_reemit_still_replaces_the_row_it_read(reemit) -> None:
+@pytest.mark.parametrize("reemit", [_touch, _unsupersede])
+async def test_a_metadata_copy_still_replaces_the_row_it_read(reemit) -> None:
     ch = _RMTCH()
     ch.emb.append({**_LIVE, "status": "superseded" if reemit is _unsupersede else "active"})
     await reemit(ch)
     (live,) = ch.live_emb()
     assert live["version"] == _LIVE["version"] + 1
-    assert live["status"] == {_status_mirror: "superseded", _restamp: "duplicate"}.get(
-        reemit, "active"
-    )
+    assert live["status"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_a_status_retire_writes_the_memory_rows_version_and_keeps_newer_rows() -> None:
+    ch = _RMTCH()
+    newer = {**_LIVE, "agent": "b", "version": 50}
+    ch.emb += [dict(_LIVE), newer]
+    rows = [
+        {**_LIVE, "status": "superseded", "version": 30},
+        {**newer, "status": "superseded", "version": 30},
+    ]
+    await M.mirror_status_to_embeddings(rows, ch=ch)
+    by_agent = {r["agent"]: r for r in ch.live_emb()}
+    assert (by_agent["a"]["status"], by_agent["a"]["version"]) == ("superseded", 30)
+    assert by_agent["b"] == newer
 
 
 @pytest.mark.asyncio
@@ -406,3 +420,289 @@ async def test_an_explicit_version_override_is_kept() -> None:
     await M.reemit_embedding_rows_for_key(*_KEY, ch=ch, tombstoned_at=datetime.now(), version=99)
     ((_, rows, _),) = ch.insert_calls
     assert rows[0]["version"] == 99
+
+
+# ---- every retire site against a paused metadata copy ---------------------------------
+# A touch (or any metadata copy) reads the live vector row, pauses, and writes read + 1
+# after the retire. Each retire must be stamped above that, so the copy loses under FINAL.
+
+
+class _SiteCH(_RMTCH):
+    """FINAL fake that also answers the status-divergence scan and leaves every
+    other loom.memory read empty."""
+
+    async def query_all(self, sql, params=None):
+        if "embeddings_status" in sql:
+            return [{**_LIVE, "status": "superseded", "invalid_at": None}]
+        if "entity_vectors" in sql or "memory_embeddings" in sql:
+            return await super().query_all(sql, params)
+        return []
+
+    async def insert(self, table, rows, settings=None):
+        if table in ("loom.memory_embeddings", "loom.entity_vectors"):
+            await super().insert(table, rows, settings)
+
+
+def _memory_row(**over: Any) -> Any:
+    base = {
+        "memory_id": "mid",
+        **{c: _LIVE[c] for c in ("org", "namespace", "agent", "user_id", "session_id")},
+        "memory_key": "k",
+        "memory_type": "episodic",  # not searchable: no chunk side paths
+        "value": "v",
+        "confidence": 0.9,
+        "version": 1,
+        "tags": [],
+        "entities": [],
+        "pinned": False,
+        "created_at": datetime(2026, 1, 1),
+        "expires_at": None,
+    }
+    return M.MemoryRow(**(base | over))
+
+
+def _patch_memory_io(mp: pytest.MonkeyPatch, ch: Any, row: Any) -> None:
+    async def get_by_id(*_a, **_k):
+        return row
+
+    async def no_insert(*_a, **_k):
+        return None
+
+    mp.setattr("server.memory.store.lifecycle.get_by_id", get_by_id)
+    mp.setattr("server.memory.store.lifecycle.insert_memory_versions", no_insert)
+    mp.setattr("server.memory.store.insert_memory_versions", no_insert)
+    mp.setattr("server.memory.app.expiry.insert_memory_versions", no_insert)
+    mp.setattr("server.memory.store.embeddings._default_client", lambda: ch)
+    mp.setattr("server.memory.store.lifecycle._default_client", lambda: ch)
+    mp.setattr("server.memory.store.shared._default_client", lambda: ch)
+    mp.setattr("server.core.ch.get_client", lambda: ch)
+
+
+async def _site_delete(ch, mp):
+    from server.memory.api.models_crud import MemoryDeleteInput
+    from server.memory.app import handlers
+
+    async def get_by_key(*_a, **_k):
+        return _memory_row()
+
+    mp.setattr(handlers, "get_client", lambda: ch)
+    mp.setattr("server.memory.store.get_by_key", get_by_key)
+    await handlers.handle_memory_delete(
+        MemoryDeleteInput(
+            org="o", namespace="n", agent="a", user_id="u", session_id="s", memory_key="k"
+        )
+    )
+
+
+async def _expiry(ch, mp, on_expire):
+    from server.memory.app import expiry
+
+    async def find(**_k):
+        return [_memory_row(on_expire=on_expire, expires_at=datetime(2026, 1, 1))]
+
+    mp.setattr("server.memory.store.find_expired_candidates", find)
+    await expiry.run_pass()
+
+
+async def _site_expiry_tombstone(ch, mp):
+    await _expiry(ch, mp, "tombstone")
+
+
+async def _site_expiry_anonymize(ch, mp):
+    await _expiry(ch, mp, "anonymize")
+
+
+async def _site_orphan_reconcile(ch, mp):
+    from server.memory.workers import orphan_vector_reconcile
+
+    await orphan_vector_reconcile.run_pass(ch=ch)
+
+
+async def _site_sensitivity_high(ch, mp):
+    from server.memory.app import sensitivity_sweep as sweep
+
+    async def relabelled(*_a, **_k):
+        return 1
+
+    mp.setattr("server.memory.store.write_versions_by_ids", relabelled)
+    await sweep.apply([sweep.SweepCandidate("mid", *_KEY[:5], "k", "high", ("credential",))], ch=ch)
+
+
+async def _site_cascade(ch, mp):
+    await M.tombstone_cascade_by_ids("o", ["mid"], when=datetime.now(), ch=ch)
+
+
+async def _site_supersede(ch, mp):
+    victim = {
+        "memory_id": "mid",
+        "superseded_by": "x",
+        **dict(
+            zip(
+                ("org", "namespace", "agent", "user_id", "session_id", "memory_key"),
+                _KEY,
+                strict=True,
+            )
+        ),
+    }
+    await M.supersede_duplicates("o", [victim], ch=ch)
+
+
+async def _site_consolidated_dependent(ch, mp):
+    from server.memory.store import lifecycle
+
+    async def deps(*_a, **_k):
+        return [
+            {
+                "mid": "mid",
+                **{c: _LIVE[c] for c in ("namespace", "agent", "user_id", "session_id")},
+                "memory_key": "k",
+                "tags": ["consolidated", "src:gone"],
+            }
+        ]
+
+    async def none_live(*_a, **_k):
+        return 0
+
+    mp.setattr(lifecycle, "consolidated_dependents_of", deps)
+    mp.setattr(lifecycle, "live_source_count", none_live)
+    await M.downgrade_consolidated_dependents("o", "n", "gone", ch=ch)
+
+
+async def _site_consolidate_merge(ch, mp):
+    from server.memory.api.models_admin import MemoryConsolidateInput
+    from server.memory.app import consolidate
+
+    async def written(*_a, **_k):
+        return 1
+
+    mp.setattr("server.memory.store.write_versions_by_ids", written)
+    await consolidate._retire_merged(
+        ch,
+        MemoryConsolidateInput(org="o", namespace="n", agent="a", user_id="u", session_id="s"),
+        [{"memory_id": "mid", "memory_key": "k", "session_id": "s"}],
+        canonical_key="canon",
+        now_naive=datetime.now(),
+    )
+
+
+async def _site_status_reject(ch, mp):
+    row = M.build_memory_version_row(_memory_row(), version=M.next_version(), status="rejected")
+    await M.mirror_status_to_embeddings([row], ch=ch)
+
+
+async def _site_reconcile_status(ch, mp):
+    await M.reconcile_embedding_status("o", "n", dry_run=False, ch=ch)
+
+
+async def _site_demote(ch, mp):
+    from server.memory.api.models_lifecycle import MemoryDemoteInput
+    from server.memory.app import promote
+    from server.memory.store import shared
+
+    async def fetch(*_a, **_k):
+        return {
+            "tombstoned_at": None,
+            "reversible_until": None,
+            "value": "v",
+            "memory_type": "semantic",
+            "confidence": 1.0,
+            "promoted_from": [],
+            "promotion_event": "",
+            "promoted_from_candidate_id": "",
+            "promoted_by": "",
+            "rationale": "",
+            "promoted_at": datetime.now(),
+        }
+
+    async def no_insert(*_a, **_k):
+        return None
+
+    mp.setattr(shared, "fetch_shared", fetch)
+    mp.setattr(shared, "insert_shared_row", no_insert)
+    await promote.handle_memory_demote(MemoryDemoteInput(org="o", namespace="n", memory_key="k"))
+
+
+async def _site_move(ch, mp):
+    from server.memory.app import move
+
+    await move._redirect_source(_memory_row(), "dest", ch)
+
+
+async def _site_dedup_collapse(ch, mp):
+    from server.memory.api.models_graph import MemoryDedupCollapseInput
+    from server.memory.app import dedup
+
+    pair = SimpleNamespace(agent="a", user_id="u", session_id="s", memory_key="k", duplicate_of="c")
+
+    async def pairs(*_a, **_k):
+        return [pair]
+
+    async def canon(*_a, **_k):
+        return [SimpleNamespace(canonical_id="c", memory_key="kc")]
+
+    mp.setattr("server.memory.store.find_duplicate_pairs", pairs)
+    mp.setattr("server.memory.store.canonical_rows_by_ids", canon)
+    await dedup.handle_memory_dedup_collapse(
+        MemoryDedupCollapseInput(org="o", namespace="n", dry_run=False)
+    )
+
+
+async def _site_retire_vectors(ch, mp):
+    # bulk_set, namespace.rollback, memory.set and update_by_id retire through this
+    await M.retire_vectors_for_keys([(_KEY, M.next_version())], ch=ch)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "site",
+    [
+        _site_delete,
+        _site_expiry_tombstone,
+        _site_expiry_anonymize,
+        _site_orphan_reconcile,
+        _site_sensitivity_high,
+        _site_cascade,
+        _site_supersede,
+        _site_consolidated_dependent,
+        _site_consolidate_merge,
+        _site_status_reject,
+        _site_reconcile_status,
+        _site_demote,
+        _site_move,
+        _site_dedup_collapse,
+        _site_retire_vectors,
+    ],
+)
+async def test_every_retire_outranks_a_paused_metadata_copy(site, monkeypatch) -> None:
+    ch = _SiteCH()
+    read = {**_LIVE, "created_at": datetime(2026, 1, 1), "version": M.next_version()}
+    ch.emb.append(read)
+    _patch_memory_io(monkeypatch, ch, _memory_row())
+    await site(ch, monkeypatch)
+    assert len(ch.emb) > 1, "the site wrote no retire"
+    ch.emb.append({**read, "version": M.reemit_version(read)})  # the paused touch lands
+    assert [r for r in ch.live_emb() if r["status"] in ("active", "conflicted")] == []
+
+
+@pytest.mark.asyncio
+async def test_a_vector_written_during_the_deletes_read_is_retired(monkeypatch) -> None:
+    """memory.delete draws its version after its strong read, so a stub fill that
+    lands during the read is below it and retired with the key."""
+    from server.memory.api.models_crud import MemoryDeleteInput
+    from server.memory.app import handlers
+
+    ch = _SiteCH()
+    _patch_memory_io(monkeypatch, ch, _memory_row())
+
+    async def get_by_key(*_a, **_k):
+        ch.emb.append({**_LIVE, "version": M.next_version()})  # lands mid-read
+        return _memory_row()
+
+    monkeypatch.setattr(handlers, "get_client", lambda: ch)
+    monkeypatch.setattr("server.memory.store.get_by_key", get_by_key)
+    await handlers.handle_memory_delete(
+        MemoryDeleteInput(
+            org="o", namespace="n", agent="a", user_id="u", session_id="s", memory_key="k"
+        )
+    )
+    assert ch.live_emb() == []

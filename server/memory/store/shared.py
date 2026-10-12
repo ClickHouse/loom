@@ -170,17 +170,20 @@ async def tombstone_shared_embedding(
     memory_key: str,
     when: datetime,
     *,
+    version: int,
     ch: _CHClient | None = None,
 ) -> None:
     """Mark the scope='shared' embedding tombstoned so memory.search
-    stops returning the demoted memory. A versioned re-emit of the live
-    shared rows with `tombstoned_at` set, not an ALTER UPDATE: a mutation
-    rewrites parts through Keeper, and any UPDATE on the vector table costs
-    the fact leg its codes-first read. The insert is committed, so demote's
-    contract holds: a read after demote sees the absence."""
+    stops returning the demoted memory. `version` is the loom.shared
+    tombstone's: rows at or above it are a newer write's and are kept. A
+    versioned re-emit of the live shared rows with `tombstoned_at` set, not
+    an ALTER UPDATE: a mutation rewrites parts through Keeper, and any
+    UPDATE on the vector table costs the fact leg its codes-first read. The
+    insert is committed, so demote's contract holds: a read after demote sees
+    the absence."""
     import server.memory.store as memory_repo
 
     ch = ch or _default_client()
     await memory_repo.reemit_shared_embedding_rows(
-        org, namespace, memory_key, ch=ch, tombstoned_at=when
+        org, namespace, memory_key, ch=ch, tombstoned_at=when, version=int(version)
     )

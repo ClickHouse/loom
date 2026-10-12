@@ -245,13 +245,64 @@ async def test_a_metadata_reemit_paused_across_a_high_set_does_not_restore_the_v
                 )
 
 
-@pytest.mark.parametrize("retire", ["memory.delete", "sensitivity_sweep"])
+async def _memory_row_of(ch: Any, ns: str, key: str) -> Any:
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory import store as M
+
+    row = await ch.query_one(
+        "SELECT toString(memory_id) AS id FROM loom.memory FINAL"
+        " WHERE org = {o:String} AND namespace = {n:String} AND memory_key = {k:String}",
+        params={"o": ORG, "n": ns, "k": key},
+    )
+    return await M.get_by_id(row["id"], org=ORG, ch=ch, fresh=True, scope=WHOLE_NAMESPACE)
+
+
+async def _expire_and_anonymize(ch: Any, ns: str, key: str) -> None:
+    from server.memory import store as M
+    from server.memory.app import expiry
+
+    existing = await _memory_row_of(ch, ns, key)
+    past = datetime.now(UTC).replace(tzinfo=None, microsecond=0).replace(year=2025)
+    await M.insert_memory_versions(
+        [
+            M.build_memory_version_row(
+                existing, version=M.next_version(), expires_at=past, on_expire="anonymize"
+            )
+        ],
+        ch=ch,
+    )
+    res = await expiry.run_pass(expiry.ExpiryConfig(org_filter=ORG, namespace_filter=ns))
+    assert res.anonymized == 1 and res.failures == [], res.as_dict()
+
+
+async def _orphan_and_reconcile(ch: Any, ns: str, key: str, monkeypatch: Any) -> None:
+    """The memory row is tombstoned without its mirror; the reconcile heals it."""
+    from server.memory import store as M
+    from server.memory.workers import orphan_vector_reconcile
+    from server.settings import settings
+
+    existing = await _memory_row_of(ch, ns, key)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    await M.insert_memory_versions(
+        [M.build_memory_version_row(existing, version=M.next_version(), tombstoned_at=now)],
+        ch=ch,
+    )
+    monkeypatch.setattr(settings, "orphan_vector_reconcile_grace_seconds", 0)
+    await asyncio.sleep(1.1)  # the scan takes vectors created before now()
+    res = await orphan_vector_reconcile.run_pass(ch=ch)
+    assert res.errors == [] and res.embeddings_healed >= 1
+
+
+@pytest.mark.parametrize(
+    "retire", ["memory.delete", "sensitivity_sweep", "expiry_anonymize", "orphan_reconcile"]
+)
 async def test_a_metadata_reemit_paused_across_a_retire_does_not_restore_the_vector(
-    ch: Any, control_plane_url: str, retire: str
+    ch: Any, control_plane_url: str, retire: str, monkeypatch: Any
 ) -> None:
-    """memory.delete's mirror and the sensitivity sweep's high retire land between
-    a verify re-emit's read and its write: the retire carries its memory row's
-    version, so the late copy (read + 1) does not win."""
+    """memory.delete's mirror, the sensitivity sweep's high retire, the expiry
+    anonymize mirror and the orphan reconcile land between a verify re-emit's
+    read and its write: each retire is stamped above read + 1 (its memory row's
+    version, or one drawn before its scan), so the late copy does not win."""
     import httpx
 
     from server.auth.jwt import mint_token
@@ -291,6 +342,10 @@ async def test_a_metadata_reemit_paused_across_a_retire_does_not_restore_the_vec
                 if retire == "memory.delete":
                     r = await http.post("/v1/memory.delete", json={**ident, "memory_key": key})
                     assert r.status_code == 200 and r.json()["tombstoned"], r.text
+                elif retire == "expiry_anonymize":
+                    await _expire_and_anonymize(ch, ns, key)
+                elif retire == "orphan_reconcile":
+                    await _orphan_and_reconcile(ch, ns, key, monkeypatch)
                 else:
                     row = await ch.query_one(
                         "SELECT toString(memory_id) AS id FROM loom.memory FINAL"

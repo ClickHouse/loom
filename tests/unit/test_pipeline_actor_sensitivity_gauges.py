@@ -193,8 +193,8 @@ async def test_apply_relabels_tombstones_high_and_tags_medium(monkeypatch) -> No
         written.append((ids[0], update(existing)))
         return 1
 
-    async def _tomb(org, ns, agent, uid, sid, key, *, ts, version, ch=None):
-        tombstoned.append((key, version))
+    async def _retire(items, *, ch=None):
+        tombstoned.extend((key[5], version) for key, version in items)
         return 2
 
     async def _live(ch, **ident):
@@ -213,7 +213,7 @@ async def test_apply_relabels_tombstones_high_and_tags_medium(monkeypatch) -> No
         inserted.append(rows)
 
     monkeypatch.setattr(memory_repo, "write_versions_by_ids", _write)
-    monkeypatch.setattr(memory_repo, "tombstone_embeddings_for_key", _tomb)
+    monkeypatch.setattr(memory_repo, "retire_vectors_for_keys", _retire)
     monkeypatch.setattr(memory_repo, "live_embedding_rows_for_key", _live)
     monkeypatch.setattr(memory_repo, "insert_embedding_rows", _ins)
     ch.rows = [
@@ -238,7 +238,6 @@ async def test_apply_relabels_tombstones_high_and_tags_medium(monkeypatch) -> No
         "high": 1,
         "medium": 1,
         "embeddings_tombstoned": 2,
-        "entity_vectors_tombstoned": 1,
         "embeddings_tagged": 1,
         "errors": 0,
     }
@@ -247,10 +246,9 @@ async def test_apply_relabels_tombstones_high_and_tags_medium(monkeypatch) -> No
         "sensitivity:high",
     ]
     assert written[1][1]["tags"] == ["t", "sensitivity:medium"]
-    # The retire carries the relabelled memory row's version, so a late metadata copy loses.
+    # One retire of both vector tables at the relabelled memory row's version, so a
+    # late metadata copy loses and a newer write's entity vectors stay.
     assert tombstoned == [("khigh", written[0][1]["version"])]
-    # the high row's entity vectors left with a tombstone, never a mutation
-    assert ch.inserts[0][0] == "loom.entity_vectors" and ch.inserts[0][1][0]["tombstoned_at"]
     assert inserted[0][0]["tags"] == ["t", "sensitivity:medium"] and inserted[0][0]["version"]
 
 

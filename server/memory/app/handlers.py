@@ -584,7 +584,6 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     from server.observability.otel import traced
 
     ch = get_client()
-    version = next_version()
     now = datetime.now(UTC)
 
     identity = memory_repo.Identity(
@@ -617,12 +616,15 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
             existing = None  # the wide form ignores user_id; another user's row is not ours
     if existing is None:
         # Idempotent: deleting a non-existent row is a no-op — and says so.
-        return MemoryDeleteOutput(tombstoned=False, found=False, version=version)
+        return MemoryDeleteOutput(tombstoned=False, found=False, version=next_version())
     _lock.assert_unlocked(existing, "delete", op="memory.delete")
     assert_own_row(existing, op="memory.delete")
 
     # build_memory_version_row carries every live column forward (avoiding
-    # silent column loss); only the tombstone deltas override.
+    # silent column loss); only the tombstone deltas override. The version is drawn
+    # here, right before the insert: the vector retire below skips rows at or above
+    # it, so the later it is drawn the fewer late vector writes it leaves live.
+    version = next_version()
     tombstone_row = memory_repo.build_memory_version_row(
         existing,
         version=version,

@@ -154,7 +154,9 @@ async def _redirect_source(source: MemoryRow, dest_id: str, ch: Any) -> None:
             if (str(r.get("agent")), str(r.get("user_id")), str(r.get("session_id")))
             == (source.agent, source.user_id, source.session_id)
         ]
-        await memory_repo.restamp_embedding_rows(mine, status="duplicate", ch=ch)
+        await memory_repo.restamp_embedding_rows(
+            mine, status="duplicate", version=row["version"], ch=ch
+        )
     except Exception as e:  # noqa: BLE001 — the move stands
         log.warning(
             "memory.move: mirror restamp failed for %s (non-fatal): %s", source.memory_key, e

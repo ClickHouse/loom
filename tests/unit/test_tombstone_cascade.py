@@ -261,7 +261,9 @@ async def test_reconcile_pass_heals_every_identity_in_one_batch(
         ("o", "n1", "a", "-", "s", "k2"),
         ("o", "n2", "a", "-", "s", "k3"),
     ]
-    assert all(set(o) == {"tombstoned_at"} and o["tombstoned_at"] for _, o in items)
+    # one version for the pass, drawn before its scan
+    assert all(set(o) == {"tombstoned_at", "version"} and o["tombstoned_at"] for _, o in items)
+    assert len({o["version"] for _, o in items}) == 1
     assert res.identities_healed == 3 and res.embeddings_healed == 4
     # one entity_vectors read per namespace, keys bound as an array
     assert {p["ns"]: p["keys"] for p in ch.entity_reads} == {"n1": ["k1", "k2"], "n2": ["k3"]}
