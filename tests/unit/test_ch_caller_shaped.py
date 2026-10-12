@@ -87,15 +87,27 @@ def test_a_row_or_memory_cap_hit_inside_the_scope_is_a_422(err: RuntimeError) ->
     ch._raise_if_caller_cap(err)  # outside the scope: left to the caller as before
 
 
-def test_the_server_wide_memory_limit_stays_a_server_error() -> None:
-    # captured from ClickHouse 26.5.1.882 with max_server_memory_usage=1000000000
-    err = RuntimeError(
-        "Code: 241. DB::Exception: (total) memory limit exceeded: would use 1000.04 MiB "
-        "(attempt to allocate chunk of 512.00 MiB), current RSS: 702.20 MiB, maximum: "
-        "953.67 MiB. OvercommitTracker decision: Query was selected to stop by "
-        "OvercommitTracker: While executing AggregatingTransform. (MEMORY_LIMIT_EXCEEDED) "
-        "(version 26.5.1.882 (official build))"
-    )
+@pytest.mark.parametrize(
+    "err",
+    [
+        # captured from ClickHouse 26.5.1.882 with max_server_memory_usage=1000000000
+        RuntimeError(
+            "Code: 241. DB::Exception: (total) memory limit exceeded: would use 1000.04 MiB "
+            "(attempt to allocate chunk of 512.00 MiB), current RSS: 702.20 MiB, maximum: "
+            "953.67 MiB. OvercommitTracker decision: Query was selected to stop by "
+            "OvercommitTracker: While executing AggregatingTransform. (MEMORY_LIMIT_EXCEEDED) "
+            "(version 26.5.1.882 (official build))"
+        ),
+        # captured from ClickHouse 26.5.1.882 with max_memory_usage_for_user=5000000
+        RuntimeError(
+            "Code: 241. DB::Exception: User memory limit exceeded: would use 6.59 MiB "
+            "(attempt to allocate chunk of 6.00 MiB), maximum: 4.77 MiB. OvercommitTracker "
+            "decision: Query was selected to stop by OvercommitTracker: While executing "
+            "AggregatingTransform. (MEMORY_LIMIT_EXCEEDED) (version 26.5.1.882 (official build))"
+        ),
+    ],
+)
+def test_the_server_or_user_memory_limit_stays_a_server_error(err: RuntimeError) -> None:
     with ch.caller_shaped():
         ch._raise_if_caller_cap(err)
 

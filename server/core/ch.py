@@ -188,9 +188,10 @@ _MEMORY_LIMIT_EXCEEDED = 241
 def _is_caller_cap(e: BaseException) -> bool:
     code = error_code(e)
     if code == _MEMORY_LIMIT_EXCEEDED:
-        # The per-query limit is this request's breadth; the server-wide total
-        # ("(total) memory limit exceeded") is the server running short.
-        return "(total)" not in str(e)
+        # Only the per-query limit is this request's breadth; the server total
+        # or the user's limit is the server or the shared user running short.
+        text = str(e)
+        return "Query memory limit exceeded" in text or "(for query)" in text
     return code in _CALLER_CAP_CODES
 
 
