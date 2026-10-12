@@ -413,6 +413,11 @@ NO_MEMORY_CONTENT: dict[str, str] = {
         "The live lease per task in ClickHouse Keeper (task id, owner "
         "label, fence, lease_until) — identifiers only, deleted on the terminal transition."
     ),
+    "loom.agent_run_claims": (
+        "Who began each run id, in ClickHouse Keeper (org, namespace, run id, user and "
+        "session id, time) — identifiers only; the run's goal and text live in "
+        "loom.agent_runs, which the saga deletes."
+    ),
     "loom.task_claims": (
         "The append-only claim arbitration log where no Keeper exists "
         "(task id, fence, claimant label, timestamp) — identifiers only, no task text."

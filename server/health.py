@@ -56,6 +56,7 @@ def _health_provider_fields(
     from server.observability import instance as _instance
     from server.observability import provider_health
     from server.observability.problems import HealthState, collect_problems, derive_status
+    from server.tasks.store.runs import claims_atomic
     from server.workers import leader as _leader
 
     embedding_model = settings.embedding_model
@@ -83,6 +84,7 @@ def _health_provider_fields(
             repo_sandbox_refusal=layout_refusal(),
             ch_reader_ok=reader_user_state(),
             ch_reader_error=reader_user_error(),
+            run_claims_atomic=claims_atomic(),
         ),
     )
     return {
