@@ -18,7 +18,6 @@
 // Bounded; a viewer-only token gets a 403 and nothing is
 // recorded. LOOM_RUN_LEDGER=off disables.
 
-import fs from "node:fs";
 import {
   envSwitch,
   postBounded,
@@ -33,13 +32,13 @@ import {
 import { parseLines, readTail } from "../lib/transcript.mjs";
 import {
   beginBody,
-  clearRunId,
   completeBody,
   lastAssistantText,
   readRecalledStash,
-  storeRunId,
+  readRunState,
+  writeRunBegun,
 } from "../lib/run-hook.mjs";
-import { readJsonFile, sessionStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
+import { sessionStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
 import { appendTurn, lastAssistant, readJournal } from "../lib/turn-journal.mjs";
 
 const ENABLED = envSwitch("LOOM_RUN_LEDGER", true);
@@ -70,23 +69,22 @@ async function main() {
     // Every prompt goes to the turn journal: the consumers
     // read it when the client hands them no parseable transcript.
     appendTurn(sessionId, "user", prompt);
-    if (readJsonFile(sp).begun) {
+    if (readRunState(sessionId).begun) {
       scheduleExit(0);
       return;
     }
     // Awaited: the server may answer another run id than the derived one (no
     // Keeper, narrowed token), and every later hook must use that one. A
     // timeout or error keeps the derived id.
-    clearRunId(sessionId);
     const begun = await postBounded("run.begin", beginBody(scope, payload, prompt), opts);
-    if (begun) storeRunId(sessionId, begun.run_id);
-    writeJsonFile(sp, { begun: true, at: Date.now() });
+    writeRunBegun(sessionId, begun ? begun.run_id : "");
     scheduleExit(0);
     return;
   }
 
   if (event === "SessionEnd") {
-    if (!readJsonFile(sp).begun) {
+    const state = readRunState(sessionId);
+    if (!state.begun) {
       scheduleExit(0);
       return;
     } // no run to close
@@ -97,13 +95,13 @@ async function main() {
     // 1.5 s budget by default (hooks.json raises it with `timeout`), and a
     // process that lingers past its own request is reported as "Hook
     // cancelled" even after the row landed.
-    try {
-      fs.unlinkSync(sp);
-    } catch {
-      /* fine */
-    }
     const recalled = readRecalledStash(sessionId);
-    await postBounded("run.complete", completeBody(scope, payload, finalText, process.env, recalled), opts);
+    const body = completeBody(scope, payload, finalText, process.env, recalled);
+    // No longer begun, so a resumed session's next prompt opens a new run. The
+    // id stays for the other SessionEnd hooks, which run beside this one; the
+    // stale-file sweep removes it later.
+    writeJsonFile(sp, { run_id: state.run_id });
+    await postBounded("run.complete", body, opts);
     // The stash is removed by loom-session-memory, the last SessionEnd hook.
     process.exit(0);
   }

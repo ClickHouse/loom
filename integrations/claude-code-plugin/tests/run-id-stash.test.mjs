@@ -1,5 +1,5 @@
 // run.begin can answer another run id than the derived one; the run hook
-// stores it per session and every later hook uses it.
+// keeps it in the session's run state and every later hook uses it.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -9,7 +9,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { completeBody, sessionRunId, storeRunId } from "../lib/run-hook.mjs";
+import { completeBody, sessionRunId, writeRunBegun } from "../lib/run-hook.mjs";
+import { STALE_STATE_MS, sessionStatePath, sweepStaleStateFiles } from "../lib/tmp-state.mjs";
 import { recallBody } from "../lib/prompt-recall.mjs";
 import { sessionMemoryBody } from "../lib/session-memory.mjs";
 
@@ -80,6 +81,7 @@ test("the id run.begin answers is used by run.complete, prompt recall and sessio
     assert.equal(begin.body.run_id, "cc-s1", "begin still asks for the derived id");
     assert.equal(complete.body.run_id, "0123abcd");
   });
+  // SessionEnd closed the run, but the other SessionEnd hooks still read its id.
   withTmpdir(tmp, () => {
     assert.equal(sessionRunId("s1"), "0123abcd");
     assert.equal(recallBody(scope, { session_id: "s1" }, "q").run_id, "0123abcd");
@@ -104,7 +106,7 @@ test("a run.begin that times out keeps the derived id", async () => {
 
 test("a session never reads another session's stored id", () => {
   const tmp = freshTmp();
-  assert.ok(storeRunId("s1", "0123abcd", tmp));
+  assert.ok(writeRunBegun("s1", "0123abcd", { tmp }));
   assert.equal(sessionRunId("s1", { tmp }), "0123abcd");
   assert.equal(sessionRunId("s2", { tmp }), "cc-s2");
   assert.equal(sessionRunId("", { tmp }), "", "no session, no run");
@@ -112,8 +114,21 @@ test("a session never reads another session's stored id", () => {
 
 test("a malformed answer is not stored", () => {
   const tmp = freshTmp();
-  assert.equal(storeRunId("s1", "../../etc", tmp), false);
-  assert.equal(storeRunId("s1", 42, tmp), false);
-  assert.equal(storeRunId("", "0123abcd", tmp), false);
+  writeRunBegun("s1", "../../etc", { tmp });
   assert.equal(sessionRunId("s1", { tmp }), "cc-s1");
+  writeRunBegun("s1", 42, { tmp });
+  assert.equal(sessionRunId("s1", { tmp }), "cc-s1");
+  assert.equal(writeRunBegun("", "0123abcd", { tmp }), false);
+});
+
+test("a stored id read within the sweep age outlives the sweep", () => {
+  const tmp = freshTmp();
+  const old = new Date(Date.now() - STALE_STATE_MS - 60_000);
+  writeRunBegun("s1", "0123abcd", { tmp });
+  writeRunBegun("s2", "4567ef", { tmp });
+  for (const sid of ["s1", "s2"]) fs.utimesSync(sessionStatePath("run", sid, { tmp }), old, old);
+  assert.equal(sessionRunId("s1", { tmp }), "0123abcd"); // s1 is still running
+  sweepStaleStateFiles({ tmp });
+  assert.equal(sessionRunId("s1", { tmp }), "0123abcd");
+  assert.equal(sessionRunId("s2", { tmp }), "cc-s2", "an idle session's state is swept");
 });

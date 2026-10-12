@@ -12,7 +12,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { contentText, hookClient, redactHead, runPrefixFor } from "./loom-client.mjs";
-import { readPrivateFile, readSessionState, removeFile, sessionStatePath, writeJsonFile } from "./tmp-state.mjs";
+import { readPrivateFile, readSessionState, sessionStatePath, touchPrivateFile, writeJsonFile } from "./tmp-state.mjs";
 
 const GOAL_MAX = 2000;
 const REQUEST_MAX = 8000;
@@ -26,25 +26,32 @@ export function runIdFor(sessionId, client = hookClient()) {
 }
 
 // run.begin can answer another id than the one asked for (the server makes a
-// fresh one when the derived id is not ours to open). The run hook stores the
-// answer per session and every hook reads it before deriving.
+// fresh one when the derived id is not ours to open). The run hook keeps the
+// answer in the session's `run` state file, next to `begun`, and every hook
+// reads it before deriving.
 const RUN_ID_RE = /^[\w.:-]{1,128}$/;
 
-/** Forget the session's stored run id (a new run.begin is about to answer). */
-export function clearRunId(sessionId, tmp = os.tmpdir()) {
-  return removeFile(sessionStatePath("run-id", sessionId, { tmp }));
+/** The session's run state ({begun, at, run_id}). A read refreshes the file's
+ *  mtime, so a session still running is never swept as stale. */
+export function readRunState(sessionId, tmp = os.tmpdir()) {
+  const state = readSessionState("run", sessionId, { tmp });
+  if (Object.keys(state).length) touchPrivateFile(sessionStatePath("run", sessionId, { tmp }));
+  return state;
 }
 
-/** Keep the run id run.begin answered for this session; false when not kept. */
-export function storeRunId(sessionId, runId, tmp = os.tmpdir()) {
-  if (!String(sessionId || "").trim() || typeof runId !== "string" || !RUN_ID_RE.test(runId)) return false;
-  return writeJsonFile(sessionStatePath("run-id", sessionId, { tmp }), { run_id: runId });
+/** Mark the session's run begun, with the id run.begin answered when it is
+ *  well formed; false when nothing was written. */
+export function writeRunBegun(sessionId, runId, { tmp = os.tmpdir(), now = Date.now() } = {}) {
+  if (!String(sessionId || "").trim()) return false;
+  const state = { begun: true, at: now };
+  if (typeof runId === "string" && RUN_ID_RE.test(runId)) state.run_id = runId;
+  return writeJsonFile(sessionStatePath("run", sessionId, { tmp }), state);
 }
 
 /** The session's run id: the one run.begin answered, else runIdFor's. */
 export function sessionRunId(sessionId, { tmp = os.tmpdir(), client = hookClient() } = {}) {
   if (!String(sessionId || "").trim()) return "";
-  const stored = readSessionState("run-id", sessionId, { tmp }).run_id;
+  const stored = readRunState(sessionId, tmp).run_id;
   return typeof stored === "string" && RUN_ID_RE.test(stored) ? stored : runIdFor(sessionId, client);
 }
 

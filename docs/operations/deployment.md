@@ -225,7 +225,7 @@ out of `.env`.
 - **Run ids without Keeper.** Without Keeper (or while Keeper fails) a narrowed
   token's `run.begin` with a new caller-supplied `run_id` gets a server-made id
   instead, so a client that makes the id itself must use the returned `run_id` (the
-  Claude Code and Codex plugins do). Known gap: a namespace-wide caller whose claim
+  Claude Code and Codex plugins do after run.begin answers). Known gap: a namespace-wide caller whose claim
   hits a Keeper error while a narrowed user wins the claim on the same new id at the
   same moment can end up sharing that id with them.
 - **ClickHouse Cloud.** Loom's DDL uses plain `MergeTree` engines, which Cloud runs as
