@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from server.identity.domain.read_scope import WHOLE_NAMESPACE
+from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
 from tests.analyzer.cases._common import AGENT, MODEL, NS, ORG, VEC, chunk_cand, rows_by_substring
 from tests.analyzer.cases.search import _q
 from tests.analyzer.corpus import Case, RecordingCH
@@ -382,8 +382,17 @@ async def _memory_finders(ch: RecordingCH, c: dict[str, Any]) -> None:
     await M.find_duplicate_clusters(ORG, NS, ch=ch)
     await M.find_orphan_duplicates(ORG, NS, ch=ch)
     # The served-duplicate truth read, the canonical read, the collapse worklist
-    await M.status_by_keys(ORG, [NS], ["k1", "k2"], ch=ch)
-    await M.canonical_rows_by_ids(ORG, [NS], ["00000000-0000-0000-0000-000000000001"], ch=ch)
+    # The user_id axis drives both forms: a read bounded to one user and the whole namespace.
+    dup_scope = (
+        ReadFilters(scope="own_user", user_id="u1", session_id=None)
+        if c["user_id"]
+        else WHOLE_NAMESPACE
+    )
+    await M.status_by_keys(ORG, [NS], ["k1", "k2"], scope=dup_scope, ch=ch)
+    await M.canonical_rows_by_ids(
+        ORG, [NS], ["00000000-0000-0000-0000-000000000001"], scope=dup_scope, ch=ch
+    )
+    await M.superseded_successors(ORG, [NS], ["k1"], scope=dup_scope, ch=ch)
     await M.find_duplicate_pairs(ORG, NS, key_prefix="user_" if c["vector"] else "", ch=ch)
     await M.embedding_mirror_for_keys(ORG, NS, ["k1"], ch=ch)
     await M.divergent_namespaces(ORG, since_days=7 if c["vector"] else 0, ch=ch)
