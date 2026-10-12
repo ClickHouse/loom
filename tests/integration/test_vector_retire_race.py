@@ -243,3 +243,75 @@ async def test_a_metadata_reemit_paused_across_a_high_set_does_not_restore_the_v
                     f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
                     params={"o": ORG, "n": ns},
                 )
+
+
+@pytest.mark.parametrize("retire", ["memory.delete", "sensitivity_sweep"])
+async def test_a_metadata_reemit_paused_across_a_retire_does_not_restore_the_vector(
+    ch: Any, control_plane_url: str, retire: str
+) -> None:
+    """memory.delete's mirror and the sensitivity sweep's high retire land between
+    a verify re-emit's read and its write: the retire carries its memory row's
+    version, so the late copy (read + 1) does not win."""
+    import httpx
+
+    from server.auth.jwt import mint_token
+    from server.memory import store as M
+    from server.memory.app import sensitivity_sweep
+
+    ns = f"itest-{uuid.uuid4().hex[:12]}"
+    key = f"retire_reemit_{uuid.uuid4().hex[:6]}"
+    token = mint_token(
+        subject="reemit-race", org=ORG, namespaces=[ns], roles=["writer"], ttl_seconds=600
+    )
+    ident = {"org": ORG, "namespace": ns, "agent": AGENT}
+
+    async def live_vectors() -> int:
+        row = await ch.query_one(
+            "SELECT count() AS n FROM loom.memory_embeddings FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND memory_key = {k:String} AND tombstoned_at IS NULL",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        return int(row["n"])
+
+    headers = {"Authorization": f"Bearer {token}"}
+    async with httpx.AsyncClient(base_url=control_plane_url, headers=headers, timeout=30) as http:
+        try:
+            r = await http.post(
+                "/v1/memory.set",
+                json={**ident, "memory_key": key, "value": f"the {key} vault rotates on fridays"},
+            )
+            assert r.status_code == 200, r.text
+            for _ in range(60):
+                if await live_vectors() == 1:
+                    break
+                await asyncio.sleep(0.5)
+            assert await live_vectors() == 1
+
+            async def retire_lands() -> None:
+                if retire == "memory.delete":
+                    r = await http.post("/v1/memory.delete", json={**ident, "memory_key": key})
+                    assert r.status_code == 200 and r.json()["tombstoned"], r.text
+                else:
+                    row = await ch.query_one(
+                        "SELECT toString(memory_id) AS id FROM loom.memory FINAL"
+                        " WHERE org = {o:String} AND namespace = {n:String}"
+                        " AND memory_key = {k:String}",
+                        params={"o": ORG, "n": ns, "k": key},
+                    )
+                    cand = sensitivity_sweep.SweepCandidate(
+                        row["id"], ORG, ns, AGENT, "-", "-", key, "high", ("credential",)
+                    )
+                    res = await sensitivity_sweep.apply([cand], ch=ch)
+                    assert res.errors == [] and res.embeddings_tombstoned == 1
+                assert await live_vectors() == 0
+
+            await M.reemit_embedding_rows_for_key(
+                ORG, ns, AGENT, "-", "-", key, ch=_PauseAfterRead(ch, retire_lands), verified=1
+            )
+            assert await live_vectors() == 0
+        finally:
+            for table in ("memory", "memory_embeddings", "entity_vectors"):
+                await ch.execute(
+                    f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
+                    params={"o": ORG, "n": ns},
+                )

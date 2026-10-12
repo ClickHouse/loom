@@ -535,8 +535,10 @@ async def _retire_merged(
         if r["memory_key"] != canonical_key and r.get("memory_id")
     ]
 
+    version = memory_repo.next_version()  # the tombstones', which the vector retire carries
+
     def _tombstone(existing: memory_repo.MemoryRow, _ts: datetime = now_naive) -> dict[str, Any]:
-        return {"tombstoned_at": _ts, "expires_at": None}
+        return {"tombstoned_at": _ts, "expires_at": None, "version": version}
 
     await memory_repo.write_versions_by_ids(
         input.org,
@@ -561,6 +563,7 @@ async def _retire_merged(
                 str(r.get("session_id") or "-"),
                 str(r["memory_key"]),
                 ts=now_naive,
+                version=version,
                 ch=ch,
             )
         except Exception as e:  # noqa: BLE001 — the memory tombstone stands

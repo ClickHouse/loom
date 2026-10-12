@@ -112,7 +112,7 @@ async def test_tombstone_ids_writes_rmt_versions(
 
     mirrored: list[str] = []
 
-    async def fake_mirror(org, ns, agent, user_id, session_id, key, *, ts, ch=None):
+    async def fake_mirror(org, ns, agent, user_id, session_id, key, *, ts, version, ch=None):
         mirrored.append(key)
         return 1
 

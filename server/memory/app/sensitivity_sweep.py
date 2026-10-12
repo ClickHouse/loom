@@ -245,13 +245,17 @@ async def apply(candidates: list[SweepCandidate], *, ch: _CHClient | None = None
     now = naive_utc_now()
     for c in candidates:
         try:
+            version = memory_repo.next_version()  # the relabel's, which the high retire carries
 
-            def _relabel(existing: Any, _c: SweepCandidate = c) -> dict[str, Any]:
+            def _relabel(
+                existing: Any, _c: SweepCandidate = c, _v: int = version
+            ) -> dict[str, Any]:
                 tags = list(getattr(existing, "tags", None) or [])
                 return {
                     "sensitivity": _c.level,
                     "tags": [*tags, *sensitivity_tags(_c.level, tags)],
                     "updated_at": now,
+                    "version": _v,
                 }
 
             n = await memory_repo.write_versions_by_ids(c.org, [c.memory_id], _relabel, ch=ch)
@@ -268,6 +272,7 @@ async def apply(candidates: list[SweepCandidate], *, ch: _CHClient | None = None
                     c.session_id,
                     c.memory_key,
                     ts=now,
+                    version=version,
                     ch=ch,
                 )
                 result.entity_vectors_tombstoned += (

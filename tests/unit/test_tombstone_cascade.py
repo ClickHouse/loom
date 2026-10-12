@@ -46,7 +46,7 @@ def _row(mid: str, key: str, ns: str = "ns") -> memory_repo.MemoryRow:
 @pytest.fixture
 def cascade_spy(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     rows = {"m1": _row("m1", "k1"), "m2": _row("m2", "k2", ns="other")}
-    spy: dict[str, Any] = {"versions": [], "mirrored": [], "overrides": []}
+    spy: dict[str, Any] = {"versions": [], "mirrored": [], "overrides": [], "mirror_versions": []}
 
     async def fake_get_by_id(
         mid: str, *, org: str | None = None, ch: Any = None, scope: Any = None
@@ -68,9 +68,11 @@ def cascade_spy(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         key: str,
         *,
         ts: datetime,
+        version: int,
         ch: Any = None,
     ) -> int:
         spy["mirrored"].append((org, ns, agent, user_id, session_id, key, ts))
+        spy["mirror_versions"].append(version)
         return 2
 
     monkeypatch.setattr(lifecycle, "get_by_id", fake_get_by_id)
@@ -99,6 +101,8 @@ async def test_cascade_writes_tombstoned_version_and_mirrors_embeddings(
         ("o", "ns", "a", "-", "s1", "k1", when),
         ("o", "other", "a", "-", "s1", "k2", when),
     ]
+    # Each vector retire carries its memory tombstone's version.
+    assert cascade_spy["mirror_versions"] == [ov["version"] for ov in cascade_spy["overrides"]]
 
 
 @pytest.mark.asyncio

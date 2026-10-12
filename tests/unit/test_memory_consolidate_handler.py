@@ -332,9 +332,11 @@ async def test_merged_from_rows_are_tombstoned_on_the_embeddings_table_too(
         _LLM(json.dumps({"canonical_key": "dog", "canonical_value": "Bowie eats Acana kibble."})),
     )
     calls: list[tuple[str, str, datetime]] = []
+    versions: list[int] = []
 
-    async def _tomb(org, ns, agent, user_id, session_id, key, *, ts, ch=None):
+    async def _tomb(org, ns, agent, user_id, session_id, key, *, ts, version, ch=None):
         calls.append((session_id, key, ts))
+        versions.append(version)
         return 1
 
     monkeypatch.setattr(memory_repo, "tombstone_embeddings_for_key", _tomb)
@@ -344,6 +346,9 @@ async def test_merged_from_rows_are_tombstoned_on_the_embeddings_table_too(
         "every merged-from key, not the canonical"
     )
     assert all(isinstance(ts, datetime) for _, _, ts in calls)
+    # Each vector retire carries the memory tombstone's version.
+    mem_rows = [r for t, rows in ch.inserts if t == "loom.memory" for r in rows]
+    assert set(versions) == {r["version"] for r in mem_rows if r.get("tombstoned_at") is not None}
 
 
 @pytest.mark.asyncio
@@ -364,7 +369,7 @@ async def test_a_canonical_named_like_a_source_still_tombstones_the_rest(
     )
     calls: list[str] = []
 
-    async def _tomb(org, ns, agent, user_id, session_id, key, *, ts, ch=None):
+    async def _tomb(org, ns, agent, user_id, session_id, key, *, ts, version, ch=None):
         calls.append(key)
         return 1
 
@@ -409,7 +414,9 @@ def test_tombstone_embeddings_for_key_mirrors_every_column_and_sets_the_stamp() 
     ts = datetime(2026, 9, 11, 12, 0, 0)
     with patch.object(embeddings, "insert_embedding_rows", new=fake_insert):
         n = asyncio.run(
-            mr.tombstone_embeddings_for_key("o", "n", "a", "-", "s1", "dog_name", ts=ts, ch=ch)
+            mr.tombstone_embeddings_for_key(
+                "o", "n", "a", "-", "s1", "dog_name", ts=ts, version=7, ch=ch
+            )
         )
     assert n == 1 and inserted[0]["tombstoned_at"] == ts
     assert inserted[0]["embedding"] == [0.1, 0.2] and inserted[0]["tags"] == ["pet"], (

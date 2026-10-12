@@ -399,11 +399,14 @@ async def tombstone_cascade_by_ids(
     if not rows:
         return 0
 
+    version = next_version()  # the tombstones', which the vector retire carries
+
     def _tombstone(existing: MemoryRow) -> dict[str, Any]:
         overrides: dict[str, Any] = {
             "status": "tombstoned",
             "tombstoned_at": when,
             "expires_at": None,
+            "version": version,
         }
         if update is not None:
             overrides.update(update(existing))
@@ -425,6 +428,7 @@ async def tombstone_cascade_by_ids(
                 r.session_id,
                 r.memory_key,
                 ts=when,
+                version=version,
                 ch=ch,
             )
         except Exception as e:  # noqa: BLE001 — memory tombstone is durable

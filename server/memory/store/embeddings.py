@@ -262,13 +262,12 @@ async def reemit_embedding_rows_for_key(
     as a new version with `overrides` applied — the RMT rule: every persisted
     column carried forward, the vectors included, the read row's version + 1
     (`reemit_version`: a write that lands after the read keeps winning; a
-    `version` in `overrides` replaces it). This is
-    the ONLY way a state-of-row column (expires_at, confidence, tags,
-    tombstoned_at, status) changes on the vector table: a lightweight UPDATE
-    leaves a patch part, and one patch part switches the codes-first lazy
-    read off for every fact leg. The read is one keyed FINAL statement; the
-    write one committed insert. Returns the
-    rows re-emitted (0 when the key has no live embedding row)."""
+    `version` in `overrides` replaces it). This is the ONLY way a state-of-row
+    column (expires_at, confidence, tags, tombstoned_at, status) changes on the
+    vector table: a lightweight UPDATE leaves a patch part, and one patch part
+    switches the codes-first lazy read off for every fact leg. The read is one
+    keyed FINAL statement; the write one committed insert. Returns the rows
+    re-emitted (0 when the key has no live embedding row)."""
     ch = ch or _default_client()
     rows = await live_embedding_rows_for_key(
         ch,
@@ -429,14 +428,19 @@ async def tombstone_embeddings_for_key(
     memory_key: str,
     *,
     ts: datetime,
+    version: int,
     ch: _CHClient | None = None,
 ) -> int:
     """Mirror a loom.memory tombstone onto every live memory_embeddings row
     of one key: same identity, every persisted column carried, tombstoned_at
-    set, the read row's version + 1. Search reads the embeddings table, so a memory
-    tombstoned only in loom.memory keeps surfacing. Returns rows re-emitted."""
-    return await reemit_embedding_rows_for_key(
-        org, namespace, agent, user_id, session_id, memory_key, ch=ch, tombstoned_at=ts
+    set. Search reads the embeddings table, so a memory tombstoned only in
+    loom.memory keeps surfacing. `version` is the loom.memory row that retires
+    the key (the delete's tombstone, the sweep's relabel): a late metadata copy
+    of an older read writes read + 1, below it, so it cannot bring the vector
+    back; rows at or above it (a newer write's) are kept. Returns rows re-emitted."""
+    key = (org, namespace, agent, user_id, session_id, memory_key)
+    return await reemit_embedding_rows_for_keys(
+        [(key, {"tombstoned_at": ts, "version": int(version)})], ch=ch
     )
 
 

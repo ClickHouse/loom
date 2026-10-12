@@ -649,6 +649,7 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
             existing.session_id,
             input.memory_key,
             ts=now.replace(tzinfo=None) if now.tzinfo else now,
+            version=version,
             ch=ch,
         )
     except Exception as e:  # noqa: BLE001 — the memory row tombstone already landed; mirror is best-effort

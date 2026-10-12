@@ -193,8 +193,8 @@ async def test_apply_relabels_tombstones_high_and_tags_medium(monkeypatch) -> No
         written.append((ids[0], update(existing)))
         return 1
 
-    async def _tomb(org, ns, agent, uid, sid, key, *, ts, ch=None):
-        tombstoned.append(key)
+    async def _tomb(org, ns, agent, uid, sid, key, *, ts, version, ch=None):
+        tombstoned.append((key, version))
         return 2
 
     async def _live(ch, **ident):
@@ -247,7 +247,8 @@ async def test_apply_relabels_tombstones_high_and_tags_medium(monkeypatch) -> No
         "sensitivity:high",
     ]
     assert written[1][1]["tags"] == ["t", "sensitivity:medium"]
-    assert tombstoned == ["khigh"]
+    # The retire carries the relabelled memory row's version, so a late metadata copy loses.
+    assert tombstoned == [("khigh", written[0][1]["version"])]
     # the high row's entity vectors left with a tombstone, never a mutation
     assert ch.inserts[0][0] == "loom.entity_vectors" and ch.inserts[0][1][0]["tombstoned_at"]
     assert inserted[0][0]["tags"] == ["t", "sensitivity:medium"] and inserted[0][0]["version"]

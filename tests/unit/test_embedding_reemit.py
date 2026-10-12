@@ -94,9 +94,19 @@ async def test_reemit_with_no_live_row_inserts_nothing() -> None:
 async def test_tombstone_is_a_reemit_with_tombstoned_at() -> None:
     ch = _CH([dict(_LIVE)])
     ts = datetime(2026, 9, 14, 23, 0, 0)
-    assert await M.tombstone_embeddings_for_key("o", "n", "a", "u", "s", "k", ts=ts, ch=ch) == 1
+    n = await M.tombstone_embeddings_for_key("o", "n", "a", "u", "s", "k", ts=ts, version=50, ch=ch)
+    assert n == 1
     ((_, rows, _),) = ch.insert_calls
     assert rows[0]["tombstoned_at"] == ts and rows[0]["embedding"] == [0.1, 0.2, 0.3]
+    assert rows[0]["version"] == 50  # the retiring memory row's, not the read row's + 1
+
+
+@pytest.mark.asyncio
+async def test_a_tombstone_keeps_a_row_newer_than_the_retiring_version() -> None:
+    ch = _CH([dict(_LIVE)])  # version 11
+    ts = datetime(2026, 9, 14)
+    assert await M.tombstone_embeddings_for_key(*_KEY, ts=ts, version=11, ch=ch) == 0
+    assert ch.insert_calls == []
 
 
 @pytest.mark.asyncio
@@ -345,6 +355,33 @@ async def _repair_dim(ch):
 )
 async def test_a_reemit_read_before_a_retire_does_not_bring_the_vector_back(reemit) -> None:
     ch = _RetireAfterReadCH()
+    ch.emb.append({**_LIVE, "version": M.next_version()})
+    await reemit(ch)
+    assert ch.retired and ch.live_emb() == []
+
+
+class _DeleteAfterReadCH(_RMTCH):
+    """FINAL fake where memory.delete's mirror (`tombstone_embeddings_for_key` at the
+    delete's memory version) runs right after a metadata re-emit's first read."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.retired = False
+
+    async def query_all(self, sql, params=None):
+        rows = await super().query_all(sql, params)
+        if not self.retired:
+            self.retired = True
+            await M.tombstone_embeddings_for_key(
+                *_KEY, ts=datetime.now(), version=M.next_version(), ch=self
+            )
+        return rows
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reemit", [_touch, _verify, _touch_many, _status_mirror, _unsupersede])
+async def test_a_reemit_read_before_a_delete_mirror_does_not_bring_the_vector_back(reemit) -> None:
+    ch = _DeleteAfterReadCH()
     ch.emb.append({**_LIVE, "version": M.next_version()})
     await reemit(ch)
     assert ch.retired and ch.live_emb() == []

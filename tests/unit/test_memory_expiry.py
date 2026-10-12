@@ -100,7 +100,7 @@ def _stub(monkeypatch: pytest.MonkeyPatch, rows: list[MemoryRow]) -> tuple[_CH, 
     async def _find(**_: Any) -> list[MemoryRow]:
         return rows
 
-    async def _tomb_emb(org, ns, agent, uid, sid, key, *, ts, ch=None) -> int:
+    async def _tomb_emb(org, ns, agent, uid, sid, key, *, ts, version, ch=None) -> int:
         tombstoned_keys.append(key)
         return 1
 
