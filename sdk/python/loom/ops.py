@@ -15138,6 +15138,7 @@ class SessionBriefSummary(TypedDict, total=False):
     goal: NotRequired[str]
     status: NotRequired[str]
     author: NotRequired[str]
+    actor: NotRequired[str]
     updated_at: NotRequired[Optional[str]]
     age_seconds: NotRequired[int]
     brief_chars: NotRequired[int]

@@ -188,6 +188,8 @@ class SessionBriefSummary(BaseModel):
     goal: str = ""
     status: str = ""
     author: str = ""
+    # The principal that saved the revision, as on session.brief_get.
+    actor: str = ""
     updated_at: datetime | None = None
     age_seconds: int = 0
     brief_chars: int = 0

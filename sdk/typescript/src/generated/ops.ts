@@ -7428,6 +7428,7 @@ export interface SessionBriefSummary {
   goal?: string;
   status?: string;
   author?: string;
+  actor?: string;
   updated_at?: string | null;
   age_seconds?: number;
   brief_chars?: number;

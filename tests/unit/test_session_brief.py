@@ -855,6 +855,11 @@ def test_a_namespace_wide_save_to_an_owner_key_keeps_the_owner(mem, monkeypatch)
     got = alice_get()
     assert got.found and got.revision == 2 and "ops" in got.rendered
     assert got.actor == "process:session_brief"  # alice's reads name who wrote it
+    with acting_as(alice):
+        listed = asyncio.run(
+            h.handle_session_brief_list(SessionBriefListInput(**IDENT, user_id="alice"))
+        )
+    assert [(b.brief_key, b.actor) for b in listed.briefs] == [("k", "process:session_brief")]
     row = mem._newest()["~alice~k"]
     assert (row["user_id"], row["session_id"]) == ("alice", "s1")
 

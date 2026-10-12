@@ -519,6 +519,7 @@ async def handle_session_brief_list(inp: SessionBriefListInput) -> SessionBriefL
             goal=sb_render.one_line(secs.goal, 160),
             status=sb_render.one_line(secs.status, 200),
             author=str(r.get("author") or ""),
+            actor=str(r.get("actor") or ""),
             updated_at=r.get("updated_at"),
             age_seconds=age,
             brief_chars=int(r.get("brief_chars") or 0),
