@@ -9,11 +9,17 @@ lacks), and a read is `FINAL`.
 
 from __future__ import annotations
 
+import json
+import logging
+from dataclasses import dataclass
 from typing import Any
 
 from server.core.ch import sequential_reads
+from server.core.schema.migrate_lease import key_exists
 from server.identity.domain.read_scope import ReadFilters, scope_and
 from server.tasks.store.rows import RunLedgerRow
+
+log = logging.getLogger(__name__)
 
 # Cap on the keys a derived read returns.
 DERIVED_LIMIT = 500
@@ -83,6 +89,88 @@ async def fetch_run(ch: Any, org: str, ns: str, run_id: str) -> RunLedgerRow | N
 
 async def insert_runs(ch: Any, rows: list[RunLedgerRow]) -> None:
     await ch.insert("loom.agent_runs", [run_row(r) for r in rows], settings=_SYNC_INSERT)
+
+
+# ---------------------------------------------------------------- run id claims
+
+# Whether loom.agent_run_claims exists here (its migration ran on a server with a
+# Keeper): None until the first run.begin of this process asks.
+_claims_atomic: bool | None = None
+
+
+@dataclass(frozen=True)
+class RunClaim:
+    """Who holds the claim on a run id. `won`: this call's insert made it."""
+
+    won: bool
+    user_id: str
+    session_id: str
+
+
+def claims_atomic() -> bool | None:
+    """Whether run ids are claimed in Keeper here; None = not asked yet."""
+    return _claims_atomic
+
+
+async def _claims_available(ch: Any) -> bool:
+    # The same detection as the task lease backend (`lease_backend`).
+    global _claims_atomic
+    if _claims_atomic is None:
+        row = await ch.query_one(
+            "SELECT engine FROM system.tables WHERE database = 'loom' AND name = 'agent_run_claims'"
+        )
+        _claims_atomic = bool(row) and row.get("engine") == "KeeperMap"
+        if not _claims_atomic:
+            log.info("run.begin: no loom.agent_run_claims (no Keeper); run ids are not claimed")
+    return _claims_atomic
+
+
+async def claim_run(
+    ch: Any, org: str, ns: str, run_id: str, user_id: str, session_id: str
+) -> RunClaim | None:
+    """Claim (org, ns, run_id) for this user and session, or read the claim that
+    already holds it. None where the server has no Keeper."""
+    if not await _claims_available(ch):
+        return None
+    key = json.dumps([org, ns, run_id])
+    try:
+        await ch.execute(
+            "INSERT INTO loom.agent_run_claims "
+            "(claim_key, org, namespace, run_id, user_id, session_id, claimed_at) "
+            "SETTINGS keeper_map_strict_mode = 1 "
+            "VALUES ({k:String}, {org:String}, {ns:String}, {rid:String}, "
+            "{uid:String}, {sid:String}, now64(3))",
+            params={
+                "k": key,
+                "org": org,
+                "ns": ns,
+                "rid": run_id,
+                "uid": user_id,
+                "sid": session_id,
+            },
+        )
+        return RunClaim(won=True, user_id=user_id, session_id=session_id)
+    except Exception as e:
+        if not key_exists(e):
+            raise
+    row = await ch.query_one(
+        "SELECT user_id, session_id FROM loom.agent_run_claims WHERE claim_key = {k:String}",
+        params={"k": key},
+    )
+    if row is None:  # the key exists but cannot be read: never the caller's
+        return RunClaim(won=False, user_id="", session_id="")
+    return RunClaim(won=False, user_id=str(row["user_id"]), session_id=str(row["session_id"]))
+
+
+async def delete_claim(ch: Any, org: str, ns: str, run_id: str) -> None:
+    """Drop the run id's claim once its run row is closed: from then on the row
+    itself keeps other users off the id. A Keeper key drop, not a part mutation."""
+    if not await _claims_available(ch):
+        return
+    await ch.execute(
+        "ALTER TABLE loom.agent_run_claims DELETE WHERE claim_key = {k:String}",
+        params={"k": json.dumps([org, ns, run_id])},
+    )
 
 
 async def runs_to_grade(

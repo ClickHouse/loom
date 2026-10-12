@@ -405,6 +405,98 @@ def test_run_begin_on_another_users_run_starts_a_new_run(runs) -> None:
     assert out.run_id == "r-v"
 
 
+class _KeeperRunsCH:
+    """agent_runs as last-write-wins rows and agent_run_claims as a strict
+    KeeperMap: a second INSERT of a claim key raises "Node exists"."""
+
+    def __init__(self) -> None:
+        self.claims: dict[str, dict[str, str]] = {}
+
+    async def query_one(self, sql: str, params: Any = None) -> Any:
+        if "system.tables" in sql:
+            return {"engine": "KeeperMap"}
+        return self.claims.get(params["k"])
+
+    async def execute(self, sql: str, params: Any = None) -> None:
+        await asyncio.sleep(0)
+        if params["k"] in self.claims:
+            raise RuntimeError("Code: 999. Coordination::Exception: Node exists")
+        self.claims[params["k"]] = {"user_id": params["uid"], "session_id": params["sid"]}
+
+
+@pytest.fixture
+def keeper_runs(monkeypatch):
+    """A Keeper-backed run ledger whose existence check yields, so two begins
+    both see the run absent before either writes."""
+    from server.tasks.app import run as run_app
+
+    ch = _KeeperRunsCH()
+    final: dict[str, dict[str, Any]] = {}
+
+    async def fetch_run(ch, org, ns, run_id):
+        row = final.get(run_id)
+        await asyncio.sleep(0)
+        return row
+
+    async def insert_runs(ch, rows):
+        final.update({r["run_id"]: dict(r) for r in rows})
+
+    monkeypatch.setattr(run_app, "get_client", lambda: ch)
+    monkeypatch.setattr(run_app.runs_store, "_claims_atomic", None, raising=False)
+    monkeypatch.setattr(run_app.runs_store, "fetch_run", fetch_run)
+    monkeypatch.setattr(run_app.runs_store, "insert_runs", insert_runs)
+    return final
+
+
+async def _begin_as(auth: AuthInfo, user: str, goal: str) -> str:
+    from server.tasks.api.models_run import RunBeginInput
+    from server.tasks.app.run import handle_run_begin
+
+    set_current_auth(auth)
+    bind_request_read_filters(
+        auth, resolve_read_filters(requested=None, user_id=None, session_id=None, auth=auth)
+    )
+    inp = RunBeginInput(
+        org="o", namespace="n", agent="bot", user_id=user, run_id="shared", goal=goal
+    )
+    return (await handle_run_begin(inp)).run_id
+
+
+def test_concurrent_begins_on_one_run_id_keep_both_runs(keeper_runs) -> None:
+    async def both() -> list[str]:
+        return list(
+            await asyncio.gather(
+                _begin_as(_pinned("U"), "U", "U's goal"), _begin_as(_pinned("V"), "V", "V's goal")
+            )
+        )
+
+    ids = contextvars.Context().run(lambda: asyncio.run(both()))
+    assert ids.count("shared") == 1 and len(set(ids)) == 2
+    for run_id, user in zip(ids, ("U", "V"), strict=True):
+        assert keeper_runs[run_id]["user_id"] == user
+        assert keeper_runs[run_id]["goal"] == f"{user}'s goal"
+
+
+def test_a_re_sent_begin_keeps_its_claimed_run_id(keeper_runs) -> None:
+    async def twice() -> list[str]:
+        return [await _begin_as(_pinned("U"), "U", "g"), await _begin_as(_pinned("U"), "U", "g")]
+
+    assert contextvars.Context().run(lambda: asyncio.run(twice())) == ["shared", "shared"]
+
+
+def test_a_wide_caller_does_not_take_a_narrowed_users_claim(keeper_runs) -> None:
+    wide = AuthInfo(
+        subject="sa:bot", org="o", namespaces=("n",), roles=("writer",), is_service_account=True
+    )
+
+    async def go() -> list[str]:
+        return [await _begin_as(_pinned("U"), "U", "g"), await _begin_as(wide, "-", "g")]
+
+    first, second = contextvars.Context().run(lambda: asyncio.run(go()))
+    assert first == "shared" and second != "shared"
+    assert keeper_runs["shared"]["user_id"] == "U"
+
+
 def test_run_complete_on_another_users_run_is_not_found(runs) -> None:
     from server.core.errors import NotFoundError
     from server.tasks.api.models_run import RunCompleteInput

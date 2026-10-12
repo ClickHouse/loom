@@ -370,6 +370,9 @@ STEP_ONLY_TABLES: dict[str, tuple[str, ...]] = {
     "session_outcomes.delete": SESSION_OUTCOME_TABLES,
     "term_aggregates.delete": TERM_AGGREGATE_TABLES,
     "code_index.purge": CODE_INDEX_STEP_ONLY_TABLES,
+    # Who began each still-open run (KeeperMap: ids and user ids, no run text);
+    # dropped beside the runs, not counted (absent on a server without a Keeper).
+    "agent_runs.delete": ("loom.agent_run_claims",),
 }
 
 # Every other `loom.*` table in schemas/schema.sql, with the reason it holds

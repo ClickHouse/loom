@@ -174,7 +174,7 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("memory_exposures.delete", ((D, "loom.memory_exposures"),)),
     ("code_search_trace.delete", ((D, "loom.code_search_trace"),)),
     ("events.delete", ((D, "loom.events"),)),
-    ("agent_runs.delete", ((D, "loom.agent_runs"),)),
+    ("agent_runs.delete", ((D, "loom.agent_run_claims"), (D, "loom.agent_runs"))),
     ("consolidation_runs.delete", ((D, "loom.consolidation_runs"),)),
     ("idempotency.delete", ((D, "loom.idempotency"),)),
 ]
@@ -245,7 +245,7 @@ NS_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("memory_drops.delete", ((D, "loom.memory_drops"),)),
     ("learnings_queue.delete", ((D, "loom.learnings_queue"),)),
     ("tasks.delete", ((D, "loom.tasks"), (D, "loom.task_events"))),
-    ("agent_runs.delete", ((D, "loom.agent_runs"),)),
+    ("agent_runs.delete", ((D, "loom.agent_run_claims"), (D, "loom.agent_runs"))),
     (
         "curation.tombstone",
         ((U, "loom.operator_edges"), (U, "loom.conflict_allowlist"), (U, "loom.memory_categories")),
@@ -322,7 +322,7 @@ NS_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("memory_drops.delete", ((D, "loom.memory_drops"),)),
     ("learnings_queue.delete", ((D, "loom.learnings_queue"),)),
     ("tasks.delete", ((D, "loom.tasks"), (D, "loom.task_events"))),
-    ("agent_runs.delete", ((D, "loom.agent_runs"),)),
+    ("agent_runs.delete", ((D, "loom.agent_run_claims"), (D, "loom.agent_runs"))),
     (
         "curation.tombstone",
         ((D, "loom.operator_edges"), (D, "loom.conflict_allowlist"), (D, "loom.memory_categories")),

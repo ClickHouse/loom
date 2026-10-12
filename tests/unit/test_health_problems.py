@@ -592,3 +592,19 @@ def test_allow_insecure_downgrades_the_bind_problems_to_warn(
     assert "public_base_url_missing" not in _codes(problems)
     assert _by_code(problems, "insecure_bind_auth_off").severity == "warn"
     assert _by_code(problems, "insecure_bind_dev_secret").severity == "warn"
+
+
+def test_run_ids_without_keeper_claims_are_an_info_problem(monkeypatch: pytest.MonkeyPatch) -> None:
+    s = _settings(monkeypatch)
+
+    def codes(atomic: bool | None) -> list[str]:
+        problems = collect_problems(s, HealthState(run_claims_atomic=atomic))
+        return [p.code for p in problems if p.code == "run_claims_not_atomic"]
+
+    assert codes(None) == codes(True) == []
+    found = [
+        p
+        for p in collect_problems(s, HealthState(run_claims_atomic=False))
+        if p.code == "run_claims_not_atomic"
+    ]
+    assert [p.severity for p in found] == ["info"]

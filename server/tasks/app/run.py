@@ -148,6 +148,26 @@ def _run_in_scope(run: RunLedgerRow) -> bool:
     return row_in_read_scope(scope, run.get("user_id"), run.get("session_id"))
 
 
+async def _claimed_run_id(ch: Any, input: RunBeginInput, run_id: str) -> str:
+    """`run_id` when this begin holds its claim (a new claim, or the caller's own
+    re-sent begin); else a fresh id, claimed instead. Two concurrent begins on one
+    id both find no row, so the Keeper claim decides which one keeps it. Without a
+    Keeper nothing is claimed and the row check above is all there is."""
+    user, session = input.user_id or "-", input.session_id or "-"
+    claim = await runs_store.claim_run(ch, input.org, input.namespace, run_id, user, session)
+    if claim is None or claim.won or _claim_is_callers(claim, user):
+        return run_id
+    fresh = uuid.uuid4().hex
+    await runs_store.claim_run(ch, input.org, input.namespace, fresh, user, session)
+    return fresh
+
+
+def _claim_is_callers(claim: runs_store.RunClaim, user: str) -> bool:
+    """The claim was made by this begin's user, inside the caller's scope."""
+    claimant: RunLedgerRow = {"user_id": claim.user_id, "session_id": claim.session_id}
+    return claim.user_id == user and _run_in_scope(claimant)
+
+
 # ------------------------------------------------------------------- handlers
 
 
@@ -159,11 +179,17 @@ async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:
     # for a bare client).
     from server.observability.run_context import set_ledger_run
 
-    existing = await runs_store.fetch_run(ch, input.org, input.namespace, run_id)
+    # Sequential: a closed run has dropped its claim, so this read is what keeps
+    # another user off its id, and it must see the close's synchronous insert.
+    with sequential_reads():
+        existing = await runs_store.fetch_run(ch, input.org, input.namespace, run_id)
     if existing is not None and not _run_in_scope(existing):
         # Another user's run: start a new run instead of taking that one over.
         run_id = uuid.uuid4().hex
         existing = None
+    claimed = await _claimed_run_id(ch, input, run_id)
+    if claimed != run_id:
+        run_id, existing = claimed, None
     set_ledger_run(run_id)
     started = _now()
     if existing is not None and existing.get("started_at"):
@@ -391,6 +417,7 @@ async def handle_run_complete(input: RunCompleteInput) -> RunCompleteOutput:
         }
     )
     await runs_store.insert_runs(ch, [row])
+    await _drop_claim(ch, input)
     from server.memory.app.recall_credit import note_closer_from_request
 
     note_closer_from_request(input.org)  # this consumer closes the usage loop
@@ -411,6 +438,14 @@ async def handle_run_complete(input: RunCompleteInput) -> RunCompleteOutput:
         demoted=retention.demoted,
         expiring=retention.expiring,
     )
+
+
+async def _drop_claim(ch: Any, input: RunCompleteInput) -> None:
+    """The closed run's row now guards its id; its Keeper claim can go."""
+    try:
+        await runs_store.delete_claim(ch, input.org, input.namespace, input.run_id)
+    except Exception as e:  # noqa: BLE001 — a claim left behind never fails the close
+        log.debug("run.complete: claim for %s not dropped: %s", input.run_id, e)
 
 
 async def _retain_run_rows(ch: Any, input: RunCompleteInput, now: datetime) -> tuple[str, Any]:

@@ -76,7 +76,6 @@ def test_conversations_user_scope_uses_the_user_column() -> None:
         (ledger_steps.delete_events_by_namespace, ["loom.events"]),
         (ledger_steps.delete_memory_drops_by_namespace, ["loom.memory_drops"]),
         (ledger_steps.delete_learnings_queue_by_namespace, ["loom.learnings_queue"]),
-        (ledger_steps.delete_agent_runs_by_namespace, ["loom.agent_runs"]),
         (ledger_steps.delete_consolidation_runs_by_namespace, ["loom.consolidation_runs"]),
         (ledger_steps.delete_projection_failures_by_namespace, ["loom.memory_projection_failures"]),
     ],
@@ -92,6 +91,22 @@ def test_delete_steps_are_keyed_alter_deletes_over_the_namespace_list(fn, tables
         assert params["ns"] == ["a", "b"]
     for sql, _ in ch.counts:
         assert " FINAL" not in sql  # none of these carries a live predicate
+
+
+def test_the_agent_runs_step_drops_the_runs_claims_too() -> None:
+    ch = _StubCH(count=3)
+    assert asyncio.run(ledger_steps.delete_agent_runs_by_namespace("o", ["a", "b"], ch=ch)) == 3
+    assert _tables(ch) == ["loom.agent_run_claims", "loom.agent_runs"]
+    assert "namespace IN {ns:Array(String)}" in ch.commands[0][0]
+    assert ch.commands[0][1] == {"org": "o", "ns": ["a", "b"]}
+    ch = _StubCH()
+    asyncio.run(ledger_steps.delete_agent_runs_by_user("o", "alice", ch=ch))
+    assert _tables(ch) == ["loom.agent_run_claims", "loom.agent_runs"]
+    assert all("user_id = {uid:String}" in sql for sql, _ in ch.commands)
+    # No Keeper, no claims table: only the runs.
+    ch = _StubCH(count=0)
+    asyncio.run(ledger_steps.delete_agent_runs_by_user("o", "alice", ch=ch))
+    assert _tables(ch) == []
 
 
 def test_curation_step_tombstones_three_tables() -> None:
@@ -123,7 +138,6 @@ def test_user_scope_delete_steps_skip_the_tables_without_a_user_axis() -> None:
     for fn in (
         ledger_steps.delete_memory_exposures_by_user,
         ledger_steps.delete_events_by_user,
-        ledger_steps.delete_agent_runs_by_user,
         ledger_steps.delete_consolidation_runs_by_user,
     ):
         ch = _StubCH()
