@@ -1389,7 +1389,8 @@ async def test_uncounted_table_erasure_statements_pass_the_analyzer(ch_client, m
     class _One(_RecordingCH):
         async def query_one(self, sql, params=None):
             self.calls.append((sql, params or {}))
-            return {"n": 1}
+            # `engine` makes the run-claims step see its KeeperMap table and submit its delete.
+            return {"n": 1, "engine": "KeeperMap"}
 
     mutations: list[tuple[str, str, dict[str, Any]]] = []
 
