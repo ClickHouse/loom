@@ -456,6 +456,9 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
 
     canonical = await _canonical_keys_for_rows(input.org, input.namespace, [row])
     duplicate_of = _duplicate_of_shown(row, canonical.get(input.memory_key))
+    from server.memory.app.served_superseded import shown_successors
+
+    successors = await shown_successors(input.org, input.namespace, [row])
     return MemoryGetOutput(
         found=True,
         canonical_key=(
@@ -481,7 +484,7 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
         sensitivity=str(getattr(row, "sensitivity", "") or ""),
         agent=getattr(row, "agent", "") or "",
         status=getattr(row, "status", None),
-        superseded_by=str(getattr(row, "superseded_by", "") or ""),
+        superseded_by=successors.get(str(row.memory_id), ""),
         duplicate_of=duplicate_of,
         conflict_verdict=_cd.verdict_from_row(
             str(row.memory_id), getattr(row, "status", None), duplicate_of

@@ -115,3 +115,21 @@ async def annotate_pool_superseded(ctx: Any) -> None:
         # its scope; otherwise the id may name another user's row.
         h.superseded_by = r.successor_key or ("" if scope.narrowed else r.superseded_by)
         h.superseded_at = r.superseded_at
+
+
+async def shown_successors(org: str, namespace: str, rows: list[Any]) -> dict[str, str]:
+    """memory_id -> the `superseded_by` id a read may show for each row. A read bounded
+    to one user or session sees a successor id only when that row resolves inside its
+    scope: otherwise the id may name another user's row, and gone and foreign look alike."""
+    from server.identity.app.request_scope import request_narrowed
+
+    ids = {str(r.memory_id): str(getattr(r, "superseded_by", "") or "") for r in rows}
+    if not request_narrowed() or not any(ids.values()):
+        return ids
+    import server.memory.store as memory_repo
+
+    visible = await memory_repo.canonical_rows_by_ids(
+        org, [namespace], [s for s in ids.values() if s], scope=request_scope()
+    )
+    seen = {str(v.canonical_id) for v in visible}
+    return {mid: (s if s in seen else "") for mid, s in ids.items()}

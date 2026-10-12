@@ -28,7 +28,7 @@ from server.memory.api.models_search import (
     MemoryAggregateOutput,
     _AggregateRow,
 )
-from server.memory.app.served_superseded import ServedFlags
+from server.memory.app.served_superseded import ServedFlags, shown_successors
 from server.memory.domain import trust as _trust
 from server.memory.domain.entity_sentinels import public_entities
 
@@ -783,6 +783,7 @@ async def _handle_memory_bulk_get(
     wanted = list(dict.fromkeys([parent_of.get(k, k) for k in input.memory_keys]))
     rows = await memory_repo.get_many_by_keys(identity, wanted, scope=request_scope())
     canonical = await _canonical_keys_for_rows(input.org, input.namespace, rows)
+    successors = await shown_successors(input.org, input.namespace, rows)
     # Same read shape as memory.get so a bulk reader (the OKF exporter, the
     # /me preload) sees identity, lifecycle and attestation without N gets.
     results: dict[str, MemoryGetOutput] = {}
@@ -803,7 +804,7 @@ async def _handle_memory_bulk_get(
             pinned=r.pinned,
             agent=r.agent or "",
             status=r.status,
-            superseded_by=str(getattr(r, "superseded_by", "") or ""),
+            superseded_by=successors.get(str(r.memory_id), ""),
             sensitivity=str(getattr(r, "sensitivity", "") or ""),
             source_class=getattr(r, "source_class", "") or "",
             actor=getattr(r, "actor", "") or "",

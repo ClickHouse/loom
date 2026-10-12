@@ -665,3 +665,21 @@ async def test_get_names_the_canonical_id_to_an_unbounded_read(follow_env) -> No
     )
     # Gone to a whole-namespace read too, but nothing there is foreign: the id stays.
     assert out.duplicate_of == _CANON_ID and out.model_dump()["canonical_key"] == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bounded", [True, False])
+async def test_get_names_a_successor_only_inside_the_read_scope(
+    follow_env, monkeypatch: pytest.MonkeyPatch, bounded: bool
+) -> None:
+    from server.memory.app import handlers as mem
+
+    monkeypatch.setattr("server.identity.app.request_scope.request_narrowed", lambda: bounded)
+    row = _row("k", "superseded")
+    row.superseded_by = _CANON_ID  # V's row: outside a scope bounded to U
+    follow_env.row = row
+    out = await mem.handle_memory_get(
+        MemoryGetInput(org="o", namespace="n", agent="a", memory_key="k")
+    )
+    assert out.status == "superseded"
+    assert out.superseded_by == ("" if bounded else _CANON_ID)
