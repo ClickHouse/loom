@@ -95,7 +95,9 @@ def test_the_widening_cap_falls_back_to_the_join(monkeypatch: pytest.MonkeyPatch
     ch = _TwoStageCH([(f"d{i:04d}", 0.01) for i in range(3000)], set())
     joined: list[dict[str, Any]] = []
 
-    async def _joined(ch_: Any, params: dict[str, Any], in_scope: str = "") -> list[dict[str, Any]]:
+    async def _joined(
+        ch_: Any, params: dict[str, Any], in_scope: str = "", keep: int = 10
+    ) -> list[dict[str, Any]]:
         joined.append(params)
         return [{"memory_key": "from-join", "dist": 0.02}]
 

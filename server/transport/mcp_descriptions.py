@@ -495,7 +495,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "WHEN NOT: An ordinary fact, preference or state — that is memory.set, "
         "the default for almost every save; a fact that must not change or "
         "be deleted at all (memory.lock); a topic that must not be remembered "
-        "(blacklist.add).\n"
+        "(blacklist.add, refused to a token bounded to one user).\n"
         "ARGS: memory_key, value; optional tags, ttl_seconds, on_expire. "
         "Server fills identity."
     ),
@@ -1189,7 +1189,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "blacklist.add": (
         "Add a pattern that prevents matching content from being saved "
-        'to memory. Use on explicit "never remember X" requests.'
+        'to memory. Use on explicit "never remember X" requests. Refused to a '
+        "token bounded to one user: a pattern refuses every user's writes."
     ),
     "blacklist.remove": ("Remove a previously-added blacklist pattern."),
     # ---- Erasure / Cost / Audit ----

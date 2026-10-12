@@ -169,7 +169,7 @@ async def candidate_rows_many(
         )
         if scope.narrowed:  # other users' pinned rows still block; the scope hides them
             near = await ch.query_all(
-                candidate_sql_many(len(idxs), limit=_PEER_FIRST_K), params=params
+                candidate_sql_many(len(idxs), limit=_FOREIGN_PINNED_K), params=params
             )
             rows += [r for r in near if _foreign_pinned(r, scope)]
         for i in idxs:
@@ -219,6 +219,9 @@ async def _policy_before_gate(
 
 _PEER_LIMIT = 10
 _PEER_FIRST_K = 32
+# Another user's pinned row blocks a narrowed write when it is among the namespace's
+# nearest this many peers of the write's type, so 10 closer own rows cannot hide it.
+_FOREIGN_PINNED_K = 32
 _PEER_MAX_K = 2048
 
 
@@ -242,8 +245,8 @@ async def _peer_rows(
     stage A widens (x4) — the answer is the join's, not an approximation of it. Ties
     sort by memory_key (the join's order among equal distances is arbitrary).
     Both stages stay inside `scope`, so other users' rows never take the places.
-    `keep`: how many of the nearest peers to return (the foreign-pinned arm keeps
-    stage A's whole first window, not only the 10 places)."""
+    `keep`: how many peers of the type to find and return; stage A widens until it
+    has them (the foreign-pinned arm asks for `_FOREIGN_PINNED_K`)."""
     params = dict(params)
     in_scope = scope_and(scope, params)
     k = _PEER_FIRST_K
@@ -259,10 +262,10 @@ async def _peer_rows(
             live = {_ident(r): r for r in rows}
         out = [{**live[_ident(c)], "dist": float(c["dist"])} for c in inside if _ident(c) in live]
         exhausted = len(cand) < k or len(inside) < len(cand)
-        if len(out) >= _PEER_LIMIT or exhausted:
+        if len(out) >= keep or exhausted:
             break
         if k >= _PEER_MAX_K:
-            return await _peer_rows_joined(ch, params, scope_and(scope, params, "m"))
+            return await _peer_rows_joined(ch, params, scope_and(scope, params, "m"), keep)
         k *= 4
     out.sort(key=lambda r: (r["dist"], str(r.get("memory_key") or "")))
     return out[:keep]
@@ -278,7 +281,7 @@ def _ident(r: dict[str, Any]) -> tuple[str, str, str, str]:
 
 
 async def _peer_rows_joined(
-    ch: Any, params: dict[str, Any], in_scope: str = ""
+    ch: Any, params: dict[str, Any], in_scope: str = "", keep: int = _PEER_LIMIT
 ) -> list[dict[str, Any]]:
     """The single-statement join: the widening's last resort, once stage A
     has read `_PEER_MAX_K` candidates without enough live peers. Filtered to
@@ -311,9 +314,9 @@ async def _peer_rows_joined(
         + """
         HAVING dist <= {max_dist:Float32}
         ORDER BY dist ASC
-        LIMIT 10
+        LIMIT {keep:UInt32}
         """,
-        params=params,
+        params={**params, "keep": keep},
     )
     return rows
 
@@ -340,12 +343,12 @@ async def _foreign_pinned_rows(
     below the namespace: a pinned row of another user still blocks its write.
     It is the peer read a namespace-wide writer runs (no pinned-rows join, which
     read every pinned vector), keeping the pinned rows outside the scope among
-    the namespace's nearest `_PEER_FIRST_K`, so the writer's own closer rows
+    the namespace's nearest `_FOREIGN_PINNED_K` of the write's type, so the writer's own closer rows
     cannot push a pinned row out of the 10 places."""
     if scope is not None and not scope.narrowed:
         return []
     seen = {str(r.get("memory_id")) for r in rows}
-    near = await _peer_rows(ch, params, WHOLE_NAMESPACE, keep=_PEER_FIRST_K)
+    near = await _peer_rows(ch, params, WHOLE_NAMESPACE, keep=_FOREIGN_PINNED_K)
     return [
         dict(r) for r in near if _foreign_pinned(r, scope) and str(r.get("memory_id")) not in seen
     ]

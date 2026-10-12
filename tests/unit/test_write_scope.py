@@ -460,6 +460,10 @@ _V_PINNED_ROW = {
 }
 
 
+def _type(r: dict[str, Any]) -> str:
+    return str(r.get("memory_type") or "semantic")
+
+
 def _ident_only(r: dict[str, Any]) -> dict[str, Any]:
     return {k: r[k] for k in ("agent", "user_id", "session_id", "memory_key", "dist")}
 
@@ -477,14 +481,19 @@ class _NamespaceCH(_SqlCH):
         rows = sorted(self.rows, key=lambda r: r["dist"])
         if "scope_uid" in sql:
             rows = [r for r in rows if r["user_id"] == p.get("scope_uid")]
-        if "IN {ids:" in sql:  # stage B
+        if "IN {ids:" in sql:  # stage B filters the type
             ids = {tuple(i) for i in p["ids"]}
-            return [r for r in self.rows if tuple(_ident_only(r).values())[:4] in ids]
-        if "LIMIT {k:UInt32}" in sql:  # stage A
+            return [
+                r
+                for r in self.rows
+                if tuple(_ident_only(r).values())[:4] in ids and _type(r) == p.get("mt")
+            ]
+        if "LIMIT {k:UInt32}" in sql:  # stage A ranks every vector, any type
             return [_ident_only(r) for r in rows[: int(p["k"])]]
         by_qidx = re.search(r"LIMIT (\d+) BY qidx", sql)
-        if by_qidx:  # the batched candidates
-            return [{**r, "qidx": 0} for r in rows[: int(by_qidx.group(1))]]
+        if by_qidx:  # the batched candidates filter the type before the LIMIT
+            typed = [r for r in rows if _type(r) == "semantic"]
+            return [{**r, "qidx": 0} for r in typed[: int(by_qidx.group(1))]]
         return []
 
 
@@ -583,10 +592,24 @@ class _CloserOwnRows(_NamespaceCH):
     rows = [_own_row(i) for i in range(10)] + [_V_PINNED_ROW]
 
 
-def test_bulk_and_single_both_reject_a_write_close_to_a_foreign_pinned_row(monkeypatch) -> None:
+class _CloserOwnRowsOfBothTypes(_NamespaceCH):
+    """Ten of U's semantic rows and 22 of its episodic rows sit closer than V's pinned
+    semantic row: stage A's first window (32, any type) holds none of V's row."""
+
+    rows = (
+        [_own_row(i) for i in range(10)]
+        + [{**_own_row(100 + i), "memory_type": "episodic", "dist": 0.02} for i in range(22)]
+        + [_V_PINNED_ROW]
+    )
+
+
+@pytest.mark.parametrize("namespace_rows", [_CloserOwnRows, _CloserOwnRowsOfBothTypes])
+def test_bulk_and_single_both_reject_a_write_close_to_a_foreign_pinned_row(
+    monkeypatch, namespace_rows: type[_NamespaceCH]
+) -> None:
     from server.memory.app import conflicts
 
-    ch = _CloserOwnRows()
+    ch = namespace_rows()
     monkeypatch.setattr(conflicts, "get_client", lambda: ch)
 
     def check(candidate_rows: Any) -> Any:
