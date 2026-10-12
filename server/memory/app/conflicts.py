@@ -44,6 +44,7 @@ from server.memory.domain.conflicts import (
 from server.memory.store import conflicts as _conflicts_repo
 from server.memory.store.conflict_candidates import (
     _PEER_ROWS_SQL,
+    PEER_LIMIT,
     PINNED_PEERS_SQL,
     _peer_candidates_sql,
     candidate_sql_many,
@@ -217,7 +218,6 @@ async def _policy_before_gate(
         return None
 
 
-_PEER_LIMIT = 10
 _PEER_FIRST_K = 32
 _PEER_MAX_K = 2048
 
@@ -227,7 +227,7 @@ async def _peer_rows(
 ) -> list[dict[str, Any]]:
     """The gate's peers: this fact's cosine neighbours under the same type,
     excluding its own key (a re-write is LWW by version, not a conflict), at
-    most `_PEER_LIMIT`, nearest first.
+    most `PEER_LIMIT`, nearest first.
 
     Two statements instead of the `memory FINAL JOIN memory_embeddings FINAL` scan.
     Stage A ranks the namespace's vectors alone, in the shape the `Quantized` codec
@@ -238,7 +238,7 @@ async def _peer_rows(
     the row-side filters (type, status, tombstone), which is where the two tables can
     disagree (vectors of non-live rows, live rows whose vector says otherwise). Stage A
     filters nothing the join did not filter on the vector side. When fewer than
-    `_PEER_LIMIT` survive while stage A's last candidate is still inside `max_dist`,
+    `PEER_LIMIT` survive while stage A's last candidate is still inside `max_dist`,
     stage A widens (x4) — the answer is the join's, not an approximation of it. Ties
     sort by memory_key (the join's order among equal distances is arbitrary).
     Both stages stay inside `scope`, so other users' rows never take the places."""
@@ -257,13 +257,13 @@ async def _peer_rows(
             live = {_ident(r): r for r in rows}
         out = [{**live[_ident(c)], "dist": float(c["dist"])} for c in inside if _ident(c) in live]
         exhausted = len(cand) < k or len(inside) < len(cand)
-        if len(out) >= _PEER_LIMIT or exhausted:
+        if len(out) >= PEER_LIMIT or exhausted:
             break
         if k >= _PEER_MAX_K:
             return await _peer_rows_joined(ch, params, scope_and(scope, params, "m"))
         k *= 4
     out.sort(key=lambda r: (r["dist"], str(r.get("memory_key") or "")))
-    return out[:_PEER_LIMIT]
+    return out[:PEER_LIMIT]
 
 
 def _ident(r: dict[str, Any]) -> tuple[str, str, str, str]:
@@ -306,10 +306,10 @@ async def _peer_rows_joined(
           AND e.embedding_dim = {dim:UInt16}
           AND length(e.embedding) = {dim:UInt16}"""
         + in_scope
-        + """
-        HAVING dist <= {max_dist:Float32}
+        + f"""
+        HAVING dist <= {{max_dist:Float32}}
         ORDER BY dist ASC
-        LIMIT 10
+        LIMIT {PEER_LIMIT}
         """,
         params=params,
     )
