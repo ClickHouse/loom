@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import uuid
 from collections.abc import Callable
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -242,3 +243,115 @@ def test_one_bulk_batch_with_a_key_twice_keeps_a_vector_only_if_its_last_row_is_
     assert _CANARY_SECRET not in r.text
     found = key in [h.get("memory_key") for h in r.json().get("results", [])]
     assert found is not high_last
+
+
+def _live_vectors(ch_client, key: str) -> int:
+    return int(
+        ch_client.query(
+            "SELECT count() FROM loom.memory_embeddings FINAL WHERE org = {o:String} "
+            "AND namespace = {n:String} AND memory_key = {k:String} AND tombstoned_at IS NULL",
+            parameters={"o": ORG, "n": NAMESPACE, "k": key},
+        ).result_rows[0][0]
+    )
+
+
+def test_rolling_back_to_a_high_version_leaves_no_live_vector(
+    control_plane_url: str, ch_client, token: str
+) -> None:
+    key = f"vault_rollback_{uuid.uuid4().hex[:6]}"
+    ident = {"org": ORG, "namespace": NAMESPACE, "agent": "canary", "memory_key": key}
+    plain = f"the rollback vault {key} is audited each quarter by the security office"
+    secret = f"the rollback vault {key} root token is {_CANARY_SECRET}"
+    last = f"the rollback vault {key} moved to the new cluster in march"
+    for value in (plain, secret, last):
+        r = _post(control_plane_url, token, "memory.set", {**ident, "value": value})
+        assert r.status_code == 200, r.text
+
+    def _version(where: str, **params: object) -> int:
+        return int(
+            ch_client.query(
+                "SELECT version FROM loom.memory_versions WHERE org = {o:String} "
+                f"AND namespace = {{n:String}} AND memory_key = {{k:String}} AND {where}",
+                parameters={"o": ORG, "n": NAMESPACE, "k": key, **params},
+            ).result_rows[0][0]
+        )
+
+    # An instant after the high version's last row and before the final plain write.
+    high_at = _version("sensitivity = 'high' ORDER BY version DESC LIMIT 1")
+    next_at = _version("version > {h:UInt64} ORDER BY version LIMIT 1", h=high_at)
+    mid_ns = (high_at + next_at) // 2
+    as_of = datetime.fromtimestamp(mid_ns / 1e9, tz=UTC).isoformat()
+    r = _post(
+        control_plane_url,
+        token,
+        "namespace.rollback",
+        {
+            "org": ORG,
+            "namespace": NAMESPACE,
+            "as_of": as_of,
+            "dry_run": False,
+            "memory_keys": [key],
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    def _head_is_high() -> bool:
+        rows = ch_client.query(
+            "SELECT sensitivity FROM loom.memory FINAL WHERE org = {o:String} "
+            "AND namespace = {n:String} AND memory_key = {k:String} AND tombstoned_at IS NULL",
+            parameters={"o": ORG, "n": NAMESPACE, "k": key},
+        ).result_rows
+        return [s for (s,) in rows] == ["high"]
+
+    _wait(_head_is_high)
+    _wait(lambda: _live_vectors(ch_client, key) == 0)
+    # No stub row anywhere holds the secret, live or tombstoned.
+    leaked = ch_client.query(
+        "SELECT count() FROM loom.memory_embeddings WHERE org = {o:String} AND namespace = {n:String} "
+        "AND memory_key = {k:String} AND position(content_excerpt, {s:String}) > 0",
+        parameters={"o": ORG, "n": NAMESPACE, "k": key, "s": _CANARY_SECRET},
+    ).result_rows[0][0]
+    assert int(leaked) == 0
+    from server.memory.app.sensitivity_sweep import HIGH_WITH_EMBEDDING_SQL
+
+    gauge = ch_client.query(
+        f"SELECT count() FROM ({HIGH_WITH_EMBEDDING_SQL}) WHERE org = {{o:String}} AND namespace = {{n:String}}",
+        parameters={"o": ORG, "n": NAMESPACE},
+    ).result_rows[0][0]
+    assert int(gauge) == 0
+    r = _post(
+        control_plane_url,
+        token,
+        "memory.search",
+        {**ident, "query": "rollback vault root token audited quarter", "top_k": 5, "fresh": True},
+    )
+    assert r.status_code == 200, r.text
+    assert _CANARY_SECRET not in r.text
+    assert key not in [h.get("memory_key") for h in r.json().get("results", [])]
+
+
+def test_retyping_a_key_to_a_non_searchable_type_retires_its_vector(
+    control_plane_url: str, ch_client, token: str
+) -> None:
+    key = f"vault_retype_{uuid.uuid4().hex[:6]}"
+    ident = {"org": ORG, "namespace": NAMESPACE, "agent": "canary", "memory_key": key}
+    r = _post(
+        control_plane_url,
+        token,
+        "memory.set",
+        {**ident, "value": f"the retype vault {key} backs up nightly to cold storage"},
+    )
+    assert r.status_code == 200, r.text
+    _wait(lambda: _live_vectors(ch_client, key) == 1)
+    r = _post(
+        control_plane_url,
+        token,
+        "memory.set",
+        {
+            **ident,
+            "value": f"the retype vault {key} backup ran at 02:00 and finished clean",
+            "memory_type": "episodic",
+        },
+    )
+    assert r.status_code == 200, r.text
+    _wait(lambda: _live_vectors(ch_client, key) == 0)
