@@ -2,7 +2,8 @@
 // loom-run — the run ledger hooks.
 //
 //   UserPromptSubmit  → on the FIRST prompt of a session, run.begin with the
-//                       prompt as the goal (run_id = cc-<session_id>).
+//                       prompt as the goal (run_id = cc-<session_id>, or
+//                       the id the server answers instead).
 //   SessionEnd        → run.complete with the transcript's last assistant
 //                       text as final_response. outcome:"none" — the hook
 //                       knows the run ended, not whether it succeeded, and
@@ -14,15 +15,15 @@
 // reflection — arrives through the run.complete MCP tool when it calls it;
 // the server treats a second complete on the same run as a replace.
 //
-// Fire-and-forget, bounded; a viewer-only token gets a 403 and nothing is
+// Bounded; a viewer-only token gets a 403 and nothing is
 // recorded. LOOM_RUN_LEDGER=off disables.
 
 import fs from "node:fs";
 import {
   envSwitch,
   postBounded,
-  postFireAndForget,
   readStdinJson,
+  requestTimeoutMs,
   resolveScope,
   resolveServerUrl,
   resolveToken,
@@ -30,7 +31,14 @@ import {
   scheduleExit,
 } from "../lib/loom-client.mjs";
 import { parseLines, readTail } from "../lib/transcript.mjs";
-import { beginBody, completeBody, lastAssistantText, readRecalledStash } from "../lib/run-hook.mjs";
+import {
+  beginBody,
+  clearRunId,
+  completeBody,
+  lastAssistantText,
+  readRecalledStash,
+  storeRunId,
+} from "../lib/run-hook.mjs";
 import { readJsonFile, sessionStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
 import { appendTurn, lastAssistant, readJournal } from "../lib/turn-journal.mjs";
 
@@ -54,7 +62,7 @@ async function main() {
     return;
   }
   const scope = resolveScope(payload.cwd || process.cwd());
-  const opts = { token, serverUrl: resolveServerUrl(), timeoutMs: 1500 };
+  const opts = { token, serverUrl: resolveServerUrl(), timeoutMs: Math.min(1500, requestTimeoutMs()) };
   const sp = sessionStatePath("run", sessionId);
 
   if (event === "UserPromptSubmit") {
@@ -66,7 +74,12 @@ async function main() {
       scheduleExit(0);
       return;
     }
-    postFireAndForget("run.begin", beginBody(scope, payload, prompt), opts);
+    // Awaited: the server may answer another run id than the derived one (no
+    // Keeper, narrowed token), and every later hook must use that one. A
+    // timeout or error keeps the derived id.
+    clearRunId(sessionId);
+    const begun = await postBounded("run.begin", beginBody(scope, payload, prompt), opts);
+    if (begun) storeRunId(sessionId, begun.run_id);
     writeJsonFile(sp, { begun: true, at: Date.now() });
     scheduleExit(0);
     return;

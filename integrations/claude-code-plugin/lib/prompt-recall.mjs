@@ -13,7 +13,7 @@
 // memory.search itself) stays the correctness lever; this is the cost lever.
 
 import { redactHead } from "./loom-client.mjs";
-import { runIdFor } from "./run-hook.mjs";
+import { sessionRunId } from "./run-hook.mjs";
 export const RECALL_SECTIONS = ["memories", "decisions", "procedures"];
 export const SEEN_CAP = 60;
 export const DEFAULT_MAX_CHARS = 1200;
@@ -82,7 +82,7 @@ export function renderRecall(res, seen, { cap = 3, maxChars = DEFAULT_MAX_CHARS 
 }
 
 /** Body for the per-prompt context.pack. Carries the session id and the
- * run id the run hook uses (cc-<session_id>) so the pack's exposure row and
+ * run id the run hook uses (sessionRunId) so the pack's exposure row and
  * its out_procedure_keys can be joined to the session's judged outcome;
  * without them no pack names its session. */
 export function recallBody(scope, payload, prompt, { budget = 600, topK = 3 } = {}) {
@@ -100,7 +100,7 @@ export function recallBody(scope, payload, prompt, { budget = 600, topK = 3 } = 
   };
   if (sessionId) {
     body.session_id = sessionId;
-    body.run_id = runIdFor(sessionId);
+    body.run_id = sessionRunId(sessionId);
   }
   return body;
 }

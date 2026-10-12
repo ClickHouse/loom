@@ -42,7 +42,7 @@ const ASK_FIELDS = new Set([
  *  returned an image, which leaves one `tool` placeholder turn; system-injected
  *  turns start with "<"), assistant text blocks joined. Sidechains skipped. */
 import { contentText, hookClient, redactHead, resolveToken, toolImageTurn } from "./loom-client.mjs";
-import { runIdFor } from "./run-hook.mjs";
+import { sessionRunId } from "./run-hook.mjs";
 
 export function transcriptTurns(objs) {
   const out = [];
@@ -213,7 +213,7 @@ export function sessionMemoryBody(scope, payload, turns, opts = {}) {
     namespace: scope.namespace,
     agent: scope.agent,
     session_id: sessionId,
-    run_id: runIdFor(sessionId),
+    run_id: sessionRunId(sessionId),
     messages,
     extra_tags: [`source:${hookClient()}`, ...(scope.tags || [])],
     observation_date: String(endedAt).slice(0, 10),

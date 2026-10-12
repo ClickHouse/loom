@@ -31,7 +31,7 @@ import {
 import { ensureCredential, renderFirstSessionNotice } from "../lib/first-session.mjs";
 import { duplicateNotice } from "../lib/mcp-duplicate.mjs";
 import { localFirstOn } from "../lib/code-shunt.mjs";
-import { runIdFor } from "../lib/run-hook.mjs";
+import { sessionRunId } from "../lib/run-hook.mjs";
 import {
   checkoutDir,
   codeArbitration,
@@ -101,7 +101,7 @@ async function main() {
   const [result, codeBlock, taskLine, briefsLine, recording] = await Promise.all([
     postBounded(
       "context.pack",
-      startPackBody(scope, payload, { tokenBudget, runId: runIdFor(payload.session_id) || "" }),
+      startPackBody(scope, payload, { tokenBudget, runId: sessionRunId(payload.session_id) || "" }),
       { token, serverUrl },
     ),
     // Code-plane orientation for an indexed checkout (LOOM_CODE_MAP=false
