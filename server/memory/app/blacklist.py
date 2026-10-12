@@ -94,11 +94,10 @@ def _narrowed_author() -> str | None:
     """The author whose patterns a token narrowed to one user may list and remove (its
     own stamp, as `created_by` holds it; "" owns nothing). None for a namespace-wide
     caller. Another user's pattern text and reason are that user's content."""
-    from server.auth.context import current_auth
-    from server.identity.domain.read_scope import request_read_narrowed
+    from server.identity.app.request_scope import request_narrowed
     from server.memory.app.provenance import writer_actor
 
-    if not request_read_narrowed(current_auth()):
+    if not request_narrowed():
         return None
     return writer_actor()
 
