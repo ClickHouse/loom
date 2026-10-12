@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS loom.agent_cost_rollup_daily
 ENGINE = AggregatingMergeTree
 PARTITION BY toYYYYMM(day)
 ORDER BY (org, namespace, agent, day, operation)
-SETTINGS index_granularity = 8192;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192;
 
 -- loom.agent_events
 CREATE TABLE IF NOT EXISTS loom.agent_events
@@ -281,7 +281,7 @@ CREATE TABLE IF NOT EXISTS loom.chunk_term_freq
 ENGINE = AggregatingMergeTree
 PARTITION BY toYYYYMM(df_added_at)
 ORDER BY (org, namespace, term)
-SETTINGS index_granularity = 8192;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192;
 
 -- loom.chunks
 CREATE TABLE IF NOT EXISTS loom.chunks
@@ -1027,7 +1027,7 @@ CREATE TABLE IF NOT EXISTS loom.code_term_freq
 )
 ENGINE = AggregatingMergeTree
 ORDER BY (org, namespace, term)
-SETTINGS index_granularity = 256;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 256;
 
 -- loom.code_test_facets
 CREATE TABLE IF NOT EXISTS loom.code_test_facets
@@ -1100,7 +1100,7 @@ CREATE TABLE IF NOT EXISTS loom.code_unit_signal
 )
 ENGINE = SummingMergeTree((positive, negative))
 ORDER BY (org, namespace, unit_id)
-SETTINGS index_granularity = 8192;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192;
 
 -- loom.conflict_allowlist
 CREATE TABLE IF NOT EXISTS loom.conflict_allowlist
@@ -1373,7 +1373,7 @@ CREATE TABLE IF NOT EXISTS loom.entity_degree
 )
 ENGINE = SummingMergeTree
 ORDER BY (org, namespace, entity)
-SETTINGS index_granularity = 8192;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192;
 
 -- loom.entity_edge_memories
 CREATE TABLE IF NOT EXISTS loom.entity_edge_memories
@@ -1971,7 +1971,7 @@ ENGINE = AggregatingMergeTree
 PARTITION BY toYYYYMM(hour)
 ORDER BY (org, namespace, actor, agent, hour)
 TTL hour + toIntervalDay(180)
-SETTINGS index_granularity = 8192;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192;
 
 -- loom.memory_exposures
 CREATE TABLE IF NOT EXISTS loom.memory_exposures
@@ -2224,7 +2224,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_term_freq
 ENGINE = AggregatingMergeTree
 PARTITION BY toYYYYMM(df_added_at)
 ORDER BY (org, namespace, term)
-SETTINGS index_granularity = 256;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 256;
 
 -- loom.memory_usage_events
 CREATE TABLE IF NOT EXISTS loom.memory_usage_events
@@ -2258,7 +2258,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_usage_totals
 )
 ENGINE = SummingMergeTree
 ORDER BY (org, namespace, memory_id)
-SETTINGS index_granularity = 8192;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192;
 
 -- loom.memory_versions
 CREATE TABLE IF NOT EXISTS loom.memory_versions
@@ -2484,7 +2484,7 @@ CREATE TABLE IF NOT EXISTS loom.namespace_write_marks
 )
 ENGINE = AggregatingMergeTree
 ORDER BY (org, namespace, plane)
-SETTINGS index_granularity = 8192;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192;
 
 -- loom.namespaces
 CREATE TABLE IF NOT EXISTS loom.namespaces
@@ -2816,7 +2816,7 @@ CREATE TABLE IF NOT EXISTS loom.query_nodes
 )
 ENGINE = AggregatingMergeTree
 ORDER BY (org, namespace, query_hash)
-SETTINGS index_granularity = 8192;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192;
 
 -- loom.revoked_tokens
 CREATE TABLE IF NOT EXISTS loom.revoked_tokens
@@ -3035,7 +3035,7 @@ CREATE TABLE IF NOT EXISTS loom.subject_last_seen
 )
 ENGINE = AggregatingMergeTree
 ORDER BY (org, subject)
-SETTINGS index_granularity = 8192;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192;
 
 -- loom.task_claims
 CREATE TABLE IF NOT EXISTS loom.task_claims
