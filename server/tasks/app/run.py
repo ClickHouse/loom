@@ -148,10 +148,14 @@ def _run_in_scope(run: RunLedgerRow) -> bool:
     return row_in_read_scope(scope, run.get("user_id"), run.get("session_id"))
 
 
+def _owned_by(row: RunLedgerRow, user: str) -> bool:
+    """`row` (a run, or the claim on its id) is this begin's user's, inside the
+    caller's scope: a begin re-opens only its own user's run, whoever calls."""
+    return str(row.get("user_id") or "-") == user and _run_in_scope(row)
+
+
 def _claim_is_callers(claim: runs_store.RunClaim, user: str) -> bool:
-    """The claim was made by this begin's user, inside the caller's scope."""
-    claimant: RunLedgerRow = {"user_id": claim.user_id, "session_id": claim.session_id}
-    return claim.user_id == user and _run_in_scope(claimant)
+    return _owned_by({"user_id": claim.user_id, "session_id": claim.session_id}, user)
 
 
 async def _target_run(
@@ -166,7 +170,7 @@ async def _target_run(
     # already dropped its claim.
     with sequential_reads():
         existing = await runs_store.fetch_run(ch, input.org, input.namespace, run_id)
-    if existing is not None and not _run_in_scope(existing):
+    if existing is not None and not _owned_by(existing, _user_of(input)):
         # Another user's run: start a new run instead of taking that one over.
         return uuid.uuid4().hex, None
     return run_id, existing

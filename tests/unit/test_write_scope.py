@@ -503,6 +503,24 @@ def test_a_wide_caller_does_not_take_a_narrowed_users_claim(keeper_runs) -> None
         assert keeper_runs[run_id]["user_id"] == user
 
 
+def test_a_wide_caller_later_starts_a_new_run_on_a_narrowed_users_run(keeper_runs) -> None:
+    """After U's begin has released its claim, the row check applies the claim's
+    rule: a begin re-opens only its own user's run, so the wide caller gets a fresh id."""
+    wide = AuthInfo(
+        subject="sa:bot", org="o", namespaces=("n",), roles=("writer",), is_service_account=True
+    )
+
+    async def go() -> tuple[str, str, str]:
+        first = await _begin_as(_pinned("U"), "U", "g")
+        other = await _begin_as(wide, "-", "g")
+        same_user = await _begin_as(wide, "U", "g")
+        return first, other, same_user
+
+    first, other, same_user = contextvars.Context().run(lambda: asyncio.run(go()))
+    assert first == "shared" and other != "shared" and same_user == "shared"
+    assert keeper_runs["shared"]["user_id"] == "U"
+
+
 def test_run_complete_on_another_users_run_is_not_found(runs) -> None:
     from server.core.errors import NotFoundError
     from server.tasks.api.models_run import RunCompleteInput
