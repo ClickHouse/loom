@@ -290,7 +290,9 @@ def _readonly_paths(env: Mapping[str, str], readonly: Sequence[Path]) -> list[Pa
     home = Path.home()
     found = [Path(p) for p in env.get("PATH", "").split(":") if p.startswith("/")]
     from_path = [mount for p in found for mount in tool_mounts(p)]
-    paths = [*readonly, Path(sys.prefix), Path(sys.base_prefix), *from_path]
+    runtime = [Path(sys.prefix), Path(sys.base_prefix)]
+    _refuse_in_data([*runtime, *map(Path, _SYSTEM_PATHS)])
+    paths = [*readonly, *runtime, *from_path]
     out: list[Path] = []
     for p in paths:
         p = p.absolute()
@@ -299,6 +301,20 @@ def _readonly_paths(env: Mapping[str, str], readonly: Sequence[Path]) -> list[Pa
         if not (holds_home or system or p in out) and p.exists():
             out.append(p)
     return out
+
+
+def _refuse_in_data(paths: Sequence[Path]) -> None:
+    """A mount Loom adds on its own (the server's python, the system paths) that
+    is or sits inside a data path would show that data, and no empty mount over
+    it can help: such a host layout runs no sandboxed job. The job's own checkout
+    and mirror sit there by design and are not passed here."""
+    data = [q for d in _data_paths() for q in {d, d.resolve()}]
+    for path in paths:
+        for p in {path.absolute(), path.resolve()}:
+            if any(p.is_relative_to(q) for q in data):
+                raise PermissionError(
+                    f"sandbox: {path} is inside Loom's data; refusing to mount it"
+                )
 
 
 def _binds(writable: Sequence[Path], readonly: Sequence[Path], egress_dir: str) -> list[str]:
@@ -477,19 +493,25 @@ async def _result(proc: asyncio.subprocess.Process, job: JobOptions) -> JobResul
     """Wait for the job with its output bounded. On the timeout, a cancellation or
     an error the whole process group is killed and reaped."""
     try:
-        out, err = await asyncio.wait_for(
-            _talk(proc, job.get("stdin"), keep_stdout=job.get("keep_stdout", False)),
-            timeout=job["timeout_s"],
-        )
+        out, err = await asyncio.wait_for(_talk_and_wait(proc, job), timeout=job["timeout_s"])
     except BaseException:
         await _kill_group(proc)
         raise
-    await proc.wait()
     if out is None:
         logger.warning("repository job killed: stdout passed %d bytes", _STDOUT_LIMIT)
         reason = f"loom: job killed, its stdout passed {_STDOUT_LIMIT} bytes\n"
         return JobResult(-signal.SIGKILL, b"", err + reason.encode())
     return JobResult(proc.returncode or 0, out, err)
+
+
+async def _talk_and_wait(
+    proc: asyncio.subprocess.Process, job: JobOptions
+) -> tuple[bytes | None, bytes]:
+    """Output to EOF, then the exit: a job that closes its pipes and keeps
+    running is still inside the deadline."""
+    done = await _talk(proc, job.get("stdin"), keep_stdout=job.get("keep_stdout", False))
+    await proc.wait()
+    return done
 
 
 async def _talk(

@@ -4,6 +4,7 @@ program, the mounts a job gets, and the fallback when the host has no sandbox.""
 from __future__ import annotations
 
 import asyncio
+import os
 import struct
 import sys
 from pathlib import Path
@@ -355,3 +356,51 @@ def test_a_path_holding_no_loom_data_gets_no_cover(tmp_path: Path, monkeypatch) 
     tools.mkdir()
     monkeypatch.chdir(tmp_path)
     assert sandbox._hidden([str(tools), "/usr"]) == []
+
+
+@pytest.mark.parametrize("where", ["blobs", "blobs/py"])
+def test_a_python_prefix_that_is_or_sits_in_loom_data_is_refused(
+    where: str, tmp_path: Path, monkeypatch
+) -> None:
+    from server.settings import settings
+
+    (tmp_path / "blobs" / "py").mkdir(parents=True)
+    monkeypatch.setattr(settings, "blob_dir", str(tmp_path / "blobs"))
+    monkeypatch.setattr(sys, "prefix", str(tmp_path / where))
+    with pytest.raises(PermissionError):
+        sandbox._readonly_paths({"PATH": "/usr/bin"}, [])
+
+
+async def test_a_job_that_closes_its_output_still_dies_at_its_timeout(monkeypatch) -> None:
+    monkeypatch.setattr(sandbox, "_available", False)
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    with pytest.raises(TimeoutError):
+        await sandbox.run_job(
+            ["sh", "-c", "exec 1>&- 2>&-; sleep 30"], env={"PATH": "/usr/bin:/bin"}, timeout_s=0.3
+        )
+    assert loop.time() - started < 5
+
+
+async def test_cancelling_a_job_that_closed_its_output_kills_and_reaps_it(monkeypatch) -> None:
+    monkeypatch.setattr(sandbox, "_available", False)
+    pids: list[int] = []
+    real_exec = asyncio.create_subprocess_exec
+
+    async def spy(*args, **kwargs):
+        proc = await real_exec(*args, **kwargs)
+        pids.append(proc.pid)
+        return proc
+
+    monkeypatch.setattr(sandbox.asyncio, "create_subprocess_exec", spy)
+    job = asyncio.ensure_future(
+        sandbox.run_job(
+            ["sh", "-c", "exec 1>&- 2>&-; sleep 30"], env={"PATH": "/usr/bin:/bin"}, timeout_s=30
+        )
+    )
+    await asyncio.sleep(0.3)
+    job.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await job
+    with pytest.raises(ProcessLookupError):  # killed and reaped: no such pid any more
+        os.kill(pids[0], 0)
