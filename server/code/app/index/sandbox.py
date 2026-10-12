@@ -41,6 +41,9 @@ _HOME_INSIDE = "/tmp/home"
 _STDOUT_LIMIT = 64 * 1024 * 1024
 _TAIL_BYTES = 1024 * 1024
 _READ_CHUNK = 64 * 1024
+# How long a killed job's pipes may stay open. Outside the sandbox a process that
+# left the job's session (setsid) can hold them for as long as it runs.
+_REAP_GRACE_S = 5.0
 
 # Read-only from the host: programs, libraries, CA certificates and the user
 # database ssh and git look themselves up in. Nothing else of /etc.
@@ -269,14 +272,13 @@ def _exposes_data(path: Path) -> bool:
     from server.core.paths import REPO_ROOT
 
     data = _data_paths()
-    home = Path.home().absolute()
-    var = [Path("var").absolute(), REPO_ROOT / "var"]
+    kept_from_files = _var_and_home()
     for p in {path.absolute(), path.resolve()}:
-        if any(q.is_relative_to(p) for q in [*data, *var, REPO_ROOT, home]):
+        if any(q.is_relative_to(p) for q in [*_protected_paths(), REPO_ROOT]):
             return True
         if any(p.is_relative_to(q) for q in data):
             return True
-        if p.is_dir() and any(p.is_relative_to(q) for q in [*var, home]):
+        if p.is_dir() and any(p.is_relative_to(q) for q in kept_from_files):
             return True
     return False
 
@@ -326,11 +328,16 @@ def _binds(writable: Sequence[Path], readonly: Sequence[Path], egress_dir: str) 
     return out
 
 
-def _protected_paths() -> list[Path]:
-    """What no job may read wherever it sits: Loom's data, var/ and the server's HOME."""
+def _var_and_home() -> list[Path]:
     from server.core.paths import REPO_ROOT
 
-    return [*_data_paths(), Path("var").absolute(), REPO_ROOT / "var", Path.home().absolute()]
+    return [Path("var").absolute(), REPO_ROOT / "var", Path.home().absolute()]
+
+
+def _protected_paths() -> list[Path]:
+    """What no job may read wherever it sits: Loom's data, var/ and the server's HOME.
+    The install root is not covered: the server's python may run from it."""
+    return [*_data_paths(), *_var_and_home()]
 
 
 def _hidden(sources: Sequence[str]) -> list[tuple[str, list[str]]]:
@@ -546,8 +553,19 @@ def _signal_group(proc: asyncio.subprocess.Process) -> None:
 
 async def _kill_group(proc: asyncio.subprocess.Process) -> None:
     """Kill the job and reap it. Its pipes are drained first: a reader that
-    stopped mid-flood leaves the pipe paused, and wait() needs it closed."""
+    stopped mid-flood leaves the pipe paused, and wait() needs it closed. Pipes
+    still open after _REAP_GRACE_S are closed on our side."""
     _signal_group(proc)
+    try:
+        await asyncio.wait_for(_drain_and_wait(proc), _REAP_GRACE_S)
+    except TimeoutError:
+        logger.warning("repository job %d: a process outside its group holds its output", proc.pid)
+        # asyncio has no public way to drop a child's pipes; close() is what wait() waits on
+        proc._transport.close()  # type: ignore[attr-defined]
+        await proc.wait()
+
+
+async def _drain_and_wait(proc: asyncio.subprocess.Process) -> None:
     for stream in (proc.stdout, proc.stderr):
         if stream is not None:
             while await stream.read(_READ_CHUNK):

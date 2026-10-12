@@ -3,6 +3,7 @@ program, the mounts a job gets, and the fallback when the host has no sandbox.""
 
 from __future__ import annotations
 
+import asyncio
 import struct
 import sys
 from pathlib import Path
@@ -196,6 +197,20 @@ async def test_a_job_past_its_timeout_is_killed(monkeypatch) -> None:
     monkeypatch.setattr(sandbox, "_available", False)
     with pytest.raises(TimeoutError):
         await sandbox.run_job(["sleep", "30"], env={"PATH": "/usr/bin:/bin"}, timeout_s=0.2)
+
+
+async def test_a_detached_process_holding_stdout_does_not_outlast_the_timeout(monkeypatch) -> None:
+    monkeypatch.setattr(sandbox, "_available", False)
+    monkeypatch.setattr(sandbox, "_REAP_GRACE_S", 0.3)
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    with pytest.raises(TimeoutError):
+        await sandbox.run_job(
+            ["sh", "-c", "setsid sleep 30 & echo hi; sleep 30"],
+            env={"PATH": "/usr/bin:/bin"},
+            timeout_s=0.2,
+        )
+    assert loop.time() - started < 5
 
 
 def test_the_probe_says_no_without_bwrap(monkeypatch) -> None:

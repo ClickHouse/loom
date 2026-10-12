@@ -258,8 +258,9 @@ dependency installs and the compiler-tier harnesses) inside one boundary built o
   toolchain is mounted only where it exposes none of Loom's data: never a directory
   that is or holds `var/`, the mirrors and checkouts, the blob store, the env file, the
   install root or `HOME`, nor one inside `var/` or under `HOME` (the default
-  `var/bin/scip-clang` is mounted as that one file). Where one of those paths lies inside
-  any other mounted directory (the blob store inside the server's Python prefix, `var/`
+  `var/bin/scip-clang` is mounted as that one file). Where one of those paths other than
+  the install root (the server's Python may run from it) lies inside any other mounted
+  directory (the blob store inside the server's Python prefix, `var/`
   under a system path), an empty mount covers it inside the sandbox. The checkout (or
   the bare mirror, for a fetch) and the output directory are writable, the checkout's
   `.git` and the harness scripts are read-only, and `/tmp` and `HOME` are a fresh
