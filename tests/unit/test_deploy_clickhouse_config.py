@@ -61,8 +61,9 @@ def test_the_reader_profile_caps_equal_the_caller_shaped_defaults(
     ch_setting: str, field: str
 ) -> None:
     """No statement may raise the reader's caps past Loom's own ceilings, so the
-    two must not drift apart; nor lower memory or rows to 0, which ClickHouse reads
-    as none. Time has no min: deadline-bounded code.grep sends sub-second limits."""
+    two must not drift apart; nor lower one to 0, which ClickHouse reads as none.
+    The time min is code.grep's statement floor, so its sub-second limits pass."""
+    from server.code.domain.deadline import STATEMENT_FLOOR_S
     from server.settings import Settings
 
     root = ET.parse(CFG / "nlp_user_settings.xml").getroot()
@@ -71,5 +72,5 @@ def test_the_reader_profile_caps_equal_the_caller_shaped_defaults(
     default = Settings.model_fields[field].default
     assert float(profile.findtext(f"constraints/{ch_setting}/max") or "nan") == default
     assert float(profile.findtext(ch_setting) or "nan") == default
-    min_ = None if ch_setting == "max_execution_time" else "1"
-    assert profile.findtext(f"constraints/{ch_setting}/min") == min_
+    min_ = STATEMENT_FLOOR_S if ch_setting == "max_execution_time" else 1
+    assert float(profile.findtext(f"constraints/{ch_setting}/min") or "nan") == min_

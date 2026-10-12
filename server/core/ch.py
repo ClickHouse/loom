@@ -118,18 +118,17 @@ def _caller_shaped_ceilings() -> dict[str, float]:
     }
 
 
-def _apply_caller_ceilings(out: dict[str, Any], sql: str) -> None:
-    """Lower each limit to its ceiling inside a `caller_shaped()` block (0 in
-    ClickHouse means unlimited, so an unset or 0 value takes the ceiling; with no
-    ceiling a 0 is dropped, so the reader profile's own cap applies)."""
-    if not caller_shaped_var.get() or not is_read_statement(sql):
+def _apply_caller_ceilings(out: dict[str, Any], cls: str) -> None:
+    """Lower each limit to its ceiling for a read-class statement inside a
+    `caller_shaped()` block (0 in ClickHouse means unlimited, so an unset or 0
+    value takes the ceiling). Every query-path statement is read-class, the
+    same statements `_reader_auth` sends as the reader user."""
+    if not caller_shaped_var.get() or cls != "read":
         return
     for name, ceiling in _caller_shaped_ceilings().items():
-        asked = float(out.get(name) or 0)
         if ceiling <= 0:
-            if name in out and asked <= 0:
-                del out[name]
             continue
+        asked = float(out.get(name) or 0)
         if asked <= 0 or asked > ceiling:
             out[name] = int(ceiling) if ceiling.is_integer() else ceiling
     out["read_overflow_mode"] = "throw"
@@ -137,7 +136,9 @@ def _apply_caller_ceilings(out: dict[str, Any], sql: str) -> None:
 
 def _reader_auth() -> dict[str, Any]:
     """Inside a `caller_shaped()` block with LOOM_CH_READER_USER set, the HTTP
-    auth header that sends the read as that read-only user instead of `ch_user`."""
+    auth header that sends the read as that read-only user instead of `ch_user`.
+    Only the query path sends it, where every statement is read-class and so
+    carries the caller-shaped ceilings too."""
     user = settings.ch_reader_user
     if not caller_shaped_var.get() or not user:
         return {}
@@ -392,7 +393,8 @@ def statement_settings(
     caller's own `extra` wins on a name it already sets, and neither setting
     changes which rows the statement returns."""
     out = query_settings(extra)
-    _apply_class_timeout(out, cls or statement_class(sql))
+    cls = cls or statement_class(sql)
+    _apply_class_timeout(out, cls)
     if os.environ.get("LOOM_CH_CAPTURE_STATEMENTS"):
         capture_statement(sql)
     if settings.ch_log_comment_statement_digest:
@@ -402,7 +404,7 @@ def statement_settings(
     if tclass and is_read_statement(sql):
         for name, value in traffic_class_settings(tclass).items():
             out.setdefault(name, value)
-    _apply_caller_ceilings(out, sql)
+    _apply_caller_ceilings(out, cls)
     return _with_request_query_id(out)
 
 

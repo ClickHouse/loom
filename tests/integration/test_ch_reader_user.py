@@ -73,14 +73,26 @@ async def test_a_read_over_its_memory_cap_is_a_422(
         await client.query_all("SELECT groupArray(number) AS a FROM numbers(10000000)")
 
 
-@pytest.mark.parametrize("cap", ["max_memory_usage", "max_rows_to_read"])
+@pytest.mark.parametrize("cap", ["max_execution_time", "max_memory_usage", "max_rows_to_read"])
 async def test_a_reader_statement_cannot_lift_a_cap_with_0(client: Any, cap: str) -> None:
-    """0 means no limit in ClickHouse; the reader profile refuses it. Time has no
-    min (sub-second deadlines must pass): Loom alone writes it and never sends 0."""
+    """0 means no limit in ClickHouse; the reader profile refuses it, even from a
+    SETTINGS clause in the SQL (which wins over the URL's ceiling)."""
     from server.core.ch import caller_shaped
 
     with caller_shaped(), pytest.raises(Exception, match=r"Code: 452"):
         await client.query_all(f"SELECT count() FROM numbers(10) SETTINGS {cap} = 0")
+
+
+@pytest.mark.parametrize("limit_s", [0.01, -1])
+async def test_a_reader_statement_cannot_go_under_the_time_floor(
+    client: Any, limit_s: float
+) -> None:
+    """The time min is code.grep's statement floor (0.05 s)."""
+    from server.core.ch import caller_shaped
+
+    sql = f"SELECT count() FROM numbers(10) SETTINGS max_execution_time = {limit_s}"
+    with caller_shaped(), pytest.raises(Exception, match=r"shouldn't be less than 0.05"):
+        await client.query_all(sql)
 
 
 @pytest.mark.parametrize("limit_s", [0.05, 0.5, 1.25])

@@ -56,16 +56,6 @@ def test_a_per_call_value_cannot_widen_a_ceiling_but_may_lower_it() -> None:
     assert _caller_shaped_settings(_SELECT, {"max_execution_time": 2})["max_execution_time"] == 2
 
 
-def test_with_no_ceiling_a_0_is_dropped_so_the_profile_cap_applies(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The reader profile has no min on max_execution_time, so a 0 must never leave Loom."""
-    monkeypatch.setattr(settings, "ch_caller_shaped_max_execution_s", 0.0)
-    out = _caller_shaped_settings(_SELECT, {"max_execution_time": 0})
-    assert "max_execution_time" not in out
-    assert _caller_shaped_settings(_SELECT, {"max_execution_time": 2})["max_execution_time"] == 2
-
-
 def test_a_statement_timeout_scope_cannot_widen_it() -> None:
     with ch.statement_timeout(3600):
         assert _caller_shaped_settings(_SELECT)["max_execution_time"] == 30
@@ -249,6 +239,22 @@ async def test_only_caller_shaped_reads_go_as_the_reader_user(
     assert "transport_settings" not in outside and "transport_settings" not in write
     auth = shaped["transport_settings"]["Authorization"]
     assert base64.b64decode(auth.removeprefix("Basic ")).decode() == "loom_reader:pw"
+
+
+@pytest.mark.parametrize("sql", ["(SELECT 1) UNION ALL (SELECT 2)", "EXPLAIN SELECT 1"])
+async def test_a_read_as_the_reader_user_always_carries_the_ceilings(
+    monkeypatch: pytest.MonkeyPatch, sql: str
+) -> None:
+    monkeypatch.setattr(settings, "ch_reader_user", "loom_reader")
+    driver = _RecordingDriver()
+    client = ch.CHClient.__new__(ch.CHClient)
+    client._client = driver  # type: ignore[assignment]
+    with ch.caller_shaped():
+        await client.query_all(sql)
+    (call,) = driver.calls
+    assert "transport_settings" in call
+    assert call["settings"]["max_rows_to_read"] == 500_000_000
+    assert call["settings"]["read_overflow_mode"] == "throw"
 
 
 def test_no_reader_user_means_no_auth_override(monkeypatch: pytest.MonkeyPatch) -> None:

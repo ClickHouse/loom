@@ -36,11 +36,10 @@
              The three caps equal the defaults of Loom's ch_caller_shaped_*
              settings (LOOM_CH_CALLER_SHAPED_*): no statement may raise them, so a
              deployment that raises one of those settings raises it here too.
-             The min of 1 on memory and rows refuses 0, which ClickHouse reads as
-             "no limit". max_execution_time has no min: code.grep with deadline_ms
-             sends sub-second limits, and a fractional min lets 0 through. Only
-             Loom writes these SETTINGS (a caller shapes a pattern, never SQL), and
-             Loom never sends a 0 time: it sends its ceiling instead.
+             Each cap also has a min, so no statement can set it to 0, which
+             ClickHouse reads as "no limit". The time min is 0.05 s, code.grep's
+             statement floor (STATEMENT_FLOOR_S in server/code/domain/deadline.py):
+             with deadline_ms it sends sub-second limits.
              timeout_overflow_mode stays changeable: code.grep with deadline_ms
              sets it to `break` and reports the hits as partial. -->
         <loom_reader>
@@ -51,6 +50,7 @@
             <max_rows_to_read>500000000</max_rows_to_read>
             <constraints>
                 <max_execution_time>
+                    <min>0.05</min>
                     <max>30</max>
                 </max_execution_time>
                 <max_memory_usage>
