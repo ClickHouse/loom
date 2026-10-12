@@ -31,6 +31,7 @@ from server.core.logging_config import configure_logging
 from server.observability import get_emitter
 from server.operations.capabilities import operation_rows
 from server.settings import settings
+from server.tasks.store import runs as runs_store
 from server.transport import http as http_transport
 from server.transport import mcp as mcp_transport
 from server.wiring import wire
@@ -156,6 +157,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # jwt_revocation_refresh worker runs here.
     revocation_loop = await boot.start_revocation(lease.held)
     await probe_reader_user(ch)
+    await runs_store.probe_claims(ch)
     tracker_sources_loop = boot.start_tracker_sources_refresher(ch)
     lease_retry: asyncio.Task[None] | None = None
     if lease.held:

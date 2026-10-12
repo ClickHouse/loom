@@ -334,6 +334,18 @@ def key_exists(e: BaseException) -> bool:
     return "Node exists" in str(e)
 
 
+# Run ids are claimed in Keeper only where 025_agent_run_claims.sql created its
+# KeeperMap table (a server with a Keeper). run.begin, erasure and the doctor
+# all decide it with this one read and `is_keeper_table`.
+RUN_CLAIMS_TABLE_SQL = (
+    "SELECT engine FROM system.tables WHERE database = 'loom' AND name = 'agent_run_claims'"
+)
+
+
+def is_keeper_table(row: dict[str, Any] | None) -> bool:
+    return row is not None and row.get("engine") == "KeeperMap"
+
+
 def lost_race(e: BaseException) -> bool:
     return "Bad version" in str(e) or "KEEPER_EXCEPTION" in str(e)
 

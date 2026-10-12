@@ -15,8 +15,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from server.core.ch import sequential_reads
-from server.core.schema.migrate_lease import key_exists
+from server.core.schema.migrate_lease import RUN_CLAIMS_TABLE_SQL, is_keeper_table, key_exists
 from server.identity.domain.read_scope import ReadFilters, scope_and
+from server.observability import degradations, provider_health
 from server.tasks.store.rows import RunLedgerRow
 
 log = logging.getLogger(__name__)
@@ -94,8 +95,10 @@ async def insert_runs(ch: Any, rows: list[RunLedgerRow]) -> None:
 # ---------------------------------------------------------------- run id claims
 
 # Whether loom.agent_run_claims exists here (its migration ran on a server with a
-# Keeper): None until the first run.begin of this process asks.
+# Keeper): None until the boot probe or the first run.begin asks.
 _claims_atomic: bool | None = None
+# A Keeper error on a claim is logged once per process, then only noted.
+_keeper_error_logged = False
 
 
 @dataclass(frozen=True)
@@ -113,27 +116,41 @@ def claims_atomic() -> bool | None:
 
 
 async def _claims_available(ch: Any) -> bool:
-    # The same detection as the task lease backend (`lease_backend`).
     global _claims_atomic
     if _claims_atomic is None:
-        row = await ch.query_one(
-            "SELECT engine FROM system.tables WHERE database = 'loom' AND name = 'agent_run_claims'"
-        )
-        _claims_atomic = bool(row) and row.get("engine") == "KeeperMap"
+        _claims_atomic = is_keeper_table(await ch.query_one(RUN_CLAIMS_TABLE_SQL))
         if not _claims_atomic:
             log.info("run.begin: no loom.agent_run_claims (no Keeper); run ids are not claimed")
     return _claims_atomic
+
+
+async def probe_claims(ch: Any) -> None:
+    """At boot, so /v1/health names `run_claims_not_atomic` before any run.begin."""
+    try:
+        await _claims_available(ch)
+    except Exception as e:  # noqa: BLE001 — a failed probe leaves it to the first run.begin
+        log.warning("run claims: could not read system.tables: %s", e)
+
+
+def _keeper_failed(e: BaseException) -> None:
+    """The claim could not be written: run.begin falls back to the row check."""
+    global _keeper_error_logged
+    if not _keeper_error_logged:
+        _keeper_error_logged = True
+        log.warning("run.begin: Keeper claim failed, checking the run row only: %s", e)
+    with provider_health.unrecorded():
+        degradations.note("run_claims", "row_check_only", e)
 
 
 async def claim_run(
     ch: Any, org: str, ns: str, run_id: str, user_id: str, session_id: str
 ) -> RunClaim | None:
     """Claim (org, ns, run_id) for this user and session, or read the claim that
-    already holds it. None where the server has no Keeper."""
-    if not await _claims_available(ch):
-        return None
+    already holds it. None where the server has no Keeper or Keeper failed."""
     key = json.dumps([org, ns, run_id])
     try:
+        if not await _claims_available(ch):
+            return None
         await ch.execute(
             "INSERT INTO loom.agent_run_claims "
             "(claim_key, org, namespace, run_id, user_id, session_id, claimed_at) "
@@ -150,27 +167,41 @@ async def claim_run(
             },
         )
         return RunClaim(won=True, user_id=user_id, session_id=session_id)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — Keeper down falls back to the row check
         if not key_exists(e):
-            raise
-    row = await ch.query_one(
-        "SELECT user_id, session_id FROM loom.agent_run_claims WHERE claim_key = {k:String}",
-        params={"k": key},
-    )
-    if row is None:  # the key exists but cannot be read: never the caller's
+            _keeper_failed(e)
+            return None
+    return await _claim_holder(ch, key)
+
+
+async def _claim_holder(ch: Any, key: str) -> RunClaim:
+    """Who holds `key`. A key that exists but cannot be read is never the caller's."""
+    try:
+        row = await ch.query_one(
+            "SELECT user_id, session_id FROM loom.agent_run_claims WHERE claim_key = {k:String}",
+            params={"k": key},
+        )
+    except Exception as e:  # noqa: BLE001 — unreadable counts as another user's claim
+        log.debug("run.begin: claim %s not readable: %s", key, e)
+        row = None
+    if row is None:
         return RunClaim(won=False, user_id="", session_id="")
     return RunClaim(won=False, user_id=str(row["user_id"]), session_id=str(row["session_id"]))
 
 
 async def delete_claim(ch: Any, org: str, ns: str, run_id: str) -> None:
-    """Drop the run id's claim once its run row is closed: from then on the row
-    itself keeps other users off the id. A Keeper key drop, not a part mutation."""
-    if not await _claims_available(ch):
-        return
-    await ch.execute(
-        "ALTER TABLE loom.agent_run_claims DELETE WHERE claim_key = {k:String}",
-        params={"k": json.dumps([org, ns, run_id])},
-    )
+    """Drop the run id's claim once its run row is written: from then on the row
+    itself keeps other users off the id. A Keeper key drop, not a part mutation.
+    Best effort: a claim left behind only sends other users to a fresh id."""
+    try:
+        if not await _claims_available(ch):
+            return
+        await ch.execute(
+            "ALTER TABLE loom.agent_run_claims DELETE WHERE claim_key = {k:String}",
+            params={"k": json.dumps([org, ns, run_id])},
+        )
+    except Exception as e:  # noqa: BLE001 — a claim left behind never fails the caller
+        log.debug("run claim for %s not dropped: %s", run_id, e)
 
 
 async def runs_to_grade(

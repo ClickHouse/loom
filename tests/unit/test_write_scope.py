@@ -419,6 +419,9 @@ class _KeeperRunsCH:
 
     async def execute(self, sql: str, params: Any = None) -> None:
         await asyncio.sleep(0)
+        if "DELETE" in sql:
+            self.claims.pop(params["k"], None)
+            return
         if params["k"] in self.claims:
             raise RuntimeError("Code: 999. Coordination::Exception: Node exists")
         self.claims[params["k"]] = {"user_id": params["uid"], "session_id": params["sid"]}
@@ -490,11 +493,14 @@ def test_a_wide_caller_does_not_take_a_narrowed_users_claim(keeper_runs) -> None
     )
 
     async def go() -> list[str]:
-        return [await _begin_as(_pinned("U"), "U", "g"), await _begin_as(wide, "-", "g")]
+        return list(
+            await asyncio.gather(_begin_as(_pinned("U"), "U", "g"), _begin_as(wide, "-", "g"))
+        )
 
-    first, second = contextvars.Context().run(lambda: asyncio.run(go()))
-    assert first == "shared" and second != "shared"
-    assert keeper_runs["shared"]["user_id"] == "U"
+    ids = contextvars.Context().run(lambda: asyncio.run(go()))
+    assert ids.count("shared") == 1 and len(set(ids)) == 2
+    for run_id, user in zip(ids, ("U", "-"), strict=True):
+        assert keeper_runs[run_id]["user_id"] == user
 
 
 def test_run_complete_on_another_users_run_is_not_found(runs) -> None:

@@ -214,9 +214,9 @@ than `namespace`:
   `memory.set_from_messages` (`defer=true`, or `extraction_defer_agents`) stores the
   request's scope with it and replays under that scope. `run.begin` with
   another user's `run_id` starts a new run under a fresh id, and `run.complete` on it
-  answers `NOT_FOUND`. Each begin first claims its run id in ClickHouse Keeper
-  (`loom.agent_run_claims`), so of two users' concurrent begins on one id exactly one
-  keeps it; a server without a Keeper only checks the run row, and `/v1/health` lists
+  answers `NOT_FOUND`. A begin with a caller-supplied id claims it in ClickHouse Keeper
+  (`loom.agent_run_claims`) until its run row is written, so of two users' concurrent
+  begins on one id exactly one keeps it; a server without a Keeper only checks the run row, and `/v1/health` lists
   `run_claims_not_atomic`.
 - Session briefs are kept per user (per session under `own_session`): two users saving
   the same `brief_key` get two briefs, each sees only its own, and a namespace-wide

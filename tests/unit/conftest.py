@@ -249,6 +249,19 @@ def _no_repo_job_sandbox() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _no_run_claims() -> Iterator[None]:
+    """run.begin sees no Keeper unless a test says otherwise: the claims-table
+    check is cached per process, so without this the first test to ask decides
+    it for every later one (and asks whatever client it wired)."""
+    from server.tasks.store import runs
+
+    before = (runs._claims_atomic, runs._keeper_error_logged)
+    runs._claims_atomic, runs._keeper_error_logged = False, False
+    yield
+    runs._claims_atomic, runs._keeper_error_logged = before
+
+
+@pytest.fixture(autouse=True)
 def _no_quota_key() -> Iterator[None]:
     """A test that verifies a bearer sets the ClickHouse quota key in this
     context; clear it so the next test's queries carry none."""

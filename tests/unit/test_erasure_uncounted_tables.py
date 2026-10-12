@@ -24,7 +24,8 @@ class _StubCH:
 
     async def query_one(self, sql, params=None):
         self.counts.append((sql, params or {}))
-        return {"n": self.count}
+        # count=0 also stands for "no Keeper": the claims table is absent.
+        return {"n": self.count, "engine": "KeeperMap" if self.count else ""}
 
     async def execute(self, sql, params=None):
         self.commands.append((sql, params or {}))
@@ -99,6 +100,10 @@ def test_the_agent_runs_step_drops_the_runs_claims_too() -> None:
     assert _tables(ch) == ["loom.agent_run_claims", "loom.agent_runs"]
     assert "namespace IN {ns:Array(String)}" in ch.commands[0][0]
     assert ch.commands[0][1] == {"org": "o", "ns": ["a", "b"]}
+    ch = _StubCH()
+    asyncio.run(ledger_steps.delete_agent_runs_by_namespace("o", "a", ch=ch))
+    assert "namespace IN {ns:Array(String)}" in ch.commands[0][0]
+    assert ch.commands[0][1] == {"org": "o", "ns": ["a"]}
     ch = _StubCH()
     asyncio.run(ledger_steps.delete_agent_runs_by_user("o", "alice", ch=ch))
     assert _tables(ch) == ["loom.agent_run_claims", "loom.agent_runs"]

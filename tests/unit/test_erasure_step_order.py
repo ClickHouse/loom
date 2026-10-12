@@ -36,6 +36,8 @@ class _TraceCH:
         self.trace = trace
 
     async def query_one(self, sql: str, params: Any = None, **kw: Any) -> Any:
+        if "system.tables" in sql:
+            return {"engine": "KeeperMap"}
         return {"n": 1} if "count()" in sql else None
 
     async def query_all(self, sql: str, params: Any = None, **kw: Any) -> list[dict[str, Any]]:

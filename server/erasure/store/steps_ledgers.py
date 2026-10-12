@@ -8,8 +8,9 @@ from collections.abc import Sequence
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
+from server.core.schema.migrate_lease import RUN_CLAIMS_TABLE_SQL, is_keeper_table
 from server.erasure.store import mutations as erasure_mutations
-from server.erasure.store.mutations import delete_scoped, tombstone_scoped
+from server.erasure.store.mutations import delete_scoped, namespaces_of, tombstone_scoped
 from server.erasure.store.predicates import NS_EQ, NS_IN, UID
 
 # ---------------------------------------------------------------------------
@@ -230,11 +231,7 @@ async def _delete_run_claims(
     so a key drop rather than a part mutation (never in system.mutations), and
     absent on a server without a Keeper."""
     ch = ch or _default_client()
-    found = await ch.query_one(
-        "SELECT count() AS n FROM system.tables "
-        "WHERE database = 'loom' AND name = 'agent_run_claims'"
-    )
-    if not found or not int(found["n"]):
+    if not is_keeper_table(await ch.query_one(RUN_CLAIMS_TABLE_SQL)):
         return
     await erasure_mutations.run_keeper_delete(
         "loom.agent_run_claims",
@@ -249,9 +246,7 @@ async def delete_agent_runs_by_namespace(
 ) -> int:
     """agent_runs: goal, user_request and final_response per run; RMT
     without a soft-delete column. The runs' claims go with them."""
-    many = isinstance(namespace, (list, tuple))
-    ns = [str(x) for x in namespace] if many else namespace
-    await _delete_run_claims(org, NS_IN if many else NS_EQ, {"ns": ns}, ch)
+    await _delete_run_claims(org, NS_IN, {"ns": namespaces_of(namespace)}, ch)
     return await delete_scoped(
         "loom.agent_runs", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
     )

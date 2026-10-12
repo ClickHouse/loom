@@ -48,12 +48,12 @@ async def test_begin_labels_its_ledger_row_with_the_run_id(monkeypatch):
     monkeypatch.setattr(run_handlers.runs_store, "_claims_atomic", False)
     set_ledger_run("")
     out = await run_handlers.handle_run_begin(
-        RunBeginInput(org="o", namespace="n", agent="a", goal="triage")
+        RunBeginInput(org="o", namespace="n", agent="a", goal="triage", run_id="r1")
     )
-    assert out.run_id
+    assert out.run_id == "r1"
     assert current_ledger_run() == out.run_id
-    # A closed run drops its Keeper claim, so the begin's existence check is what
-    # keeps another user off the id: it must see the close's insert.
+    # A begin drops its Keeper claim once its row lands, so the existence check is
+    # what keeps a later user off the id: it must see that insert.
     assert client.sequential_reads == [True]
 
 

@@ -3,8 +3,9 @@
 Tokens pinned to users U and V begin the same caller-supplied run_id at the
 same moment, ten times. Exactly one keeps the id and the other is handed a
 fresh one, and under FINAL each run holds its own goal and owner. A re-sent
-begin by the owner keeps its id. run.complete drops the claim, and the closed
-run's row still sends another user's begin to a fresh id.
+begin by the owner keeps its id. A begin drops its claim once its row lands, so
+begins that are never completed leave no Keeper key, and the run's row still
+sends another user's begin to a fresh id.
 
 Needs a server whose ClickHouse has a Keeper (loom.agent_run_claims); skips
 without LOOM_BASE_URL (tests/integration/conftest.py).
@@ -104,3 +105,22 @@ async def test_a_closed_run_drops_its_claim_and_still_refuses_another_user(
         wide = _mint(org, ns)
         got = await _call(c, wide, "run.get", {"org": org, "namespace": ns, "run_id": "closed"})
     assert got["run"]["user_id"] == U and got["run"]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_begins_never_completed_leave_no_claims(
+    control_plane_url: str, ch_client: Any
+) -> None:
+    org, ns = unique_org("run-claims"), "run-claims"
+    tok = _mint(org, ns, read_user_id=U)
+    ident = {"org": org, "namespace": ns, "agent": "a", "user_id": U, "goal": "g"}
+    async with httpx.AsyncClient(base_url=control_plane_url, timeout=60.0) as c:
+        await asyncio.gather(
+            *(_call(c, tok, "run.begin", {**ident, "run_id": f"open-{i}"}) for i in range(25)),
+            *(_call(c, tok, "run.begin", ident) for _ in range(5)),
+        )
+    left = ch_client.query(
+        "SELECT count() FROM loom.agent_run_claims WHERE org = {org:String}",
+        parameters={"org": org},
+    ).result_rows[0][0]
+    assert left == 0

@@ -203,6 +203,20 @@ def _doctor_reader_probe(settings: Any) -> tuple[str, str]:
     return "ok", ""
 
 
+def _doctor_run_claims(settings: Any) -> bool | None:
+    """Whether run.begin claims run ids in Keeper here; None when ClickHouse
+    does not answer (`clickhouse_reachable` says so)."""
+    from server.core.schema.migrate_lease import RUN_CLAIMS_TABLE_SQL, is_keeper_table
+
+    if not settings.ch_host:
+        return None
+    try:
+        rows = _doctor_ch_query(settings, RUN_CLAIMS_TABLE_SQL + " FORMAT JSONEachRow", {})
+    except Exception:  # noqa: BLE001 — a doctor line must never crash the doctor
+        return None
+    return is_keeper_table(rows[0] if rows else None)
+
+
 def _doctor_problems() -> list[Any]:
     """The shared problem list as the doctor sees it: settings
     only — no probed dim, breaker, lease or ledger before boot. Empty when
@@ -220,6 +234,7 @@ def _doctor_problems() -> list[Any]:
                 repo_sandbox_refusal=layout_refusal(),
                 ch_reader_ok={"ok": True, "failing": False}.get(status),
                 ch_reader_error=detail if status == "failing" else "",
+                run_claims_atomic=_doctor_run_claims(settings),
             ),
         )
         if status == "not_probed" and detail:
