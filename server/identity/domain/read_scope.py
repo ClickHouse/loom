@@ -312,7 +312,7 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "code.review_brief": _CODE_INDEX,
     "code.scip_ingest": _CODE_INDEX,
     "code.scip_status": _CODE_INDEX,
-    # The tie-break reads the files named by the scope's own user's memories.
+    # The tie-break reads the files named by memories inside the caller's read scope.
     "code.search": _CODE_INDEX,
     "code.setting_facts": _CODE_INDEX,
     # Attaches no lessons under a narrowed scope.
