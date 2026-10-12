@@ -481,6 +481,39 @@ async def canonical_rows_by_ids(
     return [CanonicalRow.from_row(r) for r in rows]
 
 
+async def live_ids_in_scope(
+    org: str,
+    namespaces: list[str],
+    memory_ids: list[str],
+    *,
+    scope: ReadFilters,
+    ch: _CHClient | None = None,
+) -> set[str]:
+    """The ids among `memory_ids` whose row is live (not tombstoned) inside `scope`,
+    whatever its status: a successor that was itself superseded or conflicted still
+    names a row this read may see. Malformed ids are skipped rather than bound."""
+    ids = _uuid_strings(memory_ids)
+    nss = sorted({str(n) for n in namespaces if n})
+    if not ids or not nss:
+        return set()
+    ch = ch or _default_client()
+    params: dict[str, Any] = {"org": org, "nss": nss, "ids": ids}
+    in_scope = scope_and(scope, params)
+    rows = await ch.query_all(
+        f"""
+        SELECT DISTINCT toString(memory_id) AS mid
+        FROM loom.memory FINAL
+        WHERE org = {{org:String}}
+          AND namespace IN {{nss:Array(String)}}
+          AND memory_id IN {{ids:Array(UUID)}}
+          AND tombstoned_at IS NULL{in_scope}
+        SETTINGS select_sequential_consistency = 0
+        """,
+        params=params,
+    )
+    return {str(r["mid"]) for r in rows}
+
+
 async def superseded_successors(
     org: str,
     namespaces: list[str],

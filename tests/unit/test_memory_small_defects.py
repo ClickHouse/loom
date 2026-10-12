@@ -450,7 +450,7 @@ def _row(
 def follow_env(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     from server.memory import store as memory_repo
 
-    e = SimpleNamespace(row=_row(), by_id={}, id_calls=[], canon={})
+    e = SimpleNamespace(row=_row(), by_id={}, id_calls=[], canon={}, live=set())
 
     async def get_by_key(identity: Any, key: str, **kw: Any) -> Any:
         return e.row
@@ -473,7 +473,14 @@ def follow_env(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
 
     monkeypatch.setattr(memory_repo, "get_by_key", get_by_key)
     monkeypatch.setattr(memory_repo, "get_by_id", get_by_id)
+
+    async def live_ids_in_scope(
+        org: str, nss: list[str], ids: list[str], *, scope: Any = None, ch: Any = None
+    ) -> set[str]:
+        return {i for i in ids if i in e.live}
+
     monkeypatch.setattr(memory_repo, "canonical_rows_by_ids", canonical_rows_by_ids)
+    monkeypatch.setattr(memory_repo, "live_ids_in_scope", live_ids_in_scope)
     monkeypatch.setattr("server.memory.app.query._record_read_exposure", lambda *a, **k: None)
     return e
 
@@ -683,3 +690,42 @@ async def test_get_names_a_successor_only_inside_the_read_scope(
     )
     assert out.status == "superseded"
     assert out.superseded_by == ("" if bounded else _CANON_ID)
+
+
+@pytest.mark.asyncio
+async def test_bounded_get_names_an_in_scope_successor_that_is_itself_superseded(
+    follow_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A -> B -> C: B is superseded (not active) but inside the read's scope, so a
+    # bounded get names it, as memory.search's successor read does.
+    from server.memory.app import handlers as mem
+
+    monkeypatch.setattr("server.identity.app.request_scope.request_narrowed", lambda: True)
+    row = _row("k", "superseded")
+    row.superseded_by = _CANON_ID
+    follow_env.row = row
+    follow_env.live = {_CANON_ID}  # live, but no active canonical row behind it
+    out = await mem.handle_memory_get(
+        MemoryGetInput(org="o", namespace="n", agent="a", memory_key="k")
+    )
+    assert out.superseded_by == _CANON_ID
+
+
+@pytest.mark.asyncio
+async def test_live_ids_in_scope_reads_any_status_inside_the_scope() -> None:
+    from server.identity.domain.read_scope import ReadFilters
+    from server.memory.store.dedup import live_ids_in_scope
+
+    seen: list[tuple[str, dict[str, Any]]] = []
+
+    class _CH:
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            seen.append((sql, params))
+            return [{"mid": _CANON_ID}]
+
+    scope = ReadFilters(scope="own_user", user_id="u", session_id=None)
+    got = await live_ids_in_scope("o", ["n"], [_CANON_ID, "not-a-uuid"], scope=scope, ch=_CH())
+    assert got == {_CANON_ID}
+    sql, params = seen[0]
+    assert "status" not in sql and "tombstoned_at IS NULL" in sql
+    assert params["ids"] == [_CANON_ID] and "u" in params.values()

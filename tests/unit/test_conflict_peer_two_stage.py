@@ -129,3 +129,27 @@ def test_stage_a_keeps_the_codes_first_shape_and_never_decodes_the_column() -> N
     rows = conflict_candidates._PEER_ROWS_SQL
     assert "PREWHERE" in rows and "memory_type = {mt:String}" in rows
     assert "status IN ('active', 'conflicted')" in rows and "tombstoned_at IS NULL" in rows
+
+
+def test_the_joined_fallback_takes_its_limit_from_the_peer_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[str] = []
+
+    class _CH:
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            seen.append(sql)
+            return []
+
+    monkeypatch.setattr(cf, "PEER_LIMIT", 7)
+    asyncio.run(cf._peer_rows_joined(_CH(), dict(_BASE)))
+    assert "LIMIT 7" in seen[0]
+
+
+def test_both_pinned_statements_share_one_pinned_row_filter() -> None:
+    shared = conflict_candidates._pinned_row_filter("{t}").split("{t}")
+    for sql in (conflict_candidates.PINNED_PEERS_SQL, conflict_candidates.pinned_sql_many(2)):
+        assert all(part.strip() in sql for part in shared)
+    limit = f"LIMIT {conflict_candidates.PEER_LIMIT}"
+    assert limit in conflict_candidates.PINNED_PEERS_SQL
+    assert f"{limit} BY qidx" in conflict_candidates.pinned_sql_many(2)

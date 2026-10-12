@@ -53,7 +53,7 @@ def _action(key: str, action: str, version_to: int) -> RollbackAction:
 
 @pytest.fixture
 def calls(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
-    seen: dict[str, list[Any]] = {"stubs": [], "retired": []}
+    seen: dict[str, list[Any]] = {"stubs": [], "retired": [], "memory": [], "retire_calls": []}
     historical = [
         _row("plain", 10),
         _row("secret", 11, value="token sk-proj-abc", sensitivity="high"),
@@ -67,21 +67,22 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
     async def _get(ident: Any, key: str, **_: Any) -> MemoryRow:
         return heads[key]
 
-    async def _noop(rows: list[Any], **_: Any) -> None:
-        return None
+    async def _memory(rows: list[dict[str, Any]], **_: Any) -> None:
+        seen["memory"].extend(rows)
 
     async def _stubs(rows: list[dict[str, Any]], **_: Any) -> None:
         seen["stubs"].extend(rows)
 
-    async def _retire(org: str, ns: str, agent: str, uid: str, sid: str, key: str, **_: Any) -> int:
-        seen["retired"].append(key)
-        return 1
+    async def _retire(items: list[tuple[Any, int]], **_: Any) -> int:
+        seen["retire_calls"].append(items)
+        seen["retired"].extend(items)
+        return len(items)
 
     monkeypatch.setattr(store, "fetch_version_rows", _fetch)
     monkeypatch.setattr(store, "get_by_key", _get)
     monkeypatch.setattr(store, "insert_embedding_rows", _stubs)
-    monkeypatch.setattr(store, "tombstone_embeddings_for_key", _retire)
-    monkeypatch.setattr(rb, "insert_memory_versions", _noop)
+    monkeypatch.setattr(store, "retire_vectors_for_keys", _retire)
+    monkeypatch.setattr(rb, "insert_memory_versions", _memory)
     return seen
 
 
@@ -100,4 +101,25 @@ async def test_unembedded_rows_get_no_stub_and_their_vectors_are_retired(
 
     assert sorted(r["memory_key"] for r in calls["stubs"]) == ["gone", "plain"]
     assert not any("sk-proj" in r["content_excerpt"] for r in calls["stubs"])
-    assert sorted(calls["retired"]) == ["ep", "gone_high", "secret"]
+    assert sorted(ident[5] for ident, _ in calls["retired"]) == ["ep", "gone_high", "secret"]
+
+
+async def test_vectors_are_retired_in_one_call_at_each_rows_own_version(
+    calls: dict[str, list[Any]],
+) -> None:
+    # One batched retire (entity vectors too), pinned to the version of the memory row
+    # that replaces each key, so a concurrent newer embedded write keeps its vectors.
+    plan = RollbackPlan(
+        reinstate=[_action("secret", "reinstate", 11), _action("ep", "reinstate", 12)],
+        remove=[_action("gone_high", "remove", 20)],
+    )
+    await rb.apply_rollback("test", "personal", plan, applied_at=_NOW, ch=object())
+
+    assert len(calls["retire_calls"]) == 1
+    written = {r["memory_key"]: r["version"] for r in calls["memory"]}
+    assert {ident[5]: v for ident, v in calls["retired"]} == {
+        k: written[k] for k in ("secret", "ep", "gone_high")
+    }
+    assert all(
+        ident[:5] == ("test", "personal", "cursor", "-", "-") for ident, _ in calls["retired"]
+    )

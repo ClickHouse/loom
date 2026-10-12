@@ -4,6 +4,9 @@ rows-by-sort-key pair, and the pinned-rows-first pair a narrowed writer adds."""
 
 from __future__ import annotations
 
+# The most peers a conflict check weighs per fact.
+PEER_LIMIT = 10
+
 _CANDIDATE_JOIN = """
         FROM loom.memory m FINAL
         JOIN loom.memory_embeddings e FINAL
@@ -20,10 +23,10 @@ def candidate_sql_many(n: int, in_scope: str = "") -> str:
     replicates the 6 KB vector once per fact per row (1.7 GB peak at n=12);
     the unrolled tuple array does not. `ARRAY JOIN` over the filtered tuples
     drops rows that match no fact, the per-fact `memory_type` / self-key
-    predicates and distance ceiling ride in the filter, and `LIMIT 10 BY qidx`
-    is the per-fact statement's `LIMIT 10`. Measured identical per-fact lists
-    at n = 1, 4, 6, 8, 12, 24 against the per-fact statement. `in_scope`: the
-    read-scope clause on `m`, so other users' rows never take the 10 places
+    predicates and distance ceiling ride in the filter, and `LIMIT ... BY qidx`
+    is the per-fact statement's `LIMIT` (both `PEER_LIMIT`). Measured identical
+    per-fact lists at n = 1, 4, 6, 8, 12, 24 against the per-fact statement. `in_scope`: the
+    read-scope clause on `m`, so other users' rows never take the places
     (their pinned rows come from `pinned_sql_many`)."""
     if n < 1:
         raise ValueError("candidate_sql_many needs at least one fact")
@@ -50,7 +53,7 @@ def candidate_sql_many(n: int, in_scope: str = "") -> str:
           AND e.embedding_dim = {{dim:UInt16}}
           AND length(e.embedding) = {{dim:UInt16}}{in_scope}
         ORDER BY qidx ASC, dist ASC
-        LIMIT 10 BY qidx
+        LIMIT {PEER_LIMIT} BY qidx
         """
 
 
@@ -102,13 +105,19 @@ _PEER_ROWS_SQL = """
 # The pinned rows' keys come from `loom.memory` first, so the memory row decides type
 # and liveness (a vector row's own type is never read) and only those keys' vectors
 # are read. Every pinned row is weighed by distance, not only the nearest few vectors.
-_PINNED_ROW_FILTER = """m.org = {org:String}
-          AND m.namespace = {ns:String}
-          AND m.memory_type = {mt:String}
-          AND m.memory_key != {self_key:String}
+def _pinned_row_filter(type_filter: str) -> str:
+    """The pinned, live rows of the namespace, under `type_filter` (a predicate on `m`)."""
+    return f"""m.org = {{org:String}}
+          AND m.namespace = {{ns:String}}
+          AND {type_filter}
           AND m.pinned = 1
           AND m.tombstoned_at IS NULL
           AND m.status IN ('active', 'conflicted')"""
+
+
+_PINNED_ROW_FILTER = _pinned_row_filter(
+    "m.memory_type = {mt:String}\n          AND m.memory_key != {self_key:String}"
+)
 
 PINNED_PEERS_SQL = f"""
         SELECT
@@ -135,27 +144,23 @@ PINNED_PEERS_SQL = f"""
         WHERE {_PINNED_ROW_FILTER}
           AND e.dist <= {{max_dist:Float32}}
         ORDER BY dist ASC
-        LIMIT 10
+        LIMIT {PEER_LIMIT}
         """
 
 
 def pinned_sql_many(n: int) -> str:
     """The batched form of `PINNED_PEERS_SQL`, for a narrowed bulk writer: the
-    pinned peers of `n` facts anywhere in the namespace, at most 10 per fact.
-    Its own statement, so pinned rows never compete with the writer's own
-    rows for the 10 places, and it reads only the pinned rows' vectors."""
+    pinned peers of `n` facts anywhere in the namespace, at most `PEER_LIMIT` per
+    fact. Its own statement, so pinned rows never compete with the writer's own
+    rows for those places, and it reads only the pinned rows' vectors."""
     if n < 1:
         raise ValueError("pinned_sql_many needs at least one fact")
     terms = ", ".join(
         f"({i}, cosineDistance(embedding, {{embs:Array(Array(Float32))}}[{i}]))"
         for i in range(1, n + 1)
     )
-    row_filter = """m.org = {org:String}
-          AND m.namespace = {ns:String}
-          AND m.memory_type IN {types:Array(String)}
-          AND m.pinned = 1
-          AND m.tombstoned_at IS NULL
-          AND m.status IN ('active', 'conflicted')"""
+    # Each fact's own type and key are matched per fact in the ARRAY JOIN below.
+    row_filter = _pinned_row_filter("m.memory_type IN {types:Array(String)}")
     return f"""
         SELECT
             hit.1 - 1 AS qidx,
@@ -185,5 +190,5 @@ def pinned_sql_many(n: int) -> str:
             e.hits) AS hit
         WHERE {row_filter}
         ORDER BY qidx ASC, dist ASC
-        LIMIT 10 BY qidx
+        LIMIT {PEER_LIMIT} BY qidx
         """
