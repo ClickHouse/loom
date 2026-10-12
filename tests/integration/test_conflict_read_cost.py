@@ -155,7 +155,7 @@ async def test_a_narrowed_writers_conflict_reads_cost_at_most_two_namespace_read
     assert wide[0]["memory_key"] == "k47" and scope is not WHOLE_NAMESPACE
     assert len(own) == 10 and all(r["user_id"] == "u3" for r in own)
     assert [r["memory_key"] for r in pinned][:1] == ["k47"]
-    assert all(r["pinned"] for r in pinned)
+    assert all(r["pinned"] and r["user_id"] != "u3" for r in pinned)
     assert len(wide_bulk) == len(bulk) == 4
     for rows in bulk.values():
         assert sum(1 for r in rows if r["user_id"] == "u3" and not r["pinned"]) == 10

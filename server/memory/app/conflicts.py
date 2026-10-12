@@ -170,7 +170,8 @@ async def candidate_rows_many(
             candidate_sql_many(len(idxs), scope_and(scope, params, "m")), params=params
         )
         if scope.narrowed:  # other users' pinned rows still block; the scope hides them
-            rows += await ch.query_all(pinned_sql_many(len(idxs)), params=params)
+            pinned = await ch.query_all(pinned_sql_many(len(idxs)), params=params)
+            rows += [r for r in pinned if _foreign_pinned(r, scope)]
         for i in idxs:
             out[i] = []
         seen: set[tuple[int, str]] = set()
@@ -323,6 +324,14 @@ def _scope_or_none() -> ReadFilters | None:
         return None
 
 
+def _foreign_pinned(r: Mapping[str, Any], scope: ReadFilters | None) -> bool:
+    """A pinned row outside `scope` (every row is outside a scope that did not resolve).
+    The writer's own rows come from its scoped read, with the gate's 10 places."""
+    if not r.get("pinned"):
+        return False
+    return scope is None or not row_in_read_scope(scope, r.get("user_id"), r.get("session_id"))
+
+
 async def _foreign_pinned_rows(
     ch: Any, params: dict[str, Any], scope: ReadFilters | None, rows: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -334,7 +343,9 @@ async def _foreign_pinned_rows(
         return []
     seen = {str(r.get("memory_id")) for r in rows}
     pinned = await ch.query_all(PINNED_PEERS_SQL, params=params)
-    return [dict(r) for r in pinned if str(r.get("memory_id")) not in seen]
+    return [
+        dict(r) for r in pinned if _foreign_pinned(r, scope) and str(r.get("memory_id")) not in seen
+    ]
 
 
 def _split_by_read_scope(
