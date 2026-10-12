@@ -116,11 +116,13 @@ async def handle_memory_extraction_status(
     input: MemoryExtractionStatusInput,
 ) -> MemoryExtractionStatusOutput:
     """memory.extraction_status — lifecycle of deferred batches in scope."""
+    from server.identity.app.request_scope import request_scope
     from server.memory.app import extraction_queue
 
     rows = await extraction_queue.list_status(
         org=input.org,
         namespace=input.namespace,
+        scope=request_scope(),
         agent=input.agent,
         user_id=input.user_id,
         session_id=input.session_id,
@@ -234,7 +236,6 @@ async def _set_record_from_messages(
             memory_keys=[r.memory_key for r in bulk_out.written],
             payload={"evidence_ids": evidence_ids},
         )
-    skip_notes: list[str] = []
     try:
         projected = await _write_inline_record_projection(
             input,
@@ -243,7 +244,7 @@ async def _set_record_from_messages(
             evidence_ids=evidence_ids,
         )
         if not projected:
-            skip_notes.append("records: projection_skipped (read scope below the namespace)")
+            _degradations.note("records", "projection_skipped", "read scope below the namespace")
     except Exception as e:  # noqa: BLE001 — a projection; the write stands
         log.warning("memory_records inline projection failed (non-fatal): %s", e)
         await record_input_projection_failure(
@@ -266,7 +267,7 @@ async def _set_record_from_messages(
         belief_source_links=belief_source_links,
         stubbed_fields=stubbed_fields,
         value_updates_linked=last_value_updates_linked.get(),
-        degraded=[*_degradations.current(), *skip_notes],
+        degraded=_degradations.current(),
     )
 
 

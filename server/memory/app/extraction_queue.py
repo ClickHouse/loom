@@ -25,7 +25,6 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from server.core.datetimes import utc_now as _now
-from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, scope_and
 from server.memory.api.models_bulk import MemorySetFromMessagesInput
 from server.memory.store.rows import next_version
@@ -295,6 +294,7 @@ async def list_status(
     *,
     org: str,
     namespace: str,
+    scope: ReadFilters,
     agent: str | None = None,
     user_id: str | None = None,
     session_id: str | None = None,
@@ -308,24 +308,24 @@ async def list_status(
     from server.core.ch import get_client
 
     ch = ch or get_client()
-    scope = ""
+    where = ""
     params: dict[str, Any] = {"org": org, "ns": namespace, "lim": int(limit)}
     if agent and agent != "*":
-        scope += " AND agent = {agent:String}"
+        where += " AND agent = {agent:String}"
         params["agent"] = agent
     if user_id and user_id != "-":
-        scope += " AND user_id = {uid:String}"
+        where += " AND user_id = {uid:String}"
         params["uid"] = user_id
     if session_id and session_id != "-":
-        scope += " AND session_id = {sid:String}"
+        where += " AND session_id = {sid:String}"
         params["sid"] = session_id
     if queue_id:
-        scope += " AND queue_id = {qid:String}"
+        where += " AND queue_id = {qid:String}"
         params["qid"] = queue_id
     if status:
-        scope += " AND status = {st:String}"
+        where += " AND status = {st:String}"
         params["st"] = status
-    scope += scope_and(request_scope(), params)
+    where += scope_and(scope, params)
     rows = await ch.query_all(
         f"""
         SELECT queue_id, agent, user_id, session_id, status, attempts,
@@ -333,7 +333,7 @@ async def list_status(
                enqueued_at, updated_at
         FROM {TABLE} FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
-          {scope}
+          {where}
         ORDER BY enqueued_at DESC
         LIMIT {{lim:UInt32}}
         """,

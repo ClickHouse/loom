@@ -566,6 +566,7 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
     await EQ.list_status(
         org=ORG,
         namespace=NS,
+        scope=WHOLE_NAMESPACE,
         agent=AGENT if f else None,
         user_id="alice" if f else None,
         session_id="s1" if f else None,
