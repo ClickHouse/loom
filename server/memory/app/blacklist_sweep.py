@@ -6,9 +6,8 @@ and readers that do not go through search still see it. The sweep finds the live
 pattern matches — inside the caller's org, and inside the namespace for a
 namespace-scoped pattern — and tombstones them through the one by-id funnel that also
 mirrors the tombstone onto the embeddings table, leaving a `memory_drops` row per
-pattern so the ledger says what a Refuse removed. Under a read scope narrowed to one
-user the sweep reaches, and counts, only that user's rows: another user's row is neither
-tombstoned nor reported, so the count is no substring oracle over their content.
+pattern so the ledger says what a Refuse removed. A token narrowed to one user never
+reaches a sweep (no blacklist op is in NARROW_SAFE_OPS).
 
 Matching is the SQL twin of `server.memory.app.blacklist_guard._matches`: `position(value,
 pattern) > 0` for a substring pattern (case-sensitive, like the in-process
@@ -24,8 +23,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
-from server.identity.app.request_scope import request_scope
-from server.identity.domain.read_scope import scope_and
 
 log = logging.getLogger(__name__)
 
@@ -73,7 +70,6 @@ async def sweep_pattern(
     ch = ch or _default_client()
     where, params = sweep_where(pattern_type, scope, namespace)
     params.update({"org": org, "pat": pattern, "lim": int(limit) + 1})
-    where += scope_and(request_scope(), params)
     try:
         rows = await ch.query_all(
             f"""

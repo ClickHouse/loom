@@ -332,10 +332,9 @@ NARROW_SAFE_OPS: dict[str, str] = {
     # other users' memory keys and payloads.
     "ops.capabilities": "the deployment's capabilities",
     "ops.health": "deployment health",
-    # Not list, remove or sweep by id: a pattern has no user axis (created_by is the
-    # token subject, which many users' tokens can share), so they would reach another
-    # user's patterns.
-    "blacklist.add": "a namespace-wide Refuse (ADMIN); its sweep reaches only the caller's rows",
+    # Not blacklist.*: a pattern has no user axis (created_by is the token subject,
+    # which many users' tokens can share). List, remove and sweep would reach another
+    # user's patterns, and an add would be a namespace-wide Refuse the token can't manage.
     "memory_schema.": "value schemas",
     "admin.users": "the deployment's users",
     "agents.connected": "connected agent names",

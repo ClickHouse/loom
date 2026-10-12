@@ -90,22 +90,6 @@ def _stamped_author(body_value: str) -> str:
     return writer_actor(fallback=body_value)
 
 
-async def _require_admin_if_narrowed(org: str, namespace: str) -> None:
-    """A pattern refuses every user's writes in the namespace, so a token narrowed to
-    one user needs ADMIN there to add one; a namespace-wide WRITER keeps the right."""
-    from server.auth.authz import Role, row_in_scope
-    from server.core.errors import AuthInsufficientError
-    from server.identity.app.request_scope import request_narrowed
-
-    if not request_narrowed():
-        return
-    if not await row_in_scope(org, namespace, Role.ADMIN):
-        raise AuthInsufficientError(
-            "blacklist.add from a token narrowed to one user requires role ADMIN: "
-            "the pattern refuses every user's writes in the namespace"
-        )
-
-
 def _reject_bad_regex(pattern: str) -> None:
     reason = validate_regex(pattern)
     if reason is None:
@@ -123,7 +107,6 @@ async def handle_blacklist_add(input: BlacklistAddInput) -> BlacklistAddOutput:
     # reads and blocks writes for other namespaces or other tenants, so it needs the role
     # whose reach matches.
     _require_scope_authority(input.scope, "add", row_org=input.org)
-    await _require_admin_if_narrowed(input.org, input.namespace)
     if input.pattern_type == "regex":
         _reject_bad_regex(input.pattern)
 
