@@ -6,6 +6,7 @@ namespaces, with no operator round-trip.
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Request
@@ -51,13 +52,14 @@ def parse_ttl_days(ttl_raw: object) -> int | None:
 
 def dev_parent(payload: dict[str, object]) -> AuthInfo:
     """The parent a token is delegated from in dev mode (no auth, no bearer): a
-    flat writer for the body's subject and org."""
+    flat writer for the body's subject and org, issued now."""
     return AuthInfo(
         subject=str(payload.get("subject") or "dev"),
         org=str(payload.get("org") or "default"),
         namespaces=("*",),
         roles=(Role.WRITER,),
         is_service_account=False,
+        issued_at=int(time.time()),
     )
 
 

@@ -16,7 +16,7 @@ from fastapi import HTTPException
 
 from server.auth import authz, context, delegation, revocation
 from server.auth.delegation import DEFAULT_TTL_DAYS, delegate
-from server.auth.jwt import AuthInfo, TokenError, verify_token
+from server.auth.jwt import AuthInfo, TokenError, mint_token, verify_token
 from server.operations.base import Role
 
 ORG, OTHER = "o", "other"
@@ -96,6 +96,7 @@ def _login(**kw: Any) -> AuthInfo:
         "roles": (Role.WRITER,),
         "is_service_account": False,
         "token_id": "login-1",
+        "issued_at": int(time.time()),
     }
     return AuthInfo(**{**base, **kw})
 
@@ -506,6 +507,83 @@ async def test_revoking_a_service_account_by_subject_kills_its_children(
     for raw in (raw_child, raw_grandchild):
         with pytest.raises(TokenError, match="parent"):
             verify_token(raw)
+
+
+def _old_sa(now: int) -> AuthInfo:
+    """sa:old, delegated from alice two hours ago and issued an hour ago."""
+    return _login(
+        subject="sa:old",
+        creator="alice",
+        parents=("login-1",),
+        parent_subjects=("alice",),
+        parent_iats=(now - 7200,),
+        token_id="old-1",
+        issued_at=now - 3600,
+    )
+
+
+async def _mint_from(parent: AuthInfo, subject: str) -> str:
+    d = await delegate(
+        parent,
+        org=ORG,
+        requested={"a": None},
+        scoped=False,
+        ttl_seconds=None,
+        is_service_account=True,
+    )
+    return d.mint(subject)
+
+
+@pytest.mark.asyncio
+async def test_an_ancestor_cutoff_is_judged_by_the_ancestors_own_iat(
+    world, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A parent issued before a cutoff dies, and so do its child and grandchild
+    even though both were issued after it."""
+    now = int(time.time())
+    child = verify_token(await _mint_from(_old_sa(now), "sa:child"))
+    assert child.parent_iats == (now - 7200, now - 3600)
+    raw_child = await _mint_from(_old_sa(now), "sa:c")
+    raw_grandchild = await _mint_from(child, "sa:g")
+    monkeypatch.setattr(revocation, "_revoked_before", {"sa:old": now - 60})
+    for raw in (raw_child, raw_grandchild):
+        with pytest.raises(TokenError, match="parent"):
+            verify_token(raw)
+    # the creator's cutoff is judged by the root's iat
+    monkeypatch.setattr(revocation, "_revoked_before", {"alice": now - 5000})
+    with pytest.raises(TokenError, match="creator"):
+        verify_token(raw_grandchild)
+
+
+@pytest.mark.asyncio
+async def test_an_ancestor_issued_after_the_cutoff_survives_it(
+    world, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now = int(time.time())
+    raw = await _mint_from(_old_sa(now), "sa:c")
+    monkeypatch.setattr(revocation, "_revoked_before", {"sa:old": now - 4000, "alice": now - 8000})
+    assert verify_token(raw).parent_subjects == ("alice", "sa:old")
+
+
+@pytest.mark.parametrize("iats", [None, [1, 2], ["1"], [True]])
+def test_parent_subjects_without_aligned_parent_iats_are_refused(world, iats: Any) -> None:
+    raw = mint_token(
+        subject="sa:x",
+        org=ORG,
+        namespaces=["a"],
+        roles=["writer"],
+        parents=["p-1"],
+        parent_subjects=["alice"],
+        parent_iats=iats,
+        creator="alice",
+    )
+    with pytest.raises(TokenError, match="parent_iats"):
+        verify_token(raw)
+
+
+@pytest.mark.asyncio
+async def test_a_parent_without_an_issue_time_cannot_delegate(world) -> None:
+    assert "issue time" in await _refused(_login(issued_at=None), {"a": None})
 
 
 @pytest.mark.asyncio

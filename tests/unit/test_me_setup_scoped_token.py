@@ -45,6 +45,7 @@ def _caller(**kw: Any) -> AuthInfo:
         "roles": (Role.PLATFORM_ADMIN,),
         "is_service_account": False,
         "token_id": "login-1",
+        "issued_at": int(time.time()),
     }
     return AuthInfo(**{**base, **kw})
 

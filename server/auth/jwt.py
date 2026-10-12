@@ -135,9 +135,14 @@ class AuthInfo:
     # token is rechecked against on every request. '' = not a delegated token.
     # `parent_subjects`: the ancestors' `sub`s, in the same order, so revoking
     # an ancestor by subject (a service account's revoke) kills this token too.
+    # `parent_iats`: each ancestor's `iat`, aligned with `parent_subjects`, so
+    # an issued-before cutoff on an ancestor is judged by that ancestor's age.
     parents: tuple[str, ...] = ()
     parent_subjects: tuple[str, ...] = ()
+    parent_iats: tuple[int, ...] = ()
     creator: str = ""
+    # `iat` as unix seconds; None for an identity no token backs (dev mode).
+    issued_at: int | None = None
     # `exp` as unix seconds; None for a token without one.
     expires_at: int | None = None
 
@@ -222,6 +227,7 @@ def mint_token(
     jti: str | None = None,
     parents: list[str] | None = None,
     parent_subjects: list[str] | None = None,
+    parent_iats: list[int] | None = None,
     creator: str | None = None,
 ) -> str:
     """Mint a JWT for service accounts, user onboarding, and tests.
@@ -240,7 +246,7 @@ def mint_token(
     authorization per namespace instead of the flat `roles`. No `ttl_seconds`
     => no `exp` => indefinite token. The active kid goes in the header so
     verifiers pick the matching secret during signing-key rotation.
-    `parents` / `parent_subjects` / `creator` are the delegation claims
+    `parents` / `parent_subjects` / `parent_iats` / `creator` are the delegation claims
     `delegation.delegate` computes; a token minted from another token gets
     them from there.
     """
@@ -284,6 +290,8 @@ def mint_token(
         payload["parents"] = list(parents)
     if parent_subjects:
         payload["parent_subjects"] = list(parent_subjects)
+    if parent_iats:
+        payload["parent_iats"] = list(parent_iats)
     if creator:
         payload["creator"] = creator
     if ttl_seconds is not None:
@@ -394,7 +402,9 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
         consumer=_consumer_claim(decoded.get("consumer")),
         parents=tuple(_str_list(decoded, "parents")),
         parent_subjects=tuple(_str_list(decoded, "parent_subjects")),
+        parent_iats=tuple(_parent_iats(decoded)),
         creator=_creator_claim(decoded),
+        issued_at=_iat_of(decoded),
         expires_at=int(exp) if isinstance(exp, (int, float)) else None,
     )
 
@@ -404,7 +414,9 @@ def _check_not_revoked(decoded: dict[str, Any]) -> None:
     a principal) or by `sub` with an issued-before cutoff (tokens minted
     before it die, a re-mint after it stays valid). A delegated token also
     dies with any ancestor token (`parents`), any ancestor's `sub`
-    (`parent_subjects`) and its creator's `sub`.
+    (`parent_subjects`, each judged by its own `parent_iats` entry: a child
+    minted after the cutoff from an older parent must die with it) and its
+    creator's `sub` (judged by the root's `iat`, the oldest in the chain).
     `iat` is required, so the cutoff always has an anchor."""
     from server.auth.revocation import is_revoked, loaded, snapshot_age_seconds
 
@@ -421,10 +433,13 @@ def _check_not_revoked(decoded: dict[str, Any]) -> None:
         raise TokenError(f"token sub {sub_for_revoke!r} is revoked")
     if any(is_revoked(parent) for parent in _str_list(decoded, "parents")):
         raise TokenError("a parent of this token is revoked")
+    parent_iats = _parent_iats(decoded)
     creator = _creator_claim(decoded)
-    if creator and is_revoked(creator, issued_at=issued_at):
+    oldest = min([*parent_iats, issued_at]) if issued_at is not None else None
+    if creator and is_revoked(creator, issued_at=oldest):
         raise TokenError(f"token creator {creator!r} is revoked")
-    if any(is_revoked(sub, issued_at=issued_at) for sub in _str_list(decoded, "parent_subjects")):
+    chain = zip(_str_list(decoded, "parent_subjects"), parent_iats, strict=True)
+    if any(is_revoked(sub, issued_at=iat) for sub, iat in chain):
         raise TokenError("a parent of this token is revoked")
 
 
@@ -450,6 +465,21 @@ def _str_list(decoded: dict[str, Any], claim: str) -> list[str]:
     value = decoded.get(claim) or []
     if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
         raise TokenError(f"claim {claim!r} must be a list of strings")
+    return value
+
+
+def _parent_iats(decoded: dict[str, Any]) -> list[int]:
+    """The `parent_iats` claim, one int per `parent_subjects` entry. A missing
+    or misaligned list is refused: without it an ancestor's cutoff would be
+    judged by this token's (younger) `iat` and miss."""
+    value = decoded.get("parent_iats") or []
+    subjects = _str_list(decoded, "parent_subjects")
+    if (
+        not isinstance(value, list)
+        or not all(isinstance(v, int) and not isinstance(v, bool) for v in value)
+        or len(value) != len(subjects)
+    ):
+        raise TokenError("claim 'parent_iats' must list one int per parent subject")
     return value
 
 

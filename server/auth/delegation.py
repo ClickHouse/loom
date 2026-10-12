@@ -1,21 +1,9 @@
 """One delegation policy for every token minted from another token.
 
-`/v1/me/setup/mcp_config`, `/v1/me/service_accounts.create` and
-`/v1/admin/token.mint` call `delegate`. A child gets
-
-    requested ∩ the parent token's ceiling ∩ the creator's live grants
-
-and never more: same org, grant roles only (org_admin / platform_admin are
-never delegated), the parent's read scope and write namespaces, an expiry no
-later than the parent's, and the parent's chain plus the parent's own id
-and subject.
-The CLI `loom mint-token` holds the signing secret and is not a delegation.
-
-The creator is the root principal of the chain (a grandchild keeps it).
-Live grants are rechecked on every request, inside the token's own claim
-(`authz.check_authorized`, `context.resolve_my_namespaces`), and
-`jwt.verify_token` refuses the child once any ancestor token (by id or by
-subject) or the creator is revoked.
+A child gets requested ∩ the parent token's ceiling ∩ the creator's live
+grants, never more. The rules and the recheck on every request are in
+docs/guides/tokens-and-grants.md (Delegated tokens). `loom mint-token`
+holds the signing secret and is not a delegation.
 """
 
 from __future__ import annotations
@@ -58,6 +46,7 @@ class Delegated:
     ttl_seconds: int
     parents: list[str]
     parent_subjects: list[str]
+    parent_iats: list[int]
     creator: str
     is_service_account: bool
 
@@ -82,6 +71,7 @@ class Delegated:
             jti=jti,
             parents=self.parents,
             parent_subjects=self.parent_subjects,
+            parent_iats=self.parent_iats,
             creator=self.creator,
         )
 
@@ -113,6 +103,9 @@ async def delegate(
         raise _refuse(f"delegation chain is limited to {MAX_CHAIN_DEPTH} tokens")
     if scoped and "*" in requested:
         raise _refuse("a per-namespace token cannot name '*'")
+    if parent.issued_at is None:
+        # The child's revocation check needs the parent's age (jwt.parent_iats).
+        raise _refuse("the parent token carries no issue time")
     creator = parent.creator or parent.subject
     roles = await _allowed_roles(parent, child_org, creator, requested)
     if scoped:
@@ -132,6 +125,7 @@ async def delegate(
         ttl_seconds=_child_ttl(parent, ttl_seconds),
         parents=parents,
         parent_subjects=[*parent.parent_subjects, parent.subject],
+        parent_iats=[*parent.parent_iats, parent.issued_at],
         creator=creator,
         is_service_account=is_service_account,
     )
