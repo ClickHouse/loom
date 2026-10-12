@@ -15,6 +15,7 @@ from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.policy_rules import PolicyRule, parse_rule
+from server.identity.domain.read_scope import ReadFilters, scope_and
 
 _RULE_COLUMNS = (
     "org",
@@ -218,10 +219,13 @@ async def list_decisions(
     *,
     limit: int = 100,
     decision: str | None = None,
+    scope: ReadFilters,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     ch = ch or _default_client()
+    params: dict[str, Any] = {"org": org, "ns": namespace, "lim": int(limit), "dec": decision or ""}
     clause = " AND decision = {dec:String}" if decision else ""
+    clause += scope_and(scope, params)
     return await ch.query_all(
         f"""
         SELECT {", ".join(_DECISION_COLUMNS)}
@@ -230,7 +234,7 @@ async def list_decisions(
         ORDER BY ts DESC
         LIMIT {{lim:UInt32}}
         """,
-        {"org": org, "ns": namespace, "lim": int(limit), "dec": decision or ""},
+        params,
     )
 
 

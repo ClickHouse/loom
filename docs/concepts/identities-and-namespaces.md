@@ -215,8 +215,13 @@ than `namespace`:
 - `code.search` breaks ties with the scope's own user's recent files, whatever
   `user_id` the body names.
 - A leg whose rows carry no user (conversations, runs) answers nothing.
+- A blacklist pattern still refuses every user's writes, but its sweep
+  (`blacklist.add(sweep=true)`, `blacklist.sweep`) tombstones and counts only the
+  caller's own rows, and `blacklist.list` shows no hit counts. `policy.decisions`
+  lists only the caller's own decisions.
 - An op that cannot bound its answer to one user (the entity graph `facts.*`,
-  `conversation.*`, namespace exports, admin and curation ops) is refused with
+  `conversation.*`, namespace exports, admin and curation ops,
+  `ops.projection_failures.*`) is refused with
   `AUTH_INSUFFICIENT`, and so is a write to a table keyed without a user, where it
   would overwrite another user's row: `memory.record.write`, `decision.record`,
   `procedure.record_run` and `context.offload`. `memory.set_from_messages` skips its

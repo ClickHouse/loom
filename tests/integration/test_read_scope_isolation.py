@@ -235,6 +235,7 @@ def _payload(model: type, seed: _Seed, user_id: str) -> dict[str, Any] | None:
         "ttl_seconds": 3600,
         "messages": [{"role": "user", "content": "canary"}],
         "entries": [{"memory_key": seed.keys_v[0], "value": "canary"}],
+        "failure_ids": [str(uuid.uuid4())],
     }
     out: dict[str, Any] = {}
     fields = model.model_fields
@@ -550,6 +551,46 @@ def test_writes_aimed_at_vs_rows_never_answer_or_change_them(
         },
     )
     assert r.status_code == 200 and seed.nonce_v in r.text, f"brief: {r.text[:300]}"
+
+
+def test_a_sweep_by_another_user_neither_removes_nor_counts_vs_rows(
+    control_plane_url: str, seed: _Seed, tokens: dict[str, str], ch_client: Any
+) -> None:
+    """W adds a pattern holding the first chars of V's nonce with sweep=true, then
+    sweeps with it again: V's rows stay live, and both counts are 0, as for a
+    pattern nobody's content holds (so the count is no substring oracle)."""
+
+    def _stable() -> dict[str, tuple[Any, ...]] | None:
+        first = _v_rows(ch_client, seed)
+        return first if first == _v_rows(ch_client, seed) else None
+
+    before = wait_until(_stable, max_wait=30.0, description="V's rows to settle")
+    w = {"org": seed.org, "namespace": seed.ns}
+    added = _write(
+        control_plane_url,
+        tokens["pinned_w"],
+        "blacklist.add",
+        {**w, "pattern": seed.nonce_v[:10], "reason": "probe", "sweep": True},
+    )
+    try:
+        assert added["swept"] == 0 and not added["swept_truncated"], added
+        swept = _write(
+            control_plane_url,
+            tokens["pinned_w"],
+            "blacklist.sweep",
+            {**w, "pattern_id": added["pattern_id"]},
+        )
+        assert (swept["matched"], swept["tombstoned"]) == (0, 0), swept
+        assert seed.nonce_v not in str(added) + str(swept)
+    finally:
+        # The pattern would also refuse and hide V's nonce for the tests after this one.
+        _write(
+            control_plane_url,
+            tokens["namespace"],
+            "blacklist.remove",
+            {"org": seed.org, "pattern_id": added["pattern_id"]},
+        )
+    assert _v_rows(ch_client, seed) == before
 
 
 def test_pinned_users_keep_their_own_brief_under_one_key(

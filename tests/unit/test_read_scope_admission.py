@@ -163,6 +163,9 @@ def test_a_pinned_token_reaches_only_ops_that_honour_its_scope(op: Any) -> None:
     "name",
     [
         "facts.traverse",  # entity_edges / entity_triples carry no user
+        "ops.projection_failures.list",  # failure rows carry no user, and others' keys
+        "ops.projection_failures.retry",
+        "ops.projection_failures.resolve",
         "facts.related",
         "conversation.get",
         "conversation.search",
@@ -357,6 +360,14 @@ async def test_history_conflicts_and_briefs_carry_the_scope() -> None:
     await session_briefs.current(ch, "o", "n", "b", scope=U1)
     await session_briefs.by_revision(ch, "o", "n", "b", 2, scope=U1)
     await session_briefs.listing(ch, "o", "n", scope=U1)
+    _bound_to_u1(ch)
+
+
+async def test_policy_decisions_carry_the_scope() -> None:
+    from server.identity.store import policy
+
+    ch = _CH()
+    await policy.list_decisions("o", "n", scope=U1, ch=ch)
     _bound_to_u1(ch)
 
 

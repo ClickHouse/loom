@@ -148,3 +148,79 @@ def test_sweep_is_hidden_from_the_mcp_chat_surface() -> None:
     from server.operations.toolsets import _MCP_HIDDEN_OPS
 
     assert "blacklist.sweep" in _MCP_HIDDEN_OPS and "blacklist.add" not in _MCP_HIDDEN_OPS
+
+
+def _bind_pinned(user: str):  # type: ignore[no-untyped-def]
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.identity.domain.read_scope import ReadFilters, bind_request_read_filters
+
+    auth = AuthInfo(
+        subject="sa:w",
+        org="o",
+        namespaces=("a",),
+        roles=(),
+        is_service_account=True,
+        read_user_id=user,
+    )
+    set_current_auth(auth)
+    bind_request_read_filters(auth, ReadFilters(scope="own_user", user_id=user, session_id=None))
+
+
+@pytest.fixture
+def _unbind():  # type: ignore[no-untyped-def]
+    yield
+    from server.auth.context import set_current_auth
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE, bind_request_read_filters
+
+    set_current_auth(None)
+    bind_request_read_filters(None, WHOLE_NAMESPACE)
+
+
+async def test_a_narrowed_sweep_matches_only_the_callers_rows(monkeypatch, _unbind) -> None:
+    """Otherwise a writer pinned to W tombstones V's rows, and the count tells W
+    whether V's content holds the pattern."""
+    monkeypatch.setattr("server.memory.app.drops.record_drop", lambda *a, **k: None)
+    _bind_pinned("w")
+    ch = _CH([])
+    res = await bs.sweep_pattern(
+        org="o",
+        namespace="a",
+        pattern_id="p",
+        pattern="NONCEV12",
+        pattern_type="substring",
+        scope="namespace",
+        ch=ch,
+    )
+    sql, params = ch.queries[0]
+    assert "user_id = {scope_uid:String}" in sql and params["scope_uid"] == "w"
+    assert (res.matched, res.tombstoned) == (0, 0)
+
+
+async def test_list_hides_hit_counts_from_a_narrowed_token(monkeypatch, _unbind) -> None:
+    import server.memory.app.blacklist as h
+    from server.memory.api.models_blacklist import BlacklistListInput
+
+    row = {
+        "pattern_id": "p",
+        "org": "o",
+        "namespace": "a",
+        "pattern": "x",
+        "pattern_type": "substring",
+        "scope": "namespace",
+        "reason": "",
+        "created_by": "",
+        "hit_count": 7,
+        "last_hit_at": "2026-01-01 00:00:00",
+        "created_at": "2026-01-01 00:00:00",
+    }
+
+    async def rows(*a, **k):
+        return [row]
+
+    monkeypatch.setattr(h.blacklist_repo, "list_for_scope", rows)
+    wide = await h.handle_blacklist_list(BlacklistListInput(org="o", namespace="a"))
+    assert wide.rows[0].hit_count == 7
+    _bind_pinned("w")
+    narrow = await h.handle_blacklist_list(BlacklistListInput(org="o", namespace="a"))
+    assert narrow.rows[0].hit_count == 0 and narrow.rows[0].last_hit_at is None

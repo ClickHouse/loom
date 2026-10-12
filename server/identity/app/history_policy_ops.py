@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from server.auth.context import current_auth
 from server.core.errors import ValidationError
 from server.identity.api.models_policy import (
     PolicyCheckInput,
@@ -23,6 +24,7 @@ from server.identity.api.models_policy import (
 from server.identity.app import history_policy as _policy
 from server.identity.domain import policy_rules
 from server.identity.domain.policy_change import ChangeVerdict, classify_change
+from server.identity.domain.read_scope import request_read_filters
 from server.identity.store import policy as policy_repo
 from server.memory.app.provenance import writer_actor
 
@@ -201,8 +203,13 @@ async def handle_policy_check(input: PolicyCheckInput) -> PolicyCheckOutput:
 async def handle_policy_decisions(input: PolicyDecisionsInput) -> PolicyDecisionsOutput:
     """List the recorded history-policy decisions for a namespace, optionally one verdict."""
 
+    # A token narrowed to one user sees only that user's decisions.
     rows = await policy_repo.list_decisions(
-        input.org, input.namespace, limit=input.limit, decision=input.decision
+        input.org,
+        input.namespace,
+        limit=input.limit,
+        decision=input.decision,
+        scope=request_read_filters(current_auth()),
     )
     return PolicyDecisionsOutput(
         rows=[
