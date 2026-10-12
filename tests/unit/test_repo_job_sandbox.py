@@ -265,3 +265,78 @@ def test_without_the_sandbox_the_ingest_pass_skips_self_registered_network_entri
     assert result.note == f"self-ssh: {compiler_tier.UNSANDBOXED_NETWORK_SKIP}"
     monkeypatch.setattr(sandbox, "_available", True)
     assert ingest_pass._without_unsandboxed(entries, CodeIngestResult()) == entries
+
+
+async def test_a_parsed_stdout_past_its_limit_kills_the_job(monkeypatch) -> None:
+    monkeypatch.setattr(sandbox, "_available", False)
+    monkeypatch.setattr(sandbox, "_STDOUT_LIMIT", 4096)
+    done = await sandbox.run_job(
+        ["sh", "-c", "head -c 1000000 /dev/zero; sleep 30"],
+        env={"PATH": "/usr/bin:/bin"},
+        timeout_s=20,
+        keep_stdout=True,
+    )
+    assert done.returncode != 0 and done.stdout == b""
+    assert b"stdout passed 4096 bytes" in done.stderr
+
+
+async def test_diagnostic_output_keeps_a_bounded_tail(monkeypatch) -> None:
+    monkeypatch.setattr(sandbox, "_available", False)
+    monkeypatch.setattr(sandbox, "_TAIL_BYTES", 100)
+    flood = "head -c 1000000 /dev/zero | tr '\\0' x"
+    done = await sandbox.run_job(
+        ["sh", "-c", f"{flood}; echo out-end; {flood} >&2; echo err-end >&2"],
+        env={"PATH": "/usr/bin:/bin"},
+        timeout_s=20,
+    )
+    assert done.returncode == 0
+    assert len(done.stdout) == 100 and done.stdout.endswith(b"out-end\n")
+    assert len(done.stderr) == 100 and done.stderr.endswith(b"err-end\n")
+
+
+async def test_stdin_reaches_the_job_and_stdout_is_kept_whole(monkeypatch) -> None:
+    monkeypatch.setattr(sandbox, "_available", False)
+    monkeypatch.setattr(sandbox, "_TAIL_BYTES", 10)
+    payload = b"refs/heads/main\n" * 1000
+    done = await sandbox.run_job(
+        ["cat"], env={"PATH": "/usr/bin:/bin"}, timeout_s=10, stdin=payload, keep_stdout=True
+    )
+    assert (done.returncode, done.stdout) == (0, payload)
+
+
+def test_loom_data_inside_a_mounted_python_prefix_is_hidden(tmp_path: Path, monkeypatch) -> None:
+    """Blobs, the env file and var/ under the server's python prefix: each mount that
+    shows them is followed by an empty one over them; the job's own checkout inside
+    the blob store is still mounted after it."""
+    from server.settings import settings
+
+    prefix = tmp_path / "py"
+    for d in ("blobs/b", "var", "bin"):
+        (prefix / d).mkdir(parents=True)
+    (prefix / ".env").write_text("SECRET=1")
+    monkeypatch.chdir(prefix)
+    monkeypatch.setattr(sys, "prefix", str(prefix))
+    monkeypatch.setattr(sys, "base_prefix", str(prefix))
+    monkeypatch.setattr(settings, "blob_dir", str(prefix / "blobs"))
+    monkeypatch.setenv("LOOM_ENV_FILE", str(prefix / ".env"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    checkout = prefix / "blobs" / "b"
+    readonly = sandbox._readonly_paths({"PATH": "/usr/bin"}, [])
+    assert prefix in readonly
+    argv = sandbox._binds([checkout], readonly, "")
+
+    def at(*args: str) -> int:
+        return next(i for i in range(len(argv)) if argv[i : i + len(args)] == list(args))
+
+    shown = at("--ro-bind", str(prefix), str(prefix))
+    assert shown < at("--tmpfs", str(prefix / "blobs")) < at("--bind", str(checkout))
+    assert shown < at("--tmpfs", str(prefix / "var"))
+    assert shown < at("--ro-bind", "/dev/null", str(prefix / ".env"))
+    assert str(prefix / "bin") not in argv
+
+
+def test_a_path_holding_no_loom_data_gets_no_cover(tmp_path: Path, monkeypatch) -> None:
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    monkeypatch.chdir(tmp_path)
+    assert sandbox._hidden([str(tools), "/usr"]) == []

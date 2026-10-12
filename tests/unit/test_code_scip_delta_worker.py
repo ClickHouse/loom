@@ -6,7 +6,6 @@ git_head has outrun scip_commit AND the host has the checkout + binary.
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -93,9 +92,9 @@ async def test_fetch_does_not_recurse_submodules(monkeypatch, tmp_path):
 
     monkeypatch.setattr(w, "git", fake_git)
 
-    harness = AsyncMock()
-    harness.returncode = 0
-    harness.communicate.return_value = (b"", b"")
+    from server.code.app.index.sandbox import JobResult
+
+    harness = AsyncMock(return_value=JobResult(0, b"", b""))
 
     repo = _repo("a" * 40, "b" * 40)
     with (
@@ -104,7 +103,7 @@ async def test_fetch_does_not_recurse_submodules(monkeypatch, tmp_path):
             "server.code.domain.index.repos.configured_repos",
             return_value=[_Cfg()],
         ),
-        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=harness)),
+        patch("server.code.app.index.compiler_tier.run_job", harness),
     ):
         res = await run_pass()
 
@@ -160,29 +159,17 @@ async def test_pass_is_recorded_in_the_worker_status_registry() -> None:
 @pytest.mark.asyncio
 async def test_git_timeout_names_the_command_and_retries(monkeypatch, tmp_path):
     from server.code.app.index import compiler_tier as w
+    from server.code.app.index.sandbox import JobResult
 
     calls = {"n": 0}
 
-    class _Proc:
-        returncode = 0
-        pid = 4_194_305  # above pid_max: the group kill finds nothing
+    async def _job(argv, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise TimeoutError  # first attempt hangs past its timeout
+        return JobResult(0, b"", b"")
 
-        async def communicate(self):
-            calls["n"] += 1
-            if calls["n"] == 1:
-                await asyncio.sleep(10)  # first attempt hangs
-            return b"", b""
-
-        def kill(self):
-            pass
-
-        async def wait(self):
-            return 0
-
-    async def _exec(*a, **k):
-        return _Proc()
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", _exec)
+    monkeypatch.setattr(w, "run_job", _job)
     await w.git(tmp_path, "fetch", "origin", timeout_s=0.05, retries=1)
     assert calls["n"] == 2
     calls["n"] = 0

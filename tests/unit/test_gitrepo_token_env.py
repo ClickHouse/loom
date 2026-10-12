@@ -8,7 +8,7 @@ import base64
 
 import pytest
 
-from server.code.app.index import gitrepo
+from server.code.app.index import gitrepo, sandbox
 
 HEADER = "http.https://github.com/.extraheader"
 
@@ -86,18 +86,12 @@ def test_remote_port_names_the_port_the_egress_proxy_must_allow() -> None:
 def test_fetch_passes_the_token_to_the_environment_not_argv(monkeypatch) -> None:
     seen = {}
 
-    class _Proc:
-        returncode = 0
-
-        async def communicate(self):
-            return b"", b""
-
-    async def _exec(*argv, **kw):
-        seen["argv"] = argv
+    async def _job(argv, **kw):
+        seen["argv"] = tuple(argv)
         seen["env"] = kw.get("env") or {}
-        return _Proc()
+        return sandbox.JobResult(0, b"", b"")
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", _exec)
+    monkeypatch.setattr(sandbox, "run_job", _job)
     asyncio.run(
         gitrepo.fetch("/tmp/x.git", "https://github.com/o/r.git", "master", token="tok_abc")
     )
@@ -109,19 +103,11 @@ def test_fetch_passes_the_token_to_the_environment_not_argv(monkeypatch) -> None
 
 
 def test_git_error_text_never_carries_the_token(monkeypatch) -> None:
-    class _Proc:
-        returncode = 128
+    async def _job(argv, **kw):
+        err = b"fatal: could not read from https://x-access-token:tok_abc@github.com/o/r.git"
+        return sandbox.JobResult(128, b"", err)
 
-        async def communicate(self):
-            return (
-                b"",
-                b"fatal: could not read from https://x-access-token:tok_abc@github.com/o/r.git",
-            )
-
-    async def _exec(*argv, **kw):
-        return _Proc()
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", _exec)
+    monkeypatch.setattr(sandbox, "run_job", _job)
     with pytest.raises(gitrepo.GitError) as ei:
         asyncio.run(
             gitrepo.fetch("/tmp/x.git", "https://github.com/o/r.git", "master", token="tok_abc")

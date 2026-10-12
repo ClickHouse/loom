@@ -1,36 +1,19 @@
-"""The one isolation boundary for repository jobs.
-
-Clone, fetch, `git submodule update`, dependency installs and the compiler-tier
-harnesses read a repository's files and run what it ships (a CMakeLists.txt is a
-program). `run_job` runs each of them inside bubblewrap when the host supports it:
-
-- its own user, pid, network, mount, ipc and uts namespaces, no capabilities, no
-  new user namespaces, and a seccomp filter that refuses the syscalls a job never
-  needs (`seccomp_filter`);
-- only the system directories, the toolchains (never a directory holding Loom's
-  data, `tool_mounts`) and the paths the caller names are mounted; the caller's
-  work directories are writable, everything else read-only. /tmp and HOME are a
-  fresh directory removed after the job. No server environment, credentials, host
-  HOME or Docker socket;
-- rlimits on CPU, data memory, processes and file size, and a wall-clock timeout that
-  kills the whole tree: when bwrap dies its pid namespace dies with it, so no
-  process the job started survives it. The rlimits are per process (CPU, data
-  memory, file size) and per uid (processes), not a cgroup: they bound each process
-  of a job, not the job's total;
-- no network unless the caller asks for it, and then the only way out is the
-  egress proxy (`egress.py`), which allows public addresses only.
-
-Without a usable bwrap (or without prlimit) the job runs as a plain child process, as it always has;
-`sandbox_available()` says which, and the callers decide what may run then.
+"""The one isolation boundary for repository jobs (clone, fetch, submodules,
+dependency installs, compiler-tier harnesses): they run what a repository ships.
+`run_job` runs each inside bubblewrap when the host supports it, else as a plain
+child process; `sandbox_available()` says which. What the sandbox mounts, limits
+and lets out is in docs/operations/code-index-operations.md (repository job sandbox).
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import platform
 import shutil
+import signal
 import struct
 import subprocess
 import sys
@@ -40,7 +23,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Required, TypedDict, Unpack
 
-from server.code.app.index.gitrepo import communicate_or_kill
 from server.settings import settings
 
 logger = logging.getLogger("loom.code_index.sandbox")
@@ -52,6 +34,13 @@ _RELAY_SCRIPT = Path(__file__).with_name("egress_relay.py")
 _RELAY_INSIDE = "/run/loom-relay.py"
 _EGRESS_INSIDE = "/run/loom-egress"
 _HOME_INSIDE = "/tmp/home"
+
+# Output the parent holds: a `keep_stdout` job's stdout whole up to this (a big
+# repository's `ls-remote` of PR heads is ~6 MB), past it the job is killed; any other
+# stream keeps only its last _TAIL_BYTES. The child's rlimits do not bound the parent.
+_STDOUT_LIMIT = 64 * 1024 * 1024
+_TAIL_BYTES = 1024 * 1024
+_READ_CHUNK = 64 * 1024
 
 # Read-only from the host: programs, libraries, CA certificates and the user
 # database ssh and git look themselves up in. Nothing else of /etc.
@@ -158,8 +147,8 @@ _disable_userns = False
 
 
 def sandbox_available() -> bool:
-    """Whether repository jobs run inside the sandbox on this host: bwrap and
-    prlimit are installed, the architecture has a seccomp table, and a trivial job runs.
+    """Whether repository jobs run inside the sandbox on this host (bwrap and
+    prlimit installed, a seccomp table for the architecture, a trivial job runs).
     Probed once per process."""
     global _available
     if _available is None:
@@ -210,6 +199,8 @@ def _probe() -> bool:
 
 def _seccomp_fd() -> int:
     """A file descriptor holding the seccomp program, for `--seccomp FD`."""
+    if sys.platform != "linux":  # memfd_create is Linux-only; bwrap is too
+        raise OSError("no memfd_create on this platform")
     fd = os.memfd_create("loom-seccomp", 0)
     os.write(fd, seccomp_filter())
     os.lseek(fd, 0, os.SEEK_SET)
@@ -312,13 +303,17 @@ def _binds(writable: Sequence[Path], readonly: Sequence[Path], egress_dir: str) 
     """Parents before children (bwrap mounts in order, and a later mount hides
     what it covers): a read-only parent cannot hide a writable checkout, and a
     read-only path inside a writable one (a checkout's .git) stays read-only.
-    At equal depth a read-only bind comes last and wins."""
-    binds = [("--bind", os.path.abspath(p)) for p in writable]
-    binds += [("--ro-bind", os.path.abspath(p)) for p in readonly]
-    binds.sort(key=lambda bind: len(Path(bind[1]).parts))
-    out: list[str] = []
-    for flag, p in binds:
-        out += [flag, p, p]
+    At equal depth a read-only bind comes last and wins. Loom's data under any
+    mounted directory is covered by an empty mount (`_hidden`), placed by the
+    same order: after the bind that shows it, before the job's own paths inside it."""
+    sources = [(os.path.abspath(p), 1, "--bind") for p in writable]
+    sources += [(os.path.abspath(p), 2, "--ro-bind") for p in readonly]
+    mounts = [(dest, rank, [flag, dest, dest]) for dest, rank, flag in sources]
+    system = [p for p in _SYSTEM_PATHS if not os.path.islink(p) and os.path.exists(p)]
+    hidden = _hidden([*system, *(dest for dest, _, _ in sources)])
+    mounts += [(dest, 0, args) for dest, args in hidden]
+    mounts.sort(key=lambda mount: (len(Path(mount[0]).parts), mount[1]))
+    out = [arg for _, _, args in mounts for arg in args]
     if egress_dir:
         out += [
             "--ro-bind",
@@ -329,6 +324,41 @@ def _binds(writable: Sequence[Path], readonly: Sequence[Path], egress_dir: str) 
             _RELAY_INSIDE,
         ]
     return out
+
+
+def _protected_paths() -> list[Path]:
+    """What no job may read wherever it sits: Loom's data, var/ and the server's HOME."""
+    from server.core.paths import REPO_ROOT
+
+    return [*_data_paths(), Path("var").absolute(), REPO_ROOT / "var", Path.home().absolute()]
+
+
+def _hidden(sources: Sequence[str]) -> list[tuple[str, list[str]]]:
+    """(path, bwrap args) covering each protected path that lies strictly inside a
+    mounted source (blobs inside a python prefix, var/ under /usr): an empty tmpfs
+    over a directory, /dev/null over a file. A source that is itself inside a
+    protected path (the job's checkout or mirror) is the job's own and stays."""
+    out: dict[str, list[str]] = {}
+    for protected in _protected_paths():
+        for source in sources:
+            dest = _inside(protected, Path(source))
+            if dest is None or dest in out:
+                continue
+            if os.path.isdir(dest):
+                out[dest] = ["--tmpfs", dest]
+            elif os.path.exists(dest):
+                out[dest] = ["--ro-bind", "/dev/null", dest]
+    return list(out.items())
+
+
+def _inside(protected: Path, source: Path) -> str | None:
+    """Where `protected` shows inside the sandbox through a bind of `source`
+    (mounted at its own path), if it lies strictly under it; symlinks either side."""
+    for p in {protected.absolute(), protected.resolve()}:
+        for s in {source.absolute(), source.resolve()}:
+            if p != s and p.is_relative_to(s):
+                return str(source.absolute() / p.relative_to(s))
+    return None
 
 
 def _network_env(env: dict[str, str]) -> None:
@@ -347,10 +377,9 @@ def _network_env(env: dict[str, str]) -> None:
 
 
 def _rlimits() -> list[tuple[str, int]]:
-    """(prlimit option, value) for each job rlimit. Per process (CPU, data, file
-    size) and per uid (processes): one job's processes are bounded each, not in
-    total. Memory is RLIMIT_DATA, not RLIMIT_AS: node (scip-typescript,
-    scip-python, npm) reserves far more address space than it uses."""
+    """(prlimit option, value) for each job rlimit. Memory is RLIMIT_DATA, not
+    RLIMIT_AS: node (scip-typescript, scip-python, npm) reserves far more address
+    space than it uses."""
     mib = 1024 * 1024
     return [
         ("--cpu", settings.code_sandbox_cpu_seconds),
@@ -361,8 +390,7 @@ def _rlimits() -> list[tuple[str, int]]:
 
 
 def _prlimit_argv() -> list[str]:
-    """`prlimit` (util-linux, in the image; the probe requires it) setting the
-    rlimits before it execs bwrap; the job inherits them."""
+    """`prlimit` setting the rlimits before it execs bwrap; the job inherits them."""
     prlimit = shutil.which("prlimit") or "prlimit"
     return [prlimit, *(f"{option}={value}:{value}" for option, value in _rlimits()), "--"]
 
@@ -372,7 +400,9 @@ class JobOptions(TypedDict, total=False):
     the same place; they must exist. With `network` the job reaches public
     hosts on 443, 22 and `allow_remote_port` through the egress proxy. The
     environment is exactly `env` (inside the sandbox HOME and TMPDIR point into
-    the job's scratch directory). `timeout_s` kills the tree (TimeoutError)."""
+    the job's scratch directory). `timeout_s` kills the tree (TimeoutError).
+    `keep_stdout`: the caller parses stdout (ls-remote), so it is kept whole up to
+    _STDOUT_LIMIT and the job killed past it; otherwise only its tail is kept."""
 
     env: Required[Mapping[str, str]]
     timeout_s: Required[float]
@@ -383,6 +413,7 @@ class JobOptions(TypedDict, total=False):
     allow_remote_port: int | None
     stdin: bytes | None
     merge_stderr: bool
+    keep_stdout: bool
 
 
 async def run_sandboxed(argv: Sequence[str], **job: Unpack[JobOptions]) -> JobResult:
@@ -436,10 +467,92 @@ def _pipes(job: JobOptions) -> dict[str, Any]:
 
 
 async def _result(proc: asyncio.subprocess.Process, job: JobOptions) -> JobResult:
-    out, err = await communicate_or_kill(
-        proc, job.get("stdin"), timeout_s=job["timeout_s"], group=True
-    )
-    return JobResult(proc.returncode or 0, out or b"", err or b"")
+    """Wait for the job with its output bounded. On the timeout, a cancellation or
+    an error the whole process group is killed and reaped."""
+    try:
+        out, err = await asyncio.wait_for(
+            _talk(proc, job.get("stdin"), keep_stdout=job.get("keep_stdout", False)),
+            timeout=job["timeout_s"],
+        )
+    except BaseException:
+        await _kill_group(proc)
+        raise
+    await proc.wait()
+    if out is None:
+        logger.warning("repository job killed: stdout passed %d bytes", _STDOUT_LIMIT)
+        reason = f"loom: job killed, its stdout passed {_STDOUT_LIMIT} bytes\n"
+        return JobResult(-signal.SIGKILL, b"", err + reason.encode())
+    return JobResult(proc.returncode or 0, out, err)
+
+
+async def _talk(
+    proc: asyncio.subprocess.Process, stdin: bytes | None, *, keep_stdout: bool
+) -> tuple[bytes | None, bytes]:
+    """Feed stdin and read stdout and stderr to EOF, each into a bounded buffer.
+    stdout is None when it passed _STDOUT_LIMIT (the job was killed then)."""
+    feed = None
+    if stdin is not None and proc.stdin is not None:
+        feed = asyncio.create_task(_feed(proc.stdin, stdin))
+    errs = asyncio.create_task(_read(proc, proc.stderr, keep_all=False)) if proc.stderr else None
+    tasks = [task for task in (feed, errs) if task is not None]
+    try:
+        assert proc.stdout is not None
+        out = await _read(proc, proc.stdout, keep_all=keep_stdout)
+        await asyncio.gather(*tasks)
+    finally:
+        for task in tasks:
+            task.cancel()
+        # a reader still pending would race `_kill_group`'s drain of the same pipe
+        await asyncio.gather(*tasks, return_exceptions=True)
+    return out, (errs.result() or b"") if errs else b""
+
+
+async def _feed(pipe: asyncio.StreamWriter, data: bytes) -> None:
+    with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+        pipe.write(data)
+        await pipe.drain()
+    pipe.close()
+
+
+async def _read(
+    proc: asyncio.subprocess.Process, stream: asyncio.StreamReader, *, keep_all: bool
+) -> bytes | None:
+    """A stream to EOF: with `keep_all` all of it, else only its last _TAIL_BYTES.
+    A `keep_all` stream past _STDOUT_LIMIT kills the job and gives None; the rest
+    is read and dropped, as asyncio's wait() waits for the pipes to close."""
+    buf = bytearray()
+    overflowed = False
+    while chunk := await stream.read(_READ_CHUNK):
+        if overflowed:
+            continue
+        buf += chunk
+        if keep_all and len(buf) > _STDOUT_LIMIT:
+            overflowed = True
+            buf.clear()
+            _signal_group(proc)
+        elif not keep_all and len(buf) > _TAIL_BYTES:
+            del buf[:-_TAIL_BYTES]
+    return None if overflowed else bytes(buf)
+
+
+def _signal_group(proc: asyncio.subprocess.Process) -> None:
+    """SIGKILL the job's process group (it runs in its own session)."""
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(proc.pid, signal.SIGKILL)
+    if proc.returncode is None:
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
+
+
+async def _kill_group(proc: asyncio.subprocess.Process) -> None:
+    """Kill the job and reap it. Its pipes are drained first: a reader that
+    stopped mid-flood leaves the pipe paused, and wait() needs it closed."""
+    _signal_group(proc)
+    for stream in (proc.stdout, proc.stderr):
+        if stream is not None:
+            while await stream.read(_READ_CHUNK):
+                pass
+    await proc.wait()
 
 
 async def run_job(argv: Sequence[str], **job: Unpack[JobOptions]) -> JobResult:

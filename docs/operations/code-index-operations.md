@@ -258,11 +258,13 @@ dependency installs and the compiler-tier harnesses) inside one boundary built o
   toolchain is mounted only where it exposes none of Loom's data: never a directory
   that is or holds `var/`, the mirrors and checkouts, the blob store, the env file, the
   install root or `HOME`, nor one inside `var/` or under `HOME` (the default
-  `var/bin/scip-clang` is mounted as that one file). The checkout (or the bare mirror,
-  for a fetch) and the output directory are writable, the checkout's `.git` and the
-  harness scripts are read-only, and `/tmp` and `HOME` are a fresh directory removed
-  after the job. No server environment, credentials, host `HOME`, Docker socket or
-  other host paths;
+  `var/bin/scip-clang` is mounted as that one file). Where one of those paths lies inside
+  any other mounted directory (the blob store inside the server's Python prefix, `var/`
+  under a system path), an empty mount covers it inside the sandbox. The checkout (or
+  the bare mirror, for a fetch) and the output directory are writable, the checkout's
+  `.git` and the harness scripts are read-only, and `/tmp` and `HOME` are a fresh
+  directory removed after the job. No server environment, credentials, host `HOME`,
+  Docker socket or other host paths;
 - rlimits, set by `prlimit` before bwrap starts: `LOOM_CODE_SANDBOX_CPU_SECONDS` (7200),
   `LOOM_CODE_SANDBOX_MEMORY_MB` (16384) and `LOOM_CODE_SANDBOX_MAX_FILE_MB` (32768)
   bound **each process** of a job (CPU time, data memory, file size), not the job's
@@ -271,6 +273,9 @@ dependency installs and the compiler-tier harnesses) inside one boundary built o
   cgroup; give the container its own memory and pids limits for a hard total. Each job
   also has a wall-clock timeout that kills its whole tree; the job's pid namespace
   guarantees no process it started outlives it;
+- bounded output in the server: a job's stderr, and the stdout of a build, install or
+  clone, keep only their last 1 MiB; a command whose stdout Loom parses (`ls-remote`,
+  fetch) may print up to 64 MiB, and past that the whole job is killed and fails;
 - no network, except for clones, fetches, submodules and dependency downloads, and then
   only through an egress proxy outside the sandbox. It accepts `CONNECT` to ports 443,
   22 and the remote's own port, resolves the name, refuses it unless **every** address

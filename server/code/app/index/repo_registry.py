@@ -315,6 +315,7 @@ async def _ls_remote(
             ["git", "ls-remote", flag, remote, *refs],
             env=auth_env(token, remote),
             timeout_s=timeout_s,
+            keep_stdout=True,
             **remote_access(remote),
         )
     except TimeoutError:

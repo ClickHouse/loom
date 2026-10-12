@@ -335,3 +335,40 @@ async def test_the_checkout_stays_writable_under_a_read_only_parent(tmp_path: Pa
     )
     assert (checkout / "out").read_text() == "built\n"
     assert not (checkout / ".git" / "hook").exists(), done.stdout
+
+
+async def test_output_past_its_bounds_ends_bounded(monkeypatch) -> None:
+    """A parsed stdout past its limit kills the job; diagnostic output keeps a tail."""
+    monkeypatch.setattr(sandbox, "_STDOUT_LIMIT", 4096)
+    monkeypatch.setattr(sandbox, "_TAIL_BYTES", 100)
+    flood = "head -c 1000000 /dev/zero"
+    killed = await sandbox.run_sandboxed(
+        ["sh", "-c", f"{flood}; sleep 30"], env=ENV, timeout_s=20, keep_stdout=True
+    )
+    assert killed.returncode != 0 and killed.stdout == b""
+    assert b"stdout passed 4096 bytes" in killed.stderr
+    tail = await sandbox.run_sandboxed(
+        ["sh", "-c", f"{flood}; echo end"], env=ENV, timeout_s=20, merge_stderr=True
+    )
+    assert tail.returncode == 0 and len(tail.stdout) == 100 and tail.stdout.endswith(b"end\n")
+
+
+async def test_loom_data_inside_the_python_prefix_is_unreadable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from server.settings import settings
+
+    prefix = tmp_path / "py"
+    (prefix / "blobs").mkdir(parents=True)
+    (prefix / "blobs" / "blob").write_text(CANARY)
+    (prefix / "lib.txt").write_text("runtime")
+    monkeypatch.setattr(sys, "prefix", str(prefix))
+    monkeypatch.setattr(settings, "blob_dir", str(prefix / "blobs"))
+    done = await sandbox.run_sandboxed(
+        ["sh", "-c", f"cat {prefix}/lib.txt; cat {prefix}/blobs/blob; ls -a {prefix}/blobs"],
+        env=ENV,
+        timeout_s=30,
+        merge_stderr=True,
+    )
+    assert b"runtime" in done.stdout
+    assert CANARY.encode() not in done.stdout and b"blob\n" not in done.stdout, done.stdout
