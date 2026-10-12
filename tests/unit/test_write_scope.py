@@ -516,8 +516,93 @@ def test_batched_conflict_candidates_are_the_writers_rows() -> None:
             org="o", namespace="n", items=[("semantic", "k", [0.1], 0.3)], ch=ch
         ),
     )
-    assert len(ch.sql) == 1 and "m.user_id = {scope_uid:String}" in ch.sql[0][0]
-    assert "m.pinned = 1 OR (" in ch.sql[0][0], "other users' pinned rows ride the batch"
+    candidates, pinned = ch.sql
+    assert (
+        "m.user_id = {scope_uid:String}" in candidates[0] and "m.pinned = 1 OR" not in candidates[0]
+    )
+    assert "AS hits" in pinned[0], "other users' pinned rows come from their own statement"
+
+
+def test_a_namespace_wide_bulk_writer_runs_no_pinned_statement() -> None:
+    from server.memory.app.conflicts import candidate_rows_many
+
+    ch = _SqlCH()
+    _run_as(
+        None,
+        lambda: candidate_rows_many(
+            org="o", namespace="n", items=[("semantic", "k", [0.1], 0.3)], ch=ch
+        ),
+    )
+    assert len(ch.sql) == 1 and "AS hits" not in ch.sql[0][0]
+
+
+def _own_row(i: int) -> dict[str, Any]:
+    return {
+        **_V_PINNED_ROW,
+        "memory_id": f"u{i}",
+        "memory_key": f"u-fact-{i}",
+        "value": f"U lives in Lisbon, note number {i}",
+        "pinned": 0,
+        "user_id": "U",
+        "dist": 0.01,
+    }
+
+
+class _CloserOwnRows(_SqlCH):
+    """Ten of U's own rows sit closer to the write than V's pinned row, so any
+    statement that ranks them together keeps only U's rows."""
+
+    async def query_all(self, sql, params=None):
+        await super().query_all(sql, params)
+        own = [_own_row(i) for i in range(10)]
+        if "AS hits" in sql:  # the batched pinned statement
+            return [{**_V_PINNED_ROW, "qidx": 0}]
+        if "e.dist AS dist" in sql:  # the single write's pinned statement
+            return [dict(_V_PINNED_ROW)]
+        if "qidx" in sql:  # the batched candidates, 10 places
+            return [{**r, "qidx": 0} for r in own]
+        if "LIMIT {k:UInt32}" in sql:  # stage A
+            return [
+                {k: r[k] for k in ("agent", "user_id", "session_id", "memory_key", "dist")}
+                for r in own
+            ]
+        if "IN {ids:" in sql:  # stage B
+            return own
+        return []
+
+
+def test_bulk_and_single_both_reject_a_write_close_to_a_foreign_pinned_row(monkeypatch) -> None:
+    from server.memory.app import conflicts
+
+    ch = _CloserOwnRows()
+    monkeypatch.setattr(conflicts, "get_client", lambda: ch)
+
+    def check(candidate_rows: Any) -> Any:
+        return conflicts.check_on_commit(
+            org="o",
+            namespace="n",
+            agent="bot",
+            memory_type="semantic",
+            memory_key="k",
+            new_value="U lives in Lisbon",
+            new_embedding=[0.1, 0.2],
+            candidate_rows=candidate_rows,
+            resolved_threshold=0.85,
+            resolved_duplicate_threshold=0.9,
+            resolved_policy="auto_reinforce",
+            allowlisted_keys=set(),
+        )
+
+    async def bulk() -> Any:
+        rows = await conflicts.candidate_rows_many(
+            org="o", namespace="n", items=[("semantic", "k", [0.1, 0.2], 0.3)], ch=ch
+        )
+        return await check(rows[0])
+
+    single = _run_as(_pinned("U"), lambda: check(None))
+    batched = _run_as(_pinned("U"), bulk)
+    assert single.verdict == batched.verdict == "rejected"
+    assert single.pinned_blocker_id == batched.pinned_blocker_id == "v1"
 
 
 def test_a_bulk_fact_with_prefetched_rows_runs_no_pinned_statement(monkeypatch) -> None:
@@ -545,14 +630,6 @@ def test_a_bulk_fact_with_prefetched_rows_runs_no_pinned_statement(monkeypatch) 
     assert ch.sql == [], "one pinned read per batch, never one per fact"
     assert out.verdict == "rejected" and out.pinned_blocker_id == "v1"
     assert all(p.memory_id != "v1" for p in out.peers)
-
-
-def test_the_pinned_statement_reads_only_the_pinned_rows_vectors() -> None:
-    from server.memory.store.conflict_candidates import PINNED_PEERS_SQL
-
-    vectors = PINNED_PEERS_SQL.split("FROM loom.memory_embeddings FINAL", 1)[1]
-    assert "(agent, user_id, session_id, memory_key) IN (" in vectors
-    assert "m.pinned = 1" in vectors.split(") e", 1)[0]
 
 
 def test_request_narrowed_follows_the_bound_scope() -> None:

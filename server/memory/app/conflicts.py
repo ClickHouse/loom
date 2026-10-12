@@ -26,7 +26,6 @@ from server.identity.domain.read_scope import (
     ReadFilters,
     row_in_read_scope,
     scope_and,
-    scope_where,
 )
 from server.memory.domain.conflicts import (
     APPEND_ONLY_POLICY,
@@ -48,6 +47,7 @@ from server.memory.store.conflict_candidates import (
     PINNED_PEERS_SQL,
     _peer_candidates_sql,
     candidate_sql_many,
+    pinned_sql_many,
 )
 from server.settings import settings
 
@@ -167,13 +167,17 @@ async def candidate_rows_many(
             "max_dists": [float(items[i][3]) for i in idxs],
         }
         rows = await ch.query_all(
-            candidate_sql_many(len(idxs), _scope_or_pinned(scope, params)), params=params
+            candidate_sql_many(len(idxs), scope_and(scope, params, "m")), params=params
         )
+        if scope.narrowed:  # other users' pinned rows still block; the scope hides them
+            rows += await ch.query_all(pinned_sql_many(len(idxs)), params=params)
         for i in idxs:
             out[i] = []
+        seen: set[tuple[int, str]] = set()
         for r in rows:
             q = int(r.get("qidx") or 0)
-            if 0 <= q < len(idxs):
+            if 0 <= q < len(idxs) and (q, str(r.get("memory_id"))) not in seen:
+                seen.add((q, str(r.get("memory_id"))))
                 out[idxs[q]].append(dict(r))
 
     jobs = [
@@ -309,16 +313,6 @@ async def _peer_rows_joined(
         params=params,
     )
     return rows
-
-
-def _scope_or_pinned(scope: ReadFilters, params: dict[str, Any]) -> str:
-    """The batched statement's scope clause: the writer's rows, and for a
-    narrowed writer also every pinned row (another user's pinned row still
-    blocks the write; `check_on_commit` keeps it outside the scope)."""
-    preds = scope_where(scope, params, "m")
-    if not preds:
-        return ""
-    return f" AND (m.pinned = 1 OR ({' AND '.join(preds)}))"
 
 
 def _scope_or_none() -> ReadFilters | None:
@@ -508,7 +502,7 @@ async def check_on_commit(
         rows = []
     else:
         rows = await _peer_rows(ch, params, scope)
-    if candidate_rows is None:  # a bulk caller's rows already hold the pinned ones
+    if candidate_rows is None:  # a bulk caller's rows carry its pinned arm already
         rows += await _foreign_pinned_rows(ch, params, scope, rows)
     if not rows:
         return ConflictResult(verdict="clear", peers=[])
