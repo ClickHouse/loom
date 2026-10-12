@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { sessionMemoryBody, sessionToolEchoes, structuredPieces, transcriptTurns } from "../lib/session-memory.mjs";
+import { journalTurns, parseJournal } from "../lib/turn-journal.mjs";
 
 const scope = { org: "o", namespace: "coding", agent: "claude-code", project: "loom", tags: ["project:loom"] };
 const objs = [
@@ -336,4 +337,45 @@ test("structuredPieces: whole when it fits, one piece per row when not", () => {
   assert.equal(structuredPieces({ a: 1 }).length, 1);
   const big = structuredPieces({ rows: Array.from({ length: 30 }, () => "y".repeat(500)), n: 30 });
   assert.equal(big.length, 31);
+});
+
+// A synthetic GitHub token: redactSecrets matches its shape.
+const GH_TOKEN = "ghp_" + "A1b2C3d4E5".repeat(3) + "F6g7H8";
+const GH_TAIL = GH_TOKEN.slice(4, 24); // what a clipped token would still leak
+
+test("SessionEnd body from a transcript carries no captured secret", () => {
+  const transcript = [
+    { type: "user", message: { content: `deploy with ${GH_TOKEN} please` } },
+    {
+      type: "assistant",
+      message: {
+        content: [
+          { type: "text", text: `Using ${GH_TOKEN} now.` },
+          { type: "tool_use", id: "t1", name: "mcp__loom__loom_memory_set", input: { value: `ci token ${GH_TOKEN}` } },
+        ],
+      },
+    },
+    { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: `stored ${GH_TOKEN}` }] } },
+  ];
+  const echoes = sessionToolEchoes(transcript);
+  assert.ok(echoes.values.length >= 2);
+  const body = sessionMemoryBody(scope, { session_id: "s1" }, transcriptTurns(transcript), { echoes });
+  const wire = JSON.stringify(body);
+  assert.ok(!wire.includes(GH_TAIL), wire);
+  assert.ok(wire.includes("[redacted]"));
+});
+
+test("SessionEnd body from the journal carries no captured secret, even at the clip edge", () => {
+  const pad = "x".repeat(40);
+  const rows = parseJournal(
+    [
+      JSON.stringify({ role: "user", content: `${pad} ${GH_TOKEN}`, at: "2026-09-12T10:00:00Z" }),
+      JSON.stringify({ role: "assistant", content: `ok, ${GH_TOKEN}`, at: "2026-09-12T10:00:01Z" }),
+    ].join("\n"),
+  );
+  // The clip falls inside the first turn's token: redacting after it would leak the tail.
+  const body = sessionMemoryBody(scope, { session_id: "s1" }, journalTurns(rows), { maxMessageChars: 80 });
+  const wire = JSON.stringify(body);
+  assert.ok(!wire.includes(GH_TAIL), wire);
+  assert.equal(body.messages.length, 2);
 });
