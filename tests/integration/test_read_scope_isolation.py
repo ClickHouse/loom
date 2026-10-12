@@ -699,9 +699,10 @@ def test_writes_aimed_at_vs_runs_threads_records_and_blobs_leave_them_alone(
 ) -> None:
     """W's token aims run.begin / run.complete at V's run, the conversation writes at V's
     thread, records and decisions at V's record key, procedure.record_run at V's
-    procedure, context.offload at V's blob, and a set / bulk_set at V's pinned fact. The
-    run moves start a new run or answer not-found; the others are refused; nothing
-    names V's pinned row (no rejected_pinned); V's rows read back unchanged."""
+    procedure, context.offload at V's blob, and a set / bulk_set next to V's pinned fact.
+    The run moves start a new run or answer not-found; the others are refused; the pinned
+    row still blocks the close write (a namespace-wide invariant) but no answer names it;
+    V's rows read back unchanged."""
     ns_tok, w_tok = tokens["namespace"], tokens["pinned_w"]
     tag = uuid.uuid4().hex[:8]
     tags = {
@@ -810,13 +811,17 @@ def test_writes_aimed_at_vs_runs_threads_records_and_blobs_leave_them_alone(
         if r.status_code != 403:
             bad[op] = (r.status_code, r.text[:200])
     probe = _post(control_plane_url, w_tok, "memory.set", {**w, **near, "dry_run": True})
-    if probe.status_code != 200 or probe.json().get("conflict_verdict") == "rejected":
+    if probe.status_code != 200 or probe.json().get("conflict_verdict") != "rejected":
         bad["memory.set near a pinned row"] = (probe.status_code, probe.text[:200])
     bulk = _post(control_plane_url, w_tok, "memory.bulk_set", {**w, "entries": [near]})
-    if bulk.status_code != 200 or bulk.json().get("rejected_pinned"):
+    if bulk.status_code != 200:
         bad["memory.bulk_set near a pinned row"] = (bulk.status_code, bulk.text[:200])
+    pinned_id = next(
+        i for i, row in _v_rows(ch_client, seed).items() if row[0] == f"pinned/{tag}"
+    )
     for name, r in (("run.begin", begun), ("run.complete", done), ("set", probe), ("bulk", bulk)):
-        if seed.nonce_v in r.text or "4417" in r.text:
+        named = [m for m in (seed.nonce_v, "4417", f"pinned/{tag}", pinned_id) if m and m in r.text]
+        if named:
             leaks[name] = r.text[:300]
 
     after = _v_ledgers(ch_client, seed, tags)

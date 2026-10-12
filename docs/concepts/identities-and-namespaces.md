@@ -203,9 +203,10 @@ than `namespace`:
 - A token pinned with `read_user_id` acts only as that user, on writes too: a body naming
   another `user_id` is refused with `AUTH_INSUFFICIENT` on every op, and a body that names
   none (or `-`) runs as the pinned user.
-- A write treats another user's row as absent: it is not merged into, marked as a
-  duplicate or conflict, or rejected by (even when pinned), the write's answer names no
-  such row, and `conflicts.list` drops such peers from `conflict_with`. `run.begin` with
+- A write's answer names no row outside the scope: a merge into, a duplicate of or a
+  pinned conflict with another user's row reports the verdict without that row's id,
+  hash or key, and `conflicts.list` drops such peers from `conflict_with`. A pinned row
+  still blocks a close write from any user (a namespace-wide invariant). `run.begin` with
   another user's `run_id` starts a new run under a fresh id, and `run.complete` on it
   answers `NOT_FOUND`.
 - Session briefs are kept per user (per session under `own_session`): two users saving
