@@ -249,6 +249,17 @@ def _no_repo_job_sandbox() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _no_quota_key() -> Iterator[None]:
+    """A test that verifies a bearer sets the ClickHouse quota key in this
+    context; clear it so the next test's queries carry none."""
+    from server.core import ch
+
+    ch.quota_key_var.set("")
+    yield
+    ch.quota_key_var.set("")
+
+
+@pytest.fixture(autouse=True)
 def _network_left_untouched() -> Iterator[None]:
     """Fail a test that tried to connect to or resolve a remote host."""
     _network_attempts.clear()
