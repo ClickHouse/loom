@@ -15,7 +15,15 @@
 // revises the brief (session.brief_save). The hook sends only the events
 // after its cursor, so each save carries one window of the session.
 
-import { commandText, contentText, envSwitch, extractFiles, normalizeToolName } from "./loom-client.mjs";
+import {
+  commandText,
+  contentText,
+  envSwitch,
+  extractFiles,
+  normalizeToolName,
+  redactSecrets,
+  resolveToken,
+} from "./loom-client.mjs";
 
 export const MAX_EVENTS = 3000;
 export const TEXT_MAX = 1500;
@@ -40,8 +48,12 @@ export function briefEnabled(env = process.env) {
   return envSwitch("LOOM_SESSION_BRIEF", true, env);
 }
 
+let token; // looked up once per hook run, not per clipped string
+
+// Every brief field passes through here, so it redacts before the cut.
 function clip(text, max = TEXT_MAX) {
-  const s = String(text || "")
+  token ??= resolveToken();
+  const s = redactSecrets(text || "", token)
     .replace(/\s+/g, " ")
     .trim();
   return s.length > max ? s.slice(0, max - 1) + "…" : s;

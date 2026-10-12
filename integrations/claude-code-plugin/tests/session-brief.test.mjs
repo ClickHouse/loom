@@ -534,3 +534,33 @@ test("the SessionStart pointer is opt-in: resuming is the person's call", () => 
   assert.equal(briefPrimerEnabled({ LOOM_SESSION_BRIEF_PRIMER: "on" }), true);
   assert.equal(briefPrimerEnabled({ LOOM_SESSION_BRIEF_PRIMER: "on", LOOM_SESSION_BRIEF: "off" }), false);
 });
+
+test("a brief carries no secret from a prompt, a command or an error", () => {
+  const secret = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
+  const events = transcriptEvents([
+    { type: "user", uuid: "u1", message: { role: "user", content: `push with ${secret} please` } },
+    {
+      type: "assistant",
+      uuid: "a1",
+      message: {
+        content: [
+          { type: "text", text: "Pushing now." },
+          {
+            type: "tool_use",
+            id: "t1",
+            name: "Bash",
+            input: { command: `curl -H "Authorization: token ${secret}" x` },
+          },
+        ],
+      },
+    },
+    {
+      type: "user",
+      uuid: "r1",
+      message: { content: [{ type: "tool_result", tool_use_id: "t1", is_error: true, content: `bad ${secret}` }] },
+    },
+  ]);
+  const body = JSON.stringify(briefBody({ org: "o", namespace: "n", agent: "a" }, { sessionId: "s", events }));
+  assert.ok(events.length >= 3, JSON.stringify(events));
+  assert.ok(!body.includes(secret.slice(4)), body);
+});
