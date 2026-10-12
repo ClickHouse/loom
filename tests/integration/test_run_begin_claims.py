@@ -7,8 +7,10 @@ begin by the owner keeps its id. A begin drops its claim once its row lands, so
 begins that are never completed leave no Keeper key, and the run's row still
 sends another user's begin to a fresh id.
 
-Needs a server whose ClickHouse has a Keeper (loom.agent_run_claims); skips
-without LOOM_BASE_URL (tests/integration/conftest.py).
+Without a Keeper (no loom.agent_run_claims) those tests skip, and the last one
+runs instead: a narrowed token's new supplied id is replaced by a server-made
+one, its own existing run keeps its id, and a namespace-wide token keeps it.
+Skips without LOOM_BASE_URL (tests/integration/conftest.py).
 """
 
 from __future__ import annotations
@@ -39,6 +41,19 @@ def _mint(org: str, ns: str, **claims: Any) -> str:
     )
 
 
+def _has_keeper(ch_client: Any) -> bool:
+    rows = ch_client.query(
+        "SELECT engine FROM system.tables WHERE database = 'loom' AND name = 'agent_run_claims'"
+    ).result_rows
+    return bool(rows) and rows[0][0] == "KeeperMap"
+
+
+@pytest.fixture
+def keeper(ch_client: Any) -> None:
+    if not _has_keeper(ch_client):
+        pytest.skip("needs loom.agent_run_claims (a ClickHouse Keeper)")
+
+
 async def _call(c: httpx.AsyncClient, token: str, op: str, body: dict[str, Any]) -> Any:
     r = await c.post(f"/v1/{op}", json=body, headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 200, f"{op}: {r.status_code} {r.text[:400]}"
@@ -46,7 +61,9 @@ async def _call(c: httpx.AsyncClient, token: str, op: str, body: dict[str, Any])
 
 
 @pytest.mark.asyncio
-async def test_concurrent_begins_on_one_run_id_keep_both_runs(control_plane_url: str) -> None:
+async def test_concurrent_begins_on_one_run_id_keep_both_runs(
+    control_plane_url: str, keeper: None
+) -> None:
     org, ns = unique_org("run-claims"), "run-claims"
     toks = {U: _mint(org, ns, read_user_id=U), V: _mint(org, ns, read_user_id=V)}
     wide = _mint(org, ns)
@@ -74,7 +91,9 @@ async def test_concurrent_begins_on_one_run_id_keep_both_runs(control_plane_url:
 
 
 @pytest.mark.asyncio
-async def test_the_owner_re_begins_its_run_under_the_same_id(control_plane_url: str) -> None:
+async def test_the_owner_re_begins_its_run_under_the_same_id(
+    control_plane_url: str, keeper: None
+) -> None:
     org, ns = unique_org("run-claims"), "run-claims"
     tok = _mint(org, ns, read_user_id=U)
     body = {"org": org, "namespace": ns, "agent": "a", "user_id": U, "run_id": "mine", "goal": "g"}
@@ -87,7 +106,7 @@ async def test_the_owner_re_begins_its_run_under_the_same_id(control_plane_url: 
 
 @pytest.mark.asyncio
 async def test_a_closed_run_drops_its_claim_and_still_refuses_another_user(
-    control_plane_url: str, ch_client: Any
+    control_plane_url: str, ch_client: Any, keeper: None
 ) -> None:
     org, ns = unique_org("run-claims"), "run-claims"
     u_tok, v_tok = _mint(org, ns, read_user_id=U), _mint(org, ns, read_user_id=V)
@@ -109,7 +128,7 @@ async def test_a_closed_run_drops_its_claim_and_still_refuses_another_user(
 
 @pytest.mark.asyncio
 async def test_begins_never_completed_leave_no_claims(
-    control_plane_url: str, ch_client: Any
+    control_plane_url: str, ch_client: Any, keeper: None
 ) -> None:
     org, ns = unique_org("run-claims"), "run-claims"
     tok = _mint(org, ns, read_user_id=U)
@@ -124,3 +143,42 @@ async def test_begins_never_completed_leave_no_claims(
         parameters={"org": org},
     ).result_rows[0][0]
     assert left == 0
+
+
+@pytest.mark.asyncio
+async def test_without_keeper_a_narrowed_new_supplied_id_is_replaced(
+    control_plane_url: str, ch_client: Any
+) -> None:
+    if _has_keeper(ch_client):
+        pytest.skip("needs a server without a Keeper")
+    org, ns = unique_org("run-claims"), "run-claims"
+    toks = {U: _mint(org, ns, read_user_id=U), V: _mint(org, ns, read_user_id=V)}
+    wide = _mint(org, ns)
+    ident = {"org": org, "namespace": ns, "agent": "a"}
+    async with httpx.AsyncClient(base_url=control_plane_url, timeout=60.0) as c:
+        for i in range(10):
+            run_id = f"shared-{i}-{uuid.uuid4().hex[:6]}"
+            outs = await asyncio.gather(
+                *(
+                    _call(
+                        c,
+                        toks[user],
+                        "run.begin",
+                        {**ident, "user_id": user, "run_id": run_id, "goal": f"{user} {i}"},
+                    )
+                    for user in (U, V)
+                )
+            )
+            ids = [o["run_id"] for o in outs]
+            assert run_id not in ids and len(set(ids)) == 2, ids
+            for rid, user in zip(ids, (U, V), strict=True):
+                got = await _call(c, wide, "run.get", {"org": org, "namespace": ns, "run_id": rid})
+                assert got["found"] and got["run"]["user_id"] == user, (i, user)
+        # U's run exists (opened namespace-wide): U re-opens it, V does not take it.
+        mine = {**ident, "user_id": U, "run_id": "mine", "goal": "u"}
+        assert (await _call(c, wide, "run.begin", mine))["run_id"] == "mine"
+        assert (await _call(c, toks[U], "run.begin", mine))["run_id"] == "mine"
+        other = await _call(c, toks[V], "run.begin", {**mine, "user_id": V, "goal": "v"})
+        assert other["run_id"] != "mine"
+        got = await _call(c, wide, "run.get", {"org": org, "namespace": ns, "run_id": "mine"})
+    assert got["run"]["user_id"] == U and got["run"]["goal"] == "u"

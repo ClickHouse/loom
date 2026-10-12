@@ -3,9 +3,10 @@
 Order: claim, read the row, write the row, drop the claim. Two begins by
 different users on one caller-supplied id are run here under every schedule
 of their ClickHouse calls: exactly one keeps the id, each row keeps its own
-owner, and no claim is left. Also: a server-made id is never claimed, a
-Keeper error falls back to the row check, and the boot probe fills the
-health flag. CH-free.
+owner, and no claim is left. Also: a server-made id is never claimed; with
+no Keeper (or a Keeper error) a narrowed caller keeps a supplied id only for
+its own existing run, a namespace-wide one falls back to the row check; and
+the boot probe fills the health flag. CH-free.
 """
 
 from __future__ import annotations
@@ -262,10 +263,28 @@ def test_a_failed_begin_keeps_its_claim_so_no_other_user_takes_the_id(ledger, mo
 
 class _BrokenKeeperCH(_KeeperCH):
     async def execute(self, sql: str, params: Any = None) -> None:
+        await self.sched.turn()
         raise RuntimeError("Code: 999. Coordination::Exception: Session expired")
 
 
+class _NoClaimsCH(_KeeperCH):
+    """A server without Keeper: no claims table, so nothing is ever claimed."""
+
+    async def query_one(self, sql: str, params: Any = None) -> Any:
+        assert "system.tables" in sql
+        return None
+
+    async def execute(self, sql: str, params: Any = None) -> None:
+        raise AssertionError("no claims table to write")
+
+
+_WIDE = AuthInfo(
+    subject="sa:bot", org="o", namespaces=("n",), roles=("writer",), is_service_account=True
+)
+
+
 def test_a_keeper_error_falls_back_to_the_row_check(ledger, monkeypatch, caplog) -> None:
+    """A namespace-wide caller keeps the supplied id, as before Keeper claims."""
     rows, state = ledger
     monkeypatch.setattr(runs_store, "_keeper_errors_logged", set())
     provider_health.reset()
@@ -273,7 +292,7 @@ def test_a_keeper_error_falls_back_to_the_row_check(ledger, monkeypatch, caplog)
     async def go() -> tuple[list[str], list[str]]:
         state["ch"] = _BrokenKeeperCH(_Schedule(""))
         degradations.begin()
-        _bind(_pinned("U"))
+        _bind(_WIDE)
         ids = [(await run_app.handle_run_begin(_input("U"))).run_id for _ in range(2)]
         return ids, degradations.current()
 
@@ -285,9 +304,60 @@ def test_a_keeper_error_falls_back_to_the_row_check(ledger, monkeypatch, caplog)
     assert "run_claims" not in provider_health.status().get("providers", {})
 
 
-_WIDE = AuthInfo(
-    subject="sa:bot", org="o", namespaces=("n",), roles=("writer",), is_service_account=True
-)
+_UNCLAIMED = [
+    pytest.param(_BrokenKeeperCH, id="keeper-error"),
+    pytest.param(_NoClaimsCH, id="no-keeper"),
+]
+
+
+@pytest.mark.parametrize("ch_type", _UNCLAIMED)
+def test_without_claims_two_narrowed_users_never_share_an_id(ledger, ch_type) -> None:
+    rows, state = ledger
+    for order in _SCHEDULES:
+        rows.clear()
+        runs_store._claims_atomic = None
+
+        async def both(order: str = order) -> list[str]:
+            sched = _Schedule(order)
+            state["ch"] = ch_type(sched)
+            return list(await asyncio.gather(_begin(sched, "A", "U"), _begin(sched, "B", "V")))
+
+        ids = contextvars.Context().run(lambda: asyncio.run(both()))
+        assert "shared" not in ids and len(set(ids)) == 2, (order, ids)
+        for run_id, user in zip(ids, ("U", "V"), strict=True):
+            assert rows[run_id]["user_id"] == user, (order, run_id)
+
+
+@pytest.mark.parametrize("ch_type", _UNCLAIMED)
+def test_without_claims_a_narrowed_user_reopens_its_own_run(ledger, ch_type) -> None:
+    """U's run already exists: U's re-begin keeps the id, V's racing begin does not."""
+    rows, state = ledger
+    for order in _SCHEDULES:
+        rows.clear()
+        rows["shared"] = {"run_id": "shared", "user_id": "U", "session_id": "-"}
+        runs_store._claims_atomic = None
+
+        async def both(order: str = order) -> list[str]:
+            sched = _Schedule(order)
+            state["ch"] = ch_type(sched)
+            return list(await asyncio.gather(_begin(sched, "A", "U"), _begin(sched, "B", "V")))
+
+        ids = contextvars.Context().run(lambda: asyncio.run(both()))
+        assert ids[0] == "shared" and ids[1] != "shared", (order, ids)
+        assert rows["shared"]["user_id"] == "U" and rows[ids[1]]["user_id"] == "V", order
+
+
+@pytest.mark.parametrize("ch_type", _UNCLAIMED)
+def test_without_claims_a_namespace_wide_caller_keeps_the_supplied_id(ledger, ch_type) -> None:
+    rows, state = ledger
+
+    async def go() -> str:
+        state["ch"] = ch_type(_Schedule(""))
+        _bind(_WIDE)
+        return (await run_app.handle_run_begin(_input("U"))).run_id
+
+    assert contextvars.Context().run(lambda: asyncio.run(go())) == "shared"
+    assert rows["shared"]["user_id"] == "U"
 
 
 @pytest.mark.parametrize(("auth", "user"), [(_pinned("U"), "U"), (_WIDE, "-")])

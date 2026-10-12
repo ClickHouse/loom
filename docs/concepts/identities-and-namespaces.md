@@ -218,7 +218,10 @@ than `namespace`:
   (`loom.agent_run_claims`) and releases the claim once its run row is written, so of
   two users' concurrent begins on one id exactly one keeps it. A begin that fails before
   its row keeps the claim, so no other user's begin can take the id. A server without
-  a Keeper only checks the run row, and `/v1/health` lists `run_claims_not_atomic`.
+  a Keeper (or while Keeper fails) only checks the run row, and `/v1/health` lists
+  `run_claims_not_atomic`; there a narrowed token keeps a supplied id only to re-open
+  its own existing run, and a new one gets a server-made id, so a client that makes
+  the id itself must use the returned `run_id`.
 - Session briefs are kept per user (per session under `own_session`): two users saving
   the same `brief_key` get two briefs, each sees only its own, and a namespace-wide
   token lists them under keys prefixed `~<user>~` (or `~<user>~<session>~`).
