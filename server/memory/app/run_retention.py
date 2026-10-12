@@ -79,8 +79,13 @@ async def load_run_rows(
     Locked rows are excluded in SQL (the lock refuses the value / expiry
     write) and count as retained by the caller."""
 
+    from server.identity.domain.read_scope import scope_and
+    from server.memory.app.provenance import request_scope
     from server.memory.domain.lock import locked_predicate
 
+    params: dict[str, Any] = {"org": org, "ns": namespace, "rid": run_id, "lim": int(limit)}
+    # A run id is the caller's word: only rows inside its read scope are retained.
+    in_scope = scope_and(request_scope(), params)
     rows: list[dict[str, Any]] = await ch.query_all(
         f"""
         SELECT toString(memory_id) AS memory_id, memory_key, memory_type, agent, user_id,
@@ -88,11 +93,11 @@ async def load_run_rows(
                {locked_predicate()} AS locked
         FROM loom.memory FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
-          AND run_id = {{rid:String}} AND tombstoned_at IS NULL
+          AND run_id = {{rid:String}} AND tombstoned_at IS NULL{in_scope}
         ORDER BY memory_key
         LIMIT {{lim:UInt32}}
         """,
-        params={"org": org, "ns": namespace, "rid": run_id, "lim": int(limit)},
+        params=params,
     )
     return rows
 

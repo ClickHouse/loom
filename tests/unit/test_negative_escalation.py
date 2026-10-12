@@ -6,8 +6,23 @@ stub CH; the threshold is a settings knob (default 0 = off)."""
 
 from __future__ import annotations
 
+import pytest
+
 import server.memory.app.ops as ops
 from server.memory.api.models_temporal import MemoryOutcomeInput
+
+
+@pytest.fixture(autouse=True)
+def _row(monkeypatch):
+    """The outcome resolves its row before it counts anything."""
+    from types import SimpleNamespace
+
+    import server.memory.store as memory_repo
+
+    async def get_by_id(memory_id, **kw):
+        return SimpleNamespace(memory_id=memory_id, namespace="n")
+
+    monkeypatch.setattr(memory_repo, "get_by_id", get_by_id)
 
 
 class _StubCH:

@@ -20,7 +20,7 @@ from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.embedding import get_embedder
-from server.identity.domain.read_scope import WHOLE_NAMESPACE, request_read_filters
+from server.identity.domain.read_scope import request_read_filters
 from server.memory.api.models_crud import (
     MemoryClearInput,
     MemoryClearOutput,
@@ -39,6 +39,7 @@ from server.memory.api.models_crud import (
     MemoryUnpinOutput,
 )
 from server.memory.app import conflict_deferred as _cd
+from server.memory.app.provenance import request_scope
 from server.memory.app.write import handle_memory_set
 from server.memory.domain import lock as _lock
 from server.memory.domain import trust as _trust
@@ -139,7 +140,7 @@ async def _fetch_relevant_existing_memories(
         user_id=identity.user_id,
         session_id="*",
     )
-    rows = await memory_repo.get_many_by_keys(any_session, hit_keys, scope=WHOLE_NAMESPACE)
+    rows = await memory_repo.get_many_by_keys(any_session, hit_keys, scope=request_scope())
     by_key = {r.memory_key: r for r in rows}
     out: list[dict[str, str]] = []
     for h in hits:
@@ -524,7 +525,7 @@ async def handle_memory_unpin(input: MemoryUnpinInput) -> MemoryUnpinOutput:
         session_id=input.session_id,
     )
     existing = await memory_repo.get_by_key(
-        identity, input.memory_key, fresh=True, strong=True, scope=WHOLE_NAMESPACE
+        identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
     )
     if existing is None and identity.agent != "*":
         wide = memory_repo.Identity(
@@ -535,7 +536,7 @@ async def handle_memory_unpin(input: MemoryUnpinInput) -> MemoryUnpinOutput:
             session_id=input.session_id,
         )
         existing = await memory_repo.get_by_key(
-            wide, input.memory_key, fresh=True, strong=True, scope=WHOLE_NAMESPACE
+            wide, input.memory_key, fresh=True, strong=True, scope=request_scope()
         )
         if existing is not None and not same_user(existing, identity):
             existing = None
@@ -585,7 +586,7 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     with traced("ch.query.memory.precheck", op="tombstone_lookup"):
         # fresh: a delete right after a set must not no-op on a replica lag miss.
         existing = await memory_repo.get_by_key(
-            identity, input.memory_key, fresh=True, strong=True, scope=WHOLE_NAMESPACE
+            identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
         )
     if existing is None and identity.agent != "*":
         # A delete names a key, not the identity that wrote it (hooks write under their own
@@ -599,7 +600,7 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
             session_id=input.session_id,
         )
         existing = await memory_repo.get_by_key(
-            wide, input.memory_key, fresh=True, strong=True, scope=WHOLE_NAMESPACE
+            wide, input.memory_key, fresh=True, strong=True, scope=request_scope()
         )
         if existing is not None and not same_user(existing, identity):
             existing = None  # the wide form ignores user_id; another user's row is not ours
@@ -763,7 +764,7 @@ async def handle_memory_touch(input: MemoryTouchInput) -> MemoryTouchOutput:
     if input.memory_keys:
         wanted = list(dict.fromkeys(k for k in input.memory_keys if k))
         rows = await memory_repo.get_many_by_keys(
-            ident, wanted, ch=ch, strong=True, scope=WHOLE_NAMESPACE
+            ident, wanted, ch=ch, strong=True, scope=request_scope()
         )
     else:
         wanted = [input.memory_key]
@@ -772,7 +773,7 @@ async def handle_memory_touch(input: MemoryTouchInput) -> MemoryTouchOutput:
             input.memory_key,
             fresh=True,  # touch follows set
             strong=True,  # the head feeds a write
-            scope=WHOLE_NAMESPACE,
+            scope=request_scope(),
         )
         rows = [one] if one is not None else []
     by_key = {r.memory_key: r for r in rows}

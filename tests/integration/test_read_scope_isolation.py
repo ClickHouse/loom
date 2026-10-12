@@ -3,7 +3,7 @@
 Users U and V write into the SAME namespace: facts (one key both hold, the
 rest V's alone, across two sessions), raw turns through set_from_messages
 (the same session id for both), an entity both rows name, a profile section, a session brief, a working-memory block and a procedure. V's rows
-carry a nonce. A token minted with `read_user_id=U` then drives every op the
+carry a nonce (each fact row its own, all starting with V's). A token minted with `read_user_id=U` then drives every op the
 registry holds:
 
 * an op in `SCOPED_OPS` answers, and no answer carries V's nonce;
@@ -11,8 +11,9 @@ registry holds:
 * every other op that does not return memory-free data is refused (403), so
   the entity graph, conversations and exports never answer such a token;
 * every write a bounded token may call, aimed at V's keys, ids and brief by a
-  token pinned to a third user W, answers without V's nonce and leaves V's
-  rows as they were.
+  token pinned to a third user W, answers without V's nonce and leaves each
+  of V's rows (value, lifecycle, lock, version) and its usage counters as
+  they were.
 
 An op the walks cannot build a body for fails the test unless `_UNBUILDABLE`
 names it with the reason.
@@ -101,7 +102,7 @@ def _seed_user(base: str, tok: str, s: _Seed, user: str, nonce: str) -> list[str
                 **ident,
                 "session_id": session,
                 "memory_key": f"canary/{user}/{i}",
-                "value": f"{s.entity} keeps the vault code {nonce} in drawer {i}",
+                "value": f"{s.entity} keeps the vault code {nonce}r{i} in drawer {i}",
                 "tags": ["canary"],
                 "entities": [s.entity],
             },
@@ -118,7 +119,7 @@ def _seed_user(base: str, tok: str, s: _Seed, user: str, nonce: str) -> list[str
             "agent": "a",
             "user_id": user,
             "memory_key": "canary/shared",
-            "value": f"the shared key holds {nonce}",
+            "value": f"the shared key holds {nonce}rs",
             "entities": [s.entity],
             "tags": ["canary"],
         },
@@ -394,14 +395,118 @@ def test_ops_that_cannot_bound_their_answer_are_refused(
     assert set(unbuildable) <= set(_UNBUILDABLE), unbuildable
 
 
+def _v_rows(ch: Any, seed: _Seed) -> dict[str, tuple[Any, ...]]:
+    """Each of V's memory rows by id: value, lifecycle, lock and version."""
+    rows = ch.query(
+        """
+        SELECT toString(memory_id), memory_key, session_id, value, toString(tombstoned_at),
+               status, lock_mode, lock_reason, toString(lock_until), locked_by, version
+        FROM loom.memory FINAL
+        WHERE org = {org:String} AND namespace = {ns:String} AND user_id = {uid:String}
+        """,
+        parameters={"org": seed.org, "ns": seed.ns, "uid": V},
+    ).result_rows
+    return {str(r[0]): tuple(r[1:]) for r in rows}
+
+
+def _v_usage(ch: Any, seed: _Seed, ids: list[str]) -> dict[tuple[str, str], int]:
+    """The usage counters an outcome moves, per (memory_id, event type)."""
+    rows = ch.query(
+        """
+        SELECT toString(memory_id), event_type, sum(event_count)
+        FROM loom.memory_usage_events
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND toString(memory_id) IN {ids:Array(String)}
+          AND event_type IN ('evidence', 'used', 'harm', 'rejection')
+        GROUP BY 1, 2
+        """,
+        parameters={"org": seed.org, "ns": seed.ns, "ids": ids},
+    ).result_rows
+    return {(str(r[0]), str(r[1])): int(r[2]) for r in rows}
+
+
+def _attack_moves(seed: _Seed) -> list[tuple[str, dict[str, Any]]]:
+    """Writes aimed at each of V's facts by key (with the `*` agent) and by id."""
+    w = {"org": seed.org, "namespace": seed.ns, "agent": "*", "user_id": "-"}
+    moves: list[tuple[str, dict[str, Any]]] = []
+    for key, mid in zip(seed.keys_v, seed.memory_ids_v, strict=True):
+        moves += [
+            ("memory.delete", {**w, "memory_key": key}),
+            ("memory.lock", {**w, "memory_key": key, "mode": "read_only", "reason": "probe"}),
+            ("memory.touch", {**w, "memory_key": key, "ttl_seconds": 60}),
+            ("memory.outcome", {**w, "memory_key": key, "outcome": "negative", "weight": 100}),
+            ("memory.outcome", {**w, "memory_key": key, "outcome": "positive", "weight": 100}),
+            ("memory.outcome", {**w, "memory_id": mid, "outcome": "negative", "weight": 100}),
+            ("memory.outcome", {**w, "memory_id": mid, "outcome": "positive", "weight": 100}),
+        ]
+    return moves
+
+
 def test_writes_aimed_at_vs_rows_never_answer_or_change_them(
-    control_plane_url: str, seed: _Seed, tokens: dict[str, str]
+    control_plane_url: str, seed: _Seed, tokens: dict[str, str], ch_client: Any
 ) -> None:
     """A token pinned to W (who holds nothing) sends every write a bounded token may
-    call at V's keys, ids and brief. No answer carries V's nonce, a refusal is a 409 or
-    a 423 (W's own lock) at most, and V's rows read back unchanged afterwards."""
+    call at V's keys, ids and brief, plus a delete, lock, touch and outcome (by key and
+    by id) and an if_match probe at each of V's facts. No answer carries V's nonce or
+    hash, a refusal is a 409 or a 423 (W's own lock) at most, and each of V's rows and
+    its usage counters read back unchanged afterwards."""
+    ns_tok, w_tok = tokens["namespace"], tokens["pinned_w"]
+    shas: list[str] = []
+    for key, session in zip(seed.keys_v, ("sess-1", "sess-2", "-"), strict=True):
+        got = _write(
+            control_plane_url,
+            ns_tok,
+            "memory.get",
+            {
+                "org": seed.org,
+                "namespace": seed.ns,
+                "agent": "a",
+                "user_id": V,
+                "session_id": session,
+                "memory_key": key,
+            },
+        )
+        assert got.get("content_sha256"), got
+        shas.append(got["content_sha256"])
+    ids = list(seed.memory_ids_v)
+
+    # Settle first: a write's own follow-ups (entity re-emits) may still bump a version.
+    def _stable() -> tuple[dict[str, tuple[Any, ...]], dict[tuple[str, str], int]] | None:
+        first = (_v_rows(ch_client, seed), _v_usage(ch_client, seed, ids))
+        return (
+            first if first == (_v_rows(ch_client, seed), _v_usage(ch_client, seed, ids)) else None
+        )
+
+    rows_before, usage_before = wait_until(_stable, max_wait=30.0, description="V's rows to settle")
+    assert set(ids) <= set(rows_before), "V's facts are missing before the walk"
+    assert len({rows_before[i][2] for i in ids}) == len(ids), "each fact needs its own nonce"
+
     leaks: dict[str, str] = {}
     bad: dict[str, int] = {}
+    for op, body in _attack_moves(seed):
+        r = _post(control_plane_url, w_tok, op, body)
+        if r.status_code not in {200, 404}:
+            bad[f"{op} {body}"] = r.status_code
+        if seed.nonce_v in r.text:
+            leaks[op] = r.text[:300]
+        if op == "memory.outcome" and r.json().get("recorded") is not False:
+            bad[f"{op} {body} recorded"] = r.status_code
+    for key in seed.keys_v:
+        probe = {
+            "org": seed.org,
+            "namespace": seed.ns,
+            "agent": "*",
+            "user_id": "-",
+            "memory_key": key,
+            "value": "probe",
+            "if_match_sha256": "0" * 64,
+        }
+        r = _post(control_plane_url, w_tok, "memory.set", probe)
+        if r.status_code != 409:
+            bad[f"if_match on {key}"] = r.status_code
+        if any(sha in r.text for sha in shas):
+            leaks[f"if_match on {key}"] = r.text[:300]
+
     unbuildable: list[str] = []
     walked: set[str] = set()
     for op in _bounded_writes():
@@ -409,7 +514,7 @@ def test_writes_aimed_at_vs_rows_never_answer_or_change_them(
         if body is None:
             unbuildable.append(op.name)
             continue
-        r = _post(control_plane_url, tokens["pinned_w"], op.name, body)
+        r = _post(control_plane_url, w_tok, op.name, body)
         if r.status_code == 422:
             unbuildable.append(op.name)
             continue
@@ -418,17 +523,33 @@ def test_writes_aimed_at_vs_rows_never_answer_or_change_them(
             bad[op.name] = r.status_code
         if seed.nonce_v in r.text:
             leaks[op.name] = r.text[:300]
-    assert not leaks, f"V's canary reached W's token: {leaks}"
-    assert not bad, f"unexpected statuses: {bad}"
+
+    rows_after = _v_rows(ch_client, seed)
+    changed = {
+        i: (rows_before.get(i), rows_after.get(i))
+        for i in rows_before.keys() | rows_after.keys()
+        if rows_before.get(i) != rows_after.get(i)
+    }
+    assert not changed, f"V's rows changed: {changed}"
+    usage_after = _v_usage(ch_client, seed, ids)
+    assert usage_after == usage_before, f"V's usage moved: {usage_before} -> {usage_after}"
+    assert not leaks, f"V's canary or hash reached W's token: {leaks}"
+    assert not bad, f"unexpected answers: {bad}"
     assert set(unbuildable) <= set(_UNBUILDABLE), unbuildable
     assert {"session.brief_save", "session.brief_delete", "memory.set"} <= walked
-    ident = {"org": seed.org, "namespace": seed.ns, "agent": "*", "user_id": "*"}
-    for op, body in [
-        ("memory.list", {**ident, "session_id": "*"}),
-        ("session.brief_get", {**ident, "brief_key": f"{seed.brief_key}-{V}"}),
-    ]:
-        r = _post(control_plane_url, tokens["namespace"], op, body)
-        assert r.status_code == 200 and seed.nonce_v in r.text, f"{op}: {r.text[:300]}"
+    r = _post(
+        control_plane_url,
+        ns_tok,
+        "session.brief_get",
+        {
+            "org": seed.org,
+            "namespace": seed.ns,
+            "agent": "*",
+            "user_id": "*",
+            "brief_key": f"{seed.brief_key}-{V}",
+        },
+    )
+    assert r.status_code == 200 and seed.nonce_v in r.text, f"brief: {r.text[:300]}"
 
 
 def test_pinned_users_keep_their_own_brief_under_one_key(

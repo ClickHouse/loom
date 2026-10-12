@@ -20,13 +20,13 @@ from fastapi import HTTPException
 from server.auth.context import current_auth
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now, to_naive_utc
-from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_lock import (
     MemoryLockInput,
     MemoryLockOutput,
     MemoryUnlockInput,
     MemoryUnlockOutput,
 )
+from server.memory.app.provenance import request_scope
 from server.memory.domain import lock as _lock
 from server.memory.domain import trust as _trust
 from server.memory.store.inserts import insert_memory_versions
@@ -57,7 +57,7 @@ async def _head(input: MemoryLockInput | MemoryUnlockInput) -> MemoryRow | None:
         input.memory_key,
         fresh=True,  # a lock follows a set; a replica-lag miss is not 'not found'
         strong=True,  # a lock built on a stale head erases a newer write
-        scope=WHOLE_NAMESPACE,
+        scope=request_scope(),
     )
 
 

@@ -15,7 +15,6 @@ from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value as _content_sha256
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
-from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_crud import (
     MemorySetInput,
     MemorySetOutput,
@@ -290,7 +289,7 @@ async def _set_fetch_existing(input: MemorySetInput) -> tuple[Any, Any]:
             memory_key=input.memory_key,
             fresh=True,
             strong=True,  # the guard sees the latest version
-            scope=WHOLE_NAMESPACE,
+            scope=app_provenance.request_scope(),
         )
     return _cfg_task, existing
 
@@ -457,7 +456,7 @@ async def _set_check_if_match(w: _SetWrite) -> None:
             # replica returning the previous version would pass a stale hash
             # and let a read-modify-write land twice.
             strong=True,
-            scope=WHOLE_NAMESPACE,
+            scope=app_provenance.request_scope(),
         )
         current_sha = (
             _content_sha256_of_stored(json.dumps(existing.value, default=str))

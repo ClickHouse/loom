@@ -14,6 +14,7 @@ from server.core.ch import get_client
 from server.core.hashing import hash_text
 from server.core.hashing import sha256_value as _content_sha256
 from server.embedding import get_embedder
+from server.identity.domain.read_scope import scope_and
 from server.memory.api.models_bulk import (
     MemoryBulkSetInput,
     MemoryBulkSetOutput,
@@ -38,7 +39,7 @@ from server.memory.app.projections import (
     write_entity_triples,
     write_entity_vectors,
 )
-from server.memory.app.provenance import writer_actor
+from server.memory.app.provenance import request_scope, writer_actor
 
 if TYPE_CHECKING:
     from server.memory.app.search.clock import StageClock
@@ -123,29 +124,32 @@ async def _bulk_identity_dupes(ch: Any, input: MemoryBulkSetInput) -> dict[str, 
     if _dedup_scope == "identity" and input.entries:
         try:
             _shas = sorted({_content_sha256(entry.value) for entry in input.entries})
+            params: dict[str, Any] = {
+                "org": input.org,
+                "ns": input.namespace,
+                "agent": input.agent,
+                "uid": input.user_id,
+                "shas": _shas,
+            }
+            # Under own_session the keeper must be in the caller's session too.
+            in_scope = scope_and(request_scope(), params)
             _rows = await ch.query_all(
-                """
+                f"""
                 SELECT content_sha256, memory_key,
                        toString(argMax(memory_id, version)) AS memory_id
                 FROM loom.memory
-                WHERE org = {org:String}
-                  AND namespace = {ns:String}
-                  AND agent = {agent:String}
-                  AND user_id = {uid:String}
-                  AND content_sha256 IN {shas:Array(String)}
+                WHERE org = {{org:String}}
+                  AND namespace = {{ns:String}}
+                  AND agent = {{agent:String}}
+                  AND user_id = {{uid:String}}
+                  AND content_sha256 IN {{shas:Array(String)}}{in_scope}
                 GROUP BY content_sha256, memory_key
                 HAVING argMax(tombstoned_at IS NULL, version) = 1
                    AND argMax(status, version) IN ('active', 'duplicate', 'conflicted')
                 ORDER BY content_sha256, memory_key
                 SETTINGS select_sequential_consistency = 1
                 """,
-                params={
-                    "org": input.org,
-                    "ns": input.namespace,
-                    "agent": input.agent,
-                    "uid": input.user_id,
-                    "shas": _shas,
-                },
+                params=params,
             )
             for _r in _rows:
                 identity_dupes.setdefault(

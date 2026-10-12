@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from server.core.ch import sequential_reads
+from server.identity.domain.read_scope import ReadFilters, scope_and
 from server.tasks.store.rows import RunLedgerRow
 
 # Cap on the keys a derived read returns.
@@ -207,21 +208,25 @@ async def session_cost(ch: Any, org: str, ns: str, session_id: str) -> tuple[int
     return int(row.get("turns") or 0), round(float(row.get("cost") or 0.0), 6)
 
 
-async def live_memories_by_key(ch: Any, org: str, ns: str, keys: list[str]) -> list[dict[str, Any]]:
-    """One row per live memory_key of `keys`: its newest memory_id (as
-    `memory_id`), memory_type, agent, user_id and session_id. A key is shared
+async def live_memories_by_key(
+    ch: Any, org: str, ns: str, keys: list[str], *, scope: ReadFilters
+) -> list[dict[str, Any]]:
+    """One row per live memory_key of `keys` inside `scope`: its newest memory_id
+    (as `memory_id`), memory_type, agent, user_id and session_id. A key is shared
     by every session's copy of the fact, and a run's credit is one use."""
+    params: dict[str, Any] = {"org": org, "ns": ns, "keys": keys}
+    in_scope = scope_and(scope, params)
     rows: list[dict[str, Any]] = await ch.query_all(
-        """
+        f"""
         SELECT argMax(toString(memory_id), updated_at) AS mid, memory_key,
                any(memory_type) AS memory_type, any(agent) AS agent,
                any(user_id) AS user_id, any(session_id) AS session_id
         FROM loom.memory FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND memory_key IN {keys:Array(String)} AND tombstoned_at IS NULL
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND memory_key IN {{keys:Array(String)}} AND tombstoned_at IS NULL{in_scope}
         GROUP BY memory_key
         """,
-        params={"org": org, "ns": ns, "keys": keys},
+        params=params,
     )
     # `AS mid`, not `AS memory_id`: a same-named alias shadows the column in WHERE.
     for r in rows:

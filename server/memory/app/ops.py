@@ -34,6 +34,7 @@ from server.memory.api.models_temporal import (
     MemoryOutcomeRunInput,
     MemoryOutcomeRunOutput,
 )
+from server.memory.app.provenance import request_scope
 
 log = logging.getLogger(__name__)
 
@@ -83,11 +84,16 @@ async def handle_memory_outcome(input: MemoryOutcomeInput) -> MemoryOutcomeOutpu
     from server.core.ch import get_client
 
     ch = get_client()
-    # Resolve memory_key → memory_id when the caller addressed the row by key.
-    memory_id = input.memory_id
-    if not memory_id:
-        if not input.memory_key:
-            return MemoryOutcomeOutput(recorded=False, evidence_count_after=0)
+    # Resolve the row first, by key or by id, under the request's scope: a row
+    # outside it (or in another namespace) answers like a missing one, before
+    # any counter is read or written.
+    if input.memory_id:
+        row = await memory_repo.get_by_id(
+            input.memory_id, org=input.org, fresh=True, scope=request_scope()
+        )
+        if row is not None and row.namespace != input.namespace:
+            row = None
+    elif input.memory_key:
         ident = memory_repo.Identity(
             org=input.org,
             namespace=input.namespace,
@@ -96,11 +102,13 @@ async def handle_memory_outcome(input: MemoryOutcomeInput) -> MemoryOutcomeOutpu
             session_id="-",
         )
         row = await memory_repo.get_by_key(
-            ident, input.memory_key, fresh=True, scope=WHOLE_NAMESPACE
+            ident, input.memory_key, fresh=True, scope=request_scope()
         )
-        if row is None:
-            return MemoryOutcomeOutput(recorded=False, evidence_count_after=0)
-        memory_id = str(row.memory_id)
+    else:
+        row = None
+    if row is None:
+        return MemoryOutcomeOutput(recorded=False, evidence_count_after=0)
+    memory_id = str(row.memory_id)
 
     if input.outcome in ("positive", "used"):
         try:

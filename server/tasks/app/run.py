@@ -22,8 +22,9 @@ from typing import Any
 
 from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now as _now
-from server.core.errors import NotFoundError
+from server.core.errors import AuthInsufficientError, IdentityIncompleteError, NotFoundError
 from server.memory.app import run_feedback, run_retention
+from server.memory.app.provenance import request_scope
 from server.operations.read_projection import project_rows
 from server.tasks.api.models_run import (
     RunBeginInput,
@@ -222,7 +223,16 @@ async def _credit_used(
     used_applied = 0
     evidence_applied = 0
     harm_applied = 0
-    id_rows = await runs_store.live_memories_by_key(ch, input.org, input.namespace, used_keys)
+    # Only rows inside the caller's read scope take credit: a token bounded to one
+    # user never moves another user's counters. A scope that does not resolve
+    # credits nothing (the close itself still lands).
+    try:
+        scope = request_scope()
+    except (AuthInsufficientError, IdentityIncompleteError):
+        return _UsageCredit(used_keys=[], id_rows=[])
+    id_rows = await runs_store.live_memories_by_key(
+        ch, input.org, input.namespace, used_keys, scope=scope
+    )
     # The row records what the agent relied on among memories that exist;
     # a key that resolves to nothing is reported (used_applied) but not
     # kept, so the ledger never points at a memory that is not there.
