@@ -167,10 +167,14 @@ def _doctor_otel_erasure_index_check(settings: Any) -> tuple[str, str, str]:
 _GRADE_BY_SEVERITY = {"error": FAIL, "warn": WARN, "info": PASS}
 
 
+_READER_NOT_PROBED = "reader user not probed: loom.memory missing"
+
+
 def _doctor_reader_probe(settings: Any) -> tuple[bool | None, str]:
     """Whether ClickHouse accepts the boot probe's read as LOOM_CH_READER_USER,
     under the caller-shaped caps, and its error text when not; None when it is
-    unset or ClickHouse does not answer (`clickhouse_reachable` says so)."""
+    unset or ClickHouse does not answer (`clickhouse_reachable` says so), or,
+    with `_READER_NOT_PROBED`, before migrations created loom.memory."""
     import httpx
 
     from server.core.ch import (
@@ -194,7 +198,7 @@ def _doctor_reader_probe(settings: Any) -> tuple[bool | None, str]:
         return None, ""
     if r.status_code != 200:
         if error_code(r.text) in BEFORE_MIGRATIONS_CODES:
-            return None, ""  # no loom.memory yet: migrations have not run, nothing to probe
+            return None, _READER_NOT_PROBED
         return False, r.text.strip()
     return r.text.split("\t")[0] == settings.ch_reader_user, ""
 
@@ -205,11 +209,11 @@ def _doctor_problems() -> list[Any]:
     settings do not load (the `settings_load` check already says so)."""
     try:
         from server.code.app.index.sandbox import sandbox_available
-        from server.observability.problems import HealthState, collect_problems
+        from server.observability.problems import HealthState, Problem, collect_problems
         from server.settings import settings
 
         reader_ok, reader_error = _doctor_reader_probe(settings)
-        return collect_problems(
+        problems = collect_problems(
             settings,
             HealthState(
                 repo_sandbox=sandbox_available(),
@@ -217,6 +221,11 @@ def _doctor_problems() -> list[Any]:
                 ch_reader_error=reader_error,
             ),
         )
+        if reader_error == _READER_NOT_PROBED:
+            problems.append(
+                Problem("ch_reader_user_not_probed", "info", reader_error, "run `loom migrate`.")
+            )
+        return problems
     except Exception:  # noqa: BLE001 — a doctor line must never crash the doctor
         return []
 
