@@ -463,16 +463,10 @@ def _memory_read_narrowed() -> bool:
     or session, so such an ask neither reads nor writes it, even when the memory
     namespace is public: the token's narrower ceiling still applies."""
     from server.auth.context import current_auth
-    from server.core.errors import AuthInsufficientError, IdentityIncompleteError
-    from server.identity.domain.read_scope import request_read_filters
+    from server.identity.domain.read_scope import request_read_narrowed
     from server.settings import settings as _s
 
-    if not _s.code_ask_memory_namespace.strip():
-        return False
-    try:
-        return request_read_filters(current_auth()).narrowed
-    except (AuthInsufficientError, IdentityIncompleteError):
-        return True  # an unresolved narrowed scope: fail closed
+    return bool(_s.code_ask_memory_namespace.strip()) and request_read_narrowed(current_auth())
 
 
 async def _memory_context_cacheable() -> bool:

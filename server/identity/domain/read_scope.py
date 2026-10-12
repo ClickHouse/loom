@@ -184,6 +184,15 @@ def request_read_filters(auth: Any) -> ReadFilters:
     return resolve_read_filters(requested=None, user_id=None, session_id=None, auth=auth)
 
 
+def request_read_narrowed(auth: Any) -> bool:
+    """Whether this request reads below the whole namespace. A scope that does
+    not resolve counts as narrowed (fail closed)."""
+    try:
+        return request_read_filters(auth).narrowed
+    except (AuthInsufficientError, IdentityIncompleteError):
+        return True
+
+
 def pin_read_filters[M: BaseModel](input: M, auth: Any) -> tuple[M, bool]:
     """`input` with `resolve_read_filters`' predicates pinned on its
     `user_id` / `session_id` / `read_scope`, and whether pinning changed
@@ -258,13 +267,9 @@ _CODE_INDEX = "the code index: repository content, no user's memory"
 # code.search, code.symbol), so a new one stays refused until someone
 # classifies it.
 NO_MEMORY_CONTENT: dict[str, str] = {
-    # The shared answer cache has no user or session in its key
-    # (`server.code.app.answers._memory_read_narrowed`).
-    "code.ask": (
-        "code answers; memory enrichment searches under the caller's scope, and a caller "
-        "whose memory read is narrowed neither reads nor writes the shared answer cache, "
-        "even when the memory namespace is public"
-    ),
+    # Memory enrichment searches under the caller's scope. The shared answer cache
+    # has no user or session in its key, so a narrowed caller skips it (answers.ask).
+    "code.ask": "code answers; memory excerpts read under the caller's scope",
     "code.backport_gap": _CODE_INDEX,
     "code.backport_gaps": _CODE_INDEX,
     "code.bisect_candidates": _CODE_INDEX,

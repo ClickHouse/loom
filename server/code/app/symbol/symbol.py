@@ -44,8 +44,7 @@ from server.code.app.symbol.resolve import (
 )
 from server.code.app.symbol.uses import _mention_leg, _symbol_uses
 from server.code.store.index import CodeRepo
-from server.core.errors import AuthInsufficientError, IdentityIncompleteError
-from server.identity.domain.read_scope import request_read_filters
+from server.identity.domain.read_scope import request_read_narrowed
 from server.observability.budget_shape import note_budget_shape
 from server.settings import settings
 
@@ -257,15 +256,6 @@ def _unit_with_body(
     return u
 
 
-def _read_scope_narrowed() -> bool:
-    """Whether this request's token reads below the whole namespace. Lessons
-    are memory rows of every user, so such a token gets none."""
-    try:
-        return request_read_filters(current_auth()).narrowed
-    except (AuthInsufficientError, IdentityIncompleteError):
-        return True
-
-
 async def _enrichment(
     repo: CodeRepo, org: str, ns: str, input: CodeSymbolInput, head: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -286,7 +276,7 @@ async def _enrichment(
 
     async def lessons() -> list[dict[str, Any]]:
         lesson_nss = [s.strip() for s in settings.code_lesson_namespaces.split(",") if s.strip()]
-        if not lesson_nss or _read_scope_narrowed():
+        if not lesson_nss or request_read_narrowed(current_auth()):
             return []  # no lesson namespaces, or a token that may not read every user's lessons
         return await code_enrich.lessons_for_symbol(
             org,

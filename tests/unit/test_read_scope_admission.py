@@ -660,14 +660,15 @@ async def test_conflicts_list_drops_peers_outside_the_scope() -> None:
 
 
 def test_code_symbol_attaches_no_lessons_under_a_narrowed_scope() -> None:
-    from server.code.app.symbol.symbol import _read_scope_narrowed
+    from server.auth.context import current_auth
+    from server.identity.domain.read_scope import request_read_narrowed
 
     _bind(PINNED, U1)
-    assert _read_scope_narrowed()
+    assert request_read_narrowed(current_auth())
     _bind(PINNED, AuthInsufficientError("pinned to u1"))
-    assert _read_scope_narrowed()
+    assert request_read_narrowed(current_auth())
     _bind(None, WHOLE_NAMESPACE)
-    assert not _read_scope_narrowed()
+    assert not request_read_narrowed(current_auth())
 
 
 def _candidate(mid: str, uid: str, value: str, *, pinned: bool = False) -> dict[str, Any]:
@@ -728,4 +729,3 @@ def test_every_code_op_is_classified_by_name() -> None:
     code_ops = {op.name for op in ALL_OPERATIONS if op.name.startswith("code.")}
     unclassified = sorted(n for n in code_ops if n not in NO_MEMORY_CONTENT and n not in SCOPED_OPS)
     assert not unclassified, unclassified
-    assert "narrowed" in NO_MEMORY_CONTENT["code.ask"]
