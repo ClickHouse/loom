@@ -61,7 +61,7 @@ def test_the_reader_profile_caps_equal_the_caller_shaped_defaults(
     ch_setting: str, field: str
 ) -> None:
     """No statement may raise the reader's caps past Loom's own ceilings, so the
-    two must not drift apart."""
+    two must not drift apart; nor lower one to 0, which ClickHouse reads as none."""
     from server.settings import Settings
 
     root = ET.parse(CFG / "nlp_user_settings.xml").getroot()
@@ -70,3 +70,4 @@ def test_the_reader_profile_caps_equal_the_caller_shaped_defaults(
     default = Settings.model_fields[field].default
     assert float(profile.findtext(f"constraints/{ch_setting}/max") or "nan") == default
     assert float(profile.findtext(ch_setting) or "nan") == default
+    assert profile.findtext(f"constraints/{ch_setting}/min") == "1"

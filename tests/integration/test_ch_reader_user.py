@@ -71,3 +71,12 @@ async def test_a_read_over_its_memory_cap_is_a_422(
     monkeypatch.setattr(settings, "ch_caller_shaped_max_memory_bytes", 5_000_000)
     with caller_shaped(), pytest.raises(ValidationError, match="narrow it"):
         await client.query_all("SELECT groupArray(number) AS a FROM numbers(10000000)")
+
+
+@pytest.mark.parametrize("cap", ["max_execution_time", "max_memory_usage", "max_rows_to_read"])
+async def test_a_reader_statement_cannot_lift_a_cap_with_0(client: Any, cap: str) -> None:
+    """0 means no limit in ClickHouse; the reader profile refuses it."""
+    from server.core.ch import caller_shaped
+
+    with caller_shaped(), pytest.raises(Exception, match=r"Code: 452"):
+        await client.query_all(f"SELECT count() FROM numbers(10) SETTINGS {cap} = 0")

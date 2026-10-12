@@ -35,7 +35,10 @@
         <!-- read-only; settings may still change, within the constraints above.
              The three caps equal the defaults of Loom's ch_caller_shaped_*
              settings (LOOM_CH_CALLER_SHAPED_*): no statement may raise them, so a
-             deployment that raises one of those settings raises it here too. -->
+             deployment that raises one of those settings raises it here too.
+             The min of 1 refuses 0, which ClickHouse reads as "no limit".
+             timeout_overflow_mode stays changeable: code.grep with deadline_ms
+             sets it to `break` and reports the hits as partial. -->
         <loom_reader>
             <profile>default</profile>
             <readonly>2</readonly>
@@ -44,12 +47,15 @@
             <max_rows_to_read>500000000</max_rows_to_read>
             <constraints>
                 <max_execution_time>
+                    <min>1</min>
                     <max>30</max>
                 </max_execution_time>
                 <max_memory_usage>
+                    <min>1</min>
                     <max>4000000000</max>
                 </max_memory_usage>
                 <max_rows_to_read>
+                    <min>1</min>
                     <max>500000000</max>
                 </max_rows_to_read>
             </constraints>
