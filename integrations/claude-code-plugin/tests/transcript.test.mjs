@@ -151,7 +151,7 @@ test("a Stop with more than fifty new turns sends fifty and leaves the rest for 
     assert.ok(await until(() => appended.length === 60), `after two Stops: ${appended.length}`);
     assert.deepEqual(new Set(appended).size, 60, "no turn sent twice, none skipped");
   });
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 test("a turn still being written when Stop fires is sent by the next Stop", async () => {
@@ -170,5 +170,5 @@ test("a turn still being written when Stop fires is sent by the next Stop", asyn
     await stop(env, payload);
     assert.ok(await until(() => appended.includes("a3")), `sent: ${appended.join(",")}`);
   });
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
