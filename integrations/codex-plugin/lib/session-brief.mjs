@@ -21,7 +21,7 @@ import {
   envSwitch,
   extractFiles,
   normalizeToolName,
-  redactSecrets,
+  redactHead,
   resolveToken,
 } from "./loom-client.mjs";
 
@@ -53,7 +53,7 @@ let token; // looked up once per hook run, not per clipped string
 // Every brief field passes through here, so it redacts before the cut.
 function clip(text, max = TEXT_MAX) {
   token ??= resolveToken();
-  const s = redactSecrets(text || "", token)
+  const s = redactHead(text || "", max, token)
     .replace(/\s+/g, " ")
     .trim();
   return s.length > max ? s.slice(0, max - 1) + "…" : s;

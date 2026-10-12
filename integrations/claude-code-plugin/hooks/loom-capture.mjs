@@ -28,7 +28,7 @@ import {
   normalizeToolName,
   postFireAndForget,
   readStdinJson,
-  redactSecrets,
+  redactHead,
   resolveScope,
   resolveServerUrl,
   resolveToken,
@@ -124,8 +124,8 @@ function scrubbed(value, max, token = resolveToken()) {
   const text =
     typeof value === "string"
       ? value
-      : JSON.stringify(value ?? "", (_, v) => (typeof v === "string" ? redactSecrets(v, token) : v));
-  return truncate(redactSecrets(text, token), max);
+      : JSON.stringify(value ?? "", (_, v) => (typeof v === "string" ? redactHead(v, max, token) : v));
+  return truncate(redactHead(text, max, token), max);
 }
 
 export function buildObservation(event, payload, scope) {

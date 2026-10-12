@@ -7,6 +7,8 @@
 // lever: the agent gets the index's answer with the prompt instead of spending
 // a turn asking for it, and skips the first exploration round.
 
+import { redactHead } from "./loom-client.mjs";
+
 export const MIN_PROMPT_CHARS = 12;
 export const SEEN_CAP = 40;
 
@@ -42,6 +44,21 @@ export function searchQuery(prompt) {
   const kept = body.split(/(?<=[.!?])\s+|\n{2,}/).filter((sentence) => !INSTRUCTION_RE.test(sentence));
   const q = kept.join(" ").replace(/\s+/g, " ").trim();
   return q.length >= MIN_PROMPT_CHARS ? q : p.trim();
+}
+
+/** Body for the per-prompt code.search. The query is redacted: code.search
+ *  keeps it in loom.code_search_trace. */
+export function searchBody(repo, prompt, { topK = 3, token } = {}) {
+  return {
+    org: repo.org,
+    namespace: repo.namespace,
+    query: redactHead(searchQuery(prompt), 2000, token).slice(0, 2000),
+    top_k: topK,
+    token_budget: 600,
+    bodies: "none",
+    annotate: false,
+    consumer: "claude-code-prompt-pack",
+  };
 }
 
 /** Gate on the index's own verdict, not on the caller's optimism. */

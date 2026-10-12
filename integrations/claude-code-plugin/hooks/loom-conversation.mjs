@@ -19,7 +19,7 @@ import {
   envSwitch,
   postFireAndForget,
   readStdinJson,
-  redactSecrets,
+  redactHead,
   resolveScope,
   resolveServerUrl,
   resolveToken,
@@ -119,7 +119,7 @@ function fromEvents(payload, sessionId, scope) {
     msg_id: `${sessionId}-j${r.i}`,
     role: r.role,
     // Redact before the cut, so a clipped secret cannot slip past its pattern.
-    content: truncate(redactSecrets(r.content, token), MAX_CONTENT),
+    content: truncate(redactHead(r.content, MAX_CONTENT, token), MAX_CONTENT),
   }));
   dispatch(appends, cursorFile, fresh[fresh.length - 1].i + 1);
   return true;
@@ -175,7 +175,7 @@ async function main() {
       thread_id: sessionId,
       msg_id: obj.uuid || `${sessionId}-o${line.start}`,
       role: turn.role,
-      content: truncate(redactSecrets(turn.content, token), MAX_CONTENT),
+      content: truncate(redactHead(turn.content, MAX_CONTENT, token), MAX_CONTENT),
     });
   }
 

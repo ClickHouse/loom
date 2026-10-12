@@ -603,18 +603,20 @@ export async function postBounded(opName, body, { token, serverUrl, timeoutMs } 
 
 // Best effort, not a guarantee: common credential shapes only. A secret in
 // another shape still reaches the server, whose blacklist and sensitivity
-// sweep are the next line.
-const PRIVATE_KEY_RE = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g;
+// sweep are the next line. Every open-ended run is bounded ({0,64} and the
+// like): an unbounded one retried from each start is quadratic on a long
+// tool output.
+const PRIVATE_KEY_RE = /-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g;
 const TOKEN_SHAPES_RE =
   /\b(?:(?:AKIA|ASIA)[0-9A-Z]{16}|(?:ghp|gho|ghs|ghu|ghr)_[A-Za-z0-9]{20,}|github_pat_\w{20,}|xox[abeprs]-[A-Za-z0-9-]{10,}|sk-(?:ant|proj)-[\w-]{20,}|glpat-[\w-]{20,})\b/g;
 // `password=…`, `"api_key": "…"`, `AWS_SECRET_ACCESS_KEY=…`: the name stays, the value goes.
 const SECRET_ASSIGNMENT_RE =
-  /\b([\w.-]*?(?:password|passwd|secret|secret[_-]?key|token|api[_-]?key|access[_-]?key|private[_-]?key)\b["']?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s"'\\,;}]+)/gi;
-const JWT_RE = /\beyJ[\w-]*\.[\w-]+\.[\w-]*/g;
+  /\b([\w.-]{0,64}?(?:password|passwd|secret|secret[_-]?key|token|api[_-]?key|access[_-]?key|private[_-]?key)\b["']?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s"'\\,;}]+)/gi;
+const JWT_RE = /\beyJ[\w-]{0,512}\.[\w-]{1,8192}\.[\w-]{0,1024}/g;
 const BEARER_RE = /\b(Bearer)\s+[^\s"'\\]+/gi;
 const BASIC_AUTH_RE = /(\bAuthorization["']?\s*[:=]\s*["']?Basic)\s+[^\s"'\\]+/gi;
 // `https://user:pass@host`: the scheme and host stay, the credentials go.
-const URL_CREDENTIALS_RE = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@"']+:[^\s/@"']*@/gi;
+const URL_CREDENTIALS_RE = /\b([a-z][a-z0-9+.-]{0,31}:\/\/)[^\s/@"']{1,256}:[^\s/@"']{0,256}@/gi;
 
 /** `replacement` in the quotes `value` had, so redacted JSON still parses. */
 function quoted(value, replacement) {
@@ -638,6 +640,16 @@ export function redactSecrets(text, token = resolveToken()) {
     .replace(URL_CREDENTIALS_RE, "$1[redacted]@");
 }
 
+// Room past a cut for the longest bounded pattern (a JWT is under 10 KB), so
+// a secret that straddles the cut is still matched whole.
+const REDACT_MARGIN = 16 * 1024;
+
+/** `redactSecrets` over the head of `text` its caller keeps (`max` chars, plus
+ *  a margin): a multi-megabyte tool output is not scanned only to be cut. */
+export function redactHead(text, max, token = resolveToken()) {
+  return redactSecrets(String(text ?? "").slice(0, max + REDACT_MARGIN), token);
+}
+
 /**
  * Run a hook's `main`. Whatever it throws, the hook exits 0: a hook never
  * fails the host session. With LOOM_HOOK_DEBUG=on the error's first line,
@@ -649,7 +661,7 @@ export function runHookMain(main) {
     .catch((e) => {
       if (envSwitch("LOOM_HOOK_DEBUG", false)) {
         const line = String((e && (e.stack || e.message)) || e).split("\n")[0];
-        process.stderr.write(`loom hook ${basename(process.argv[1] || "")}: ${redactSecrets(line).slice(0, 300)}\n`);
+        process.stderr.write(`loom hook ${basename(process.argv[1] || "")}: ${redactHead(line, 300).slice(0, 300)}\n`);
       }
       scheduleExit(0);
     });

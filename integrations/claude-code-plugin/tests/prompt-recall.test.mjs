@@ -107,3 +107,8 @@ test("recall arrives as one delimited data block that says it is not instruction
   assert.ok(text.endsWith("</loom-recalled-data>"));
   assert.match(text, /by=human:mallory/);
 });
+
+test("recallBody sends the prompt redacted", () => {
+  const body = recallBody({ org: "o", namespace: "n", agent: "a" }, {}, "deploy with api_key=abc123secret now");
+  assert.equal(body.query, "deploy with api_key=[redacted] now");
+});

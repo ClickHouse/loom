@@ -443,3 +443,37 @@ def test_a_refused_layout_is_a_health_problem(tmp_path: Path, monkeypatch) -> No
     assert [p.code for p in problems if p.code.startswith("repo_")] == [
         "repo_sandbox_layout_refused"
     ]
+
+
+def _layout_codes(monkeypatch, tmp_path: Path, probed, bwrap_on_path: bool):
+    from server.observability import problems as problems_mod
+    from server.observability.problems import HealthState, collect_problems
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_ingest_enabled", True)
+    found = "/usr/bin/bwrap" if bwrap_on_path else None
+    monkeypatch.setattr(problems_mod.shutil, "which", lambda name: found)
+    state = HealthState(repo_sandbox=probed, repo_sandbox_refusal="sandbox: /x is inside")
+    return [(p.code, p.severity) for p in collect_problems(settings, state) if "sandbox" in p.code]
+
+
+def test_a_refused_layout_before_the_probe_is_an_error_only_with_bwrap(
+    tmp_path: Path, monkeypatch
+) -> None:
+    error = [("repo_sandbox_layout_refused", "error")]
+    warn = [("repo_sandbox_layout_refused", "warn")]
+    assert _layout_codes(monkeypatch, tmp_path, None, bwrap_on_path=True) == error
+    # No bwrap: jobs will run unsandboxed and succeed, so health is not degraded.
+    assert _layout_codes(monkeypatch, tmp_path, None, bwrap_on_path=False) == warn
+    assert _layout_codes(monkeypatch, tmp_path, True, bwrap_on_path=False) == error
+
+
+def test_the_layout_check_and_the_mount_refusal_read_one_list(tmp_path: Path, monkeypatch) -> None:
+    from server.settings import settings
+
+    (tmp_path / "blobs").mkdir()
+    monkeypatch.setattr(settings, "blob_dir", str(tmp_path / "blobs"))
+    monkeypatch.setattr(sandbox, "_own_mounts", lambda: [tmp_path / "blobs"])
+    assert "inside Loom's data" in sandbox.layout_refusal()
+    with pytest.raises(PermissionError):
+        sandbox._readonly_paths({"PATH": "/usr/bin"}, [])
