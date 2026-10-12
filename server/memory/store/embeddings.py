@@ -466,8 +466,11 @@ async def retire_vectors_for_keys(
     """Tombstone the live vectors each key had before the given version, the one of
     the unembedded memory row that replaces them: its memory_embeddings rows below
     that version and its entity_vectors rows created no later than that second. A
-    concurrent embedded write that lands a newer version keeps its vectors. Returns
-    the memory_embeddings rows retired."""
+    concurrent embedded write that lands a newer version keeps its memory_embeddings
+    rows, and its entity_vectors rows only when created in a later second. Residual:
+    created_at is whole seconds, so a newer write's entity vectors from the same
+    second are retired too; that write loses only its entity boost (those rows carry
+    no text). Returns the memory_embeddings rows retired."""
     from server.core.datetimes import naive_utc_now
 
     if not items:
@@ -477,7 +480,7 @@ async def retire_vectors_for_keys(
     n = await reemit_embedding_rows_for_keys(
         [(key, {"tombstoned_at": now, "version": int(v)}) for key, v in items], ch=ch
     )
-    # entity_vectors has no version, only a created_at in whole seconds.
+    # entity_vectors has no version, only a created_at in whole seconds (see the residual above).
     cutoffs = {key: _version_second(v) for key, v in items}
     await tombstone_entity_vectors_for_keys(list(cutoffs), ts=now, ch=ch, created_by=cutoffs)
     return n
