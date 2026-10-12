@@ -38,6 +38,7 @@ async def list_for_scope(
     namespace: str,
     *,
     scope: str | None = None,
+    created_by: str | None = None,
     limit: int = 100,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
@@ -45,6 +46,7 @@ async def list_for_scope(
 
     `scope=None` returns every pattern that applies (namespace +
     org-wide + global). Specific scope strings filter exact match.
+    `created_by` keeps only that author's patterns.
     """
     ch = ch or _default_client()
     if scope is None:
@@ -59,6 +61,10 @@ async def list_for_scope(
         where = "org = {org:String} AND scope = 'org'"
     else:
         where = "org = {org:String} AND namespace = {ns:String} AND scope = 'namespace'"
+    params: dict[str, Any] = {"org": org, "ns": namespace, "lim": int(limit)}
+    if created_by is not None:
+        where += " AND created_by = {author:String}"
+        params["author"] = created_by
     return await ch.query_all(
         f"""
         SELECT pattern_id, org, namespace, pattern, pattern_type, scope,
@@ -68,7 +74,7 @@ async def list_for_scope(
         ORDER BY created_at DESC
         LIMIT {{lim:UInt32}}
         """,
-        params={"org": org, "ns": namespace, "lim": int(limit)},
+        params=params,
     )
 
 
@@ -93,7 +99,7 @@ async def find_active_pattern(
         params["org"] = org
     return await ch.query_one(
         f"""
-        SELECT pattern_id, org, namespace, scope, pattern, pattern_type
+        SELECT pattern_id, org, namespace, scope, pattern, pattern_type, created_by
         FROM loom.blacklist FINAL
         WHERE {" AND ".join(where)}
         LIMIT 1

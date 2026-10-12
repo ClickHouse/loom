@@ -229,6 +229,60 @@ def test_remove_unknown_id_is_a_miss(repo: _Repo) -> None:
     assert out.removed is False and out.removed_at is None
 
 
+# ------------------------------------------------- a token narrowed to one user
+
+
+def _pinned(role: str, user: str) -> AuthInfo:
+    """A token pinned to `user`; its author stamp is `human:<role>@x`."""
+    return AuthInfo(
+        subject=f"{role.lower()}@x",
+        org=ORG,
+        namespaces=(NS,),
+        roles=(Role[role],),
+        is_service_account=False,
+        read_scope="own_user",
+        read_user_id=user,
+    )
+
+
+def test_a_narrowed_writer_cannot_add_a_pattern_but_a_narrowed_admin_can(repo: _Repo) -> None:
+    """The pattern refuses every user's writes in the namespace."""
+    set_current_auth(_pinned("WRITER", "w"))
+    with pytest.raises(AuthInsufficientError):
+        asyncio.run(h.handle_blacklist_add(_add("namespace")))
+    assert repo.inserted == []
+    set_current_auth(_pinned("ADMIN", "w"))
+    asyncio.run(h.handle_blacklist_add(_add("namespace")))
+    assert [r["created_by"] for r in repo.inserted] == ["human:admin@x"]
+
+
+def test_a_narrowed_admin_cannot_remove_another_users_pattern(repo: _Repo) -> None:
+    repo.rows["v1"] = {**_row("v1", "namespace"), "created_by": "human:v@x"}
+    repo.rows["w1"] = {**_row("w1", "namespace"), "created_by": "human:admin@x"}
+    set_current_auth(_pinned("ADMIN", "w"))
+    out = asyncio.run(h.handle_blacklist_remove(BlacklistRemoveInput(org=ORG, pattern_id="v1")))
+    assert out.removed is False and repo.tombstoned == []
+    out = asyncio.run(h.handle_blacklist_remove(BlacklistRemoveInput(org=ORG, pattern_id="w1")))
+    assert out.removed is True and repo.tombstoned == ["w1"]
+
+
+def test_a_narrowed_list_asks_only_for_the_callers_own_patterns(monkeypatch) -> None:
+    from server.memory.api.models_blacklist import BlacklistListInput
+
+    asked: list[str | None] = []
+
+    async def _list(*_a, created_by=None, **_k):
+        asked.append(created_by)
+        return []
+
+    monkeypatch.setattr(h.blacklist_repo, "list_for_scope", _list)
+    set_current_auth(_auth("ADMIN"))
+    asyncio.run(h.handle_blacklist_list(BlacklistListInput(org=ORG, namespace=NS)))
+    set_current_auth(_pinned("ADMIN", "w"))
+    asyncio.run(h.handle_blacklist_list(BlacklistListInput(org=ORG, namespace=NS)))
+    assert asked == [None, "human:admin@x"]
+
+
 # -------------------------------------------------------------- sweep gate
 
 

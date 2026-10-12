@@ -2,7 +2,7 @@
 
 Users U and V write into the SAME namespace: facts (one key both hold, the
 rest V's alone, across two sessions), raw turns through set_from_messages
-(the same session id for both), an entity both rows name, a profile section, a session brief, a working-memory block and a procedure. V's rows
+(the same session id for both), an entity both rows name, a profile section, a session brief, a working-memory block, a procedure and a blacklist pattern. V's rows
 carry a nonce (each fact row its own, all starting with V's). A token minted with `read_user_id=U` then drives every op the
 registry holds:
 
@@ -62,6 +62,10 @@ class _Seed:
     keys_v: list[str] = field(default_factory=list)
     memory_ids_v: list[str] = field(default_factory=list)
     brief_key: str = ""
+    # A blacklist pattern added by a token pinned to V (its reason carries V's nonce).
+    pattern_v: str = ""
+    pattern_id_v: str = ""
+    token_v: str = ""
 
 
 def _post(base: str, token: str, op: str, payload: dict[str, Any]) -> httpx.Response:
@@ -179,6 +183,14 @@ def seed(control_plane_url: str) -> _Seed:
     _seed_user(control_plane_url, writer, s, U, s.nonce_u)
     s.memory_ids_v = _seed_user(control_plane_url, writer, s, V, s.nonce_v)
     s.keys_v = [f"canary/{V}/0", f"canary/{V}/1", "canary/shared"]
+    s.token_v = _mint(org, s.ns, read_scope="own_user", read_user_id=V)
+    s.pattern_v = f"BLKV{uuid.uuid4().hex[:10]}"
+    s.pattern_id_v = _write(
+        control_plane_url,
+        s.token_v,
+        "blacklist.add",
+        {"org": org, "namespace": s.ns, "pattern": s.pattern_v, "reason": f"my {s.nonce_v}"},
+    )["pattern_id"]
 
     def _searchable() -> bool:
         r = _post(
@@ -591,6 +603,42 @@ def test_a_sweep_by_another_user_neither_removes_nor_counts_vs_rows(
             {"org": seed.org, "pattern_id": added["pattern_id"]},
         )
     assert _v_rows(ch_client, seed) == before
+
+
+def test_another_users_blacklist_pattern_is_neither_listed_nor_removed(
+    control_plane_url: str, seed: _Seed, tokens: dict[str, str]
+) -> None:
+    """W lists without V's pattern, reason or id, and removing it by id is a miss. The
+    pattern still refuses W's write: a pattern is a Refuse for the whole namespace."""
+    w = {"org": seed.org, "namespace": seed.ns}
+    listed = _post(control_plane_url, tokens["pinned_w"], "blacklist.list", w)
+    assert listed.status_code == 200, listed.text
+    for secret in (seed.pattern_v, seed.nonce_v, seed.pattern_id_v):
+        assert secret not in listed.text, listed.text[:300]
+    gone = _write(
+        control_plane_url,
+        tokens["pinned_w"],
+        "blacklist.remove",
+        {"org": seed.org, "pattern_id": seed.pattern_id_v},
+    )
+    assert gone["removed"] is False, gone
+    # V's own token and a namespace-wide one still see it.
+    for tok in (seed.token_v, tokens["namespace"]):
+        r = _post(control_plane_url, tok, "blacklist.list", w)
+        assert r.status_code == 200 and seed.pattern_id_v in r.text, r.text[:300]
+    r = _post(
+        control_plane_url,
+        tokens["pinned_w"],
+        "memory.set",
+        {
+            **w,
+            "agent": "a",
+            "user_id": W,
+            "memory_key": "probe/blacklisted",
+            "value": f"a note holding {seed.pattern_v}",
+        },
+    )
+    assert r.status_code == 422 and "BLACKLISTED" in r.text, f"{r.status_code} {r.text[:300]}"
 
 
 def test_pinned_users_keep_their_own_brief_under_one_key(

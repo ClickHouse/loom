@@ -217,9 +217,11 @@ than `namespace`:
 - `code.search` breaks ties with the scope's own user's recent files, whatever
   `user_id` the body names.
 - A leg whose rows carry no user (conversations, runs) answers nothing.
-- A blacklist pattern still refuses every user's writes, but its sweep
-  (`blacklist.add(sweep=true)`, `blacklist.sweep`) tombstones and counts only the
-  caller's own rows, and `blacklist.list` shows no hit counts. `policy.decisions`
+- A blacklist pattern still refuses every user's writes, so `blacklist.add` needs
+  `admin` on the namespace. Its sweep (`blacklist.add(sweep=true)`,
+  `blacklist.sweep`) tombstones and counts only the caller's own rows.
+  `blacklist.list` and `blacklist.remove` reach only the patterns the caller added
+  (another user's pattern is not found), and the list shows no hit counts. `policy.decisions`
   lists only the caller's own decisions. `memory.unlock` and `memory.unpin` (admin)
   reach only the caller's own rows, like `memory.lock`.
 - An op that cannot bound its answer to one user (the entity graph `facts.*`,

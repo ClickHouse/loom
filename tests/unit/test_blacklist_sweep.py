@@ -209,7 +209,7 @@ async def test_list_hides_hit_counts_from_a_narrowed_token(monkeypatch, _unbind)
         "pattern_type": "substring",
         "scope": "namespace",
         "reason": "",
-        "created_by": "",
+        "created_by": "process:sa:w",
         "hit_count": 7,
         "last_hit_at": "2026-01-01 00:00:00",
         "created_at": "2026-01-01 00:00:00",
