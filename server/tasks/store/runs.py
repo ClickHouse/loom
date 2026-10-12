@@ -9,6 +9,7 @@ lacks), and a read is `FINAL`.
 
 from __future__ import annotations
 
+import enum
 import json
 import logging
 from dataclasses import dataclass
@@ -112,6 +113,15 @@ class RunClaim:
     unreadable: bool = False
 
 
+class NoClaim(enum.Enum):
+    """Why claim_run holds no claim. UNAVAILABLE: no claims table here, or Keeper
+    failed, so nothing keeps two users' first begins apart. RELEASED: the key was
+    taken and dropped again, so its holder's row is already written."""
+
+    UNAVAILABLE = "unavailable"
+    RELEASED = "released"
+
+
 def claims_atomic() -> bool | None:
     """Whether run ids are claimed in Keeper here; None = not asked yet."""
     return _claims_atomic
@@ -135,7 +145,8 @@ async def probe_claims(ch: Any) -> None:
 
 
 def _keeper_failed(e: BaseException, what: str = "Keeper claim failed") -> None:
-    """The claim could not be made: run.begin falls back to the row check."""
+    """The claim could not be made: run.begin falls back to the row check (a
+    narrowed caller only re-opens its own run, else gets a fresh id)."""
     if what not in _keeper_errors_logged:
         _keeper_errors_logged.add(what)
         log.warning("run.begin: %s, checking the run row only: %s", what, e)
@@ -145,18 +156,17 @@ def _keeper_failed(e: BaseException, what: str = "Keeper claim failed") -> None:
 
 async def claim_run(
     ch: Any, org: str, ns: str, run_id: str, user_id: str, session_id: str
-) -> RunClaim | None:
+) -> RunClaim | NoClaim:
     """Claim (org, ns, run_id) for this user and session, or read the claim that
-    already holds it. None where the server has no Keeper, Keeper failed, or the
-    claim was released again before it could be read: the row check decides then."""
+    already holds it. NoClaim says why there is none."""
     key = json.dumps([org, ns, run_id])
     try:
         available = await _claims_available(ch)
     except Exception as e:  # noqa: BLE001 — an unknown claims table falls back to the row check
         _keeper_failed(e, "could not read system.tables for the claims table")
-        return None
+        return NoClaim.UNAVAILABLE
     if not available:
-        return None
+        return NoClaim.UNAVAILABLE
     try:
         await ch.execute(
             "INSERT INTO loom.agent_run_claims "
@@ -177,12 +187,12 @@ async def claim_run(
     except Exception as e:  # noqa: BLE001 — Keeper down falls back to the row check
         if not key_exists(e):
             _keeper_failed(e)
-            return None
+            return NoClaim.UNAVAILABLE
     return await _claim_holder(ch, key)
 
 
-async def _claim_holder(ch: Any, key: str) -> RunClaim | None:
-    """Who holds `key`, after our insert found it taken. None when the key is gone
+async def _claim_holder(ch: Any, key: str) -> RunClaim | NoClaim:
+    """Who holds `key`, after our insert found it taken. RELEASED when the key is gone
     again (its holder wrote its row and released it): the row check then decides.
     A key that cannot be read is never the caller's."""
     try:
@@ -196,7 +206,7 @@ async def _claim_holder(ch: Any, key: str) -> RunClaim | None:
             degradations.note("run_claims", "claim_unreadable", e)
         return RunClaim(won=False, user_id="", session_id="", unreadable=True)
     if row is None:
-        return None
+        return NoClaim.RELEASED
     return RunClaim(won=False, user_id=str(row["user_id"]), session_id=str(row["session_id"]))
 
 

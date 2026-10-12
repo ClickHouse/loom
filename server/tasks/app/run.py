@@ -23,7 +23,7 @@ from typing import Any
 from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now as _now
 from server.core.errors import AuthInsufficientError, IdentityIncompleteError, NotFoundError
-from server.identity.app.request_scope import request_scope
+from server.identity.app.request_scope import request_narrowed, request_scope
 from server.identity.domain.read_scope import WHOLE_NAMESPACE, row_in_read_scope
 from server.memory.app import run_feedback, run_retention
 from server.operations.read_projection import project_rows
@@ -155,11 +155,11 @@ def _owned_by(row: RunLedgerRow, user: str) -> bool:
 
 
 async def _target_run(
-    ch: Any, input: RunBeginInput, run_id: str, claim: runs_store.RunClaim | None
+    ch: Any, input: RunBeginInput, run_id: str, claim: runs_store.RunClaim | runs_store.NoClaim
 ) -> tuple[str, RunLedgerRow | None]:
     """`run_id` and its row when the caller may (re)open it, else a fresh id.
     `claim` is this begin's claim on `run_id`, made before this is called."""
-    if claim is not None and not claim.won:
+    if isinstance(claim, runs_store.RunClaim) and not claim.won:
         holder: RunLedgerRow = {"user_id": claim.user_id, "session_id": claim.session_id}
         held_by_caller = not claim.unreadable and _owned_by(holder, _user_of(input))
         if not held_by_caller:
@@ -171,6 +171,10 @@ async def _target_run(
         existing = await runs_store.fetch_run(ch, input.org, input.namespace, run_id)
     if existing is not None and not _owned_by(existing, _user_of(input)):
         # Another user's run: start a new run instead of taking that one over.
+        return uuid.uuid4().hex, None
+    if existing is None and claim is runs_store.NoClaim.UNAVAILABLE and request_narrowed():
+        # Nothing atomic keeps another user's concurrent first begin off this id,
+        # so a narrowed caller opens a new id only under a server-made id.
         return uuid.uuid4().hex, None
     return run_id, existing
 
@@ -189,7 +193,9 @@ async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:
     the holder released it reads the holder's row, so it goes to a fresh id too:
     that is why the row read comes after the claim. The claim is released only
     once the row is written; a begin that fails first keeps it, so no other
-    user's begin can take the id before a row holds it."""
+    user's begin can take the id before a row holds it. Without a claim (no
+    Keeper, or Keeper failed) a narrowed caller keeps a supplied id only for a
+    run of its own that already exists; a new one gets a server-made id."""
     ch = get_client()
     supplied = (input.run_id or "").strip()
     if not supplied:
@@ -200,7 +206,7 @@ async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:
     )
     run_id, existing = await _target_run(ch, input, supplied, claim)
     opened = await _open_run(ch, input, run_id, existing)
-    if claim is not None and claim.won:
+    if isinstance(claim, runs_store.RunClaim) and claim.won:
         await runs_store.delete_claim(ch, input.org, input.namespace, supplied)
     return opened
 
