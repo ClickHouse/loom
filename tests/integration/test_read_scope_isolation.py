@@ -453,6 +453,46 @@ def test_pinned_users_keep_their_own_brief_under_one_key(
         assert theirs not in str(got)
 
 
+def test_every_listed_brief_key_opens_and_deletes_for_the_token_that_listed_it(
+    control_plane_url: str,
+) -> None:
+    org, ns = unique_org("brief-keys"), f"bk-{uuid.uuid4().hex[:8]}"
+    ident = {"org": org, "namespace": ns, "agent": "a", "user_id": U, "session_id": "s1"}
+    tok = {
+        "namespace": _mint(org, ns),
+        "own_user": _mint(org, ns, read_scope="own_user", read_user_id=U),
+        "own_session": _mint(org, ns, read_scope="own_session", read_user_id=U),
+    }
+
+    def listed(t: str) -> list[str]:
+        out = _write(control_plane_url, tok[t], "session.brief_list", ident)
+        return [b["brief_key"] for b in out["briefs"]]
+
+    for t in tok:
+        body = {**ident, "brief_key": f"k-{t}", "trigger": "model", "sections": {"goal": t}}
+        _write(control_plane_url, tok[t], "session.brief_save", body)
+    assert listed("own_session") == ["k-own_session"]
+    assert listed("own_user") == ["k-own_user"]
+    everything = listed("namespace")
+    assert len(everything) == 3 and "k-namespace" in everything, everything
+    owned = [k for k in everything if k.startswith("~")]
+    # A narrowed token can't name a stored owner key, its own or anyone's.
+    for k in [*owned, "~bob~k-own_user"]:
+        r = _post(
+            control_plane_url, tok["own_user"], "session.brief_get", {**ident, "brief_key": k}
+        )
+        assert r.status_code == 422, f"{k}: {r.status_code} {r.text}"
+    for t in ("own_session", "own_user", "namespace"):
+        for k in listed(t):
+            got = _write(control_plane_url, tok[t], "session.brief_get", {**ident, "brief_key": k})
+            assert got["found"] and got["brief_key"] == k, got
+            gone = _write(
+                control_plane_url, tok[t], "session.brief_delete", {**ident, "brief_key": k}
+            )
+            assert gone["deleted"], gone
+    assert listed("namespace") == []
+
+
 def test_a_pinned_token_cannot_write_as_another_user(
     control_plane_url: str, seed: _Seed, tokens: dict[str, str]
 ) -> None:

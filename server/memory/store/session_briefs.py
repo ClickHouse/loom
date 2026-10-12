@@ -206,11 +206,13 @@ async def listing(
     key_prefix: str = "",
 ) -> list[dict[str, Any]]:
     """Live briefs of a namespace inside the read `scope` whose key starts with
-    `key_prefix`, most recently saved first."""
+    `key_prefix` and holds no further `~` (an own_user prefix must not match
+    that user's own_session briefs), most recently saved first."""
     params: dict[str, Any] = {"org": org, "ns": namespace, "lim": int(limit)}
     where: list[str] = scope_where(scope, params)
     if key_prefix:
         where.append("startsWith(brief_key, {key_prefix:String})")
+        where.append("position(brief_key, '~', length({key_prefix:String}) + 1) = 0")
         params["key_prefix"] = key_prefix
     if project:
         where.append("project = {project:String}")

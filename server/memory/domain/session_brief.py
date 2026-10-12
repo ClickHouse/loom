@@ -54,6 +54,11 @@ PROMPT_VERSION = "sb-4"
 # a name the user chose. Path-like, no spaces, bounded.
 BRIEF_KEY_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:/@+-]{0,159}$"
 _BRIEF_KEY_RE = re.compile(BRIEF_KEY_PATTERN)
+# A key as stored: a requested key, optionally behind the owner prefix of
+# `owner_key_prefix`. A namespace-wide token lists and addresses briefs this way.
+STORED_KEY_PATTERN = r"^(~[A-Za-z0-9_.%-]*~([A-Za-z0-9_.%-]*~)?)?" + BRIEF_KEY_PATTERN[1:]
+STORED_KEY_MAX = 600
+_STORED_KEY_RE = re.compile(STORED_KEY_PATTERN)
 
 EventKind = Literal[
     "user", "assistant", "edit", "command", "error", "read", "search", "tool", "note", "summary"
@@ -173,6 +178,10 @@ class BriefSections(BaseModel):
 
 def brief_key_ok(key: str) -> bool:
     return bool(_BRIEF_KEY_RE.match(key or ""))
+
+
+def stored_key_ok(key: str) -> bool:
+    return len(key or "") <= STORED_KEY_MAX and bool(_STORED_KEY_RE.match(key or ""))
 
 
 def owner_key_prefix(user_id: str, session_id: str | None = None) -> str:
