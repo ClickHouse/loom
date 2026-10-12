@@ -24,7 +24,7 @@ from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now as _now
 from server.core.errors import AuthInsufficientError, IdentityIncompleteError, NotFoundError
 from server.identity.app.request_scope import request_scope
-from server.identity.domain.read_scope import row_in_read_scope
+from server.identity.domain.read_scope import WHOLE_NAMESPACE, row_in_read_scope
 from server.memory.app import run_feedback, run_retention
 from server.operations.read_projection import project_rows
 from server.tasks.api.models_run import (
@@ -159,10 +159,17 @@ async def _target_run(
 ) -> tuple[str, RunLedgerRow | None]:
     """`run_id` and its row when the caller may (re)open it, else a fresh id.
     `claim` is this begin's claim on `run_id`, made before this is called."""
-    claimant: RunLedgerRow = (
-        {"user_id": claim.user_id, "session_id": claim.session_id} if claim is not None else {}
-    )
-    if claim is not None and not claim.won and not _owned_by(claimant, _user_of(input)):
+    if (
+        claim is not None
+        and not claim.won
+        # A claim whose holder could not be read is never the caller's.
+        and not (
+            claim.user_id
+            and _owned_by(
+                {"user_id": claim.user_id, "session_id": claim.session_id}, _user_of(input)
+            )
+        )
+    ):
         # Another user's begin on this id is between its claim and its row.
         return uuid.uuid4().hex, None
     # Sequential: it must see the synchronous insert of a begin that has
@@ -726,12 +733,13 @@ async def handle_run_get(input: RunGetInput) -> RunGetOutput:
     if existing is None:
         return RunGetOutput(found=False)
     run = _row_to_model(existing)
-    scope = request_scope()
+    # run.get is refused to narrowed tokens (in neither SCOPED_OPS nor NARROW_SAFE_OPS),
+    # so it always reads the whole namespace.
     written = await runs_store.written_keys(
-        ch, input.org, input.namespace, input.run_id, scope=scope
+        ch, input.org, input.namespace, input.run_id, scope=WHOLE_NAMESPACE
     )
     observations = await runs_store.observation_count(
-        ch, input.org, input.namespace, input.run_id, scope=scope
+        ch, input.org, input.namespace, input.run_id, scope=WHOLE_NAMESPACE
     )
     recalled = await _recalled_keys(ch, input.org, input.namespace, input.run_id)
     # The keys the plugin's hooks saw served under this session join the trace-derived

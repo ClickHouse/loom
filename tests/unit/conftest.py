@@ -255,10 +255,10 @@ def _no_run_claims() -> Iterator[None]:
     it for every later one (and asks whatever client it wired)."""
     from server.tasks.store import runs
 
-    before = (runs._claims_atomic, runs._keeper_error_logged)
-    runs._claims_atomic, runs._keeper_error_logged = False, False
+    before = (runs._claims_atomic, runs._keeper_errors_logged)
+    runs._claims_atomic, runs._keeper_errors_logged = False, set()
     yield
-    runs._claims_atomic, runs._keeper_error_logged = before
+    runs._claims_atomic, runs._keeper_errors_logged = before
 
 
 @pytest.fixture(autouse=True)

@@ -98,7 +98,7 @@ async def insert_runs(ch: Any, rows: list[RunLedgerRow]) -> None:
 # Keeper): None until the boot probe or the first run.begin asks.
 _claims_atomic: bool | None = None
 # A Keeper error on a claim is logged once per process, then only noted.
-_keeper_error_logged = False
+_keeper_errors_logged: set[str] = set()  # one warning per kind of failure
 
 
 @dataclass(frozen=True)
@@ -134,9 +134,8 @@ async def probe_claims(ch: Any) -> None:
 
 def _keeper_failed(e: BaseException, what: str = "Keeper claim failed") -> None:
     """The claim could not be made: run.begin falls back to the row check."""
-    global _keeper_error_logged
-    if not _keeper_error_logged:
-        _keeper_error_logged = True
+    if what not in _keeper_errors_logged:
+        _keeper_errors_logged.add(what)
         log.warning("run.begin: %s, checking the run row only: %s", what, e)
     with provider_health.unrecorded():
         degradations.note("run_claims", "row_check_only", e)
@@ -188,6 +187,8 @@ async def _claim_holder(ch: Any, key: str) -> RunClaim:
         )
     except Exception as e:  # noqa: BLE001 — unreadable counts as another user's claim
         log.debug("run.begin: claim %s not readable: %s", key, e)
+        with provider_health.unrecorded():
+            degradations.note("run_claims", "claim_unreadable", e)
         row = None
     if row is None:
         return RunClaim(won=False, user_id="", session_id="")

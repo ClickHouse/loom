@@ -247,7 +247,7 @@ class _BrokenKeeperCH(_KeeperCH):
 
 def test_a_keeper_error_falls_back_to_the_row_check(ledger, monkeypatch, caplog) -> None:
     rows, state = ledger
-    monkeypatch.setattr(runs_store, "_keeper_error_logged", False)
+    monkeypatch.setattr(runs_store, "_keeper_errors_logged", set())
     provider_health.reset()
 
     async def go() -> tuple[list[str], list[str]]:
@@ -265,7 +265,15 @@ def test_a_keeper_error_falls_back_to_the_row_check(ledger, monkeypatch, caplog)
     assert "run_claims" not in provider_health.status().get("providers", {})
 
 
-def test_an_unreadable_held_claim_is_another_users(ledger) -> None:
+_WIDE = AuthInfo(
+    subject="sa:bot", org="o", namespaces=("n",), roles=("writer",), is_service_account=True
+)
+
+
+@pytest.mark.parametrize(("auth", "user"), [(_pinned("U"), "U"), (_WIDE, "-")])
+def test_an_unreadable_held_claim_is_another_users(ledger, auth: AuthInfo, user: str) -> None:
+    """Whoever calls, and even with no user of its own ("-"), a held claim it cannot
+    read sends the begin to a fresh id."""
     _, state = ledger
 
     class _Unreadable(_KeeperCH):
@@ -276,9 +284,9 @@ def test_an_unreadable_held_claim_is_another_users(ledger) -> None:
 
     async def go() -> str:
         state["ch"] = ch = _Unreadable(_Schedule(""))
-        ch.claims['["o", "n", "shared"]'] = {"user_id": "U", "session_id": "-"}
-        _bind(_pinned("U"))
-        return (await run_app.handle_run_begin(_input("U"))).run_id
+        ch.claims['["o", "n", "shared"]'] = {"user_id": "V", "session_id": "-"}
+        _bind(auth)
+        return (await run_app.handle_run_begin(_input(user))).run_id
 
     assert contextvars.Context().run(lambda: asyncio.run(go())) != "shared"
 
