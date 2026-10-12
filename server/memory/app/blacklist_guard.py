@@ -314,6 +314,18 @@ async def enforce_on_insert(
     if hit is None:
         return
     await note_hit(hit.pattern_id)
+    from server.identity.app.request_scope import request_narrowed
+
+    if request_narrowed():
+        # The pattern may be another user's: its id and reason are theirs.
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "BLACKLISTED",
+                "message": f"value matches a blacklist pattern (scope={hit.scope})",
+                "scope": hit.scope,
+            },
+        )
     raise HTTPException(
         status_code=422,
         detail={

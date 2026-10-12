@@ -256,31 +256,67 @@ def test_a_narrowed_writer_cannot_add_a_pattern_but_a_narrowed_admin_can(repo: _
     assert [r["created_by"] for r in repo.inserted] == ["human:admin@x"]
 
 
-def test_a_narrowed_admin_cannot_remove_another_users_pattern(repo: _Repo) -> None:
-    repo.rows["v1"] = {**_row("v1", "namespace"), "created_by": "human:v@x"}
-    repo.rows["w1"] = {**_row("w1", "namespace"), "created_by": "human:admin@x"}
-    set_current_auth(_pinned("ADMIN", "w"))
-    out = asyncio.run(h.handle_blacklist_remove(BlacklistRemoveInput(org=ORG, pattern_id="v1")))
-    assert out.removed is False and repo.tombstoned == []
-    out = asyncio.run(h.handle_blacklist_remove(BlacklistRemoveInput(org=ORG, pattern_id="w1")))
-    assert out.removed is True and repo.tombstoned == ["w1"]
+@pytest.mark.parametrize("name", ["blacklist.list", "blacklist.remove", "blacklist.sweep"])
+def test_a_narrowed_token_cannot_list_remove_or_sweep_by_id(name: str) -> None:
+    """A backend mints one token per end user under one subject, so `created_by`
+    (the subject) cannot tell alice's pattern from bob's: these ops are refused."""
+    from types import SimpleNamespace
+
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import gates
+
+    alice, bob = (
+        AuthInfo(
+            subject="sa:backend",
+            org=ORG,
+            namespaces=(NS,),
+            roles=(Role.ADMIN,),
+            is_service_account=True,
+            read_user_id=user,
+        )
+        for user in ("alice", "bob")
+    )
+    body = SimpleNamespace(user_id="-", session_id="-")
+    for tok in (alice, bob):
+        with pytest.raises(AuthInsufficientError):
+            gates.read_scope(OPERATIONS_BY_NAME[name], tok, body)
+        gates.read_scope(OPERATIONS_BY_NAME["blacklist.add"], tok, body)
+    # A namespace-wide token keeps them.
+    wide = AuthInfo(
+        subject="sa:backend",
+        org=ORG,
+        namespaces=(NS,),
+        roles=(Role.ADMIN,),
+        is_service_account=True,
+    )
+    gates.read_scope(OPERATIONS_BY_NAME[name], wide, body)
 
 
-def test_a_narrowed_list_asks_only_for_the_callers_own_patterns(monkeypatch) -> None:
-    from server.memory.api.models_blacklist import BlacklistListInput
+def test_a_narrowed_writers_refusal_names_no_pattern_id_or_reason(monkeypatch) -> None:
+    """The matching pattern may be another user's: its id and reason are theirs."""
+    import server.memory.app.blacklist_guard as bl
 
-    asked: list[str | None] = []
+    hit = bl.BlacklistPattern("pid-v", ORG, NS, "x", "substring", "namespace", "V-PRIVATE")
 
-    async def _list(*_a, created_by=None, **_k):
-        asked.append(created_by)
-        return []
+    async def _match(**_):
+        return hit
 
-    monkeypatch.setattr(h.blacklist_repo, "list_for_scope", _list)
-    set_current_auth(_auth("ADMIN"))
-    asyncio.run(h.handle_blacklist_list(BlacklistListInput(org=ORG, namespace=NS)))
-    set_current_auth(_pinned("ADMIN", "w"))
-    asyncio.run(h.handle_blacklist_list(BlacklistListInput(org=ORG, namespace=NS)))
-    assert asked == [None, "human:admin@x"]
+    async def _hit(_pid):
+        return None
+
+    monkeypatch.setattr(bl, "find_match", _match)
+    monkeypatch.setattr(bl, "note_hit", _hit)
+    bodies = []
+    for auth in (_auth("WRITER"), _pinned("WRITER", "w")):
+        set_current_auth(auth)
+        with pytest.raises(HTTPException) as refused:
+            asyncio.run(bl.enforce_on_insert(org=ORG, namespace=NS, value="x"))
+        assert refused.value.status_code == 422
+        assert refused.value.detail["code"] == "BLACKLISTED"
+        bodies.append(str(refused.value.detail))
+    wide, narrow = bodies
+    assert "pid-v" in wide and "V-PRIVATE" in wide
+    assert "pid-v" not in narrow and "V-PRIVATE" not in narrow
 
 
 # -------------------------------------------------------------- sweep gate

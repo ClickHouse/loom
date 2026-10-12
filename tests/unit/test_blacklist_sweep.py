@@ -195,32 +195,3 @@ async def test_a_narrowed_sweep_matches_only_the_callers_rows(monkeypatch, _unbi
     sql, params = ch.queries[0]
     assert "user_id = {scope_uid:String}" in sql and params["scope_uid"] == "w"
     assert (res.matched, res.tombstoned) == (0, 0)
-
-
-async def test_list_hides_hit_counts_from_a_narrowed_token(monkeypatch, _unbind) -> None:
-    import server.memory.app.blacklist as h
-    from server.memory.api.models_blacklist import BlacklistListInput
-
-    row = {
-        "pattern_id": "p",
-        "org": "o",
-        "namespace": "a",
-        "pattern": "x",
-        "pattern_type": "substring",
-        "scope": "namespace",
-        "reason": "",
-        "created_by": "process:sa:w",
-        "hit_count": 7,
-        "last_hit_at": "2026-01-01 00:00:00",
-        "created_at": "2026-01-01 00:00:00",
-    }
-
-    async def rows(*a, **k):
-        return [row]
-
-    monkeypatch.setattr(h.blacklist_repo, "list_for_scope", rows)
-    wide = await h.handle_blacklist_list(BlacklistListInput(org="o", namespace="a"))
-    assert wide.rows[0].hit_count == 7
-    _bind_pinned("w")
-    narrow = await h.handle_blacklist_list(BlacklistListInput(org="o", namespace="a"))
-    assert narrow.rows[0].hit_count == 0 and narrow.rows[0].last_hit_at is None

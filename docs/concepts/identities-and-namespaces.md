@@ -218,11 +218,12 @@ than `namespace`:
   `user_id` the body names.
 - A leg whose rows carry no user (conversations, runs) answers nothing.
 - A blacklist pattern still refuses every user's writes, so `blacklist.add` needs
-  `admin` on the namespace. Its sweep (`blacklist.add(sweep=true)`,
-  `blacklist.sweep`) tombstones and counts only the caller's own rows.
-  `blacklist.list` and `blacklist.remove` reach only the patterns the caller added
-  (another user's pattern is not found), and the list shows no hit counts. `policy.decisions`
-  lists only the caller's own decisions. `memory.unlock` and `memory.unpin` (admin)
+  `admin` on the namespace, and `blacklist.add(sweep=true)` tombstones and counts
+  only the caller's own rows. A pattern records no user (its `created_by` is the
+  token subject, which every per-user token of one backend shares), so
+  `blacklist.list`, `blacklist.remove` and `blacklist.sweep` are refused with
+  `AUTH_INSUFFICIENT`, and a refused write's 422 names no pattern id or reason.
+  `policy.decisions` lists only the caller's own decisions. `memory.unlock` and `memory.unpin` (admin)
   reach only the caller's own rows, like `memory.lock`.
 - An op that cannot bound its answer to one user (the entity graph `facts.*`,
   `conversation.*`, namespace exports, admin and curation ops,
