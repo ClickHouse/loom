@@ -5,7 +5,7 @@
 
 services:
   clickhouse:
-    image: clickhouse/clickhouse-server:26.5.1.882
+    image: clickhouse/clickhouse-server:26.7.28.6
     restart: unless-stopped
     environment:
       CLICKHOUSE_DB: loom

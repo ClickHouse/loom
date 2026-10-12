@@ -23,7 +23,7 @@ services:
     # QBit native vector type, native JSON-type query path, and the
     # newer batch of AI/NLP SQL functions. Bump explicitly when
     # validating against newer minors.
-    image: clickhouse/clickhouse-server:26.5.1.882
+    image: clickhouse/clickhouse-server:26.7.28.6
     container_name: loom-ch
     # Host-side ports only, parametrized so a machine already using 8123/9000
     # for something else can remap in its own .env without touching this

@@ -116,7 +116,7 @@ jobs:
       # parser and engine match the integration job's server.
       - name: Install the pinned clickhouse binary
         run: |
-          id=$(docker create clickhouse/clickhouse-server:26.5.1.882)
+          id=$(docker create clickhouse/clickhouse-server:26.7.28.6)
           sudo docker cp -L "$id:/usr/bin/clickhouse" /usr/local/bin/clickhouse
           docker rm "$id" >/dev/null
           sudo ln -sf clickhouse /usr/local/bin/clickhouse-format

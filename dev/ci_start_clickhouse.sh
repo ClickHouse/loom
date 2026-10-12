@@ -26,7 +26,7 @@ docker run -d --name loom-ch \
   -v "$CFG/nlp_user_settings.xml:/etc/clickhouse-server/users.d/nlp_user_settings.xml:ro" \
   -v "$CFG/merge_tree_settings.xml:/etc/clickhouse-server/config.d/merge_tree_settings.xml:ro" \
   -v "$CFG/keeper.xml:/etc/clickhouse-server/config.d/keeper.xml:ro" \
-  clickhouse/clickhouse-server:26.5.1.882
+  clickhouse/clickhouse-server:26.7.28.6
 # named_collections.xml is intentionally omitted: it's gitignored (built from a
 # template against an operator secret) and only powers CH SQL ai* functions,
 # which the test suite doesn't exercise.
