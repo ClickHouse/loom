@@ -152,7 +152,7 @@ async def validate_providers(
         for provider, model in sorted(models)
     ]
     embedding = setup.embedding
-    if codes_state.coded_widths() and not codable(embedding.dimensions):
+    if codes_state.primary_widths() and not codable(embedding.dimensions):
         # The rebuild re-creates the coded vector tables at the new width.
         checks.append(
             ProviderCheck(

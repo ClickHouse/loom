@@ -29,9 +29,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import time
 from typing import Any
+
+from server.core.schema.vector_codec_ddl import codec_width
 
 log = logging.getLogger(__name__)
 
@@ -39,8 +40,6 @@ CODED_COLUMNS_SQL = (
     "SELECT table, name, compression_codec FROM system.columns "
     "WHERE database = {db:String} AND compression_codec LIKE '%Quantized(%'"
 )
-# The width argument of Quantized('<method>', <dim>, ...).
-_WIDTH = re.compile(r"Quantized\([^,]*,\s*(\d+)")
 PATCH_PARTS_SQL = (
     "SELECT table, countIf(startsWith(name, 'patch')) AS patch_parts "
     "FROM system.parts "
@@ -88,19 +87,36 @@ def coded_widths() -> dict[str, int]:
     return dict(_widths)
 
 
+def _table(column: str) -> str:
+    return column.rsplit(".", 1)[0]
+
+
+def _written_by_served_model(column: str) -> bool:
+    """One of Loom's own coded tables that no LOOM_CODE_VECTOR_TABLES label
+    routes elsewhere: a model change rebuilds it at the new width."""
+    from server.core.schema.vector_codec_ddl import CODED_TABLES
+    from server.core.vectors.code_tables import vector_dim_for_table
+
+    table = _table(column)
+    return table.split(".", 1)[1] in CODED_TABLES and not vector_dim_for_table(table)
+
+
+def primary_widths() -> dict[str, int]:
+    """The coded columns the served model writes."""
+    return {c: w for c, w in _widths.items() if _written_by_served_model(c)}
+
+
 def width_mismatches(served: int) -> dict[str, tuple[int, int]]:
     """Serving columns whose width differs from what their writes carry, as
-    column -> (stored, written). A table LOOM_CODE_VECTOR_TABLES routes a label to
-    takes that label's width, Loom's own coded tables the served model's; other
-    tables (rebuild staging, backups) take no writes."""
-    from server.core.schema.vector_codec_ddl import CODED_TABLES
+    column -> (stored, written): a routed label's width, or the served model's.
+    Other tables (rebuild staging, backups) take no writes."""
     from server.core.vectors.code_tables import vector_dim_for_table
 
     out: dict[str, tuple[int, int]] = {}
     for column, stored in _widths.items():
-        table = column.rsplit(".", 1)[0]
-        own = table.split(".", 1)[1] in CODED_TABLES
-        written = vector_dim_for_table(table) or (served if own else 0)
+        written = vector_dim_for_table(_table(column)) or (
+            served if _written_by_served_model(column) else 0
+        )
         if written and stored != written:
             out[column] = (stored, written)
     return out
@@ -136,9 +152,9 @@ async def probe(ch: Any) -> None:
         rows = await ch.query_all(CODED_COLUMNS_SQL, {"db": "loom"})
         set_coded({f"loom.{r['table']}.{r['name']}" for r in rows})
         _widths = {
-            f"loom.{r['table']}.{r['name']}": int(m.group(1))
+            f"loom.{r['table']}.{r['name']}": width
             for r in rows
-            if (m := _WIDTH.search(str(r.get("compression_codec") or "")))
+            if (width := codec_width(str(r.get("compression_codec") or ""))) is not None
         }
     except Exception as e:  # noqa: BLE001 — advisory; the previous reading stands
         log.info("coded-column probe failed: %s", str(e)[:160])
@@ -212,6 +228,7 @@ __all__ = [
     "codes_apply",
     "coded_columns",
     "coded_widths",
+    "primary_widths",
     "width_mismatches",
     "ensure_probed",
     "is_coded",

@@ -237,9 +237,10 @@ out of `.env`.
   same moment can end up sharing that id with them.
 - **Another ClickHouse image.** The compose files run the release CI tests; set
   `LOOM_CLICKHOUSE_IMAGE` in `.env` to run another, such as
-  `clickhouse/clickhouse-server:head` for a build of ClickHouse master. A master build is
-  unsupported: Loom depends on experimental features master can change, and a data volume
-  it writes may not open on an older release.
+  `clickhouse/clickhouse-server:head` for a build of ClickHouse master. CI does not test
+  master, and Loom uses experimental features master can change. A newer server can also
+  write data in a format an older release cannot read, so switching back to the release may
+  need a fresh ClickHouse volume.
 - **ClickHouse Cloud.** Loom's DDL uses plain `MergeTree` engines, which Cloud runs as
   `SharedMergeTree`, so replication and durability come with the service. The one
   migration that needs the NLP functions is skipped and recorded, so the lexical leg

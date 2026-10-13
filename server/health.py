@@ -95,7 +95,7 @@ def _health_provider_fields(
         "embedding_model": embedding_model,
         "embedding_dim_configured": settings.embedding_dim,
         "embedding_dim_probed": probed_dim,
-        "embedding_dim_mismatch": probed_dim != settings.embedding_dim or bool(width_mismatches),
+        "embedding_dim_mismatch": probed_dim != settings.embedding_dim,
         "llm_provider": llm_provider,
         "llm_model": settings.llm_model,
         "providers_degraded": fake_embedding or fake_llm or provider_status["degraded"],

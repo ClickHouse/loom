@@ -248,18 +248,18 @@ def test_explicit_empty_key_does_not_use_environment(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("coded", "ready"), [(frozenset({3072}), False), (frozenset(), True)])
+@pytest.mark.parametrize(
+    ("widths", "ready"), [({"loom.memory_embeddings.embedding": 3072}, False), ({}, True)]
+)
 async def test_a_width_the_coded_tables_cannot_take_is_refused_before_any_probe(
-    monkeypatch: pytest.MonkeyPatch, coded: frozenset[int], ready: bool
+    monkeypatch: pytest.MonkeyPatch, widths: dict[str, int], ready: bool
 ) -> None:
     from server.core.vectors import codes_state
 
     llm, embed = AsyncMock(), AsyncMock()
     monkeypatch.setattr(validation, "_probe_llm", llm)
     monkeypatch.setattr(validation, "_probe_embedding", embed)
-    monkeypatch.setattr(
-        codes_state, "coded_widths", lambda: {f"loom.t{w}.embedding": w for w in coded}
-    )
+    monkeypatch.setattr(codes_state, "primary_widths", lambda: widths)
     setup = setup_input(embedding={"provider": "openai", "model": "e", "dimensions": 12})
     result = await validation.validate_providers(setup, {"anthropic": "a", "openai": "o"})
     assert result.ready is ready
