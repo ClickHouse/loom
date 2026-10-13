@@ -459,7 +459,7 @@ async def _loom_search_capture_levels_seen(
         return {"org": "o", "namespace": "personal-alice", "agent": "cursor"}
 
     async def _fanout(org: str) -> Fanout:
-        return Fanout(org=org, namespaces=tuple(accessible), skipped=())
+        return Fanout(org=org, namespaces=tuple(accessible), cap=32)
 
     monkeypatch.setattr(llm_client, "get_llm_client", lambda: _Client())
     monkeypatch.setattr(mcp_call, "_caller_defaults", _defaults)

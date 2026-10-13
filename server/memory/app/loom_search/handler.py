@@ -20,24 +20,28 @@ async def handle_search(input: SearchInput) -> SearchOutput:
     from server.auth.fanout import resolve_fanout
     from server.observability.capture_consent import narrow_to
 
-    fanout: list[str] = []
-    if input.namespace_scope == "all_mine":
+    namespace_scope = input.namespace_scope
+    read = [input.namespace]
+    if namespace_scope == "all_mine":
         try:
-            fanout = list((await resolve_fanout(input.org)).namespaces)
+            read, _skipped = (await resolve_fanout(input.org)).reads(input.namespace)
         except Exception as e:  # noqa: BLE001 — no fan-out namespaces narrows the search, never widens
             log.warning("search namespace resolution failed (non-fatal): %s", e)
-    await narrow_to(input.org, [input.namespace, *fanout])
+            # Every leg, not only this one, reads the addressed namespace alone:
+            # consent was narrowed over it, so no leg may read wider.
+            namespace_scope = "this"
+    await narrow_to(input.org, read)
     payload = await search_sections(
         org=input.org,
         namespace=input.namespace,
         query=input.query,
         top_k=input.top_k,
         tags=[t for t in input.tags if t],
-        namespace_scope=input.namespace_scope,
+        namespace_scope=namespace_scope,
         recipe=input.recipe,
         bodies=input.bodies,
         page=input.page.strip(),
         explain=input.explain,
-        fanout_namespaces=fanout,
+        fanout_namespaces=read,
     )
     return SearchOutput.model_validate(payload)

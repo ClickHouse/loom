@@ -194,12 +194,13 @@ The SDK's `Session.offload` / `Session.fetch` wrap the pair for one session.
 
 ## Settings
 
-| Setting                           | Effect                                                                                        |
-| --------------------------------- | --------------------------------------------------------------------------------------------- |
-| `LOOM_MCP_LOOM_SEARCH_*`          | Legs, floors and withholding rules ([Mcp](../reference/configuration.md#mcp)).                |
-| `LOOM_MEMORY_SEARCH_FANOUT_KINDS` | Namespace kinds a fan-out spans ([MemorySearch](../reference/configuration.md#memorysearch)). |
-| `LOOM_MCP_TOOLSET`                | Which tools `tools/list` shows ([toolsets](../reference/mcp.md#toolsets)).                    |
-| `LOOM_CONTEXT_OFFLOAD_MAX_BYTES`  | The largest body `context.offload` stores ([Context](../reference/configuration.md#context)). |
+| Setting                                    | Effect                                                                                                                                      |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LOOM_MCP_LOOM_SEARCH_*`                   | Legs, floors and withholding rules ([Mcp](../reference/configuration.md#mcp)).                                                              |
+| `LOOM_MEMORY_SEARCH_FANOUT_KINDS`          | Namespace kinds a fan-out spans ([MemorySearch](../reference/configuration.md#memorysearch)).                                               |
+| `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES` | How many of the caller's namespaces a fan-out reads besides the addressed one ([MemorySearch](../reference/configuration.md#memorysearch)). |
+| `LOOM_MCP_TOOLSET`                         | Which tools `tools/list` shows ([toolsets](../reference/mcp.md#toolsets)).                                                                  |
+| `LOOM_CONTEXT_OFFLOAD_MAX_BYTES`           | The largest body `context.offload` stores ([Context](../reference/configuration.md#context)).                                               |
 
 ## Limits
 

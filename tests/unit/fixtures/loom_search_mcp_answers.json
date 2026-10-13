@@ -87,8 +87,8 @@
     "page": "",
     "explain": false,
     "fanout_namespaces": [
-     "team",
-     "alice"
+     "alice",
+     "team"
     ]
    }
   },
@@ -179,8 +179,8 @@
     "page": "",
     "explain": false,
     "fanout_namespaces": [
-     "team",
-     "alice"
+     "alice",
+     "team"
     ]
    }
   }
@@ -273,8 +273,8 @@
     "page": "",
     "explain": false,
     "fanout_namespaces": [
-     "team",
-     "alice"
+     "alice",
+     "team"
     ]
    }
   }
@@ -369,8 +369,8 @@
     "page": "",
     "explain": true,
     "fanout_namespaces": [
-     "team",
-     "alice"
+     "alice",
+     "team"
     ]
    }
   }
@@ -463,7 +463,9 @@
     "bodies": "none",
     "page": "",
     "explain": false,
-    "fanout_namespaces": []
+    "fanout_namespaces": [
+     "team"
+    ]
    }
   }
  ],
@@ -555,8 +557,8 @@
     "page": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
     "explain": false,
     "fanout_namespaces": [
-     "team",
-     "alice"
+     "alice",
+     "team"
     ]
    }
   }
@@ -651,8 +653,8 @@
     "page": "h",
     "explain": false,
     "fanout_namespaces": [
-     "team",
-     "alice"
+     "alice",
+     "team"
     ]
    }
   }
@@ -764,8 +766,8 @@
     "page": "",
     "explain": false,
     "fanout_namespaces": [
-     "team",
-     "alice"
+     "alice",
+     "team"
     ]
    }
   }
@@ -807,8 +809,8 @@
     "page": "",
     "explain": false,
     "fanout_namespaces": [
-     "team",
-     "alice"
+     "alice",
+     "team"
     ]
    }
   }
@@ -882,8 +884,8 @@
     "page": "",
     "explain": false,
     "fanout_namespaces": [
-     "team",
-     "alice"
+     "alice",
+     "team"
     ]
    }
   }
@@ -976,8 +978,8 @@
     "page": "",
     "explain": false,
     "fanout_namespaces": [
-     "team",
-     "alice"
+     "alice",
+     "team"
     ]
    }
   }

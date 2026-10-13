@@ -201,21 +201,16 @@ async def search_sections(
     fanout_namespaces: list[str],
 ) -> dict[str, Any]:
     """The assembled loom_search payload for `query` addressed to
-    (`org`, `namespace`). `fanout_namespaces` are the caller's memory-kind
-    namespaces a `namespace_scope="all_mine"` search reads (the profile leg
-    reads them too); the caller has already authorized `namespace`."""
-    from server.auth.fanout import with_addressed
+    (`org`, `namespace`). `fanout_namespaces` are the namespaces a
+    `namespace_scope="all_mine"` search reads, `namespace` first (the profile
+    leg reads them too); the caller has already authorized `namespace`."""
     from server.knowledge.api.models_conversations import ConversationSearchInput
     from server.knowledge.api.models_knowledge import KnowledgeSearchInput
     from server.memory.app.search import handle_memory_search
 
     scope = request_scope()
 
-    profile_namespaces = (
-        with_addressed(namespace, fanout_namespaces)
-        if namespace_scope == "all_mine"
-        else [namespace]
-    )
+    profile_namespaces = fanout_namespaces if namespace_scope == "all_mine" else [namespace]
 
     mem_input = MemorySearchInput(
         org=org,

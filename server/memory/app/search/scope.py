@@ -10,7 +10,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from server.auth.fanout import Fanout, resolve_fanout, with_addressed
+from server.auth.fanout import Fanout, resolve_fanout
 from server.core.background import create_deferred_task
 from server.core.ch import get_client
 from server.memory.api.models_search import MemorySearchInput
@@ -106,24 +106,23 @@ def _launch_scope_reads(input: MemorySearchInput) -> _SearchRun:
     )
 
 
-async def _scope_inputs(
-    input: MemorySearchInput,
-    run: _SearchRun,
-    llm_query_entities: list[str],
-    actual_work: dict[str, Any],
-) -> list[str]:
-    """Settle the namespaces this search reads on `run`, and return the entity filter before
-    canonicalisation. The caller's explicit `entity_filter` wins over the entities the intent
-    parser found. "all_mine" reads the caller's fan-out (`server.auth.fanout`: its kinds, its
-    cap) led by the addressed `input.namespace`: membership may only widen the search, never
-    redirect it."""
+async def _settle_namespaces(
+    input: MemorySearchInput, run: _SearchRun, actual_work: dict[str, Any]
+) -> None:
+    """The namespaces this search reads, onto `run`. "all_mine" reads the caller's fan-out
+    (`server.auth.fanout`: its kinds, its cap) led by the addressed `input.namespace`:
+    membership may only widen the search, never redirect it."""
     run.namespaces = [input.namespace]
     if run.fanout_task is not None:
         fanout = await run.fanout_task
-        run.namespaces = with_addressed(input.namespace, fanout.namespaces)
+        run.namespaces, run.namespaces_skipped = fanout.reads(input.namespace)
         run.order_authoritative = fanout.ordered
-        run.namespaces_skipped = [ns for ns in fanout.skipped if ns != input.namespace]
     actual_work["namespace_count"] = len(run.namespaces)
+
+
+def _entity_filter(input: MemorySearchInput, llm_query_entities: list[str]) -> list[str]:
+    """The entity filter before canonicalisation: the caller's own wins over the
+    entities the intent parser found."""
     return list(input.entity_filter or []) or list(llm_query_entities)
 
 
@@ -145,7 +144,8 @@ async def _prelaunch_canonical_lookup(
     effective_entity_filter: list[str] = []
     _canonical_prelaunched = False
     if _enrichment_parser_gate_active(input):
-        effective_entity_filter = await _scope_inputs(input, run, llm_query_entities, actual_work)
+        await _settle_namespaces(input, run, actual_work)
+        effective_entity_filter = _entity_filter(input, llm_query_entities)
         if effective_entity_filter:
             from server.memory.app.entity_resolution import lookup_canonical_entities
 
@@ -183,7 +183,8 @@ async def _resolve_entity_scope(
     if not _canonical_prelaunched:
         # Default (serial) path: entity-filter build, namespace resolution,
         # and canonical lookup all run here, after the embed.
-        effective_entity_filter = await _scope_inputs(input, run, llm_query_entities, actual_work)
+        await _settle_namespaces(input, run, actual_work)
+        effective_entity_filter = _entity_filter(input, llm_query_entities)
         if effective_entity_filter:
             try:
                 from server.memory.app.entity_resolution import (

@@ -1,15 +1,14 @@
 """What a `namespace_scope=all_mine` search reads.
 
-The caller's own namespaces (`resolve_my_namespaces`), narrowed to the kinds a
-fan-out sweeps and cut at `memory_search_fanout_max_namespaces`, plus the
-namespace the call addressed, which every leg reads first whatever the list
-says. Code and QA indexes are readable namespaces too, but they are reached by
-name or by their own tools, never swept for a personal fact.
+The namespace the call addressed, first, and up to
+`memory_search_fanout_max_namespaces` more of the caller's own namespaces
+(`resolve_my_namespaces`, narrowed to the kinds a fan-out sweeps). Code and QA
+indexes are readable namespaces too, but they are reached by name or by their
+own tools, never swept for a personal fact.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass
 
 from server.auth import context
@@ -20,22 +19,27 @@ from server.settings import settings
 
 @dataclass(frozen=True)
 class Fanout:
-    """What an all_mine search reads in `org`, and what its cap left out."""
+    """The caller's namespaces an all_mine search may read in `org`, before the cap."""
 
     org: str
     namespaces: tuple[str, ...]
-    skipped: tuple[str, ...]
+    cap: int
     # The order is a priority (a scoped token's), read as strict tiers.
     ordered: bool = False
+    # The public ones, which the cap drops before any private one. Empty when
+    # the order is a priority or every namespace fits under the cap.
+    public: frozenset[str] = frozenset()
 
-
-def with_addressed(namespace: str, fanout: Sequence[str]) -> list[str]:
-    """The namespaces an all_mine leg reads: the addressed `namespace` first,
-    then the rest of `fanout` in its order. The transport authorized that
-    namespace, and a fan-out only widens a search: nothing read before it may
-    end the search without it."""
-    rest = [ns for ns in fanout if ns and ns != namespace]
-    return [namespace, *rest] if namespace else rest
+    def reads(self, namespace: str) -> tuple[list[str], list[str]]:
+        """(read, skipped) for a search addressed to `namespace`: it first,
+        then up to `cap` of the others in their order; skipped are the others
+        the cap left out. The transport authorized `namespace`, and a fan-out
+        only widens a search, so nothing read before it may end the search
+        without it."""
+        others = [ns for ns in self.namespaces if ns != namespace]
+        keep = set(sorted(others, key=lambda ns: ns in self.public)[: self.cap])
+        read = [ns for ns in others if ns in keep]
+        return [namespace, *read], [ns for ns in others if ns not in keep]
 
 
 async def namespaces_to_search(org: str, namespace: str, namespace_scope: str | None) -> list[str]:
@@ -43,14 +47,14 @@ async def namespaces_to_search(org: str, namespace: str, namespace_scope: str | 
     under `all_mine` the caller's fan-out besides."""
     if namespace_scope != "all_mine":
         return [namespace]
-    return with_addressed(namespace, (await resolve_fanout(org)).namespaces)
+    read, _skipped = (await resolve_fanout(org)).reads(namespace)
+    return read
 
 
 async def resolve_fanout(org: str) -> Fanout:
-    """The caller's namespaces of the fan-out kinds, cut at
-    `memory_search_fanout_max_namespaces`; the kept ones stay in their order,
-    which is a priority only when `ordered` (a scoped token). Memoised per
-    bound principal and org."""
+    """The caller's namespaces of the fan-out kinds, in their order, which is a
+    priority only when `ordered` (a scoped token). Memoised per bound principal
+    and org."""
     cached = context.fanout_memo.get()
     if cached is not None and cached.org == org:
         return cached
@@ -62,16 +66,13 @@ async def resolve_fanout(org: str) -> Fanout:
     mine = await directory().fanout_namespaces(org, readable)
     cap = settings.memory_search_fanout_max_namespaces
     ordered = auth is not None and auth.has_ns_roles()
-    # Only a scoped token's order is a priority. For anyone else the cut keeps
-    # the private namespaces, the ones the search reads first.
-    cut_by_visibility = len(mine) > cap and not ordered
-    public = await directory().public_namespaces(org, mine) if cut_by_visibility else set()
-    keep = set(sorted(mine, key=lambda ns: ns in public)[:cap])
+    public: set[str] = set()
+    if len(mine) > cap and not ordered:
+        # Only a scoped token's order is a priority. For anyone else the cut
+        # keeps the private namespaces, the ones the search reads first.
+        public = await directory().public_namespaces(org, mine)
     fanout = Fanout(
-        org=org,
-        namespaces=tuple(ns for ns in mine if ns in keep),
-        skipped=tuple(ns for ns in mine if ns not in keep),
-        ordered=ordered,
+        org=org, namespaces=tuple(mine), cap=cap, ordered=ordered, public=frozenset(public)
     )
     context.fanout_memo.set(fanout)
     return fanout

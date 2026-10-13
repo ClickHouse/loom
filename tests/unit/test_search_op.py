@@ -40,7 +40,7 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
         return {k: dict(v) for k, v in PAYLOAD.items()}
 
     async def _fanout(org: str) -> Fanout:
-        return Fanout(org=org, namespaces=("n", "team"), skipped=())
+        return Fanout(org=org, namespaces=("n", "team"), cap=32)
 
     async def _defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:
         return {"org": "o", "namespace": "n", "agent": "a"}
@@ -172,7 +172,7 @@ def test_unresolvable_consent_or_fan_out_never_widens_capture(
 
     # A fanned-out namespace whose consent lookup fails captures nothing.
     async def _unknown(org: str) -> Fanout:
-        return Fanout(org=org, namespaces=("n", "unknown"), skipped=())
+        return Fanout(org=org, namespaces=("n", "unknown"), cap=32)
 
     monkeypatch.setattr("server.auth.fanout.resolve_fanout", _unknown)
     asyncio.run(_run("all"))

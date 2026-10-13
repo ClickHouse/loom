@@ -169,7 +169,7 @@ def _make_harness(monkeypatch: pytest.MonkeyPatch) -> Any:
         return _payload(state["payload"])
 
     async def _fanout(org: str) -> Fanout:
-        return Fanout(org=org, namespaces=("team", "alice"), skipped=())
+        return Fanout(org=org, namespaces=("team", "alice"), cap=32)
 
     async def _defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:
         return {"org": ORG, "namespace": "team", "agent": "claude-code"}

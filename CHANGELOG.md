@@ -47,7 +47,7 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   clone stays a plain `git clone`.
 
 - `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES` (default 32) caps how many of the caller's
-  namespaces a `namespace_scope=all_mine` search reads; the addressed one is read regardless.
+  namespaces a `namespace_scope=all_mine` search reads besides the addressed one.
   For anyone but a scoped token the cap keeps private namespaces ahead of public ones.
   `memory.search` names the rest in a new output field, `namespaces_skipped`, and the
   `loom_search` text lists them.

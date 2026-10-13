@@ -70,7 +70,7 @@ A `procedural` row written with `memory.set` that is not a procedure body (a non
 ### Matching
 
 `procedure.match` ranks by similarity of the caller's `situation` to each stored one,
-across every namespace the caller can read (`namespace_scope="all_mine"`). It can add:
+across the caller's own namespaces, up to the fan-out cap (`namespace_scope="all_mine"`). It can add:
 
 | Term         | Effect                                                                                      |
 | ------------ | ------------------------------------------------------------------------------------------- |

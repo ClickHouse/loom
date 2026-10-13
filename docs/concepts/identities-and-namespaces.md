@@ -190,10 +190,11 @@ Then the list is narrowed:
   `memory`) are swept. Code and benchmark namespaces are read by name or with their own
   tools.
 - **Restricted namespaces** stay only when the caller passes the restricted check.
-- **The cap.** At most `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES` (default 32) are kept,
-  in their order: a scoped token's first ones, anyone else's private namespaces before
-  public ones. Memory search names the rest in `namespaces_skipped`, and `loom_search`
-  says so in its text; address one by name to read it.
+- **The cap.** Besides the addressed namespace, at most
+  `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES` (default 32) are read, in their order: a
+  scoped token's first ones, anyone else's private namespaces before public ones. Memory
+  search names the rest in `namespaces_skipped`, and `loom_search` says so in its text;
+  address one by name to read it.
 
 The addressed namespace is always searched, and first: the fan-out only widens a search.
 Memory search then reads in tiers. For a scoped token the other namespaces follow in its

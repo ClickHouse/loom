@@ -142,10 +142,8 @@ async def _address_home(arguments: dict[str, Any], auth: Any) -> None:
     except Exception as e:  # noqa: BLE001 — no fan-out namespaces narrows the search, never widens
         log.warning("loom_search namespace resolution failed (non-fatal): %s", e)
         return
-    # The home is chosen from every namespace of the caller, the ones past the
-    # fan-out cap included; a caller with no home of its own starts at the
-    # first namespace read.
-    accessible = [*fanout.namespaces, *fanout.skipped]
+    # The home is chosen from every namespace of the caller, before the cap.
+    accessible = list(fanout.namespaces)
     if accessible:
         subject = str(getattr(auth, "subject", "") or "") if auth is not None else ""
         arguments["namespace"] = home_namespace(

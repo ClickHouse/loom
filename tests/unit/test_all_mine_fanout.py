@@ -15,7 +15,7 @@ import server.auth.context as ctx
 import server.auth.fanout as fanout_mod
 import server.identity.app.namespace_kinds as nk
 import server.identity.app.namespace_visibility as nv
-from server.auth.fanout import Fanout, namespaces_to_search, with_addressed
+from server.auth.fanout import Fanout, namespaces_to_search
 from server.auth.jwt import AuthInfo
 from server.knowledge.api.models_knowledge import KnowledgeSearchInput
 from server.knowledge.app import knowledge_search
@@ -90,8 +90,9 @@ def test_the_cap_keeps_private_namespaces_and_names_the_rest(
     monkeypatch.setattr(settings, "memory_search_fanout_max_namespaces", 2)
     ctx.set_current_auth(_flat("a-team", "alice", "b-team", "notes"))
     fanout = _fanout()
-    assert fanout.namespaces == ("alice", "notes")
-    assert fanout.skipped == ("a-team", "b-team")
+    assert fanout.reads("zed") == (["zed", "alice", "notes"], ["a-team", "b-team"])
+    # The addressed namespace takes no slot: the cap bounds the others.
+    assert fanout.reads("alice") == (["alice", "a-team", "notes"], ["b-team"])
 
 
 def test_a_failed_visibility_lookup_cuts_in_plain_order(
@@ -103,8 +104,7 @@ def test_a_failed_visibility_lookup_cuts_in_plain_order(
     monkeypatch.setattr(nv, "visibility_map", _unreadable)
     monkeypatch.setattr(settings, "memory_search_fanout_max_namespaces", 2)
     ctx.set_current_auth(_flat("a-team", "alice", "b-team"))
-    fanout = _fanout()
-    assert (fanout.namespaces, fanout.skipped) == (("a-team", "alice"), ("b-team",))
+    assert _fanout().reads("zed") == (["zed", "a-team", "alice"], ["b-team"])
 
 
 def test_auth_off_applies_the_cap_too(
@@ -116,9 +116,8 @@ def test_auth_off_applies_the_cap_too(
     monkeypatch.setattr(nv, "visibility_map", _visibility)
     monkeypatch.setattr(settings, "auth_required", False)
     monkeypatch.setattr(settings, "memory_search_fanout_max_namespaces", 1)
-    grants["you"] = ["alpha-team", "local"]
-    fanout = _fanout()
-    assert (fanout.namespaces, fanout.skipped) == (("local",), ("alpha-team",))
+    grants["you"] = ["alpha-team", "local", "work"]
+    assert _fanout().reads("work") == (["work", "local"], ["alpha-team"])
 
 
 def test_the_cap_keeps_a_scoped_tokens_own_order(
@@ -135,15 +134,15 @@ def test_the_cap_keeps_a_scoped_tokens_own_order(
     )
     ctx.set_current_auth(scoped)
     fanout = _fanout()
-    assert (fanout.namespaces, fanout.skipped, fanout.ordered) == (("team",), ("alice",), True)
+    assert fanout.ordered
+    assert fanout.reads("zed") == (["zed", "team"], ["alice"])
 
 
 def test_the_addressed_namespace_always_leads() -> None:
-    assert with_addressed("mine", ["team"]) == ["mine", "team"]
-    assert with_addressed("mine", ("team", "mine", "wiki")) == ["mine", "team", "wiki"]
-    assert with_addressed("mine", []) == ["mine"]
-    assert with_addressed("mine", ["", "team"]) == ["mine", "team"]
-    assert with_addressed("", ["team"]) == ["team"]
+    fanout = Fanout(org=ORG, namespaces=("team", "mine", "wiki"), cap=32)
+    assert fanout.reads("mine") == (["mine", "team", "wiki"], [])
+    assert fanout.reads("other") == (["other", "team", "mine", "wiki"], [])
+    assert Fanout(org=ORG, namespaces=(), cap=32).reads("mine") == (["mine"], [])
 
 
 def test_private_first_passes_put_the_addressed_namespace_first(
@@ -171,10 +170,11 @@ def test_namespaces_to_search_leads_with_the_addressed_namespace(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def _fanout(org: str) -> Fanout:
-        return Fanout(org=org, namespaces=("team",), skipped=("mine",))
+        return Fanout(org=org, namespaces=("team", "mine", "wiki"), cap=1)
 
     monkeypatch.setattr(fanout_mod, "resolve_fanout", _fanout)
     assert asyncio.run(namespaces_to_search(ORG, "mine", "all_mine")) == ["mine", "team"]
+    assert asyncio.run(namespaces_to_search(ORG, "wiki", "all_mine")) == ["wiki", "team"]
     assert asyncio.run(namespaces_to_search(ORG, "mine", "this")) == ["mine"]
     assert asyncio.run(namespaces_to_search(ORG, "mine", None)) == ["mine"]
 
@@ -217,7 +217,7 @@ def test_an_unaddressed_search_starts_at_home_even_past_the_cap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def _fanout(org: str) -> Fanout:
-        return Fanout(org=org, namespaces=("aaa-team",), skipped=("alice",))
+        return Fanout(org=org, namespaces=("aaa-team", "alice"), cap=1)
 
     monkeypatch.setattr(fanout_mod, "resolve_fanout", _fanout)
     arguments = {"org": ORG, "namespace": "aaa-team", "namespace_scope": "all_mine"}

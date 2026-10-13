@@ -136,9 +136,9 @@ async def _run_vector_legs(
     input = ctx.input
 
     # Private-first sequential fallback (cross-namespace only, unscoped /
-    # order-less tokens): search private-visibility namespaces first; if a
-    # private hit clears the relevance floor, return only those and skip the
-    # public pass — otherwise also search public and merge. Without this a
+    # order-less tokens): search the addressed namespace and the private ones
+    # first; if a hit there clears the relevance floor, skip the public pass —
+    # otherwise also search the public ones and merge. Without this a
     # strong private hit gets diluted by team-scratchpad noise.
     # CAVEAT — visibility is a rough OWNERSHIP proxy here, nothing more. It is
     # orthogonal to the caller's role: a private namespace the caller only
@@ -225,10 +225,10 @@ async def _run_vector_legs(
                     top_k=input.top_k,
                     namespaces=len(second_pass),
                 ):
-                    public_results = await asyncio.gather(
+                    second_pass_results = await asyncio.gather(
                         *[_search_one(ctx, ns) for ns in second_pass]
                     )
-                results_per_ns = list(results_per_ns) + list(public_results)
+                results_per_ns = list(results_per_ns) + list(second_pass_results)
         else:
             with traced(
                 "ch.query.memory_embeddings",

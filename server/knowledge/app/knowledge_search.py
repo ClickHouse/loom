@@ -136,8 +136,8 @@ async def _search_private_first(
                 top_k=input.top_k,
                 namespaces=len(second_pass),
             ):
-                public_results = await asyncio.gather(*[search_one(ns) for ns in second_pass])
-            results_per_ns = list(results_per_ns) + list(public_results)
+                second_pass_results = await asyncio.gather(*[search_one(ns) for ns in second_pass])
+            results_per_ns = list(results_per_ns) + list(second_pass_results)
     else:
         with traced(
             "ch.query.chunks",
