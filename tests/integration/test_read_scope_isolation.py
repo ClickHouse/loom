@@ -57,7 +57,7 @@ _UNBUILDABLE = {
 _SHAPED_HINTS: dict[str, tuple[type, Any]] = {
     "fields": (list, [{"name": "canary"}]),
     "actions": (list, ["memory.set"]),
-    "condition": (dict, {"op": "formerly", "within": "9d", "operation": "memory.set"}),
+    "condition": (dict, {"op": "formerly", "within": "1h", "operation": "memory.set"}),
 }
 
 
@@ -416,9 +416,10 @@ def test_ops_that_cannot_bound_their_answer_are_refused(
             continue
         r = _post(control_plane_url, tokens["pinned_u"], op.name, body)
         assert seed.nonce_v not in r.text, op.name
-        if r.status_code not in (403, 422):
+        # Only the gate's 403 proves the refusal: a 422 is a body the walk got wrong.
+        if r.status_code != 403:
             served[op.name] = r.status_code
-    assert not served, f"served to a token bounded to one user: {served}"
+    assert not served, f"not refused for a token bounded to one user: {served}"
     assert set(unbuildable) <= set(_UNBUILDABLE), unbuildable
 
 

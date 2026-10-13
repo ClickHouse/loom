@@ -417,6 +417,14 @@ async def _bind_context_and_policy(
 
     set_ledger_run(request.headers.get("X-Loom-Run-Id") or "")
 
+    # Read scope first: a body naming another user than the token's pin is refused
+    # before any rule is evaluated for that user, and the policy sees the pinned input.
+    try:
+        payload = gates.read_scope(op, auth, payload)
+    except IdentityIncompleteError as e:
+        raise _refuse(op, call, 400, "IDENTITY_INCOMPLETE", e) from e
+    except AuthInsufficientError as e:
+        raise _refuse(op, call, 403, gates.ROLE_REFUSAL_CODE, e) from e
     # History policy: after the role check, before the
     # handler. No-op when LOOM_POLICY_MODE=off or no rule applies; in
     # shadow it only records; in enforce a denial is a structured 403
@@ -435,12 +443,7 @@ async def _bind_context_and_policy(
             error_code="POLICY_FORBIDDEN",
         )
         raise HTTPException(status_code=403, detail=e.to_detail()) from e
-    try:
-        return gates.read_scope(op, auth, payload)
-    except IdentityIncompleteError as e:
-        raise _refuse(op, call, 400, "IDENTITY_INCOMPLETE", e) from e
-    except AuthInsufficientError as e:
-        raise _refuse(op, call, 403, gates.ROLE_REFUSAL_CODE, e) from e
+    return payload
 
 
 def _record_failure(op: Operation, identity: dict[str, str], elapsed_ms: int) -> None:

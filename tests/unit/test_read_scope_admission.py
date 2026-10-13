@@ -251,18 +251,51 @@ def test_a_write_under_an_unresolved_scope_is_refused() -> None:
         request_read_filters(own_user)
 
 
+# Narrow-safe ops that would write or count as user '-' if run under a scope that
+# does not resolve: written out, so a change to the predicate or a new op has to
+# be decided here rather than follow the rule it is checked against.
+_ACTS_AS_A_USER = [
+    "cost.record_turns",
+    "cost.summary",
+    "memory.bulk_set",
+    "memory.delete",
+    "memory.lock",
+    "memory.outcome",
+    "memory.pin",
+    "memory.set",
+    "memory.set_from_messages",
+    "memory.touch",
+    "memory.unlock",
+    "memory.unpin",
+    "observe.record",
+    "procedure.add",
+    "profile.append",
+    "profile.replace",
+    "profile.set",
+    "run.begin",
+    "run.complete",
+    "session.brief_delete",
+    "session.brief_save",
+    "working_memory.append",
+    "working_memory.delete",
+    "working_memory.replace",
+    "working_memory.set",
+]
+
+
 def _identity_ops() -> list[str]:
-    """Narrow-safe ops that would write or count as user '-' if run unpinned."""
+    return _ACTS_AS_A_USER
+
+
+def test_the_ops_refused_under_an_unresolved_scope_are_the_listed_ones() -> None:
     from server.identity.domain.read_scope import honours_read_scope
 
-    names = []
-    for op in ALL_OPERATIONS:
-        fields = getattr(op.input_model, "model_fields", {})
-        if not ("user_id" in fields or "session_id" in fields) or op.name.startswith("code."):
-            continue
-        if honours_read_scope(op.name) and (not op.read_only or op.name == "cost.summary"):
-            names.append(op.name)
-    return sorted(names)
+    refused = {
+        op.name
+        for op in ALL_OPERATIONS
+        if honours_read_scope(op.name) and gates._would_act_as_nobody(op)
+    }
+    assert refused == set(_ACTS_AS_A_USER)
 
 
 @pytest.mark.parametrize("name", _identity_ops())

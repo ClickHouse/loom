@@ -33,7 +33,10 @@ function runHook(event, payload, { tmp, url }) {
 }
 
 // A fake server: run.begin answers `beginRunId` after `delayMs`; every request is recorded.
-async function withServer({ beginRunId, delayMs = 0, beginStatus = 200, firstBeginDelayMs = 0 }, fn) {
+async function withServer(
+  { beginRunId, delayMs = 0, beginStatus = 200, firstBeginDelayMs = 0, completeDelayMs = 0 },
+  fn,
+) {
   let begins = 0;
   const seen = [];
   const server = http.createServer((req, res) => {
@@ -51,7 +54,7 @@ async function withServer({ beginRunId, delayMs = 0, beginStatus = 200, firstBeg
           res.setHeader("content-type", "application/json");
           res.end(JSON.stringify(answer));
         },
-        delayMs + (first ? firstBeginDelayMs : 0),
+        delayMs + (first ? firstBeginDelayMs : 0) + (req.url.endsWith("/run.complete") ? completeDelayMs : 0),
       );
     });
   });
@@ -200,6 +203,20 @@ test("the retry state holds the redacted body, never the raw prompt", async () =
   assert.ok(withTmpdir(tmp, () => readRunState("s10")).attempted);
   for (const frag of ["ghp_", "abcdefghijklmnopqrstuvwxyz"]) assert.ok(!raw.includes(frag), frag);
   assert.equal(raw.includes(" tail"), false, "nothing past the request's cut");
+});
+
+test("a re-sent begin and the close fit Codex's one-second SessionEnd budget", async () => {
+  const tmp = freshTmp();
+  await withServer({ beginRunId: "late", delayMs: 2500 }, async (url) => {
+    await runHook("UserPromptSubmit", { session_id: "s11", cwd: tmp, prompt: "p" }, { tmp, url });
+  });
+  await withServer({ beginRunId: "r5ess1on", delayMs: 350, completeDelayMs: 1100 }, async (url, seen) => {
+    const started = Date.now();
+    await runHook("SessionEnd", { session_id: "s11", cwd: tmp, reason: "exit" }, { tmp, url });
+    assert.ok(seen.some((r) => r.url.endsWith("/run.complete")), "the close was sent");
+    // The node start-up is outside the hook's own deadline; allow for it.
+    assert.ok(Date.now() - started < 1400, `SessionEnd took ${Date.now() - started} ms`);
+  });
 });
 
 test("a 429 is a busy moment: the next prompt asks again", async () => {

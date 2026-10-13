@@ -93,15 +93,18 @@ async function main() {
 
   if (event === "SessionEnd") {
     let state = readRunState(sessionId);
+    let completeOpts = opts;
     if (!state.begun && state.attempted) {
       // Asked with no answer: the begin may have opened a run. Asked again, it answers
       // that run's id (or opens one, which this hook then closes), with the body first sent.
-      // Briefly: run.complete must still fit Codex's one-second SessionEnd budget.
+      // Begin and complete share one deadline inside Codex's one-second SessionEnd budget.
+      const deadline = Date.now() + 900;
       const beginOpts = { ...opts, timeoutMs: Math.min(opts.timeoutMs, 400) };
       const res = await postBoundedResult("run.begin", state.body || beginBody(scope, payload, ""), beginOpts);
       const runId = res.status >= 200 && res.status < 300 && res.body ? res.body.run_id : "";
       if (typeof runId === "string" && runId) writeRunBegun(sessionId, runId);
       state = readRunState(sessionId);
+      completeOpts = { ...opts, timeoutMs: Math.max(100, deadline - Date.now()) };
     }
     if (!state.begun) {
       scheduleExit(0);
@@ -120,7 +123,7 @@ async function main() {
     // id stays for the other SessionEnd hooks, which run beside this one; the
     // stale-file sweep removes it later.
     writeJsonFile(sp, { run_id: state.run_id });
-    await postBounded("run.complete", body, opts);
+    await postBounded("run.complete", body, completeOpts);
     // The stash is removed by loom-session-memory, the last SessionEnd hook.
     process.exit(0);
   }

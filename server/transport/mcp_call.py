@@ -658,8 +658,8 @@ class _AdmittedCall:
 
 
 async def _admission_refusal(call: _AdmittedCall) -> dict[str, Any] | None:
-    """Phase 6 of `_call_tool`: the traffic class, the history policy gate,
-    the read scope (which may rewrite `call.input_obj`), then the rate
+    """Phase 6 of `_call_tool`: the traffic class, the read scope (which may
+    rewrite `call.input_obj`), the history policy gate, then the rate
     limiter — HTTP's order after authorization. Returns the refusal
     response, or None to run the handler. The classifier and the limiter
     FAIL OPEN (gates); the policy gate turns only PolicyForbiddenError, and
@@ -671,12 +671,24 @@ async def _admission_refusal(call: _AdmittedCall) -> dict[str, Any] | None:
     # policy and the ledger row; keys the limiter below.
     traffic_class, _source = await gates.traffic_class(op, auth, target, arguments)
 
+    # Read scope first, as HTTP: the policy never evaluates a rule for a user the
+    # token is not pinned to, and it sees the pinned input.
+    from server.core.errors import AuthInsufficientError, IdentityIncompleteError
+
+    try:
+        call.input_obj = gates.read_scope(op, auth, input_obj)
+    except (AuthInsufficientError, IdentityIncompleteError) as e:
+        _emit_mcp_event(
+            op.name, arguments, 0, success=False, error_code=e.code, request_id=request_id
+        )
+        return _ok(req_id, _refusal_result(e))
+
     # History policy, at parity with HTTP: after authz, before the handler.
     # Off → no-op; shadow → records; enforce → structured denial.
     from server.identity.app.policy_gate import PolicyForbiddenError as _PolicyForbidden
 
     try:
-        await gates.policy(op, target, input_obj, arguments, request_id=request_id)
+        await gates.policy(op, target, call.input_obj, arguments, request_id=request_id)
     except _PolicyForbidden as e:
         _emit_mcp_event(
             op.name,
@@ -694,16 +706,6 @@ async def _admission_refusal(call: _AdmittedCall) -> dict[str, Any] | None:
                 "structuredContent": e.to_detail(),
             },
         )
-    from server.core.errors import AuthInsufficientError, IdentityIncompleteError
-
-    try:
-        call.input_obj = gates.read_scope(op, auth, input_obj)
-    except (AuthInsufficientError, IdentityIncompleteError) as e:
-        _emit_mcp_event(
-            op.name, arguments, 0, success=False, error_code=e.code, request_id=request_id
-        )
-        return _ok(req_id, _refusal_result(e))
-
     rl = gates.rate_limit(op, auth, target, traffic_class)
     if rl is not None and not rl.allowed:
         # Wait out the hint once and re-check. The SDK honours Retry-After;
