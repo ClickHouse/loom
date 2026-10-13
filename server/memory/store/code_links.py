@@ -669,3 +669,48 @@ async def for_code_at(
         )
     )
     return list({_key(r): r for rows in reads for r in rows}.values())
+
+
+async def stale_of_served(
+    org: str,
+    namespace: str,
+    states: Sequence[str],
+    memory_keys: Sequence[str] | None = None,
+    *,
+    ch: _CHClient | None = None,
+) -> list[dict[str, Any]]:
+    """The namespace's live links in `states` of its served memories (those under
+    `memory_keys` when given): each link's code, state and inputs hash beside the head
+    columns that hash is made from."""
+    keys = "AND memory_key IN {mks:Array(String)}" if memory_keys is not None else ""
+    narrow = (
+        f"org = {{org:String}} AND namespace = {{ns:String}} "
+        f"AND state IN {{states:Array(String)}} {keys}"
+    )
+    return await (ch or _default_client()).query_all(
+        f"""
+        SELECT l.memory_key AS memory_key, l.code_namespace AS code_namespace,
+               l.path AS path, l.qualified_name AS qualified_name, l.state AS state,
+               l.changed_since AS changed_since, l.checked_at AS checked_at,
+               l.inputs_hash AS inputs_hash, m.namespace AS namespace, m.tags AS tags,
+               m.files AS files, m.sha AS sha, m.user_id AS user_id
+        FROM (
+            SELECT memory_id, memory_key, code_namespace, path, qualified_name, state,
+                   changed_since, checked_at, inputs_hash
+            {_LIVE} AND {narrow}
+        ) AS l
+        INNER JOIN (
+            SELECT memory_id, namespace, tags, files, toString(content_sha256) AS sha, user_id
+            FROM loom.memory FINAL
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND memory_id IN (SELECT memory_id FROM {TABLE} WHERE {narrow})
+              AND tombstoned_at IS NULL AND status IN ('active', 'conflicted')
+        ) AS m ON m.memory_id = l.memory_id
+        """,
+        params={
+            "org": org,
+            "ns": namespace,
+            "states": list(states),
+            "mks": list(memory_keys or []),
+        },
+    )

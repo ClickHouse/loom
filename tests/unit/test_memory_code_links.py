@@ -511,6 +511,7 @@ async def test_links_name_only_repositories_the_caller_may_read(monkeypatch) -> 
 
     monkeypatch.setattr(code_links.store, "for_memories", for_memories)
     monkeypatch.setattr(code_links.store, "memory_heads", memory_heads)
+    monkeypatch.setattr(code_links.code, "code_namespaces", lambda: ["code-a"])
     monkeypatch.setattr(code_link_reads, "readable_code", readable)
     monkeypatch.setattr(code_link_reads, "code_namespace_for", lambda org, ns, tags: "code-a")
     links = await code_link_reads.links_of("o", ["m"])
@@ -1125,43 +1126,54 @@ async def test_a_hash_whose_code_is_gone_is_cleared_and_every_page_is_rehashed(
 async def test_stale_links_are_the_current_links_of_served_memories_in_readable_repositories(
     monkeypatch,
 ) -> None:
-    def link(mid: str, cns: str = "code-a") -> dict[str, Any]:
-        return _full(
-            {
-                "memory_id": mid,
-                "code_namespace": cns,
-                "inputs_hash": f"i-{mid}",
-                "state": "missing",
-            }
-        )
+    def link(key: str, cns: str = "code-a", made: str = "") -> dict[str, Any]:
+        head = _row(key)
+        return {"memory_key": key, "code_namespace": cns, "inputs_hash": made or _inputs(head)}
 
-    def head(mid: str, status: str = "active", tombstoned: Any = None) -> dict[str, Any]:
-        return {"mid": mid, "status": status, "tombstoned_at": tombstoned}
-
-    async def for_code(org, cns, *, namespaces, memory_keys, states):
-        assert cns is None and states == ["changed", "unresolved", "missing"]
-        assert memory_keys == ["k"]
-        return [link("live"), link("deleted"), link("rejected"), link("hidden", "code-secret")]
-
-    async def heads(org, ids):
-        return [
-            head("live"),
-            head("deleted", tombstoned=1),
-            head("rejected", "rejected"),
-            head("hidden"),
-        ]
+    async def stale_of_served(org, ns, states, memory_keys):
+        assert (ns, states, memory_keys) == ("ns", ["changed", "unresolved", "missing"], ["k"])
+        rows = [link("live"), link("older", made="i-old"), link("hidden", "code-secret")]
+        return [_row(r["memory_key"]) | r for r in rows]
 
     async def readable(org, nss):
         return {n for n in nss if n != "code-secret"}
 
-    monkeypatch.setattr(code_links.store, "for_code", for_code)
-    monkeypatch.setattr(code_links.store, "lost", _none_lost)
-    monkeypatch.setattr(code_links.store, "memory_heads", heads)
+    monkeypatch.setattr(code_links.store, "stale_of_served", stale_of_served)
     monkeypatch.setattr(code_link_reads, "readable_code", readable)
-    monkeypatch.setattr(code_link_reads, "inputs_now", lambda org, memory: f"i-{memory['mid']}")
-    monkeypatch.setattr(code_links.code_change, "held", lambda row: False)
+    monkeypatch.setattr(code_link_reads, "code_namespace_for", lambda org, ns, tags: "code-a")
     links = await code_link_reads.stale_links("o", "ns", ["k"])
-    assert [a["memory_id"] for a in links] == ["live"]
+    assert [a["memory_key"] for a in links] == ["live"]
+
+
+@pytest.mark.asyncio
+async def test_stale_links_read_served_heads_and_only_the_columns_they_need() -> None:
+    from server.memory.store import code_links as store
+
+    class _Rec:
+        sql = ""
+        params: Any = None
+
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            self.sql, self.params = sql, params
+            return []
+
+    ch = _Rec()
+    assert await store.stale_of_served("o", "ns", ["missing"], ["k"], ch=ch) == []
+    assert "SELECT *" not in ch.sql and "value" not in ch.sql
+    assert "status IN ('active', 'conflicted')" in ch.sql and "tombstoned_at IS NULL" in ch.sql
+    assert ch.sql.count("memory_key IN {mks:Array(String)}") == 2 and ch.params["mks"] == ["k"]
+    await store.stale_of_served("o", "ns", ["missing"], ch=ch)
+    assert "mks:" not in ch.sql
+
+
+@pytest.mark.asyncio
+async def test_a_memory_get_reads_no_links_where_no_repository_is_configured(monkeypatch) -> None:
+    async def for_memories(org, ids):
+        raise AssertionError("no link is read")
+
+    monkeypatch.setattr(code_links.store, "for_memories", for_memories)
+    monkeypatch.setattr(code_links.code, "code_namespaces", lambda: [])
+    assert await code_link_reads.links_of("o", ["m"]) == {}
 
 
 @pytest.mark.asyncio

@@ -67,31 +67,27 @@ def _judged_here(link: LinkRow) -> bool:
     return bool(link["judged_hash"]) and link["judged_hash"] == link["checked_hash"]
 
 
-async def current_links(
-    org: str, links: list[LinkRow], *, served_only: bool = False
-) -> list[LinkRow]:
+async def current_links(org: str, links: list[LinkRow]) -> list[LinkRow]:
     """`links` (any memories') less those `current` drops, and those of a memory no longer
-    stored (with `served_only`, no longer served either)."""
+    stored."""
     by_mid: dict[str, list[LinkRow]] = defaultdict(list)
     for a in links:
         by_mid[a["memory_id"]].append(a)
     heads = await store.memory_heads(org, list(by_mid))
-    if served_only:
-        heads = [h for h in heads if h["status"] in SERVED and h.get("tombstoned_at") is None]
     return [a for h in heads for a in current(org, h, by_mid.get(str(h["mid"]), []))]
 
 
-async def stale_links(org: str, namespace: str, keys: Sequence[str] | None = None) -> list[LinkRow]:
+async def stale_links(
+    org: str, namespace: str, keys: Sequence[str] | None = None
+) -> list[dict[str, Any]]:
     """The namespace's changed, unresolved and missing links into repositories the caller
-    may read, of its served memories (those under `keys` when given) as they are now."""
-    rows = await store.for_code(
-        org,
-        None,
-        namespaces=[namespace],
-        memory_keys=keys,
-        states=["changed", "unresolved", "missing"],
+    may read, of its served memories (those under `keys` when given) as they are now:
+    each with its memory_key, code_namespace, path, qualified_name, state, changed_since
+    and checked_at."""
+    rows = await store.stale_of_served(
+        org, namespace, ["changed", "unresolved", "missing"], memory_keys=keys
     )
-    links = await current_links(org, rows, served_only=True)
+    links = [r for r in rows if r["inputs_hash"] == inputs_now(org, r)]
     seen = await readable_code(org, {a["code_namespace"] for a in links})
     return [a for a in links if a["code_namespace"] in seen]
 
@@ -111,6 +107,8 @@ async def readable_code(org: str, namespaces: set[str]) -> set[str]:
 async def links_of(org: str, memory_ids: list[str]) -> dict[str, list[dict[str, str]]]:
     """memory_id -> the code it is linked to, in repositories the caller may read, for a
     read's `code` field; {} when the links cannot be read."""
+    if not code.code_namespaces():
+        return {}
     try:
         rows = await current_links(org, await store.for_memories(org, memory_ids))
         seen = await readable_code(org, {a["code_namespace"] for a in rows})
