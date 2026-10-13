@@ -30,6 +30,7 @@ from server.memory.app.bulk_verdicts import BulkVerdictPlan, apply_bulk_verdicts
 from server.memory.app.entity_projections import (
     _write_derived_facts,
 )
+from server.memory.app.high_fence import fence_high
 from server.memory.app.projection_errors import (
     bulk_projection_payload,
     bulk_source_resource_id,
@@ -306,7 +307,7 @@ async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
     await memory_repo.retire_vectors_for_keys(list(retire.values()), ch=ch)
     fences = _high_winners(state)
     if fences:
-        await memory_repo.fence_vectors(fences, model=get_embedder().model_name, ch=ch)
+        await fence_high(fences, ch=ch)
 
 
 def _winners(state: _BulkWriteState) -> dict[str, dict[str, Any]]:

@@ -33,7 +33,7 @@ from typing import Any
 
 from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client
-from server.embedding import get_embedder
+from server.memory.app.high_fence import fence_high
 from server.memory.domain.sensitivity import HIGH, MEDIUM, detect_sensitivity, sensitivity_tags
 
 # RE2, for ClickHouse `match()`: a superset of the shapes in
@@ -268,9 +268,7 @@ async def apply(candidates: list[SweepCandidate], *, ch: _CHClient | None = None
                     [(key, version)], ch=ch
                 )
                 # and fences the key: a plain write still embedding lands below it
-                await memory_repo.fence_vectors(
-                    [(key, version)], model=get_embedder().model_name, ch=ch
-                )
+                await fence_high([(key, version)], ch=ch)
             else:
                 result.medium += 1
                 result.embeddings_tagged += await _tag_embeddings(c, ch=ch)

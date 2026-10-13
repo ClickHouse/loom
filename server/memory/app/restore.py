@@ -110,8 +110,13 @@ def _attested(row: MemoryRow) -> bool:
 async def _restore_embedding_mirror(
     ch: Any, input: Any, existing: MemoryRow, memory_type: str
 ) -> None:
-    """Propagate a restore to memory_embeddings, for every memory type (delete's mirror)."""
+    """Propagate a restore to memory_embeddings, for every memory type (delete's mirror).
+    A 'high' row gets none: its key's last rows are a retired vector or a fence, and
+    reviving either would serve it."""
     import server.memory.store as memory_repo
+
+    if getattr(existing, "sensitivity", "") == "high":
+        return
 
     # Vectors live only on the embeddings table (re-read here);
     # other columns mirror from `existing`. argMax keys on version

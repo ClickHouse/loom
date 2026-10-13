@@ -218,10 +218,9 @@ def _consolidation_canonical_row(
         # is not any one fact's grade, so it starts ungraded.
         "grounding": "",
         "evidence": "",
-        # Clusters are built from embedding rows, so a 'high' row (never
-        # embedded) cannot enter one — but a 'medium' row (an email, a phone
-        # number) is embedded and can. The merged row is never labelled
-        # lower than its most sensitive source or its own text.
+        # The candidate query keeps 'high' rows out of a cluster, but a 'medium'
+        # row (an email, a phone number) is embedded and can enter one. The merged
+        # row is never labelled lower than its most sensitive source or its own text.
         "sensitivity": inherited_sensitivity(
             (str(r.get("sensitivity") or "") for r in cluster), canonical_value
         ),
@@ -339,7 +338,11 @@ WHERE m.org = {org:String}
   -- Same for a lock in force: a no_delete or
   -- read_only row is never merged away.
   AND (m.lock_mode = '' OR (m.lock_until IS NOT NULL AND m.lock_until <= now()))
+  -- a live vector only: a retired copy or a high write's fence is not a candidate
+  AND e.tombstoned_at IS NULL
+  AND e.embedding_dim > 0
   AND length(e.embedding) > 0
+  AND m.sensitivity != 'high'
 ORDER BY m.created_at DESC
 LIMIT {limit:UInt32}
 """
@@ -452,7 +455,6 @@ async def _write_canonical(
     import server.memory.store as memory_repo
     from server.core.hashing import sha256_value as _content_sha256
 
-    canonical_embedding = await embedder.embed(canonical_value)
     canonical_sha = _content_sha256(canonical_value)
     version = next_version()
     canonical_row = _consolidation_canonical_row(
@@ -481,6 +483,13 @@ async def _write_canonical(
         )
     except Exception as e:  # noqa: BLE001 — lineage is additive
         log.warning("consolidate: derived_from links failed (non-fatal): %s", e)
+    if canonical_row["sensitivity"] == "high":
+        # The merged text holds a credential: no vector, and the key is fenced.
+        from server.memory.app.high_fence import fence_high
+
+        await fence_high([(memory_repo.embedding_key(canonical_row), version)], ch=ch)
+        return canonical_row
+    canonical_embedding = await embedder.embed(canonical_value)
     await ch.insert(
         "loom.memory_embeddings",
         [

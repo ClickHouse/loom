@@ -34,6 +34,7 @@ from server.memory.api.models_crud import (
 )
 from server.memory.app import conflict_deferred as _cd
 from server.memory.app.drops import record_drop
+from server.memory.app.high_fence import fence_high
 from server.memory.domain.embed_text import embedding_texts
 from server.memory.domain.trust import attests
 from server.memory.store.inserts import insert_memory_versions
@@ -245,10 +246,8 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
     # The version this replaces may have been embedded (re-set as 'high', or retyped).
     await memory_repo.tombstone_vectors_of(w.existing, version=memory_row["version"], ch=ch)
     if memory_row.get("sensitivity") == "high":
-        await memory_repo.fence_vectors(
-            [(memory_repo.embedding_key(memory_row), int(memory_row["version"]))],
-            model=get_embedder().model_name,
-            ch=ch,
+        await fence_high(
+            [(memory_repo.embedding_key(memory_row), int(memory_row["version"]))], ch=ch
         )
     await _project_set_entities_fail_open(input)
     # Non-searchable types skip the conflict check entirely, so there is no

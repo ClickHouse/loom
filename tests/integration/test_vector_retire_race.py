@@ -604,3 +604,127 @@ async def test_a_rollback_off_a_high_version_is_embedded_again(ch: Any) -> None:
                 f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
                 params={"o": ORG, "n": ns},
             )
+
+
+@pytest.mark.parametrize("made_high_by", ["memory.update", "sensitivity_sweep"])
+async def test_a_long_value_made_high_keeps_no_live_chunks(
+    ch: Any, control_plane_url: str, made_high_by: str
+) -> None:
+    """A long value's verbatim chunks are a search leg of their own (read with no
+    join back to loom.memory): a key made 'high' tombstones them with its vectors."""
+    import httpx
+
+    from server.auth.jwt import mint_token
+    from server.memory.api.models_crud import MemorySetInput, MemoryUpdateInput
+    from server.memory.app import sensitivity_sweep, update, write
+    from server.memory.domain.excerpt import EXCERPT_LIMIT
+
+    ns = f"itest-{uuid.uuid4().hex[:12]}"
+    key = f"long_high_{uuid.uuid4().hex[:6]}"
+    ident = {"org": ORG, "namespace": ns, "agent": AGENT}
+    secret = "sk-proj-" + uuid.uuid4().hex + uuid.uuid4().hex[:8]
+    sentence = f"The {key} runbook says the staging vault is rotated every friday. "
+    long_plain = sentence * (EXCERPT_LIMIT // len(sentence) + 4)
+
+    async def live_chunks() -> int:
+        row = await ch.query_one(
+            "SELECT count() AS n FROM loom.memory_chunks FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND parent_memory_key = {k:String}"
+            " AND tombstoned_at IS NULL",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        return int(row["n"])
+
+    token = mint_token(
+        subject="long-high", org=ORG, namespaces=[ns], roles=["writer"], ttl_seconds=600
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    async with httpx.AsyncClient(base_url=control_plane_url, headers=headers, timeout=30) as http:
+        try:
+            await write.handle_memory_set(MemorySetInput(**ident, memory_key=key, value=long_plain))
+            assert await live_chunks() > 0
+            if made_high_by == "memory.update":
+                await update.handle_memory_update(
+                    MemoryUpdateInput(
+                        org=ORG, namespace=ns, memory_key=key, value=f"{long_plain} {secret}"
+                    )
+                )
+            else:
+                row = await ch.query_one(
+                    "SELECT toString(memory_id) AS id FROM loom.memory FINAL"
+                    " WHERE org = {o:String} AND namespace = {n:String}"
+                    " AND memory_key = {k:String}",
+                    params={"o": ORG, "n": ns, "k": key},
+                )
+                cand = sensitivity_sweep.SweepCandidate(
+                    row["id"], ORG, ns, AGENT, "-", "-", key, "high", ("credential",)
+                )
+                res = await sensitivity_sweep.apply([cand], ch=ch)
+                assert res.errors == [] and res.high == 1
+            assert await live_chunks() == 0
+            r = await http.post(
+                "/v1/memory.search",
+                json={**ident, "query": "staging vault rotated every friday", "top_k": 5},
+            )
+            assert r.status_code == 200, r.text
+            assert key not in [h.get("memory_key") for h in r.json().get("results", [])]
+        finally:
+            for table in ("memory", "memory_embeddings", "entity_vectors", "memory_chunks"):
+                await ch.execute(
+                    f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
+                    params={"o": ORG, "n": ns},
+                )
+
+
+async def test_a_reindex_paused_across_a_high_relabel_leaves_no_vector(
+    ch: Any, monkeypatch: Any
+) -> None:
+    """memory.reindex reads a plain row, the sweep relabels it high (retire and
+    fence), then the reindex writes: its row carries the memory row's version + 1,
+    below the fence, so no vector is live under the high row."""
+    from server.embedding import embedder as embedder_mod
+    from server.memory.api.models_admin import MemoryReindexInput
+    from server.memory.app import ops, sensitivity_sweep
+
+    ns = f"itest-{uuid.uuid4().hex[:12]}"
+    key = f"reindex_high_{uuid.uuid4().hex[:6]}"
+    marker = f"pauseme{uuid.uuid4().hex[:6]}"
+    value = f"the {key} staging vault {marker} is rotated every friday"
+
+    async def live_vectors() -> int:
+        row = await ch.query_one(
+            "SELECT count() AS n FROM loom.memory_embeddings FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND memory_key = {k:String}"
+            " AND tombstoned_at IS NULL AND embedding_dim > 0",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        return int(row["n"])
+
+    try:
+        await _memory_only_row(ch, ns, key, value)  # no vector yet: reindex picks it up
+        paused = _PausedEmbedder(embedder_mod.get_embedder(), marker)
+        monkeypatch.setattr(embedder_mod, "_cached", paused)
+        task = asyncio.create_task(
+            ops.handle_memory_reindex(MemoryReindexInput(org=ORG, namespace=ns))
+        )
+        await asyncio.wait_for(paused.entered.wait(), 30)
+        row = await ch.query_one(
+            "SELECT toString(memory_id) AS id FROM loom.memory FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND memory_key = {k:String}",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        cand = sensitivity_sweep.SweepCandidate(
+            row["id"], ORG, ns, AGENT, "-", "-", key, "high", ("credential",)
+        )
+        res = await sensitivity_sweep.apply([cand], ch=ch)
+        assert res.errors == [] and res.high == 1
+        paused.gate.set()
+        out = await asyncio.wait_for(task, 30)
+        assert out.processed == 1
+        assert await live_vectors() == 0
+    finally:
+        for table in ("memory", "memory_embeddings", "entity_vectors"):
+            await ch.execute(
+                f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
+                params={"o": ORG, "n": ns},
+            )

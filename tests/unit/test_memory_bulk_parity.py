@@ -395,6 +395,13 @@ async def test_bulk_insert_decides_a_keys_vectors_by_the_row_that_wins(
 
     monkeypatch.setattr(memory_repo, "retire_vectors_for_keys", _retire)
     monkeypatch.setattr(memory_repo, "fence_vectors", _fence)
+
+    async def _no_chunks(**_k: Any) -> int:
+        return 0
+
+    from server.memory.app import high_fence
+
+    monkeypatch.setattr(high_fence, "tombstone_set_chunks", _no_chunks)
     await _bulk_set_mod._bulk_insert(object(), _vec_state(entries, lookup_ok=lookup_ok))
     # a key whose winning row is high is fenced at that row's version, vector or not
     winner = max(entries, key=lambda e: e[1])

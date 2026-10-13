@@ -94,6 +94,13 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
 
     monkeypatch.setattr(store, "retire_vectors_for_keys", _retire)
     monkeypatch.setattr(store, "fence_vectors", _fence)
+
+    async def _no_chunks(**_k: Any) -> int:
+        return 0
+
+    from server.memory.app import high_fence
+
+    monkeypatch.setattr(high_fence, "tombstone_set_chunks", _no_chunks)
     monkeypatch.setattr(rb, "insert_memory_versions", _memory)
     return seen
 

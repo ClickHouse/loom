@@ -279,9 +279,12 @@ async def find_memories_to_reindex(
                 AND tombstoned_at IS NULL
           )"""
     )
+    # The memory row's version + 1, not one drawn after the embed call: a 'high'
+    # write that lands meanwhile fences above it (+ 1 replaces the row the
+    # memory write stamped at that version).
     return await ch.query_all(
         f"""
-        SELECT {_EMBEDDING_MIRROR_COLUMNS}
+        SELECT {_EMBEDDING_MIRROR_COLUMNS}, m.version + 1 AS version
         FROM loom.memory AS m FINAL
         WHERE m.org = {{org:String}} AND m.namespace = {{ns:String}}
           AND m.tombstoned_at IS NULL

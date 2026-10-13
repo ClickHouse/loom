@@ -26,6 +26,7 @@ from server.memory.api.models_crud import (
 )
 from server.memory.app import conflict_deferred as _cd
 from server.memory.app import provenance as app_provenance
+from server.memory.app.high_fence import fence_high
 from server.memory.domain import lock as _lock
 from server.memory.domain.embed_text import _build_embed_text, key_axis_text
 from server.memory.domain.excerpt import build_excerpt
@@ -674,18 +675,10 @@ async def _write_revision(
             if searchable
             else [memory_repo.tombstone_vectors_of(existing, version=new_version, ch=ch)]
         ),
-        *(
-            [
-                memory_repo.fence_vectors(
-                    [(memory_repo.embedding_key(existing), new_version)],
-                    model=get_embedder().model_name,
-                    ch=ch,
-                )
-            ]
-            if sensitivity == "high"
-            else []
-        ),
     )
+    if sensitivity == "high":
+        # After the retire: at the same version, the later insert wins the tie.
+        await fence_high([(memory_repo.embedding_key(existing), new_version)], ch=ch)
     cfg = await cfg_task
     _cd.schedule_settle(
         _settle_identity(input.org, existing, revision_run_id),

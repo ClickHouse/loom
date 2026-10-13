@@ -52,6 +52,7 @@ async def apply_rollback(
     embedded ('high', or a non-searchable type) gets no stub: its excerpt would
     carry the value into search. Its key's live vectors are retired instead."""
     from server.embedding import get_embedder
+    from server.memory.app.high_fence import fence_high
     from server.memory.domain.excerpt import build_excerpt
     from server.memory.domain.memory_types import is_embedded
     from server.memory.domain.trust import attests
@@ -177,7 +178,7 @@ async def apply_rollback(
     # outlive the row that retires it. Each key's own version keeps a concurrent
     # newer embedded write's vectors.
     await store.retire_vectors_for_keys(retire, ch=ch)
-    await store.fence_vectors(fence, model=embedder.model_name, ch=ch)
+    await fence_high(fence, ch=ch)
     log.info(
         "namespace.rollback applied org=%s ns=%s reinstate=%d remove=%d",
         org,
