@@ -261,9 +261,11 @@ async def _recheck_reindexed_heads(
     rows: list[dict[str, Any]], written: list[dict[str, Any]], *, ch: Any, model: str
 ) -> None:
     """The heads, re-read after the insert, against what the reindex read (`rows`, each
-    with the `memory_version` it read) and wrote (`written`, the same order). Every
-    write below sits one above the newest version it read, never at a fresh draw, so
-    a 'high' write that lands later still fences above it.
+    with the `memory_version` it read) and wrote (`written`, the same order). No
+    write below takes a fresh version: each sits just above the newest version it
+    read, so a 'high' write that lands later still fences above it. (The copy paths —
+    touch, verify, apply, the entity tagger — never copy a vector under a head that
+    is not embedded, so nothing re-emits the reindexed row under a 'high' head.)
 
     - A head no longer embedded ('high', unsearchable, gone): the key's vectors are
       retired two above the newest version read (the reindexed row, the head).

@@ -52,7 +52,7 @@ log = logging.getLogger(__name__)
 
 # Leaf module (no internal imports) shared with memory.app.retrieval to
 # avoid a circular import.
-from server.memory.domain.memory_types import is_searchable_type  # noqa: E402
+from server.memory.domain.memory_types import is_embedded, is_searchable_type  # noqa: E402
 
 
 def existing_context_limit(msgs: list[dict[str, str]], limit: int) -> int:
@@ -826,7 +826,8 @@ async def handle_memory_touch(input: MemoryTouchInput) -> MemoryTouchOutput:
                 {"expires_at": naive_expiry},
             )
             for r in (by_key[k] for k in versions)
-            if is_searchable_type(r.memory_type)
+            # a 'high' head keeps no vector: never copy one forward under it
+            if is_embedded(r.memory_type, r.sensitivity)
         ]
         if mirror:
             try:

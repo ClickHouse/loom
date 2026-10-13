@@ -196,6 +196,12 @@ async def _mirror_rows_for_keys(
     )
 
 
+def _embedded(row: Any) -> bool:
+    from server.memory.domain.memory_types import is_embedded
+
+    return is_embedded(row.memory_type, row.sensitivity)
+
+
 async def apply_entities_batch(
     items: Sequence[Mapping[str, Any]], *, ch: _CHClient | None = None
 ) -> dict[str, int]:
@@ -233,6 +239,8 @@ async def apply_entities_batch(
     if mem_rows:
         await insert_memory_versions(mem_rows, ch=ch)
         written["memory"] = len(mem_rows)
+    # A key whose head keeps no vector ('high', unsearchable) gets no mirror copy.
+    keys = [k for k in keys if k not in existing or _embedded(existing[k])]
     emb_rows = await _mirror_rows_for_keys(ch, keys)
     seen = {_identity_key(r) for r in emb_rows}
     missing = [k for k in keys if k in existing and k not in seen]
@@ -274,7 +282,8 @@ async def heal_divergent_entities(*, limit: int = 200, ch: _CHClient | None = No
                m.memory_key AS memory_key, m.entities AS entities
         FROM (SELECT org, namespace, agent, user_id, session_id, memory_key,
                      entities, arraySort(entities) AS ents
-              FROM loom.memory FINAL WHERE tombstoned_at IS NULL) AS m
+              FROM loom.memory FINAL
+              WHERE tombstoned_at IS NULL AND sensitivity != 'high') AS m
         INNER JOIN (SELECT org, namespace, agent, user_id, session_id,
                            memory_key, arraySort(entities) AS ents
                     FROM loom.memory_embeddings FINAL

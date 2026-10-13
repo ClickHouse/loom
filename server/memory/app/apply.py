@@ -263,7 +263,10 @@ async def _mirror(row: Any, **overrides: Any) -> None:
     loom.memory version row already landed; a stray embedding is the known,
     tolerated failure mode."""
     import server.memory.store as memory_repo
+    from server.memory.domain.memory_types import is_embedded
 
+    if not is_embedded(row.memory_type, row.sensitivity):  # a 'high' head keeps no vector
+        return
     try:
         await memory_repo.reemit_embedding_rows_for_key(
             row.org,

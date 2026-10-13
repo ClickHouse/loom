@@ -220,9 +220,9 @@ async def _mirror_verified_to_embeddings(row: MemoryRow, *, verified: bool) -> N
     Best-effort: the attestation on loom.memory is the source of truth; a miss here only
     delays the ranking signal until the next embedding write."""
     import server.memory.store as memory_repo
-    from server.memory.domain.memory_types import is_searchable_type
+    from server.memory.domain.memory_types import is_embedded
 
-    if not is_searchable_type(row.memory_type):
+    if not is_embedded(row.memory_type, row.sensitivity):  # a 'high' head keeps no vector
         return
     try:
         await memory_repo.reemit_embedding_rows_for_key(

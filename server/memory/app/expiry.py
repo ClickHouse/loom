@@ -39,6 +39,7 @@ from typing import Any
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value as _sha
 from server.memory.domain import lock as _lock
+from server.memory.domain.memory_types import is_embedded
 from server.memory.store.inserts import insert_memory_versions
 
 log = logging.getLogger(__name__)
@@ -290,6 +291,7 @@ async def _mirror_embeddings_batch(
         )
         for action, row, _version in mirrors
         if action not in ("tombstone", "anonymize")
+        and is_embedded(row.memory_type, row.sensitivity)  # a 'high' head keeps no vector
     ]
     n = await memory_repo.retire_vectors_for_keys(retires) if retires else 0
     if copies:
