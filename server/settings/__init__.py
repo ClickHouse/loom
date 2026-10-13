@@ -74,6 +74,19 @@ class Settings(
     )
 
     @model_validator(mode="after")
+    def _resolve_conflict_judge(self) -> Settings:
+        """An unset `memory_conflict_judge` follows the LLM provider: on for a
+        real one, off on the fake one (the judge's calls would only fail open).
+        It spans two areas, so it runs on the composed object."""
+        if self.memory_conflict_judge is None:
+            from server.core.llm_provider import resolve_llm_provider
+
+            provider = self.llm_provider or resolve_llm_provider("", self.llm_model).provider
+            self.memory_conflict_judge = provider in ("openai", "anthropic")
+            self._llm_inferred_fields = self._llm_inferred_fields | {"memory_conflict_judge"}
+        return self
+
+    @model_validator(mode="after")
     def _check_read_replica(self) -> Settings:
         """A read-replica's rules span areas (migrations, workers), so they run
         on the composed object."""

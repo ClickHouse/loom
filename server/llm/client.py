@@ -77,6 +77,24 @@ def log_llm_provider_resolution() -> None:
     )
 
 
+def log_conflict_judge_resolution() -> None:
+    """The boot INFO line saying whether the conflict judge is on when the env
+    left `LOOM_MEMORY_CONFLICT_JUDGE` unset (it follows the LLM provider), and how
+    to turn it off. Silent when the operator set it."""
+    import logging
+
+    from server.settings import settings
+
+    if "memory_conflict_judge" in settings.env_fields_set():
+        return
+    logging.getLogger(__name__).info(
+        "LOOM_MEMORY_CONFLICT_JUDGE unset — the conflict judge is %s (llm_provider=%s); "
+        "set it to false to turn it off",
+        "on" if settings.memory_conflict_judge else "off",
+        settings.llm_provider,
+    )
+
+
 def _key_absent(provider: str) -> bool:
     from server.core.provider_keys import provider_key
 

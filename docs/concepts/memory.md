@@ -196,7 +196,8 @@ carries `conflict_verdict`, up to five `peers`, and a `next` hint.
   (0.85) and `LOOM_DUPLICATE_THRESHOLD` (0.97) are the fallback. A namespace or memory
   type can pin its own; `calibration.get` reports which is in force.
 - **The judge.** Cosine says two statements are about the same thing, not whether they
-  agree. With `LOOM_MEMORY_CONFLICT_JUDGE=true`, one LLM call labels the closest peers
+  agree. With the conflict judge on (`LOOM_MEMORY_CONFLICT_JUDGE`, the default when a real LLM
+  provider is configured), one LLM call labels the closest peers
   (`contradiction`, `elaboration`, `restatement`, `unrelated`), giving `conflict`,
   `refines` (the refined peer is superseded), `merge` or `clear`. It runs after the
   write by default (verdict `pending`) unless the caller passes `await_verdict=true`.
