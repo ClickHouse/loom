@@ -244,6 +244,12 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
         await insert_memory_versions([memory_row], ch=ch)
     # The version this replaces may have been embedded (re-set as 'high', or retyped).
     await memory_repo.tombstone_vectors_of(w.existing, version=memory_row["version"], ch=ch)
+    if memory_row.get("sensitivity") == "high":
+        await memory_repo.fence_vectors(
+            [(_identity_key(memory_row), int(memory_row["version"]))],
+            model=get_embedder().model_name,
+            ch=ch,
+        )
     await _project_set_entities_fail_open(input)
     # Non-searchable types skip the conflict check entirely, so there is no
     # verdict to map: the insert always happened.
@@ -586,6 +592,9 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
         # defaulted to `active` while loom.memory holds a `duplicate` verdict, the search
         # pool would keep serving the duplicate.
         status=str(memory_row.get("status") or "active"),
+        # The memory row's version, not one drawn now: a newer write's retire or fence
+        # outranks this vector even when its embedding arrives late.
+        version=int(memory_row["version"]),
         # A revision of unchanged content keeps its attestation; the mirror says so.
         verified=int(
             attests(
@@ -773,3 +782,14 @@ def _merged_into_key(existing: Any, input: Any) -> str:
     the caller's own key (or unknown)."""
     key = str(getattr(existing, "memory_key", "") or "")
     return key if key and key != input.memory_key else ""
+
+
+def _identity_key(row: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
+    return (
+        str(row["org"]),
+        str(row["namespace"]),
+        str(row["agent"]),
+        str(row["user_id"]),
+        str(row["session_id"]),
+        str(row["memory_key"]),
+    )

@@ -387,8 +387,21 @@ async def test_bulk_insert_decides_a_keys_vectors_by_the_row_that_wins(
 
     monkeypatch.setattr(memory_repo, "insert_memory_versions", _noop)
     monkeypatch.setattr(memory_repo, "insert_embedding_rows", _emb)
+    fences: list[Any] = []
+
+    async def _fence(items: Any, *, model: str, ch: Any = None) -> int:
+        fences.extend(items)
+        return len(items)
+
     monkeypatch.setattr(memory_repo, "retire_vectors_for_keys", _retire)
+    monkeypatch.setattr(memory_repo, "fence_vectors", _fence)
     await _bulk_set_mod._bulk_insert(object(), _vec_state(entries, lookup_ok=lookup_ok))
+    # a key whose winning row is high is fenced at that row's version, vector or not
+    winner = max(entries, key=lambda e: e[1])
+    if winner[0] == "high":
+        assert fences == [(("o", "n", "a", "u", "s", "k"), winner[1])]
+    else:
+        assert fences == []
     if retired:
         assert inserted == []
         assert retire_calls == [(("o", "n", "a", "u", "s", "k"), max(v for _, v in entries))]

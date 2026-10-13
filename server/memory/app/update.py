@@ -318,6 +318,8 @@ def _update_embedding_row(
         # attestation still binds the new hash.
         status=memory_row["status"],
         source_class=memory_row["source_class"] or "",
+        # The version row's: a newer write's retire or fence outranks a late vector.
+        version=int(memory_row["version"]),
         verified=int(
             verification_state(
                 memory_row["verified_by"],
@@ -672,6 +674,17 @@ async def _write_revision(
             if searchable
             else [memory_repo.tombstone_vectors_of(existing, version=new_version, ch=ch)]
         ),
+        *(
+            [
+                memory_repo.fence_vectors(
+                    [(_identity(existing), new_version)],
+                    model=get_embedder().model_name,
+                    ch=ch,
+                )
+            ]
+            if sensitivity == "high"
+            else []
+        ),
     )
     cfg = await cfg_task
     _cd.schedule_settle(
@@ -693,3 +706,7 @@ async def _write_revision(
         conflict_peers=len(conflict_result.peers) if conflict_result is not None else 0,
         duplicate_of=duplicate_of_id,
     )
+
+
+def _identity(row: Any) -> tuple[str, str, str, str, str, str]:
+    return (row.org, row.namespace, row.agent, row.user_id, row.session_id, row.memory_key)

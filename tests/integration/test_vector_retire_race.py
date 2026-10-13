@@ -370,3 +370,132 @@ async def test_a_metadata_reemit_paused_across_a_retire_does_not_restore_the_vec
                     f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
                     params={"o": ORG, "n": ns},
                 )
+
+
+class _PausedEmbedder:
+    """The served embedder, with the first call whose text holds `marker` held at
+    `gate` until released: an older write paused inside its embedding work."""
+
+    def __init__(self, inner: Any, marker: str) -> None:
+        self._inner, self._marker = inner, marker
+        self.entered, self.gate = asyncio.Event(), asyncio.Event()
+        self.model_name, self.dim = inner.model_name, inner.dim
+
+    async def _hold(self, texts: list[str]) -> None:
+        if not self.entered.is_set() and any(self._marker in t for t in texts):
+            self.entered.set()
+            await self.gate.wait()
+
+    async def embed(self, text: str) -> list[float]:
+        await self._hold([text])
+        return await self._inner.embed(text)
+
+    async def embed_many(self, texts: list[str]) -> list[list[float]]:
+        await self._hold(list(texts))
+        return await self._inner.embed_many(texts)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+@pytest.mark.parametrize(
+    ("older", "prior_vector"),
+    [("memory.set", False), ("memory.set", True), ("memory.update", True), ("bulk_set", False)],
+)
+async def test_an_older_writes_late_vector_stays_under_a_newer_high_write(
+    ch: Any, control_plane_url: str, monkeypatch: Any, older: str, prior_vector: bool
+) -> None:
+    """An older plain write draws its version, then pauses in its embed call; a newer
+    write labelled 'high' commits; the older one resumes. Its vector carries its own
+    memory version, below the high write's fence, so search stays empty, with or
+    without a vector for the key before."""
+    import httpx
+
+    from server.auth.jwt import mint_token
+    from server.embedding import embedder as embedder_mod
+    from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry
+    from server.memory.api.models_crud import MemorySetInput, MemoryUpdateInput
+    from server.memory.app import bulk_set, update, write
+
+    ns = f"itest-{uuid.uuid4().hex[:12]}"
+    key = f"late_vector_{uuid.uuid4().hex[:6]}"
+    marker = f"pauseme{uuid.uuid4().hex[:6]}"
+    plain = f"the {key} staging vault {marker} is rotated every friday by the platform team"
+    secret = "sk-proj-" + uuid.uuid4().hex + uuid.uuid4().hex[:8]  # labelled 'high'
+    ident = {"org": ORG, "namespace": ns, "agent": AGENT}
+
+    paused = _PausedEmbedder(embedder_mod.get_embedder(), marker)
+    monkeypatch.setattr(embedder_mod, "_cached", paused)  # what every get_embedder() returns
+
+    async def live_vectors() -> int:
+        row = await ch.query_one(
+            "SELECT count() AS n FROM loom.memory_embeddings FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND memory_key = {k:String}"
+            " AND tombstoned_at IS NULL AND embedding_dim > 0",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        return int(row["n"])
+
+    def older_write() -> Any:
+        if older == "memory.set":
+            return write.handle_memory_set(MemorySetInput(**ident, memory_key=key, value=plain))
+        if older == "memory.update":
+            return update.handle_memory_update(
+                MemoryUpdateInput(org=ORG, namespace=ns, memory_key=key, value=plain)
+            )
+        return bulk_set.handle_memory_bulk_set(
+            MemoryBulkSetInput(**ident, entries=[_BulkSetEntry(memory_key=key, value=plain)])
+        )
+
+    def newer_high_write() -> Any:
+        if older == "bulk_set":
+            entry = _BulkSetEntry(memory_key=key, value=f"token {secret}")
+            return bulk_set.handle_memory_bulk_set(MemoryBulkSetInput(**ident, entries=[entry]))
+        return write.handle_memory_set(
+            MemorySetInput(**ident, memory_key=key, value=f"token {secret}")
+        )
+
+    token = mint_token(
+        subject="late-vector", org=ORG, namespaces=[ns], roles=["writer"], ttl_seconds=600
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    async with httpx.AsyncClient(base_url=control_plane_url, headers=headers, timeout=30) as http:
+        try:
+            if prior_vector:
+                first = f"the {key} vault was rotated by hand on mondays"
+                await write.handle_memory_set(MemorySetInput(**ident, memory_key=key, value=first))
+                assert await live_vectors() == 1
+
+            task = asyncio.create_task(older_write())
+            await asyncio.wait_for(paused.entered.wait(), 30)
+            await newer_high_write()
+            assert await live_vectors() == 0
+            paused.gate.set()
+            await asyncio.wait_for(task, 30)
+
+            row = await ch.query_one(
+                "SELECT sensitivity FROM loom.memory FINAL WHERE org = {o:String}"
+                " AND namespace = {n:String} AND memory_key = {k:String}",
+                params={"o": ORG, "n": ns, "k": key},
+            )
+            assert row["sensitivity"] == "high"
+            assert await live_vectors() == 0
+            r = await http.post(
+                "/v1/memory.search",
+                json={
+                    **ident,
+                    "query": "staging vault rotated friday platform team",
+                    "top_k": 5,
+                    "fresh": True,
+                },
+            )
+            assert r.status_code == 200, r.text
+            assert marker not in r.text and secret not in r.text
+            assert key not in [h.get("memory_key") for h in r.json().get("results", [])]
+        finally:
+            paused.gate.set()
+            for table in ("memory", "memory_embeddings", "entity_vectors"):
+                await ch.execute(
+                    f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
+                    params={"o": ORG, "n": ns},
+                )

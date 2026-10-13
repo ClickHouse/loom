@@ -259,9 +259,12 @@ async def test_an_update_that_writes_a_credential_is_labelled_high_and_leaves_se
         )
     )
     assert out.updated
-    tables = [t for t, _ in ch.inserts]
-    assert "loom.memory_embeddings" not in tables
     [written] = [r for t, rows in ch.inserts if t == "loom.memory" for r in rows]
     assert written["sensitivity"] == "high" and "sensitivity:high" in written["tags"]
+    # the only embeddings row is the fence: no vector, no text, tombstoned at the new
+    # row's version, so an older write's vector that lands late stays under it
+    [fence] = [r for t, rows in ch.inserts if t == "loom.memory_embeddings" for r in rows]
+    assert fence["embedding_dim"] == 0 and fence["content_excerpt"] == ""
+    assert fence["tombstoned_at"] is not None and fence["version"] == written["version"]
     # at the new row's version, so a concurrent embedded write's newer vector survives
     assert dropped == [("deploy_day", written["version"])]

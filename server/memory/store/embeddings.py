@@ -500,6 +500,42 @@ async def retire_vectors_for_keys(
     return n
 
 
+async def fence_vectors(
+    items: list[tuple[EmbeddingKey, int]], *, model: str, ch: _CHClient | None = None
+) -> int:
+    """Write a tombstoned, vector-less row for each key at the given version, the one
+    of the 'high' memory row that keeps the key unembedded. An older write's vector
+    still in flight carries its own (lower) memory version, so it lands under this row
+    and stays hidden, even for a key that had no vector to retire. `model` is the served
+    embedder's: it is in the sort key, and only rows of that model are written. Returns
+    the rows written."""
+    if not items:
+        return 0
+    ch = ch or _default_client()
+    from server.core.datetimes import naive_utc_now
+
+    now = naive_utc_now()
+    rows = [
+        build_embedding_row(
+            org=key[0],
+            namespace=key[1],
+            agent=key[2],
+            user_id=key[3],
+            session_id=key[4],
+            memory_key=key[5],
+            scope="private",
+            embedding_model=model,
+            embedding_dim=0,
+            created_at=now,
+            tombstoned_at=now,
+            version=int(version),
+        )
+        for key, version in items
+    ]
+    await insert_embedding_rows(rows, ch=ch)
+    return len(rows)
+
+
 def version_second(version: int) -> datetime:
     """The naive-UTC second a next_version() stamp (epoch ns) was drawn in."""
     return datetime.fromtimestamp(int(version) // 1_000_000_000, UTC).replace(tzinfo=None)

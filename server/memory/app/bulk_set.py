@@ -304,6 +304,32 @@ async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
         memory_repo.insert_embedding_rows(state.embedding_rows, ch=ch),
     )
     await memory_repo.retire_vectors_for_keys(list(retire.values()), ch=ch)
+    fences = _high_winners(state)
+    if fences:
+        await memory_repo.fence_vectors(fences, model=get_embedder().model_name, ch=ch)
+
+
+def _winners(state: _BulkWriteState) -> dict[str, dict[str, Any]]:
+    """memory_key -> the batch's highest-version row of it."""
+    winners: dict[str, dict[str, Any]] = {}
+    for r in state.memory_rows:
+        key = str(r.get("memory_key"))
+        if key not in winners or int(r["version"]) >= int(winners[key]["version"]):
+            winners[key] = r
+    return winners
+
+
+def _high_winners(state: _BulkWriteState) -> list[tuple[Any, int]]:
+    """(identity key, version) of each key whose winning row is 'high': the fence an
+    older write's late vector lands under."""
+    return [
+        (
+            (r["org"], r["namespace"], r["agent"], r["user_id"], r["session_id"], key),
+            int(r["version"]),
+        )
+        for key, r in _winners(state).items()
+        if str(r.get("sensitivity") or "") == "high"
+    ]
 
 
 def _vectors_to_retire(state: _BulkWriteState) -> dict[str, tuple[Any, int]]:
@@ -311,11 +337,7 @@ def _vectors_to_retire(state: _BulkWriteState) -> dict[str, tuple[Any, int]]:
     highest version in the batch) lands unembedded and may have a live vector: the
     batch embedded an earlier entry of it, the replaced version was embedded, or the
     lookup failed and nobody knows."""
-    winners: dict[str, dict[str, Any]] = {}
-    for r in state.memory_rows:
-        key = str(r.get("memory_key"))
-        if key not in winners or int(r["version"]) >= int(winners[key]["version"]):
-            winners[key] = r
+    winners = _winners(state)
     batch_embedded = {str(r.get("memory_key")) for r in state.embedding_rows}
     out: dict[str, tuple[Any, int]] = {}
     for key, r in winners.items():

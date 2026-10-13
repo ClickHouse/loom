@@ -593,6 +593,9 @@ async def _bulk_embed_rows(
                     valid_to=entry.valid_to,
                     expires_at=e_expires,
                     verified=_row_attested(state.memory_rows[idx]),
+                    # The entry's memory version: a newer write's retire or fence
+                    # outranks this vector even when the batch lands late.
+                    version=int(state.memory_rows[idx]["version"]),
                 )
             )
     return emb_idx_of, value_vectors, entity_embeddings
