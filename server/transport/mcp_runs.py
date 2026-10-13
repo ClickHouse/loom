@@ -73,6 +73,7 @@ class SessionRun:
     extra: dict[str, Any] = field(default_factory=dict)
 
 
+# Keyed by run id: two callers sending one session id hold two runs.
 _RUNS: dict[str, SessionRun] = {}
 _BEGIN_FAILED_AT: dict[str, float] = {}
 _PENDING = TaskSet()  # in-flight run.begin, and evicted runs' closes
@@ -136,10 +137,8 @@ def goal_of(arguments: dict[str, Any], fallback: str) -> str:
     return fallback[:GOAL_MAX_CHARS]
 
 
-def current(session_id: str | None) -> SessionRun | None:
-    if not session_id:
-        return None
-    return _RUNS.get(session_id)
+def current(run_id: str) -> SessionRun | None:
+    return _RUNS.get(run_id)
 
 
 async def ensure(
@@ -155,7 +154,13 @@ async def ensure(
     if not session_id or not defaults:
         return None
     now = time.monotonic() if now is None else now
-    run = _RUNS.get(session_id)
+    org = str(defaults.get("org") or "")
+    namespace = str(defaults.get("namespace") or "")
+    agent = str(defaults.get("agent") or "")
+    if any(v in ("", "-") for v in (org, namespace, agent)):
+        return None
+    run_id = run_id_for(org, str(defaults.get("principal") or "-"), session_id)
+    run = _RUNS.get(run_id)
     if run is not None:
         run.last_seen = now
         if now - run.checked_at >= SWEEP_MIN_INTERVAL_S:
@@ -164,10 +169,10 @@ async def ensure(
             # re-open it if so.
             run.checked_at = now
             run.extra["begin_task"] = _PENDING.spawn(
-                _begin(run, goal=goal, now=now), name=f"mcp-run-check:{session_id}"
+                _begin(run, goal=goal, now=now, first=False), name=f"mcp-run-check:{run_id}"
             )
         return run
-    failed_at = _BEGIN_FAILED_AT.get(session_id)
+    failed_at = _BEGIN_FAILED_AT.get(run_id)
     if failed_at is not None and now - failed_at < idle_seconds():
         return None
     if len(_RUNS) >= SESSION_RUN_CAP:
@@ -175,54 +180,54 @@ async def ensure(
         # session to go idle, and a sibling still serving it re-opens the run on
         # its next check. Detached: no caller's scope applies to another's run.
         idlest = min(_RUNS.values(), key=lambda r: r.last_seen)
-        _RUNS.pop(idlest.session_id, None)
+        _RUNS.pop(idlest.run_id, None)
         _PENDING.spawn(
-            _close(idlest, reason="evicted"),
-            name=f"mcp-run-evict:{idlest.session_id}",
-            detached=True,
+            _close(idlest, reason="evicted"), name=f"mcp-run-evict:{idlest.run_id}", detached=True
         )
-    org = str(defaults.get("org") or "")
-    namespace = str(defaults.get("namespace") or "")
-    agent = str(defaults.get("agent") or "")
-    if any(v in ("", "-") for v in (org, namespace, agent)):
-        return None
-    user_id = str(defaults.get("user_id") or "-")
     # The run is registered now, under a deterministic id, and its begin lands
     # in the background: an awaited agent_runs insert would hold every session's
     # first tool call for ~3 s on ClickHouse Cloud, and the id is all the call
     # needs.
     run = SessionRun(
-        run_id=run_id_for(org, user_id, session_id),
+        run_id=run_id,
         org=org,
         namespace=namespace,
         agent=agent,
         session_id=session_id,
         last_seen=now,
-        user_id=user_id,
+        user_id=str(defaults.get("user_id") or "-"),
         row_session_id=str(defaults.get("session_id") or session_id),
         checked_at=now,
         goal=goal,
     )
-    _RUNS[session_id] = run
-    _BEGIN_FAILED_AT.pop(session_id, None)
+    _RUNS[run_id] = run
+    _BEGIN_FAILED_AT.pop(run_id, None)
     run.extra["begin_task"] = _PENDING.spawn(
-        _begin(run, goal=goal, now=now), name=f"mcp-run-begin:{session_id}"
+        _begin(run, goal=goal, now=now, first=True), name=f"mcp-run-begin:{run_id}"
     )
     return run
 
 
-def run_id_for(org: str, user_id: str, session_id: str) -> str:
+def principal_of(auth: Any, user_id: str) -> str:
+    """Whose session it is, for `run_id_for`: the token's subject and the user it
+    acts as ("-" with no auth)."""
+    return f"{getattr(auth, 'subject', '') or '-'}/{user_id}"
+
+
+def run_id_for(org: str, principal: str, session_id: str) -> str:
     """The implicit run's id: the same for every call and web process of the
-    session, and one no other user's session can make."""
-    seed = json.dumps([org, user_id, session_id])
+    session, and one no other caller can make by sending the same session id
+    (`principal` is the token's subject, and the user it pins)."""
+    seed = json.dumps([org, principal, session_id])
     return "mcp-" + hashlib.sha256(seed.encode()).hexdigest()[:40]
 
 
-async def _begin(run: SessionRun, *, goal: str, now: float) -> None:
+async def _begin(run: SessionRun, *, goal: str, now: float, first: bool) -> None:
     """`run.begin` for a registered run, unless another web process of this server
     began it already (in whichever namespace the session's first call named, which
-    the close must name too). On failure the run is forgotten and the session waits
-    out the idle window before the next attempt."""
+    the close must name too). A `first` begin that fails forgets the run and the
+    session waits out the idle window before the next attempt; a failed check of a
+    run already begun keeps it, and the next check tries again."""
     try:
         from server.tasks.api.models_run import RunBeginInput
         from server.tasks.app.run import active_session_run, begin_session_run
@@ -248,10 +253,11 @@ async def _begin(run: SessionRun, *, goal: str, now: float) -> None:
         if not began:
             raise RuntimeError(f"{run.run_id} holds another user's run")
     except Exception as e:  # noqa: BLE001 — the ledger never fails a tool call
-        if _RUNS.get(run.session_id) is run:
-            _RUNS.pop(run.session_id, None)
-        _BEGIN_FAILED_AT[run.session_id] = now
-        log.warning("mcp session run: run.begin failed for %s (non-fatal): %s", run.session_id, e)
+        log.warning("mcp session run: run.begin failed for %s (non-fatal): %s", run.run_id, e)
+        if first:
+            if _RUNS.get(run.run_id) is run:
+                _RUNS.pop(run.run_id, None)
+            _BEGIN_FAILED_AT[run.run_id] = now
 
 
 async def drain_ledger_writes() -> None:
@@ -270,7 +276,7 @@ async def _close(run: SessionRun, *, reason: str) -> _Closed:
     begin_task = run.extra.get("begin_task")
     if isinstance(begin_task, asyncio.Task) and not begin_task.done():
         await asyncio.gather(begin_task, return_exceptions=True)  # complete after begin
-    if _BEGIN_FAILED_AT.get(run.session_id) is not None and _RUNS.get(run.session_id) is not run:
+    if _BEGIN_FAILED_AT.get(run.run_id) is not None and _RUNS.get(run.run_id) is not run:
         return "gone"
     try:
         from server.core.datetimes import naive_utc_now
@@ -305,18 +311,16 @@ async def _close(run: SessionRun, *, reason: str) -> _Closed:
         return "later"
 
 
-async def close_session(session_id: str | None, org: str = "", user_id: str = "-") -> bool:
-    """`DELETE /mcp`: the client ended the session; close its run. A web process
-    that never served the session closes it by id, made from the caller's org
-    and user."""
-    if not session_id:
+async def close_session(session_id: str | None, org: str = "", principal: str = "-") -> bool:
+    """`DELETE /mcp`: the client ended the session; close its run, the one its id
+    names for this caller (`run_id_for`), whichever web process served it."""
+    if not session_id or not org:
         return False
-    run = _RUNS.pop(session_id, None)
+    run_id = run_id_for(org, principal, session_id)
+    run = _RUNS.pop(run_id, None)
     if run is None:
-        if not org:
-            return False
         run = SessionRun(
-            run_id=run_id_for(org, user_id, session_id),
+            run_id=run_id,
             org=org,
             namespace="",
             agent="",
@@ -342,8 +346,8 @@ async def sweep_idle(*, now: float | None = None, force: bool = False) -> int:
         outcome = await _close(run, reason="idle")
         if outcome == "later":
             continue
-        if _RUNS.get(run.session_id) is run:
-            _RUNS.pop(run.session_id)
+        if _RUNS.get(run.run_id) is run:
+            _RUNS.pop(run.run_id)
         closed += outcome == "closed"
     for sid, t in list(_BEGIN_FAILED_AT.items()):
         if now - t >= idle:

@@ -164,7 +164,7 @@ def test_a_sibling_worker_does_not_begin_the_sessions_run_again(ledger: _Ledger)
         await mcp_runs.ensure("sess-1", DEFAULTS, goal="third call", now=101.0)
         await mcp_runs.drain_ledger_writes()
         assert [b.goal for b in ledger.begins] == ["first call"]
-        await mcp_runs.close_session("sess-1")
+        await mcp_runs.close_session("sess-1", "clickhouse")
         await mcp_runs.ensure("sess-1", DEFAULTS, goal="after close", now=103.0)
         await mcp_runs.drain_ledger_writes()
         assert [b.goal for b in ledger.begins] == ["first call", "after close"]
@@ -191,7 +191,7 @@ def test_begin_failure_is_swallowed_and_not_retried_every_call(ledger: _Ledger) 
         # The call gets its run at once; the failed begin forgets it.
         assert await mcp_runs.ensure("s", DEFAULTS, goal="g", now=10.0) is not None
         await mcp_runs.drain_ledger_writes()
-        assert mcp_runs.current("s") is None
+        assert mcp_runs.current(rid("s")) is None
         ledger.fail_begin = False
         # Within the idle window the failed session is not retried (no
         # run.begin per tool call while the ledger is down) …
@@ -229,9 +229,9 @@ def test_failed_begins_are_forgotten_while_no_run_is_live(ledger: _Ledger) -> No
 def test_close_session_completes_with_outcome_none(ledger: _Ledger) -> None:
     async def _run() -> None:
         await mcp_runs.ensure("s", DEFAULTS, goal="g", now=100.0)
-        assert await mcp_runs.close_session("s") is True
-        assert await mcp_runs.close_session("s") is False  # already gone
-        assert await mcp_runs.close_session("never-seen") is False
+        assert await mcp_runs.close_session("s", "clickhouse") is True
+        assert await mcp_runs.close_session("s", "clickhouse") is False  # already gone
+        assert await mcp_runs.close_session("never-seen", "clickhouse") is False
         c = ledger.completes[0]
         assert (c.org, c.namespace, c.run_id) == ("clickhouse", "ns-a", rid("s"))
         assert c.status == "completed" and c.outcome == "none" and c.memories_used == []
@@ -251,8 +251,8 @@ def test_a_run_a_sibling_still_serves_or_closed_is_not_completed(ledger: _Ledger
         ledger.active.pop(rid("done"))  # a sibling's DELETE /mcp closed it
         assert await mcp_runs.sweep_idle(now=mcp_runs.idle_seconds() + 1.0, force=True) == 0
         # the closed run is forgotten; the busy one stays for the next sweep
-        assert ledger.completes == [] and mcp_runs.current("busy") is not None
-        assert mcp_runs.current("done") is None
+        assert ledger.completes == [] and mcp_runs.current(rid("busy")) is not None
+        assert mcp_runs.current(rid("done")) is None
         ledger.served_elsewhere.clear()  # the sibling went quiet too
         assert await mcp_runs.sweep_idle(now=mcp_runs.idle_seconds() + 61.0) == 1
         assert [c.run_id for c in ledger.completes] == [rid("busy")] and mcp_runs.live_count() == 0
@@ -289,7 +289,7 @@ def test_cap_evicts_the_idlest_run_by_closing_it(ledger: _Ledger, monkeypatch) -
         await mcp_runs.ensure("b", DEFAULTS, goal="g", now=5.0)
         await mcp_runs.ensure("a", DEFAULTS, goal="g", now=10.0)  # a is now the fresher one
         await mcp_runs.ensure("c", DEFAULTS, goal="g", now=20.0)
-        assert mcp_runs.live_count() == 2 and mcp_runs.current("b") is None
+        assert mcp_runs.live_count() == 2 and mcp_runs.current(rid("b")) is None
         await mcp_runs.drain_ledger_writes()  # the close runs off the call's path
         assert [c.run_id for c in ledger.completes] == [rid("b")]
         assert ledger.completes[0].metadata["closed_by"] == "mcp_evicted"
@@ -468,3 +468,46 @@ def test_a_call_naming_an_org_binds_the_run_there(monkeypatch) -> None:
         mcp_call._bind_session_run(OPERATIONS_BY_NAME["memory.set"], arguments, DEFAULTS, "s")
     )
     assert (seen[0]["org"], seen[0]["namespace"]) == ("other", "ns-b")
+
+
+def test_two_callers_sending_one_session_id_hold_two_runs(ledger: _Ledger) -> None:
+    """The id binds the caller's principal: one's writes never carry the other's
+    run, and one's DELETE never closes the other's."""
+
+    async def _run() -> None:
+        alice = {**DEFAULTS, "principal": "alice/-"}
+        bob = {**DEFAULTS, "namespace": "ns-b", "principal": "bob/-"}
+        a = await mcp_runs.ensure("shared", alice, goal="a", now=0.0)
+        b = await mcp_runs.ensure("shared", bob, goal="b", now=1.0)
+        await mcp_runs.drain_ledger_writes()
+        assert a is not None and b is not None and a.run_id != b.run_id
+        assert [x.namespace for x in ledger.begins] == ["ns-a", "ns-b"]
+        assert await mcp_runs.close_session("shared", "clickhouse", "bob/-") is True
+        assert [c.run_id for c in ledger.completes] == [b.run_id]
+        assert mcp_runs.current(a.run_id) is a
+
+    asyncio.run(_run())
+
+
+def test_a_failed_check_keeps_the_run_and_tries_again(ledger: _Ledger, monkeypatch) -> None:
+    """Only a failed first begin waits out the idle window; a check that cannot
+    reach the ledger leaves the session's run in place."""
+    import server.tasks.app.run as h
+
+    async def _run() -> None:
+        run = await mcp_runs.ensure("s", DEFAULTS, goal="g", now=0.0)
+        await mcp_runs.drain_ledger_writes()
+
+        async def _down(org: str, run_id: str) -> Any:
+            raise RuntimeError("ledger down")
+
+        monkeypatch.setattr(h, "active_session_run", _down)
+        assert await mcp_runs.ensure("s", DEFAULTS, goal="g", now=61.0) is run
+        await mcp_runs.drain_ledger_writes()
+        assert await mcp_runs.ensure("s", DEFAULTS, goal="g", now=62.0) is run
+        monkeypatch.setattr(h, "active_session_run", ledger.active_run)
+        assert await mcp_runs.ensure("s", DEFAULTS, goal="g", now=125.0) is run
+        await mcp_runs.drain_ledger_writes()
+        assert len(ledger.begins) == 1  # still active: joined, never begun twice
+
+    asyncio.run(_run())

@@ -61,7 +61,7 @@ def test_ensure_returns_before_run_begin_lands_and_close_waits_for_it(monkeypatc
         run = await asyncio.wait_for(mcp_runs.ensure("sess-9", DEFAULTS, goal="g", now=1.0), 0.5)
         assert run is not None and run.run_id == rid("sess-9"), "the call has its id at once"
         assert order == [], "run.begin has not landed and the call did not wait for it"
-        closer = asyncio.create_task(mcp_runs.close_session("sess-9"))
+        closer = asyncio.create_task(mcp_runs.close_session("sess-9", "clickhouse"))
         await asyncio.sleep(0)
         assert order == [], "close waits for the begin"
         gate.set()

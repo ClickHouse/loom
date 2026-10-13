@@ -113,14 +113,21 @@ async def test_a_scoped_callers_session_run_is_its_own(ch: Any) -> None:
         )
     )
     try:
-        defaults = {"org": ORG, "namespace": namespace, "agent": AGENT, "user_id": "review-user"}
+        principal = "sa:bot/review-user"
+        defaults = {
+            "org": ORG,
+            "namespace": namespace,
+            "agent": AGENT,
+            "user_id": "review-user",
+            "principal": principal,
+        }
         run = await mcp_runs.ensure(session, defaults, goal="first call")
         await mcp_runs.drain_ledger_writes()
-        assert run is not None and run.run_id == mcp_runs.run_id_for(ORG, "review-user", session)
+        assert run is not None and run.run_id == mcp_runs.run_id_for(ORG, principal, session)
         got = await handle_run_get(RunGetInput(org=ORG, namespace=namespace, run_id=run.run_id))
         assert got.found and got.run is not None and got.run.user_id == "review-user"
         mcp_runs.reset()  # the DELETE reaches a web process that never served it
-        assert await mcp_runs.close_session(session, ORG, "review-user") is True
+        assert await mcp_runs.close_session(session, ORG, principal) is True
         got = await handle_run_get(RunGetInput(org=ORG, namespace=namespace, run_id=run.run_id))
         assert got.run is not None and got.run.status == "completed"
     finally:
@@ -130,4 +137,37 @@ async def test_a_scoped_callers_session_run_is_its_own(ch: Any) -> None:
             await ch.execute(
                 f"DELETE FROM loom.{table} WHERE org = {{org:String}} AND namespace = {{ns:String}}",
                 params={"org": ORG, "ns": namespace},
+            )
+
+
+@pytest.mark.asyncio
+async def test_two_callers_sending_one_session_id_keep_their_own_runs(ch: Any) -> None:
+    """A client picks its session id: two tokens sending the same one hold two
+    runs, and one's DELETE leaves the other's open."""
+    from server.tasks.app.run import active_session_run
+    from server.transport import mcp_runs
+
+    first, other = (f"itest-{uuid.uuid4().hex[:12]}" for _ in range(2))
+    session = uuid.uuid4().hex
+    mcp_runs.reset()
+    try:
+        runs = {}
+        for who, namespace in (("alice", first), ("bob", other)):
+            defaults = {"org": ORG, "namespace": namespace, "agent": AGENT, "principal": who}
+            runs[who] = await mcp_runs.ensure(session, defaults, goal=f"{who}'s call")
+        await mcp_runs.drain_ledger_writes()
+        assert runs["alice"] is not None and runs["bob"] is not None
+        assert runs["alice"].run_id != runs["bob"].run_id
+        mcp_runs.reset()
+        assert await mcp_runs.close_session(session, ORG, "bob") is True
+        assert await active_session_run(ORG, runs["bob"].run_id) is None
+        alice = await active_session_run(ORG, runs["alice"].run_id)
+        assert alice is not None and alice["namespace"] == first
+    finally:
+        mcp_runs.reset()
+        for table in ("agent_runs", "agent_events"):
+            await ch.execute(
+                f"DELETE FROM loom.{table} WHERE org = {{org:String}} "
+                "AND namespace IN {ns:Array(String)}",
+                params={"org": ORG, "ns": [first, other]},
             )

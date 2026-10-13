@@ -424,8 +424,9 @@ def attach(app: FastAPI) -> None:
         session_id = request.headers.get("mcp-session-id") or request.headers.get("Mcp-Session-Id")
         set_current_auth(auth)
         defaults = await _caller_defaults(auth, None) if session_id else None
+        principal = _mcp_runs.principal_of(auth, ledger_identity({})["user_id"])
         closed = await _mcp_runs.close_session(
-            session_id, str((defaults or {}).get("org") or ""), ledger_identity({})["user_id"]
+            session_id, str((defaults or {}).get("org") or ""), principal
         )
         if session_id:
             _MCP_AGENT_BY_SESSION.pop(session_id, None)

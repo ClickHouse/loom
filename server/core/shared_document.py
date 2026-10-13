@@ -120,8 +120,9 @@ def share_override[T](
 
 
 def _lock_within(fd: int, path: str, wait_s: float) -> None:
-    """Take the exclusive lock, or raise OSError after `wait_s`: an update runs
-    on the event loop, which a stuck sibling must not hold up."""
+    """Take the exclusive lock, or raise OSError after `wait_s`. An update runs on
+    the event loop, so a sibling stuck holding the lock stalls it for `wait_s` at
+    most; a sibling's own update holds it for one read and one replace."""
     deadline = time.monotonic() + wait_s
     while True:
         try:

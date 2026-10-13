@@ -348,6 +348,8 @@ async def _bind_session_run(
             # The run row lives where the session's first call worked (its explicit
             # org and namespace when it named them, else the caller's), filed under
             # the user and session the caller's token acts as.
+            from server.auth.context import current_auth
+
             who = ledger_identity({})
             _run = await _mcp_runs.ensure(
                 mcp_session_id,
@@ -357,6 +359,7 @@ async def _bind_session_run(
                     "namespace": str(arguments.get("namespace") or defaults["namespace"]),
                     "user_id": who["user_id"],
                     "session_id": who["session_id"] if who["session_id"] != "-" else "",
+                    "principal": _mcp_runs.principal_of(current_auth(), who["user_id"]),
                 },
                 goal=_mcp_runs.goal_of(arguments, f"mcp session ({defaults['agent']})"),
             )
