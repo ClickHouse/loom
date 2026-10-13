@@ -155,8 +155,8 @@ def _matched(
             on_trunk=on_trunk,
             baseline=was[1] if was else "",
         )
-        # a correction only for the definition it was judged against
-        judged = state == "changed" and a["judged_hash"] == now.body_hash
+        # `current` serves a correction only for trunk's checked code: the branch must have it
+        judged = state == "changed" and now.body_hash == a["checked_hash"]
         out.append((a, state, a["suggestion"] if judged else ""))
     return out
 
@@ -173,8 +173,7 @@ def _as_trunk_has_it(links: list[LinkRow], qualified_name: str) -> list[tuple[Li
     out = []
     for a in live:
         if (a["path"], a["qualified_name"]) in named:
-            judged = a["state"] == "changed" and a["judged_hash"] == a["checked_hash"]
-            out.append((a, a["state"], a["suggestion"] if judged else ""))
+            out.append((a, a["state"], a["suggestion"] if a["state"] == "changed" else ""))
     return out
 
 
