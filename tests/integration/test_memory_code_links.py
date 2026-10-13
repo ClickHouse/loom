@@ -225,8 +225,9 @@ async def _links(memory_id: str) -> list[dict[str, str]]:
 
 async def _row(memory_id: str) -> Any:
     import server.memory.store as memory_repo
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
 
-    return await memory_repo.get_by_id(memory_id, org=ORG, strong=True)
+    return await memory_repo.get_by_id(memory_id, scope=WHOLE_NAMESPACE, org=ORG, strong=True)
 
 
 async def _lessons(ns: str, name: str) -> list[dict[str, Any]]:
