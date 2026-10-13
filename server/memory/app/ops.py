@@ -257,55 +257,81 @@ def _reindex_texts(r: dict[str, Any]) -> tuple[str, str, str]:
     )
 
 
-def _without(row: dict[str, Any], *cols: str) -> dict[str, Any]:
-    return {k: v for k, v in row.items() if k not in cols}
+async def _recheck_reindexed_heads(
+    rows: list[dict[str, Any]], written: list[dict[str, Any]], *, ch: Any, model: str
+) -> None:
+    """The heads, re-read after the insert, against what the reindex read (`rows`, each
+    with the `memory_version` it read) and wrote (`written`, the same order). Every
+    write below sits one above the newest version it read, never at a fresh draw, so
+    a 'high' write that lands later still fences above it.
 
-
-async def _recheck_reindexed_heads(rows: list[dict[str, Any]], *, ch: Any, model: str) -> None:
-    """The heads, re-read after the insert, against what the reindex read (`rows`
-    carry `memory_version`). A key whose head is no longer embedded ('high',
-    unsearchable, gone) has its vectors retired at a version drawn now, above the
-    reindexed row. A key whose head changed (a newer write landed between the reads,
-    and its vector may sit under the reindexed one) is handed back to the embed
-    worker: a stub of the current head at a version drawn now, which the worker
-    fills from the head's value."""
+    - A head no longer embedded ('high', unsearchable, gone): the key's vectors are
+      retired one above the reindexed row.
+    - A head whose version changed with the same value (a touch, a verify, a tag): the
+      reindexed vectors are re-emitted on the current head's columns.
+    - A head whose value changed (a newer write landed between the reads, its vector
+      may sit under the reindexed one): a dim-0 stub of the current head for the embed
+      worker, which fills it at + 1 from the head's value."""
     import server.memory.store as memory_repo
     from server.memory.domain.memory_types import is_embedded
     from server.memory.store import read_your_writes_enabled
 
-    read = {memory_repo.embedding_key(r): int(r["memory_version"]) for r in rows}
-    heads = await memory_repo.memory_rows_by_identity_keys(
-        list(read), ch=ch, sequential=read_your_writes_enabled()
-    )
-    gone: list[Any] = []
+    sequential = read_your_writes_enabled()
+    read = {memory_repo.embedding_key(r): (r, w) for r, w in zip(rows, written, strict=True)}
+    heads = await memory_repo.memory_rows_by_identity_keys(list(read), ch=ch, sequential=sequential)
+    gone: list[tuple[Any, int]] = []
     changed: list[Any] = []
-    for key, version in read.items():
+    for key, (r, w) in read.items():
         head = heads.get(key)
         if head is None or not is_embedded(head.memory_type, head.sensitivity):
-            gone.append(key)
-        elif int(head.version) != version:
+            gone.append((key, int(w["version"]) + 1))
+        elif int(head.version) != int(r["memory_version"]):
             changed.append(key)
     if gone:
-        now_version = memory_repo.next_version()
-        await memory_repo.retire_vectors_for_keys([(k, now_version) for k in gone], ch=ch)
-    if changed:
-        mirror = await memory_repo.memory_mirror_rows_for_keys(changed, ch=ch)
-        await memory_repo.insert_embedding_rows(
-            [
+        await memory_repo.retire_vectors_for_keys(gone, ch=ch)
+    if not changed:
+        return
+    mirror = await memory_repo.memory_mirror_rows_for_keys(changed, ch=ch, sequential=sequential)
+    out: list[dict[str, Any]] = []
+    for m in mirror:
+        r, w = read[memory_repo.embedding_key(m)]
+        cols = {k: v for k, v in m.items() if k not in ("created_at", "version")}
+        version = max(int(m["version"]), int(w["version"])) + 1
+        if m["content_excerpt"] == r["content_excerpt"]:  # same value: keep the vectors
+            vectors = {
+                c: w[c]
+                for c in (
+                    "content_excerpt",
+                    "embedding_model",
+                    "embedding_dim",
+                    "embedding",
+                    "memory_key_embedding",
+                    "memory_key_embedding_dim",
+                )
+            }
+            out.append(
                 memory_repo.build_embedding_row(
-                    **{k: v for k, v in m.items() if k not in ("created_at", "version")},
+                    **(cols | vectors),
+                    embed_attempts=1,
+                    created_at=m["created_at"],
+                    version=version,
+                )
+            )
+        else:
+            out.append(
+                memory_repo.build_embedding_row(
+                    **cols,
                     embedding_model=model,
                     embedding_dim=0,
                     embedding=[],  # dim 0: the worker's queue
                     tombstoned_at=None,
                     embed_attempts=0,
                     created_at=m["created_at"],
-                    version=memory_repo.next_version(),
+                    version=version,
                 )
-                for m in mirror
-            ],
-            ch=ch,
-        )
+            )
+    if out:
+        await memory_repo.insert_embedding_rows(out, ch=ch)
 
 
 async def handle_memory_reindex(input: MemoryReindexInput) -> MemoryReindexOutput:
@@ -358,7 +384,8 @@ async def handle_memory_reindex(input: MemoryReindexInput) -> MemoryReindexOutpu
         key_vec = key_vecs.get(i, [])
         embedding_rows.append(
             memory_repo.build_embedding_row(
-                **{**_without(r, "memory_version"), "content_excerpt": texts[i][0]},
+                **{k: v for k, v in r.items() if k not in ("memory_version", "content_excerpt")},
+                content_excerpt=texts[i][0],
                 embedding_model=target_model,
                 embedding_dim=embedder.dim,
                 embedding=vectors[i],
@@ -368,7 +395,7 @@ async def handle_memory_reindex(input: MemoryReindexInput) -> MemoryReindexOutpu
             )
         )
     await memory_repo.insert_embedding_rows(embedding_rows, ch=ch)
-    await _recheck_reindexed_heads(rows, ch=ch, model=target_model)
+    await _recheck_reindexed_heads(rows, embedding_rows, ch=ch, model=target_model)
 
     return MemoryReindexOutput(
         processed=len(embedding_rows),

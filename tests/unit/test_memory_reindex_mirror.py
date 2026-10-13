@@ -196,15 +196,16 @@ def test_a_procedural_row_is_reindexed_from_its_procedure_text() -> None:
 
 
 def test_the_heads_are_rechecked_after_the_insert(monkeypatch: Any) -> None:
-    """A head now 'high' or gone is retired above the reindexed row; a head that
-    changed since the read is handed back to the embed worker as a fresh stub; an
-    unchanged head is left alone."""
+    """A head now 'high' or gone is retired one above the reindexed row; a head whose
+    value changed since the read becomes a stub one above the newest version read; a
+    head that changed only its metadata keeps the reindexed vectors on its columns;
+    an unchanged head is left alone. No write takes a fresh version."""
     from types import SimpleNamespace
 
     from server.memory.app import ops
 
     retired: list[tuple[Any, int]] = []
-    stubs: list[dict[str, Any]] = []
+    written: list[dict[str, Any]] = []
 
     async def _heads(keys: Any, **_k: Any) -> dict[Any, Any]:
         by_key = {k[5]: k for k in keys}
@@ -212,6 +213,7 @@ def test_the_heads_are_rechecked_after_the_insert(monkeypatch: Any) -> None:
             by_key["k1"]: SimpleNamespace(memory_type="semantic", sensitivity="high", version=5),
             by_key["k2"]: SimpleNamespace(memory_type="semantic", sensitivity="", version=5),
             by_key["k4"]: SimpleNamespace(memory_type="semantic", sensitivity="", version=9),
+            by_key["k5"]: SimpleNamespace(memory_type="semantic", sensitivity="", version=9),
         }  # k3 is gone
 
     async def _retire(items: Any, **_k: Any) -> int:
@@ -219,22 +221,48 @@ def test_the_heads_are_rechecked_after_the_insert(monkeypatch: Any) -> None:
         return len(items)
 
     async def _mirror(keys: Any, **_k: Any) -> list[dict[str, Any]]:
-        return [{**_memory_mirror_row(), "memory_key": k[5], "version": 9} for k in keys]
+        out = []
+        for k in keys:
+            value = "a newer value" if k[5] == "k4" else "x" * 600
+            out.append(
+                {
+                    **_memory_mirror_row(),
+                    "memory_key": k[5],
+                    "content_excerpt": value,
+                    "tags": ["touched"],
+                    "version": 9,
+                }
+            )
+        return out
 
     async def _insert(rows: Any, **_k: Any) -> None:
-        stubs.extend(rows)
+        written.extend(rows)
 
     monkeypatch.setattr(mr, "memory_rows_by_identity_keys", _heads)
     monkeypatch.setattr(mr, "retire_vectors_for_keys", _retire)
     monkeypatch.setattr(mr, "memory_mirror_rows_for_keys", _mirror)
     monkeypatch.setattr(mr, "insert_embedding_rows", _insert)
-    rows = [
-        {**_memory_mirror_row(), "memory_key": k, "memory_version": 5, "version": 6}
-        for k in ("k1", "k2", "k3", "k4")
+    keys = ("k1", "k2", "k3", "k4", "k5")
+    rows = [{**_memory_mirror_row(), "memory_key": k, "memory_version": 5} for k in keys]
+    reindexed = [
+        {
+            **_memory_mirror_row(),
+            "memory_key": k,
+            "version": 6,
+            "content_excerpt": "excerpt",
+            "embedding_model": "fake-model",
+            "embedding_dim": 3,
+            "embedding": [0.1, 0.2, 0.3],
+            "memory_key_embedding": [0.3, 0.2, 0.1],
+            "memory_key_embedding_dim": 3,
+        }
+        for k in keys
     ]
-    asyncio.run(ops._recheck_reindexed_heads(rows, ch=object(), model="fake-model"))
-    assert sorted(k[5] for k, _ in retired) == ["k1", "k3"]
-    assert all(v > 6 for _, v in retired)
-    [stub] = stubs
-    assert stub["memory_key"] == "k4" and stub["embedding_dim"] == 0
-    assert stub["tombstoned_at"] is None and stub["version"] > 9
+    asyncio.run(ops._recheck_reindexed_heads(rows, reindexed, ch=object(), model="fake-model"))
+    assert sorted((k[5], v) for k, v in retired) == [("k1", 7), ("k3", 7)]
+    by_key = {r["memory_key"]: r for r in written}
+    assert set(by_key) == {"k4", "k5"}
+    stub, kept = by_key["k4"], by_key["k5"]
+    assert stub["embedding_dim"] == 0 and stub["tombstoned_at"] is None and stub["version"] == 10
+    assert kept["embedding_dim"] == 3 and kept["memory_key_embedding_dim"] == 3
+    assert kept["tags"] == ["touched"] and kept["version"] == 10

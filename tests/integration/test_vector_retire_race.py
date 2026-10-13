@@ -1144,3 +1144,125 @@ async def test_a_newer_plain_write_between_the_reindex_reads_keeps_its_value(
                 f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
                 params={"o": ORG, "n": ns},
             )
+
+
+class _ProxyAroundReindexReads:
+    """The client, running `before_max` once just before reindex's max(version) read
+    and `after_mirror` once just after its post-insert mirror read."""
+
+    def __init__(self, inner: Any, before_max: Any, after_mirror: Any) -> None:
+        self._inner, self._before_max, self._after_mirror = inner, before_max, after_mirror
+        self.fired: list[str] = []
+
+    async def query_all(self, sql: str, *a: Any, **kw: Any) -> Any:
+        if "max(version) AS ev" in sql and "max" not in self.fired:
+            self.fired.append("max")
+            await self._before_max()
+        out = await self._inner.query_all(sql, *a, **kw)
+        if "max" in self.fired and "mirror" not in self.fired and "length(m.value) > 0" in sql:
+            self.fired.append("mirror")
+            await self._after_mirror()
+        return out
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+async def test_a_high_write_after_the_reindex_mirror_read_fences_the_stub(
+    ch: Any, monkeypatch: Any
+) -> None:
+    """A newer plain write lands between the reindex reads (so the key gets a stub),
+    then a 'high' write lands right after the mirror read the stub is built from. The
+    stub sits one above what it read, below the high write's fence, so the worker's
+    fill is never served."""
+    import server.core.ch as ch_mod
+    from server.memory.api.models_admin import MemoryReindexInput
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import ops, write
+    from server.memory.workers.embedding import EmbeddingWorkerConfig, run_pass
+
+    ns = f"itest-{uuid.uuid4().hex[:12]}"
+    key = f"stub_fence_{uuid.uuid4().hex[:6]}"
+    ident = {"org": ORG, "namespace": ns, "agent": AGENT, "memory_key": key}
+    secret = "sk-proj-" + uuid.uuid4().hex + uuid.uuid4().hex[:8]
+    await _memory_only_row(ch, ns, key, "OLDVALUE the deploy uses blue")
+
+    async def newer_plain() -> None:
+        await write.handle_memory_set(MemorySetInput(**ident, value="NEWVALUE deploy uses green"))
+
+    async def high() -> None:
+        await write.handle_memory_set(MemorySetInput(**ident, value=f"root token {secret}"))
+
+    try:
+        proxy = _ProxyAroundReindexReads(ch, newer_plain, high)
+        monkeypatch.setattr(ch_mod, "get_client", lambda: proxy)
+        await ops.handle_memory_reindex(MemoryReindexInput(org=ORG, namespace=ns))
+        assert proxy.fired == ["max", "mirror"]
+        monkeypatch.setattr(ch_mod, "get_client", lambda: ch)
+        await run_pass(EmbeddingWorkerConfig(org_filter=ORG, namespace_filter=ns))
+        head = await ch.query_one(
+            "SELECT sensitivity FROM loom.memory FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND memory_key = {k:String}",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        live = await ch.query_one(
+            "SELECT count() AS n FROM loom.memory_embeddings FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND memory_key = {k:String}"
+            " AND tombstoned_at IS NULL AND embedding_dim > 0",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        assert head["sensitivity"] == "high"
+        assert int(live["n"]) == 0
+    finally:
+        for table in ("memory", "memory_embeddings", "entity_vectors", "memory_chunks"):
+            await ch.execute(
+                f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
+                params={"o": ORG, "n": ns},
+            )
+
+
+async def test_a_touch_during_the_reindex_keeps_the_reindexed_vectors(
+    ch: Any, monkeypatch: Any
+) -> None:
+    """A metadata-only write between the reindex reads changes the head's version, not
+    its value: the reindexed vectors (value and key axis) stay live on its columns."""
+    import server.core.ch as ch_mod
+    from server.memory import store as M
+    from server.memory.api.models_admin import MemoryReindexInput
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import ops, write
+
+    ns = f"itest-{uuid.uuid4().hex[:12]}"
+    key = f"reindex_touch_{uuid.uuid4().hex[:6]}"
+    await write.handle_memory_set(
+        MemorySetInput(org=ORG, namespace=ns, agent=AGENT, memory_key=key, value=f"{key} is blue")
+    )
+
+    async def touch() -> None:
+        head = await _memory_row_of(ch, ns, key)
+        await M.insert_memory_versions(
+            [M.build_memory_version_row(head, version=M.next_version(), tags=["touched"])], ch=ch
+        )
+
+    async def nothing() -> None:
+        return None
+
+    try:
+        proxy = _ProxyAroundReindexReads(ch, touch, nothing)
+        monkeypatch.setattr(ch_mod, "get_client", lambda: proxy)
+        out = await ops.handle_memory_reindex(MemoryReindexInput(org=ORG, namespace=ns, force=True))
+        assert out.processed == 1 and proxy.fired == ["max", "mirror"]
+        row = await ch.query_one(
+            "SELECT embedding_dim, memory_key_embedding_dim, tags FROM loom.memory_embeddings"
+            " FINAL WHERE org = {o:String} AND namespace = {n:String}"
+            " AND memory_key = {k:String} AND tombstoned_at IS NULL",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        assert int(row["embedding_dim"]) > 0 and int(row["memory_key_embedding_dim"]) > 0
+        assert "touched" in list(row["tags"])
+    finally:
+        for table in ("memory", "memory_embeddings", "entity_vectors"):
+            await ch.execute(
+                f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
+                params={"o": ORG, "n": ns},
+            )

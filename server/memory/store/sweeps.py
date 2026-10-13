@@ -476,7 +476,10 @@ async def find_memories_without_embedding_rows(
 
 
 async def memory_mirror_rows_for_keys(
-    keys: list[tuple[str, str, str, str, str, str]], *, ch: _CHClient | None = None
+    keys: list[tuple[str, str, str, str, str, str]],
+    *,
+    ch: _CHClient | None = None,
+    sequential: bool = False,
 ) -> list[dict[str, Any]]:
     """The live, embeddable memory rows of the given identity keys as embedding-mirror
     rows (`_EMBEDDING_MIRROR_COLUMNS` plus `version`): what a stub for the embed worker
@@ -494,6 +497,7 @@ async def memory_mirror_rows_for_keys(
           AND m.sensitivity != 'high'
           AND m.memory_type NOT IN {{unsearchable:Array(String)}}
           AND length(m.value) > 0
+        {_SEQUENTIAL if sequential else ""}
         """,
         params={"keys": [tuple(k) for k in keys], "unsearchable": sorted(NON_SEARCHABLE_TYPES)},
     )
