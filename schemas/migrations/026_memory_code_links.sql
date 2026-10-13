@@ -79,8 +79,10 @@ CREATE TABLE IF NOT EXISTS loom.memory_code_link_queue
     `queued_at` DateTime64(6) DEFAULT now64(6)
 )
 ENGINE = MergeTree
+PARTITION BY toDate(queued_at)
 ORDER BY queued_at
-TTL toDateTime(queued_at) + INTERVAL 7 DAY;
+TTL toDateTime(queued_at) + INTERVAL 7 DAY
+SETTINGS ttl_only_drop_parts = 1;
 
 -- Every write is queued, touches and pins included: one that drops a memory's `repo:`
 -- tag must reach the worker to drop its links. A queued row is its identity alone; the

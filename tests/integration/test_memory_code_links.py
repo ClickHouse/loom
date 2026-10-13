@@ -611,6 +611,38 @@ async def test_code_gone_past_the_search_window_returns_only_in_its_own_file(
     assert [(x["path"], x["state"]) for x in await _links(mid)] == [("src/A.cpp", "fresh")]
 
 
+async def test_the_sweep_removes_every_version_of_an_old_tombstone(env, ch_client) -> None:
+    from server.memory.store import code_links as store
+
+    c1 = env.commit(
+        {"src/t.py": "def first_rows():\n    return 1\n\n\ndef second_rows():\n    return 2\n"}
+    )
+    await _index(TRUNK, env, c1, ["src/t.py"])
+    mid = await _remember(MEM, "t", "`first_rows` returns one")
+    await _pass()
+    await _remember(MEM, "t", "`second_rows` returns two")  # the first link is tombstoned
+    await _pass()
+
+    def versions() -> int:
+        return ch_client.query(
+            "SELECT count() FROM loom.memory_code_links WHERE memory_id = {m:UUID} "
+            "AND qualified_name LIKE '%first_rows'",
+            parameters={"m": mid},
+        ).result_rows[0][0]
+
+    assert versions() >= 2  # the live row it had and its tombstone
+    ch_client.command(
+        "ALTER TABLE loom.memory_code_links UPDATE tombstoned_at = now() - INTERVAL 8 DAY "
+        "WHERE memory_id = {m:UUID} AND tombstoned_at IS NOT NULL SETTINGS mutations_sync = 2",
+        parameters={"m": mid},
+    )
+    after: tuple[str, ...] | None = (ORG, TRUNK, "", "", "", "00000000-0000-0000-0000-000000000000")
+    while after is not None and after[:2] == (ORG, TRUNK):
+        after, _ = await store.sweep_page(after, 1000)
+    assert versions() == 0
+    assert [x["symbol"].rsplit("::", 1)[-1] for x in await _links(mid)] == ["second_rows"]
+
+
 async def test_a_bulk_write_larger_than_a_page_is_linked_whole(env) -> None:
     """One bulk insert shares one queue time; pages split it by position, never by time."""
     from server.code.domain.index.remote import repo_tag

@@ -164,9 +164,10 @@ async def sweep_page(
     after: tuple[str, ...] | None, limit: int, *, ch: _CHClient | None = None
 ) -> tuple[tuple[str, ...] | None, int]:
     """Drop the links of the gone memories among the next `limit` link rows after
-    `after`, read in the table's sort order: the retry of an insert's cleanup that
-    failed, at whatever age. Returns where the next page starts (None: the table was
-    read to its end) and how many memories' links went."""
+    `after`, read in the table's sort order (the retry of an insert's cleanup that
+    failed, at whatever age), and the tombstones among them older than
+    `TOMBSTONE_DAYS`. Returns where the next page starts (None: the table was read to
+    its end) and how many memories' links went."""
     ch = ch or _default_client()
     # the tuple alone is no key condition: bounds on the key's first columns let the read
     # skip the rows before the cursor
@@ -190,8 +191,34 @@ async def sweep_page(
     for r in rows:
         by_org[str(r["org"])].add(str(r["memory_id"]))
     dropped = await _drop_gone(ch, by_org)
+    await _purge_tombstones(ch, [tuple(r[c] for c in _KEY_COLUMNS) for r in rows])
     last = tuple(str(rows[-1][c]) for c in _KEY_COLUMNS) if len(rows) == limit else None
     return last, dropped
+
+
+# days a link's tombstone is kept before every version of its key is deleted
+TOMBSTONE_DAYS = 7
+_KEY_TUPLES = "Array(Tuple(String, String, String, String, String, UUID))"
+
+
+async def _purge_tombstones(ch: _CHClient, keys: list[tuple[Any, ...]]) -> None:
+    """Delete every version of those of `keys` whose newest row is a tombstone older
+    than `TOMBSTONE_DAYS`: the tombstone alone would bring the versions under it back."""
+    if not keys:
+        return
+    old = await query_all_sliced(
+        ch,
+        f"SELECT {_KEY} FROM {TABLE} FINAL WHERE ({_KEY}) IN {{keys:{_KEY_TUPLES}}} "
+        "AND tombstoned_at < now() - INTERVAL {days:UInt32} DAY",
+        {"keys": keys, "days": TOMBSTONE_DAYS},
+        "keys",
+    )
+    for part in param_slices([tuple(r[c] for c in _KEY_COLUMNS) for r in old]):
+        await ch.execute(
+            f"DELETE FROM {TABLE} WHERE ({_KEY}) IN {{keys:{_KEY_TUPLES}}} "
+            "SETTINGS lightweight_deletes_sync = 2",
+            params={"keys": part},
+        )
 
 
 async def drop_gone(org: str, memory_ids: set[str], *, ch: _CHClient | None = None) -> int:
@@ -532,7 +559,8 @@ async def backfill_page(
     ch = ch or _default_client()
     params: dict[str, Any] = {"cns": list(code_namespaces), "lim": int(limit)}
     # in each leg, beside the tuple (no key condition): bounds on the key's first columns,
-    # loom.memory's identity and the links' org, so a page skips what came before
+    # loom.memory's identity and the links' org, so a page skips what came before; and
+    # each leg's own order and limit, so it reads no further than one page
     memory_after = links_after = ""
     if after:
         params |= {"after": tuple(after), "org": after[0], "ns": after[1], "agent": after[2]}
@@ -549,13 +577,18 @@ async def backfill_page(
         f"""
         SELECT org, namespace, agent, user_id, session_id, memory_key
         FROM (
-            SELECT org, namespace, agent, user_id, session_id, memory_key
+            SELECT DISTINCT org, namespace, agent, user_id, session_id, memory_key
             FROM loom.memory
             WHERE tombstoned_at IS NULL
               AND (arrayExists(t -> startsWith(t, 'repo:'), tags)
                    OR namespace IN {{cns:Array(String)}}){memory_after}
+            ORDER BY org, namespace, agent, user_id, session_id, memory_key
+            LIMIT {{lim:UInt32}}
             UNION DISTINCT
-            SELECT org, namespace, agent, user_id, session_id, memory_key {_LIVE}{links_after}
+            SELECT DISTINCT org, namespace, agent, user_id, session_id, memory_key
+            {_LIVE}{links_after}
+            ORDER BY org, namespace, agent, user_id, session_id, memory_key
+            LIMIT {{lim:UInt32}}
         )
         ORDER BY org, namespace, agent, user_id, session_id, memory_key
         LIMIT {{lim:UInt32}}

@@ -212,7 +212,7 @@ async def test_the_sweep_pages_through_every_linked_memory_and_drops_the_gone() 
     assert (nxt, dropped) == (("o", "c", "p", "q", "n", "live"), 1)  # a full page: more may follow
     (read, params) = ch.sql[0]
     assert "> {after:" not in read and params["lim"] == 2
-    (delete, params) = ch.sql[-1]
+    (delete, params) = next((sql, p) for sql, p in ch.sql if sql.startswith("DELETE"))
     assert delete.startswith("DELETE FROM loom.memory_code_links") and params["ids"] == ["erased"]
     ch = _CH(
         {
@@ -300,3 +300,20 @@ def test_the_queue_ttl_is_the_tables() -> None:
     table = schema[schema.index("CREATE TABLE IF NOT EXISTS loom.memory_code_link_queue") :]
     ttl = table[table.index("TTL ") : table.index("\n", table.index("TTL "))]
     assert ttl == f"TTL toDateTime(queued_at) + toIntervalDay({store.QUEUE_TTL_DAYS})"
+
+
+@pytest.mark.asyncio
+async def test_the_sweep_deletes_every_version_of_a_key_long_tombstoned() -> None:
+    key = {"org": "o", "code_namespace": "c", "path": "p", "qualified_name": "q", "namespace": "n"}
+    page = [key | {"memory_id": "old"}, key | {"memory_id": "kept"}]
+    ch = _CH(
+        {
+            "ORDER BY org, code_namespace": [page],
+            "FROM loom.memory FINAL": [[{"mid": "old"}, {"mid": "kept"}]],
+            "FROM loom.memory_code_links FINAL WHERE": [[page[0]]],
+        }
+    )
+    await store.sweep_page(None, 10, ch=ch)
+    ((purge, params),) = [(sql, p) for sql, p in ch.sql if sql.startswith("DELETE")]
+    assert "version" not in purge  # every version of the key: the tombstone alone would not do
+    assert params["keys"] == [("o", "c", "p", "q", "n", "old")]

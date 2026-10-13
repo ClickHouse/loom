@@ -221,7 +221,7 @@ whether it is refreshable. `make lint` fails when the page is stale.
 | `memory_categories` | `ReplacingMergeTree(created_at)` | `(org, namespace, memory_key, category_id)` |  |  |  |
 | `memory_chunk_sources` | `ReplacingMergeTree(created_at)` | `(org, namespace, session_id, chunk_index, memory_key, evidence_id)` | `toYYYYMM(created_at)` |  |  |
 | `memory_chunks` | `ReplacingMergeTree(created_at)` | `(org, namespace, session_id, chunk_index, content_sha256)` | `toYYYYMM(created_at)` |  |  |
-| `memory_code_link_queue` | `MergeTree` | `queued_at` |  | `toDateTime(queued_at) + toIntervalDay(7)` |  |
+| `memory_code_link_queue` | `MergeTree` | `queued_at` | `toDate(queued_at)` | `toDateTime(queued_at) + toIntervalDay(7)` |  |
 | `memory_code_links` | `ReplacingMergeTree(version)` | `(org, code_namespace, path, qualified_name, namespace, memory_id)` |  |  | 4 skip index (bloom_filter) |
 | `memory_doc_stats` | `ReplacingMergeTree(version)` | `(org, namespace, agent, user_id, session_id, scope, embedding_model, memory_key)` |  |  |  |
 | `memory_drops` | `MergeTree` | `(org, namespace, stage, reason, ts)` |  | `ts + toIntervalDay(30)` |  |
