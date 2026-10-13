@@ -174,3 +174,40 @@ def test_a_committed_budget_update_is_never_reported_as_failed(
     monkeypatch.undo()
     assert a.effective("memory.set", 99) == 0
     assert b.effective("memory.set", 99) == 0
+
+
+def test_an_override_with_several_workers_and_no_shared_table_is_refused(settings_override) -> None:
+    """The shared table was asked for but could not open: a change would bind
+    only the worker that took the call."""
+    settings_override(ratelimit_shared="on", ratelimit_shared_path="/proc/loom-test.buckets")
+    lim = Limiter()
+    assert not lim.shared_active
+    with pytest.raises(LoomServerError, match="this worker only"):
+        lim.set_namespace_limit("ns1", "memory", Limit(capacity=3, rate=0.0))
+    assert ("ns1", "memory") not in lim._ns_overrides
+
+
+def test_one_worker_without_the_shared_table_keeps_its_overrides_locally(settings_override) -> None:
+    settings_override(ratelimit_shared="auto", web_workers=1)
+    lim = Limiter()
+    lim.set_namespace_limit("ns1", "memory", Limit(capacity=3, rate=0.0))
+    assert lim._ns_overrides[("ns1", "memory")] == Limit(capacity=3, rate=0.0)
+    lim.reset_all()
+
+
+@pytest.mark.asyncio
+async def test_admin_ratelimit_set_cannot_acknowledge_a_worker_local_change(
+    settings_override, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.core import ratelimit
+    from server.insights.app.admin_models import RatelimitSetInput
+    from server.insights.app.admin_routes import admin_ratelimit_set
+
+    settings_override(ratelimit_shared="on", ratelimit_shared_path="/proc/loom-test.buckets")
+    lim = Limiter()
+    monkeypatch.setattr(ratelimit, "get_limiter", lambda: lim)
+    with pytest.raises(LoomServerError, match="this worker only"):
+        await admin_ratelimit_set(
+            RatelimitSetInput(namespace="ns1", op_class="memory", capacity=3, rate=0.0)
+        )
+    assert ("ns1", "memory") not in lim._ns_overrides

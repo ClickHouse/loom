@@ -315,6 +315,8 @@ class Limiter:
         self._shared_key: tuple[object, ...] | None = None
         self._shared_reason: str = "not resolved yet"
         self._shared_active: bool = False
+        # The shared table was asked for (several workers, or "on"), whether or not it opened.
+        self._shared_wanted: bool = False
         # With the shared table the overrides live beside it too
         # (`<table>.overrides.json`), so an admin override set through one web
         # worker binds every worker on the host: every check stats the file and
@@ -339,6 +341,7 @@ class Limiter:
             self._shared = None
         self._shared_key = key
         want = mode == "on" or (mode == "auto" and workers > 1)
+        self._shared_wanted = want
         if not want:
             self._shared_reason = (
                 "off by LOOM_RATELIMIT_SHARED" if mode == "off" else "single web worker"
@@ -404,11 +407,18 @@ class Limiter:
         workers updating at once never drop each other's change. A change that
         cannot be published is rolled back and refused: it would bind only
         this worker."""
+        from server.core.errors import LoomServerError
+
         path = self._overrides_path()
         if path is None:
+            if self._shared_wanted:
+                # Several workers but no shared table: the change would bind this one only.
+                raise LoomServerError(
+                    f"rate-limit override not applied: {self._shared_reason}; "
+                    "it would reach this worker only"
+                )
             yield
             return
-        from server.core.errors import LoomServerError
         from server.core.ratelimit_shared import file_lock, publish_json
 
         try:
