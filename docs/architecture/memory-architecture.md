@@ -226,7 +226,7 @@ Then by label:
   `superseded` behind it (`invalid_at` = the write time, as for any retirement). A
   pinned new row stays live, and so does the later stored row; an older stored row it
   contradicts still retires. The superseded entry's result answers `conflict_verdict:
-  superseded` with `superseded_by` and no peers, and the row leaves the write's conflict
+superseded` with `superseded_by` and no peers, and the row leaves the write's conflict
   marks, refines and value-update linking. When the new row is the later one, the stored
   row retires after the insert.
 - **`elaboration` by the newer row.** The older row retires.
