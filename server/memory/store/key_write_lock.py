@@ -3,7 +3,7 @@
 The hash check runs before the embed and the insert, so two writers holding the same
 hash could both pass it. Writers of one key are serialized per process, and across
 processes by a KeeperMap key in `loom._migration_lock` when the server has a Keeper.
-`hold_name` takes the same lock under any name.
+`lease` holds a lock of any name across hosts for as long as a job runs.
 """
 
 from __future__ import annotations
@@ -85,12 +85,6 @@ class KeyWriteLocks:
         memory_key: str,
     ) -> AsyncIterator[None]:
         name = lock_name(org, namespace, agent, user_id, session_id, memory_key)
-        async with self.hold_name(name):
-            yield
-
-    @asynccontextmanager
-    async def hold_name(self, name: str) -> AsyncIterator[None]:
-        """Hold `name`; PreconditionFailedError when another holder keeps it past the wait."""
         me = default_holder()
         async with self._process_lock(name):
             if not await self._keeper_acquire(name, me):
