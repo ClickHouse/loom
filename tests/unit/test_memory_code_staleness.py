@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from server.memory.app import code_grounding as ma
+from server.memory.app import code_link_reads
 from server.memory.store import code_links
 
 
@@ -149,3 +150,21 @@ async def test_an_unreadable_link_table_gives_no_note(monkeypatch) -> None:
 
     monkeypatch.setattr(code_links, "live_links", broken)
     assert await ma._annotate_stale_code_memories([_mem("m1")], _IN) is None
+
+
+@pytest.mark.asyncio
+async def test_only_the_hits_the_search_left_unread_are_read(monkeypatch) -> None:
+    _links(monkeypatch, [_head("m1"), _head("m2")], [_link("m2", "missing", qn="DB::gone")])
+    asked: list[Any] = []
+    read = code_link_reads.hit_memories
+
+    async def hit_memories(input, hits):
+        asked.extend(h.memory_key for h in hits)
+        return await read(input, hits)
+
+    monkeypatch.setattr(code_link_reads, "hit_memories", hit_memories)
+    searched = _mem("m1")
+    searched._code_links = [_link("m1", "changed", qn="DB::edited")]
+    note = await ma._annotate_stale_code_memories([searched, _mem("m2")], _IN)
+    assert asked == ["m2"]
+    assert "DB::edited" in note.content_excerpt and "DB::gone" in note.content_excerpt

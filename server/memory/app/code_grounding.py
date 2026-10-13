@@ -578,18 +578,21 @@ async def _annotate_stale_code_memories(memories: list[Any], search_input: Any) 
     from server.memory.app.code_link_reads import hit_memories, readable_code
 
     pool = [m for m in memories[:8] if str(getattr(m, "memory_type", "")) != "code"]
-    if all(getattr(m, "_code_links", None) is not None for m in pool):
-        links: list[LinkRow] = [a for m in pool for a in m._code_links]  # the search read them
-    else:
+    # the search read most hits' links: read only the rest's
+    by_hit: list[list[LinkRow] | None] = [getattr(m, "_code_links", None) for m in pool]
+    unread = [i for i, v in enumerate(by_hit) if v is None]
+    if unread:
         try:
-            per_hit = await hit_memories(search_input, pool)
-            links = [a for m in per_hit if m for a in m["links"]]
-            cns = {a["code_namespace"] for a in links}
+            heads = await hit_memories(search_input, [pool[i] for i in unread])
+            read: list[list[LinkRow]] = [(m or {}).get("links", []) for m in heads]
+            cns = {a["code_namespace"] for v in read for a in v}
             seen = await readable_code(str(search_input.org), cns)
         except Exception as e:  # noqa: BLE001 — grounding is advisory
             _warn_once("code staleness: links unreadable: %s", e)
             return None
-        links = [a for a in links if a["code_namespace"] in seen]
+        for i, v in zip(unread, read, strict=True):
+            by_hit[i] = [a for a in v if a["code_namespace"] in seen]
+    links = [a for v in by_hit for a in v or []]
     notes: list[str] = []
     for a in links:
         what, key = a["qualified_name"] or a["path"], f"memory [{a['memory_key']}]"
