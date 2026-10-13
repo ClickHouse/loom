@@ -755,6 +755,45 @@ async def test_a_worker_stopped_past_the_queue_ttl_backfills_an_empty_queue(env,
     assert json.loads(await memory_links.link_cursor("queue"))[0] > horizon
 
 
+async def test_a_pass_behind_the_queue_ttl_that_fails_still_owes_its_backfill(
+    env, ch_client, monkeypatch
+) -> None:
+    import json
+
+    from server.code.app import memory_links
+    from server.memory.app import code_links
+    from server.memory.store import code_links as store
+    from server.memory.workers.code_links import run_pass
+
+    repo = env
+    c1 = repo.commit({"src/q.py": "def q_one():\n    return 1\n\n\ndef q_two():\n    return 2\n"})
+    await _index(TRUNK, repo, c1, ["src/q.py"])
+    mid = await _remember(MEM, "q", "`q_one` is one")
+    await _pass()
+    await _remember(MEM, "q", "`q_two` is two")  # an edit the stopped worker never read
+    ch_client.command("TRUNCATE TABLE loom.memory_code_link_queue")  # aged out
+    horizon = await store.queue_horizon()
+    await memory_links.set_link_cursor("queue", json.dumps([horizon - 10**6, 0, *[""] * 6]))
+    await memory_links.set_link_cursor("backfill", "done")
+    # no repository is new: only the queue's TTL owes the backfill
+    configured = memory_links.configured_code_namespaces()
+    await memory_links.set_link_cursor("repos", json.dumps(configured))
+
+    async def down(*args: Any) -> Any:
+        raise RuntimeError("backfill read failed")
+
+    with monkeypatch.context() as m:
+        m.setattr(code_links, "backfill", down)
+        with pytest.raises(RuntimeError):
+            await run_pass()  # the queue cursor moves on, then the backfill fails
+    assert json.loads(await memory_links.link_cursor("queue"))[0] > horizon
+    for _ in range(50):
+        await run_pass()
+        if await memory_links.link_cursor("backfill") == "done":
+            break
+    assert [link["symbol"].rsplit("::", 1)[-1] for link in await _links(mid)] == ["q_two"]
+
+
 async def test_the_backfill_drops_links_of_a_memory_that_no_longer_names_a_repository(
     env, ch_client
 ) -> None:

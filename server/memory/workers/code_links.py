@@ -50,7 +50,7 @@ async def _link_writes(batch: int, result: PassResult) -> None:
     from server.memory.store import code_links as store
 
     raw = await code.link_cursor("queue")
-    backfill = await code.link_cursor("backfill")
+    stored = backfill = await code.link_cursor("backfill")
     if not raw:
         # first pass: the queue starts at its tail; everything before it is backfilled
         tail = await store.queue_tail()
@@ -61,9 +61,10 @@ async def _link_writes(batch: int, result: PassResult) -> None:
     configured = code.configured_code_namespaces()
     seen = {tuple(r) for r in json.loads(await code.link_cursor("repos") or "[]")}
     if {tuple(r) for r in configured} - seen:
-        # a repository configured since: memories read before it now resolve. The backfill
-        # is recorded before the repository is, so a pass that fails here still owes it
-        backfill = ""
+        backfill = ""  # a repository configured since: memories read before it now resolve
+    if backfill != stored:
+        # owed before the queue or the repositories are acknowledged: a pass that fails
+        # after either still owes it
         await code.set_link_cursor("backfill", backfill)
     await code.set_link_cursor("repos", json.dumps(configured))
     for _ in range(_QUEUE_PAGES):
