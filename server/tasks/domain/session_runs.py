@@ -7,7 +7,8 @@ import hashlib
 import json
 import re
 
-_SESSION_RUN_ID = re.compile(r"mcp-[0-9a-f]{40}")
+SESSION_RUN_ID_PATTERN = "mcp-[0-9a-f]{40}"
+_SESSION_RUN_ID = re.compile(SESSION_RUN_ID_PATTERN)
 
 
 def session_run_id(org: str, subject: str, session_id: str) -> str:
@@ -20,3 +21,8 @@ def session_run_id(org: str, subject: str, session_id: str) -> str:
 
 def is_session_run_id(run_id: str) -> bool:
     return _SESSION_RUN_ID.fullmatch(run_id) is not None
+
+
+def ledger_subject(subject: str) -> str:
+    """A token subject as `agent_events.subject` records it ("" with no auth)."""
+    return "" if subject == "-" else subject

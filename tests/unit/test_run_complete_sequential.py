@@ -71,36 +71,6 @@ async def test_begin_with_a_client_run_id_labels_that_id(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("active", [True, False])
-async def test_a_session_runs_calls_are_read_org_wide(monkeypatch, active):
-    """A session's calls may name other namespaces than its run's."""
-    from datetime import timedelta
-
-    from server.core.datetimes import naive_utc_now
-
-    now = naive_utc_now()
-    started, last = now - timedelta(hours=1), now - timedelta(seconds=10)
-
-    class _Ledger(_Client):
-        async def query_one(self, sql: str, params=None):
-            await super().query_one(sql, params)
-            assert "namespace =" not in sql and "agent_events" in sql
-            assert params["since"] == started and params["subject"] == "sa:t"
-            return {"last": last}
-
-        async def query_all(self, sql: str, params=None):
-            self.sequential_reads.append(sequential_reads_active())
-            assert "namespace =" not in sql
-            return [{"namespace": "ns-first", "started_at": started}] if active else []
-
-    client = _Ledger()
-    monkeypatch.setattr(run_handlers, "get_client", lambda: client)
-    got = await run_handlers.session_run_activity("o", "mcp-s", "sa:t")
-    assert got == ((["ns-first"], last) if active else None)
-    assert client.sequential_reads[0] is True
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("supplied", "kept"),
     [("mcp-" + "a" * 40, False), ("mcp-server-nightly-1", True), ("my-run-1", True)],

@@ -365,6 +365,8 @@ def test_an_integer_too_large_for_a_float_is_refused_and_never_breaks_a_read(
     a, b, path = _budgets(tmp_path)
     with pytest.raises(ValueError):
         a.set_for_consumer("c1", "*", huge)
+    with pytest.raises(ValueError):
+        a.set("memory.set", huge)
     a.set_for_consumer("c1", "*", 4)
     path.write_text(json.dumps({"ops": {}, "consumer": [["c1", "*", huge]]}))
     assert b.get_for_consumer("c1", "*") is None  # corrupt: not adopted, not raised

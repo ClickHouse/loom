@@ -43,8 +43,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
+from server.core.numbers import finite_non_negative
 from server.core.runtime_files import server_file
-from server.core.shared_document import SharedDocument, share_override, usable_number
+from server.core.shared_document import SharedDocument, share_override
 
 log = logging.getLogger(__name__)
 
@@ -57,7 +58,7 @@ def _parse_value(raw: Any) -> int | float | None:
     if isinstance(raw, bool):
         return None
     if isinstance(raw, int | float):
-        return int(raw) if usable_number(raw) else None
+        return int(raw) if finite_non_negative(raw) else None
     if isinstance(raw, str):
         text = raw.strip().lower()
         try:
@@ -85,14 +86,14 @@ class _Budgets:
 
 def _stored_ms(raw: Any) -> int:
     """An op budget as `set` stores it; anything else makes the document corrupt."""
-    if not isinstance(raw, int) or not usable_number(raw):
+    if not isinstance(raw, int) or not finite_non_negative(raw):
         raise ValueError(f"not a budget: {raw!r}")
     return raw
 
 
 def _stored_budget(raw: Any) -> int | float:
     """A consumer budget as `set_for_consumer` stores it: ms, or a float multiplier."""
-    return raw if isinstance(raw, float) and usable_number(raw) else _stored_ms(raw)
+    return raw if isinstance(raw, float) and finite_non_negative(raw) else _stored_ms(raw)
 
 
 def _decode(data: Any) -> _Budgets:
@@ -159,8 +160,8 @@ class BudgetOverrides:
     # -- per op (unchanged API) -------------------------------------------
 
     def set(self, op_name: str, budget_ms: int) -> None:
-        if budget_ms < 0:
-            raise ValueError("budget_ms must be >= 0")
+        if not finite_non_negative(budget_ms):
+            raise ValueError("budget_ms must be a finite number >= 0")
         self._change(lambda b: replace(b, ops={**b.ops, op_name: budget_ms}))
 
     def get(self, op_name: str) -> int | None:

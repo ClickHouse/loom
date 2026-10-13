@@ -21,7 +21,7 @@ export LOOM_RUNTIME_DIR
 # requests on SIGTERM, so one slow request cannot hold the container until
 # docker's SIGKILL skips the lifespan drains. LOOM_TRUSTED_PROXIES names the
 # peers whose X-Forwarded-For/Proto uvicorn applies. LOOM_LISTEN_HOST is the
-# address to bind: every interface in a container, loopback on a bare host.
+# address to bind (default every interface; 127.0.0.1 on a bare host).
 # exec: uvicorn must be PID 1 to receive docker's SIGTERM (a POSIX shell does
 # not forward it to its child).
 exec uvicorn server.main:app --host "${LOOM_LISTEN_HOST:-0.0.0.0}" --port "${PORT:-7777}" \

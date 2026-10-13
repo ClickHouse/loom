@@ -19,6 +19,7 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   `scripts/serve.sh` chooses it once and exports it; set it for another launcher that starts
   several workers.
 - `LOOM_LISTEN_HOST`: the address `scripts/serve.sh` binds, every interface by default.
+- A 422 echoes a number JSON cannot carry (`1e400`) as a string instead of failing as a 500.
 - Migration `026` adds `run_id` skip indexes to `agent_events` and `agent_runs`.
 
 ### Changed
@@ -47,7 +48,9 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   caller's default namespace under the user and session the call acts as. Its id binds the
   token's subject and is no longer `mcp-<Mcp-Session-Id>`; a `run.begin` naming an id of its
   shape (`mcp-` and 40 hex digits) is answered with an id of its own. Its close no longer
-  writes `metadata.calls`: count the `agent_events` rows with its `run_id`.
+  writes `metadata.calls`: count the `agent_events` rows with its `run_id`. The new
+  `mcp_session_run_sweep` worker closes an idle one from the ledger, so it closes after a
+  restart too; a web process no longer sweeps on the request path.
 
 ## [1.0.0] - 2026-10-16
 

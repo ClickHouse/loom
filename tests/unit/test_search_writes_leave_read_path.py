@@ -1,13 +1,13 @@
-"""A search's writes leave the read path. The MCP session run
-is registered at once under its id while `run.begin` lands in the background; closing waits for the begin so complete never precedes it; the
-page park is a fire-and-forget insert whose key is known before the row."""
+"""A search's writes leave the read path. The MCP session run is registered at
+once under its id while `run.begin` lands in the background; closing waits for
+the begin so complete never precedes it; the page park is a fire-and-forget
+insert whose key is known before the row."""
 
 from __future__ import annotations
 
 import asyncio
 import inspect
 from typing import Any
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -56,8 +56,12 @@ def test_ensure_returns_before_run_begin_lands_and_close_waits_for_it(monkeypatc
 
     monkeypatch.setattr(h, "begin_session_run", slow_begin)
     monkeypatch.setattr(h, "handle_run_complete", complete)
-    monkeypatch.setattr(h, "active_session_runs", AsyncMock(return_value=[]))
-    monkeypatch.setattr(h, "session_run_activity", AsyncMock(return_value=(["ns-a"], None)))
+
+    async def active(org: str, run_id: str) -> list[dict[str, str]]:
+        begun = f"begin:{run_id}" in order
+        return [{"org": org, "namespace": "ns-a", "run_id": run_id}] if begun else []
+
+    monkeypatch.setattr(h, "active_session_runs", active)
 
     async def _run() -> None:
         run = await asyncio.wait_for(

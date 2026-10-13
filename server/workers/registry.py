@@ -367,6 +367,13 @@ _WORKERS: tuple[_Worker, ...] = (
         idle_interval="task_lease_sweep_idle_interval_seconds",
     ),
     _Worker(
+        "mcp_session_run_sweep",
+        "server.tasks.workers.session_run_sweep",
+        None,
+        "INTERVAL_SECONDS",
+        interval_in_module=True,
+    ),
+    _Worker(
         "task_webhook_deliver",
         "server.tasks.workers.webhook_deliver",
         "task_webhook_deliver_enabled",

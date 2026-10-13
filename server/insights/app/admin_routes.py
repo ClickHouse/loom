@@ -468,7 +468,12 @@ async def admin_budget_set(input: BudgetSetInput) -> BudgetSetOutput:
                 "message": "budget_ms required when clear=false",
             },
         )
-    overrides.set(input.op, input.budget_ms)
+    try:
+        overrides.set(input.op, input.budget_ms)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=422, detail={"code": "VALIDATION_FAILED", "message": str(e)}
+        ) from e
     return BudgetSetOutput.model_validate(
         {"ok": True, "op": input.op, "budget_ms": input.budget_ms}
     )

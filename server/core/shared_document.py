@@ -13,7 +13,6 @@ import errno
 import fcntl
 import json
 import logging
-import math
 import os
 import tempfile
 import time
@@ -95,7 +94,7 @@ class SharedDocument[T]:
             version = _version(os.fstat(fh.fileno()))
             try:
                 state = self._decode(json.load(fh))
-            except (ValueError, LookupError, TypeError, AttributeError, OverflowError) as e:
+            except (ValueError, LookupError, TypeError, AttributeError) as e:
                 log.warning("%s is corrupt (%s); ignored until it is replaced", self.path, e)
                 state = None
         # Seen once read or found corrupt; a read that failed is tried again.
@@ -121,17 +120,6 @@ def share_override[T](
         raise OverrideNotSharedError(
             f"{what} not applied: the server's web processes could not share it"
         ) from e
-
-
-def usable_number(value: Any) -> bool:
-    """A finite, non-negative int or float (not a bool): what an override holds.
-    An int too large for a float is not one."""
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        return False
-    try:
-        return math.isfinite(value) and value >= 0
-    except OverflowError:
-        return False
 
 
 class LockBusy(OSError):

@@ -6,6 +6,7 @@ server `code` is a class the SDK deserializes via `errors.from_response`.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -222,7 +223,9 @@ def register_exception_handler(app: FastAPI) -> None:
     """Turn any LoomServerError into `{"detail": {"code", "message", ...}}`, and give every
     coded HTTP error a `Link: <catalogue#code>; rel="help"` header."""
     from fastapi import Request
+    from fastapi.encoders import jsonable_encoder
     from fastapi.exception_handlers import http_exception_handler
+    from fastapi.exceptions import RequestValidationError
     from fastapi.responses import JSONResponse, Response
     from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -241,3 +244,10 @@ def register_exception_handler(app: FastAPI) -> None:
         if headers is not getattr(exc, "headers", None):
             exc.headers = headers
         return await http_exception_handler(request, exc)
+
+    @app.exception_handler(RequestValidationError)
+    async def _handle_request_validation(_: Request, exc: RequestValidationError) -> JSONResponse:
+        # FastAPI's own 422, except that a non-finite input (`1e400`) is echoed as a
+        # string: JSON has no inf, and the response would fail as a 500.
+        errors = json.loads(json.dumps(jsonable_encoder(exc.errors())), parse_constant=str)
+        return JSONResponse(status_code=422, content={"detail": errors})

@@ -18,7 +18,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from server.core.ch import get_client, sequential_reads
@@ -247,26 +247,59 @@ async def begin_session_run(input: RunBeginInput, *, started_at: datetime) -> No
 
 async def active_session_runs(org: str, run_id: str) -> list[RunLedgerRow]:
     """An MCP session's implicit run, when a web process of the server has begun
-    it: in whichever namespace the session's first call named (oldest first, one
-    per namespace when two first begins raced)."""
+    it: oldest first, one per namespace when the subject's tokens default to
+    different ones."""
     with sequential_reads():
         return await runs_store.active_runs_by_id(get_client(), org, run_id)
 
 
-async def session_run_activity(
-    org: str, run_id: str, subject: str
-) -> tuple[list[str], datetime | None] | None:
-    """The namespaces an implicit session run is active in, and when the token
-    `subject` last made a request under it (in any org or namespace a call
-    named); None when the run is not active."""
+async def close_session_run(org: str, run_id: str, *, reason: str) -> bool:
+    """Complete every active row of an implicit session run; False when none is."""
     active = await active_session_runs(org, run_id)
-    if not active:
-        return None
-    last = await runs_store.last_ledgered_call(
-        get_client(), run_id, subject, since=min(r["started_at"] for r in active)
-    )
-    return [str(r["namespace"]) for r in active], None if last is None else last.replace(
-        tzinfo=None
+    for row in active:
+        await _complete_session_run(row, reason=reason)
+    return bool(active)
+
+
+async def close_idle_session_runs(idle_seconds: float, *, limit: int = 500) -> int:
+    """Complete the implicit session runs no call of their token reached within
+    the idle window, from the ledger alone, so a run closes whichever web
+    process served it and after any restart. Returns how many closed."""
+    ch = get_client()
+    cutoff = _now() - timedelta(seconds=idle_seconds)
+    stale = await runs_store.stale_session_runs(ch, written_before=cutoff, limit=limit)
+    if not stale:
+        return 0
+    since = min(r["started_at"] for r in stale)
+    last = await runs_store.last_calls(ch, [str(r["run_id"]) for r in stale], since)
+    closed = 0
+    for row in stale:
+        subject = str(json.loads(row["metadata"] or "{}").get("subject") or "")
+        seen = last.get((str(row["run_id"]), subject))
+        if seen is not None and seen >= cutoff:
+            continue
+        try:
+            await _complete_session_run(row, reason="idle")
+            closed += 1
+        except Exception as e:  # noqa: BLE001 — one run's close must not hold up the rest
+            log.warning("session run %s: idle close failed: %s", row["run_id"], e)
+    return closed
+
+
+async def _complete_session_run(row: RunLedgerRow, *, reason: str) -> None:
+    await handle_run_complete(
+        RunCompleteInput(
+            org=str(row["org"]),
+            namespace=str(row["namespace"]),
+            run_id=str(row["run_id"]),
+            status="completed",
+            # The transport saw the session end; it cannot say how the work
+            # went, and `none` writes no evidence or harm.
+            outcome="none",
+            # 0: from the run's start, which every web process shares.
+            duration_ms=0,
+            metadata={"closed_by": f"mcp_{reason}"},
+        )
     )
 
 

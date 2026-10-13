@@ -496,6 +496,8 @@ def test_admin_budget_set_takes_a_consumer(
     )
     assert r.status_code == 200 and r.json()["budget_ms"] == 250
     assert b.effective("memory.search", 500, consumer="plugin") == 250
+    r = client.post("/v1/admin/budget.set", json={"op": "memory.set", "budget_ms": 10**400})
+    assert r.status_code == 422 and b.get("memory.set") is None
     assert (
         client.post(
             "/v1/admin/budget.set", json={"op": "*", "consumer": "bench", "budget": "slow"}

@@ -345,20 +345,14 @@ async def _bind_session_run(
         from server.auth.context import current_auth
         from server.observability.run_context import set_ledger_run
 
-        caller = None
         if defaults and _mcp_runs.takes_run(op):
-            caller = _mcp_runs.Caller.of_call(current_auth(), arguments)
-        if defaults and caller is not None:
             # The run row lives in the caller's org and default namespace, whatever
             # namespace a call names, so every web process files it under one key.
-            _run = await _mcp_runs.ensure(
-                mcp_session_id,
-                defaults,
-                caller,
-                goal=_mcp_runs.goal_of(arguments, f"mcp session ({defaults['agent']})"),
-            )
-            if _run is not None:
-                session_run_id = _run.run_id
+            caller = _mcp_runs.Caller.of_call(current_auth(), arguments)
+            goal = _mcp_runs.goal_of(arguments, f"mcp session ({defaults['agent']})")
+            run = await _mcp_runs.ensure(mcp_session_id, defaults, caller, goal=goal)
+            if run is not None:
+                session_run_id = run.run_id
                 if _mcp_runs.stamps_run(op) and str(arguments.get("run_id") or "") in ("", "-"):
                     arguments["run_id"] = session_run_id
                     stamped_run = True

@@ -290,20 +290,6 @@ def attach(app: FastAPI) -> None:
             response.status_code = 400
             return unsupported_version_error(_echo_request_id(payload), header_version)
 
-        # Close session runs that went idle. Request-driven
-        # (no worker needed) and detached, so no request pays for it.
-        if _mcp_runs.sweep_due():
-            try:
-                from server.core.background import detached_task, register_deferred_task
-                from server.core.model_work_gate import get_model_work_gate
-
-                if not get_model_work_gate().closed:
-                    register_deferred_task(
-                        detached_task(_mcp_runs.sweep_idle(), name="loom-mcp-run-sweep")
-                    )
-            except Exception as _sweep_err:  # noqa: BLE001 — housekeeping never fails a request
-                log.debug("mcp run sweep not scheduled: %s", _sweep_err)
-
         # `Mcp-Session-Id` correlates the `initialize` handshake (carrying
         # `clientInfo.name`) with later `tools/call` POSTs. Server-assigned at
         # initialize (in _dispatch) and echoed on every response so clients
@@ -407,7 +393,8 @@ def attach(app: FastAPI) -> None:
     async def mcp_session_end(request: Request, response: Response) -> Any:
         """The Streamable HTTP transport lets a client end its session with
         `DELETE` + `Mcp-Session-Id`. The session's implicit run closes here
-        (status completed, outcome none); an idle sweep closes the rest."""
+        (status completed, outcome none); the `mcp_session_run_sweep` worker
+        closes the ones that go idle."""
         from server.auth.jwt import TokenError
 
         mode = _effective_auth_mode()

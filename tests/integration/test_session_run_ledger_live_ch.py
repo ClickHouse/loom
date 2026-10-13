@@ -1,13 +1,13 @@
 """An MCP session's implicit run, as the ledger decides it, on live ClickHouse:
-`active_session_runs` finds the run a sibling web process began, in whichever
-namespace, and `session_run_activity` sees the calls labelled with it in every
-namespace.
+`active_session_runs` finds the run a sibling web process began, and the idle
+sweep keeps open only a run its own token called lately, in any namespace.
 
 Skips cleanly when LOOM_CH_HOST is unset.
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 from typing import Any
@@ -58,45 +58,40 @@ async def _ledger_call(ch: Any, namespace: str, run_id: str, subject: str = "") 
 
 
 @pytest.mark.asyncio
-async def test_the_ledger_decides_when_a_session_run_ends(ch: Any) -> None:
+async def test_the_idle_sweep_closes_a_run_its_own_calls_did_not_keep_busy(ch: Any) -> None:
     from server.tasks.api.models_run import RunBeginInput
-    from server.tasks.app.run import active_session_runs, begin_session_run, session_run_activity
+    from server.tasks.app.run import active_session_runs, begin_session_run, close_idle_session_runs
 
-    first, other = (f"itest-{uuid.uuid4().hex[:12]}" for _ in range(2))
-    run_id = session_run_id(ORG, "", uuid.uuid4().hex)
+    namespace, elsewhere = (f"itest-{uuid.uuid4().hex[:12]}" for _ in range(2))
+    busy, quiet = (session_run_id(ORG, "sa:a", uuid.uuid4().hex) for _ in range(2))
+    explicit = f"itest-run-{uuid.uuid4().hex[:12]}"
     try:
-        assert await active_session_runs(ORG, run_id) == []
-        await begin_session_run(
-            RunBeginInput(
-                org=ORG,
-                namespace=first,
-                agent=AGENT,
-                run_id=run_id,
-                session_id="s",
-                goal="g",
-                environment="mcp",
-            ),
-            started_at=naive_utc_now(),
-        )
-        assert [r["namespace"] for r in await active_session_runs(ORG, run_id)] == [first]
-
-        # Nothing ledgered yet.
-        assert await session_run_activity(ORG, run_id, "") == ([first], None)
-        # A call the session made in another namespace counts.
-        await _ledger_call(ch, other, run_id)
-        namespaces, last = await session_run_activity(ORG, run_id, "") or ([], None)
-        assert namespaces == [first]
-        assert last is not None and (naive_utc_now() - last).total_seconds() < 120
-        assert await session_run_activity(ORG, session_run_id(ORG, "", "never-begun"), "") is None
-        # Another token labelling a request with the run's id is not the session.
-        await _ledger_call(ch, other, run_id, subject="sa:eve")
-        assert await session_run_activity(ORG, run_id, "") == ([first], last)
+        for run_id in (busy, quiet, explicit):
+            await begin_session_run(
+                RunBeginInput(
+                    org=ORG,
+                    namespace=namespace,
+                    agent=AGENT,
+                    run_id=run_id,
+                    goal="g",
+                    environment="mcp",
+                    metadata={"subject": "sa:a"},
+                ),
+                started_at=naive_utc_now(),
+            )
+        await asyncio.sleep(1.5)
+        await _ledger_call(ch, elsewhere, busy, subject="sa:a")  # a call in another namespace
+        await _ledger_call(ch, namespace, quiet, subject="sa:eve")  # another token's label
+        await close_idle_session_runs(1.0)
+        assert [r["run_id"] for r in await active_session_runs(ORG, busy)] == [busy]
+        assert await active_session_runs(ORG, quiet) == []
+        assert len(await active_session_runs(ORG, explicit)) == 1  # not a session run
     finally:
         for table in ("agent_runs", "agent_events"):
             await ch.execute(
                 f"DELETE FROM loom.{table} WHERE org = {{org:String}} "
                 "AND namespace IN {ns:Array(String)}",
-                params={"org": ORG, "ns": [first, other]},
+                params={"org": ORG, "ns": [namespace, elsewhere]},
             )
 
 
@@ -185,10 +180,10 @@ async def test_two_callers_sending_one_session_id_keep_their_own_runs(ch: Any) -
 
 
 @pytest.mark.asyncio
-async def test_a_session_run_sees_a_call_that_lands_before_its_begin(ch: Any) -> None:
-    """The run starts when the transport registered it, so a first call that
-    answers before the begin's write is the session's."""
-    from server.tasks.app.run import session_run_activity
+async def test_a_session_run_starts_before_a_call_that_lands_before_its_begin(ch: Any) -> None:
+    """The run starts when the transport registered it, so the idle sweep sees a
+    first call that answers before the begin's write."""
+    from server.tasks.store.runs import fetch_run
     from server.transport import mcp_runs
 
     namespace = f"itest-{uuid.uuid4().hex[:12]}"
@@ -199,8 +194,12 @@ async def test_a_session_run_sees_a_call_that_lands_before_its_begin(ch: Any) ->
         assert run is not None
         await _ledger_call(ch, namespace, run.run_id)  # before the begin lands
         await mcp_runs.drain_ledger_writes()
-        found = await session_run_activity(ORG, run.run_id, "")
-        assert found is not None and found[0] == [namespace] and found[1] is not None
+        row = await fetch_run(ch, ORG, namespace, run.run_id)
+        call = await ch.query_one(
+            "SELECT max(ts) AS ts FROM loom.agent_events WHERE run_id = {rid:String}",
+            params={"rid": run.run_id},
+        )
+        assert row is not None and row["started_at"] <= call["ts"].replace(tzinfo=None)
     finally:
         mcp_runs.reset()
         for table in ("agent_runs", "agent_events"):
@@ -243,7 +242,7 @@ async def test_a_reopened_session_run_keeps_its_first_goal_and_owner(ch: Any) ->
 
 
 @pytest.mark.asyncio
-async def test_a_close_completes_the_rows_two_racing_first_begins_wrote(ch: Any) -> None:
+async def test_a_close_completes_every_row_under_the_run_id(ch: Any) -> None:
     """One subject's tokens default to different namespaces, so the run has a
     row in each: the session's close completes both."""
     from server.tasks.api.models_run import RunBeginInput

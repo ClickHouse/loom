@@ -13,13 +13,14 @@ import enum
 import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from server.core.ch import sequential_reads
 from server.core.schema.migrate_lease import RUN_CLAIMS_TABLE_SQL, is_keeper_table, key_exists
 from server.identity.domain.read_scope import ReadFilters, scope_and
 from server.observability import degradations, provider_health
+from server.tasks.domain.session_runs import SESSION_RUN_ID_PATTERN
 from server.tasks.store.rows import RunLedgerRow
 
 log = logging.getLogger(__name__)
@@ -326,7 +327,7 @@ async def observation_count(ch: Any, org: str, ns: str, run_id: str, *, scope: R
 
 async def active_runs_by_id(ch: Any, org: str, run_id: str) -> list[RunLedgerRow]:
     """The active MCP session runs under `run_id` in `org`, oldest first: one, or
-    one per namespace when two web processes' first begins raced."""
+    one per namespace when the subject's tokens default to different ones."""
     rows: list[RunLedgerRow] = await ch.query_all(
         f"""
         SELECT {_RUN_SELECT}
@@ -340,21 +341,45 @@ async def active_runs_by_id(ch: Any, org: str, run_id: str) -> list[RunLedgerRow
     return rows
 
 
-async def last_ledgered_call(
-    ch: Any, run_id: str, subject: str, since: datetime
-) -> datetime | None:
-    """When the verified token `subject` last made a request under `run_id`
-    since `since`, in any org or namespace. A request labels itself with a run
-    id; only its subject is the server's."""
-    row = await ch.query_one(
-        """
-        SELECT maxOrNull(ts) AS last FROM loom.agent_events
-        WHERE ts >= {since:DateTime64(3)} AND run_id = {rid:String}
-          AND subject = {subject:String}
+async def stale_session_runs(
+    ch: Any, *, written_before: datetime, limit: int
+) -> list[RunLedgerRow]:
+    """Active MCP session runs last begun or re-opened before `written_before`
+    (naive UTC), in every org, oldest first."""
+    rows: list[RunLedgerRow] = await ch.query_all(
+        f"""
+        SELECT {_RUN_SELECT}
+        FROM loom.agent_runs FINAL
+        WHERE status = 'active' AND environment = 'mcp'
+          AND version < {{before_ns:UInt64}}
+          AND match(run_id, {{pattern:String}})
+        ORDER BY started_at
+        LIMIT {{lim:UInt32}}
         """,
-        params={"rid": run_id, "subject": subject, "since": since},
+        params={
+            "before_ns": int(written_before.replace(tzinfo=UTC).timestamp() * 1e9),
+            "pattern": f"^{SESSION_RUN_ID_PATTERN}$",
+            "lim": limit,
+        },
     )
-    return (row or {}).get("last")
+    return rows
+
+
+async def last_calls(
+    ch: Any, run_ids: list[str], since: datetime
+) -> dict[tuple[str, str], datetime]:
+    """(run id, token subject) -> the time of its last request since `since`, in
+    any org or namespace. A request labels itself with a run id; only its
+    subject is the server's."""
+    rows = await ch.query_all(
+        """
+        SELECT run_id, subject, max(ts) AS last FROM loom.agent_events
+        WHERE ts >= {since:DateTime64(3)} AND run_id IN {rids:Array(String)}
+        GROUP BY run_id, subject
+        """,
+        params={"rids": run_ids, "since": since},
+    )
+    return {(str(r["run_id"]), str(r["subject"])): r["last"].replace(tzinfo=None) for r in rows}
 
 
 async def traced_recall_keys(ch: Any, org: str, ns: str, run_id: str) -> list[str]:

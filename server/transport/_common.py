@@ -233,10 +233,11 @@ def validation_errors(e: Any) -> list[dict[str, Any]]:
     `value_error` (any `@model_validator` / `@field_validator` that raises
     ValueError), and the response encoder then fails on it — the client would see
     a 500 for what is a 422. `e.json()` is the serialiser pydantic itself
-    guarantees; round-tripping through it drops nothing a client can use."""
+    guarantees; round-tripping through it drops nothing a client can use. A
+    non-finite input (`1e400`) comes back as a string: JSON has no inf."""
     import json as _json
 
     try:
-        return list(_json.loads(e.json(include_url=False)))
+        return list(_json.loads(e.json(include_url=False), parse_constant=str))
     except Exception:  # noqa: BLE001 — never let the error report itself fail
         return [{"type": "validation_error", "msg": str(e)}]
