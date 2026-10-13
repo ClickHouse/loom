@@ -120,6 +120,7 @@ _SERVER_CODE_CLASSES: dict[str, type[LoomError]] = {
     "BACKEND_TIMEOUT": BackendTimeout,
     "SCHEMA_PENDING": SchemaPending,
     "POLICY_FORBIDDEN": AuthInsufficient,
+    "EMBED_TIMEOUT": BackendUnavailable,  # a 503; retried like any
 }
 
 
