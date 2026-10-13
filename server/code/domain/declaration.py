@@ -231,6 +231,16 @@ _FUNCTIONS = {
 # an import of one name that may carry an alias: the field each part is in
 _ALIASED = {"aliased_import": "alias", "import_specifier": "alias", "use_as_clause": "alias"}
 _PATHS = {"scoped_identifier", "qualified_identifier", "scoped_type_identifier", "dotted_name"}
+_ECMA = {"typescript", "tsx", "javascript"}
+_CLOSERS = {")", "]", "}"}
+# where a trailing comma's one element is a tuple (`(a,)`, Rust's `(T,)` type, Python's
+# `x[a,]` index): it stays there unless another comma is in the node
+_TUPLES = {"tuple", "tuple_type", "tuple_expression", "tuple_pattern", "subscript"}
+# a JS / TS `;` there separates members
+_MEMBER_LISTS = {"class_body", "interface_body", "object_type"}
+_FORS = {"for_statement", "for_in_statement"}
+# where an empty JS / TS statement is a statement of its own, not a loop's or an `if`'s body
+_STATEMENT_LISTS = {"program", "statement_block", "class_body", "switch_case", "switch_default"}
 
 
 def bound_function(value: Any) -> Any:
@@ -483,6 +493,10 @@ class Declarations:
     def _text(self, node: Any) -> str:
         return self.source[node.start_byte : node.end_byte].decode("utf-8", "replace")
 
+    def _spellings(self, leaves: Sequence[Any]) -> list[str]:
+        """Each token's text, a string's delimiters as `_quote` spells them."""
+        return [_quote(x, self._text(x), self.grammar) for x in leaves]
+
     def start(self, line: int) -> int:
         """The line the definition at `line` starts on, its decorators counted."""
         at = self._at(line)
@@ -524,8 +538,8 @@ class Declarations:
         found = self._declared(at[1], name)
         if found is None:
             return own
-        leaves, marks = _leaves(*at, _Fields(), _skipped(at, found[0]))
-        texts = [self.source[x.start_byte : x.end_byte].decode("utf-8", "replace") for x in leaves]
+        leaves, marks = _leaves(*at, _Fields(), _skipped(at, found[0]), self.grammar)
+        texts = self._spellings(leaves)
         return "\n".join([*(f"{m} {t}" for m, t in zip(marks, texts, strict=False)), marks[-1]])
 
     def _own_text(self, at: tuple[Any, Any], name: str) -> str:
@@ -679,8 +693,8 @@ class Declarations:
         decl, named, body = found
         guard = self._guard(at[1])
         fields = _Fields()
-        leaves, marks = _leaves(*at, fields, _skipped(at, decl))
-        texts = [self.source[x.start_byte : x.end_byte].decode("utf-8", "replace") for x in leaves]
+        leaves, marks = _leaves(*at, fields, _skipped(at, decl), self.grammar)
+        texts = self._spellings(leaves)
         uses = {
             i: _use(x, self.grammar, decl, body, fields)
             for i, x in enumerate(leaves)
@@ -908,11 +922,16 @@ def _sibling_spans(decl: Any) -> list[tuple[int, int]]:
 
 
 def _leaves(
-    first: Any, last: Any, fields: _Fields, skip: set[tuple[int, int, str]] | None = None
+    first: Any,
+    last: Any,
+    fields: _Fields,
+    skip: set[tuple[int, int, str]] | None = None,
+    grammar: str = "",
 ) -> tuple[list[Any], list[str]]:
-    """The tokens from `first` to `last`, each with the nodes opened and closed before it
-    (so the same tokens nested differently differ); records each node's parent and
-    previous sibling in `fields`."""
+    """The tokens from `first` to `last` but those a formatter adds or removes
+    (`_formatting`), each with the nodes opened and closed before it (so the same tokens
+    nested differently differ); records each node's parent and previous sibling in
+    `fields`."""
     out: list[Any] = []
     marks: list[str] = []
     pending: list[str] = []
@@ -921,13 +940,13 @@ def _leaves(
         stack: list[tuple[Any, bool]] = [(node, False)]
         while stack:
             n, closing = stack.pop()
-            if skip and _key(n) in skip:
+            if skip and _key(n) in skip or not closing and _formatting(n, grammar):
                 continue
             if closing:
                 pending.append(")")
             elif n.child_count == 0:
                 out.append(n)
-                marks.append("".join(pending) + n.type)
+                marks.append("".join(pending) + ('"' if _js_quote(n, grammar) else n.type))
                 pending.clear()
             else:
                 pending.append("(" + n.type)
@@ -941,6 +960,64 @@ def _leaves(
         node = node.next_sibling
     marks.append("".join(pending))
     return out, marks
+
+
+def _formatting(node: Any, grammar: str) -> bool:
+    """A trailing comma, a JS / TS statement's `;` or an empty statement: what a
+    formatter adds or removes without changing the parse."""
+    if node.type == ",":
+        return node.parent is not None and _trailing_comma(node, node.parent, grammar)
+    if grammar not in _ECMA or node.type not in (";", "empty_statement"):
+        return False
+    parent = node.parent
+    if parent is None:
+        return False
+    if node.type == "empty_statement":
+        return parent.type in _STATEMENT_LISTS
+    if parent.type == "empty_statement":
+        return False
+    if parent.type in _MEMBER_LISTS:
+        return True
+    up = parent.parent
+    in_for_head = up is not None and up.type in _FORS
+    in_for_head = in_for_head and not _same(up.child_by_field_name("body"), parent)
+    return node.next_sibling is None and not in_for_head
+
+
+def _trailing_comma(comma: Any, parent: Any, grammar: str) -> bool:
+    """`comma` follows an element and closes a bracket: neither one more element (`[a,,]`)
+    nor a tuple's only comma, nor a C / C++ macro's empty argument or a Rust macro's
+    token."""
+    after, before = comma.next_sibling, comma.prev_sibling
+    while after is not None and after.type in _COMMENTS:
+        after = after.next_sibling
+    while before is not None and before.type in _COMMENTS:
+        before = before.prev_sibling
+    if after is None or after.type not in _CLOSERS or before is None:
+        return False
+    if before.type in ("(", "[", "{", ","):
+        return False
+    if parent.type == "token_tree" or (grammar == "cpp" and parent.type == "argument_list"):
+        return False
+    return parent.type not in _TUPLES or sum(c.type == "," for c in parent.children) > 1
+
+
+def _quote(token: Any, text: str, grammar: str) -> str:
+    """A token's `text`, a string's quotes as `"`: a Python string's (its prefix lowercased
+    without `u`) and a JS / TS string's; a template, a char literal or any other token as
+    it is."""
+    if grammar == "python" and token.type in ("string_start", "string_end"):
+        prefix = text.rstrip("'\"")
+        quotes = text[len(prefix) :].replace("'", '"')
+        return prefix.lower().replace("u", "") + quotes
+    return '"' if _js_quote(token, grammar) else text
+
+
+def _js_quote(token: Any, grammar: str) -> bool:
+    """`token` is the `'` around a JS / TS string."""
+    if token.type != "'" or grammar not in _ECMA:
+        return False
+    return token.parent is not None and token.parent.type == "string"
 
 
 def _within(node: Any, outer: Any) -> bool:

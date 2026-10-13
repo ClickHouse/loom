@@ -451,14 +451,14 @@ _PINNED = [
     (
         "d.ts",
         "export function value(a: number): number {\n  return a + 3;\n}\n",
-        "2cebd44d35d50d39",
-        "f2510d1d465fe386",
+        "8c8df964b10ecffa",
+        "650acb7ba4221b54",
     ),
     (
         "e.js",
         "class Box {\n  value() {\n    return 3;\n  }\n}\n",
-        "0d033ce92cbd0dd6",
-        "bc386ec8267445b9",
+        "b3f3a6456b46a071",
+        "e49ad6de2015e038",
     ),
     (
         "f.go",
@@ -604,3 +604,134 @@ def test_a_literal_or_a_python_block_change_still_changes_it(
     path: str, before: str, after: str
 ) -> None:
     assert _value(path, before) != _value(path, after)
+
+
+@pytest.mark.parametrize(
+    ("path", "original", "formatted"),
+    [
+        (
+            "a.ts",
+            "function value(a: number): number { return a + 1 }\n",
+            "function value(a: number): number {\n  return a + 1;\n}\n",
+        ),
+        (
+            "a.js",
+            "function value(a) { let b = f('a', a,)\n  return [b,] }\n",
+            'function value(a) {\n  let b = f("a", a);\n  return [b];\n}\n',
+        ),
+        ("a.js", "function value() { g();; h() }\n", "function value() { g(); h(); }\n"),
+        (
+            "a.ts",
+            "class Box { n = 1\n  value() { return { a: 1, } } }\n",
+            "class Box { n = 1;\n  value() { return { a: 1 }; }; }\n",
+        ),
+        (
+            "a.ts",
+            "function value(): { a: string, } { return { a: '' } }\n",
+            'function value(): { a: string } { return { a: "" }; }\n',
+        ),
+        ("a.py", "def value(a):\n    return f('a', a)\n", 'def value(a):\n    return f("a", a)\n'),
+        (
+            "a.py",
+            "def value(a):\n    return [U'a', F'{a}', Rb'\\d', '''x''']\n",
+            'def value(a):\n    return [\n        "a",\n        f"{a}",\n        rb"\\d",\n        """x""",\n    ]\n',
+        ),
+        (
+            "a.py",
+            "def value(a, b):\n    return g(a, b), {a: b}, (a, b), x[a, b]\n",
+            "def value(a, b,):\n    return g(a, b,), {a: b,}, (a, b,), x[a, b,]\n",
+        ),
+        (
+            "a.rs",
+            "fn value(a: i32) -> (i32, i32) { g(a, a); (a, a) }\n",
+            "fn value(a: i32) -> (i32, i32,) { g(a, a,); (a, a,) }\n",
+        ),
+        (
+            "a.go",
+            "package a\n\nfunc value(a int) int { return f(a, a) }\n",
+            "package a\n\nfunc value(a int) int {\n\treturn f(\n\t\ta,\n\t\ta,\n\t)\n}\n",
+        ),
+        (
+            "a.java",
+            "class A { int[] value() { return new int[] {1, 2}; } }\n",
+            "class A { int[] value() { return new int[] {1, 2,}; } }\n",
+        ),
+        (
+            "a.cpp",
+            "int value() { return g({1, 2}); }\n",
+            "int value() { return g({1, 2,}); }\n",
+        ),
+    ],
+    ids=[
+        "ts-semicolon",
+        "js-quotes-commas",
+        "js-empty-statement",
+        "ts-class-members",
+        "ts-type-literal",
+        "py-quotes",
+        "py-prefixes",
+        "py-commas",
+        "rust-commas",
+        "go-commas",
+        "java-comma",
+        "cpp-comma",
+    ],
+)
+def test_a_formatters_quotes_commas_and_semicolons_keep_the_fingerprint(
+    path: str, original: str, formatted: str
+) -> None:
+    assert _value(path, formatted) == _value(path, original)
+
+
+@pytest.mark.parametrize(
+    ("path", "before", "after"),
+    [
+        ("a.py", "def value():\n    return 'a'\n", "def value():\n    return 'b'\n"),
+        ("a.py", "def value(a):\n    return (a,)\n", "def value(a):\n    return (a)\n"),
+        ("a.py", "def value(x, a):\n    return x[a,]\n", "def value(x, a):\n    return x[a]\n"),
+        ("a.py", "def value():\n    return r'\\d'\n", "def value():\n    return '\\d'\n"),
+        ("a.py", "def value():\n    return b'a'\n", "def value():\n    return 'a'\n"),
+        ("a.rs", "fn value(a: (i32,)) {}\n", "fn value(a: (i32)) {}\n"),
+        ("a.rs", "fn value() -> u32 { m!(a,) }\n", "fn value() -> u32 { m!(a) }\n"),
+        ("a.cpp", "int value() { return F(a,); }\n", "int value() { return F(a); }\n"),
+        ("a.cpp", "char value() { return 'a'; }\n", 'char value() { return "a"; }\n'),
+        ("a.js", "function value() { return `a` }\n", "function value() { return 'a' }\n"),
+        ("a.js", "function value() { return [a,,] }\n", "function value() { return [a,] }\n"),
+        (
+            "a.js",
+            "function value() { a = b\n  (c) }\n",
+            "function value() { a = b;\n  (c) }\n",
+        ),
+        (
+            "a.js",
+            "function value() { if (x); f() }\n",
+            "function value() { if (x) f() }\n",
+        ),
+    ],
+    ids=[
+        "py-literal",
+        "py-one-tuple",
+        "py-tuple-index",
+        "py-raw",
+        "py-bytes",
+        "rust-one-tuple",
+        "rust-macro",
+        "cpp-macro-argument",
+        "cpp-char",
+        "js-template",
+        "js-hole",
+        "js-asi",
+        "js-empty-body",
+    ],
+)
+def test_a_comma_quote_or_semicolon_that_means_something_changes_it(
+    path: str, before: str, after: str
+) -> None:
+    assert _value(path, before) != _value(path, after)
+
+
+def test_a_quote_change_that_changes_the_escapes_changes_it() -> None:
+    # the text between the quotes is hashed as written, not as the string it makes
+    before = "def value():\n    return 'a\"b'\n"
+    after = 'def value():\n    return "a\\"b"\n'
+    assert _value("a.py", before) != _value("a.py", after)

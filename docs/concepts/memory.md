@@ -272,15 +272,22 @@ unmerged code links once it merges.
 
 A link is a tree-sitter `(path, qualified_name)` and a fingerprint of the definition's
 text (all its overloads) when the memory was written: its tokens as the parser nests
-them, so a reformat or a comment changes nothing while a literal's bytes still do. A
-Python block is a node of its own, so moving a statement into or out of an `if` changes
-the fingerprint while a re-indent does not; the spaces inside an f-string's `{x = }`,
-which Python prints, are no token and change nothing. What a file defines is read from
-the file itself at the repository's indexed head, in its bare git mirror; the code index
-only suggests where to look, so a commit still being ingested never decides a link. A
-file the parser fails on is not code that is gone: its links keep their state and are
-rechecked every pass until it parses, while the rest of the repository moves on. On
-every indexed commit the worker follows the commit's renames and edits:
+them, so a reformat or a comment changes nothing while a literal's bytes still do. What
+formatters add or remove is left out too: a trailing comma before a closing bracket
+(kept where it makes a one-element tuple, `(a,)` or Python's `x[a,]`, and in a C or C++
+macro's or a Rust macro's arguments), a JavaScript or TypeScript statement's `;`, and
+which quote a Python or JavaScript string is written with (a Python prefix's case and
+`u` too); a template string or a char literal stays its own. The text between the quotes
+is as written, so a quote change that changes the escapes (`'a"b'` to `"a\"b"`) changes
+the fingerprint. A Python block is a node of its own, so moving a statement into or out
+of an `if` changes the fingerprint while a re-indent does not; the spaces inside an
+f-string's `{x = }`, which Python prints, are no token and change nothing. What a file
+defines is read from the file itself at the repository's indexed head, in its bare git
+mirror; the code index only suggests where to look, so a commit still being ingested
+never decides a link. A file the parser fails on is not code that is gone: its links
+keep their state and are rechecked every pass until it parses, while the rest of the
+repository moves on. On every indexed commit the worker follows the commit's renames and
+edits:
 
 | Link state   | When                                                                                                               |
 | ------------ | ------------------------------------------------------------------------------------------------------------------ |
