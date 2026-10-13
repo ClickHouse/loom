@@ -335,13 +335,12 @@ export function RecallLab() {
           signal: ac.signal,
         }).catch(() => null);
         // As on the Memories list, a failed ranked search keeps the keyword rows.
-        let failure: string | null = null;
-        const r = await (kw?.entries.length
-          ? search.catch((e: unknown) => {
-              failure = humanizeError(e);
-              return null;
-            })
-          : search);
+        const [r, failure] = await (kw?.entries.length
+          ? search.then(
+              (res) => [res, null] as const,
+              (e: unknown) => [null, humanizeError(e)] as const,
+            )
+          : search.then((res) => [res, null] as const));
         if (ac.signal.aborted) return;
         const keyword = new Map((kw?.entries ?? []).map((e) => [e.memory_key, e] as const));
         const ranked = new Map((r?.results ?? []).map((h) => [h.memory_key, h] as const));

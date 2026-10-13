@@ -430,3 +430,39 @@ def test_a_cache_hit_keeps_the_answer_from_being_evicted_first(monkeypatch):
     for inp in (first, second, first, third):
         asyncio.run(app.corpus_spellings(inp, "m"))
     assert [k[1] for k in app._cache] == [("datalakecatalog",), ("parquet",)]
+
+
+async def test_a_dead_embedder_fails_the_search_without_claiming_a_fallback(monkeypatch, caplog):
+    _lookup_returns(monkeypatch, {"DataLakeCatalog": 9})
+    texts: list[str] = []
+
+    async def embed(text: str) -> list[float]:
+        texts.append(text)
+        await asyncio.sleep(0.05)
+        raise RuntimeError("401 from the provider")
+
+    with (
+        caplog.at_level(logging.WARNING, logger=app.log.name),
+        pytest.raises(RuntimeError, match="401"),
+    ):
+        await app.embed_query(embed, "datalakecatalog", _input(), "m")
+    assert not caplog.records
+
+
+async def test_an_embed_that_fails_before_the_lookup_answers_is_not_retried_respelled(monkeypatch):
+    async def spelling_rows(_ch, _q, _tokens):
+        await asyncio.sleep(0.05)
+        return {"DataLakeCatalog": 9}
+
+    monkeypatch.setattr(app, "spelling_rows", spelling_rows)
+    monkeypatch.setattr(app, "get_client", lambda: None)
+    texts: list[str] = []
+
+    async def embed(text: str) -> list[float]:
+        texts.append(text)
+        await asyncio.sleep(0.01)
+        raise RuntimeError("401 from the provider")
+
+    with pytest.raises(RuntimeError, match="401"):
+        await app.embed_query(embed, "datalakecatalog", _input(), "m")
+    assert texts == ["datalakecatalog"]

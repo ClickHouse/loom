@@ -137,7 +137,8 @@ rewrite costs a second embed and shows in `retrieval_work.query_spellings`
 `query_spellings_skipped`), when the lookup fails or runs past 0.25 s, when the
 namespace is backing off after such a failure (a minute, doubling with each failure in a
 row up to an hour), or when the rewritten text's embed fails. Answers are reused for a
-minute.
+minute. `retrieval_cost_estimate` is made before the lookup answers, so it counts one
+embed even when the rewrite adds a second.
 `loom.search_trace_log` keeps the query as typed, so a logged query can score
 differently from a fresh embed of the same text.
 

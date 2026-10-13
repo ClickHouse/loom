@@ -130,17 +130,17 @@ async def embed_query(
         tasks.append(as_typed)
         # An embed that fails at once fails the search at once, not after the lookup.
         await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        error = as_typed.exception() if as_typed.done() else None
-        if error is not None:
-            raise error
+        if as_typed.done():
+            as_typed.result()  # raises the embed's error
         spellings = await lookup
         if not spellings:
             return await as_typed, spellings
         try:
             return await embed(apply_spellings(text, spellings)), spellings
         except Exception as e:  # noqa: BLE001 — the rewrite is a recall aid; the vector as typed serves
+            vec = await as_typed
             log.warning("embedding the respelled query failed, using it as typed: %r", e)
-            return await as_typed, None
+            return vec, None
     finally:
         for task in tasks:
             task.cancel()
