@@ -47,7 +47,7 @@ async def _bounded_query_embed(
             log.warning("query embed exceeded %.1fs (attempt %d/%d)", bound, attempt, attempts)
     raise EmbedTimeoutError(
         f"the embedding provider did not answer within {bound:.1f}s on "
-        f"{attempts} attempt(s); retry the search"
+        f"{attempts} attempt(s); the search wrote nothing"
     )
 
 

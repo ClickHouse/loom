@@ -50,7 +50,7 @@ def test_two_slow_attempts_answer_503_embed_timeout(bound) -> None:
     with pytest.raises(EmbedTimeoutError) as ei:
         asyncio.run(_bounded_query_embed(e, "q"))
     assert ei.value.status_code == 503 and ei.value.code == "EMBED_TIMEOUT"
-    assert "retry the search" in ei.value.message
+    assert "the search wrote nothing" in ei.value.message
     assert e.calls == 2
 
 
