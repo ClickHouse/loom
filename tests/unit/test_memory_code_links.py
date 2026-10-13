@@ -532,19 +532,15 @@ async def test_links_name_only_repositories_the_caller_may_read(monkeypatch) -> 
     async def for_memories(org, ids):
         return rows
 
-    async def memory_heads(org, ids):
-        return [_row("m")]
-
     async def readable(org, nss):
         return nss - {"code-secret"}
 
     monkeypatch.setattr(code_links.store, "for_memories", for_memories)
-    monkeypatch.setattr(code_links.store, "memory_heads", memory_heads)
     monkeypatch.setattr(code_links.code, "code_namespaces", lambda: ["code-a"])
     monkeypatch.setattr(code_link_reads, "readable_code", readable)
     monkeypatch.setattr(code_link_reads, "code_namespace_for", lambda org, ns, tags: "code-a")
-    links = await code_link_reads.links_of("o", ["m"])
-    assert [x["code_namespace"] for x in links["m"]] == ["code-open"]
+    links = await code_link_reads.links_of("o", _row("m"))
+    assert [x["code_namespace"] for x in links] == ["code-open"]
 
 
 def test_a_memory_naming_more_than_the_cap_is_marked_incomplete() -> None:
@@ -1221,7 +1217,7 @@ async def test_a_memory_get_reads_no_links_where_no_repository_is_configured(mon
 
     monkeypatch.setattr(code_links.store, "for_memories", for_memories)
     monkeypatch.setattr(code_links.code, "code_namespaces", lambda: [])
-    assert await code_link_reads.links_of("o", ["m"]) == {}
+    assert await code_link_reads.links_of("o", _row("m")) == []
 
 
 @pytest.mark.asyncio

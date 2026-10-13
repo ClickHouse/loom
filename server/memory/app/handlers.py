@@ -7,6 +7,7 @@ session-scoped and not embedded.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import UTC, datetime, timedelta
@@ -456,14 +457,15 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
 
     canonical = await _canonical_keys_for_rows(input.org, input.namespace, [row])
     duplicate_of = _duplicate_of_shown(row, canonical.get(input.memory_key))
-    from server.memory.app.code_link_reads import links_of
+    from server.memory.app.code_link_reads import head_of, links_of
     from server.memory.app.served_superseded import shown_successors
 
-    successors = await shown_successors(input.org, input.namespace, [row])
-    links = await links_of(input.org, [str(row.memory_id)])
+    successors, links = await asyncio.gather(
+        shown_successors(input.org, input.namespace, [row]), links_of(input.org, head_of(row))
+    )
     return MemoryGetOutput(
         found=True,
-        code=links.get(str(row.memory_id), []),
+        code=links,
         canonical_key=(
             str(row.memory_key) if resolved_from is not None else canonical.get(input.memory_key)
         ),

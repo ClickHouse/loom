@@ -232,8 +232,10 @@ async def _search(namespace: str, query: str, **kw: Any) -> dict[str, str]:
 
 async def _links(memory_id: str) -> list[dict[str, str]]:
     from server.memory.app.code_link_reads import links_of
+    from server.memory.store.code_links import memory_heads
 
-    return (await links_of(ORG, [memory_id])).get(memory_id, [])
+    heads = await memory_heads(ORG, [memory_id])
+    return await links_of(ORG, heads[0]) if heads else []
 
 
 async def _row(memory_id: str) -> Any:

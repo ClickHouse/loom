@@ -104,31 +104,49 @@ async def readable_code(org: str, namespaces: set[str]) -> set[str]:
 # ---- reads ----------------------------------------------------------------------------
 
 
-async def links_of(org: str, memory_ids: list[str]) -> dict[str, list[dict[str, str]]]:
-    """memory_id -> the code it is linked to, in repositories the caller may read, for a
-    read's `code` field; {} when the links cannot be read."""
+def head_of(row: Any) -> dict[str, Any]:
+    """A read's memory row in the head shape `current` takes."""
+
+    def get(name: str, default: Any = "") -> Any:
+        return getattr(row, name, None) or default
+
+    return {
+        "mid": str(row.memory_id),
+        "namespace": get("namespace"),
+        "user_id": get("user_id"),
+        "tags": list(get("tags", [])),
+        "files": list(get("files", [])),
+        "sha": get("content_sha256"),
+        "pinned": get("pinned", False),
+        "lock_mode": get("lock_mode"),
+        "verified_by": get("verified_by"),
+        "verified_sha256": get("verified_sha256"),
+    }
+
+
+async def links_of(org: str, memory: dict[str, Any]) -> list[dict[str, str]]:
+    """The code `memory` (a head) is linked to, in repositories the caller may read, for
+    a read's `code` field; [] when the links cannot be read."""
     if not code.code_namespaces():
-        return {}
+        return []
     try:
-        rows = await current_links(org, await store.for_memories(org, memory_ids))
+        rows = current(org, memory, await store.for_memories(org, [str(memory["mid"])]))
         seen = await readable_code(org, {a["code_namespace"] for a in rows})
     except Exception as e:  # noqa: BLE001 — the links are additive to the read
         log.debug("code links unavailable: %s", e)
-        return {}
-    out: dict[str, list[dict[str, str]]] = defaultdict(list)
-    for a in sorted(rows, key=lambda a: (a["path"], a["qualified_name"])):
-        if a["state"] != "pending" and a["code_namespace"] in seen:
-            out[a["memory_id"]].append(
-                {
-                    "code_namespace": a["code_namespace"],
-                    "path": a["path"],
-                    "symbol": a["qualified_name"],
-                    "state": a["state"],
-                    "changed_since": a["changed_since"],
-                    "suggestion": a["suggestion"],
-                }
-            )
-    return dict(out)
+        return []
+    return [
+        {
+            "code_namespace": a["code_namespace"],
+            "path": a["path"],
+            "symbol": a["qualified_name"],
+            "state": a["state"],
+            "changed_since": a["changed_since"],
+            "suggestion": a["suggestion"],
+        }
+        for a in sorted(rows, key=lambda a: (a["path"], a["qualified_name"]))
+        if a["state"] != "pending" and a["code_namespace"] in seen
+    ]
 
 
 def _bound(input: Any) -> dict[str, Any]:
