@@ -220,9 +220,7 @@ def _would_act_as_nobody(op: Operation) -> bool:
     as user '-': a write whose body carries a user or session, and cost.summary (its
     counts are filtered by the body's user). Code-index ops carry a user field but
     reach no user's rows: their memory reads raise the bound refusal on their own."""
-    from server.identity.domain.read_scope import _CODE_INDEX, NARROW_SAFE_OPS
-
-    if NARROW_SAFE_OPS.get(op.name) == _CODE_INDEX:
+    if op.name.startswith("code."):
         return False
     fields = getattr(op.input_model, "model_fields", {})
     carries_identity = "user_id" in fields or "session_id" in fields

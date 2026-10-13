@@ -181,6 +181,8 @@ async def _target_run(
     if existing is None:
         # A begin that went to the caller's own id (no claim then) and lost its answer
         # is re-sent: it re-opens that run, whether or not a claim can be made now.
+        # The server cannot tell a first begin from that retry, so every first begin
+        # with a supplied id pays this one point read.
         own_id, own_row = await _own_run(ch, input, run_id)
         if own_row is not None:
             return own_id, own_row
@@ -209,7 +211,9 @@ async def _own_run(
     with sequential_reads():
         existing = await runs_store.fetch_run(ch, input.org, input.namespace, run_id)
     if existing is not None and not _owned_by(existing, _user_of(input)):
-        return uuid.uuid4().hex, None  # not reachable short of a hash collision
+        # Another caller named this derived id as its own run_id: a fresh id, so this
+        # caller's retries lose their idempotency but never reach that run.
+        return uuid.uuid4().hex, None
     return run_id, existing
 
 

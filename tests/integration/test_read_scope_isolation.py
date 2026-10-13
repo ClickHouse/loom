@@ -52,6 +52,15 @@ _UNBUILDABLE = {
 }
 
 
+# Required fields whose name other ops use for another shape: filled only when the
+# required field has this container type (a schema's fields, a policy's rule).
+_SHAPED_HINTS: dict[str, tuple[type, Any]] = {
+    "fields": (list, [{"name": "canary"}]),
+    "actions": (list, ["memory.set"]),
+    "condition": (dict, {"op": "formerly", "within": "9d", "operation": "memory.set"}),
+}
+
+
 @dataclass
 class _Seed:
     org: str
@@ -256,6 +265,11 @@ def _payload(model: type, seed: _Seed, user_id: str) -> dict[str, Any] | None:
             continue  # an op taking either names one key
         if name in hints:
             out[name] = hints[name]
+        elif f.is_required() and name in _SHAPED_HINTS:
+            shape, value = _SHAPED_HINTS[name]
+            if typing.get_origin(f.annotation) is not shape:
+                return None
+            out[name] = value
         elif f.is_required():
             ann = f.annotation
             if ann is str:

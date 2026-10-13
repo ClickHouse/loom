@@ -327,9 +327,9 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "inbox.": "inbox registrations and policies",
     "grants.": "namespace grants",
     # Not policy.set / policy.delete: a rule is namespace-wide and denies every user's
-    # writes, a Refuse the token can't manage (as blacklist.* below).
+    # writes, a Refuse the token can't manage (as blacklist.* below). Not policy.check:
+    # it evaluates caller-supplied rules over every user's agent_events.
     "policy.list": "history policy rules",
-    "policy.check": "whether a write would pass the history policy",
     "policy.decisions": "the caller's own policy decisions",
     # Not cost.agent_summary: it has no user axis, and its session_id grouping lists
     # every user's sessions and spend.

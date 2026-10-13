@@ -53,8 +53,9 @@ async def test_begin_labels_its_ledger_row_with_the_run_id(monkeypatch):
     assert out.run_id == "r1"
     assert current_ledger_run() == out.run_id
     # A begin drops its Keeper claim once its row lands, so the existence check is
-    # what keeps a later user off the id: it must see that insert.
-    assert client.sequential_reads == [True]
+    # what keeps a later user off the id: it must see that insert. So must the read
+    # of the caller's own fallback run, which a lost answer's retry re-opens.
+    assert client.sequential_reads == [True, True]
 
 
 @pytest.mark.asyncio

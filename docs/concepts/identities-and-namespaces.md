@@ -251,7 +251,8 @@ than `namespace`:
   (`code.*`) carry a user for attribution only and are admitted; a memory read inside
   them is refused. Namespace-wide rules (`policy.set`, `policy.delete`,
   `memory_schema.register` / `propose` / `approve`, `blacklist.*`) need a
-  namespace-scoped token. The list is
+  namespace-scoped token, and so does `policy.check`, which evaluates the caller's
+  rules over every user's calls. The list is
   `server/identity/domain/read_scope.py` (`SCOPED_OPS`, `NARROW_SAFE_OPS`), and an op
   it does not name is refused.
 

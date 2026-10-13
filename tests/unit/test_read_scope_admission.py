@@ -255,11 +255,14 @@ def _identity_ops() -> list[str]:
     """Narrow-safe ops that would write or count as user '-' if run unpinned."""
     from server.identity.domain.read_scope import honours_read_scope
 
-    return sorted(
-        op.name
-        for op in ALL_OPERATIONS
-        if honours_read_scope(op.name) and gates._would_act_as_nobody(op)
-    )
+    names = []
+    for op in ALL_OPERATIONS:
+        fields = getattr(op.input_model, "model_fields", {})
+        if not ("user_id" in fields or "session_id" in fields) or op.name.startswith("code."):
+            continue
+        if honours_read_scope(op.name) and (not op.read_only or op.name == "cost.summary"):
+            names.append(op.name)
+    return sorted(names)
 
 
 @pytest.mark.parametrize("name", _identity_ops())
@@ -816,22 +819,39 @@ def test_the_identity_sweep_covers_the_writes_that_reached_user_nobody() -> None
     )
 
 
-@pytest.mark.parametrize("name", ["code.grep", "code.repos", "code.outline", "memory.get"])
-def test_reads_under_an_unresolved_scope_are_admitted_and_their_memory_reads_refused(
+def _code_ops() -> list[str]:
+    from server.identity.domain.read_scope import honours_read_scope
+
+    return sorted(
+        op.name
+        for op in ALL_OPERATIONS
+        if op.name.startswith("code.") and honours_read_scope(op.name)
+    )
+
+
+@pytest.mark.parametrize("name", _code_ops())
+def test_code_ops_under_an_unresolved_scope_are_admitted_and_their_memory_reads_refused(
     name: str,
 ) -> None:
     """A code-index op has a user field and no session field, so under an own_session
     ceiling its scope never resolves; it is admitted (it reaches no user's rows) and a
     memory read inside it raises the bound refusal."""
     token = _auth(read_scope="own_session", read_user_id="u1")
-    op = OPERATIONS_BY_NAME[name]
-    if name in SCOPED_OPS:
-        with pytest.raises(IdentityIncompleteError):
-            gates.read_scope(op, token, SimpleNamespace(user_id="u1"))
-        return
-    gates.read_scope(op, token, SimpleNamespace(user_id="u1"))
+    gates.read_scope(OPERATIONS_BY_NAME[name], token, SimpleNamespace(user_id="u1"))
     with pytest.raises(IdentityIncompleteError):
         request_read_filters(token)
+
+
+def test_a_scoped_read_under_an_unresolved_scope_is_refused() -> None:
+    token = _auth(read_scope="own_session", read_user_id="u1")
+    with pytest.raises(IdentityIncompleteError):
+        gates.read_scope(OPERATIONS_BY_NAME["memory.get"], token, SimpleNamespace(user_id="u1"))
+
+
+def test_policy_check_is_refused_to_a_narrowed_token() -> None:
+    """It evaluates caller-supplied rules over every user's agent_events."""
+    with pytest.raises(AuthInsufficientError):
+        gates.read_scope(OPERATIONS_BY_NAME["policy.check"], PINNED, SimpleNamespace(user_id="u1"))
 
 
 @pytest.mark.parametrize(
