@@ -114,7 +114,9 @@ call. It is the same search with the identity explicit:
 | Result      | text summary plus the lean structured result      | `memory`, `knowledge`, `profile`, `conversations`, and `tracker` / `withheld` when they fired                |
 | Tracker leg | fires under an `X-Loom-Code-Scope` connection     | does not fire: only an MCP connection sets a code scope                                                      |
 
-When the fan-out namespaces cannot be resolved, `all_mine` narrows to `namespace`; it never widens.
+When the fan-out namespaces cannot be resolved, `all_mine` narrows to `namespace`; it never widens. Which namespaces
+count as the caller's, and the cap on how many are read, are in
+[Reading several namespaces](../concepts/identities-and-namespaces.md#reading-several-namespaces).
 
 ```bash
 curl -s -X POST "$LOOM_BASE_URL/v1/search.query" \

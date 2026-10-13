@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+from server.auth.context import Fanout
 from server.auth.jwt import AuthInfo
 from server.operations.base import Role
 from tests.unit.test_mcp_lean_results import PAYLOAD as _SEARCH
@@ -167,8 +168,8 @@ def _make_harness(monkeypatch: pytest.MonkeyPatch) -> Any:
         state["asked"].append({k: v for k, v in kw.items()})
         return _payload(state["payload"])
 
-    async def _fanout(org: str) -> list[str]:
-        return ["team", "alice"]
+    async def _fanout(org: str) -> Fanout:
+        return Fanout(org=org, namespaces=tuple(["team", "alice"]), skipped=())
 
     async def _defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:
         return {"org": ORG, "namespace": "team", "agent": "claude-code"}
@@ -195,7 +196,7 @@ def _make_harness(monkeypatch: pytest.MonkeyPatch) -> Any:
         monkeypatch.setattr(mod, "_caller_defaults", _defaults, raising=False)
     for mod in (mcp_call, mcp_outcome, mcp_tools):
         monkeypatch.setattr(mod, "_emit_mcp_event", lambda *a, **k: None, raising=False)
-    monkeypatch.setattr("server.auth.context.resolve_fanout_namespaces", _fanout)
+    monkeypatch.setattr("server.auth.context.resolve_fanout", _fanout)
     monkeypatch.setattr("server.auth.authz.check_authorized", _allowed)
     monkeypatch.setattr("server.code.app.member_writes.authorize_op", _allowed)
     monkeypatch.setattr("server.auth.personal_namespace.ensure_personal_namespace_cached", _allowed)

@@ -135,13 +135,16 @@ async def _address_home(arguments: dict[str, Any], auth: Any) -> None:
     never rewritten (the gate refuses it if it must)."""
     if arguments.get("namespace_scope") != "all_mine":
         return
-    from server.auth.context import resolve_fanout_namespaces
+    from server.auth.context import resolve_fanout
 
     try:
-        accessible = await resolve_fanout_namespaces(str(arguments.get("org") or ""))
+        fanout = await resolve_fanout(str(arguments.get("org") or ""))
     except Exception as e:  # noqa: BLE001 — no fan-out namespaces narrows the search, never widens
         log.warning("loom_search namespace resolution failed (non-fatal): %s", e)
         return
+    # The home is chosen from every namespace of the caller, the ones past the
+    # fan-out cap included: the cap bounds what is read, not where it starts.
+    accessible = [*fanout.namespaces, *fanout.skipped]
     if accessible:
         subject = str(getattr(auth, "subject", "") or "") if auth is not None else ""
         arguments["namespace"] = home_namespace(

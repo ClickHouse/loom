@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import server.auth.bearer as bearer_mod
+from server.auth.context import Fanout
 from server.auth.jwt import AuthInfo, TokenError
 from server.operations.base import Role
 from server.settings import settings
@@ -88,8 +89,8 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     async def _sections(**_kw: Any) -> dict[str, Any]:
         return {k: dict(v) for k, v in _PAYLOAD.items()}
 
-    async def _fanout(org: str) -> list[str]:
-        return [NS]
+    async def _fanout(org: str) -> Fanout:
+        return Fanout(org=org, namespaces=tuple([NS]), skipped=())
 
     async def _defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:
         return {"org": ORG, "namespace": NS, "agent": "a"}
@@ -105,7 +106,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(policy_gate, "gate", _policy)
     monkeypatch.setattr(ratelimit_mod, "get_limiter", lambda: _Limiter())
     monkeypatch.setattr(handler_mod, "search_sections", _sections)
-    monkeypatch.setattr("server.auth.context.resolve_fanout_namespaces", _fanout)
+    monkeypatch.setattr("server.auth.context.resolve_fanout", _fanout)
     monkeypatch.setattr(mcp_call, "_caller_defaults", _defaults)
     for mod in (mcp_call, mcp_outcome):
         monkeypatch.setattr(mod, "_emit_mcp_event", lambda *a, **k: None)

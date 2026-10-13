@@ -50,7 +50,7 @@ def test_fanout_kinds_reads_the_setting(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def test_resolver_narrows_my_namespaces_by_kind(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _mine(org):
+    async def _mine(org, subject=None):
         return list(MINE)
 
     async def _kinds(org):
@@ -102,9 +102,9 @@ def test_every_all_mine_leg_and_the_tool_call_the_fanout_resolver() -> None:
         }
     )
     for name, src in sources.items():
-        assert "resolve_fanout_namespaces(" in src, name
+        assert "resolve_fanout" in src, name
         # The unnarrowed resolver is for listings and authz, not a search sweep.
-        body = src.split("resolve_fanout_namespaces", 1)[0]
+        body = src.split("resolve_fanout", 1)[0]
         assert "await resolve_my_namespaces(" not in body, name
 
 

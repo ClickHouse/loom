@@ -46,14 +46,13 @@ async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearc
 
 
 async def _namespaces_of(input: KnowledgeSearchInput) -> list[str]:
-    """The namespaces the search covers: the caller's own under `all_mine`
-    (the one asked for when it resolves to none), else the one asked for."""
+    """The namespaces the search covers: the one asked for, and under
+    `all_mine` the caller's own besides."""
     if input.namespace_scope != "all_mine":
         return [input.namespace]
-    from server.auth.context import resolve_fanout_namespaces
+    from server.auth.context import resolve_fanout_namespaces, with_addressed
 
-    namespaces = await resolve_fanout_namespaces(input.org)
-    return namespaces or [input.namespace]
+    return with_addressed(input.namespace, await resolve_fanout_namespaces(input.org))
 
 
 def _namespace_search(

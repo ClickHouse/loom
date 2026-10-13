@@ -12075,6 +12075,7 @@ class MemorySearchOutput(TypedDict, total=False):
     bodies_elided: NotRequired[int]
     tokens_returned: NotRequired[int]
     namespaces_searched: NotRequired[list[str]]
+    namespaces_skipped: NotRequired[list[str]]
     candidates_total: NotRequired[int]
     next_page: NotRequired[str]
     page_offset: NotRequired[int]

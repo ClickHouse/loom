@@ -52,12 +52,19 @@ def set_current_auth(auth: AuthInfo | None) -> None:
     set_quota_key(quota_key_for(auth))
 
 
-# The fan-out set the current principal resolved in `org`, kept for the rest
-# of its request: MCP resolves it to address an unaddressed search, and the
+@dataclass(frozen=True)
+class Fanout:
+    """What an all_mine search reads in `org`, and what its cap left out."""
+
+    org: str
+    namespaces: tuple[str, ...]
+    skipped: tuple[str, ...]
+
+
+# The fan-out the current principal resolved in `org`, kept for the rest of
+# its request: MCP resolves it to address an unaddressed search, and the
 # search handler reads it again. Binding a principal clears it.
-_fanout_memo: ContextVar[tuple[str, list[str]] | None] = ContextVar(
-    "loom_fanout_namespaces", default=None
-)
+_fanout_memo: ContextVar[Fanout | None] = ContextVar("loom_fanout_namespaces", default=None)
 
 # A delegated token's creator grants, (org, namespace, creator) -> role, read
 # once per request by `authz._check_delegated`. Binding a principal resets it.
@@ -167,19 +174,40 @@ async def _delegated_namespaces(auth: AuthInfo, org: str) -> list[str]:
 
 
 async def resolve_fanout_namespaces(org: str) -> list[str]:
-    """The namespaces a `namespace_scope=all_mine` search spans:
-    `resolve_my_namespaces` narrowed to the kinds in
-    `memory_search_fanout_kinds`. A code or QA index is a namespace the
-    caller can read, not one a personal-fact search should sweep; it is
+    """The namespaces a `namespace_scope=all_mine` search spans (`resolve_fanout`)."""
+    return list((await resolve_fanout(org)).namespaces)
+
+
+def with_addressed(namespace: str, fanout: list[str]) -> list[str]:
+    """The namespaces an all_mine leg reads: `fanout`, led by the addressed
+    `namespace` when the fan-out lacks it (cut at the cap, or of another
+    kind). The transport authorized that namespace, and a fan-out only widens
+    a search, never moves it."""
+    return fanout if not namespace or namespace in fanout else [namespace, *fanout]
+
+
+async def resolve_fanout(org: str) -> Fanout:
+    """`resolve_my_namespaces` narrowed to the kinds in
+    `memory_search_fanout_kinds`, then cut at
+    `memory_search_fanout_max_namespaces`. A code or QA index is a namespace
+    the caller can read, not one a personal-fact search should sweep; it is
     addressed by name or by its own tools. Order (= read priority) is kept.
     Unknown kinds stay: the directory can only narrow, never widen. Resolved
     once per bound principal and org."""
+    from server.auth.default_namespace import auth_off_subject
+    from server.settings import settings
+
     memo = _fanout_memo.get()
-    if memo is not None and memo[0] == org:
-        return list(memo[1])
-    out = await directory().fanout_namespaces(org, await resolve_my_namespaces(org))
-    _fanout_memo.set((org, list(out)))
-    return out
+    if memo is not None and memo.org == org:
+        return memo
+    # With auth off there is no token, but the single user's grants still say
+    # which namespaces are theirs. With auth on, no token means no namespaces.
+    subject = auth_off_subject() if current_auth() is None else None
+    mine = await directory().fanout_namespaces(org, await resolve_my_namespaces(org, subject))
+    cap = settings.memory_search_fanout_max_namespaces
+    memo = Fanout(org=org, namespaces=tuple(mine[:cap]), skipped=tuple(mine[cap:]))
+    _fanout_memo.set(memo)
+    return memo
 
 
 async def _without_unreadable_restricted(org: str, namespaces: list[str]) -> list[str]:

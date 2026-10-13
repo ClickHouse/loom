@@ -193,22 +193,18 @@ def _merge_namespace_scope(
     `ordered=True` (scoped token carrying `ns_roles`): `granted` is the token's
     authoritative, priority-ordered namespace list — return it verbatim. Do NOT
     front-insert the addressed namespace; the token's order is strict and must
-    not be reshuffled by which namespace the request happened to address. (If
-    `granted` is empty, fall back to the addressed namespace so the call still
-    targets something.)
+    not be reshuffled by which namespace the request happened to address. An
+    addressed namespace the list lacks (cut by the fan-out cap or the kind
+    filter) is read last.
 
     `ordered=False` (unscoped/wildcard token): the addressed namespace is ALWAYS
     searched and pinned to the front — grants/JWT membership may only WIDEN the
     set, never redirect away from the named namespace.
     """
     out = [ns for ns in granted if ns]
-    if ordered:
-        return out or ([explicit] if explicit else [])
-    if explicit and explicit not in out:
-        out.insert(0, explicit)
-    if not out and explicit:
-        out = [explicit]
-    return out
+    if not explicit or explicit in out:
+        return out
+    return [*out, explicit] if ordered else [explicit, *out]
 
 
 def _decorate_hits(

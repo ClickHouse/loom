@@ -5374,6 +5374,7 @@ export interface MemorySearchOutput {
   bodies_elided?: number;
   tokens_returned?: number;
   namespaces_searched?: string[];
+  namespaces_skipped?: string[];
   candidates_total?: number;
   next_page?: string;
   page_offset?: number;

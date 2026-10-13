@@ -491,11 +491,9 @@ async def handle_conversation_search(
         return await _search_substring_fallback(input)
 
     if input.namespace_scope == "all_mine":
-        from server.auth.context import resolve_fanout_namespaces
+        from server.auth.context import resolve_fanout_namespaces, with_addressed
 
-        namespaces = await resolve_fanout_namespaces(input.org)
-        if not namespaces:
-            namespaces = [input.namespace]
+        namespaces = with_addressed(input.namespace, await resolve_fanout_namespaces(input.org))
     else:
         namespaces = [input.namespace]
 

@@ -31,7 +31,7 @@ def launched(monkeypatch: pytest.MonkeyPatch) -> list[scope._SearchRun]:
 
     monkeypatch.setattr(calibration, "resolve_calibration", _forever)
     monkeypatch.setattr(rerank, "get_namespace_rerank_config", _forever)
-    monkeypatch.setattr(auth_context, "resolve_fanout_namespaces", _forever)
+    monkeypatch.setattr(auth_context, "resolve_fanout", _forever)
 
     async def _resolve(inp: MemorySearchInput) -> Any:
         return inp, False, 0, None

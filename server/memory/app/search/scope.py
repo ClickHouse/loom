@@ -44,6 +44,8 @@ class _SearchRun:
     order_authoritative: bool
     # Scope, filled before the embed (parser-gate prelaunch) or after it.
     namespaces: list[str] = field(default_factory=list)
+    # The caller's namespaces the all_mine fan-out cut at its cap.
+    namespaces_skipped: list[str] = field(default_factory=list)
     effective_entity_filter: list[str] = field(default_factory=list)
     canonical_task: asyncio.Task[list[str]] | None = None
     canonical_prelaunched: bool = False
@@ -100,9 +102,9 @@ def _launch_scope_reads(input: MemorySearchInput) -> _SearchRun:
     _auth = _current_auth()
     _order_authoritative = bool(_auth is not None and _auth.has_ns_roles())
     if input.namespace_scope == "all_mine":
-        from server.auth.context import resolve_fanout_namespaces
+        from server.auth.context import resolve_fanout
 
-        _my_namespaces_task = create_deferred_task(resolve_fanout_namespaces(input.org))
+        _my_namespaces_task = create_deferred_task(resolve_fanout(input.org))
         _my_namespaces_task.add_done_callback(_retain_task_result)
     return _SearchRun(
         rerank_override=request_rerank_override,
@@ -125,9 +127,11 @@ async def _scope_inputs(
     set: membership may only widen the search, never redirect it."""
     entity_filter = list(input.entity_filter or []) or list(llm_query_entities)
     if run.my_namespaces_task is not None:
+        fanout = await run.my_namespaces_task
         namespaces = _merge_namespace_scope(
-            input.namespace, await run.my_namespaces_task, ordered=run.order_authoritative
+            input.namespace, list(fanout.namespaces), ordered=run.order_authoritative
         )
+        run.namespaces_skipped = [ns for ns in fanout.skipped if ns not in namespaces]
     else:
         namespaces = [input.namespace]
     actual_work["namespace_count"] = len(namespaces)

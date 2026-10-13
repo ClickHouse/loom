@@ -673,6 +673,9 @@ class MemorySearchOutput(BaseModel):
     # addressed one first, then the fan-out under namespace_scope=all_mine.
     # A single-namespace caller sees exactly [input.namespace].
     namespaces_searched: list[str] = Field(default_factory=list)
+    # Namespaces of the caller the fan-out did not read because it stops at
+    # `memory_search_fanout_max_namespaces`; address one by name to search it.
+    namespaces_skipped: list[str] = Field(default_factory=list)
     # Distinct memories in the fused pool before the top_k cut
     # ("showing 10 of 124"); the handle that serves the next slice when the
     # caller asked for paging and there was more; and this page's offset

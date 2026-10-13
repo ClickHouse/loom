@@ -188,6 +188,7 @@ def _build_search_output(
     _output = MemorySearchOutput(
         top_k_ceiling=run.top_k_ceiling,
         namespaces_searched=_namespaces_searched,
+        namespaces_skipped=run.namespaces_skipped,
         results=final_hits,
         chunk_share=_chunk_share(final_hits, int(getattr(input, "top_k", 0) or len(final_hits))),
         bodies_returned=_unit_bodies[0],

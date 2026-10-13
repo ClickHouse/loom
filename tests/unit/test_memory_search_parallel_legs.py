@@ -215,7 +215,7 @@ async def test_graph_neighbor_gather_is_order_independent(
     # Patch namespace resolution so the handler fans out to both namespaces.
     import server.auth.context as auth_ctx
 
-    async def fake_my_ns(org: str) -> list[str]:
+    async def fake_my_ns(org: str, subject: str | None = None) -> list[str]:
         return ["ns_a", "ns_b"]
 
     monkeypatch.setattr(auth_ctx, "resolve_my_namespaces", fake_my_ns)
