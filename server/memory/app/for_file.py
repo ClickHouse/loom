@@ -35,7 +35,7 @@ _FILE_MATCH = (
     "OR endsWith({p:String}, concat('/', f)))"
 )
 
-_SQL = f"""
+_SELECT = f"""
 SELECT
     memory_key, memory_type,
     substring(value, 1, {_VALUE_CHARS}) AS value,
@@ -50,10 +50,13 @@ WHERE org = {{org:String}} AND namespace = {{ns:String}}
   AND sensitivity != 'high'
   AND status IN {{statuses:Array(String)}}
   AND (length({{tags:Array(String)}}) = 0 OR hasAny(tags, {{tags:Array(String)}}))
-  AND (arrayExists(f -> {_FILE_MATCH}, files) OR has({{linked:Array(UUID)}}, memory_id))
-ORDER BY has(tags, 'constraint') DESC, pinned DESC, confidence DESC, updated_at DESC
-LIMIT {{lim:UInt32}}
 """
+_ORDER = """
+ORDER BY has(tags, 'constraint') DESC, pinned DESC, confidence DESC, updated_at DESC
+LIMIT {lim:UInt32}
+"""
+_FILES_SQL = f"{_SELECT}  AND arrayExists(f -> {_FILE_MATCH}, files){_ORDER}"
+_LINKED_SQL = f"{_SELECT}  AND memory_id IN {{linked:Array(UUID)}}{_ORDER}"
 
 
 def _one_line(text: str, limit: int) -> str:
@@ -226,12 +229,15 @@ async def _rows_for(
         "b": base,
         "tags": tags,
         "statuses": statuses,
-        "linked": sorted(m for m, states in linked.items() if set(states) != {"missing"}),
         "lim": int(input.top_k),
     }
-    # a hot file's links are bound a slice at a time; the best of each slice's own
-    # top `lim` are the namespace's
-    found = await query_all_sliced(get_client(), _SQL, params, "linked")
+    ids = sorted(m for m, states in linked.items() if set(states) != {"missing"})
+    ch = get_client()
+    found = await ch.query_all(_FILES_SQL, params)
+    # a hot file's links are bound a slice at a time; the best of the files match and
+    # of each slice's own top `lim` are the namespace's
+    if ids:
+        found = found + await query_all_sliced(ch, _LINKED_SQL, params | {"linked": ids}, "linked")
     unique = {str(r["memory_id"]): r for r in found}.values()
     rows = sorted(unique, key=_order_key)[: int(input.top_k)]
     return [

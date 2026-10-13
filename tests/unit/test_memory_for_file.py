@@ -150,19 +150,26 @@ async def test_a_hot_files_links_are_bound_in_slices_and_the_best_of_all_are_kep
 
     linked = {str(uuid.UUID(int=i)): ["fresh"] for i in range(5000)}
     bound: list[list[str]] = []
+    file_scans = 0
 
     class _Sliced:
         async def query_all(self, sql: str, params: dict[str, Any] | None = None):
+            nonlocal file_scans
+            if "arrayExists" in sql:
+                file_scans += 1
+                assert "linked" not in (params or {})
+                return [_row("named", "v", confidence=0.99)]
             part = (params or {})["linked"]
             bound.append(part)
             # each slice's own best, one stronger the later the slice
             return [_row(f"k{len(bound)}", "v", memory_id=part[0], confidence=len(bound) / 10)]
 
     monkeypatch.setattr(mff, "get_client", lambda: _Sliced())
-    request = MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp", top_k=2)
+    request = MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp", top_k=3)
     rows = await mff._rows_for(request, "ns", "src/a.cpp", "a.cpp", [], linked)
+    assert file_scans == 1  # the files match runs once, not once per slice
     assert len(bound) > 1 and sorted(m for part in bound for m in part) == sorted(linked)
-    assert [r["memory_key"] for r in rows] == [f"k{len(bound)}", f"k{len(bound) - 1}"]
+    assert [r["memory_key"] for r in rows] == ["named", f"k{len(bound)}", f"k{len(bound) - 1}"]
 
 
 @pytest.mark.asyncio
