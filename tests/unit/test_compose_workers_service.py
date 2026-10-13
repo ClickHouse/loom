@@ -149,11 +149,20 @@ def test_labels_separate_the_two_deployment_processes() -> None:
 
 
 def test_launch_paths_outside_compose_carry_a_label() -> None:
-    """CI boots uvicorn from the job env; `make server` and `loom serve` name
-    themselves. Without these the launcher-identity rule would refuse each of them."""
-    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    boots = ci.count("uvicorn server.main:app")
-    assert boots >= 1 and ci.count("LOOM_INSTANCE_LABEL:") == boots  # one label per server boot
+    """CI boots the server (uvicorn or the image's launcher) from the job env;
+    `make server` and `loom serve` name themselves. Without these the
+    launcher-identity rule would refuse each of them."""
+    ci = _load(ROOT / ".github" / "workflows" / "ci.yml")
+    booting = 0
+    for name, job in ci["jobs"].items():
+        for step in job.get("steps") or []:
+            run = str(step.get("run") or "")
+            if "uvicorn server.main:app" not in run and "scripts/serve.sh" not in run:
+                continue
+            booting += 1
+            env = {**(job.get("env") or {}), **(step.get("env") or {})}
+            assert env.get("LOOM_INSTANCE_LABEL"), f"{name}: a server boot without a label"
+    assert booting >= 1
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
     assert "dev:make-server" in makefile
     cli = "\n".join(

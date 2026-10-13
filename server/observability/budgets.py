@@ -39,7 +39,6 @@ import contextlib
 import json
 import logging
 import os
-import tempfile
 import threading
 from collections.abc import Iterator
 from typing import Any
@@ -130,31 +129,34 @@ class BudgetOverrides:
 
     @contextlib.contextmanager
     def _update(self) -> Iterator[None]:
-        """Mutate under `_lock` and the host file's lock: read, change, publish."""
+        """Mutate under `_lock` and the host file's lock: read, change, publish.
+        A change that cannot be published is rolled back and refused."""
         with self._lock:
             path = self._file()
             if path is None:
                 yield
                 return
-            import fcntl
+            from server.core.errors import LoomServerError
+            from server.core.ratelimit_shared import file_lock, publish_json
 
-            with open(path + ".lock", "a+") as lk:
-                fcntl.flock(lk.fileno(), fcntl.LOCK_EX)
-                self._sync()
-                yield
-                data = {
-                    "ops": self._overrides,
-                    "consumer": [[c, o, v] for (c, o), v in self._by_consumer.items()],
-                }
-                try:
-                    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", prefix=".bud-")
-                    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                        json.dump(data, fh)
-                    os.replace(tmp, path)
-                    st = os.stat(path)
-                    self._file_sig = (st.st_ino, st.st_mtime_ns, st.st_size)
-                except OSError as e:
-                    log.warning("budget overrides: %s not written (%s); this process only", path, e)
+            try:
+                with file_lock(path):
+                    self._sync()
+                    before = (dict(self._overrides), dict(self._by_consumer))
+                    yield
+                    data = {
+                        "ops": self._overrides,
+                        "consumer": [[c, o, v] for (c, o), v in self._by_consumer.items()],
+                    }
+                    try:
+                        self._file_sig = publish_json(path, data)
+                    except OSError:
+                        self._overrides, self._by_consumer = before
+                        raise
+            except OSError as e:
+                raise LoomServerError(
+                    f"budget override not applied: {path} could not be updated ({e})"
+                ) from e
 
     # -- per op (unchanged API) -------------------------------------------
 

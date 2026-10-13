@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import math
 import os
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -97,6 +98,13 @@ def _mem_total(meminfo: str) -> float:
     return math.inf
 
 
+def _affinity_cpus() -> int:
+    """CPUs this process may run on (Linux affinity; elsewhere the CPU count)."""
+    if sys.platform == "linux":
+        return len(os.sched_getaffinity(0))
+    return os.cpu_count() or 1
+
+
 def default_workers(
     *,
     cpus: int | None = None,
@@ -105,7 +113,7 @@ def default_workers(
     root: Path = Path("/sys/fs/cgroup"),
 ) -> int:
     if cpus is None:
-        cpus = len(os.sched_getaffinity(0))
+        cpus = _affinity_cpus()
     if proc_cgroup is None:
         proc_cgroup = _read(Path("/proc/self/cgroup")) or ""
     if meminfo is None:

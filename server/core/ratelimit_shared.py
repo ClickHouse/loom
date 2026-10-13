@@ -28,15 +28,18 @@ salted per process and the whole point is that four processes agree.
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import hashlib
+import json
 import mmap
 import os
 import stat
 import struct
+import tempfile
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 
 MAGIC = b"LRL1"
@@ -82,6 +85,34 @@ def default_path() -> str:
     parent, so the parent pid is the rendezvous. Two servers on one host
     (two isolated worktrees, say) get two files."""
     return os.path.join(runtime_dir(), f"loom-ratelimit-{os.getppid()}.buckets")
+
+
+@contextlib.contextmanager
+def file_lock(path: str) -> Iterator[None]:
+    """Exclusive host-wide lock on `<path>.lock` for a read-modify-write of
+    `path`. Raises OSError when the lock file cannot be opened."""
+    with open(path + ".lock", "a+") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
+def publish_json(path: str, data: object) -> tuple[int, int, int]:
+    """Atomically replace `path` with `data` as JSON; returns the new file's
+    (inode, mtime_ns, size). Raises OSError and leaves no temporary file."""
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", prefix=".tmp-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+    st = os.stat(path)
+    return (st.st_ino, st.st_mtime_ns, st.st_size)
 
 
 def open_table_fd(path: str) -> int:

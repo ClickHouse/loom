@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
 
+import pytest
+
+from server.core import web_workers
 from server.core.web_workers import WORKER_MEMORY_BYTES, default_workers
 
 GB = 1024**3
@@ -83,7 +88,15 @@ def test_cgroup_v1_unlimited_quota(tmp_path: Path) -> None:
     assert default_workers(cpus=6, proc_cgroup=cg, meminfo=BIG_MEM, root=tmp_path) == 6
 
 
-def test_affinity_not_omp_threads(monkeypatch, tmp_path: Path) -> None:
+@pytest.mark.skipif(sys.platform != "linux", reason="scheduler affinity is Linux-only")
+def test_affinity_not_omp_threads(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("OMP_NUM_THREADS", "64")
-    monkeypatch.setattr("os.sched_getaffinity", lambda _pid: {0})
+    monkeypatch.setattr(os, "sched_getaffinity", lambda _pid: {0})
     assert default_workers(proc_cgroup="0::/\n", meminfo=BIG_MEM, root=tmp_path) == 1
+
+
+def test_cpus_default_to_this_platforms_count(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(web_workers, "_affinity_cpus", lambda: 3)
+    assert default_workers(proc_cgroup="", meminfo=BIG_MEM, root=tmp_path) == 3

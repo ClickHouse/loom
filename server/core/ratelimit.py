@@ -20,7 +20,6 @@ import contextlib
 import json
 import logging
 import os
-import tempfile
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -398,54 +397,45 @@ class Limiter:
 
     @contextlib.contextmanager
     def _overrides_update(self) -> Iterator[None]:
-        """Read-modify-write of the host's override file under an exclusive
-        lock, so two workers updating at once never drop each other's change."""
+        """Read-modify-write of the host's override file under its lock, so two
+        workers updating at once never drop each other's change. A change that
+        cannot be published is rolled back and refused: it would bind only
+        this worker."""
         path = self._overrides_path()
         if path is None:
             yield
             return
-        import fcntl
+        from server.core.errors import LoomServerError
+        from server.core.ratelimit_shared import file_lock, publish_json
 
         try:
-            fh = open(path + ".lock", "a+")
-        except OSError as e:
-            log.warning("rate limiter: override lock unavailable (%s); unserialised", e)
-            self._sync_overrides()
-            yield
-            self._save_overrides()
-            return
-        with fh:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-            try:
+            with file_lock(path):
                 self._sync_overrides()
+                before = (
+                    dict(self._ns_overrides),
+                    dict(self._org_overrides),
+                    dict(self._actor_overrides),
+                )
                 yield
-                self._save_overrides()
-            finally:
-                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-
-    def _save_overrides(self) -> None:
-        """Publish this process's overrides to the host (atomic replace, 0600)."""
-        path = self._overrides_path()
-        if path is None:
-            return
-        data = {
-            "ns": [[a, b, v.capacity, v.rate] for (a, b), v in self._ns_overrides.items()],
-            "org": [[a, b, v.capacity, v.rate] for (a, b), v in self._org_overrides.items()],
-            "actor": [
-                [a, b, o, v.capacity, v.rate] for (a, b, o), v in self._actor_overrides.items()
-            ],
-        }
-        try:
-            fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", prefix=".ovr-")
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                json.dump(data, fh)
-            os.replace(tmp, path)
-            st = os.stat(path)
-            self._overrides_sig = (st.st_ino, st.st_mtime_ns, st.st_size)
+                data = {
+                    "ns": [[a, b, v.capacity, v.rate] for (a, b), v in self._ns_overrides.items()],
+                    "org": [
+                        [a, b, v.capacity, v.rate] for (a, b), v in self._org_overrides.items()
+                    ],
+                    "actor": [
+                        [a, b, o, v.capacity, v.rate]
+                        for (a, b, o), v in self._actor_overrides.items()
+                    ],
+                }
+                try:
+                    self._overrides_sig = publish_json(path, data)
+                except OSError:
+                    self._ns_overrides, self._org_overrides, self._actor_overrides = before
+                    raise
         except OSError as e:
-            log.warning(
-                "rate limiter: override file %s not written (%s); this worker only", path, e
-            )
+            raise LoomServerError(
+                f"rate-limit override not applied: {path} could not be updated ({e})"
+            ) from e
 
     @property
     def shared_active(self) -> bool:
