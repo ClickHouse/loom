@@ -16,7 +16,7 @@ _REFINGERPRINT_PAGE = 500
 
 
 async def refingerprint(
-    org: str, cns: str, files: link_pass.Files, result: link_pass.PassResult
+    org: str, cns: str, files: link_pass.RepoReads, result: link_pass.PassResult
 ) -> None:
     """Re-hash the links hashed under other rules or grammars than these, a page at a
     time, each page written as it is done; a link whose code does not parse stays due
@@ -48,7 +48,7 @@ async def refingerprint(
             break
 
 
-async def _rehashed(a: LinkRow, files: link_pass.Files) -> dict[str, Any]:
+async def _rehashed(a: LinkRow, files: link_pass.RepoReads) -> dict[str, Any]:
     """A symbol link's hashes, former baselines included, re-hashed under the current
     rules from the commits they were taken at, its judgement dropped, and its state set
     by what these rules see between the checked text and the baseline. No hash is ever

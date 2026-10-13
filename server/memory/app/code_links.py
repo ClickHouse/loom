@@ -89,12 +89,8 @@ async def backfill(
 async def _link_org(
     org: str, rows: list[dict[str, Any]], result: link_pass.PassResult, *, rereads: int = 2
 ) -> None:
-    """Link one org's memories. A repository that cannot be read parks its memories
-    behind the `*` marker, as before its first index: every pass retries them, until the
-    marker expires, and the queue moves on.
-    Links are last-write-wins, and a worker that read an older value of a memory may
-    write after the one that linked its newer value; so each writer re-reads the heads it
-    linked and relinks those rewritten since it read them, `rereads` times at most."""
+    """Link one org's memories, parking those of an unreadable repository behind the `*`
+    marker; relink, up to `rereads` times, the ones rewritten while they were linked."""
     existing: dict[str, list[LinkRow]] = defaultdict(list)
     for a in await store.for_memories(org, [r["mid"] for r in rows]):
         existing[a["memory_id"]].append(a)
@@ -126,7 +122,7 @@ async def _link_org(
     result.unlinked += len(stale)
     linked: list[str] = []
     for cns, memories in todo.items():
-        files = link_pass.Files(org, cns)
+        files = link_pass.RepoReads(org, cns)
         try:
             rows_out, gone, unparsed = await link_each(org, cns, memories, existing, files)
         except Exception as e:  # noqa: BLE001 — one repository's failure never stops the pass
@@ -171,7 +167,7 @@ async def link_each(
     cns: str,
     memories: list[dict[str, Any]],
     existing: dict[str, list[LinkRow]],
-    files: link_pass.Files,
+    files: link_pass.RepoReads,
 ) -> tuple[list[LinkRow], list[LinkRow], list[dict[str, Any]]]:
     """`_link`, and the memories it could not link because a file they name does not
     parse; the others are linked all the same."""
@@ -198,7 +194,7 @@ async def _link(
     cns: str,
     memories: list[dict[str, Any]],
     existing: dict[str, list[LinkRow]],
-    files: link_pass.Files,
+    files: link_pass.RepoReads,
 ) -> tuple[list[LinkRow], list[LinkRow]]:
     """The link rows of `memories` (one repository's) at its indexed head, and their
     existing links that no longer hold. Before the repository's first index each memory
@@ -256,7 +252,7 @@ def _awaiting(memory: dict[str, Any], cns: str) -> LinkRow:
     return _link_row(memory, cns, "", AWAITING_INDEX, "", state="pending")
 
 
-async def at_head(files: link_pass.Files, head: str, d: Definition) -> Definition | None:
+async def at_head(files: link_pass.RepoReads, head: str, d: Definition) -> Definition | None:
     """`d` as the head has it: its first overload, or the file for a file link; None
     when the head has no such definition or file."""
     if d.qualified_name:

@@ -47,7 +47,7 @@ async def apply_policies(
     org: str,
     cns: str,
     head: str,
-    files: link_pass.Files,
+    files: link_pass.RepoReads,
     budget: link_pass.Budget,
     result: link_pass.PassResult,
 ) -> None:
@@ -113,7 +113,7 @@ async def _revise(
     links: list[LinkRow],
     policy: str,
     head: str,
-    files: link_pass.Files,
+    files: link_pass.RepoReads,
     budget: link_pass.Budget,
     result: link_pass.PassResult,
 ) -> _Revised | None:
@@ -183,7 +183,7 @@ class _Texts:
     now: Definition
 
 
-async def _texts(files: link_pass.Files, claim: str, link: LinkRow, head: str) -> _Texts | None:
+async def _texts(files: link_pass.RepoReads, claim: str, link: LinkRow, head: str) -> _Texts | None:
     """The texts the judge would read for `link`; None when it is not judged: a method
     its renamed class carried (its text cannot show what changed in the class), either
     side gone, the same text on both, or text past the judge's reach."""

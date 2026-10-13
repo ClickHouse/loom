@@ -79,9 +79,9 @@ class Recent[K, V](OrderedDict[K, V]):
             self.popitem(last=False)
 
 
-class Files:
-    """One repository's files and history, each read once per pass; parsed files while
-    they are among the last `_FILES_CACHED` read."""
+class RepoReads:
+    """One repository's git reads for a pass (files, history, ancestry, successors), each
+    made once; parsed files while they are among the last `_FILES_CACHED` read."""
 
     def __init__(self, org: str, cns: str) -> None:
         self.org, self.cns = org, cns

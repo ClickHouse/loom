@@ -1,17 +1,5 @@
-"""Following a repository's code-memory links from the commit it was last checked at
-to its indexed head: moves, renames, edits and removals, pending names and parse
-failures.
-
-A pass follows the range path by path, recording where it got to, so a pass cut by its
-deadline resumes there. It rechecks the links on the paths the range changed, those
-made since it started, and the lost ones whose name may have come back. Members follow
-their class only within one file; in another file a definition is found only under its
-qualified name or its name inside its module. A small definition renamed and edited is
-followed only when the new name is related to the old (grown or shrunk, a version
-bumped, a word kept). A lost link is weighed against other files for
-`_LOST_SEARCHED_DAYS` and against at most `_MAX_ELSEWHERE` touched files; past that a
-link that was in place reads `unresolved`. Every write is one version above the row it
-read, so a link another writer moved meanwhile keeps its newer state."""
+"""Follow a repository's code-memory links from the commit they were last checked at to
+its indexed head: moves, renames, edits, removals, pending names and parse failures."""
 
 from __future__ import annotations
 
@@ -68,8 +56,10 @@ class _Read:
 
 @dataclass
 class Move:
-    before: LinkRow
-    after: Link
+    """A link's stored row and the link it becomes."""
+
+    row: LinkRow
+    link: Link
 
 
 # a link not found keeps the commit it was last read at
@@ -85,8 +75,7 @@ async def recheck_all(result: link_pass.PassResult) -> None:
     # each pass starts one repository further on: those last in line are not always last
     start = next(_passes) % max(1, len(repositories))
     repositories = repositories[start:] + repositories[:start]
-    # each repository an even share of the judgements left, what one leaves going to the
-    # next: one with a backlog starves no other, and the pass spends no more than the cap
+    # an even share of the judgements left each; what one leaves goes to the next
     left = int(settings.memory_code_links_revise_per_pass)
     for i, (org, cns) in enumerate(repositories):
         rest = len(repositories) - i
@@ -110,7 +99,7 @@ async def _recheck_repository(
     org: str, cns: str, budget: link_pass.Budget, result: link_pass.PassResult
 ) -> None:
     """One repository's recheck, settled names and policies, under its lease."""
-    files = link_pass.Files(org, cns)
+    files = link_pass.RepoReads(org, cns)
     head = await code.indexed_head(org, cns)
     checked = await code.checked_head(org, cns)
     moves = await _resolve_pending(org, cns, head, files, result)
@@ -168,7 +157,7 @@ async def _follow(
     cns: str,
     checked: str,
     head: str,
-    files: link_pass.Files,
+    files: link_pass.RepoReads,
     result: link_pass.PassResult,
 ) -> None:
     """Recheck, path by path, the links `checked..head` may have changed (all of them
@@ -222,7 +211,7 @@ async def _recheck_paths(
     paths: list[str],
     changed: link_pass.Range | None,
     head: str,
-    files: link_pass.Files,
+    files: link_pass.RepoReads,
     unparsed: set[str],
     failed: set[str],
 ) -> list[Move]:
@@ -244,7 +233,7 @@ async def _recheck_paths(
 
 
 async def _retry_unparsed(
-    org: str, cns: str, head: str, files: link_pass.Files, result: link_pass.PassResult
+    org: str, cns: str, head: str, files: link_pass.RepoReads, result: link_pass.PassResult
 ) -> None:
     """Recheck the links on the paths a pass could not parse, each from the commit it was
     last checked at; a path that still does not parse is retried again next pass."""
@@ -299,7 +288,7 @@ async def _recheck(
     rows: list[LinkRow],
     changed: link_pass.Range | None,
     head: str,
-    files: link_pass.Files,
+    files: link_pass.RepoReads,
 ) -> list[Move]:
     """The moves of these links rechecked at `head`, each followed over `changed` or
     from its own commit."""
@@ -364,7 +353,7 @@ async def _recheck(
 
 
 async def _namesakes(
-    files: link_pass.Files,
+    files: link_pass.RepoReads,
     before: Link,
     a: LinkRow,
     candidates: list[Definition],
@@ -381,7 +370,7 @@ async def _namesakes(
 
 
 async def _new_namesakes(
-    files: link_pass.Files,
+    files: link_pass.RepoReads,
     before: Link,
     a: LinkRow,
     candidates: list[Definition],
@@ -413,7 +402,7 @@ async def _new_namesakes(
 
 
 async def _last_in_place(
-    files: link_pass.Files, before: Link, start: str, head: str, local: str
+    files: link_pass.RepoReads, before: Link, start: str, head: str, local: str
 ) -> str | None:
     """The last commit after `start` whose version of the link's file (followed through
     renames) still defines `local`: `head` when it still does; None when the history
@@ -443,14 +432,14 @@ async def _last_in_place(
             return head if await _defines(files, head, path, local) else None
 
 
-async def _defines(files: link_pass.Files, commit: str, path: str, local: str) -> bool:
+async def _defines(files: link_pass.RepoReads, commit: str, path: str, local: str) -> bool:
     """`path` at `commit` defines a name that is `local` inside its module."""
     names = await files.names(commit, path)
     return names is not None and any(local_name(qn, path) == local for qn in names)
 
 
 async def _moved_and_edited(
-    files: link_pass.Files, before: Link, a: LinkRow, new: list[Definition], head: str
+    files: link_pass.RepoReads, before: Link, a: LinkRow, new: list[Definition], head: str
 ) -> Successor:
     """The one definition with its name in another module among `new` (namesakes new
     since the link was in place), edited as it moved: followed as changed when its text
@@ -480,7 +469,7 @@ async def _moved_and_edited(
 
 
 async def _renamed(
-    files: link_pass.Files, before: Link, a: LinkRow, now: str, head: str
+    files: link_pass.RepoReads, before: Link, a: LinkRow, now: str, head: str
 ) -> Successor:
     """What the linked definition became at `head` in `now` when its name is gone there
     (`successor.successor`): read against the file as the link was last checked."""
@@ -520,7 +509,7 @@ async def _elsewhere(org: str, cns: str, lost: dict[str, str]) -> dict[str, list
 
 
 async def _resolve_pending(
-    org: str, cns: str, head: str, files: link_pass.Files, result: link_pass.PassResult
+    org: str, cns: str, head: str, files: link_pass.RepoReads, result: link_pass.PassResult
 ) -> list[Move]:
     """Every pass: drop pending names older than `memory_code_links_pending_days`; once
     the repository is indexed, relink the memories written before its first index and
@@ -576,7 +565,7 @@ async def _relink(
     org: str,
     cns: str,
     markers: list[PendingLink],
-    files: link_pass.Files,
+    files: link_pass.RepoReads,
     result: link_pass.PassResult,
 ) -> None:
     """Link the memories waiting behind a `*` marker (written before the repository's
@@ -611,12 +600,12 @@ async def _current_moves(org: str, moves: list[Move]) -> list[Move]:
     if not moves:
         return []
     heads = {
-        h["mid"]: h for h in await store.memory_heads(org, [m.before["memory_id"] for m in moves])
+        h["mid"]: h for h in await store.memory_heads(org, [m.row["memory_id"] for m in moves])
     }
     out = []
     for m in moves:
-        head = heads.get(m.before["memory_id"])
-        if head is not None and current(org, head, [m.before]):
+        head = heads.get(m.row["memory_id"])
+        if head is not None and current(org, head, [m.row]):
             out.append(m)
     return out
 
@@ -660,9 +649,9 @@ async def _write_moves(moves: list[Move], head: str) -> None:
     whose key changed is replaced in the same insert."""
     rows: list[LinkRow] = []
     gone: list[LinkRow] = []
-    revised = await policy.revised_namespaces([m.before for m in moves])
+    revised = await policy.revised_namespaces([m.row for m in moves])
     for m in moves:
-        a, link = m.before, m.after
+        a, link = m.row, m.link
         relinked = (link.path, link.qualified_name) != (a["path"], a["qualified_name"])
         if relinked:
             gone.append(a)
