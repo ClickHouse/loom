@@ -7,13 +7,13 @@ candidates."""
 from __future__ import annotations
 
 import asyncio
-from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
 
 from server.code.app.index import gitrepo
-from server.code.domain.anchor import Definition, fingerprint
-from server.code.domain.declaration import NO_SHAPE, Declarations, edit_pattern
+from server.code.domain.anchor import Definition
+from server.code.domain.declaration import edit_pattern
+from server.code.domain.definitions import definitions
 from server.code.domain.index.remote import repo_tag
 from server.code.domain.index.repos import configured_repos, docs_namespaces, repo_for_namespace
 from server.code.store.index import CodeRepo
@@ -208,7 +208,7 @@ async def parsed(
     if data is None:
         return None
     # parsing and fingerprinting is CPU work: off the event loop
-    defs = await asyncio.to_thread(_definitions, path, data, named)
+    defs = await asyncio.to_thread(file_definitions, path, data, named)
     return FileAt(data.decode("utf-8", "replace").split("\n"), defs)
 
 
@@ -234,68 +234,11 @@ async def names_at(org: str, namespace: str, commit: str, path: str) -> set[str]
     return {s.qualified_name for s in symbols}
 
 
-def _definitions(path: str, source: bytes, named: str = "") -> list[Definition]:
-    """Each symbol of the file, fingerprinted with every overload of its name; with
-    `named`, only those of that bare name, and without rename shapes. A parse that
-    failed raises `ParseFailed`."""
+def file_definitions(path: str, source: bytes, named: str = "") -> list[Definition]:
+    """`source`'s definitions, fingerprinted (`definitions`); with `named`, only those of
+    that bare name, without rename shapes. A parse that failed raises `ParseFailed`."""
     symbols, tree = _parse(path, source)
-    lines = source.decode("utf-8", "replace").split("\n")
-    groups: dict[str, list[Any]] = defaultdict(list)
-    for sym in sorted(symbols, key=lambda x: x.start_line):
-        if not named or sym.name == named:
-            groups[sym.qualified_name].append(sym)
-    decls = Declarations.parse(path, source, tree)
-    out: list[Definition] = []
-    for qn, syms in groups.items():
-        starts = [decls.start(s.start_line) if decls else s.start_line for s in syms]
-        # hash every declaration of the name in its scopes (overload signatures, repeats,
-        # one per `#if` branch), which the index folds or numbers; texts and shapes come
-        # from the same families
-        at = [s.start_line for s in syms]
-        prints = decls.fingerprints(at, syms[0].name, shapes=not named) if decls else None
-        if prints:
-            body, exact, calls, reads, shown = prints
-        else:
-            # each declaration's own bytes; its lines when the parser cannot single it out
-            texts = [
-                (decls.text(s.start_line, s.name) if decls else None)
-                or "\n".join(lines[b - 1 : s.end_line])
-                for b, s in zip(starts, syms, strict=True)
-            ]
-            shapes = [
-                decls.shape(s.start_line, s.name) if decls and not named else NO_SHAPE for s in syms
-            ]
-            # each shape over the whole group, '' when any declaration has none
-            exact, calls, reads = (
-                fingerprint(part) if all(part) else "" for part in zip(*shapes, strict=True)
-            )
-            body = fingerprint(
-                [
-                    (decls.printed(s.start_line, s.name) if decls else None) or text
-                    for s, text in zip(syms, texts, strict=True)
-                ]
-            )
-            shown = "\n\n".join(
-                (decls.shown(s.start_line, s.name) if decls else None) or text
-                for s, text in zip(syms, texts, strict=True)
-            )
-        out.extend(
-            Definition(
-                path=path,
-                qualified_name=qn,
-                name=s.name,
-                symbol_id=s.id,
-                start_line=b,
-                end_line=s.end_line,
-                body_hash=body,
-                shape=exact,
-                loose_shapes=(calls, reads),
-                kind=s.kind,
-                shown=shown,
-            )
-            for b, s in zip(starts, syms, strict=True)
-        )
-    return out
+    return definitions(path, source, symbols, tree, named=named)
 
 
 async def live_paths(org: str, namespace: str, refs: list[str]) -> dict[str, str]:

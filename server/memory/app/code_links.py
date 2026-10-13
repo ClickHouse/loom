@@ -638,7 +638,7 @@ async def _rehashed(a: dict[str, Any], files: Files) -> dict[str, Any]:
             found = await files.defs(commit, path, qualified_name)
         except code.ParseFailed:
             return None  # no more readable than a commit the mirror lost
-        return (found[0].body_hash, found[0].shape) if found else ("", "")
+        return (found[0].body_hash, found[0].shape.exact) if found else ("", "")
 
     link = _link_of(a)
     anchored = await read_at(str(a["anchored_commit"]), link.anchored_path, link.anchored_name)

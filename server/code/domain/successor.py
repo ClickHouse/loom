@@ -95,10 +95,10 @@ def successor(was: Definition, before: Side, now: Side) -> Successor:
         namesake, rivals, in_scope = _across_renamed_class(was, rivals, in_scope)
         if namesake is not None:
             return Successor(namesake, exact=not carried, carried=carried)
-    taken = {r.shape for r in rivals if r.shape and r.shape != was.shape}
-    pool = [d for d in in_scope if d.shape not in taken]
+    taken = {r.shape.exact for r in rivals if r.shape.exact and r.shape.exact != was.shape.exact}
+    pool = [d for d in in_scope if d.shape.exact not in taken]
     for found, exact in (
-        ([d for d in pool if was.shape and d.shape == was.shape], True),
+        ([d for d in pool if was.shape.exact and d.shape.exact == was.shape.exact], True),
         ([d for d in pool if _loose(was, d)], False),
     ):
         if (
@@ -124,7 +124,9 @@ def successor(was: Definition, before: Side, now: Side) -> Successor:
     # a rival's rename alone, that is still close (or too long to tell) to this one too:
     # it may be either
     contested = any(
-        _loose(was, d) or _maybe_close(was, d, before, now) for d in in_scope if d.shape in taken
+        _loose(was, d) or _maybe_close(was, d, before, now)
+        for d in in_scope
+        if d.shape.exact in taken
     )
     return Successor(None, uncertain=contested)
 
@@ -134,7 +136,7 @@ def _renamed_alone(scope: str, target: str, before: Side, now: Side) -> bool:
     same rename shape."""
 
     def shape(side: Side, name: str) -> str:
-        found = [d.shape for d in side.defs if local_name(d.qualified_name, d.path) == name]
+        found = [d.shape.exact for d in side.defs if local_name(d.qualified_name, d.path) == name]
         return found[0] if len(found) == 1 else ""
 
     old = shape(before, scope)
@@ -230,7 +232,8 @@ def _renamed_scope(scope: str, before: Side, now: Side) -> tuple[str, bool]:
 
 
 def _loose(was: Definition, d: Definition) -> bool:
-    return any(x and x == y for x, y in zip(d.loose_shapes, was.loose_shapes, strict=False))
+    loose = (d.shape.calls, was.shape.calls), (d.shape.reads, was.shape.reads)
+    return any(x and x == y for x, y in loose)
 
 
 def _tokens(text: str, name: str) -> list[str]:

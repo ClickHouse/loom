@@ -6,14 +6,14 @@ from __future__ import annotations
 
 import pytest
 
-from server.code.app.memory_links import _definitions
+from server.code.app.memory_links import file_definitions
 from server.code.domain.anchor import Link, locate, recheck
 from server.code.domain.successor import _MAX_LINES, Side, successor
 from tests.unit.step_count import steps as count
 
 
 def _side(path: str, src: str) -> Side:
-    return Side(path, _definitions(path, src.encode()), src.splitlines())
+    return Side(path, file_definitions(path, src.encode()), src.splitlines())
 
 
 def _after(before: tuple[str, str], after: tuple[str, str], name: str = "fetch_rows") -> Link:

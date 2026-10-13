@@ -8,13 +8,15 @@ import itertools
 
 import pytest
 
-from server.code.app.memory_links import _definitions
+from server.code.app.memory_links import file_definitions
 from server.code.domain.declaration import Declarations
 
 
 def _hash(path: str, src: str, qualified_name: str) -> str:
     return next(
-        d.body_hash for d in _definitions(path, src.encode()) if d.qualified_name == qualified_name
+        d.body_hash
+        for d in file_definitions(path, src.encode())
+        if d.qualified_name == qualified_name
     )
 
 
@@ -119,7 +121,7 @@ def test_a_family_is_read_once_for_all_its_numbered_declarations(monkeypatch) ->
 
     monkeypatch.setattr(Declarations, "_shape_at", counted)
     src = "".join(f"function fetch_rows() {{ return {i}; }}\n" for i in range(64))
-    defs = _definitions("m.js", src.encode())
+    defs = file_definitions("m.js", src.encode())
     assert len(defs) == 64 and len({d.body_hash for d in defs}) == 1
     assert calls <= 2 * 64
 
@@ -155,7 +157,7 @@ def test_a_name_defined_in_two_blocks_covers_both(path, src, qualified_name) -> 
 
 def test_a_rust_attribute_above_a_doc_comment_is_part_of_the_definition() -> None:
     src = '#[cfg(feature = "A")]\n/// Reads rows.\npub fn fetch_rows() -> u32 { 1 }\n'
-    (d,) = _definitions("src/a.rs", src.encode())
+    (d,) = file_definitions("src/a.rs", src.encode())
     assert d.start_line == 1
     assert _hash("src/a.rs", src.replace('"A"', '"B"'), d.qualified_name) != d.body_hash
 
@@ -165,7 +167,7 @@ def test_reading_a_class_is_linear_in_its_members() -> None:
 
     def work(n: int) -> int:
         src = "class C:\n" + "".join(f"    def m{i}(self):\n        return {i}\n" for i in range(n))
-        return steps(lambda: _definitions("a.py", src.encode()))
+        return steps(lambda: file_definitions("a.py", src.encode()))
 
     assert work(800) / work(100) < 12
 
@@ -211,7 +213,7 @@ def test_reading_a_class_is_linear_in_its_members() -> None:
 )
 def test_a_comment_above_a_definition_is_no_part_of_it(path, src) -> None:
     def own(source: str) -> list[tuple[str, str]]:
-        defs = _definitions(path, source.encode())
+        defs = file_definitions(path, source.encode())
         return [
             (d.body_hash, d.shape) for d in defs if d.name in ("fetch_rows", "fetchRows", "Rows")
         ]
@@ -230,8 +232,8 @@ def test_go_methods_on_two_receivers_are_two_families() -> None:
 
 
 def test_an_inline_cpp_file_is_read_as_cpp() -> None:
-    (d,) = _definitions("src/a.inl", b"int fetch_rows() { return 1; }\n")
-    assert d.shape
+    (d,) = file_definitions("src/a.inl", b"int fetch_rows() { return 1; }\n")
+    assert d.shape.exact
 
 
 def test_a_name_declared_many_times_is_hashed_once_for_all_its_numbers() -> None:
@@ -239,13 +241,13 @@ def test_a_name_declared_many_times_is_hashed_once_for_all_its_numbers() -> None
 
     def work(n: int) -> int:
         src = "".join(f"function handler(a) {{ return a + {i}; }}\n" for i in range(n))
-        return steps(lambda: _definitions("lib/a.js", src.encode()))
+        return steps(lambda: file_definitions("lib/a.js", src.encode()))
 
     assert work(400) / work(50) < 12
 
 
 def _defs(path: str, src: str, qualified_name: str) -> list:
-    return [d for d in _definitions(path, src.encode()) if d.qualified_name == qualified_name]
+    return [d for d in file_definitions(path, src.encode()) if d.qualified_name == qualified_name]
 
 
 def _conditions(shown: str | None) -> str:
@@ -260,7 +262,7 @@ def _guard(path: str, src: str) -> str:
     """The conditions that select the first `value` in `src`."""
     decls = Declarations.parse(path, src.encode())
     assert decls is not None
-    d = next(d for d in _definitions(path, src.encode()) if d.name == "value")
+    d = next(d for d in file_definitions(path, src.encode()) if d.name == "value")
     return _conditions(decls.shown(d.start_line, "value"))
 
 
@@ -285,9 +287,9 @@ def test_a_condition_selecting_the_definition_changes_its_fingerprints(
 ) -> None:
     (before,), (after,) = _defs(path, src, qn)[:1], _defs(path, src.replace(old, new), qn)[:1]
     assert before.body_hash != after.body_hash
-    assert before.loose_shapes != after.loose_shapes  # nor a rename of it
+    assert before.shape[1:] != after.shape[1:]  # nor a rename of it
     renamed = _defs(path, src.replace("value", "amount"), qn.replace("value", "amount"))[0]
-    assert renamed.loose_shapes == before.loose_shapes
+    assert renamed.shape[1:] == before.shape[1:]
 
 
 def test_the_guard_names_each_condition_and_branch() -> None:
@@ -357,7 +359,7 @@ def test_an_include_guard_is_no_condition() -> None:
     once = _defs("c/baz.h", f"#pragma once\n{body}", "value")[0]
     assert _guard("a/foo.h", f"#ifndef A_FOO_H\n#define A_FOO_H\n{body}#endif\n") == ""
     assert guarded.body_hash == renamed.body_hash
-    assert (guarded.shape, guarded.loose_shapes) == (once.shape, once.loose_shapes)
+    assert guarded.shape == once.shape
 
 
 def test_a_comment_or_line_break_in_a_condition_is_no_change() -> None:
@@ -365,7 +367,7 @@ def test_a_comment_or_line_break_in_a_condition_is_no_change() -> None:
     noted = src.replace(" && B", " /* why */ \\\n  && B")
     before, after = _defs("a.cpp", src, "value")[0], _defs("a.cpp", noted, "value")[0]
     assert _guard("a.cpp", src) == "#if defined ( A ) && B"
-    assert (before.body_hash, before.loose_shapes) == (after.body_hash, after.loose_shapes)
+    assert (before.body_hash, before.shape[1:]) == (after.body_hash, after.shape[1:])
 
 
 def test_a_guarded_file_is_read_in_linear_time() -> None:
@@ -374,7 +376,7 @@ def test_a_guarded_file_is_read_in_linear_time() -> None:
     def work(n: int) -> int:
         body = "".join(f"int value{i}() {{ return {i}; }}\n" for i in range(n))
         src = f"#if USE_X\n{body}#endif\n"
-        return steps(lambda: _definitions("a.cpp", src.encode()))
+        return steps(lambda: file_definitions("a.cpp", src.encode()))
 
     assert work(400) / work(50) < 12
 
@@ -396,7 +398,7 @@ def test_another_handler_type_changes_the_fingerprints() -> None:
     before = _defs("a.py", _HANDLED, "a::value")[0]
     after = _defs("a.py", _HANDLED.replace("ValueError", "KeyError"), "a::value")[0]
     assert before.body_hash != after.body_hash
-    assert before.loose_shapes != after.loose_shapes
+    assert before.shape[1:] != after.shape[1:]
 
 
 def test_the_name_a_handler_binds_is_no_part_of_its_guard() -> None:
@@ -404,7 +406,7 @@ def test_the_name_a_handler_binds_is_no_part_of_its_guard() -> None:
     renamed = bound.replace("as e:", "as err:")
     first, second = _defs("a.py", bound, "a::value")[0], _defs("a.py", renamed, "a::value")[0]
     assert _guard("a.py", bound) == "except ( ValueError , OSError )"
-    assert (first.body_hash, first.loose_shapes) == (second.body_hash, second.loose_shapes)
+    assert (first.body_hash, first.shape[1:]) == (second.body_hash, second.shape[1:])
 
 
 # Unchanged code under the current rules, one case per grammar's own rules. A hash change
@@ -469,9 +471,9 @@ def test_a_fingerprint_changes_only_with_its_rules(
 ) -> None:
     from server.code.domain.declaration import fingerprint_version
 
-    (d,) = [d for d in _definitions(path, src.encode()) if d.name == "value"]
+    (d,) = [d for d in file_definitions(path, src.encode()) if d.name == "value"]
     pinned = ("6", body, shape)
-    assert (fingerprint_version().split("-")[0], d.body_hash[:16], d.shape[:16]) == pinned, (
+    assert (fingerprint_version().split("-")[0], d.body_hash[:16], d.shape.exact[:16]) == pinned, (
         "fingerprints changed: bump _RULES (a grammar upgrade alone needs none) and re-pin"
     )
 
@@ -513,7 +515,7 @@ def test_the_index_tree_is_reused_only_for_its_own_grammar() -> None:
 
 
 def _value(path: str, src: str) -> str:
-    return next(d.body_hash for d in _definitions(path, src.encode()) if d.name == "value")
+    return next(d.body_hash for d in file_definitions(path, src.encode()) if d.name == "value")
 
 
 @pytest.mark.parametrize(

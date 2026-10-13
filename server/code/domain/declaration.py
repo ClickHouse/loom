@@ -13,7 +13,7 @@ from collections.abc import Iterator, Sequence
 from functools import lru_cache
 from typing import Any, NamedTuple
 
-from server.code.domain.anchor import fingerprint, unnumbered
+from server.code.domain.anchor import NO_SHAPE, Shape, fingerprint, unnumbered
 from server.code.domain.extract.lang_typescript_nodes import (
     _is_function_like,
     _unwrap,
@@ -242,29 +242,16 @@ def bound_function(value: Any) -> Any:
     return _unwrap(value) if _is_function_like(value) else _wrapped_function(value)
 
 
-class Shape(NamedTuple):
-    """A declaration's rename shapes: its tokens with the declared name blanked, and its
-    bare uses of that name blanked too. A rename alone leaves them the same."""
-
-    # every bare use of the name (call or read) blanked; '' when a use inside may mean
-    # something else (a parameter or local of that name, a call that may be another's)
-    exact: str
-    # only the bare calls blanked: a rename matching on this alone may be another's
-    calls: str
-    # every bare use blanked, whatever it may mean: likewise
-    reads: str
-
-
-NO_SHAPE = Shape("", "", "")
+def joined(shapes: Sequence[Shape]) -> Shape:
+    """One shape over several declarations of a name, each part '' when any of theirs is."""
+    return Shape(*(fingerprint(part) if all(part) else "" for part in zip(*shapes, strict=True)))
 
 
 class Prints(NamedTuple):
     """A definition's fingerprints, and the text the judge reads of it."""
 
     body: str
-    exact: str
-    calls: str
-    reads: str
+    shape: Shape
     shown: str
 
 
@@ -639,7 +626,7 @@ class Declarations:
     def fingerprints(
         self, lines: Sequence[int], name: str, *, shapes: bool = True
     ) -> Prints | None:
-        """The fingerprints (texts, exact, call, read) over every declaration spelled as those
+        """The fingerprints (text and rename shapes) over every declaration spelled as those
         at `lines` in their scopes, each scope once, in source order: overload signatures,
         a declaration and its implementation, a name declared twice, one per `#if` branch,
         each with the conditions that select it.
@@ -652,13 +639,9 @@ class Declarations:
             return None
         if keys not in self._prints:
             members = [m for key in keys for m in self._families[key]]
-            exact, calls, reads = (
-                fingerprint(part) if all(part) else ""
-                for part in zip(*(m.shape for m in members), strict=True)
-            )
             body = fingerprint([m.printed for m in members])
             shown = "\n\n".join(m.shown for m in members)
-            self._prints[keys] = Prints(body, exact, calls, reads, shown)
+            self._prints[keys] = Prints(body, joined([m.shape for m in members]), shown)
         return self._prints[keys]
 
     def _family_keys(

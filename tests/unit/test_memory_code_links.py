@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from server.code.domain.anchor import Shape
 from server.code.domain.declaration import edit_pattern
 from server.memory.app import code_link_reads, code_links
 from server.memory.domain import code_change
@@ -465,7 +466,7 @@ def test_exactly_the_cap_of_mentions_is_not_cut() -> None:
 
 
 def test_definitions_come_from_the_file_with_every_overload_in_one_fingerprint() -> None:
-    from server.code.app.memory_links import _definitions
+    from server.code.app.memory_links import file_definitions
 
     source = b"""class Reader:
     def read_rows(self, n):
@@ -474,16 +475,16 @@ def test_definitions_come_from_the_file_with_every_overload_in_one_fingerprint()
 def helper():
     return 1
 """
-    defs = {d.qualified_name: d for d in _definitions("pkg/io.py", source)}
+    defs = {d.qualified_name: d for d in file_definitions("pkg/io.py", source)}
     assert {"pkg.io::Reader", "pkg.io::Reader::read_rows", "pkg.io::helper"} <= set(defs)
     method = defs["pkg.io::Reader::read_rows"]
     assert (method.start_line, method.end_line) == (2, 3) and method.body_hash
     edited = source.replace(b"self.fetch(n)", b"self.fetch(n + 1)")
-    again = {d.qualified_name: d for d in _definitions("pkg/io.py", edited)}
+    again = {d.qualified_name: d for d in file_definitions("pkg/io.py", edited)}
     assert again["pkg.io::Reader::read_rows"].body_hash != method.body_hash
     assert again["pkg.io::helper"].body_hash == defs["pkg.io::helper"].body_hash
     renamed = source.replace(b"def helper", b"def assist")
-    (assist,) = [d for d in _definitions("pkg/io.py", renamed) if d.name == "assist"]
+    (assist,) = [d for d in file_definitions("pkg/io.py", renamed) if d.name == "assist"]
     assert assist.shape == defs["pkg.io::helper"].shape
 
 
@@ -760,7 +761,7 @@ async def test_links_of_a_repository_no_longer_configured_are_left_alone(monkeyp
 
 
 def test_decorators_and_template_heads_are_part_of_the_definition() -> None:
-    from server.code.app.memory_links import _definitions
+    from server.code.app.memory_links import file_definitions
 
     py = b"""import functools
 
@@ -776,14 +777,14 @@ x = [1]
 def plain():
     return 2
 """
-    defs = {d.name: d for d in _definitions("m.py", py)}
+    defs = {d.name: d for d in file_definitions("m.py", py)}
     assert (defs["cached"].start_line, defs["plain"].start_line) == (4, 12)
-    off = {d.name: d for d in _definitions("m.py", py.replace(b"128", b"0"))}
+    off = {d.name: d for d in file_definitions("m.py", py.replace(b"128", b"0"))}
     assert off["cached"].body_hash != defs["cached"].body_hash
     assert off["plain"].body_hash == defs["plain"].body_hash
     cpp = b"namespace a {\ntemplate <int N = 1>\nint f() { return N; }\n}\n"
-    (f,) = [d for d in _definitions("m.cpp", cpp) if d.name == "f"]
-    (g,) = [d for d in _definitions("m.cpp", cpp.replace(b"N = 1", b"N = 2")) if d.name == "f"]
+    (f,) = [d for d in file_definitions("m.cpp", cpp) if d.name == "f"]
+    (g,) = [d for d in file_definitions("m.cpp", cpp.replace(b"N = 1", b"N = 2")) if d.name == "f"]
     assert f.start_line == 2 and f.body_hash != g.body_hash
 
 
@@ -1072,7 +1073,11 @@ async def test_a_change_only_new_rules_see_reads_changed(monkeypatch) -> None:
     }
 
     async def defs(commit, path, qn):
-        return [Definition(path, qn, "f", body_hash=f"new-{commit}", shape=f"shape-{commit}")]
+        return [
+            Definition(
+                path, qn, "f", body_hash=f"new-{commit}", shape=Shape(f"shape-{commit}", "", "")
+            )
+        ]
 
     files = code_links.Files("o", "code-a")
     monkeypatch.setattr(files, "defs", defs)
@@ -1233,7 +1238,7 @@ async def test_a_missing_link_is_rehashed_from_the_commit_it_was_last_read_at(mo
     }
 
     async def defs(commit, path, qn):
-        return [Definition(path, qn, "f", body_hash=f"new-{commit}", shape="same")]
+        return [Definition(path, qn, "f", body_hash=f"new-{commit}", shape=Shape("same", "", ""))]
 
     files = code_links.Files("o", "code-a")
     monkeypatch.setattr(files, "defs", defs)
@@ -1303,9 +1308,9 @@ def _history(monkeypatch, files, commits, renames=None, *, traceable=True) -> No
 
 
 def _file(path: str, src: str) -> Any:
-    from server.code.app.memory_links import FileAt, _definitions
+    from server.code.app.memory_links import FileAt, file_definitions
 
-    return FileAt(src.split("\n"), _definitions(path, src.encode()))
+    return FileAt(src.split("\n"), file_definitions(path, src.encode()))
 
 
 @pytest.mark.asyncio

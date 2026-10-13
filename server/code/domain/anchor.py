@@ -30,6 +30,22 @@ _SNAKE = re.compile(r"\b[a-z][a-z0-9]*_[a-z0-9_]{2,}\b")
 _MIN_BARE = 4
 
 
+class Shape(NamedTuple):
+    """A declaration's rename shapes: its tokens with the declared name blanked, and its
+    bare uses of that name blanked too. A rename alone leaves them the same."""
+
+    # every bare use of the name (call or read) blanked; '' when a use inside may mean
+    # something else (a parameter or local of that name, a call that may be another's)
+    exact: str
+    # only the bare calls blanked: a rename matching on this alone may be another's
+    calls: str
+    # every bare use blanked, whatever it may mean: likewise
+    reads: str
+
+
+NO_SHAPE = Shape("", "", "")
+
+
 @dataclass(frozen=True)
 class Definition:
     path: str
@@ -40,18 +56,12 @@ class Definition:
     end_line: int = 0
     # The fingerprint of the definition's text, all overloads together.
     body_hash: str = ""
-    # Its tokens with the declared name and its bare calls and reads blanked
-    # (`declaration.Declarations.shape`): unchanged by a rename alone; '' where no grammar
-    # parses it or the name is also used another way inside, and then never matched as one.
-    shape: str = ""
-    # The declared name with its bare calls, and with its bare calls and reads, blanked: a
-    # rename matched by these alone may have changed what a name means, so it is
-    # relinked as changed.
-    loose_shapes: tuple[str, ...] = ()
+    # Its rename shapes, over all overloads; NO_SHAPE where no grammar parses it.
+    shape: Shape = NO_SHAPE
     # the index's kind: function, class, struct, …
     kind: str = ""
     # what the judge reads of it: every declaration its fingerprint covers, each under the
-    # conditions that select it (`Declarations.family_text`)
+    # conditions that select it (`Prints.shown`)
     shown: str = ""
 
 
