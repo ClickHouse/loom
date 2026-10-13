@@ -8,9 +8,9 @@ from __future__ import annotations
 import asyncio
 import inspect
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
-from unittest.mock import AsyncMock
 
 from server.memory.app import search_pages as sp
 from server.transport import mcp_runs
