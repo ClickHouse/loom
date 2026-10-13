@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Iterator, Sequence
 from functools import lru_cache
 from typing import Any, NamedTuple
@@ -43,6 +43,7 @@ _SCOPES = {"block", "module"}
 # decorators and attributes written as siblings before the declaration
 _PREFIXES = {"decorator", "attribute_item"}
 _COMMENTS = {"comment", "line_comment", "block_comment"}  # Rust's are the last two
+_LAYOUT = _COMMENTS | {"line_continuation"}
 # `const NAME = () => …`: a function bound to a variable, as the index declares it
 _VARIABLES = {"lexical_declaration", "variable_declaration"}
 # the nodes that declare the name they carry (a call or a qualified reference has a
@@ -362,6 +363,8 @@ class Declarations:
         self._scopes: dict[tuple[int, int, str], dict[str, list[Any]]] = {}
         self._families: dict[tuple[Any, ...], list[Member]] = {}
         self._prints: dict[tuple[tuple[Any, ...], ...], Prints] = {}
+        self._cuts: dict[tuple[int, int, str], _Cut] = {}
+        self._bindings: dict[tuple[int, int, str], dict[str, tuple[Any, Any, Any]]] = {}
 
     @classmethod
     def parse(cls, path: str, source: bytes, tree: Any = None) -> Declarations | None:
@@ -470,17 +473,21 @@ class Declarations:
     def _bound(self, decl: Any, name: str) -> tuple[Any, Any, Any] | None:
         """(declarator, name, body) of the declarator binding `name`: to a function as the
         index reads one (through `(…)`, `as`, `satisfies`, `!` and wrapper calls), else
-        to a value, with no body."""
-        value = None
-        for d in decl.named_children:
-            n, v = d.child_by_field_name("name"), d.child_by_field_name("value")
-            if d.type != "variable_declarator" or n is None or self._text(n) != name:
-                continue
-            fn = None if v is None else bound_function(v)
-            if fn is not None:
-                return d, n, fn.child_by_field_name("body")
-            value = value or (d, n, None)
-        return value
+        to a value, with no body. Read once per declaration."""
+        if (known := self._bindings.get(_key(decl))) is None:
+            values: dict[str, tuple[Any, Any, Any]] = {}
+            functions: dict[str, tuple[Any, Any, Any]] = {}
+            for d in decl.named_children:
+                n, v = d.child_by_field_name("name"), d.child_by_field_name("value")
+                if d.type != "variable_declarator" or n is None:
+                    continue
+                fn = None if v is None else bound_function(v)
+                if fn is None:
+                    values.setdefault(self._text(n), (d, n, None))
+                else:
+                    functions.setdefault(self._text(n), (d, n, fn.child_by_field_name("body")))
+            known = self._bindings[_key(decl)] = values | functions
+        return known.get(name)
 
     def _text(self, node: Any) -> str:
         return self.source[node.start_byte : node.end_byte].decode("utf-8", "replace")
@@ -519,7 +526,8 @@ class Declarations:
 
     def _tokens(self, at: tuple[Any, Any], decl: Any) -> _Tokens:
         fields = _Fields()
-        leaves, marks = _leaves(*at, fields, self.source, _skipped(at, decl), self.grammar)
+        kept = None if (cut := self._cut(decl)) is None else (decl.parent, cut.kept(decl))
+        leaves, marks = _leaves(*at, fields, self.source, self.grammar, kept)
         texts = [_quote(x, self._text(x), self.grammar) for x in leaves]
         return _Tokens(leaves, marks, texts, fields)
 
@@ -530,11 +538,23 @@ class Declarations:
             (c.prev_sibling.end_byte if c.prev_sibling else c.start_byte, c.end_byte)
             for c in _comments_within(*at)
         ]
-        for start, end in sorted(_sibling_spans(found[0] if found else None) + comments):
+        cut = self._cut(found[0]) if found else None
+        siblings = cut.spans(found[0]) if cut is not None and found else []
+        for start, end in sorted(siblings + comments):
             out.append(self.source[pos:start])
             pos = end
         out.append(self.source[pos : at[1].end_byte])
         return b"".join(out).decode("utf-8", "replace")
+
+    def _cut(self, decl: Any) -> _Cut | None:
+        """The declarators of `const a = …, b = …` that `decl` is one of, read once per
+        declaration; None for any other node."""
+        parent = decl.parent if decl.type == "variable_declarator" else None
+        if parent is None or parent.type not in _VARIABLES:
+            return None
+        if (key := _key(parent)) not in self._cuts:
+            self._cuts[key] = _Cut(parent)
+        return self._cuts[key]
 
     def _guard(self, node: Any) -> str:
         """The conditions that select `node`, outermost first, one a line: `#if X` over
@@ -807,77 +827,22 @@ def _spelled(named: Any) -> str:
     return text
 
 
-def _sibling_nodes(decl: Any) -> list[Any]:
-    """The other declarators of `const a = …, b = …` beside `decl`, the commas between
-    them and the comments beside each (what lies between two commas goes with the
-    declarator there): what `b` is says nothing about `a`."""
-    parent = decl.parent if decl is not None and decl.type == "variable_declarator" else None
-    if parent is None or parent.type not in _VARIABLES:
-        return []
-    # `var a = …, a = …`: the last one binds it; nothing is cut, so the whole reads
-    name = (decl.child_by_field_name("name") or decl).text
-    if any(
-        c.type == "variable_declarator"
-        and not _same(c, decl)
-        and (c.child_by_field_name("name") or c).text == name
-        for c in parent.children
-    ):
-        return []
-    out: list[Any] = []
-    segment: list[Any] = []
-    for c in [*parent.children, None]:
-        if c is None or c.type == ",":
-            if any(x.type == "variable_declarator" and not _same(x, decl) for x in segment):
-                out.extend(x for x in segment if x.type in ("variable_declarator", "comment"))
-            segment = []
-            if c is not None:
-                out.append(c)
-        else:
-            segment.append(c)
-    return out
-
-
-def _skipped(at: tuple[Any, Any], decl: Any) -> set[tuple[int, int, str]]:
-    """What a fingerprint and a rename shape leave out of `at`: the sibling declarators
-    beside `decl` and the layout (`_layout_in`)."""
-    return {_key(n) for n in [*_sibling_nodes(decl), *_layout_in(*at)]}
-
-
-def _layout_in(first: Any, last: Any) -> list[Any]:
-    """Every comment and Python `\\` line continuation from `first` to `last`, each a
-    whole node (a Rust block comment has its delimiters as children)."""
-    out, stack, n = [], [], first
-    while n is not None:
-        stack.append(n)
-        if n == last:
-            break
-        n = n.next_sibling
-    while stack:
-        n = stack.pop()
-        if n.type in _COMMENTS or n.type == "line_continuation":
-            out.append(n)
-        else:
-            stack.extend(n.children)
-    return out
-
-
 def _comments_within(first: Any, node: Any) -> list[Any]:
     """The comments from `first` up to the declaration's own first token, past its
     decorators, annotations, attributes and template head: a comment above a definition
     is no part of it, wherever the grammar puts it (`@Override // c public int f`)."""
-    stack, n = [], first
-    while n is not None and n.start_byte <= node.start_byte:
-        stack.append((n, False))
-        n = n.next_named_sibling
-    stack.reverse()
     out = []
+    # (node, inside a head, among `first`'s siblings): children are read only as reached
+    stack = [(first, False, True)]
     while stack:
-        n, in_head = stack.pop()
+        n, in_head, top = stack.pop()
+        after = n.next_named_sibling if top else n.next_sibling
+        if after is not None and (not top or after.start_byte <= node.start_byte):
+            stack.append((after, in_head, top))
         if n.type in _COMMENTS:
             out.append(n)
         elif n.child_count:
-            in_head = in_head or n.type in _HEADS
-            stack.extend((c, in_head) for c in reversed(n.children))
+            stack.append((n.child(0), in_head or n.type in _HEADS, False))
         elif not (in_head or n.type in _HEADS or _exported(n)):
             return out  # the declaration's own first token
     return out
@@ -894,23 +859,67 @@ def _exported(token: Any) -> bool:
     )
 
 
-def _sibling_spans(decl: Any) -> list[tuple[int, int]]:
-    """The byte ranges of `_sibling_nodes`, each from the end of the node before it, so
-    `const a = 1, b = 2;` reads `const a = 1;` whichever side `a` is on."""
-    cut = {_key(n) for n in _sibling_nodes(decl)}
-    if not cut:
-        return []
-    out: list[tuple[int, int]] = []
-    prev = None
-    for c in decl.parent.children:
-        if _key(c) in cut:
-            start = prev.end_byte if prev is not None else c.start_byte
-            if out and out[-1][1] >= start:
-                out[-1] = (out[-1][0], c.end_byte)
+_CUT_TYPES = {"variable_declarator", "comment"}
+
+
+class _Cut:
+    """The declarators of `const a = …, b = …`, the commas between them and the comments
+    beside each (what lies between two commas goes with the declarator there): what `b`
+    is says nothing about `a`, so each reads alone."""
+
+    def __init__(self, parent: Any) -> None:
+        self.children = parent.children
+        # `var a = …, a = …`: the last one binds it; nothing is cut, so the whole reads
+        names = Counter(
+            (c.child_by_field_name("name") or c).text
+            for c in self.children
+            if c.type == "variable_declarator"
+        )
+        self._repeated = {n for n, k in names.items() if k > 1}
+        self._own: dict[tuple[int, int, str], list[int]] = {}
+        self._fixed: list[int] = []  # what every declarator reads: the keyword, the `;`
+        holders = 0
+        segment: list[int] = []
+        for i, c in enumerate([*self.children, None]):
+            if c is not None and c.type != ",":
+                segment.append(i)
+                continue
+            mine = [j for j in segment if self.children[j].type in _CUT_TYPES]
+            declarators = [j for j in mine if self.children[j].type == "variable_declarator"]
+            if declarators:
+                holders += 1
+                self._own[_key(self.children[declarators[0]])] = mine
+                self._fixed.extend(j for j in segment if j not in mine)
             else:
-                out.append((start, c.end_byte))
-        prev = c
-    return out
+                self._fixed.extend(segment)
+            segment = []
+        self._cuts = holders > 1
+
+    def _indexes(self, decl: Any) -> list[int] | None:
+        """The indexes of the children `decl` reads; None when it reads them all."""
+        if not self._cuts or (decl.child_by_field_name("name") or decl).text in self._repeated:
+            return None
+        return sorted([*self._fixed, *self._own.get(_key(decl), [])])
+
+    def kept(self, decl: Any) -> list[Any]:
+        """The children `decl` reads."""
+        kept = self._indexes(decl)
+        return list(self.children) if kept is None else [self.children[i] for i in kept]
+
+    def spans(self, decl: Any) -> list[tuple[int, int]]:
+        """The byte ranges `decl` does not read, each cut child from the end of the node
+        before it, so `const a = 1, b = 2;` reads `const a = 1;` whichever side `a` is on."""
+        kept = self._indexes(decl)
+        if kept is None:
+            return []
+        out = []
+        prev = -1
+        for i in [*kept, len(self.children)]:
+            if i > prev + 1:  # children prev+1 .. i-1 are cut
+                start = self.children[prev].end_byte if prev >= 0 else self.children[0].start_byte
+                out.append((start, self.children[i - 1].end_byte))
+            prev = i
+        return out
 
 
 class _Gap(NamedTuple):
@@ -951,13 +960,14 @@ def _leaves(
     last: Any,
     fields: _Fields,
     source: bytes,
-    skip: set[tuple[int, int, str]] | None = None,
     grammar: str = "",
+    kept: tuple[Any, list[Any]] | None = None,
 ) -> tuple[list[Any], list[str]]:
-    """The tokens from `first` to `last` but those a formatter adds or removes
-    (`_formatting`), with the text no token covers (`_gaps`), each with the nodes opened
-    and closed before it (so the same tokens nested differently differ); records each
-    node's parent and previous sibling in `fields`."""
+    """The tokens from `first` to `last` but the layout (comments, Python's `\\` line
+    continuations) and those a formatter adds or removes (`_formatting`), with the text no
+    token covers (`_gaps`), each with the nodes opened and closed before it (so the same
+    tokens nested differently differ); records each node's parent and previous sibling in
+    `fields`. `kept` is (a node, the children of it read): `_Cut.kept`."""
     out: list[Any] = []
     marks: list[str] = []
     pending: list[str] = []
@@ -966,7 +976,7 @@ def _leaves(
         stack: list[tuple[Any, bool]] = [(node, False)]
         while stack:
             n, closing = stack.pop()
-            if skip and _key(n) in skip or not closing and _formatting(n, grammar):
+            if not closing and (n.type in _LAYOUT or _formatting(n, grammar)):
                 continue
             if closing:
                 pending.append(")")
@@ -977,10 +987,12 @@ def _leaves(
             else:
                 pending.append("(" + n.type)
                 stack.append((n, True))
-                children = n.children
+                cut = kept[1] if kept is not None and _same(n, kept[0]) else None
+                children = n.children if cut is None else cut
                 for i, c in enumerate(children):
                     fields.around[_key(c)] = (n, children[i - 1] if i else None)
-                stack.extend((c, False) for c in reversed(_gaps(n, source)))
+                within = _gaps(n, source) if cut is None else cut
+                stack.extend((c, False) for c in reversed(within))
         if node == last:
             break
         node = node.next_sibling
