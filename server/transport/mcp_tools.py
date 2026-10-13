@@ -587,6 +587,11 @@ def search_answer(
         f"{know_n} knowledge, {conv_n} conversation hit"
         f"{'' if (mem_n + prof_n + know_n + conv_n) == 1 else 's'}.{withheld_note(payload)}"
     ]
+    if skipped := payload["memory"].get("namespaces_skipped"):
+        lines.append(
+            f"Not read, over the fan-out cap: {', '.join(skipped)}. "
+            "Pass one as `namespace` to search it."
+        )
     if prof_hits:
         lines.append("\nProfile hits:")
         for h in prof_hits[:top_k]:

@@ -21,9 +21,10 @@ class MemorySearchSettings(BaseModel):
     # (measured sweep of 24 namespaces: 6.2 s).
     memory_search_fanout_kinds: str = "memory"
     # Upper bound on how many of the caller's namespaces an all_mine fan-out
-    # reads (the addressed one is read regardless); the rest are named in
-    # memory.search's `namespaces_skipped`. Every leg issues at least one
-    # statement per namespace.
+    # reads (the addressed one is read regardless); memory.search names the
+    # rest in `namespaces_skipped`. Every leg issues at least one statement
+    # per namespace. A guard, not a tuning knob: the widest token on the shared
+    # deployment holds 26 namespaces of every kind, so 32 cuts no one today.
     memory_search_fanout_max_namespaces: int = Field(default=32, ge=1)
     # Key-embedding axis on the fact leg: "on" scores least(value_dist,
     # key_dist) and reads both vector columns (measured 399 vs 203 MB/query on

@@ -335,3 +335,19 @@ async def test_tier_waterfall_reads_an_addressed_namespace_first_when_the_token_
     await _run_scoped(auth, namespace="mine", namespace_scope="all_mine")
     queried = list(dict.fromkeys(q.namespace for q in env.search_queries))
     assert queried == ["mine", "priv"]
+
+
+async def test_the_output_names_the_namespaces_the_cap_left_out(
+    env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import server.auth.context as auth_ctx
+    import server.settings as settings_mod
+
+    async def mine(org: str, subject: str | None = None) -> list[str]:
+        return ["ns_a", "ns_b", "ns_c"]
+
+    monkeypatch.setattr(auth_ctx, "resolve_my_namespaces", mine)
+    monkeypatch.setattr(settings_mod.settings, "memory_search_fanout_max_namespaces", 1)
+    out = await _run(namespace="ns_b", namespace_scope="all_mine")
+    assert out.namespaces_searched == ["ns_b", "ns_a"]
+    assert out.namespaces_skipped == ["ns_c"]

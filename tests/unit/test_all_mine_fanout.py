@@ -6,6 +6,7 @@ always the namespace the call addressed."""
 from __future__ import annotations
 
 import asyncio
+import copy
 from collections.abc import Iterator
 
 import pytest
@@ -15,11 +16,10 @@ import server.identity.app.namespace_kinds as nk
 import server.identity.app.namespace_visibility as nv
 from server.auth.context import Fanout, namespaces_to_search, with_addressed
 from server.auth.jwt import AuthInfo
-from server.memory.api.models_search import MemorySearchInput
-from server.memory.app.search import scope
 from server.operations.base import Role
 from server.settings import settings
-from server.transport import mcp_call
+from server.transport import mcp_call, mcp_tools
+from tests.unit.test_mcp_lean_results import PAYLOAD as SEARCH_PAYLOAD
 
 ORG = "dev"
 
@@ -115,7 +115,9 @@ def test_the_addressed_namespace_leads_when_the_fanout_lacks_it() -> None:
     assert with_addressed("", ["team"]) == ["team"]
 
 
-def test_every_leg_reads_the_addressed_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_namespaces_to_search_leads_with_the_addressed_namespace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     async def _fanout(org: str) -> Fanout:
         return Fanout(org=org, namespaces=("team",), skipped=("mine",))
 
@@ -125,29 +127,12 @@ def test_every_leg_reads_the_addressed_namespace(monkeypatch: pytest.MonkeyPatch
     assert asyncio.run(namespaces_to_search(ORG, "mine", None)) == ["mine"]
 
 
-def test_memory_search_names_what_the_cap_skipped_except_the_addressed_one() -> None:
-    async def _run() -> tuple[list[str], scope._SearchRun]:
-        async def _fanout() -> Fanout:
-            return Fanout(org=ORG, namespaces=("a", "b"), skipped=("c", "mine"))
-
-        async def _nothing() -> None:
-            return None
-
-        run = scope._SearchRun(
-            rerank_override="",
-            rerank_cfg_task=None,
-            calibration_task=asyncio.create_task(_nothing()),
-            my_namespaces_task=asyncio.create_task(_fanout()),
-            order_authoritative=False,
-        )
-        search = MemorySearchInput(org=ORG, namespace="mine", query="q", namespace_scope="all_mine")
-        _, namespaces = await scope._scope_inputs(search, run, [], {})
-        await run.calibration_task
-        return namespaces, run
-
-    namespaces, run = asyncio.run(_run())
-    assert namespaces == ["mine", "a", "b"]
-    assert run.namespaces_skipped == ["c"]
+def test_the_loom_search_text_names_the_skipped_namespaces() -> None:
+    payload = copy.deepcopy(SEARCH_PAYLOAD)
+    payload["memory"]["namespaces_skipped"] = ["work", "home"]
+    answer = mcp_tools.search_answer(payload, {"query": "q"}, "local", "session-1")
+    text = answer["content"][0]["text"]
+    assert "Not read, over the fan-out cap: work, home." in text
 
 
 def test_an_unaddressed_search_starts_at_home_even_past_the_cap(

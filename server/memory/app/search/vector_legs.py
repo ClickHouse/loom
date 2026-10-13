@@ -154,10 +154,10 @@ async def _run_vector_legs(
     PRIVATE_HIT_THRESHOLD = float(_tier_settings.memory_search_private_first_stop_similarity)
 
     # Strict token-order waterfall (scoped tokens carrying `ns_roles`): search
-    # namespaces one tier at a time in the token's EXACT priority order and
-    # stop at the first tier that clears the relevance floor. No visibility- or
-    # ownership-based reordering — the order the user put in the token is
-    # honored verbatim (public-first if that's what they chose).
+    # namespaces one tier at a time in the token's priority order and stop at
+    # the first tier that clears the relevance floor. No visibility- or
+    # ownership-based reordering (public-first if that's what the token says);
+    # only an addressed namespace the token does not list goes ahead of it.
     if (
         ctx.namespace_order_authoritative
         and input.namespace_scope == "all_mine"

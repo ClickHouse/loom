@@ -8,6 +8,7 @@ fall back to an explicit `subject` in the input body.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -173,7 +174,7 @@ async def _delegated_namespaces(auth: AuthInfo, org: str) -> list[str]:
     return [ns for ns in auth.namespaces if ns in granted]
 
 
-def with_addressed(namespace: str, fanout: list[str] | tuple[str, ...]) -> list[str]:
+def with_addressed(namespace: str, fanout: Sequence[str]) -> list[str]:
     """The namespaces an all_mine leg reads: `fanout`, led by the addressed
     `namespace` when the fan-out lacks it (cut at the cap, or of another
     kind). The transport authorized that namespace, and a fan-out only widens
@@ -211,11 +212,18 @@ async def resolve_fanout(org: str) -> Fanout:
     subject = auth_off_subject() if auth is None else None
     mine = await directory().fanout_namespaces(org, await resolve_my_namespaces(org, subject))
     cap = settings.memory_search_fanout_max_namespaces
+    ranked = mine
     if len(mine) > cap and not (auth is not None and auth.has_ns_roles()):
-        # Only a scoped token orders its namespaces; any other list is sorted
-        # by name, so the cut keeps the private ones, which the search reads first.
-        mine = await directory().private_first(org, mine)
-    memo = Fanout(org=org, namespaces=tuple(mine[:cap]), skipped=tuple(mine[cap:]))
+        # Only a scoped token's order is a priority. For anyone else the cut
+        # keeps the private namespaces, the ones the search reads first.
+        public = await directory().public_namespaces(org, mine)
+        ranked = sorted(mine, key=lambda ns: ns in public)
+    keep = set(ranked[:cap])
+    memo = Fanout(
+        org=org,
+        namespaces=tuple(ns for ns in mine if ns in keep),
+        skipped=tuple(ns for ns in mine if ns not in keep),
+    )
     _fanout_memo.set(memo)
     return memo
 

@@ -8,12 +8,15 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from server.core.background import create_deferred_task
 from server.core.ch import get_client
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app.search.query_plan import _enrichment_parser_gate_active
+
+if TYPE_CHECKING:
+    from server.auth.context import Fanout
 
 log = logging.getLogger(__package__)
 
@@ -39,7 +42,7 @@ class _SearchRun:
     rerank_override: str
     rerank_cfg_task: asyncio.Task[Any] | None
     calibration_task: asyncio.Task[Any]
-    my_namespaces_task: asyncio.Task[Any] | None
+    my_namespaces_task: asyncio.Task[Fanout] | None
     order_authoritative: bool
     # Scope, filled before the embed (parser-gate prelaunch) or after it.
     namespaces: list[str] = field(default_factory=list)
@@ -92,10 +95,9 @@ def _launch_scope_reads(input: MemorySearchInput) -> _SearchRun:
         _rerank_cfg_task.add_done_callback(_retain_task_result)
     _calibration_task = create_deferred_task(resolve_calibration(input.org, input.namespace))
     _calibration_task.add_done_callback(_retain_task_result)
-    _my_namespaces_task: asyncio.Task[Any] | None = None
+    _my_namespaces_task: asyncio.Task[Fanout] | None = None
     # Scoped token (carries `ns_roles`): its `namespaces` claim is an ordered
-    # priority list, so the search fans out in that exact order as strict tiers
-    # and the addressed namespace is NOT force-pinned to the front.
+    # priority list, so the search fans out in that order as strict tiers.
     from server.auth.context import current_auth as _current_auth
 
     _auth = _current_auth()

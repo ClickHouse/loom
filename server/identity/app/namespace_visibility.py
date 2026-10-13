@@ -11,7 +11,8 @@ Visibility is namespace configuration. It changes when an operator changes it,
 which is approximately never relative to search rate, so it is cached.
 
 **This is not an authorization input.** The caller has already resolved which
-namespaces the token may read; this only orders them. A stale entry can
+namespaces the token may read; this only orders them, and decides which of
+them an all_mine search keeps when it is cut at its cap. A stale entry can
 therefore cost relevance (a just-privatised namespace keeps being searched in
 the public tier for up to `_TTL_S`) but cannot widen access. Access control
 lives in the token and `ctx.namespaces`.

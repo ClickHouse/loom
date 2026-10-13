@@ -39,6 +39,6 @@ class IdentityDirectory:
             return namespaces
         return namespace_kinds.keep_kinds(namespaces, await namespace_kinds.kind_map(org), keep)
 
-    async def private_first(self, org: str, namespaces: list[str]) -> list[str]:
+    async def public_namespaces(self, org: str, namespaces: list[str]) -> set[str]:
         visibility = await namespace_visibility.visibility_map(org, namespaces)
-        return sorted(namespaces, key=lambda ns: visibility.get(ns, "private") != "private")
+        return {ns for ns, vis in visibility.items() if vis != "private"}
