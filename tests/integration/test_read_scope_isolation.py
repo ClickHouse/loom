@@ -824,14 +824,16 @@ def test_writes_aimed_at_vs_runs_threads_records_and_blobs_leave_them_alone(
         p["memory_key"] for p in procs["procedures"] if V in str(p.get("name") or p)
     )
     _write(control_plane_url, ns_tok, "procedure.record_run", {**v, "memory_key": tags["proc"]})
-    pinned_text = f"the vault on pier {tag} stays shut on sundays and its alarm code is 4417"
+    # Not hex, so it can't turn up inside an id or a hash in the answer.
+    code = "zulu-4417"
+    pinned_text = f"the vault on pier {tag} stays shut on sundays and its alarm code is {code}"
     _write(
         control_plane_url,
         ns_tok,
         "memory.set",
         {**v, "memory_key": f"pinned/{tag}", "value": pinned_text, "pinned": True},
     )
-    near = {"memory_key": f"near/{tag}", "value": pinned_text.replace("4417", "unknown")}
+    near = {"memory_key": f"near/{tag}", "value": pinned_text.replace(code, "unknown")}
     # Control: an unbounded writer is blocked by the pinned row, so the probe can see it.
     control = _write(
         control_plane_url,
@@ -884,7 +886,7 @@ def test_writes_aimed_at_vs_runs_threads_records_and_blobs_leave_them_alone(
         bad["memory.bulk_set near a pinned row"] = (bulk.status_code, bulk.text[:200])
     pinned_id = next(i for i, row in _v_rows(ch_client, seed).items() if row[0] == f"pinned/{tag}")
     for name, r in (("run.begin", begun), ("run.complete", done), ("set", probe), ("bulk", bulk)):
-        named = [m for m in (seed.nonce_v, "4417", f"pinned/{tag}", pinned_id) if m and m in r.text]
+        named = [m for m in (seed.nonce_v, code, f"pinned/{tag}", pinned_id) if m and m in r.text]
         if named:
             leaks[name] = r.text[:300]
 

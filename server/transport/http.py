@@ -401,8 +401,8 @@ async def _bind_context_and_policy(
     op: Operation, request: Request, call: _HttpCall, target: gates.Target, payload: Any
 ) -> Any:
     """The verified caller and the ambient run id on the request context,
-    then the history policy gate — a structured 403 when it denies — and the
-    read scope. Returns the input the handler runs with."""
+    then the read scope, then the history policy gate (a structured 403 when
+    it denies) on the scoped input. Returns the input the handler runs with."""
     request_id, raw_body, auth = call.request_id, call.raw_body, call.auth
     # Make auth visible to handlers via request.state and a ContextVar
     # (so handlers can read the caller's identity without taking Request).
