@@ -223,10 +223,11 @@ never a peer: its stored row is the one the write revises.
 Then by label:
 
 - **`contradiction`.** When the stored row is the later one, the new row lands
-  `superseded` behind it, unless the new row is pinned (`invalid_at` = the write time,
-  as for any retirement). Its entry's result answers `conflict_verdict: superseded` with
-  `superseded_by` and no peers, and the row leaves the write's conflict marks, refines
-  and value-update linking. Otherwise the stored row retires after the insert.
+  `superseded` behind it (`invalid_at` = the write time, as for any retirement); a
+  pinned new row stays live and nothing retires. The superseded entry's result answers
+  `conflict_verdict: superseded` with `superseded_by` and no peers, and the row leaves
+  the write's conflict marks, refines and value-update linking. When the new row is the
+  later one, the stored row retires after the insert.
 - **`elaboration` by the newer row.** The older row retires.
 - **Anything else.** `restatement`, `related`, `unrelated` and a peer the judge left
   unlabelled all keep both rows. The flag path reads an unlabelled peer as a

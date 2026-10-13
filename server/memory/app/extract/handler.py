@@ -261,9 +261,7 @@ async def _set_record_from_messages(
         )
     _account_build(input.namespace, llm.tokens_in, llm.tokens_out, len(bulk_out.written), len(msgs))
     return MemorySetFromMessagesOutput(
-        written=[
-            r.model_copy() for r in bulk_out.written
-        ],
+        written=[r.model_copy() for r in bulk_out.written],
         tokens_in=llm.tokens_in,
         tokens_out=llm.tokens_out,
         llm_provider=llm.provider,
@@ -609,9 +607,7 @@ async def handle_memory_set_from_messages(
         len(msgs),
     )
     return MemorySetFromMessagesOutput(
-        written=[
-            _BulkSetResult.model_validate(w) for w in state.written
-        ],
+        written=[_BulkSetResult.model_validate(w) for w in state.written],
         tokens_in=state.tokens_in,
         tokens_out=state.tokens_out,
         llm_provider=state.llm_provider,
