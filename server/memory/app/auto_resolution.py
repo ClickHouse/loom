@@ -20,6 +20,10 @@ import logging
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any
 
+# The statuses a retirement may move to `superseded` (the live ones); any other row is
+# already retired (or tombstoned, rejected, proposed) and is left as it is.
+from server.memory.domain.temporal_sql import LIVE_STATUSES
+
 log = logging.getLogger(__name__)
 
 EVENT_TYPE = "memory.auto_supersede"
@@ -34,9 +38,6 @@ VALUE_UPDATE = "value_update"
 # The most retired rows one audit row lists; more are split across several rows.
 MAX_ENTRIES = 200
 
-# The statuses a retirement may move to `superseded`; any other row is already retired
-# (or tombstoned, rejected, proposed) and is left as it is.
-RETIRABLE_STATUSES = frozenset({"active", "duplicate", "conflicted"})
 
 _ENTRY_FIELDS = (
     "memory_id",
@@ -68,8 +69,8 @@ class RetirementTracker:
     """Which rows a supersession actually retired, for the record.
 
     Pass `skip` and `written` to `supersede_duplicates` / `write_versions_by_ids`.
-    `skip` refuses a row `base` refuses (a lock) and a row that is no longer live
-    (`RETIRABLE_STATUSES`); `written` hears the rows whose superseded version reached
+    `skip` refuses a row `base` refuses (a lock), a pinned row and a row that is no
+    longer live (`LIVE_STATUSES`); `written` hears the rows whose superseded version reached
     `loom.memory`. `retired(victims)` keeps the victims among those, so a refused,
     vanished or never-written row is never recorded."""
 
@@ -78,7 +79,10 @@ class RetirementTracker:
         self.ids: set[str] = set()
 
     def skip(self, row: Any) -> bool:
-        if str(getattr(row, "status", "") or "active") not in RETIRABLE_STATUSES:
+        if str(getattr(row, "status", "") or "active") not in LIVE_STATUSES:
+            return True
+        # A pin is a write-time invariant: nothing automatic retires a pinned row.
+        if bool(getattr(row, "pinned", False)):
             return True
         return self._base is not None and bool(self._base(row))
 

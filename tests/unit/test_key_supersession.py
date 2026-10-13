@@ -479,6 +479,14 @@ async def test_bulk_retires_judged_peers_after_the_insert_and_links_only_live_ro
     from server.memory.app.key_supersession import JudgedRetirements, _victim
 
     calls: dict = {}
+    emitted: list = []
+
+    async def emit(event_type, **kw):
+        emitted.append(event_type)
+        return "h"
+
+    # The retirement's audit record, not the ClickHouse insert behind it.
+    monkeypatch.setattr("server.observability.audit.emit", emit)
 
     async def no_same_key(**kw):
         return 0
@@ -521,6 +529,7 @@ async def test_bulk_retires_judged_peers_after_the_insert_and_links_only_live_ro
     assert [r[0] for r in plan.refines] == ["n6"]
     assert calls == {"retired": ["o1"], "linked": ["n1"]}
     assert state.judged_follow_pairs == [("o1", "n1")]
+    assert emitted == ["memory.auto_supersede"]
 
 
 def test_a_revision_is_ordered_by_when_it_was_written_not_when_the_key_was_created() -> None:
@@ -638,19 +647,26 @@ class _StoredRow:
         self.memory_id, self.pinned, self.status, self.version = mid, pinned, status, version
 
 
-def _fake_store(monkeypatch, stored: dict[str, _StoredRow]) -> list:
+def _fake_store(monkeypatch, stored: dict[str, _StoredRow], *, fail: str = "") -> list:
     """`supersede_duplicates` as the store runs it: `skip` is asked only about a row
-    it read, and a row it cannot read is passed over and still counted."""
+    it read, a row it cannot read is passed over and still counted, and `on_written`
+    hears the rows its insert wrote. `fail="mirror"` raises after that insert (the
+    embeddings mirror), `fail="insert"` before it."""
     from server.memory import store
 
     wrote: list = []
 
-    async def supersede(org, victims, *, ch=None, skip=None, strong=False):
+    async def supersede(org, victims, *, ch=None, skip=None, strong=False, on_written=None):
         assert strong, "the retirement reads read-your-writes"
-        for v in victims:
-            row = stored.get(v["memory_id"])
-            if row is not None and not skip(row):
-                wrote.append(v["memory_id"])
+        rows = [stored[v["memory_id"]] for v in victims if v["memory_id"] in stored]
+        rows = [r for r in rows if not skip(r)]
+        if fail == "insert":
+            raise RuntimeError("insert down")
+        wrote.extend(r.memory_id for r in rows)
+        if on_written is not None:
+            on_written(rows)
+        if fail == "mirror":
+            raise RuntimeError("mirror down")
         return len(victims)
 
     monkeypatch.setattr(store, "supersede_duplicates", supersede)
@@ -679,14 +695,25 @@ async def test_retire_judged_peers_reports_only_rows_it_wrote(monkeypatch) -> No
 
 
 async def test_retire_judged_peers_reports_nothing_on_a_failed_write(monkeypatch) -> None:
-    from server.memory import store
     from server.memory.app.key_supersession import _victim, retire_judged_peers
 
-    async def boom(org, v, *, ch=None, skip=None, strong=False):
-        raise RuntimeError("down")
-
-    monkeypatch.setattr(store, "supersede_duplicates", boom)
+    _fake_store(monkeypatch, {"o1": _StoredRow("o1")}, fail="insert")
     assert await retire_judged_peers("o", [_victim(_row("o1", _d(20)), "n1")], ch=None) == []
+
+
+async def test_retire_judged_peers_reports_the_written_rows_when_the_mirror_fails(
+    monkeypatch,
+) -> None:
+    from server.memory.app.key_supersession import _victim, retire_judged_peers
+    from server.memory.domain import lock
+
+    monkeypatch.setattr(lock, "refuses_retirement", lambda row: row.memory_id == "locked")
+    stored = {"o1": _StoredRow("o1"), "locked": _StoredRow("locked")}
+    _fake_store(monkeypatch, stored, fail="mirror")
+    victims = [_victim(_row(m, _d(20)), "n1") for m in ("o1", "locked")]
+    # The superseded version of o1 is in loom.memory: it retired, though the write raised.
+    out = await retire_judged_peers("o", victims, ch=None)
+    assert [v["memory_id"] for v in out] == ["o1"]
 
 
 async def test_a_key_written_twice_leaves_the_plan_by_key(monkeypatch) -> None:

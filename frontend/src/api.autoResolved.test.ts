@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { listAutoResolved, listUnsuperseded } from "./api";
+import { UNSUPERSEDED_MAX_PAGES, listAutoResolved, listUnsuperseded } from "./api";
 import { isRecord } from "./lib/guards";
 
 // The Auto-resolved tab reads `memory.auto_supersede` audit rows (one per write and
@@ -107,5 +107,27 @@ describe("listUnsuperseded", () => {
       ["m2", "2026-10-02T00:00:00Z"],
     ]);
     expect(bodies[0]).toMatchObject({ event_type: "memory.unsupersede", since: "2026-09-01T00:00:00Z" });
+  });
+
+  it("follows next_cursor, and stops after a bounded number of pages", async () => {
+    const rec = (id: string, ts: string) => ({ ts, subject: JSON.stringify({ memory_id: id }) });
+    let bodies = stubAudit([
+      { rows: [rec("m1", "2026-10-03T00:00:00Z")], next_cursor: "p2" },
+      { rows: [rec("m2", "2026-10-02T00:00:00Z")], next_cursor: null },
+    ]);
+    let out = await listUnsuperseded({ org: "o", namespace: "n" }, { since: "2026-09-01T00:00:00Z" });
+    expect([...out.keys()]).toEqual(["m1", "m2"]);
+    expect(bodies.map((b) => b.cursor)).toEqual([undefined, "p2"]);
+    vi.unstubAllGlobals();
+
+    bodies = stubAudit(
+      Array.from({ length: 10 }, (_, i) => ({
+        rows: [rec(`m${i}`, "2026-10-01T00:00:00Z")],
+        next_cursor: `p${i + 1}`,
+      })),
+    );
+    out = await listUnsuperseded({ org: "o", namespace: "n" }, { since: "2026-09-01T00:00:00Z" });
+    expect(bodies).toHaveLength(UNSUPERSEDED_MAX_PAGES);
+    expect(out.size).toBe(UNSUPERSEDED_MAX_PAGES);
   });
 });

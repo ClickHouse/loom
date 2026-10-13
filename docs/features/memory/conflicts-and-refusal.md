@@ -143,11 +143,17 @@ When Loom retires memories on its own, each path that retired rows records them 
 A write that retires rows through several paths leaves one record per path, and a path
 that retires more than 200 rows splits them across several records. A record names each
 retired memory, the row it retired behind and the reason; it holds ids, keys and
-identity, never value text. Only rows that did retire are listed: a locked row or one
-already retired is left as it is. A point write (`memory.set`, `memory.update_by_id`, the
-deferred judge) writes its record beside the response. The Review queue's
-**Auto-resolved** tab lists the last 30 days, and its Undo calls `memory.restore`, which
-brings a superseded row back `active` and records `memory.unsupersede`.
+identity, never value text. On every path listed, a locked or pinned row, or one
+already retired since it was read, is left as it is, and only rows whose superseded
+version reached `loom.memory` are listed. A point write (`memory.set`,
+`memory.update_by_id`, the deferred judge) writes its record beside the response.
+
+The Review queue's **Auto-resolved** tab lists the last 30 days, a page of 20 records at a
+time, and its Undo calls `memory.restore`, which brings a superseded row back `active` and
+records `memory.unsupersede`. To mark rows already restored, the tab reads up to 2,500
+`memory.unsupersede` records (5 pages of 500) back to the oldest retirement it shows.
+Past that, an older row still offers Undo, and undoing a row that is already live shows
+"No longer retired".
 
 ## Duplicates
 

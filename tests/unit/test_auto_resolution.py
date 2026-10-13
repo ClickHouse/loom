@@ -130,6 +130,8 @@ def test_the_tracker_records_only_rows_it_passed_that_were_written() -> None:
     assert t.skip(SimpleNamespace(memory_id="ok", status="active")) is False
     assert t.skip(SimpleNamespace(memory_id="dup", status="duplicate")) is False
     assert t.skip(SimpleNamespace(memory_id="locked", status="active")) is True
+    # A pin is a write-time invariant: nothing automatic retires it.
+    assert t.skip(SimpleNamespace(memory_id="pin", status="active", pinned=True)) is True
     # Retired already (or tombstoned, proposed): not re-pointed, not recorded.
     for status in ("superseded", "tombstoned", "proposed"):
         assert t.skip(SimpleNamespace(memory_id="x", status=status)) is True
@@ -522,28 +524,42 @@ async def test_a_failed_refines_write_records_what_reached_the_table(
     assert [m for ev in emitted for m in _ids(ev)] == recorded
 
 
-async def test_value_update_records_the_older_rows_it_re_emitted(monkeypatch, emitted) -> None:
+async def _value_updates(monkeypatch, older: dict[str, dict]) -> tuple[Any, list[str]]:
+    """`link_value_updates` over new rows n<i> -> stored older rows (id -> row fields,
+    or absent: vanished), with `write_versions_by_ids` as the store runs it."""
     from server.memory import store
     from server.memory.app import value_updates as vu
     from server.settings import settings
 
     monkeypatch.setattr(settings, "memory_write_candidate_batch", 0)
+    olds = list(older) + ["gone"]
 
     async def peers(*a, **k):
         return []
 
     def links(new_id, new_key, *a, **k):
-        old = "gone" if new_key == "k2" else "o1"
-        return [vu.UpdateLink(old, new_id, f"old_{new_key}", new_key, 0.9)]
+        i = int(new_id[1:])
+        return [vu.UpdateLink(olds[i], new_id, f"old_{new_key}", new_key, 0.9)]
 
-    async def write(org, ids, update, *, ch=None, on_written=None):
+    wrote: list[str] = []
+
+    async def write(org, ids, update, *, ch=None, skip=None, on_written=None):
         found = [
-            SimpleNamespace(**{**_live(mid, "old_k1"), "superseded_by": ""})
+            SimpleNamespace(
+                **{
+                    **_live(mid, f"old_{mid}"),
+                    "superseded_by": "",
+                    "status": "active",
+                    **older[mid],
+                }
+            )
             for mid in ids
-            if mid != "gone"
+            if mid in older
         ]
+        found = [r for r in found if not (skip and skip(r))]
         for row in found:
             update(row)
+        wrote.extend(r.memory_id for r in found)
         if found and on_written is not None:
             on_written(found)
 
@@ -551,22 +567,47 @@ async def test_value_update_records_the_older_rows_it_re_emitted(monkeypatch, em
     monkeypatch.setattr(vu, "decide_links", links)
     monkeypatch.setattr(store, "write_versions_by_ids", write)
     rows = [
-        {"memory_id": "n1", "memory_key": "k1", "value": "x", "valid_at": datetime.now(UTC)},
-        {"memory_id": "n2", "memory_key": "k2", "value": "y", "valid_at": None},
+        {"memory_id": f"n{i}", "memory_key": f"k{i}", "value": "x", "valid_at": datetime.now(UTC)}
+        for i in range(len(olds))
     ]
     report = await vu.link_value_updates(
         org="o",
         namespace="ns",
         rows=rows,
-        embeddings_by_key={"k1": [0.1], "k2": [0.2]},
+        embeddings_by_key={r["memory_key"]: [0.1] for r in rows},
         ch=object(),
     )
-    assert len(report.links) == 2
+    return report, wrote
+
+
+async def test_value_update_records_the_older_rows_it_re_emitted(monkeypatch, emitted) -> None:
+    report, wrote = await _value_updates(monkeypatch, {"o1": {}})
+    # The vanished older row retired nothing, so it is neither linked nor recorded.
+    assert [ln.older_id for ln in report.links] == ["o1"] and wrote == ["o1"]
     (ev,) = emitted
     assert ev["subject"]["reason"] == "value_update" and _ids(ev) == ["o1"]
     entry = ev["subject"]["retired"][0]
-    assert (entry["superseded_by"], entry["superseded_by_key"]) == ("n1", "k1")
-    assert entry["memory_key"] == "old_k1" and "value" not in entry
+    assert (entry["superseded_by"], entry["superseded_by_key"]) == ("n0", "k0")
+    assert entry["memory_key"] == "old_o1" and "value" not in entry
+
+
+async def test_value_update_leaves_locked_pinned_and_retired_rows_live(
+    monkeypatch, emitted
+) -> None:
+    _lock(monkeypatch, "locked")
+    report, wrote = await _value_updates(
+        monkeypatch,
+        {
+            "o1": {},
+            "locked": {},
+            "pinned": {"pinned": True},
+            "retired": {"status": "superseded"},
+        },
+    )
+    assert wrote == ["o1"]
+    assert [ln.older_id for ln in report.links] == ["o1"]
+    (ev,) = emitted
+    assert _ids(ev) == ["o1"]
 
 
 async def test_newest_wins_triple_repair_records_the_retired_carrier(monkeypatch, emitted) -> None:

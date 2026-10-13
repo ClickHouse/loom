@@ -39,6 +39,7 @@ from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
 from server.memory.app.auto_resolution import (
     VALUE_UPDATE,
+    RetirementTracker,
     record_auto_supersessions,
     retired_entry,
 )
@@ -464,14 +465,23 @@ async def link_value_updates(
     for ln in links:
         by_older[ln.older_id] = ln
     retired: list[dict[str, Any]] = []
+    linked: list[UpdateLink] = []
     if by_older:
+        from server.memory.domain.lock import refuses_retirement
+
+        # As the other automatic paths: a locked, pinned or no-longer-live older row is
+        # left as it is (the peer query reads neither the lock nor the pin).
+        _skip = RetirementTracker(refuses_retirement).skip
+
         try:
             for older_id, ln in by_older.items():
                 inv = _as_dt(newer_at.get(ln.newer_id))
 
-                # Only a row whose superseded version reached loom.memory: a vanished
-                # one retired nothing, and a failed mirror after the insert still did.
+                # Only a row whose superseded version reached loom.memory: a skipped or
+                # vanished one retired nothing, and a failed mirror after the insert did.
                 def _written(rows: list[Any], ln: UpdateLink = ln) -> None:
+                    if rows:
+                        linked.append(ln)
                     retired.extend(
                         retired_entry(r, superseded_by=ln.newer_id, superseded_by_key=ln.newer_key)
                         for r in rows
@@ -482,12 +492,15 @@ async def link_value_updates(
                     [older_id],
                     _supersession_update(ln.newer_id, inv),
                     ch=ch,
+                    skip=_skip,
                     on_written=_written,
                 )
-            report.links = list(by_older.values())
         except Exception as e:  # noqa: BLE001 — fails open: counted in report.errors
             log.warning("value_updates: supersession write failed (open): %s", e)
             report.errors += 1
+        # Only the pairs whose older row retired: the triple plane must not close a
+        # live row's triples.
+        report.links = linked
     await record_auto_supersessions(
         org=org, namespace=namespace, retired=retired, reason=VALUE_UPDATE
     )

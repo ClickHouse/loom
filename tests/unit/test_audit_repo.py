@@ -110,6 +110,50 @@ async def test_audit_list_pages_with_a_cursor_and_hex_hashes(monkeypatch) -> Non
     out = await h.handle_audit_list(AuditListInput(org="clickhouse", namespace="ns", limit=1))
     assert [r.row_hash for r in out.rows] == ["e" * 64]
     assert out.next_cursor is not None
-    assert decode_cursor(out.next_cursor)[1] == "req-1"
+    # The row hash breaks a tie between rows of one millisecond and one request id.
+    assert decode_cursor(out.next_cursor)[1] == "req-1|" + "e" * 64
     _, params = ch.query_all_calls[0]
     assert params["lim"] == 2 and params["ns"] == "ns"
+
+
+@pytest.mark.asyncio
+async def test_the_next_page_keysets_on_the_row_hash_so_no_tied_row_is_skipped(
+    monkeypatch,
+) -> None:
+    from server.auth import context as ctx
+    from server.insights.api.models_audit import AuditListInput
+    from server.insights.app import audit as h
+
+    monkeypatch.setattr(ctx, "current_auth", lambda: None)
+    # Three records of one write: one millisecond, one request id, three hashes.
+    tied = [{**_row(), "row_hash": c * 64} for c in "fed"]
+    ch = StubCH()
+    ch.query_all_returns.append(tied[:2])
+    monkeypatch.setattr(h, "get_client", lambda: ch)
+    first = await h.handle_audit_list(AuditListInput(org="clickhouse", namespace="ns", limit=1))
+    assert first.next_cursor is not None
+    ch.query_all_returns.append(tied[1:])
+    await h.handle_audit_list(
+        AuditListInput(org="clickhouse", namespace="ns", limit=1, cursor=first.next_cursor)
+    )
+    sql, params = ch.query_all_calls[1]
+    assert "(ts, request_id, row_hash) <" in sql and "{c_hash:FixedString(64)}" in sql
+    assert "ORDER BY ts DESC, request_id DESC, row_hash DESC" in sql
+    assert (params["c_rid"], params["c_hash"]) == ("req-1", "f" * 64)
+
+
+@pytest.mark.asyncio
+async def test_a_cursor_issued_before_the_row_hash_still_pages(monkeypatch) -> None:
+    from server.auth import context as ctx
+    from server.core.cursors import encode_cursor
+    from server.insights.api.models_audit import AuditListInput
+    from server.insights.app import audit as h
+
+    monkeypatch.setattr(ctx, "current_auth", lambda: None)
+    ch = StubCH()
+    monkeypatch.setattr(h, "get_client", lambda: ch)
+    old = encode_cursor(datetime(2026, 5, 16, 12, 0, 0, tzinfo=UTC), "req-1")
+    await h.handle_audit_list(AuditListInput(org="clickhouse", namespace="ns", cursor=old))
+    sql, params = ch.query_all_calls[0]
+    assert "AND (ts, request_id) < (" in sql and "c_hash" not in params
+    assert params["c_rid"] == "req-1"

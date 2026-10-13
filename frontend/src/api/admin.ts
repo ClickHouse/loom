@@ -758,7 +758,8 @@ function parseSubject(raw: string): Record<string, unknown> {
 const str = (v: unknown): string => (v == null ? "" : String(v));
 
 /** One page of the memories Loom retired on its own in a namespace, newest first: one row
- *  per retired memory, flattened out of the `memory.auto_supersede` audit rows. `since`
+ *  per retired memory, flattened out of the `memory.auto_supersede` audit records. A page
+ *  is `limit` records (default 20), each listing up to 200 retired memories. `since`
  *  defaults to 30 days back; pass the returned `next_cursor` as `cursor` for the next,
  *  older page. */
 export async function listAutoResolved(
@@ -798,26 +799,38 @@ export async function listAutoResolved(
   return { rows: out, next_cursor: page.next_cursor ?? null };
 }
 
+/** Pages of `memory.unsupersede` records `listUnsuperseded` reads at most. A restore is
+ *  one record, made by a person clicking Undo or Restore, so 5 pages of 500 cover far more
+ *  restores than a 30-day window holds; past that, an older retirement shows Undo, and
+ *  undoing a row already live answers `restored=false` ("No longer retired"). */
+export const UNSUPERSEDED_MAX_PAGES = 5;
+
 /** memory_id -> when it was last restored from `superseded` (`memory.unsupersede` audit
- *  rows since `since`, the oldest retirement on show), so a retirement already undone
- *  reads as such. */
+ *  records since `since`, the oldest retirement on show), so a retirement already undone
+ *  reads as such. Follows `next_cursor` for at most `UNSUPERSEDED_MAX_PAGES` pages. */
 export async function listUnsuperseded(
   id: Pick<Identity, "org" | "namespace">,
-  opts: { since: string; limit?: number } & RequestOpts,
+  opts: { since: string; limit?: number; maxPages?: number } & RequestOpts,
 ): Promise<Map<string, string>> {
-  const { rows } = await listAuditLog(id, {
-    event_type: "memory.unsupersede",
-    limit: opts.limit ?? 500,
-    since: opts.since,
-    fields: ["ts", "subject"],
-    signal: opts.signal,
-  });
   const out = new Map<string, string>();
-  for (const r of rows || []) {
-    const mid = str(parseSubject(r.subject)["memory_id"]);
-    if (!mid) continue;
-    const prev = out.get(mid);
-    if (!prev || r.ts > prev) out.set(mid, r.ts);
+  let cursor: string | undefined;
+  for (let page = 0; page < (opts.maxPages ?? UNSUPERSEDED_MAX_PAGES); page++) {
+    const { rows, next_cursor } = await listAuditLog(id, {
+      event_type: "memory.unsupersede",
+      limit: opts.limit ?? 500,
+      since: opts.since,
+      cursor,
+      fields: ["ts", "subject"],
+      signal: opts.signal,
+    });
+    for (const r of rows || []) {
+      const mid = str(parseSubject(r.subject)["memory_id"]);
+      if (!mid) continue;
+      const prev = out.get(mid);
+      if (!prev || r.ts > prev) out.set(mid, r.ts);
+    }
+    if (!next_cursor) break;
+    cursor = next_cursor;
   }
   return out;
 }

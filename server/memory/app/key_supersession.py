@@ -443,38 +443,45 @@ async def retire_judged_peers(
     """After the insert: retire the stored rows `judge_same_key_rows` found older
     than a row of this write. A row is left as it is when, since the judge read it,
     it was locked, pinned, retired or revised (another version). Returns the
-    victims that retired: the rows the write read and passed, none of them on a
-    failed write, so nothing follows a row that is still live. Best effort."""
+    victims that retired: the rows whose superseded version reached `loom.memory`
+    (`on_written`), also when the write then failed (the embeddings mirror), so
+    nothing follows a row that is still live and nothing that retired is lost.
+    Best effort."""
     if not victims:
         return []
+    written: set[str] = set()
+
+    def retired() -> list[dict[str, Any]]:
+        return [v for v in victims if str(v["memory_id"]) in written]
+
     try:
         from server.memory.domain.lock import refuses_retirement
+        from server.memory.domain.temporal_sql import LIVE_STATUSES
         from server.memory.store import supersede_duplicates
 
         judged_version = {str(v["memory_id"]): v.get("judged_version") for v in victims}
-        written: set[str] = set()
 
         def skip(row: Any) -> bool:
-            mid = str(row.memory_id)
-            want = judged_version.get(mid)
-            if (
+            want = judged_version.get(str(row.memory_id))
+            return bool(
                 refuses_retirement(row)
                 or bool(row.pinned)
-                or str(row.status) not in ("active", "duplicate", "conflicted")
+                or str(row.status) not in LIVE_STATUSES
                 or (want is not None and int(row.version) != int(want))
-            ):
-                return True
-            # `write_versions_by_ids` asks only about a row it read, and writes it.
-            written.add(mid)
-            return False
+            )
+
+        def on_written(rows: list[Any]) -> None:
+            written.update(str(r.memory_id) for r in rows)
 
         # Read-your-writes: a replica serving the judged version after a revision would
         # pass the version check and rebuild the stale value.
-        await supersede_duplicates(org, victims, ch=ch, skip=skip, strong=True)
-        return [v for v in victims if str(v["memory_id"]) in written]
+        await supersede_duplicates(
+            org, victims, ch=ch, skip=skip, strong=True, on_written=on_written
+        )
+        return retired()
     except Exception as e:  # noqa: BLE001 — the rows are in; retirement is best effort
         log.warning("same-key judged retirement failed (non-fatal): %s", e)
-        return []
+        return retired()
 
 
 async def supersede_same_key_rows(
