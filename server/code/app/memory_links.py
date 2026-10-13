@@ -242,12 +242,16 @@ async def names_at(org: str, namespace: str, commit: str, path: str) -> set[str]
 def file_at(path: str, source: bytes, named: str = "") -> FileAt:
     """`source` as the index reads it (a notebook's code cells) with its definitions,
     fingerprinted (`definitions`); with `named`, only those of that bare name, without
-    rename shapes. A parse that failed raises `ParseFailed`."""
+    rename shapes. A parse or fingerprint that failed raises `ParseFailed`."""
     pf = _parse(path, source)
     if pf is None:
         return FileAt(source.decode("utf-8", "replace").split("\n"), [])
     text = pf.source or source
-    defs = definitions(path, text, pf.symbols, pf.tree, named=named)
+    try:
+        defs = definitions(path, text, pf.symbols, pf.tree, named=named)
+    except Exception as e:  # one file must not wedge its repository's checks
+        log.exception("memory links: fingerprinting %s failed", path)
+        raise ParseFailed(path, f"fingerprinting failed: {e!r}") from e
     return FileAt(text.decode("utf-8", "replace").split("\n"), defs)
 
 

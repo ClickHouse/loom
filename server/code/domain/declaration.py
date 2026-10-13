@@ -237,7 +237,10 @@ def bound_function(value: Any) -> Any:
 
 
 def joined(shapes: Sequence[Shape]) -> Shape:
-    """One shape over several declarations of a name, each part '' when any of theirs is."""
+    """One shape over several declarations of a name, each part '' when any of theirs is;
+    `NO_SHAPE` over none."""
+    if not shapes:
+        return NO_SHAPE
     return Shape(*(fingerprint(part) if all(part) else "" for part in zip(*shapes, strict=True)))
 
 
@@ -644,7 +647,7 @@ class Declarations:
             for node in self._members(scope).get(_spelled(found[1]), []):
                 out.append(self._member(_prefixed(node), name, shapes))
             self._families[key] = out
-        return key
+        return key if self._families[key] else None
 
     def _members(self, scope: Any) -> dict[str, list[Any]]:
         """spelling -> the declarations directly in `scope` naming it (in each branch of an

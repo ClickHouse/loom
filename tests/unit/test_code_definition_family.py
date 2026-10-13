@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import itertools
 import json
+from typing import Any
 
 import pytest
 
@@ -756,3 +757,29 @@ def test_a_notebook_definition_is_fingerprinted_from_its_code_cell() -> None:
     assert was.body_hash and was.body_hash != now.body_hash
     assert was.shape.exact and was.shown == "def value(a):\n    return a + 1"
     assert before.span(was.start_line, was.end_line) == was.shown
+
+
+_SPLIT_HEAD = (
+    "#if !defined(X)\nint A::compareAt(int n) const\n#else\nint A::doCompareAt(int n) const\n"
+    "#endif\n{\n    return n;\n}\n"
+)
+
+
+def test_a_declaration_parse_recovery_made_is_fingerprinted() -> None:
+    # a function head split by `#if` parses as two declarations and a lone body
+    decls = Declarations.parse("a.cpp", _SPLIT_HEAD.encode())
+    assert decls is not None
+    decls.fingerprints([4], "doCompareAt")
+    defs = file_definitions("a.cpp", _SPLIT_HEAD.encode())
+    assert all(d.body_hash for d in defs)
+
+
+def test_a_file_that_fails_to_fingerprint_is_a_parse_failure(monkeypatch: Any) -> None:
+    from server.code.app import memory_links
+
+    def broken(*_: Any, **__: Any) -> None:
+        raise TypeError("boom")
+
+    monkeypatch.setattr(memory_links, "definitions", broken)
+    with pytest.raises(memory_links.ParseFailed):
+        memory_links.file_at("a.py", b"def value():\n    return 1\n")
