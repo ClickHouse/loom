@@ -84,9 +84,12 @@ async function main() {
     // answer opened stays open.)
     const res = await postBoundedResult("run.begin", beginBody(scope, payload, prompt), opts);
     const runId = res.status >= 200 && res.status < 300 && res.body ? res.body.run_id : "";
+    // 408 and 429 are a busy moment, not a refusal. An earlier unanswered attempt is
+    // kept through a refusal: SessionEnd still closes the run it may have opened.
+    const transient = res.status === 0 || res.status === 408 || res.status === 429 || res.status >= 500;
     if (typeof runId === "string" && runId) writeRunBegun(sessionId, runId);
-    else if (res.status >= 400 && res.status < 500) writeJsonFile(sp, { refused: true, at: Date.now() });
-    else writeJsonFile(sp, { attempted: true, at: Date.now() });
+    else if (transient) writeJsonFile(sp, { attempted: true, at: Date.now() });
+    else writeJsonFile(sp, { refused: true, attempted: Boolean(prior.attempted), at: Date.now() });
     scheduleExit(0);
     return;
   }

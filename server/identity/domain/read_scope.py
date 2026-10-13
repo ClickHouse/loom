@@ -327,7 +327,11 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "inbox.": "inbox registrations and policies",
     "grants.": "namespace grants",
     "policy.": "history policy rules; decisions only the caller's own",
-    "cost.": "cost and budget counters",
+    # Not cost.agent_summary: it has no user axis, and its session_id grouping lists
+    # every user's sessions and spend.
+    "cost.summary": "the caller's own cost counters (pinned through its user_id)",
+    "cost.budget_status": "the namespace's budget counters",
+    "cost.record_turns": "a write of the caller's own model turns",
     # Not ops.projection_failures.*: a failure row has no user axis, and carries
     # other users' memory keys and payloads.
     "ops.capabilities": "the deployment's capabilities",
@@ -338,7 +342,8 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "memory_schema.": "value schemas",
     "admin.users": "the deployment's users",
     "agents.connected": "connected agent names",
-    "audit.list": "hash-only audit rows",
+    # Not audit.list: a row's subject carries memory keys, ids and content hashes of
+    # any user (and erasure targets), with no user axis to pin.
     "calibration.get": "embedder calibration numbers",
     "embedding.embed": "vectors of the caller's own text",
     "llm.complete": "a completion of the caller's own prompt",

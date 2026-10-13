@@ -170,9 +170,9 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   another id, it is kept in the session's run state and every hook uses it;
   the SessionStart primer and the first prompt's recall run before that answer,
   so their context.pack exposure rows carry the derived id, or on a resumed
-  session the previous run's id; a begin that timed out or hit a 5xx is asked
+  session the previous run's id; a begin that timed out or hit a 408, 429 or 5xx is asked
   again on the next prompt with the same id, and closed at SessionEnd if it was
-  never answered; a 4xx refusal is final for the session); every prompt is also
+  never answered; any other 4xx is final for the session); every prompt is also
   appended to the turn journal, which clients without a parseable
   transcript read. SessionEnd closes the run with the last assistant text,
   `outcome: none` and the recalled keys, awaited and then exited at once;

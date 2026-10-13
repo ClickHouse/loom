@@ -164,6 +164,10 @@ async def repair_dim0_rows(
     from server.memory.store.embeddings import retire_copies_under_unembedded_heads
 
     await retire_copies_under_unembedded_heads(out, ch=ch)
+    # A row that was dim 0 was never counted, and its + 1 sits under the BM25 watermark.
+    from server.memory.store.bm25_stats import index_late_rows
+
+    await index_late_rows(out, ch=ch)
     return len(out)
 
 

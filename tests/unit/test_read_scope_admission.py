@@ -178,6 +178,8 @@ def test_a_pinned_token_reaches_only_ops_that_honour_its_scope(op: Any) -> None:
         "erasure.request",
         "erasure.status",
         "erasure.list",
+        "audit.list",
+        "cost.agent_summary",
     ],
 )
 def test_ops_that_cannot_bound_their_answer_are_refused(name: str) -> None:

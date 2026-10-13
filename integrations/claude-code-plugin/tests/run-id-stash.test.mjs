@@ -141,6 +141,33 @@ test("a run.begin that never answered is closed at SessionEnd under the derived 
   });
 });
 
+test("a 429 is a busy moment: the next prompt asks again", async () => {
+  const tmp = freshTmp();
+  await withServer({ beginRunId: "x", beginStatus: 429 }, async (url) => {
+    await runHook("UserPromptSubmit", { session_id: "s5", cwd: tmp, prompt: "p" }, { tmp, url });
+  });
+  withTmpdir(tmp, () => assert.equal(readRunState("s5").refused, undefined));
+  await withServer({ beginRunId: "5a5a5a5a" }, async (url, seen) => {
+    const payload = { session_id: "s5", cwd: tmp, prompt: "q" };
+    await runHook("UserPromptSubmit", payload, { tmp, url });
+    await runHook("SessionEnd", { ...payload, reason: "exit" }, { tmp, url });
+    assert.equal(seen.find((r) => r.url.endsWith("/run.complete")).body.run_id, "5a5a5a5a");
+  });
+});
+
+test("a refusal after an unanswered begin still closes the run that begin may have opened", async () => {
+  const tmp = freshTmp();
+  await withServer({ beginRunId: "late", delayMs: 2500 }, async (url) => {
+    await runHook("UserPromptSubmit", { session_id: "s6", cwd: tmp, prompt: "p" }, { tmp, url });
+  });
+  await withServer({ beginRunId: "x", beginStatus: 403 }, async (url, seen) => {
+    const payload = { session_id: "s6", cwd: tmp, prompt: "q" };
+    await runHook("UserPromptSubmit", payload, { tmp, url });
+    await runHook("SessionEnd", { ...payload, reason: "exit" }, { tmp, url });
+    assert.equal(seen.find((r) => r.url.endsWith("/run.complete")).body.run_id, "cc-s6");
+  });
+});
+
 test("a session never reads another session's stored id", () => {
   const tmp = freshTmp();
   assert.ok(writeRunBegun("s1", "0123abcd", { tmp }));

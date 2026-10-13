@@ -406,6 +406,8 @@ async def handle_memory_reindex(input: MemoryReindexInput) -> MemoryReindexOutpu
         )
     await memory_repo.insert_embedding_rows(embedding_rows, ch=ch)
     await _recheck_reindexed_heads(rows, embedding_rows, ch=ch, model=target_model)
+    # One above versions read before the embed call: under the BM25 watermark.
+    await memory_repo.index_late_rows(embedding_rows, ch=ch)
 
     return MemoryReindexOutput(
         processed=len(embedding_rows),

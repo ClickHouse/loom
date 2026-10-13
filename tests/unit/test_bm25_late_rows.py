@@ -55,8 +55,6 @@ async def test_late_rows_are_folded_with_both_views_statements_and_errors_are_lo
 @pytest.mark.asyncio
 async def test_the_bulk_insert_and_the_worker_fill_index_their_late_rows(monkeypatch) -> None:
     """Each embedding write whose version predates its insert hands its rows over."""
-    import inspect
-
     import server.memory.store as memory_repo
     from server.memory.app import bulk_set
     from server.memory.app.bulk_rows import _BulkWriteState
@@ -80,4 +78,46 @@ async def test_the_bulk_insert_and_the_worker_fill_index_their_late_rows(monkeyp
     state.embedding_rows.append(_row(version=1))
     await bulk_set._bulk_insert(object(), state)
     assert handed and handed[0][0]["memory_key"] == "k"
-    assert "index_late_rows(replacements)" in inspect.getsource(embedding.run_pass)
+
+    # The worker: a filled stub is handed over after its replacement row is in (the
+    # INSERT ... SELECT reads that row back).
+    order: list[str] = []
+    stub = {
+        **_row(),
+        "memory_type": "semantic",
+        "scope": "private",
+        "content_excerpt": "a stub",
+        "embedding_model": "fake",
+        "embed_attempts": 0,
+        "version": 3,
+    }
+
+    async def _stubs(**_k: Any) -> list[dict[str, Any]]:
+        return [dict(stub)]
+
+    async def _none(**_k: Any) -> list[Any]:
+        return []
+
+    async def _insert(rows: Any, **_k: Any) -> None:
+        if rows:
+            order.append("insert")
+
+    async def _index_after(rows: Any, **_k: Any) -> int:
+        order.append("index")
+        return 0
+
+    async def _embed(_e: Any, texts: list[str]) -> list[tuple[list[float], str]]:
+        return [([0.1, 0.2, 0.3], "") for _ in texts]
+
+    class _Embedder:
+        model_name, dim = "fake", 3
+
+    monkeypatch.setattr(memory_repo, "find_memories_without_embedding_rows", _none)
+    monkeypatch.setattr(memory_repo, "find_embedding_stubs", _stubs)
+    monkeypatch.setattr(memory_repo, "insert_embedding_rows", _insert)
+    monkeypatch.setattr(memory_repo, "index_late_rows", _index_after)
+    monkeypatch.setattr(embedding, "_embed_batch", _embed)
+    monkeypatch.setattr(embedding, "_refresh_entities", _noop)
+    monkeypatch.setattr(embedding, "get_embedder", lambda: _Embedder())
+    await embedding.run_pass(embedding.EmbeddingWorkerConfig(org_filter="o", namespace_filter="n"))
+    assert order[:2] == ["insert", "index"], order
