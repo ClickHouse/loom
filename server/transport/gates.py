@@ -206,8 +206,11 @@ def read_scope(op: Operation, auth: AuthInfo | None, input_obj: Any) -> Any:
     if isinstance(result, AuthInsufficientError):
         raise result
     if isinstance(result, Exception):
-        if op.name in SCOPED_OPS:
-            raise result  # a read whose scope does not resolve is refused here
+        # A read whose scope does not resolve is refused here, and so is any op whose
+        # body carries an identity: run unpinned it would write (or count) as user '-'.
+        fields = getattr(op.input_model, "model_fields", {})
+        if op.name in SCOPED_OPS or "user_id" in fields or "session_id" in fields:
+            raise result
         return input_obj
     return with_read_identity(input_obj, result)
 

@@ -121,3 +121,27 @@ async def test_the_bulk_insert_and_the_worker_fill_index_their_late_rows(monkeyp
     monkeypatch.setattr(embedding, "get_embedder", lambda: _Embedder())
     await embedding.run_pass(embedding.EmbeddingWorkerConfig(org_filter="o", namespace_filter="n"))
     assert order[:2] == ["insert", "index"], order
+
+
+@pytest.mark.asyncio
+async def test_the_dim0_repair_and_reindex_index_their_late_rows(monkeypatch) -> None:
+    """Both write vectors under the BM25 watermark (+ 1 of a row read, or the memory
+    row's version): each hands its inserted rows to index_late_rows."""
+    import server.memory.store as memory_repo
+    from server.memory.store import integrity
+
+    handed: list[str] = []
+
+    async def _index(rows: Any, **_k: Any) -> int:
+        handed.extend(r["memory_key"] for r in rows)
+        return 0
+
+    async def _noop(*_a: Any, **_k: Any) -> Any:
+        return 0
+
+    monkeypatch.setattr(bm25_stats, "index_late_rows", _index)
+    monkeypatch.setattr(memory_repo, "insert_embedding_rows", _noop)
+    await integrity.repair_dim0_rows(
+        [{**_row(memory_key="dim0"), "embedding": [0.1, 0.2], "version": 1}], ch=object()
+    )
+    assert handed == ["dim0"]

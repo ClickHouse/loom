@@ -267,3 +267,18 @@ def test_the_heads_are_rechecked_after_the_insert(monkeypatch: Any) -> None:
     assert stub["embedding_dim"] == 0 and stub["tombstoned_at"] is None and stub["version"] == 10
     assert kept["embedding_dim"] == 3 and kept["memory_key_embedding_dim"] == 3
     assert kept["tags"] == ["touched"] and kept["version"] == 10
+
+
+def test_a_reindex_indexes_its_late_bm25_rows(monkeypatch: Any) -> None:
+    """Reindexed rows sit one above versions read before the embed call, under the BM25
+    watermark: they are handed to index_late_rows after the insert."""
+    handed: list[list[dict[str, Any]]] = []
+
+    async def _index(rows: Any, **_k: Any) -> int:
+        handed.append(list(rows))
+        return 0
+
+    monkeypatch.setattr(mr, "index_late_rows", _index)
+    ch = _CH([dict(_memory_mirror_row())])
+    assert _run(monkeypatch, ch).processed == 1
+    assert len(handed) == 1 and handed[0][0]["memory_key"] == "k"

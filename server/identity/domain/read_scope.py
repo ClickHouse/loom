@@ -331,7 +331,7 @@ NARROW_SAFE_OPS: dict[str, str] = {
     # every user's sessions and spend.
     "cost.summary": "the caller's own cost counters (pinned through its user_id)",
     "cost.budget_status": "the namespace's budget counters",
-    "cost.record_turns": "a write of the caller's own model turns",
+    "cost.record_turns": "the caller's own model turns (usage rows, no memory)",
     # Not ops.projection_failures.*: a failure row has no user axis, and carries
     # other users' memory keys and payloads.
     "ops.capabilities": "the deployment's capabilities",
@@ -341,7 +341,8 @@ NARROW_SAFE_OPS: dict[str, str] = {
     # user's patterns, and an add would be a namespace-wide Refuse the token can't manage.
     "memory_schema.": "value schemas",
     "admin.users": "the deployment's users",
-    "agents.connected": "connected agent names",
+    # Not agents.connected: no user axis; it lists every user's agents, their ops,
+    # when they were seen and what they cost.
     # Not audit.list: a row's subject carries memory keys, ids and content hashes of
     # any user (and erasure targets), with no user axis to pin.
     "calibration.get": "embedder calibration numbers",

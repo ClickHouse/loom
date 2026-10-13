@@ -237,11 +237,15 @@ than `namespace`:
   `memory.unpin` (admin) reach only the caller's own rows, like `memory.lock`.
 - An op that cannot bound its answer to one user (the entity graph `facts.*`,
   `conversation.*`, namespace exports, admin and curation ops,
-  `ops.projection_failures.*`) is refused with
+  `ops.projection_failures.*`, `erasure.*`, `audit.list`, `cost.agent_summary`,
+  `agents.connected`) is refused with
   `AUTH_INSUFFICIENT`, and so is a write to a table keyed without a user, where it
   would overwrite another user's row: `memory.record.write`, `decision.record`,
   `procedure.record_run` and `context.offload`. `memory.set_from_messages` skips its
-  `record_schema` projection into records and says so in `degraded`. The list is
+  `record_schema` projection into records and says so in `degraded`. A token whose
+  scope does not resolve (an `own_session` ceiling and a body naming no session) is
+  refused on every op whose body carries a user or session, rather than run as user
+  `-`. The list is
   `server/identity/domain/read_scope.py` (`SCOPED_OPS`, `NARROW_SAFE_OPS`), and an op
   it does not name is refused.
 

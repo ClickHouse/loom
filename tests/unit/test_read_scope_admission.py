@@ -180,6 +180,7 @@ def test_a_pinned_token_reaches_only_ops_that_honour_its_scope(op: Any) -> None:
         "erasure.list",
         "audit.list",
         "cost.agent_summary",
+        "agents.connected",
     ],
 )
 def test_ops_that_cannot_bound_their_answer_are_refused(name: str) -> None:
@@ -236,11 +237,38 @@ def test_a_write_naming_no_user_writes_as_the_pinned_one() -> None:
     assert gates.read_scope(OPERATIONS_BY_NAME["memory.set"], _auth(), body) is body
 
 
-def test_a_write_under_an_unresolved_scope_is_admitted_and_its_reads_refused() -> None:
+def test_a_write_under_an_unresolved_scope_is_refused() -> None:
+    """Unpinned it would write as user '-' and could overwrite that user's row."""
     own_user = _auth(read_scope="own_user")
-    gates.read_scope(OPERATIONS_BY_NAME["memory.set"], own_user, SimpleNamespace(user_id="-"))
+    with pytest.raises(IdentityIncompleteError):
+        gates.read_scope(OPERATIONS_BY_NAME["memory.set"], own_user, SimpleNamespace(user_id="-"))
     with pytest.raises(IdentityIncompleteError):
         request_read_filters(own_user)
+
+
+def _identity_ops() -> list[str]:
+    from server.identity.domain.read_scope import NARROW_SAFE_OPS
+
+    names = []
+    for op in ALL_OPERATIONS:
+        fields = getattr(op.input_model, "model_fields", {})
+        if not ("user_id" in fields or "session_id" in fields):
+            continue
+        if op.name in NARROW_SAFE_OPS or any(
+            k.endswith(".") and op.name.startswith(k) for k in NARROW_SAFE_OPS
+        ):
+            names.append(op.name)
+    return sorted(names)
+
+
+@pytest.mark.parametrize("name", _identity_ops())
+def test_a_session_ceiling_with_no_session_in_the_body_is_refused(name: str) -> None:
+    """A token pinned to a user with an own_session ceiling and a body naming no
+    session does not resolve; every op whose body carries an identity is refused
+    rather than run unpinned (as user '-')."""
+    token = _auth(read_scope="own_session", read_user_id="u1")
+    with pytest.raises((AuthInsufficientError, IdentityIncompleteError)):
+        gates.read_scope(OPERATIONS_BY_NAME[name], token, SimpleNamespace(user_id="u1"))
 
 
 def test_a_scoped_read_runs_as_the_user_its_scope_binds() -> None:

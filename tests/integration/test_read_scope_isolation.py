@@ -243,6 +243,8 @@ def _payload(model: type, seed: _Seed, user_id: str) -> dict[str, Any] | None:
         "value": "canary",
         "steps": ["canary", "turn the dial"],
         "ttl_seconds": 3600,
+        "from_date": "2026-01-01",
+        "to_date": "2099-12-31",
         "messages": [{"role": "user", "content": "canary"}],
         "entries": [{"memory_key": seed.keys_v[0], "value": "canary"}],
         "failure_ids": [str(uuid.uuid4())],
