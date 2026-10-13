@@ -21,6 +21,7 @@
 import {
   envSwitch,
   postBounded,
+  postBoundedResult,
   readStdinJson,
   requestTimeoutMs,
   resolveScope,
@@ -69,23 +70,31 @@ async function main() {
     // Every prompt goes to the turn journal: the consumers
     // read it when the client hands them no parseable transcript.
     appendTurn(sessionId, "user", prompt);
-    if (readRunState(sessionId).begun) {
+    const prior = readRunState(sessionId);
+    if (prior.begun || prior.refused) {
       scheduleExit(0);
       return;
     }
     // Awaited: the server may answer another run id than the derived one (no
     // Keeper, narrowed token), and every later hook must use that one. Begun only
-    // with an answered id: after a timeout or an error the next prompt asks again
-    // (the same derived id, so a run that did open is re-opened, not duplicated).
-    const begun = await postBounded("run.begin", beginBody(scope, payload, prompt), opts);
-    if (begun && typeof begun.run_id === "string" && begun.run_id) writeRunBegun(sessionId, begun.run_id);
+    // with an answered id. A refusal (4xx) is final for the session. A timeout, a
+    // network error or a 5xx is asked again on the next prompt with the same
+    // derived id; SessionEnd closes that id if no answer ever came. (Without a
+    // Keeper a narrowed token's retry gets a fresh server id, and a run the lost
+    // answer opened stays open.)
+    const res = await postBoundedResult("run.begin", beginBody(scope, payload, prompt), opts);
+    const runId = res.status >= 200 && res.status < 300 && res.body ? res.body.run_id : "";
+    if (typeof runId === "string" && runId) writeRunBegun(sessionId, runId);
+    else if (res.status >= 400 && res.status < 500) writeJsonFile(sp, { refused: true, at: Date.now() });
+    else writeJsonFile(sp, { attempted: true, at: Date.now() });
     scheduleExit(0);
     return;
   }
 
   if (event === "SessionEnd") {
     const state = readRunState(sessionId);
-    if (!state.begun) {
+    // Begun, or asked with no answer (it may have opened under the derived id).
+    if (!state.begun && !state.attempted) {
       scheduleExit(0);
       return;
     } // no run to close

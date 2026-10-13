@@ -490,6 +490,8 @@ async def run_pass(
             # A stub drawn from a read before a 'high' write landed can sit above
             # its fence: the fill re-checks its heads like every vector copy.
             await memory_repo.retire_copies_under_unembedded_heads(replacements)
+            # A fill sits at its stub's version + 1, usually far under the BM25 watermark.
+            await memory_repo.index_late_rows(replacements)
             await memory_repo.insert_embedding_rows(retries)
 
         rec.outcome = _outcome(

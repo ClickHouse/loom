@@ -343,10 +343,10 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "embedding.embed": "vectors of the caller's own text",
     "llm.complete": "a completion of the caller's own prompt",
     "ui.vitals": "browser timing beacons",
-    # Not erasure.request: its target is a namespace or a user_id, checked for admin
-    # authority only, so a token narrowed to one user would erase every user's rows.
-    "erasure.status": "an erasure's progress counters",
-    "erasure.list": "erasure requests and their counters",
+    # Not erasure.*: an erasure's target is a namespace or a user_id, checked for admin
+    # authority only, so a token narrowed to one user would erase every user's rows
+    # (request) or see other users' erasures, their user ids and requesters (status,
+    # list).
     "namespace.get": "the namespace's registration",
     "namespace.list_mine": "the caller's namespaces",
     "namespace.register": "registers a namespace",

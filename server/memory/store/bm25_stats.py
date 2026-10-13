@@ -17,11 +17,14 @@ import logging
 import time
 from typing import Any
 
+from server.core import bm25
 from server.core.repo_base import _CHClient, _default_client
 
 _log = logging.getLogger(__name__)
 
-# The refresh views' lag, less a margin for the time a version spends in flight.
+# The refresh views' lag, less a margin for the time a version spends in flight. The
+# views measure it on ClickHouse's clock and versions are drawn on the app's: the
+# margin also covers the two clocks disagreeing by up to half the lag.
 REFRESH_LAG_NS = 10 * 1_000_000_000
 LATE_AFTER_NS = REFRESH_LAG_NS // 2
 
@@ -45,8 +48,7 @@ SELECT org, namespace, term,
                        toString(embedding_model), memory_key)),
        now(), max(version)
 FROM loom.memory_embeddings FINAL
-ARRAY JOIN arrayDistinct(arrayFilter(t -> (length(t) >= 3),
-           arrayMap(t -> lowerUTF8(t), splitByNonAlpha(content_excerpt)))) AS term
+ARRAY JOIN {bm25.terms_sql("content_excerpt")} AS term
 WHERE {_IDENTITY} IN {_KEYS} AND embedding_dim > 0 AND tombstoned_at IS NULL
 GROUP BY org, namespace, term
 """

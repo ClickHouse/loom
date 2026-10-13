@@ -33,7 +33,7 @@ function runHook(event, payload, { tmp, url }) {
 }
 
 // A fake server: run.begin answers `beginRunId` after `delayMs`; every request is recorded.
-async function withServer({ beginRunId, delayMs = 0 }, fn) {
+async function withServer({ beginRunId, delayMs = 0, beginStatus = 200 }, fn) {
   const seen = [];
   const server = http.createServer((req, res) => {
     let raw = "";
@@ -44,6 +44,7 @@ async function withServer({ beginRunId, delayMs = 0 }, fn) {
       seen.push({ url: req.url, body: raw ? JSON.parse(raw) : {} });
       const answer = req.url.endsWith("/run.begin") ? { run_id: beginRunId } : {};
       setTimeout(() => {
+        if (req.url.endsWith("/run.begin")) res.statusCode = beginStatus;
         res.setHeader("content-type", "application/json");
         res.end(JSON.stringify(answer));
       }, delayMs);
@@ -98,8 +99,11 @@ test("a run.begin that times out is asked again, and the run it opens is complet
   await withServer({ beginRunId: "late", delayMs: 2500 }, async (url) => {
     await runHook("UserPromptSubmit", { session_id: "s2", cwd: tmp, prompt: "p" }, { tmp, url });
   });
-  // Not begun: nothing was answered, so nothing is marked.
-  withTmpdir(tmp, () => assert.equal(readRunState("s2").begun, undefined));
+  // Not begun: nothing was answered; only the attempt is marked.
+  withTmpdir(tmp, () => {
+    assert.equal(readRunState("s2").begun, undefined);
+    assert.equal(readRunState("s2").attempted, true);
+  });
   await withServer({ beginRunId: "0a1b2c3d" }, async (url, seen) => {
     const payload = { session_id: "s2", cwd: tmp, prompt: "next" };
     await runHook("UserPromptSubmit", payload, { tmp, url });
@@ -109,6 +113,31 @@ test("a run.begin that times out is asked again, and the run it opens is complet
     assert.equal(begin.body.run_id, "cc-s2", "the retry asks for the same derived id");
     assert.equal(complete.body.run_id, "0a1b2c3d", "the run the retry opened is the one completed");
     assert.equal(complete.body.session_id, "s2");
+  });
+});
+
+test("a run.begin refused with a 4xx is not asked again", async () => {
+  const tmp = freshTmp();
+  await withServer({ beginRunId: "x", beginStatus: 403 }, async (url, seen) => {
+    const payload = { session_id: "s3", cwd: tmp, prompt: "p" };
+    await runHook("UserPromptSubmit", payload, { tmp, url });
+    await runHook("UserPromptSubmit", { ...payload, prompt: "q" }, { tmp, url });
+    await runHook("SessionEnd", { ...payload, reason: "exit" }, { tmp, url });
+    assert.equal(seen.filter((r) => r.url.endsWith("/run.begin")).length, 1, "asked once");
+    assert.equal(seen.filter((r) => r.url.endsWith("/run.complete")).length, 0, "nothing to close");
+  });
+});
+
+test("a run.begin that never answered is closed at SessionEnd under the derived id", async () => {
+  const tmp = freshTmp();
+  await withServer({ beginRunId: "late", delayMs: 2500 }, async (url) => {
+    await runHook("UserPromptSubmit", { session_id: "s4", cwd: tmp, prompt: "p" }, { tmp, url });
+  });
+  await withServer({ beginRunId: "unused" }, async (url, seen) => {
+    await runHook("SessionEnd", { session_id: "s4", cwd: tmp, reason: "exit" }, { tmp, url });
+    const complete = seen.find((r) => r.url.endsWith("/run.complete"));
+    assert.ok(complete, "a begin that may have opened the run is closed");
+    assert.equal(complete.body.run_id, "cc-s4");
   });
 });
 

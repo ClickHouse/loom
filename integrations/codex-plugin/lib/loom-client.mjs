@@ -591,12 +591,17 @@ export function postFireAndForget(opName, body, { token, serverUrl, timeoutMs } 
  * verdict): the parsed body of a 2xx answer, else null. `timeoutMs` may
  * exceed the default for a caller that runs rarely (the repository lookup).
  */
-export async function postBounded(opName, body, { token, serverUrl, timeoutMs } = {}) {
-  const bearer = token || resolveToken();
-  if (!bearer) return null;
-  const bound = Number(timeoutMs) > 0 ? Number(timeoutMs) : requestTimeoutMs();
-  const res = await requestJson(opUrl(opName, serverUrl), { body, token: bearer, timeoutMs: bound });
+export async function postBounded(opName, body, opts = {}) {
+  const res = await postBoundedResult(opName, body, opts);
   return res.status >= 200 && res.status < 300 && res.body && typeof res.body === "object" ? res.body : null;
+}
+
+/** postBounded's answer with its status: 0 for no token, a timeout or a network error. */
+export async function postBoundedResult(opName, body, { token, serverUrl, timeoutMs } = {}) {
+  const bearer = token || resolveToken();
+  if (!bearer) return { status: 0, body: null };
+  const bound = Number(timeoutMs) > 0 ? Number(timeoutMs) : requestTimeoutMs();
+  return requestJson(opUrl(opName, serverUrl), { body, token: bearer, timeoutMs: bound });
 }
 
 // --- diagnostics ------------------------------------------------------------

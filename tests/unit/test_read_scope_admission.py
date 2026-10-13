@@ -176,6 +176,8 @@ def test_a_pinned_token_reaches_only_ops_that_honour_its_scope(op: Any) -> None:
         "decision.precedents",
         "profile.activity",
         "erasure.request",
+        "erasure.status",
+        "erasure.list",
     ],
 )
 def test_ops_that_cannot_bound_their_answer_are_refused(name: str) -> None:
