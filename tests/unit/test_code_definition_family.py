@@ -848,3 +848,13 @@ def test_a_file_that_fails_to_fingerprint_is_a_parse_failure(monkeypatch: Any) -
     monkeypatch.setattr(memory_links, "definitions", broken)
     with pytest.raises(memory_links.ParseFailed):
         memory_links.file_at("a.py", b"def value():\n    return 1\n")
+
+
+_CLASS_TEMPLATE = "template <class T = int>\nclass value {\n  T n;\n};\n"
+
+
+def test_a_class_templates_head_on_its_own_line_is_part_of_it() -> None:
+    (d,) = file_definitions("a.cpp", _CLASS_TEMPLATE.encode())
+    assert d.start_line == 1 and d.shown.startswith("template <class T = int>\n")
+    assert _value("a.cpp", _CLASS_TEMPLATE.replace("int", "long")) != d.body_hash
+    assert _value("a.cpp", _CLASS_TEMPLATE.replace(">\nclass", "> class")) == d.body_hash

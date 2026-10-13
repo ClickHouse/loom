@@ -403,8 +403,8 @@ class Declarations:
             node = node.parent  # `const a = …,\n  b = …`: b's keyword and export are its own
         while (parent := node.parent) is not None and parent.parent is not None:
             # a parent that is the declaration with what comes before it, not a scope
-            # holding more after it
-            if parent.end_byte != node.end_byte or parent.type in _SCOPES:
+            # holding more after it (a template's `;` after its class is no more)
+            if parent.type in _SCOPES or not _ends(parent, node):
                 break
             before = [c for c in parent.children if c.end_byte <= node.start_byte]
             wraps = parent.type in _HOLDERS or all(
@@ -727,6 +727,15 @@ def _hashed(tokens: _Tokens) -> str:
     it prints, are no token and change nothing."""
     _, marks, texts, _ = tokens
     return "\n".join([*(f"{m} {t}" for m, t in zip(marks, texts, strict=False)), marks[-1]])
+
+
+def _ends(parent: Any, node: Any) -> bool:
+    """`parent` ends with `node`, or is a holder with only a `;` after it."""
+    if parent.end_byte == node.end_byte:
+        return True
+    if parent.type not in _HOLDERS:
+        return False
+    return all(c.type == ";" for c in parent.children if c.start_byte >= node.end_byte)
 
 
 def _undefined(cond: Any) -> Any:
