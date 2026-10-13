@@ -153,7 +153,8 @@ async def create_snapshot(
     vectors = {surface.column for surface in EMBEDDING_SURFACES if surface.table == names.table}
     # A copy made by CREATE ... AS SELECT keeps a Quantized column's fixed width in
     # memory though its DDL shows no codec; the cast drops it, so the copies hold
-    # vectors of any width (the new model's included).
+    # vectors of any width (the new model's included). toTypeName keeps the
+    # column's own type: an uncoded install may store Array(Float32).
     columns = ", ".join(
         f"CAST({_identifier(name)}, toTypeName({_identifier(name)})) AS {_identifier(name)}"
         if name in vectors

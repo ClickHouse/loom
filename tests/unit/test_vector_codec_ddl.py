@@ -3,6 +3,8 @@ knows the codec; the migration files stay byte-identical."""
 
 from __future__ import annotations
 
+import pytest
+
 from server.core.schema import vector_codec_ddl as vcd
 
 BASELINE = """CREATE TABLE IF NOT EXISTS loom.memory_embeddings
@@ -110,3 +112,26 @@ def test_every_coded_table_except_entity_vectors_has_a_placeholder_rule() -> Non
 def test_codable_widths_are_whole_bytes_of_rabitq_bits() -> None:
     assert vcd.codable(8) and vcd.codable(384) and vcd.codable(3072)
     assert not vcd.codable(12) and not vcd.codable(0)
+
+
+@pytest.mark.parametrize(("dim", "coded"), [(3072, True), (1020, False)])
+def test_a_fresh_install_codes_its_vectors_only_at_a_codable_width(
+    settings_override, monkeypatch: pytest.MonkeyPatch, tmp_path, dim: int, coded: bool
+) -> None:
+    from server.core.schema import migrate as mig
+    from server.core.schema.journal import sorted_migrations
+
+    (tmp_path / "1999_a.sql").write_text(
+        "CREATE TABLE IF NOT EXISTS loom.x (a UInt8) ENGINE = Memory;\n"
+    )
+    settings_override(embedding_dim=dim)
+    seen: list[bool] = []
+    monkeypatch.setattr(mig, "_nlp_available", lambda ch: True)
+    monkeypatch.setattr(mig, "_codec_supported", lambda ch: True)
+    monkeypatch.setattr(mig, "_dimensions_setting_known", lambda ch: False)
+    monkeypatch.setattr(mig, "_sync_settings_accepted", lambda ch: frozenset())
+    monkeypatch.setattr(mig, "_run_file", lambda ch, f, **kw: seen.append(kw["coded"]))
+    monkeypatch.setattr(mig, "_record", lambda ch, name, cs: None)
+    files = sorted_migrations(tmp_path.glob("*.sql"))
+    assert mig._apply_pending(object(), files, dry=False, lease=None) == 0  # type: ignore[arg-type]
+    assert seen == [coded]

@@ -184,9 +184,9 @@ def _embedder_problems(settings: Any, state: HealthState) -> list[Problem]:
             Problem(
                 "coded_width_mismatch",
                 "error",
-                f"The vector tables are coded for {stored[0]}-dim vectors (a Quantized codec "
-                f"is fixed when its table is created) but {model} emits {width}: every "
-                "vector write fails.",
+                f"Vector tables are coded for {' and '.join(map(str, stored))}-dim vectors "
+                f"(a Quantized codec is fixed when its table is created) but {model} emits "
+                f"{width}: every write of those vectors fails.",
                 f"Set LOOM_EMBEDDING_DIM={stored[0]} again, or change the model in Settings → "
                 "Models & keys, which rebuilds the vector tables at the new width.",
                 source="runtime",

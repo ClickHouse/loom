@@ -189,6 +189,7 @@ __all__ = [
     "PATCH_PARTS_SQL",
     "codes_apply",
     "coded_columns",
+    "coded_widths",
     "ensure_probed",
     "is_coded",
     "probe",
