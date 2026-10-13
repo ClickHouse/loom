@@ -542,6 +542,7 @@ async def _recheck_repository(org: str, cns: str, budget: Budget, result: PassRe
     await _write_moves(await _current_moves(org, moves), head)
     result.rechecked += len(moves)
     await _refingerprint(org, cns, files, result)
+    await _retry_unparsed(org, cns, head, files, result)
     if head and head != checked:
         cut_at = str(
             json.loads(await code.link_cursor(_progress(org, cns)) or "{}").get("head", "")
@@ -618,7 +619,10 @@ async def _rehashed(a: dict[str, Any], files: Files) -> dict[str, Any]:
         None when the mirror lost the commit."""
         if not commit or not await files.has(commit):
             return None
-        found = await files.defs(commit, path, qualified_name)
+        try:
+            found = await files.defs(commit, path, qualified_name)
+        except code.ParseFailed:
+            return None  # no more readable than a commit the mirror lost
         return (found[0].body_hash, found[0].shape) if found else ("", "")
 
     link = _link_of(a)
@@ -717,14 +721,75 @@ async def _follow(
             by_path[str(a["path"])].append(a)
     after = str(done.get("after", "")) if done.get("head") == head else ""
     paths = [p for p in sorted(by_path) if p > after]
+    unparsed: set[str] = set()
     for i in range(0, len(paths), _PATHS_PER_WRITE):
         part = paths[i : i + _PATHS_PER_WRITE]
-        rows_part = [a for p in part for a in by_path[p]]
-        moves = await _recheck(org, cns, rows_part, changed, head, files)
+        moves = await _recheck_paths(org, cns, by_path, part, changed, head, files, unparsed)
         await _write_moves(await _current_moves(org, moves), head)
         result.rechecked += len(moves)
         await code.set_link_cursor(progress, json.dumps({"head": head, "after": part[-1]}))
     await code.set_link_cursor(progress, "")
+    if unparsed:
+        result.errors.append(f"recheck {org}/{cns}: did not parse: {', '.join(sorted(unparsed))}")
+        await _set_unparsed(org, cns, await _unparsed(org, cns) | unparsed)
+
+
+async def _recheck_paths(
+    org: str,
+    cns: str,
+    by_path: dict[str, list[dict[str, Any]]],
+    paths: list[str],
+    changed: _Range | None,
+    head: str,
+    files: Files,
+    unparsed: set[str],
+) -> list[Move]:
+    """The moves of the links on `paths`. A path whose recheck reads a file that does
+    not parse keeps its links as they were and joins `unparsed`, to be retried."""
+    rows = [a for p in paths for a in by_path[p]]
+    try:
+        return await _recheck(org, cns, rows, changed, head, files)
+    except code.ParseFailed:
+        pass
+    moves: list[Move] = []
+    for p in paths:
+        try:
+            moves += await _recheck(org, cns, by_path[p], changed, head, files)
+        except code.ParseFailed:
+            unparsed.add(p)
+    return moves
+
+
+async def _retry_unparsed(org: str, cns: str, head: str, files: Files, result: PassResult) -> None:
+    """Recheck the links on the paths a pass could not parse, each from the commit it was
+    last checked at; a path that still does not parse is retried again next pass."""
+    paths = await _unparsed(org, cns)
+    if not paths or not head:
+        return
+    by_commit: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for a in await store.for_code(org, [cns], paths=sorted(paths)):
+        by_commit[str(a["checked_commit"])].append(a)
+    still: set[str] = set()
+    for commit, rows in by_commit.items():
+        changed = await files.range(commit, head) if commit else None
+        by_path: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for a in rows:
+            by_path[str(a["path"])].append(a)
+        paths_now = sorted(by_path)
+        moves = await _recheck_paths(org, cns, by_path, paths_now, changed, head, files, still)
+        await _write_moves(await _current_moves(org, moves), head)
+        result.rechecked += len(moves)
+    if still:
+        result.errors.append(f"recheck {org}/{cns}: did not parse: {', '.join(sorted(still))}")
+    await _set_unparsed(org, cns, still)
+
+
+async def _unparsed(org: str, cns: str) -> set[str]:
+    return set(json.loads(await code.link_cursor(f"unparsed/{org}/{cns}") or "[]"))
+
+
+async def _set_unparsed(org: str, cns: str, paths: set[str]) -> None:
+    await code.set_link_cursor(f"unparsed/{org}/{cns}", json.dumps(sorted(paths)))
 
 
 async def _lost(org: str, cns: str, paths: set[str]) -> list[dict[str, Any]]:
@@ -968,7 +1033,11 @@ async def _resolve_pending(
         return []
     awaiting = [r for r in rows if r["qualified_name"] == _AWAITING_INDEX]
     if awaiting:
-        await _relink(org, cns, awaiting, files, result)
+        try:
+            await _relink(org, cns, awaiting, files, result)
+        except code.ParseFailed as e:
+            result.errors.append(f"relink {org}/{cns}: {e}")  # they stay waiting
+
     names = [r for r in rows if r["qualified_name"] != _AWAITING_INDEX]
     if not names:
         return []
@@ -983,7 +1052,10 @@ async def _resolve_pending(
         d = resolve(
             m, [x for x in defs if x.name == bare_name(m)], named.get(str(r["memory_id"]), [])
         )
-        here = await _at_head(files, head, d) if d is not None else None
+        try:
+            here = await _at_head(files, head, d) if d is not None else None
+        except code.ParseFailed:
+            continue  # stays pending: retried next pass
         if here is None:
             continue
         anchored: dict[str, Any] = {"anchored_commit": head, "anchored_path": here.path}

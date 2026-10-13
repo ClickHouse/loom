@@ -163,6 +163,10 @@ async def candidates(
 class ParseFailed(Exception):
     """A file the parser failed on: its missing symbols are no evidence of removal."""
 
+    def __init__(self, path: str, error: str) -> None:
+        super().__init__(f"{path}: {error}")
+        self.path = path
+
 
 def _parse(path: str, source: bytes) -> tuple[list[Any], Any]:
     """The parser's symbols of `path` and its tree-sitter tree (None without one); a
@@ -171,7 +175,7 @@ def _parse(path: str, source: bytes) -> tuple[list[Any], Any]:
 
     pf, error = _parse_for_ingest(path, source)
     if error:
-        raise ParseFailed(f"{path}: {error}")
+        raise ParseFailed(path, error)
     return (pf.symbols, pf.tree) if pf is not None else ([], None)
 
 

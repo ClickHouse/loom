@@ -1069,12 +1069,12 @@ async def test_a_parser_failure_is_retried_not_read_as_removed_code(env, monkeyp
     from server.memory.app import code_links
 
     repo = env
-    src = "def kept_rows():\n    return 1\n\n\ndef other():\n    return 0\n"
+    src = "def kept_rows():\n    return 1\n"
     c1 = repo.commit({"src/k.py": src})
     await _index(TRUNK, repo, c1, ["src/k.py"])
     mid = await _remember(MEM, "kept", "`kept_rows` returns one")
     await _pass()
-    c2 = repo.commit({"src/k.py": src.replace("return 0", "return 9")})
+    c2 = repo.commit({"src/k.py": src.replace("return 1", "return 9")})
     await _index(TRUNK, repo, c2, ["src/k.py"])
 
     def broken(path: str, source: bytes) -> None:
@@ -1086,10 +1086,41 @@ async def test_a_parser_failure_is_retried_not_read_as_removed_code(env, monkeyp
         await code_links.recheck_all(result)
     assert result.errors  # reported, not read as a deletion
     assert [link["state"] for link in await _links(mid)] == ["fresh"]
-    assert await code.checked_head(ORG, TRUNK) == c1  # retried from the same head
+    assert await code.checked_head(ORG, TRUNK) == c2  # the repository moves on
+    await _pass()  # the parser is back: the file is rechecked from its own commit
+    assert [link["state"] for link in await _links(mid)] == ["changed"]
+
+
+async def test_a_file_that_never_parses_holds_back_no_other_file(env, monkeypatch) -> None:
+    from server.code.app.index import ingest_parse
+    from server.memory.app import code_links
+
+    repo = env
+    c1 = repo.commit(
+        {"src/a.py": "def alpha():\n    return 1\n", "src/b.py": "def beta():\n    return 1\n"}
+    )
+    await _index(TRUNK, repo, c1, ["src/a.py", "src/b.py"])
+    alpha = await _remember(MEM, "alpha", "`alpha` returns one")
+    beta = await _remember(MEM, "beta", "`beta` returns one")
     await _pass()
-    assert [link["state"] for link in await _links(mid)] == ["fresh"]
-    assert await code.checked_head(ORG, TRUNK) == c2
+    c2 = repo.commit(
+        {"src/a.py": "def alpha():\n    return 2\n", "src/b.py": "def beta():\n    return 2\n"}
+    )
+    await _index(TRUNK, repo, c2, ["src/a.py", "src/b.py"])
+    parse = ingest_parse._PARSERS["python"]
+
+    def b_never_parses(path: str, source: bytes) -> Any:
+        if path.endswith("b.py"):
+            raise RecursionError("maximum recursion depth exceeded")
+        return parse(path, source)
+
+    monkeypatch.setitem(ingest_parse._PARSERS, "python", b_never_parses)
+    for _ in range(2):
+        result = code_links.PassResult()
+        await code_links.recheck_all(result)
+        assert any("src/b.py" in e for e in result.errors)
+    assert [x["state"] for x in await _links(alpha)] == ["changed"]
+    assert [x["state"] for x in await _links(beta)] == ["fresh"]  # as last checked
 
 
 async def test_a_late_link_of_an_older_value_is_relinked_to_the_newest(env) -> None:

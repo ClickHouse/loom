@@ -274,7 +274,9 @@ A link is a tree-sitter `(path, qualified_name)` and a fingerprint of the defini
 text (all its overloads, verbatim: indentation and literals are behaviour) when the
 memory was written. What a file defines is read from the file itself at the repository's
 indexed head, in its bare git mirror; the code index only suggests where to look, so a
-commit still being ingested never decides a link. On every indexed commit the worker
+commit still being ingested never decides a link. A file the parser fails on is not
+code that is gone: its links keep their state and are rechecked every pass until it
+parses, while the rest of the repository moves on. On every indexed commit the worker
 follows the commit's renames and edits:
 
 | Link state   | When                                                                                                               |

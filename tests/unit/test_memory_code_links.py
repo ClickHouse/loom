@@ -1497,6 +1497,7 @@ def _repository(monkeypatch, *, head: str, checked: str, cursor: str, diffs: dic
         "_write_moves",
         "_current_moves",
         "_refingerprint",
+        "_retry_unparsed",
         "_apply_policies",
     ):
         monkeypatch.setattr(code_links, name, nothing)
