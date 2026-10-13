@@ -97,7 +97,7 @@ def test_the_family_lists_each_declaration_in_order() -> None:
     keys = decls._family_keys([3], "fetch_rows", True)
     assert keys is not None
     family = [member for key in keys for member in decls._families[key]]
-    assert len(family) == 3 and family[-1][0].endswith("return a;\n}")
+    assert len(family) == 3 and family[-1].shown.endswith("return a;\n}")
 
 
 def test_overload_signatures_sharing_a_line_are_in_the_family() -> None:

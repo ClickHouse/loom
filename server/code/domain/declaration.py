@@ -242,10 +242,9 @@ def joined(shapes: Sequence[Shape]) -> Shape:
 
 
 class Member(NamedTuple):
-    """One declaration: its text, the text its fingerprint covers, its rename shapes,
-    and the text the judge reads; the first two under its conditions."""
+    """One declaration: what its fingerprint covers, its rename shapes and the text the
+    judge reads, the first and last under its conditions."""
 
-    text: str
     hashed: str
     shape: Shape
     shown: str
@@ -510,12 +509,7 @@ class Declarations:
         shown = conditions + (indent.decode() if indent.isspace() else "") + own
         shape = self._shape_at(at, name) if shapes else NO_SHAPE
         hashed = self._hashed(at, name, own)
-        return Member(
-            f"{guard}\n{own}" if guard else own,
-            f"{guard}\n{hashed}" if guard else hashed,
-            shape,
-            shown,
-        )
+        return Member(f"{guard}\n{hashed}" if guard else hashed, shape, shown)
 
     def _hashed(self, at: tuple[Any, Any], name: str, own: str) -> str:
         """What a declaration's fingerprint covers: its tokens as the parser nests them,

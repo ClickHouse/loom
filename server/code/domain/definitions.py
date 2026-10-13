@@ -36,7 +36,7 @@ def definitions(
                 m = decls.member(s.start_line, s.name, shapes=not named) if decls else None
                 if m is None:
                     text = "\n".join(lines[b - 1 : s.end_line])
-                    m = Member(text, text, NO_SHAPE, text)
+                    m = Member(text, NO_SHAPE, text)
                 members.append(m)
             prints = Prints.over(members)
         body, shape, shown = prints

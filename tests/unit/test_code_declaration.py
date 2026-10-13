@@ -27,7 +27,7 @@ def _shape(decls: Declarations, line: int, name: str) -> Shape:
 
 def _text(decls: Declarations, line: int, name: str) -> str | None:
     m = decls.member(line, name, shapes=False)
-    return None if m is None else m.text
+    return None if m is None else m.shown
 
 
 def _shapes(path: str, src: str, name: str) -> tuple[str, tuple[str, str]]:
