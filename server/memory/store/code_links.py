@@ -268,13 +268,27 @@ async def _for_code(
 
 
 async def stale_fingerprints(
-    org: str, code_namespace: str, version: str, *, limit: int, ch: _CHClient | None = None
+    org: str,
+    code_namespace: str,
+    version: str,
+    *,
+    limit: int,
+    offset: int = 0,
+    ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
-    """Up to `limit` live links of the namespace fingerprinted under another `version`."""
+    """Up to `limit` live links of the namespace fingerprinted under another `version`,
+    in key order, past the first `offset`."""
     return await (ch or _default_client()).query_all(
         f"SELECT * {_LIVE} AND org = {{org:String}} AND code_namespace = {{cns:String}} "
-        "AND state != 'pending' AND fingerprint_version != {v:String} LIMIT {lim:UInt32}",
-        params={"org": org, "cns": code_namespace, "v": version, "lim": int(limit)},
+        "AND state != 'pending' AND fingerprint_version != {v:String} "
+        f"ORDER BY {_KEY} LIMIT {{lim:UInt32}} OFFSET {{off:UInt32}}",
+        params={
+            "org": org,
+            "cns": code_namespace,
+            "v": version,
+            "lim": int(limit),
+            "off": int(offset),
+        },
     )
 
 

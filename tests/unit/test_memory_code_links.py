@@ -957,7 +957,7 @@ async def test_new_fingerprint_rules_rehash_links_from_their_own_commits(monkeyp
             "fingerprint_version": "0-old",
         }
 
-    async def stale(org, cns, version, *, limit):
+    async def stale(org, cns, version, *, limit, offset=0):
         assert version == fingerprint_version()
         return [link("fresh"), link("changed")]
 
@@ -1042,7 +1042,7 @@ async def test_a_hash_whose_code_is_gone_is_cleared_and_every_page_is_rehashed(
         [link("m3", "unresolved", "old-a", "old-c")],
     ]
 
-    async def stale(org, cns, version, *, limit):
+    async def stale(org, cns, version, *, limit, offset=0):
         return pages.pop(0) if pages else []
 
     async def defs(commit, path, qn):
@@ -1210,7 +1210,7 @@ def _changed_link(**change: Any) -> dict[str, Any]:
 async def _refingerprinted(monkeypatch, row, policies, defs, has=None) -> dict[str, Any]:
     """`row` as one re-hash pass writes it, its namespace under `policies`."""
 
-    async def stale(org, cns, version, *, limit):
+    async def stale(org, cns, version, *, limit, offset=0):
         return [row]
 
     async def policies_of(org, nss):

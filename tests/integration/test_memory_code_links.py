@@ -1193,6 +1193,92 @@ async def test_a_name_two_files_define_never_links_to_the_one_left(env) -> None:
     assert await store.for_memories(ORG, [mid]) == []
 
 
+def _python_parser_fails_for(monkeypatch, suffix: str) -> Any:
+    """Make the Python parser fail on paths ending in `suffix`; returns the undo."""
+    from server.code.app.index import ingest_parse
+
+    parse = ingest_parse._PARSERS["python"]
+
+    def failing(path: str, source: bytes) -> Any:
+        if path.endswith(suffix):
+            raise RecursionError("maximum recursion depth exceeded")
+        return parse(path, source)
+
+    monkeypatch.setitem(ingest_parse._PARSERS, "python", failing)
+    return lambda: monkeypatch.setitem(ingest_parse._PARSERS, "python", parse)
+
+
+async def test_a_rehash_the_parser_failed_stays_due(env, ch_client, monkeypatch) -> None:
+    from server.code.domain.declaration import fingerprint_version
+    from server.memory.app import code_links
+    from server.memory.store import code_links as store
+
+    c1 = env.commit({"src/k.py": "def kept_rows():\n    return 1\n"})
+    await _index(TRUNK, env, c1, ["src/k.py"])
+    mid = await _remember(MEM, "kept", "`kept_rows` returns one")
+    await _pass()
+    _as_old_rules(ch_client, body_hash="old", checked_hash="old", anchored_hash="old")
+    restore = _python_parser_fails_for(monkeypatch, "k.py")
+    await code_links.recheck_all(code_links.PassResult())
+    ((row,),) = [await store.for_memories(ORG, [mid])]
+    assert (row["fingerprint_version"], row["body_hash"]) == ("old", "old")  # still due
+    restore()
+    await _pass()
+    ((row,),) = [await store.for_memories(ORG, [mid])]
+    assert row["fingerprint_version"] == fingerprint_version()
+    assert row["checked_hash"] not in ("", "old") and row["state"] == "fresh"
+
+
+async def test_a_path_that_did_not_parse_is_owed_before_its_batch_is_done(env, monkeypatch) -> None:
+    from server.code.app import memory_links as code
+    from server.memory.app import code_links
+
+    files = {"src/a.py": "def alpha():\n    return 1\n", "src/b.py": "def beta():\n    return 1\n"}
+    c1 = env.commit(files)
+    await _index(TRUNK, env, c1, list(files))
+    beta = await _remember(MEM, "beta", "`beta` returns one")
+    await _pass()
+    c2 = env.commit({p: t.replace("return 1", "return 2") for p, t in files.items()})
+    await _index(TRUNK, env, c2, list(files))
+    monkeypatch.setattr(code_links, "_PATHS_PER_WRITE", 1)
+    restore = _python_parser_fails_for(monkeypatch, "b.py")
+    write = code.set_link_cursor
+
+    async def cut_after_b(name: str, value: str) -> None:
+        await write(name, value)
+        if name.startswith("recheck/") and '"after": "src/b.py"' in value:
+            raise RuntimeError("the pass is cut here")
+
+    with monkeypatch.context() as m:
+        m.setattr(code, "set_link_cursor", cut_after_b)
+        await code_links.recheck_all(code_links.PassResult())
+    await code_links.recheck_all(code_links.PassResult())  # finishes the head
+    restore()
+    await _pass()
+    assert [x["state"] for x in await _links(beta)] == ["changed"]
+
+
+async def test_a_memory_whose_file_does_not_parse_holds_back_no_other(env, monkeypatch) -> None:
+    files = {"src/a.py": "def alpha():\n    return 1\n", "src/b.py": "def beta():\n    return 1\n"}
+    c1 = env.commit(files)
+    await _index(TRUNK, env, c1, list(files))
+    restore = _python_parser_fails_for(monkeypatch, "b.py")
+    alpha = await _remember(MEM, "alpha", "`alpha` returns one", files=["src/a.py"])
+    beta = await _remember(MEM, "beta", "`beta` returns one", files=["src/b.py"])
+    from server.memory.app import code_links
+
+    for _ in range(2):  # the first link, then the retry of the one left waiting
+        result = code_links.PassResult()
+        cursor = QUEUE_START
+        cursor = await code_links.link_queued(cursor, 10_000, result)
+        await code_links.recheck_all(result)
+    assert [x["state"] for x in await _links(alpha)] == ["fresh"]
+    assert await _links(beta) == []
+    restore()
+    await code_links.recheck_all(code_links.PassResult())  # its marker is relinked
+    assert [x["state"] for x in await _links(beta)] == ["fresh"]
+
+
 async def test_a_late_link_of_an_older_value_is_relinked_to_the_newest(env) -> None:
     from server.memory.api.models_crud import MemoryGetInput
     from server.memory.app import code_links

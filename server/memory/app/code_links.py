@@ -351,12 +351,18 @@ async def _link_org(
     result.unlinked += len(stale)
     linked: list[str] = []
     for cns, memories in todo.items():
+        files = Files(org, cns)
         try:
-            rows_out, gone = await _link(org, cns, memories, existing, Files(org, cns))
+            rows_out, gone, unparsed = await _link_each(org, cns, memories, existing, files)
         except Exception as e:  # noqa: BLE001 — one repository's failure never stops the pass
             result.errors.append(f"link {org}/{cns}: {e}")
             out += [_awaiting(r, cns) for r in memories]
             continue
+        if unparsed:
+            result.errors.append(f"link {org}/{cns}: a file did not parse")
+            out += [_awaiting(r, cns) for r in unparsed]
+            waiting = {str(r["mid"]) for r in unparsed}
+            memories = [r for r in memories if str(r["mid"]) not in waiting]
         out += rows_out + store.tombstones(gone)
         result.linked += len(rows_out)
         result.unlinked += len(gone)
@@ -373,6 +379,33 @@ def _names_a_repository(
     namespace its links are in."""
     in_code = any(a["code_namespace"] == memory["namespace"] for a in links)
     return in_code or any(t.startswith("repo:") for t in tags)
+
+
+async def _link_each(
+    org: str,
+    cns: str,
+    memories: list[dict[str, Any]],
+    existing: dict[str, list[dict[str, Any]]],
+    files: Files,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """`_link`, and the memories it could not link because a file they name does not
+    parse; the others are linked all the same."""
+    try:
+        return *await _link(org, cns, memories, existing, files), []
+    except code.ParseFailed:
+        pass
+    rows: list[dict[str, Any]] = []
+    gone: list[dict[str, Any]] = []
+    unparsed: list[dict[str, Any]] = []
+    for m in memories:
+        try:
+            made, dropped = await _link(org, cns, [m], existing, files)
+        except code.ParseFailed:
+            unparsed.append(m)
+            continue
+        rows += made
+        gone += dropped
+    return rows, gone, unparsed
 
 
 async def _link(
@@ -618,14 +651,20 @@ _REFINGERPRINT_PAGE = 500
 
 async def _refingerprint(org: str, cns: str, files: Files, result: PassResult) -> None:
     """Re-hash the links hashed under other rules or grammars than these, a page at a
-    time, each page written as it is done: a pass the deadline cuts resumes with the
-    rest, and the repository follows new commits only after it, so no hash is compared
-    across rules."""
+    time, each page written as it is done; a link whose code does not parse stays due
+    for the next pass."""
     version = fingerprint_version()
-    while rows := await store.stale_fingerprints(org, cns, version, limit=_REFINGERPRINT_PAGE):
+    unparsed = 0  # links whose code did not parse: they stay due, first in key order
+    while rows := await store.stale_fingerprints(
+        org, cns, version, limit=_REFINGERPRINT_PAGE, offset=unparsed
+    ):
         rehashed = []
         for a in rows:
-            fields = await _rehashed(a, files) if a["qualified_name"] else {}
+            try:
+                fields = await _rehashed(a, files) if a["qualified_name"] else {}
+            except code.ParseFailed:
+                unparsed += 1
+                continue
             rehashed.append((a, fields, _owes(a, fields)))
         revised = await _revised_namespaces([a for a, _, owed in rehashed if owed])
         out = []
@@ -652,10 +691,7 @@ async def _rehashed(a: dict[str, Any], files: Files) -> dict[str, Any]:
         None when the mirror lost the commit."""
         if not commit or not await files.has(commit):
             return None
-        try:
-            found = await files.defs(commit, path, qualified_name)
-        except code.ParseFailed:
-            return None  # no more readable than a commit the mirror lost
+        found = await files.defs(commit, path, qualified_name)
         return (found[0].body_hash, found[0].shape.exact) if found else ("", "")
 
     link = _link_of(a)
@@ -752,17 +788,20 @@ async def _follow(
             by_path[str(a["path"])].append(a)
     after = str(done.get("after", "")) if done.get("head") == head else ""
     paths = [p for p in sorted(by_path) if p > after]
-    unparsed: set[str] = set()
+    unparsed = await _unparsed(org, cns)
+    before = set(unparsed)
     for i in range(0, len(paths), _PATHS_PER_WRITE):
         part = paths[i : i + _PATHS_PER_WRITE]
+        known = len(unparsed)
         moves = await _recheck_paths(org, cns, by_path, part, changed, head, files, unparsed)
         await _write_moves(await _current_moves(org, moves), head)
         result.rechecked += len(moves)
+        if len(unparsed) > known:  # owed before the cursor moves past them
+            await _set_unparsed(org, cns, unparsed)
         await code.set_link_cursor(progress, json.dumps({"head": head, "after": part[-1]}))
     await code.set_link_cursor(progress, "")
-    if unparsed:
-        result.errors.append(f"recheck {org}/{cns}: did not parse: {', '.join(sorted(unparsed))}")
-        await _set_unparsed(org, cns, await _unparsed(org, cns) | unparsed)
+    if new := sorted(unparsed - before):
+        result.errors.append(f"recheck {org}/{cns}: did not parse: {', '.join(new)}")
 
 
 async def _recheck_paths(
@@ -1057,10 +1096,7 @@ async def _resolve_pending(
         return []
     awaiting = [r for r in rows if r["qualified_name"] == _AWAITING_INDEX]
     if awaiting:
-        try:
-            await _relink(org, cns, awaiting, files, result)
-        except code.ParseFailed as e:
-            result.errors.append(f"relink {org}/{cns}: {e}")  # they stay waiting
+        await _relink(org, cns, awaiting, files, result)
 
     names = [r for r in rows if r["qualified_name"] != _AWAITING_INDEX]
     if not names:
@@ -1113,11 +1149,15 @@ async def _relink(
     for a in await store.for_memories(org, ids):
         if a["code_namespace"] == cns and a["qualified_name"] != _AWAITING_INDEX:
             existing[str(a["memory_id"])].append(a)
-    rows, gone = await _link(org, cns, served, existing, files) if served else ([], [])
+    rows, gone, unparsed = (
+        await _link_each(org, cns, served, existing, files) if served else ([], [], [])
+    )
+    waiting = {str(m["mid"]) for m in unparsed}  # their markers stay
     read = {str(m["memory_id"]): int(m["version"]) for m in markers}
     for r in rows:
         r["version"] = read[str(r["memory_id"])] + 1
-    await store.insert(store.tombstones(markers + gone) + rows)
+    done = [m for m in markers if str(m["memory_id"]) not in waiting]
+    await store.insert(store.tombstones(done + gone) + rows)
     result.linked += len(rows)
     result.unlinked += len(gone)
 
