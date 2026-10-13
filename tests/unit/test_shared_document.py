@@ -215,3 +215,31 @@ def test_an_update_gives_up_on_a_lock_a_sibling_holds(tmp_path, monkeypatch) -> 
     finally:
         os.close(holder)
     assert doc.update(lambda d: {**d, "a": 1}, {}) == {"a": 1}
+
+
+def test_a_busy_lock_is_a_retry_and_an_unwritable_document_is_not(tmp_path, monkeypatch) -> None:
+    import fcntl
+    import os
+
+    import pytest
+
+    from server.core import shared_document
+    from server.core.errors import OverloadedError, OverrideNotSharedError
+
+    path = str(tmp_path / "doc.json")
+    doc = shared_document.SharedDocument(path, lambda d: d, lambda d: d)
+    holder = os.open(path + ".lock", os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    monkeypatch.setattr(shared_document, "LOCK_WAIT_S", 0.05)
+    try:
+        with pytest.raises(OverloadedError):
+            shared_document.share_override(doc, lambda d: d, {}, what="budget override")
+    finally:
+        os.close(holder)
+    monkeypatch.setattr(shared_document, "_publish", _refuse_publish)
+    with pytest.raises(OverrideNotSharedError):
+        shared_document.share_override(doc, lambda d: d, {}, what="budget override")
+
+
+def _refuse_publish(path: str, data: object) -> object:
+    raise OSError(28, "No space left on device")

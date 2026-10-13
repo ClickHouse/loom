@@ -1,9 +1,12 @@
-"""An MCP session's implicit run, through the transport, for a session-scoped token.
+"""An MCP session's implicit run, through the transport, on the auth-on server.
 
 A token minted with `read_scope=own_session` acts as the user and session its
 calls name. The run the transport begins for its MCP session is filed under
 that user and that session (not the MCP session id), every write carries the
 run's stored id, and the client's DELETE /mcp completes it.
+
+Two tokens sending the same (client-chosen) session id hold two runs: each
+one's writes carry its own, and each one's DELETE completes only its own.
 
 Needs a server that enforces auth (the isolation step of CI); skips otherwise,
 and without LOOM_BASE_URL (tests/integration/conftest.py).
@@ -22,7 +25,7 @@ from tests.integration._resources import unique_org
 USER, APP_SESSION = "user-s", "app-session-1"
 
 
-def _mint(org: str, ns: str) -> str:
+def _mint(org: str, ns: str, **claims: Any) -> str:
     from server.auth.jwt import mint_token
 
     return mint_token(
@@ -32,8 +35,7 @@ def _mint(org: str, ns: str) -> str:
         roles=["writer"],
         ttl_seconds=900,
         is_service_account=True,
-        read_scope="own_session",
-        read_user_id=USER,
+        **claims,
     )
 
 
@@ -46,22 +48,21 @@ def _headers(token: str, session: str) -> dict[str, str]:
 
 
 async def _memory_set(c: httpx.AsyncClient, token: str, session: str, ns: str, key: str) -> None:
+    arguments = {"namespace": ns, "session_id": APP_SESSION, "memory_key": key, "value": key}
     body = {
         "jsonrpc": "2.0",
         "id": 1,
         "method": "tools/call",
-        "params": {
-            "name": "loom_memory_set",
-            "arguments": {
-                "namespace": ns,
-                "session_id": APP_SESSION,
-                "memory_key": key,
-                "value": f"fact {key}",
-            },
-        },
+        "params": {"name": "loom_memory_set", "arguments": arguments},
     }
     r = await c.post("/mcp", json=body, headers=_headers(token, session))
     assert r.status_code == 200 and "error" not in r.json(), r.text[:400]
+
+
+async def _require_auth(c: httpx.AsyncClient) -> None:
+    r = await c.post("/v1/memory.get", json={"org": "o", "namespace": "n", "memory_key": "k"})
+    if r.status_code == 200:
+        pytest.skip("the server does not enforce auth")
 
 
 @pytest.mark.asyncio
@@ -69,11 +70,10 @@ async def test_a_session_scoped_tokens_run_is_filed_under_its_session(
     control_plane_url: str, ch_client: Any
 ) -> None:
     async with httpx.AsyncClient(base_url=control_plane_url, timeout=30) as c:
-        r = await c.post("/v1/memory.get", json={"org": "o", "namespace": "n", "memory_key": "k"})
-        if r.status_code == 200:
-            pytest.skip("the server does not enforce auth")
+        await _require_auth(c)
         org, ns = unique_org("mcp-scope"), "ns"
-        token, session = _mint(org, ns), uuid.uuid4().hex
+        token = _mint(org, ns, read_scope="own_session", read_user_id=USER)
+        session = uuid.uuid4().hex
         for i in range(3):
             await _memory_set(c, token, session, ns, f"rv/fact/{i}")
         r = await c.delete("/mcp", headers=_headers(token, session))
@@ -92,3 +92,32 @@ async def test_a_session_scoped_tokens_run_is_filed_under_its_session(
         parameters={"org": org},
     ).result_rows
     assert stamped == [(run_id,)]
+
+
+@pytest.mark.asyncio
+async def test_two_tokens_sending_one_session_id_hold_two_runs(
+    control_plane_url: str, ch_client: Any
+) -> None:
+    org, session = unique_org("mcp-two"), uuid.uuid4().hex
+    tokens = {ns: _mint(org, ns) for ns in ("ns-a", "ns-b")}
+    async with httpx.AsyncClient(base_url=control_plane_url, timeout=30) as c:
+        await _require_auth(c)
+        for ns, token in tokens.items():
+            for i in range(2):
+                await _memory_set(c, token, session, ns, f"rv/fact/{ns}/{i}")
+        r = await c.delete("/mcp", headers=_headers(tokens["ns-b"], session))
+        assert r.json()["run_closed"] is True, r.text[:400]
+
+    runs = dict(
+        ch_client.query(
+            "SELECT namespace, status FROM loom.agent_runs FINAL WHERE org = {org:String}",
+            parameters={"org": org},
+        ).result_rows
+    )
+    assert runs == {"ns-a": "active", "ns-b": "completed"}
+    stamped = ch_client.query(
+        "SELECT namespace, uniqExact(run_id) FROM loom.memory FINAL WHERE org = {org:String} "
+        "GROUP BY namespace ORDER BY namespace",
+        parameters={"org": org},
+    ).result_rows
+    assert stamped == [("ns-a", 1), ("ns-b", 1)]

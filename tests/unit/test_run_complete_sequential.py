@@ -84,27 +84,32 @@ async def test_a_session_runs_calls_are_read_org_wide(monkeypatch, active):
     class _Ledger(_Client):
         async def query_one(self, sql: str, params=None):
             await super().query_one(sql, params)
+            assert "namespace =" not in sql and "agent_events" in sql
+            assert params["since"] == started and params["subject"] == "sa:t"
+            return {"n": 4, "last": last}
+
+        async def query_all(self, sql: str, params=None):
+            self.sequential_reads.append(sequential_reads_active())
             assert "namespace =" not in sql
-            if "agent_events" in sql:
-                assert params["since"] == started and params["subject"] == "sa:t"
-                return {"n": 4, "last": last}
-            if not active:
-                return None
-            return {"namespace": "ns-first", "status": "active", "started_at": started}
+            return [{"namespace": "ns-first", "started_at": started}] if active else []
 
     client = _Ledger()
     monkeypatch.setattr(run_handlers, "get_client", lambda: client)
     got = await run_handlers.session_run_calls("o", "mcp-s", "sa:t")
-    assert got == (("ns-first", 4, last) if active else None)
+    assert got == ((["ns-first"], 4, last) if active else None)
     assert client.sequential_reads[0] is True
 
 
 @pytest.mark.asyncio
-async def test_an_explicit_begin_never_takes_a_session_runs_id(monkeypatch):
-    """The MCP transport's session runs open only through begin_session_run."""
+@pytest.mark.parametrize(
+    ("supplied", "kept"),
+    [("mcp-" + "a" * 40, False), ("mcp-server-nightly-1", True), ("my-run-1", True)],
+)
+async def test_an_explicit_begin_never_takes_a_session_runs_id(monkeypatch, supplied, kept):
+    """Only the exact shape of a session run's id is the transport's."""
     client = _Client()
     monkeypatch.setattr(run_handlers, "get_client", lambda: client)
     out = await run_handlers.handle_run_begin(
-        RunBeginInput(org="o", namespace="n", agent="a", goal="g", run_id="mcp-abc", user_id="eve")
+        RunBeginInput(org="o", namespace="n", agent="a", goal="g", run_id=supplied, user_id="eve")
     )
-    assert out.run_id != "mcp-abc" and not out.run_id.startswith("mcp-")
+    assert (out.run_id == supplied) is kept

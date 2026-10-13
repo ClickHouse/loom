@@ -19,7 +19,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from server.core.errors import OverrideNotSharedError
+from server.core.errors import OverloadedError, OverrideNotSharedError
 from server.core.runtime_files import open_private
 
 log = logging.getLogger(__name__)
@@ -106,17 +106,24 @@ def share_override[T](
     doc: SharedDocument[T] | None, change: Callable[[T], T], current: T, *, what: str
 ) -> T:
     """`change(current)`, published to the server's other web processes through
-    `doc` (None: this process is the only one). Raises OverrideNotSharedError,
-    having changed nothing, when it cannot be shared; the log says why."""
+    `doc` (None: this process is the only one). Raises OverloadedError when a
+    sibling's update holds the lock (a retry goes through), OverrideNotSharedError
+    when the document cannot be shared at all; either way nothing changed."""
     if doc is None:
         return change(current)
     try:
         return doc.update(change, current)
+    except LockBusy as e:
+        raise OverloadedError(f"{what} not applied: another web process is updating it") from e
     except OSError as e:
         log.warning("%s not shared: %s", what, e)
         raise OverrideNotSharedError(
             f"{what} not applied: the server's web processes could not share it"
         ) from e
+
+
+class LockBusy(OSError):
+    """A sibling web process held the document's lock past the wait."""
 
 
 def _lock_within(fd: int, path: str, wait_s: float) -> None:
@@ -130,7 +137,7 @@ def _lock_within(fd: int, path: str, wait_s: float) -> None:
             return
         except BlockingIOError:
             if time.monotonic() >= deadline:
-                raise OSError(errno.EWOULDBLOCK, f"{path}.lock held past {wait_s:g} s") from None
+                raise LockBusy(errno.EWOULDBLOCK, f"{path}.lock held past {wait_s:g} s") from None
             time.sleep(0.002)
 
 

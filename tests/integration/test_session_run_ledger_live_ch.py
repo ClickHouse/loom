@@ -1,5 +1,5 @@
 """An MCP session's implicit run, as the ledger decides it, on live ClickHouse:
-`active_session_run` finds the run a sibling web process began, in whichever
+`active_session_runs` finds the run a sibling web process began, in whichever
 namespace, and `session_run_calls` counts the calls labelled with it in every
 namespace.
 
@@ -59,13 +59,13 @@ async def _ledger_call(ch: Any, namespace: str, run_id: str, subject: str = "") 
 @pytest.mark.asyncio
 async def test_the_ledger_decides_when_a_session_run_ends(ch: Any) -> None:
     from server.tasks.api.models_run import RunBeginInput
-    from server.tasks.app.run import active_session_run, begin_session_run, session_run_calls
+    from server.tasks.app.run import active_session_runs, begin_session_run, session_run_calls
 
     first, other = (f"itest-{uuid.uuid4().hex[:12]}" for _ in range(2))
     run_id = f"mcp-{uuid.uuid4().hex[:12]}"
     try:
-        assert await active_session_run(ORG, run_id) is None
-        began = await begin_session_run(
+        assert await active_session_runs(ORG, run_id) == []
+        await begin_session_run(
             RunBeginInput(
                 org=ORG,
                 namespace=first,
@@ -77,16 +77,14 @@ async def test_the_ledger_decides_when_a_session_run_ends(ch: Any) -> None:
             ),
             started_at=naive_utc_now(),
         )
-        assert began
-        run = await active_session_run(ORG, run_id)
-        assert run is not None and run["namespace"] == first
+        assert [r["namespace"] for r in await active_session_runs(ORG, run_id)] == [first]
 
         # Nothing ledgered yet.
-        assert await session_run_calls(ORG, run_id, "") == (first, 0, None)
+        assert await session_run_calls(ORG, run_id, "") == ([first], 0, None)
         # A call the session made in another namespace counts.
         await _ledger_call(ch, other, run_id)
-        namespace, calls, last = await session_run_calls(ORG, run_id, "") or ("", 0, None)
-        assert (namespace, calls) == (first, 1)
+        namespaces, calls, last = await session_run_calls(ORG, run_id, "") or ([], 0, None)
+        assert (namespaces, calls) == ([first], 1)
         assert last is not None and (naive_utc_now() - last).total_seconds() < 120
         assert await session_run_calls(ORG, "mcp-never-begun", "") is None
         # Another token labelling a request with the run's id is not the session.
@@ -155,7 +153,7 @@ async def test_a_scoped_callers_session_run_is_its_own(ch: Any) -> None:
 async def test_two_callers_sending_one_session_id_keep_their_own_runs(ch: Any) -> None:
     """A client picks its session id: two tokens sending the same one hold two
     runs, and one's DELETE leaves the other's open."""
-    from server.tasks.app.run import active_session_run
+    from server.tasks.app.run import active_session_runs
     from server.transport import mcp_runs
 
     first, other = (f"itest-{uuid.uuid4().hex[:12]}" for _ in range(2))
@@ -172,9 +170,9 @@ async def test_two_callers_sending_one_session_id_keep_their_own_runs(ch: Any) -
         assert runs["alice"].run_id != runs["bob"].run_id
         mcp_runs.reset()
         assert await mcp_runs.close_session(session, ORG, "bob") is True
-        assert await active_session_run(ORG, runs["bob"].run_id) is None
-        alice = await active_session_run(ORG, runs["alice"].run_id)
-        assert alice is not None and alice["namespace"] == first
+        assert await active_session_runs(ORG, runs["bob"].run_id) == []
+        alice = await active_session_runs(ORG, runs["alice"].run_id)
+        assert [r["namespace"] for r in alice] == [first]
     finally:
         mcp_runs.reset()
         for table in ("agent_runs", "agent_events"):
@@ -201,7 +199,7 @@ async def test_a_session_run_counts_a_call_that_lands_before_its_begin(ch: Any) 
         await _ledger_call(ch, namespace, run.run_id)  # before the begin lands
         await mcp_runs.drain_ledger_writes()
         found = await session_run_calls(ORG, run.run_id, "")
-        assert found is not None and found[:2] == (namespace, 1)
+        assert found is not None and found[:2] == ([namespace], 1)
     finally:
         mcp_runs.reset()
         for table in ("agent_runs", "agent_events"):
@@ -212,7 +210,7 @@ async def test_a_session_run_counts_a_call_that_lands_before_its_begin(ch: Any) 
 
 
 @pytest.mark.asyncio
-async def test_the_transports_begin_refuses_an_id_holding_another_users_run(ch: Any) -> None:
+async def test_a_reopened_session_run_keeps_its_first_goal_and_owner(ch: Any) -> None:
     from server.tasks.api.models_run import RunBeginInput
     from server.tasks.app.run import begin_session_run
     from server.tasks.store.runs import fetch_run
@@ -220,23 +218,60 @@ async def test_the_transports_begin_refuses_an_id_holding_another_users_run(ch: 
     namespace = f"itest-{uuid.uuid4().hex[:12]}"
     run_id = f"mcp-{uuid.uuid4().hex[:12]}"
 
-    def begin(user: str) -> RunBeginInput:
+    def begin(user: str, goal: str) -> RunBeginInput:
         return RunBeginInput(
-            org=ORG, namespace=namespace, agent=AGENT, run_id=run_id, user_id=user, goal=user
+            org=ORG,
+            namespace=namespace,
+            agent=AGENT,
+            run_id=run_id,
+            user_id=user,
+            goal=goal,
+            environment="mcp",
         )
 
-    started = naive_utc_now()
     try:
-        assert await begin_session_run(begin("u1"), started_at=started) is True
-        assert await begin_session_run(begin("u2"), started_at=started) is False
+        await begin_session_run(begin("u1", "first"), started_at=naive_utc_now())
+        await begin_session_run(begin("u2", "a later call's query"), started_at=naive_utc_now())
         row = await fetch_run(ch, ORG, namespace, run_id)
-        assert row is not None and (row["user_id"], row["goal"]) == ("u1", "u1")
-        later = begin("u1").model_copy(update={"goal": "a later call's query"})
-        assert await begin_session_run(later, started_at=started) is True
-        row = await fetch_run(ch, ORG, namespace, run_id)
-        assert row is not None and row["goal"] == "u1"  # re-opened, first goal kept
+        assert row is not None and (row["user_id"], row["goal"]) == ("u1", "first")
     finally:
         await ch.execute(
             "DELETE FROM loom.agent_runs WHERE org = {org:String} AND namespace = {ns:String}",
             params={"org": ORG, "ns": namespace},
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_close_completes_the_rows_two_racing_first_begins_wrote(ch: Any) -> None:
+    """Two web processes' first calls named different namespaces and both began
+    the run: the session's close completes both."""
+    from server.tasks.api.models_run import RunBeginInput
+    from server.tasks.app.run import active_session_runs, begin_session_run
+    from server.transport import mcp_runs
+
+    first, other = (f"itest-{uuid.uuid4().hex[:12]}" for _ in range(2))
+    session = uuid.uuid4().hex
+    run_id = mcp_runs.run_id_for(ORG, "sub", session)
+    try:
+        for namespace in (first, other):
+            await begin_session_run(
+                RunBeginInput(
+                    org=ORG,
+                    namespace=namespace,
+                    agent=AGENT,
+                    run_id=run_id,
+                    goal="g",
+                    environment="mcp",
+                ),
+                started_at=naive_utc_now(),
+            )
+        assert len(await active_session_runs(ORG, run_id)) == 2
+        mcp_runs.reset()
+        assert await mcp_runs.close_session(session, ORG, "sub") is True
+        assert await active_session_runs(ORG, run_id) == []
+    finally:
+        await ch.execute(
+            "DELETE FROM loom.agent_runs WHERE org = {org:String} "
+            "AND namespace IN {ns:Array(String)}",
+            params={"org": ORG, "ns": [first, other]},
         )

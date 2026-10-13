@@ -137,9 +137,9 @@ def _embedder_problems(settings: Any, state: HealthState) -> list[Problem]:
     provider = _embedder_provider(model)
     fix_real = (
         "Choose an embedding model in Settings → Models & keys, which re-embeds what is "
-        "stored at the model's width. Or set LOOM_EMBEDDING_MODEL to a model of the width "
-        "the vector tables store (LOOM_EMBEDDING_MODEL=text-embedding-3-large for 3072, "
-        "with OPENAI_API_KEY) and run `loom reembed`, which keeps that width."
+        "stored at the model's width. Or set LOOM_EMBEDDING_MODEL=<a model of the width "
+        "the vector tables store> with its key and run `loom reembed`, which keeps that "
+        "width."
     )
     if provider == "fake":
         out.append(

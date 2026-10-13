@@ -33,7 +33,7 @@ def rid(session_id: str) -> str:
 def _fresh(monkeypatch):
     from server.settings import settings
 
-    monkeypatch.setattr(settings, "mcp_session_run_idle_seconds", 1800, raising=False)
+    monkeypatch.setattr(settings, "mcp_session_run_idle_seconds", 1800)
     mcp_runs.reset()
     run_context.set_ledger_run("")
     yield
@@ -53,8 +53,8 @@ class _Ledger:
         # Runs a sibling web process called within the idle window.
         self.served_elsewhere: set[str] = set()
 
-    async def active_run(self, org: str, run_id: str) -> dict[str, Any] | None:
-        return {"namespace": self.active[run_id]} if run_id in self.active else None
+    async def active_runs(self, org: str, run_id: str) -> list[dict[str, Any]]:
+        return [{"namespace": self.active[run_id]}] if run_id in self.active else []
 
     async def calls(self, org: str, run_id: str, subject: str) -> Any:
         if run_id not in self.active:
@@ -62,14 +62,13 @@ class _Ledger:
         from server.core.datetimes import naive_utc_now
 
         last = naive_utc_now() if run_id in self.served_elsewhere else None
-        return self.active[run_id], 7, last  # the run's namespace, the ledger's count
+        return [self.active[run_id]], 7, last  # the run's namespaces, the ledger's count
 
-    async def begin(self, inp: Any, *, started_at: Any) -> bool:
+    async def begin(self, inp: Any, *, started_at: Any) -> None:
         if self.fail_begin:
             raise RuntimeError("ledger down")
         self.begins.append(inp)
         self.active[inp.run_id] = inp.namespace
-        return True
 
     async def complete(self, inp: Any) -> Any:
         self.completes.append(inp)
@@ -87,7 +86,7 @@ def ledger(monkeypatch) -> _Ledger:
     monkeypatch.setattr(h, "begin_session_run", led.begin)
     monkeypatch.setattr(h, "handle_run_complete", led.complete)
     monkeypatch.setattr(h, "session_run_calls", led.calls)
-    monkeypatch.setattr(h, "active_session_run", led.active_run)
+    monkeypatch.setattr(h, "active_session_runs", led.active_runs)
     return led
 
 
@@ -510,11 +509,11 @@ def test_a_failed_check_keeps_the_run_and_tries_again(ledger: _Ledger, monkeypat
         async def _down(org: str, run_id: str) -> Any:
             raise RuntimeError("ledger down")
 
-        monkeypatch.setattr(h, "active_session_run", _down)
+        monkeypatch.setattr(h, "active_session_runs", _down)
         assert await mcp_runs.ensure("s", DEFAULTS, CALLER, goal="g", now=61.0) is run
         await mcp_runs.drain_ledger_writes()
         assert await mcp_runs.ensure("s", DEFAULTS, CALLER, goal="g", now=62.0) is run
-        monkeypatch.setattr(h, "active_session_run", ledger.active_run)
+        monkeypatch.setattr(h, "active_session_runs", ledger.active_runs)
         assert await mcp_runs.ensure("s", DEFAULTS, CALLER, goal="g", now=125.0) is run
         await mcp_runs.drain_ledger_writes()
         assert len(ledger.begins) == 1  # still active: joined, never begun twice

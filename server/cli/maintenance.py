@@ -249,8 +249,7 @@ def _cmd_reembed(args: argparse.Namespace) -> int:
 
     async def _go(ch: Any) -> int:
         embedder = get_embedder()
-        probe = await embedder.embed("dimension probe")
-        print(f"target embedder: {embedder.model_name} ({len(probe)}-dim)")
+        print(f"target embedder: {embedder.model_name} ({embedder.dim}-dim)")
         try:
             written = await reembed_all(
                 ch,

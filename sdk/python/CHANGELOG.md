@@ -5,6 +5,18 @@ All notable changes to the Python SDK. The format follows
 [SemVer](https://semver.org/). The top entry's version equals `pyproject.toml` and
 `loom/_version.py` (a unit test checks).
 
+## [Unreleased]
+
+### Added
+
+- `CodedWidthMismatch` and `OverrideNotShared` (`BackendUnavailable` subclasses) for the
+  server's `CODED_WIDTH_MISMATCH` and `OVERRIDE_NOT_SHARED`.
+
+### Changed
+
+- `CODED_WIDTH_MISMATCH` and `OVERRIDE_NOT_SHARED` are not retried: an operator, not a
+  retry, fixes them.
+
 ## [1.0.0] - 2026-10-16
 
 First public release.

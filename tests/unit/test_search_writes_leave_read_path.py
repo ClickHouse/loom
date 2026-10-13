@@ -30,7 +30,7 @@ def rid(session_id: str) -> str:
 def _flag(monkeypatch: pytest.MonkeyPatch):
     from server.settings import settings
 
-    monkeypatch.setattr(settings, "mcp_session_run_idle_seconds", 1800, raising=False)
+    monkeypatch.setattr(settings, "mcp_session_run_idle_seconds", 1800)
     mcp_runs._RUNS.clear()
     mcp_runs._BEGIN_FAILED_AT.clear()
     yield
@@ -44,10 +44,9 @@ def test_ensure_returns_before_run_begin_lands_and_close_waits_for_it(monkeypatc
     gate = asyncio.Event()
     order: list[str] = []
 
-    async def slow_begin(inp: Any, *, started_at: Any) -> bool:
+    async def slow_begin(inp: Any, *, started_at: Any) -> None:
         await gate.wait()
         order.append(f"begin:{inp.run_id}")
-        return True
 
     async def complete(inp: Any) -> Any:
         order.append(f"complete:{inp.run_id}")
@@ -57,8 +56,8 @@ def test_ensure_returns_before_run_begin_lands_and_close_waits_for_it(monkeypatc
 
     monkeypatch.setattr(h, "begin_session_run", slow_begin)
     monkeypatch.setattr(h, "handle_run_complete", complete)
-    monkeypatch.setattr(h, "active_session_run", AsyncMock(return_value=None))
-    monkeypatch.setattr(h, "session_run_calls", AsyncMock(return_value=("ns-a", 1, None)))
+    monkeypatch.setattr(h, "active_session_runs", AsyncMock(return_value=[]))
+    monkeypatch.setattr(h, "session_run_calls", AsyncMock(return_value=(["ns-a"], 1, None)))
 
     async def _run() -> None:
         run = await asyncio.wait_for(

@@ -3,7 +3,7 @@
 # deploy/clickhouse-config/*.xml + the lemmagen3 'en' dictionary. Without these,
 # the content_excerpt_{stem,lemma} MATERIALIZED columns can't evaluate
 # lemmatize()/stem() (experimental, gated) and lightweight UPDATEs fail on
-# CH 26.5 — so every insert into memory_embeddings dies and search returns
+# ClickHouse — so every insert into memory_embeddings dies and search returns
 # nothing. GitHub Actions `services:` start BEFORE checkout and can't mount
 # repo files, so CI runs the container as a post-checkout step via this script.
 #

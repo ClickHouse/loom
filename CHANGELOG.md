@@ -8,7 +8,39 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 
 ## [Unreleased]
 
+### Added
+
+- `CODED_WIDTH_MISMATCH` (503): a write whose vector is not the width its coded column was
+  created at; `memory.set`, `bulk_set`, `update` and the `knowledge.*` writes are refused before
+  any of their rows lands, and `/v1/health` reports `coded_width_mismatch` with the fix.
+- `OVERRIDE_NOT_SHARED` (503): a budget or rate-limit override the server's web processes could
+  not share is refused and changes nothing; the server log names the file.
+- `LOOM_RUNTIME_DIR`: the directory one server's web processes share files in.
+  `scripts/serve.sh` chooses it once and exports it; set it for another launcher that starts
+  several workers.
+- Migration `026` adds `run_id` skip indexes to `agent_events` and `agent_runs`.
+
 ### Changed
+
+- **Operators:** every stack runs ClickHouse **26.9.17.8**. A fresh install creates its vector
+  columns coded (`Quantized('rabitq', dim, 0)`) when the width is a multiple of 8; an install
+  whose vector tables are plain stays plain until `scripts/ops/vector_codec_rebuild.py` moves
+  it. `LOOM_CLICKHOUSE_IMAGE` overrides the compose image (for example
+  `clickhouse/clickhouse-server:head`, unsupported).
+- **Operators:** with `LOOM_WEB_WORKERS` unset, the image starts one web process per CPU the
+  container may use, at most one per GiB of memory and at most 8, instead of one. Set it to
+  keep the old behaviour or to leave cores for ClickHouse on a shared host.
+- **Operators:** the image owns `/run/loom` (uid 999) and the compose files mount it as a
+  tmpfs. Runtime files under the earlier names (`loom-ratelimit-<pid>.buckets`,
+  `loom-graph-marks-<pid>/`) are not removed automatically; delete them once the old server is
+  gone.
+- With `LOOM_EMBEDDING_DIM` unset, a `local:*` embedding model sets the width itself (384 for
+  `bge-small`).
+- `loom reembed` refuses a width the coded vector tables do not take; change a model of another
+  width in Settings → Models & keys, which rebuilds the tables.
+- An MCP session's implicit run is shared by every web process of the server and filed under
+  the user and session the call acts as. A `run.begin` naming an id of its shape (`mcp-` and 40
+  hex digits) is answered with an id of its own.
 
 - **Breaking:** `rerank` (`memory.search`, `memory.search_trace`, `code.search`, `code.ask`)
   and a namespace's `rerank_endpoint` take a name, not a URL: `none`, `builtin:openai[:model]`,

@@ -6,7 +6,8 @@ client never names a run of its own. The transport mints the run itself:
 
 - The first run-scoped tool call of a session begins a run (goal = that
   call's query or key, `environment="mcp"`, `consumer=<client agent>`,
-  `session_id` = the MCP session, `metadata.implicit=true`).
+  `metadata.implicit=true`), filed under the user and session the call acts as.
+  Its id binds the token's subject (`run_id_for`).
 - Writes get the run stamped into their `run_id` argument (provenance, and
   the cross-scope `duplicate` rule); reads are labelled through the
   ledger ContextVar (`server.observability.run_context`) and never filtered.
@@ -18,6 +19,10 @@ client never names a run of its own. The transport mints the run itself:
   `status="completed"`, `outcome="none"` (the transport knows the session
   ended, not how it went, and never guesses). The sweep is request-driven
   (once a minute at most) so it needs no worker.
+- Begins and closes run detached from the request, as the sweep does: they are
+  the transport's own bookkeeping, the id already proves the run is the
+  token's, and they run before the call's read scope is bound (a DELETE has
+  none at all).
 
 Bounded like the session→agent cache: at the cap the idlest run is closed
 and evicted. Ledger failures never fail a tool call.
@@ -26,8 +31,6 @@ and evicted. Ledger failures never fail a tool call.
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
 import logging
 import time
 from dataclasses import dataclass
@@ -35,6 +38,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 from server.core.background import TaskSet
+from server.tasks.domain.session_runs import session_run_id
 
 log = logging.getLogger(__name__)
 
@@ -123,8 +127,10 @@ class SessionRun:
 # Keyed by run id: two callers sending one session id hold two runs.
 _RUNS: dict[str, SessionRun] = {}
 _BEGIN_FAILED_AT: dict[str, float] = {}
-# Closes the ledger did not answer (a DELETE, an eviction): run id -> (org,
-# subject, reason), retried by every sweep until they land.
+# Closes the ledger did not answer for runs this process began (a DELETE, an
+# eviction): run id -> (org, subject, reason), retried by every sweep until they
+# land. Capped like _RUNS: past the cap the oldest waits for an idle sweep
+# elsewhere.
 _CLOSE_LATER: dict[str, tuple[str, str, str]] = {}
 _PENDING = TaskSet()  # in-flight run.begin, and evicted runs' closes
 _last_sweep: float = 0.0
@@ -230,8 +236,7 @@ async def ensure(
         return None
     if len(_RUNS) >= SESSION_RUN_CAP:
         # A cap, not a sign the session ended: the close does not wait for the
-        # session to go idle, and a sibling still serving it re-opens the run on
-        # its next check. Detached: no caller's scope applies to another's run.
+        # session to go idle, and a sibling still serving it re-opens the run.
         idlest = min(_RUNS.values(), key=lambda r: r.last_seen)
         _RUNS.pop(idlest.run_id, None)
         _PENDING.spawn(
@@ -257,8 +262,6 @@ async def ensure(
     )
     _RUNS[run_id] = run
     _BEGIN_FAILED_AT.pop(run_id, None)
-    # Detached, like every close: the transport's own bookkeeping on an id bound
-    # to the token, which runs before the call's read scope is bound.
     run.begin_task = _PENDING.spawn(
         _begin(run, now=now, first=True), name=f"mcp-run-begin:{run_id}", detached=True
     )
@@ -266,11 +269,9 @@ async def ensure(
 
 
 def run_id_for(org: str, subject: str, session_id: str) -> str:
-    """The implicit run's id: the same for every call and web process of the
-    session (and for its DELETE, which carries no body), and one no other token
-    can make by sending the same session id."""
-    seed = json.dumps([org, subject, session_id])
-    return "mcp-" + hashlib.sha256(seed.encode()).hexdigest()[:40]
+    """The implicit run's id (`session_run_id`); a DELETE, which has no body,
+    rebuilds it from the token alone."""
+    return session_run_id(org, subject, session_id)
 
 
 async def _begin(run: SessionRun, *, now: float, first: bool) -> None:
@@ -282,13 +283,13 @@ async def _begin(run: SessionRun, *, now: float, first: bool) -> None:
     it, and the next check tries again."""
     try:
         from server.tasks.api.models_run import RunBeginInput
-        from server.tasks.app.run import active_session_run, begin_session_run
+        from server.tasks.app.run import active_session_runs, begin_session_run
 
-        active = await active_session_run(run.org, run.run_id)
-        if active is not None:
-            run.namespace = str(active["namespace"])
+        active = await active_session_runs(run.org, run.run_id)
+        if active:
+            run.namespace = str(active[0]["namespace"])
             return
-        began = await begin_session_run(
+        await begin_session_run(
             RunBeginInput(
                 org=run.org,
                 namespace=run.namespace,
@@ -303,8 +304,6 @@ async def _begin(run: SessionRun, *, now: float, first: bool) -> None:
             ),
             started_at=run.started_at,
         )
-        if not began:
-            raise RuntimeError(f"{run.run_id} holds another user's run")
     except Exception as e:  # noqa: BLE001 — the ledger never fails a tool call
         log.warning("mcp session run: run.begin failed for %s (non-fatal): %s", run.run_id, e)
         if first:
@@ -338,24 +337,25 @@ async def _close(org: str, run_id: str, subject: str, *, reason: str) -> _Closed
         found = await session_run_calls(org, run_id, "" if subject == "-" else subject)
         if found is None:
             return "gone"
-        namespace, calls, last_call = found
+        namespaces, calls, last_call = found
         if reason == "idle" and last_call is not None:
             if (naive_utc_now() - last_call).total_seconds() < idle_seconds():
                 return "later"  # a sibling web process served it lately
-        await handle_run_complete(
-            RunCompleteInput(
-                org=org,
-                namespace=namespace,
-                run_id=run_id,
-                status="completed",
-                # The transport saw the session end; it cannot say how the
-                # work went, and `none` writes no evidence or harm.
-                outcome="none",
-                # 0: from the run's start, which every web process shares.
-                duration_ms=0,
-                metadata={"closed_by": f"mcp_{reason}", "calls": calls},
+        for namespace in namespaces:
+            await handle_run_complete(
+                RunCompleteInput(
+                    org=org,
+                    namespace=namespace,
+                    run_id=run_id,
+                    status="completed",
+                    # The transport saw the session end; it cannot say how the
+                    # work went, and `none` writes no evidence or harm.
+                    outcome="none",
+                    # 0: from the run's start, which every web process shares.
+                    duration_ms=0,
+                    metadata={"closed_by": f"mcp_{reason}", "calls": calls},
+                )
             )
-        )
         return "closed"
     except Exception as e:  # noqa: BLE001 — best effort; a sweep tries again
         log.warning("mcp session run: run.complete failed for %s (non-fatal): %s", run_id, e)
@@ -372,10 +372,12 @@ async def _close_run(run: SessionRun, *, reason: str) -> _Closed:
 
 
 async def _end(run: SessionRun, *, reason: str) -> _Closed:
-    """Close a run this process has let go of (an eviction); a close the ledger
-    did not answer is kept for the next sweep."""
+    """Close a run this process has let go of (a DELETE, an eviction); a close
+    the ledger did not answer is kept for the next sweep."""
     outcome = await _close_run(run, reason=reason)
     if outcome == "later":
+        if len(_CLOSE_LATER) >= SESSION_RUN_CAP:
+            _CLOSE_LATER.pop(next(iter(_CLOSE_LATER)))
         _CLOSE_LATER[run.run_id] = (run.org, run.caller.subject, reason)
     return outcome
 
@@ -383,10 +385,8 @@ async def _end(run: SessionRun, *, reason: str) -> _Closed:
 async def close_session(session_id: str | None, org: str, subject: str) -> bool:
     """`DELETE /mcp`: the client ended the session; close its run, the one its id
     names for this token in its org (`run_id_for`), whichever web process served
-    it. Detached, as an idle sweep's close is: the id already proves the run is
-    this token's, and a DELETE has no body for a session-scoped token's read
-    scope to resolve from. A close the ledger did not answer waits for a sweep;
-    a call on the session before then re-opens the run."""
+    it. A close the ledger did not answer is retried by this process's sweep
+    when it began the run, else left to the idle sweep of the one that did."""
     if not session_id or not org:
         return False
     from server.core.background import detached_task
@@ -394,14 +394,11 @@ async def close_session(session_id: str | None, org: str, subject: str) -> bool:
     run_id = run_id_for(org, subject, session_id)
     run = _RUNS.pop(run_id, None)
     ending = (
-        _close_run(run, reason="session_end")
+        _end(run, reason="session_end")
         if run is not None
         else _close(org, run_id, subject, reason="session_end")
     )
-    outcome = await detached_task(ending, name=f"mcp-run-end:{run_id}")
-    if outcome == "later":
-        _CLOSE_LATER[run_id] = (org, subject, "session_end")
-    return outcome == "closed"
+    return await detached_task(ending, name=f"mcp-run-end:{run_id}") == "closed"
 
 
 async def sweep_idle(*, now: float | None = None, force: bool = False) -> int:

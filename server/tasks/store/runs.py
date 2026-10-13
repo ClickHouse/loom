@@ -324,19 +324,20 @@ async def observation_count(ch: Any, org: str, ns: str, run_id: str, *, scope: R
     return int((row or {}).get("n") or 0)
 
 
-async def active_run_by_id(ch: Any, org: str, run_id: str) -> RunLedgerRow | None:
-    """The active MCP session run under `run_id` in any namespace of `org`."""
-    row: RunLedgerRow | None = await ch.query_one(
+async def active_runs_by_id(ch: Any, org: str, run_id: str) -> list[RunLedgerRow]:
+    """The active MCP session runs under `run_id` in `org`, oldest first: one, or
+    one per namespace when two web processes' first begins raced."""
+    rows: list[RunLedgerRow] = await ch.query_all(
         f"""
         SELECT {_RUN_SELECT}
         FROM loom.agent_runs FINAL
         WHERE org = {{org:String}} AND run_id = {{rid:String}} AND status = 'active'
           AND environment = 'mcp'
-        LIMIT 1
+        ORDER BY started_at, namespace
         """,
         params={"org": org, "rid": run_id},
     )
-    return row
+    return rows
 
 
 async def ledgered_calls(

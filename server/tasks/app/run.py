@@ -42,6 +42,7 @@ from server.tasks.api.models_run import (
     RunListOutput,
     RunRow,
 )
+from server.tasks.domain.session_runs import is_session_run_id
 from server.tasks.store import runs as runs_store
 from server.tasks.store.rows import RunLedgerRow
 
@@ -224,49 +225,48 @@ def _user_of(input: RunBeginInput) -> str:
 # ------------------------------------------------------------------- handlers
 
 
-# Ids of the MCP transport's implicit session runs (`mcp_runs.run_id_for`); an
-# explicit run.begin naming one gets an id of its own instead.
-SESSION_RUN_PREFIX = "mcp-"
-
-
-async def begin_session_run(input: RunBeginInput, *, started_at: datetime) -> bool:
-    """Open (or re-open) an MCP session's implicit run under the id the transport
-    made for it, which binds the session's caller (`mcp_runs.run_id_for`): no other
-    caller can name it, so it takes no claim, and the id the session's calls carry
-    is the one stored. A new row starts at `started_at`, when the transport
-    registered it. False, writing nothing, when the id holds another user's run."""
+async def begin_session_run(input: RunBeginInput, *, started_at: datetime) -> None:
+    """Open, or re-open, an MCP session's implicit run under the id the transport
+    made for it. The id binds the token (`session_run_id`) and an explicit
+    run.begin cannot name it, so it takes no claim, and the id the session's calls
+    carry is the one stored. A new row starts at `started_at`, when the transport
+    registered the run; a re-opened one keeps its start, first goal and owner."""
     ch = get_client()
     with sequential_reads():
         existing = await runs_store.fetch_run(ch, input.org, input.namespace, input.run_id)
-    if existing is not None and not _owned_by(existing, _user_of(input)):
-        return False
     if existing is not None:
-        # Re-opened (the session went on after a close): the first call's goal stays.
-        input = input.model_copy(update={"goal": str(existing.get("goal") or input.goal)})
+        input = input.model_copy(
+            update={
+                "goal": str(existing.get("goal") or input.goal),
+                "user_id": str(existing.get("user_id") or input.user_id),
+                "session_id": str(existing.get("session_id") or input.session_id),
+            }
+        )
     await _open_run(ch, input, input.run_id, existing, started_at=started_at)
-    return True
 
 
-async def active_session_run(org: str, run_id: str) -> RunLedgerRow | None:
+async def active_session_runs(org: str, run_id: str) -> list[RunLedgerRow]:
     """An MCP session's implicit run, when a web process of the server has begun
-    it: in whichever namespace the session's first call named."""
+    it: in whichever namespace the session's first call named (oldest first, one
+    per namespace when two first begins raced)."""
     with sequential_reads():
-        return await runs_store.active_run_by_id(get_client(), org, run_id)
+        return await runs_store.active_runs_by_id(get_client(), org, run_id)
 
 
 async def session_run_calls(
     org: str, run_id: str, subject: str
-) -> tuple[str, int, datetime | None] | None:
-    """An active implicit session run's namespace, how many requests the token
-    `subject` made under it (in any org or namespace a call named), and when the
-    last one was; None when the run is not active."""
-    existing = await active_session_run(org, run_id)
-    if existing is None:
+) -> tuple[list[str], int, datetime | None] | None:
+    """The namespaces an implicit session run is active in, how many requests the
+    token `subject` made under it (in any org or namespace a call named), and
+    when the last one was; None when the run is not active."""
+    active = await active_session_runs(org, run_id)
+    if not active:
         return None
     calls, last = await runs_store.ledgered_calls(
-        get_client(), run_id, subject, since=existing["started_at"]
+        get_client(), run_id, subject, since=min(r["started_at"] for r in active)
     )
-    return str(existing["namespace"]), calls, None if last is None else last.replace(tzinfo=None)
+    last_call = None if last is None else last.replace(tzinfo=None)
+    return [str(r["namespace"]) for r in active], calls, last_call
 
 
 async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:
@@ -284,7 +284,7 @@ async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:
     if not supplied:
         # A server-made id cannot collide: nothing to claim or check.
         return await _open_run(ch, input, uuid.uuid4().hex, None)
-    if supplied.startswith(SESSION_RUN_PREFIX):
+    if is_session_run_id(supplied):
         # The MCP transport's session runs open only through begin_session_run.
         run_id, existing = await _own_run(ch, input, supplied)
         return await _open_run(ch, input, run_id, existing)
