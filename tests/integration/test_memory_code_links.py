@@ -26,6 +26,9 @@ ORG = unique_org("codelinks")
 REMOTE = "https://github.com/acme/widgets.git"
 # Namespaces of the running test (the env fixture draws fresh ones per test).
 TRUNK = BRANCH = MEM = FLAGGED = ""
+# The queue's newest write when the test started: the suite shares one queue, and every
+# other test's writes come before this test's own.
+QUEUE_START: Any = None
 
 _READER = """class Reader:
     def read_rows(self, limit):
@@ -103,7 +106,7 @@ async def _index(ns: str, repo: _Repo, sha: str, paths: list[str]) -> None:
 
 @pytest.fixture
 async def env(ch_client, tmp_path, monkeypatch):
-    global TRUNK, BRANCH, MEM, FLAGGED
+    global TRUNK, BRANCH, MEM, FLAGGED, QUEUE_START
     import server.code.app.memory_links as code_side
     from server.code.domain.index.repos import RepoConfig, set_registry_repos
     from server.core.ch import get_client
@@ -113,6 +116,9 @@ async def env(ch_client, tmp_path, monkeypatch):
         await get_client().connect()
     except Exception as e:  # noqa: BLE001
         pytest.skip(f"clickhouse unavailable: {e}")
+    from server.memory.store import code_links as link_store
+
+    QUEUE_START = await link_store.queue_tail()
     tag = os.urandom(3).hex()
     TRUNK, MEM, FLAGGED = f"code-widgets-{tag}", f"agent-links-{tag}", f"agent-flag-{tag}"
     BRANCH = f"{TRUNK}-release"
@@ -200,7 +206,12 @@ async def _pass() -> Any:
     from server.memory.app import code_links
 
     result = code_links.PassResult()
-    await code_links.link_queued(None, 10_000, result)
+    cursor = QUEUE_START
+    while True:
+        read = result.queued
+        cursor = await code_links.link_queued(cursor, 10_000, result)
+        if result.queued - read < 10_000:
+            break
     await code_links.recheck_all(result)
     assert not result.errors, result.errors
     return result
@@ -524,7 +535,7 @@ async def test_a_write_landing_after_later_ones_is_still_linked(env) -> None:
     early_version = memory_repo.next_version()  # a writer takes its version, then embeds
     await _remember(MEM, "later", "an unrelated later write")
     first = code_links.PassResult()
-    cursor = await code_links.link_queued(None, 10_000, first)  # the cursor moves past both
+    cursor = await code_links.link_queued(QUEUE_START, 10_000, first)  # past both
     head = await _row(mid)
     row = memory_repo.build_memory_version_row(
         head, value='"`late_value` is nine"', content_sha256="late", version=early_version
