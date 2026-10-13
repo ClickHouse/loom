@@ -50,8 +50,8 @@ def _not_accessible_result(tool_name: Any, auth: Any, ns: str) -> dict[str, Any]
         )
     msg = (
         f"namespace {ns!r} is not in your accessible list and you don't have an active grant "
-        f"on it. Omit the namespace argument to search across all namespaces you do have "
-        f"access to, or request a grant via /me/discover."
+        f"on it. Omit the namespace argument to search your own namespaces "
+        f"(namespace_scope=all_mine), or request a grant via /me/discover."
     )
     body = {"error": msg, "code": "NAMESPACE_NOT_ACCESSIBLE", "namespace": ns}
     return {"content": [{"type": "text", "text": msg}], "isError": True, "structuredContent": body}

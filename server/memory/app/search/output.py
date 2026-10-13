@@ -140,11 +140,9 @@ async def _shape_final_hits(
     # consumer reads (the reader block, memory.ask's window, the wire).
     _resolve_relative_words(final_hits)
 
-    # Say which namespaces were read, and mark every hit that came from a namespace other than
-    # the addressed one.
-    _namespaces_searched = [input.namespace] + [
-        ns for ns in (namespaces or []) if ns and ns != input.namespace
-    ]
+    # Say which namespaces were in scope (they already lead with the addressed one), and mark
+    # every hit that came from a namespace other than the addressed one.
+    _namespaces_searched = list(namespaces or [input.namespace])
     for _h in final_hits:
         _hns = str(getattr(_h, "namespace", "") or "")
         if _hns and _hns != input.namespace:

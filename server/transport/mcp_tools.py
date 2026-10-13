@@ -597,7 +597,7 @@ def search_answer(
         lines.append(
             f"Not read, over the fan-out cap: {named}"
             + (f" and {more} more (memory.namespaces_skipped)" if more > 0 else "")
-            + ". Pass one as `namespace` to search it."
+            + "."
         )
     if prof_hits:
         lines.append("\nProfile hits:")

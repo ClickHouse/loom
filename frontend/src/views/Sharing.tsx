@@ -152,7 +152,7 @@ export function Sharing() {
           Totals span the {totals.namespaces} namespace{totals.namespaces === 1 ? "" : "s"} you hold a grant on. A write
           is any operation that puts knowledge into a namespace — a memory, a captured observation, a seeded
           conversation, a typed record. A recall is a <code className="font-mono">memory.search</code> or a code read. A
-          cross-namespace recall is a search that fanned out across every namespace you can read (
+          cross-namespace recall is a search that fanned out across your own namespaces (
           <code className="font-mono">namespace_scope=all_mine</code>) rather than the one it was addressed to.
         </p>
       </section>
@@ -342,7 +342,7 @@ export function Sharing() {
                       <th className="px-3.5 py-2 font-semibold text-right">Recalls</th>
                       <th
                         className="px-3.5 py-2 font-semibold text-right"
-                        title="Searches that fanned out across every namespace you can read (namespace_scope=all_mine)"
+                        title="Searches that fanned out across your own namespaces (namespace_scope=all_mine)"
                       >
                         Fan-out
                       </th>

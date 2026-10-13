@@ -204,7 +204,7 @@ def test_the_loom_search_text_names_the_skipped_namespaces() -> None:
     payload["memory"]["namespaces_skipped"] = ["work", "home"]
     answer = mcp_tools.search_answer(payload, {"query": "q"}, "local", "session-1")
     text = answer["content"][0]["text"]
-    assert "Not read, over the fan-out cap: work, home." in text
+    assert "Not read, over the fan-out cap: work, home.\n" in text + "\n"
 
     payload["memory"]["namespaces_skipped"] = [f"ns-{i}" for i in range(8)]
     text = mcp_tools.search_answer(payload, {"query": "q"}, "local", "session-1")["content"][0][
