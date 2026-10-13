@@ -641,10 +641,19 @@ def _apply_pending(
 ) -> int:
     """Apply `to_apply` in order, recording each; 1 on the first failure. A
     file in `baselined` is recorded without running."""
+    from server.core.schema.vector_codec_ddl import codable
+    from server.settings import settings
+
     # Probe NLP support once: it decides whether the NLP experimental flag is
     # sent at all (ClickHouse Cloud forbids it).
     nlp_ok = _nlp_available(ch)
     coded = _codec_supported(ch)
+    if coded and not codable(int(settings.embedding_dim)):
+        coded = False
+        print(
+            f"  · vector tables created plain: LOOM_EMBEDDING_DIM={settings.embedding_dim} "
+            "is not a multiple of 8, which the Quantized codec needs"
+        )
     dims = _dimensions_setting_known(ch)
     sync = NO_SYNC if dry else sync_policy(ch)
     if sync.accepted:

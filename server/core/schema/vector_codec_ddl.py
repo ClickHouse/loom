@@ -41,6 +41,11 @@ _CREATE_RE = re.compile(r"CREATE TABLE(?: IF NOT EXISTS)?\s+(?:loom\.)?`?(\w+)`?
 _ALTER_RE = re.compile(r"ALTER TABLE\s+(?:loom\.)?`?(\w+)`?", re.I)
 
 
+def codable(dim: int) -> bool:
+    """Whether the codec takes `dim`: RaBitQ packs one bit per dimension into whole bytes."""
+    return dim > 0 and dim % 8 == 0
+
+
 def codec_clause(dim: int, chain: str | None) -> str:
     inner = f"Quantized('rabitq', {int(dim)}, 0)" + (f", {chain}" if chain else "")
     return f"CODEC({inner})"

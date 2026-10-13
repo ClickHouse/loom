@@ -105,3 +105,8 @@ def test_every_coded_table_except_entity_vectors_has_a_placeholder_rule() -> Non
 
     for table, (cols, _chain) in vcd.CODED_TABLES.items():
         assert PLACEHOLDER_COLUMNS[f"loom.{table}"] == cols, table
+
+
+def test_codable_widths_are_whole_bytes_of_rabitq_bits() -> None:
+    assert vcd.codable(8) and vcd.codable(384) and vcd.codable(3072)
+    assert not vcd.codable(12) and not vcd.codable(0)

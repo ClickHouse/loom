@@ -245,3 +245,22 @@ def test_explicit_empty_key_does_not_use_environment(
         monkeypatch.setenv(name, "existing-key")
     with pytest.raises(RuntimeError):
         factory(model="test-model", api_key="")  # type: ignore[operator]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("coded", "ready"), [(frozenset({3072}), False), (frozenset(), True)])
+async def test_a_width_the_coded_tables_cannot_take_is_refused_before_any_probe(
+    monkeypatch: pytest.MonkeyPatch, coded: frozenset[int], ready: bool
+) -> None:
+    from server.core.vectors import codes_state
+
+    llm, embed = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(validation, "_probe_llm", llm)
+    monkeypatch.setattr(validation, "_probe_embedding", embed)
+    monkeypatch.setattr(codes_state, "coded_widths", lambda: coded)
+    setup = setup_input(embedding={"provider": "openai", "model": "e", "dimensions": 12})
+    result = await validation.validate_providers(setup, {"anthropic": "a", "openai": "o"})
+    assert result.ready is ready
+    embedding = result.checks[-1]
+    assert embedding.code == ("ready" if ready else "unsupported_dimensions")
+    assert embed.await_count == (1 if ready else 0)

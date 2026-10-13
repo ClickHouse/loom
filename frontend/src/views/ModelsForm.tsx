@@ -23,6 +23,7 @@ const errorMessages: Record<string, string> = {
   model_unavailable: "This model is not available to your API account.",
   timeout: "The provider did not respond in time. Try again.",
   invalid_output: "The model response did not match the expected format or dimensions.",
+  unsupported_dimensions: "The vector tables need a dimension count that is a multiple of 8.",
   unsupported_provider: "This provider is not supported for this job.",
   provider_error: "The provider check failed. Check the model and provider availability.",
 };
