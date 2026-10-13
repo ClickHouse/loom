@@ -100,7 +100,6 @@ async def test_cancel_pending_leaves_finished_tasks_alone() -> None:
         rerank_cfg_task=None,
         calibration_task=done,
         fanout_task=None,
-        order_authoritative=False,
         side_tasks=[None, pending],
     )
     run.cancel_pending()

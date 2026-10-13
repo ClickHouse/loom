@@ -211,9 +211,11 @@ async def search_sections(
 
     scope = request_scope()
 
-    profile_namespaces = [namespace]
-    if namespace_scope == "all_mine":
-        profile_namespaces = with_addressed(namespace, fanout_namespaces)
+    profile_namespaces = (
+        with_addressed(namespace, fanout_namespaces)
+        if namespace_scope == "all_mine"
+        else [namespace]
+    )
 
     mem_input = MemorySearchInput(
         org=org,

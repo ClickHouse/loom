@@ -11,8 +11,9 @@ from server.settings._env import CaseFolded
 
 class MemorySearchSettings(BaseModel):
     # Default `namespace_scope` when a request leaves it unset. "this" reads
-    # the addressed namespace only; "all_mine" fans out over every namespace
-    # the subject holds a grant on (the MCP loom_search asks for it by name).
+    # the addressed namespace only; "all_mine" also reads the caller's own
+    # namespaces, as "Reading several namespaces" in the identity docs
+    # describes (the MCP loom_search asks for it by name).
     memory_search_default_namespace_scope: Literal["this", "all_mine"] = "this"
     # Namespace kinds an all_mine fan-out spans (memory.search,
     # knowledge.search, conversation.search, MCP loom_search): comma list over

@@ -110,15 +110,15 @@ def test_a_failed_visibility_lookup_cuts_in_plain_order(
 def test_auth_off_applies_the_cap_too(
     grants: dict[str, list[str]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def _private(org: str, namespaces: list[str]) -> dict[str, str]:
-        return {}
+    async def _visibility(org: str, namespaces: list[str]) -> dict[str, str]:
+        return {"alpha-team": "public", "local": "private"}
 
-    monkeypatch.setattr(nv, "visibility_map", _private)
+    monkeypatch.setattr(nv, "visibility_map", _visibility)
     monkeypatch.setattr(settings, "auth_required", False)
     monkeypatch.setattr(settings, "memory_search_fanout_max_namespaces", 1)
-    grants["you"] = ["local", "work"]
+    grants["you"] = ["alpha-team", "local"]
     fanout = _fanout()
-    assert (fanout.namespaces, fanout.skipped) == (("local",), ("work",))
+    assert (fanout.namespaces, fanout.skipped) == (("local",), ("alpha-team",))
 
 
 def test_the_cap_keeps_a_scoped_tokens_own_order(
@@ -135,12 +135,12 @@ def test_the_cap_keeps_a_scoped_tokens_own_order(
     )
     ctx.set_current_auth(scoped)
     fanout = _fanout()
-    assert (fanout.namespaces, fanout.skipped) == (("team",), ("alice",))
+    assert (fanout.namespaces, fanout.skipped, fanout.ordered) == (("team",), ("alice",), True)
 
 
-def test_the_addressed_namespace_leads_when_the_fanout_lacks_it() -> None:
+def test_the_addressed_namespace_always_leads() -> None:
     assert with_addressed("mine", ["team"]) == ["mine", "team"]
-    assert with_addressed("mine", ("team", "mine")) == ["team", "mine"]
+    assert with_addressed("mine", ("team", "mine", "wiki")) == ["mine", "team", "wiki"]
     assert with_addressed("mine", []) == ["mine"]
     assert with_addressed("mine", ["", "team"]) == ["mine", "team"]
     assert with_addressed("", ["team"]) == ["team"]
@@ -161,13 +161,8 @@ def test_namespaces_to_search_leads_with_the_addressed_namespace(
 def test_knowledge_reads_an_addressed_public_namespace_in_the_first_pass(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class _Client:
-        async def query_all(self, sql, params=None):
-            return [
-                {"namespace": "home", "visibility": "private"},
-                {"namespace": "team", "visibility": "public"},
-                {"namespace": "wiki", "visibility": "public"},
-            ]
+    async def _visibility(org: str, namespaces: list[str]) -> dict[str, str]:
+        return {"home": "private", "team": "public", "wiki": "public"}
 
     async def _search_one(ns: str) -> tuple[str, list[ChunkHit]]:
         read.append(ns)
@@ -175,7 +170,7 @@ def test_knowledge_reads_an_addressed_public_namespace_in_the_first_pass(
         return ns, [hit]
 
     read: list[str] = []
-    monkeypatch.setattr("server.core.ch.get_client", lambda: _Client())
+    monkeypatch.setattr(nv, "visibility_map", _visibility)
     search = KnowledgeSearchInput(org=ORG, namespace="team", query="q", namespace_scope="all_mine")
     asyncio.run(
         knowledge_search._search_private_first(search, ["team", "home", "wiki"], _search_one)

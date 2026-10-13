@@ -11,7 +11,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from server.auth import context
+from server.auth.default_namespace import auth_off_subject
 from server.auth.directory import directory
+from server.settings import settings
 
 
 @dataclass(frozen=True)
@@ -21,15 +23,17 @@ class Fanout:
     org: str
     namespaces: tuple[str, ...]
     skipped: tuple[str, ...]
+    # The order is a priority (a scoped token's), read as strict tiers.
+    ordered: bool = False
 
 
 def with_addressed(namespace: str, fanout: Sequence[str]) -> list[str]:
-    """The namespaces an all_mine leg reads: `fanout`, led by the addressed
-    `namespace` when the fan-out lacks it (cut at the cap, or of another
-    kind). The transport authorized that namespace, and a fan-out only widens
-    a search, never moves it."""
-    out = [ns for ns in fanout if ns]
-    return out if not namespace or namespace in out else [namespace, *out]
+    """The namespaces an all_mine leg reads: the addressed `namespace` first,
+    then the rest of `fanout` in its order. The transport authorized that
+    namespace, and a fan-out only widens a search: nothing read before it may
+    end the search without it."""
+    rest = [ns for ns in fanout if ns and ns != namespace]
+    return [namespace, *rest] if namespace else rest
 
 
 async def namespaces_to_search(org: str, namespace: str, namespace_scope: str | None) -> list[str]:
@@ -49,9 +53,6 @@ async def resolve_fanout(org: str) -> Fanout:
     addressed by name or by its own tools. Order (= read priority) is kept.
     Unknown kinds stay: the directory can only narrow, never widen. Resolved
     once per bound principal and org."""
-    from server.auth.default_namespace import auth_off_subject
-    from server.settings import settings
-
     memo = context.fanout_memo.get()
     if memo is not None and memo.org == org:
         return memo
@@ -62,8 +63,9 @@ async def resolve_fanout(org: str) -> Fanout:
     readable = await context.resolve_my_namespaces(org, subject)
     mine = await directory().fanout_namespaces(org, readable)
     cap = settings.memory_search_fanout_max_namespaces
+    ordered = auth is not None and auth.has_ns_roles()
     ranked = mine
-    if len(mine) > cap and not (auth is not None and auth.has_ns_roles()):
+    if len(mine) > cap and not ordered:
         # Only a scoped token's order is a priority. For anyone else the cut
         # keeps the private namespaces, the ones the search reads first.
         public = await directory().public_namespaces(org, mine)
@@ -73,6 +75,7 @@ async def resolve_fanout(org: str) -> Fanout:
         org=org,
         namespaces=tuple(ns for ns in mine if ns in keep),
         skipped=tuple(ns for ns in mine if ns not in keep),
+        ordered=ordered,
     )
     context.fanout_memo.set(memo)
     return memo

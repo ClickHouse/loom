@@ -111,26 +111,14 @@ async def _search_private_first(
     # namespaces if the private pass came up dry.
     PRIVATE_HIT_THRESHOLD = 0.30
     do_private_first = input.namespace_scope == "all_mine" and len(namespaces) > 1
-    ns_visibility: dict[str, str] = {}
+    private: set[str] = set()
     if do_private_first:
-        try:
-            from server.core.ch import get_client as _get_ch_vp
+        from server.identity.app.namespace_visibility import visibility_map
 
-            _ch_vp = _get_ch_vp()
-            vis_rows = await _ch_vp.query_all(
-                """
-                SELECT namespace, toString(visibility) AS visibility
-                FROM loom.namespaces FINAL
-                WHERE org = {org:String} AND namespace IN {ns:Array(String)}
-                """,
-                params={"org": input.org, "ns": list(namespaces)},
-            )
-            ns_visibility = {r["namespace"]: r.get("visibility", "private") for r in vis_rows}
-        except Exception:  # noqa: BLE001 — visibility read failure disables private-first only
-            do_private_first = False
-
-    private = {n for n in namespaces if ns_visibility.get(n, "private") == "private"}
-    if do_private_first and private:
+        # Fails open: an unreadable directory counts every namespace private.
+        visibility = await visibility_map(input.org, list(namespaces))
+        private = {n for n in namespaces if visibility.get(n, "private") == "private"}
+    if private:
         # The addressed namespace joins the first pass whatever its visibility.
         private_ns = [n for n in namespaces if n in private or n == input.namespace]
         public_ns = [n for n in namespaces if n not in private_ns]

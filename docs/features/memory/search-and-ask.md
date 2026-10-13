@@ -297,7 +297,7 @@ worker otherwise runs weekly).
 | Setting                                       | Default    | Effect                                                                              |
 | --------------------------------------------- | ---------- | ----------------------------------------------------------------------------------- |
 | `LOOM_MEMORY_SEARCH_DEFAULT_MODE`             | `semantic` | Mode for a request that sets neither mode nor recipe.                               |
-| `LOOM_MEMORY_SEARCH_DEFAULT_NAMESPACE_SCOPE`  | `this`     | `all_mine` searches every namespace the caller belongs to.                          |
+| `LOOM_MEMORY_SEARCH_DEFAULT_NAMESPACE_SCOPE`  | `this`     | `all_mine` also searches the caller's own namespaces.                               |
 | `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES`    | 32         | Cap on the caller's namespaces an `all_mine` search reads (plus the addressed one). |
 | `LOOM_ADAPTIVE_THRESHOLDS`                    | true       | Derive similarity gates from the live embedder.                                     |
 | `LOOM_MEMORY_SEARCH_MIN_SIMILARITY`           | 0.22       | Scalar floor when adaptivity is off or the embedder is fake.                        |

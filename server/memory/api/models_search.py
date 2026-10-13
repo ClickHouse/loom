@@ -67,8 +67,9 @@ class MemorySearchInput(BaseModel):
     # Which rows to read: "private" = per-agent rows (narrowed to `agent` when it names
     # one), "shared" = rows promoted to the namespace's shared scope.
     scope: Literal["private", "shared"] = "private"
-    # "all_mine" spans every namespace the caller is a member of (own +
-    # granted); "this" scopes to input.namespace only. None → the deployment
+    # "all_mine" also reads the caller's own namespaces (docs/concepts/
+    # identities-and-namespaces.md, "Reading several namespaces"); "this"
+    # scopes to input.namespace only. None → the deployment
     # default `memory_search_default_namespace_scope` (default "this"; an
     # operator may set all_mine to search the union).
     namespace_scope: Literal["this", "all_mine"] | None = None

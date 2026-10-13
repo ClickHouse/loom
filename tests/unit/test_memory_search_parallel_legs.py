@@ -374,3 +374,14 @@ async def test_private_first_reads_an_addressed_public_namespace_in_the_first_pa
     out = await _run(namespace="team", namespace_scope="all_mine")
     assert {q.namespace for q in env.search_queries} == {"team", "home"}
     assert ("team", "t1") in {(r.namespace, r.memory_key) for r in out.results}
+
+
+async def test_tier_waterfall_reads_the_addressed_namespace_before_the_tokens_first(env) -> None:
+    """The token lists the addressed namespace second; a confident hit in the
+    first must not end the walk before the namespace the caller asked for."""
+    auth = _scoped_auth("o", team="viewer", mine="writer")
+    env.hits_by_ns["team"] = [_svc_hit("t1", sim=0.60)]
+    env.hits_by_ns["mine"] = [_svc_hit("m1", sim=0.35)]
+    await _run_scoped(auth, namespace="mine", namespace_scope="all_mine")
+    queried = list(dict.fromkeys(q.namespace for q in env.search_queries))
+    assert queried == ["mine", "team"]
