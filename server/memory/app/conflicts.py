@@ -647,8 +647,9 @@ async def _policy_for(org: str, namespace: str, judged: Any) -> str:
         return ""
 
 
-async def _judge_conflict(new_value: str, peers: list[ConflictPeer]) -> Any:
-    """One cheap call labels the closest peers. None when off."""
+async def judge_peers(new_value: str, peers: list[Any]) -> Any:
+    """One cheap call labels the closest peers (anything with `memory_id` and
+    `value`). None when off."""
     if not bool(settings.memory_conflict_judge):
         return None
     from server.memory.app import conflict_judge
@@ -686,7 +687,7 @@ async def settle_deferred_judgement(pj: PendingJudge) -> ConflictResult:
     with the flagged peers as the conflict fallback and the namespace policy
     (prefetched or read now). The inline path calls this too, so the two
     cannot drift."""
-    judged = await _judge_conflict(pj.new_value, pj.candidates)
+    judged = await judge_peers(pj.new_value, pj.candidates)
     if judged is None or not judged.ran:
         return ConflictResult(verdict=pj.fallback_verdict, peers=list(pj.cosine_peers))
     if pj.policy is None:

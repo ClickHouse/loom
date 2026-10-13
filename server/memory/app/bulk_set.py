@@ -363,7 +363,8 @@ async def _bulk_post_insert_links(
     then value-update linking; returns the value-update links the triple
     plane follows."""
     # Same-key supersession: under `newest_wins` the rows just written retire every older
-    # live row sharing their key, from any session. After the insert so the new ids are
+    # live row sharing their key, from any session; under `auto_reinforce` the ones the
+    # conflict judge reads as the same attribute. After the insert so the new ids are
     # visible; fail-open.
     _n_key_superseded = 0
     if state.memory_rows:
@@ -374,6 +375,7 @@ async def _bulk_post_insert_links(
             namespace=input.namespace,
             new_rows=state.memory_rows,
             ch=ch,
+            judged=True,
         )
 
     # Value-update supersession (memory.app.value_updates). Runs after the

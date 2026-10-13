@@ -129,7 +129,8 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
     joins back to `memory`. Conflict marks then go on the peers, or `refines`
     supersedes them.
 13. **After the write** (`_set_after_write`, `_set_post_insert`). Same-key supersession
-    under `newest_wins` (`memory/app/key_supersession.py`) and the hash-only audit row are
+    under `newest_wins` (`memory/app/key_supersession.py`; a bulk write also judges
+    same-key rows under `auto_reinforce`, see below) and the hash-only audit row are
     awaited in one round trip. The entity-graph projection is scheduled beside the
     response (`memory/app/after_write.py`) and repaired by `entity_extractor` if lost. A
     long value is also split into `memory_chunks`, fail-open.
@@ -185,6 +186,25 @@ The prompt names keys by subject and attribute, never by value
 (`memory/domain/extraction_prompts.py`), so a later statement of the same attribute
 supersedes the earlier row. A "forget this" request in the transcript retires the
 matching rows (`_retire_forgotten`).
+
+**Same key, another session.** The storage identity includes the session, so a key
+that a later session states again is a second live row, and the conflict check skips
+same-key peers. Under `newest_wins` the newer write retires the older row. Under
+`auto_reinforce` a shared key alone is not evidence of one attribute: extraction reuses
+generic keys (`assistant_recommended_3`, `user_attended`) for different items, and in a
+sample of 60 same-key pairs from chat-history namespaces 58 were different facts. So a
+bulk write asks the conflict judge about each same-key row of the same user that
+another session wrote (`supersede_same_key_rows(judged=True)`). A `contradiction`
+retires the row older in valid time. Sessions are ingested concurrently, so the row
+retired can be the one just written. An `elaboration` retires the row it elaborates;
+`restatement`, `related` and `unrelated` keep both, and so does a
+peer the judge left unlabelled (the flag path reads that as a contradiction; a
+retirement does not). Without this, "User is Asian
+American" (05-23) and "The user has mixed Irish and Italian ethnicity" (05-30) both
+stayed live under `user_ethnicity`, and a reader shown both merged them into one
+answer. The point write keeps the documented `auto_reinforce` behaviour and its latency:
+it does not call the judge for same-key rows. The judge is off by default
+(`LOOM_MEMORY_CONFLICT_JUDGE`), and with it off same-key rows stay live as before.
 
 The extraction also writes its inputs:
 

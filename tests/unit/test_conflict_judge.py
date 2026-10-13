@@ -52,6 +52,18 @@ async def test_judge_fails_open_to_the_cosine_verdict() -> None:
     assert not (await cj.judge(Boom(), "", peers)).ran
 
 
+@pytest.mark.asyncio
+async def test_judge_records_only_the_labels_the_model_stated() -> None:
+    class One:
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            return NS(text='{"labels": {"a": "unrelated"}}')
+
+    peers = [NS(memory_id="a", value="x"), NS(memory_id="b", value="y")]
+    j = await cj.judge(One(), "new", peers)
+    assert j.ran and j.labels == {"a": "unrelated", "b": "contradiction"}
+    assert j.stated == {"a": "unrelated"}
+
+
 # ------------------------------------------------- check_on_commit mapping
 
 
