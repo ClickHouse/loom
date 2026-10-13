@@ -403,10 +403,12 @@ jobs:
           tests/integration/test_provider_source_policy_live_ch.py
           tests/integration/test_provider_staging_live_ch.py
           tests/integration/test_provider_views_live_ch.py
+      # The image's launcher with several web processes, so state that must
+      # bind every process (rate limits, budgets, schema caches) is tested.
       - name: Boot control plane
         run: |
-          nohup uvicorn server.main:app --host 0.0.0.0 --port 7777 --timeout-graceful-shutdown 10 > server.log 2>&1 &
-          for _ in $(seq 1 30); do
+          LOOM_WEB_WORKERS=3 nohup sh scripts/serve.sh > server.log 2>&1 &
+          for _ in $(seq 1 60); do
             curl -fsS http://localhost:7777/v1/health && exit 0
             sleep 1
           done

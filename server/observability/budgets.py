@@ -27,17 +27,21 @@ A value is an integer (milliseconds) or a string multiplier such as "3x"
 consumer without listing them. The transport then applies the deployment's
 `latency_budget_multiplier` to whatever this resolves.
 
-Threading note: like the ratelimit overrides, the runtime table is
-per-process state that's not synchronized across replicas; the settings map
-is the fleet-wide half. For fleet-wide runtime policy, push the override
-table into CH.
+The runtime table binds every web process of one server: with more than one
+(`LOOM_WEB_WORKERS`) it lives in a host file beside the shared rate-limit
+table, re-read on change and updated under a lock. It is not shared across
+replicas; the settings map is the fleet-wide half.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
+import os
+import tempfile
 import threading
+from collections.abc import Iterator
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -85,25 +89,93 @@ class BudgetOverrides:
         # The settings map, parsed once per distinct raw string.
         self._settings_raw: str | None = None
         self._settings_map: dict[str, dict[str, int | float]] = {}
+        # The host file's identity when last read or written; None = not yet.
+        self._file_sig: tuple[int, int, int] | None = None
+        # Tests point this at a file; None = derive from settings.
+        self.path: str | None = None
+
+    # -- the host file the web processes share -----------------------------
+
+    def _file(self) -> str | None:
+        if self.path is not None:
+            return self.path
+        from server.settings import settings
+
+        if int(settings.web_workers) <= 1:
+            return None
+        from server.core.ratelimit_shared import runtime_dir
+
+        return os.path.join(runtime_dir(), f"loom-budgets-{os.getppid()}.json")
+
+    def _sync(self) -> None:
+        """Adopt the host file when it changed (caller holds `_lock`)."""
+        path = self._file()
+        if path is None:
+            return
+        try:
+            st = os.stat(path)
+            sig = (st.st_ino, st.st_mtime_ns, st.st_size)
+            if sig == self._file_sig:
+                return
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+            ops = {str(k): int(v) for k, v in data["ops"].items()}
+            by_consumer = {(str(c), str(o)): v for c, o, v in data["consumer"]}
+        except FileNotFoundError:
+            return
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            log.warning("budget overrides: %s unreadable (%s); keeping mine", path, e)
+            return
+        self._overrides, self._by_consumer, self._file_sig = ops, by_consumer, sig
+
+    @contextlib.contextmanager
+    def _update(self) -> Iterator[None]:
+        """Mutate under `_lock` and the host file's lock: read, change, publish."""
+        with self._lock:
+            path = self._file()
+            if path is None:
+                yield
+                return
+            import fcntl
+
+            with open(path + ".lock", "a+") as lk:
+                fcntl.flock(lk.fileno(), fcntl.LOCK_EX)
+                self._sync()
+                yield
+                data = {
+                    "ops": self._overrides,
+                    "consumer": [[c, o, v] for (c, o), v in self._by_consumer.items()],
+                }
+                try:
+                    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", prefix=".bud-")
+                    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                        json.dump(data, fh)
+                    os.replace(tmp, path)
+                    st = os.stat(path)
+                    self._file_sig = (st.st_ino, st.st_mtime_ns, st.st_size)
+                except OSError as e:
+                    log.warning("budget overrides: %s not written (%s); this process only", path, e)
 
     # -- per op (unchanged API) -------------------------------------------
 
     def set(self, op_name: str, budget_ms: int) -> None:
         if budget_ms < 0:
             raise ValueError("budget_ms must be >= 0")
-        with self._lock:
+        with self._update():
             self._overrides[op_name] = budget_ms
 
     def get(self, op_name: str) -> int | None:
         with self._lock:
+            self._sync()
             return self._overrides.get(op_name)
 
     def clear(self, op_name: str) -> None:
-        with self._lock:
+        with self._update():
             self._overrides.pop(op_name, None)
 
     def snapshot(self) -> dict[str, int]:
         with self._lock:
+            self._sync()
             return dict(self._overrides)
 
     # -- per consumer --------------------------------------
@@ -116,22 +188,24 @@ class BudgetOverrides:
         parsed = _parse_value(value)
         if parsed is None:
             raise ValueError("budget must be a non-negative integer (ms) or '<n>x'")
-        with self._lock:
+        with self._update():
             self._by_consumer[(consumer, op_name or ANY_OP)] = parsed
 
     def get_for_consumer(self, consumer: str, op_name: str) -> int | float | None:
         with self._lock:
+            self._sync()
             hit = self._by_consumer.get((consumer, op_name))
             if hit is None:
                 hit = self._by_consumer.get((consumer, ANY_OP))
             return hit
 
     def clear_for_consumer(self, consumer: str, op_name: str = ANY_OP) -> None:
-        with self._lock:
+        with self._update():
             self._by_consumer.pop((consumer, op_name or ANY_OP), None)
 
     def snapshot_by_consumer(self) -> dict[str, dict[str, int | float]]:
         with self._lock:
+            self._sync()
             out: dict[str, dict[str, int | float]] = {}
             for (consumer, op_name), value in self._by_consumer.items():
                 out.setdefault(consumer, {})[op_name] = value

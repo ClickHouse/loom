@@ -224,6 +224,25 @@ async def run_fenced_boot_migrations(
     enabled: bool,
     pending: Callable[[], list[str]],
 ) -> int:
+    """`_fenced_boot_migrations`, then forget the schema state this process
+    cached before it: a sibling worker may have applied the migrations while
+    this one waited, and the no-op paths return without touching the ledger."""
+    rc = await _fenced_boot_migrations(ch, migrate, lock_path, enabled=enabled, pending=pending)
+    if rc == 0:
+        from server.core.schema.status import reset_cache
+
+        reset_cache()
+    return rc
+
+
+async def _fenced_boot_migrations(
+    ch: Any,
+    migrate: Callable[[list[str]], int],
+    lock_path: str,
+    *,
+    enabled: bool,
+    pending: Callable[[], list[str]],
+) -> int:
     """Boot DDL must not race provider snapshot/publication on another process.
 
     The first install predates provider configuration and needs no provider

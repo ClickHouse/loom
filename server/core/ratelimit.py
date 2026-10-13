@@ -22,7 +22,7 @@ import logging
 import os
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -80,10 +80,6 @@ def op_class_for(op_name: str) -> str:
     if prefix == "code":
         return "code"
     return "default"
-
-
-# How often a worker checks the host's override file for a change (seconds).
-_OVERRIDES_CHECK_S = 1.0
 
 
 @dataclass
@@ -322,10 +318,9 @@ class Limiter:
         self._shared_active: bool = False
         # With the shared table the overrides live beside it too
         # (`<table>.overrides.json`), so an admin override set through one web
-        # worker binds every worker on the host: re-read when the file changed,
-        # checked at most once per `_OVERRIDES_CHECK_S`.
-        self._overrides_mtime: int = -1
-        self._overrides_checked: float = 0.0
+        # worker binds every worker on the host: every check stats the file and
+        # re-reads it when its identity (inode, mtime, size) changed.
+        self._overrides_sig: tuple[int, int, int] | None = None
 
     # -- backend selection ---------------------------------
 
@@ -374,19 +369,16 @@ class Limiter:
         store = self._store()
         return f"{store.path}.overrides.json" if store is not None else None
 
-    def _sync_overrides(self, *, force: bool = False) -> None:
+    def _sync_overrides(self) -> None:
         """Adopt the host's override file when it changed. No file (none set
         yet) or an unreadable one keeps this process's own overrides."""
         path = self._overrides_path()
         if path is None:
             return
-        now = time.monotonic()
-        if not force and now - self._overrides_checked < _OVERRIDES_CHECK_S:
-            return
-        self._overrides_checked = now
         try:
-            mtime = os.stat(path).st_mtime_ns
-            if mtime == self._overrides_mtime:
+            st = os.stat(path)
+            sig = (st.st_ino, st.st_mtime_ns, st.st_size)
+            if sig == self._overrides_sig:
                 return
             with open(path, encoding="utf-8") as fh:
                 data = json.load(fh)
@@ -402,7 +394,34 @@ class Limiter:
             log.warning("rate limiter: override file %s unreadable (%s); keeping mine", path, e)
             return
         self._ns_overrides, self._org_overrides, self._actor_overrides = ns, org, actor
-        self._overrides_mtime = mtime
+        self._overrides_sig = sig
+
+    @contextlib.contextmanager
+    def _overrides_update(self) -> Iterator[None]:
+        """Read-modify-write of the host's override file under an exclusive
+        lock, so two workers updating at once never drop each other's change."""
+        path = self._overrides_path()
+        if path is None:
+            yield
+            return
+        import fcntl
+
+        try:
+            fh = open(path + ".lock", "a+")
+        except OSError as e:
+            log.warning("rate limiter: override lock unavailable (%s); unserialised", e)
+            self._sync_overrides()
+            yield
+            self._save_overrides()
+            return
+        with fh:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            try:
+                self._sync_overrides()
+                yield
+                self._save_overrides()
+            finally:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
     def _save_overrides(self) -> None:
         """Publish this process's overrides to the host (atomic replace, 0600)."""
@@ -421,7 +440,8 @@ class Limiter:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 json.dump(data, fh)
             os.replace(tmp, path)
-            self._overrides_mtime = os.stat(path).st_mtime_ns
+            st = os.stat(path)
+            self._overrides_sig = (st.st_ino, st.st_mtime_ns, st.st_size)
         except OSError as e:
             log.warning(
                 "rate limiter: override file %s not written (%s); this worker only", path, e
@@ -657,36 +677,31 @@ class Limiter:
 
     def set_namespace_limit(self, namespace: str, op_class: str, limit: Limit) -> None:
         """Install a per-namespace override for one op_class."""
-        self._sync_overrides(force=True)
-        self._ns_overrides[(namespace, op_class)] = limit
-        self._save_overrides()
+        with self._overrides_update():
+            self._ns_overrides[(namespace, op_class)] = limit
         # The namespace's buckets in every org (key element 0 is the org).
         self._apply_override(self._ns_buckets, (namespace, op_class), limit, skip=1)
 
     def clear_namespace_limit(self, namespace: str, op_class: str) -> None:
-        self._sync_overrides(force=True)
-        self._ns_overrides.pop((namespace, op_class), None)
-        self._save_overrides()
+        with self._overrides_update():
+            self._ns_overrides.pop((namespace, op_class), None)
 
     def set_org_limit(self, org: str, op_class: str, limit: Limit) -> None:
         """Install a per-org override for one op_class. Bounds the total
         fan-out across all of the org's namespaces for this op class."""
-        self._sync_overrides(force=True)
-        self._org_overrides[(org, op_class)] = limit
-        self._save_overrides()
+        with self._overrides_update():
+            self._org_overrides[(org, op_class)] = limit
         self._apply_override(self._org_buckets, (org, op_class), limit)
 
     def clear_org_limit(self, org: str, op_class: str) -> None:
-        self._sync_overrides(force=True)
-        self._org_overrides.pop((org, op_class), None)
-        self._save_overrides()
+        with self._overrides_update():
+            self._org_overrides.pop((org, op_class), None)
 
     def set_actor_limit(self, namespace: str, actor: str, op_class: str, limit: Limit) -> None:
         """Install a per-(namespace, actor) override for one op_class. Creates
         the actor bucket even when the deployment fraction is 1.0."""
-        self._sync_overrides(force=True)
-        self._actor_overrides[(namespace, actor, op_class)] = limit
-        self._save_overrides()
+        with self._overrides_update():
+            self._actor_overrides[(namespace, actor, op_class)] = limit
         self._apply_override(self._actor_buckets, (namespace, actor, op_class), limit, skip=1)
 
     @staticmethod
@@ -736,7 +751,7 @@ class Limiter:
         if path is not None:
             with contextlib.suppress(OSError):
                 os.remove(path)
-        self._overrides_mtime = -1
+        self._overrides_sig = None
 
 
 _limiter = Limiter()

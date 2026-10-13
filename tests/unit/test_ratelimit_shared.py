@@ -316,13 +316,28 @@ def test_the_slot_memo_is_bounded_and_a_forgotten_key_keeps_its_bucket(tmp_path:
     again.close()
 
 
+def test_overrides_set_through_two_workers_both_survive(shared_on: str) -> None:
+    """Each update re-reads the host's file under its lock, so a worker that
+    has not checked since a sibling's update never overwrites it."""
+    a, b = Limiter(clock=FakeClock()), Limiter(clock=FakeClock())
+    b.check("ns0", "memory.set", org="o")
+    a.set_namespace_limit("ns1", "memory", Limit(capacity=1, rate=0.0))
+    b.set_org_limit("o", "memory", Limit(capacity=5, rate=1.0))
+    c = Limiter(clock=FakeClock())
+    c.check("ns2", "memory.set", org="o")
+    assert c._ns_overrides[("ns1", "memory")] == Limit(capacity=1, rate=0.0)
+    assert c._org_overrides[("o", "memory")] == Limit(capacity=5, rate=1.0)
+    a.reset_all()
+    b.reset_all()
+    c.reset_all()
+
+
 def test_an_override_set_through_one_worker_binds_every_worker_on_the_host(
     shared_on: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """admin/ratelimit.set lands in one web worker; with the shared table the
-    override file beside it carries it to the others within the check
-    interval, and a clear travels the same way."""
-    monkeypatch.setattr(ratelimit, "_OVERRIDES_CHECK_S", 0.0)
+    override file beside it carries it to the others on their next check,
+    and a clear travels the same way."""
     a, b = Limiter(clock=FakeClock()), Limiter(clock=FakeClock())
     assert a.shared_active and b.shared_active
     a.set_namespace_limit("ns1", "memory", Limit(capacity=1, rate=0.0))
