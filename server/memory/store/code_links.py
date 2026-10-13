@@ -5,8 +5,9 @@ from __future__ import annotations
 
 import time
 from collections import defaultdict
-from collections.abc import Sequence
-from typing import Any
+from collections.abc import Mapping, Sequence
+from datetime import datetime
+from typing import Any, TypedDict, cast
 
 from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client, param_slices, query_all_sliced
@@ -57,24 +58,79 @@ LINK_COLS: dict[str, Any] = {
     "version": 0,
 }
 
+
+class LinkRow(TypedDict):
+    """A row of loom.memory_code_links, read or to write; `memory_id` as text."""
+
+    org: str
+    code_namespace: str
+    path: str
+    qualified_name: str
+    namespace: str
+    memory_id: str
+    memory_key: str
+    agent: str
+    user_id: str
+    session_id: str
+    inputs_hash: str
+    complete: int
+    body_hash: str
+    checked_hash: str
+    start_line: int
+    end_line: int
+    state: str
+    checked_commit: str
+    checked_path: str
+    anchored_commit: str
+    anchored_path: str
+    anchored_hash: str
+    anchored_name: str
+    baseline_commit: str
+    baseline_path: str
+    baseline_name: str
+    changed_since: str
+    former_paths: list[str]
+    former_names: list[str]
+    former_hashes: list[str]
+    former_baseline_commits: list[str]
+    former_baseline_paths: list[str]
+    former_baseline_names: list[str]
+    policy_due: int
+    suggestion: str
+    judged_hash: str
+    carried: int
+    fingerprint_version: str
+    checked_at: datetime
+    tombstoned_at: datetime | None
+    version: int
+
+
+class PendingLink(LinkRow):
+    expired: int  # older than the days `pending` was asked for
+
+
+def _links(rows: list[dict[str, Any]]) -> list[LinkRow]:
+    """Link rows read back, `memory_id` (a UUID) as text."""
+    for r in rows:
+        r["memory_id"] = str(r["memory_id"])
+    return cast(list[LinkRow], rows)
+
+
 _LIVE = f"FROM {TABLE} FINAL WHERE tombstoned_at IS NULL"
 IDENTITY = ("org", "namespace", "agent", "user_id", "session_id", "memory_key")
 
 
-def link_row(
-    base: dict[str, Any] | None = None, *, follows: int | None = None, **fields: Any
-) -> dict[str, Any]:
+def link_row(base: LinkRow | None = None, *, follows: int | None = None, **fields: Any) -> LinkRow:
     """A full link row: `base` (a row read back) with `fields` over it, a fresh version;
     with `follows`, the version right after that one, so any write made since it wins."""
-    row = {k: (base or {}).get(k, d) for k, d in LINK_COLS.items()}
-    row.update(fields)
-    row["memory_id"] = str(row["memory_id"])
-    row["checked_at"] = row.get("checked_at") or naive_utc_now()
+    read: Mapping[str, object] = base or {}
+    row = {k: read.get(k, d) for k, d in LINK_COLS.items()} | fields
+    row["checked_at"] = row["checked_at"] or naive_utc_now()
     row["version"] = time.time_ns() if follows is None else follows + 1
-    return row
+    return cast(LinkRow, row)
 
 
-async def insert(rows: list[dict[str, Any]], *, ch: _CHClient | None = None) -> None:
+async def insert(rows: list[LinkRow], *, ch: _CHClient | None = None) -> None:
     """Write `rows`; in an org an erasure is running in, or ran in today, then drop them
     again for any memory that is gone by now. A writer that read before the erasure and
     wrote after it would otherwise bring back what it removed; `sweep_page` catches what
@@ -82,10 +138,10 @@ async def insert(rows: list[dict[str, Any]], *, ch: _CHClient | None = None) -> 
     if not rows:
         return
     ch = ch or _default_client()
-    await ch.insert(TABLE, rows)
+    await ch.insert(TABLE, cast(list[dict[str, Any]], rows))
     by_org: dict[str, set[str]] = defaultdict(set)
     for r in rows:
-        by_org[str(r["org"])].add(str(r["memory_id"]))
+        by_org[r["org"]].add(r["memory_id"])
     erasing = await _erasing(ch, sorted(by_org))
     await _drop_gone(ch, {org: ids for org, ids in by_org.items() if org in erasing})
 
@@ -170,7 +226,7 @@ async def _drop_gone(ch: _CHClient, by_org: dict[str, set[str]]) -> int:
     return dropped
 
 
-def tombstones(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+def tombstones(rows: Sequence[LinkRow]) -> list[LinkRow]:
     """`rows` deleted, each one version above the row read (`link_row`): a write made
     since it was read is newer and stays. A tombstone keeps no suggestion, a rewrite of
     the memory's text."""
@@ -178,7 +234,7 @@ def tombstones(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         link_row(
             r,
-            follows=int(r["version"]),
+            follows=r["version"],
             tombstoned_at=now,
             checked_at=now,
             suggestion="",
@@ -190,16 +246,17 @@ def tombstones(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
 
 async def for_memories(
     org: str, memory_ids: Sequence[str], *, ch: _CHClient | None = None
-) -> list[dict[str, Any]]:
+) -> list[LinkRow]:
     """Live links of these memories."""
     if not memory_ids:
         return []
-    return await query_all_sliced(
+    rows = await query_all_sliced(
         ch or _default_client(),
         f"SELECT * {_LIVE} AND org = {{org:String}} AND memory_id IN {{ids:Array(UUID)}}",
         {"org": org, "ids": sorted({str(i) for i in memory_ids})},
         "ids",
     )
+    return _links(rows)
 
 
 async def for_code(
@@ -213,7 +270,7 @@ async def for_code(
     checked_commits: Sequence[str] | None = None,
     or_former_paths: bool = False,
     ch: _CHClient | None = None,
-) -> list[dict[str, Any]]:
+) -> list[LinkRow]:
     """Live links of `code_namespaces` (None = every one), narrowed to `paths` (or, with
     `or_former_paths`, links that lived there before a move or where they were made), the
     memory `namespaces` and `memory_keys`, link `states` and the commits they were checked
@@ -222,7 +279,7 @@ async def for_code(
         raise ValueError("for_code narrows by paths or by commits, not both")
     # one read per column, each narrowed by its own index: an OR of them by none
     columns = ("path", "former_paths", "anchored_path") if or_former_paths else ("path",)
-    rows: list[dict[str, Any]] = []
+    rows: list[LinkRow] = []
     for column in columns if paths is not None else ("path",):
         rows += await _for_code(
             ch or _default_client(),
@@ -237,7 +294,19 @@ async def for_code(
             },
         )
     # a moved link answers to its path, its former ones and its anchor
-    return list({tuple(r[c] for c in _KEY_COLUMNS): r for r in rows}.values())
+    return list({_key(r): r for r in rows}.values())
+
+
+def _key(r: LinkRow) -> tuple[str, ...]:
+    """The table's sort key of link `r`."""
+    return (
+        r["org"],
+        r["code_namespace"],
+        r["path"],
+        r["qualified_name"],
+        r["namespace"],
+        r["memory_id"],
+    )
 
 
 async def _for_code(
@@ -245,7 +314,7 @@ async def _for_code(
     org: str,
     code_namespaces: Sequence[str] | None,
     narrow: dict[str, Sequence[str] | None],
-) -> list[dict[str, Any]]:
+) -> list[LinkRow]:
     """Live links of `code_namespaces` with each column of `narrow` in its values (None:
     any); the one long list, a pass's changed paths or its commits, bound in slices."""
     where = ["org = {org:String}"]
@@ -262,7 +331,7 @@ async def _for_code(
             if column in ("path", "former_paths", "anchored_path", "checked_commit"):
                 long = column
     sql = f"SELECT * {_LIVE} AND {' AND '.join(where)}"
-    return (
+    return _links(
         await query_all_sliced(ch, sql, params, long) if long else await ch.query_all(sql, params)
     )
 
@@ -275,10 +344,10 @@ async def stale_fingerprints(
     limit: int,
     offset: int = 0,
     ch: _CHClient | None = None,
-) -> list[dict[str, Any]]:
+) -> list[LinkRow]:
     """Up to `limit` live links of the namespace fingerprinted under another `version`,
     in key order, past the first `offset`."""
-    return await (ch or _default_client()).query_all(
+    rows = await (ch or _default_client()).query_all(
         f"SELECT * {_LIVE} AND org = {{org:String}} AND code_namespace = {{cns:String}} "
         "AND state != 'pending' AND fingerprint_version != {v:String} "
         f"ORDER BY {_KEY} LIMIT {{lim:UInt32}} OFFSET {{off:UInt32}}",
@@ -290,30 +359,33 @@ async def stale_fingerprints(
             "off": int(offset),
         },
     )
+    return _links(rows)
 
 
 async def pending(
     org: str, code_namespace: str, *, days: int, ch: _CHClient | None = None
-) -> list[dict[str, Any]]:
+) -> list[PendingLink]:
     """The namespace's pending names (and `*` markers of memories written before its
     first index), each with `expired` (older than `days`)."""
-    return await (ch or _default_client()).query_all(
+    rows = await (ch or _default_client()).query_all(
         f"SELECT *, checked_at < now() - INTERVAL {{days:UInt32}} DAY AS expired {_LIVE} "
         "AND org = {org:String} AND code_namespace = {cns:String} AND state = 'pending'",
         params={"org": org, "cns": code_namespace, "days": int(days)},
     )
+    return cast(list[PendingLink], _links(rows))
 
 
 async def lost(
     org: str, code_namespace: str, *, missing_days: int, ch: _CHClient | None = None
-) -> list[dict[str, Any]]:
+) -> list[LinkRow]:
     """The namespace's unresolved links, and those missing for at most `missing_days`."""
-    return await (ch or _default_client()).query_all(
+    rows = await (ch or _default_client()).query_all(
         f"SELECT * {_LIVE} AND org = {{org:String}} AND code_namespace = {{cns:String}} "
         "AND (state = 'unresolved' OR (state = 'missing' "
         "AND checked_at > now() - INTERVAL {days:UInt32} DAY))",
         params={"org": org, "cns": code_namespace, "days": int(missing_days)},
     )
+    return _links(rows)
 
 
 async def policy_due(org: str, code_namespace: str, *, ch: _CHClient | None = None) -> list[str]:
@@ -495,17 +567,18 @@ async def backfill_page(
 
 async def for_identities(
     idents: Sequence[tuple[str, ...]], *, ch: _CHClient | None = None
-) -> list[dict[str, Any]]:
+) -> list[LinkRow]:
     """Live links of these (org, namespace, agent, user_id, session_id, memory_key)."""
     if not idents:
         return []
-    return await query_all_sliced(
+    rows = await query_all_sliced(
         ch or _default_client(),
         f"SELECT * {_LIVE} AND (org, namespace, agent, user_id, session_id, memory_key) "
         "IN {ids:Array(Tuple(String, String, String, String, String, String))}",
         {"ids": sorted(set(idents))},
         "ids",
     )
+    return _links(rows)
 
 
 async def _heads(ch: _CHClient, idents: list[tuple[str, ...]]) -> list[dict[str, Any]]:

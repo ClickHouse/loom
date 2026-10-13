@@ -16,6 +16,7 @@ from server.identity.domain.read_scope import (
     bind_request_read_filters,
 )
 from server.memory.app import code_plane_reads
+from server.memory.store.code_links import LINK_COLS
 
 
 class _CH:
@@ -157,7 +158,7 @@ def test_code_search_runs_as_the_pinned_user_whatever_the_body_says() -> None:
 
 
 def _link(mid: str, *, qn: str = "src.a::Reader::read", state: str = "fresh", **kw: Any) -> dict:
-    return {
+    return LINK_COLS | {
         "memory_id": mid,
         "qualified_name": qn,
         "path": kw.get("path", "src/a.py"),

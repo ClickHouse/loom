@@ -4,6 +4,7 @@ version after it, and each read is scoped as its callers rely on."""
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 import pytest
@@ -61,6 +62,18 @@ async def test_an_insert_reads_no_memory_where_nothing_is_being_erased() -> None
     ch = _CH()
     await store.insert([_row("m")], ch=ch)
     assert [sql for sql, _ in ch.sql if "loom.memory FINAL" in sql] == []
+
+
+def test_a_link_row_types_every_column_the_store_writes() -> None:
+    assert store.LinkRow.__required_keys__ == set(store.LINK_COLS)
+
+
+@pytest.mark.asyncio
+async def test_a_link_read_back_carries_its_memory_id_as_text() -> None:
+    mid = uuid.uuid4()
+    ch = _CH({"SELECT *": [[{"org": "o", "memory_id": mid}]]})
+    (row,) = await store.for_memories("o", [str(mid)], ch=ch)
+    assert row["memory_id"] == str(mid)
 
 
 def test_a_write_that_follows_a_read_takes_the_version_after_it() -> None:

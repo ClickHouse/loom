@@ -13,6 +13,7 @@ from server.code.domain.declaration import fingerprint_version
 from server.identity.domain.read_scope import ReadFilters
 from server.memory.store import code_links as links_store
 from server.memory.store import code_plane_reads as reads
+from server.memory.store.code_links import LinkRow
 
 
 async def lesson_namespaces(org: str, code_namespace: str, extra: Sequence[str]) -> list[str]:
@@ -84,11 +85,11 @@ async def lessons_for_symbol(
         matched = _as_trunk_has_it(links, qualified_name)
     else:
         matched = _matched(links, here, on_trunk=code_namespace == trunk)
-    served = await reads.served_excerpts(org, [str(a["memory_id"]) for a, _, _ in matched])
+    served = await reads.served_excerpts(org, [a["memory_id"] for a, _, _ in matched])
     rows = {str(r["mid"]): r for r in served}
     out: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {}
     for a, state, suggestion in matched:
-        row = rows.get(str(a["memory_id"]))
+        row = rows.get(a["memory_id"])
         if row is None or row["mid"] in out:
             continue
         rank = (state == "changed", not row.get("pinned"), -float(row.get("confidence") or 0))
@@ -99,7 +100,7 @@ async def lessons_for_symbol(
                 "namespace": str(row["namespace"]),
                 "excerpt": str(row["excerpt"]),
                 "code_state": state,
-                "changed_since": str(a.get("changed_since") or "") if state == "changed" else "",
+                "changed_since": a["changed_since"] if state == "changed" else "",
                 "suggestion": suggestion,
             },
         )
@@ -133,15 +134,15 @@ async def _definitions_at(
 
 
 def _matched(
-    links: list[dict[str, Any]], here: dict[tuple[str, str], Definition], *, on_trunk: bool
-) -> list[tuple[dict[str, Any], str, str]]:
+    links: list[LinkRow], here: dict[tuple[str, str], Definition], *, on_trunk: bool
+) -> list[tuple[LinkRow, str, str]]:
     """(link, code state, suggestion) of each link whose definition the branch has."""
     out = []
     for a in links:
         # where trunk has it now, where it was before a move (latest first), or where the
         # memory was anchored: a branch may have any of trunk's renames, or none
-        current = here.get((str(a["path"]), str(a["qualified_name"])))
-        anchored = here.get((str(a.get("anchored_path") or ""), str(a.get("anchored_name") or "")))
+        current = here.get((a["path"], a["qualified_name"]))
+        anchored = here.get((a["anchored_path"], a["anchored_name"]))
         was = None if current else _former_here(a, here)
         now = current or (was[0] if was else None) or anchored
         if now is None:
@@ -155,42 +156,34 @@ def _matched(
             baseline=was[1] if was else "",
         )
         # a correction only for the definition it was judged against
-        judged = state == "changed" and a.get("judged_hash") == now.body_hash
-        out.append((a, state, str(a.get("suggestion") or "") if judged else ""))
+        judged = state == "changed" and a["judged_hash"] == now.body_hash
+        out.append((a, state, a["suggestion"] if judged else ""))
     return out
 
 
-def _as_trunk_has_it(
-    links: list[dict[str, Any]], qualified_name: str
-) -> list[tuple[dict[str, Any], str, str]]:
+def _as_trunk_has_it(links: list[LinkRow], qualified_name: str) -> list[tuple[LinkRow, str, str]]:
     """(link, code state, suggestion) of each link to the symbol, as trunk's last check
     left it: what is served where the branch's own files cannot be read. A link trunk
     lost is left out, since nothing here shows the code exists."""
     live = [a for a in links if a["state"] in ("fresh", "moved", "changed")]
     defs = [
-        Definition(str(a["path"]), str(a["qualified_name"]), bare_name(str(a["qualified_name"])))
-        for a in live
+        Definition(a["path"], a["qualified_name"], bare_name(a["qualified_name"])) for a in live
     ]
     named = {(d.path, d.qualified_name) for d in _named(qualified_name, defs)}
     out = []
     for a in live:
-        if (str(a["path"]), str(a["qualified_name"])) in named:
-            judged = a["state"] == "changed" and a.get("judged_hash") == a.get("checked_hash")
-            out.append((a, str(a["state"]), str(a.get("suggestion") or "") if judged else ""))
+        if (a["path"], a["qualified_name"]) in named:
+            judged = a["state"] == "changed" and a["judged_hash"] == a["checked_hash"]
+            out.append((a, a["state"], a["suggestion"] if judged else ""))
     return out
 
 
 def _former_here(
-    a: dict[str, Any], here: dict[tuple[str, str], Definition]
+    a: LinkRow, here: dict[tuple[str, str], Definition]
 ) -> tuple[Definition, str] | None:
     """The definition at the latest former identity of `a` the read found, with the
     baseline the link had there."""
-    former = zip(
-        a.get("former_paths") or [],
-        a.get("former_names") or [],
-        a.get("former_hashes") or [],
-        strict=True,
-    )
+    former = zip(a["former_paths"], a["former_names"], a["former_hashes"], strict=True)
     for path, name, baseline in reversed(list(former)):
         if (d := here.get((path, name))) is not None:
             return d, baseline
@@ -198,7 +191,7 @@ def _former_here(
 
 
 def _lesson_state(
-    a: dict[str, Any],
+    a: LinkRow,
     now: Definition,
     *,
     at_current: bool,
@@ -209,18 +202,18 @@ def _lesson_state(
     """The code state of link `a` for the definition `now` a read found it at: where
     trunk has it now (`at_current`), where it was before a move (with the `baseline` it
     had there), or where the memory was written against (`at_anchor`)."""
-    stored = str(a["state"]) if a["state"] in ("changed", "moved") else "fresh"
-    if a.get("carried") and not at_anchor:
+    stored = a["state"] if a["state"] in ("changed", "moved") else "fresh"
+    if a["carried"] and not at_anchor:
         return "changed"  # a renamed class carried it: what surrounds it is not the original
-    if a.get("fingerprint_version") != fingerprint_version():
+    if a["fingerprint_version"] != fingerprint_version():
         return stored  # hashed under other rules: compared once the worker re-hashed it
-    if on_trunk and at_current and now.body_hash == a.get("checked_hash"):
+    if on_trunk and at_current and now.body_hash == a["checked_hash"]:
         return stored  # trunk's definition as the worker last checked it
     # compare with the baseline; a branch that still has the code under its anchored
     # name may also match the anchored text
-    linked = {str(a.get("body_hash") or ""), baseline}
+    linked = {a["body_hash"], baseline}
     if at_anchor:
-        linked.add(str(a.get("anchored_hash") or ""))
+        linked.add(a["anchored_hash"])
     linked.discard("")
     if linked and now.body_hash and now.body_hash not in linked:
         return "changed"

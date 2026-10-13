@@ -23,6 +23,7 @@ import re
 from typing import Any
 
 from server.code.domain.anchor import local_name
+from server.memory.store.code_links import LinkRow
 
 logger = logging.getLogger(__name__)
 
@@ -578,12 +579,12 @@ async def _annotate_stale_code_memories(memories: list[Any], search_input: Any) 
 
     pool = [m for m in memories[:8] if str(getattr(m, "memory_type", "")) != "code"]
     if all(getattr(m, "_code_links", None) is not None for m in pool):
-        links = [a for m in pool for a in m._code_links]  # the search read them
+        links: list[LinkRow] = [a for m in pool for a in m._code_links]  # the search read them
     else:
         try:
             per_hit = await hit_memories(search_input, pool)
             links = [a for m in per_hit if m for a in m["links"]]
-            cns = {str(a["code_namespace"]) for a in links}
+            cns = {a["code_namespace"] for a in links}
             seen = await readable_code(str(search_input.org), cns)
         except Exception as e:  # noqa: BLE001 — grounding is advisory
             _warn_once("code staleness: links unreadable: %s", e)
@@ -591,7 +592,7 @@ async def _annotate_stale_code_memories(memories: list[Any], search_input: Any) 
         links = [a for a in links if a["code_namespace"] in seen]
     notes: list[str] = []
     for a in links:
-        what, key = str(a["qualified_name"] or a["path"]), f"memory [{a['memory_key']}]"
+        what, key = a["qualified_name"] or a["path"], f"memory [{a['memory_key']}]"
         if a["state"] == "missing":
             notes.append(f"{key} is about {what}, which the code index no longer has")
         elif a["state"] == "changed":
@@ -618,12 +619,12 @@ async def _annotate_stale_code_memories(memories: list[Any], search_input: Any) 
     )
 
 
-def _moved_note(a: dict[str, Any], what: str) -> str:
+def _moved_note(a: LinkRow, what: str) -> str:
     """What a moved link's memory has wrong: the name (inside its module), the file, or
     both; '' when it names neither."""
-    paths, names = a.get("former_paths") or [""], a.get("former_names") or [""]
-    old_name, old_path = str(names[-1]), str(paths[-1])
-    new_name, new_path = str(a["qualified_name"]), str(a["path"])
+    paths, names = a["former_paths"] or [""], a["former_names"] or [""]
+    old_name, old_path = names[-1], paths[-1]
+    new_name, new_path = a["qualified_name"], a["path"]
     renamed = bool(old_name) and local_name(old_name, old_path or new_path) != local_name(
         new_name, new_path
     )

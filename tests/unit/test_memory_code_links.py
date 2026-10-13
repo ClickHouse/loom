@@ -36,6 +36,11 @@ def _mirror_holds_every_commit(monkeypatch):
     monkeypatch.setattr(code_links.Files, "has", has)
 
 
+def _full(link: dict[str, Any]) -> dict[str, Any]:
+    """A link row with every column: `link` over the table's defaults."""
+    return code_links.store.LINK_COLS | link
+
+
 def _row(mid: str, **kw: Any) -> dict[str, Any]:
     base = {
         "mid": mid,
@@ -77,17 +82,19 @@ def world(monkeypatch):
 
     async def for_memories(org, ids):
         return [
-            {
-                "memory_id": m,
-                "code_namespace": "code-a",
-                "state": s,
-                "path": "a.py",
-                "qualified_name": f"a.f{i}",
-                "policy_due": 1,
-                "complete": 1,
-                "inputs_hash": "old" if m in stale else _inputs(rows[m]),
-                "version": 1,
-            }
+            _full(
+                {
+                    "memory_id": m,
+                    "code_namespace": "code-a",
+                    "state": s,
+                    "path": "a.py",
+                    "qualified_name": f"a.f{i}",
+                    "policy_due": 1,
+                    "complete": 1,
+                    "inputs_hash": "old" if m in stale else _inputs(rows[m]),
+                    "version": 1,
+                }
+            )
             for m in ids
             for i, s in enumerate(states.get(m, []))
         ]
@@ -215,8 +222,12 @@ def test_the_held_rows() -> None:
 async def test_a_pending_name_is_retried_until_the_pending_days_pass(monkeypatch) -> None:
     monkeypatch.setattr(settings, "memory_code_links_pending_days", 14)
     pending = [
-        {"qualified_name": "pkg.Planner.plan", "expired": 1, "version": 1, "memory_id": "m1"},
-        {"qualified_name": "pkg.Router.route", "expired": 0, "version": 1, "memory_id": "m2"},
+        _full(
+            {"qualified_name": "pkg.Planner.plan", "expired": 1, "version": 1, "memory_id": "m1"}
+        ),
+        _full(
+            {"qualified_name": "pkg.Router.route", "expired": 0, "version": 1, "memory_id": "m2"}
+        ),
     ]
     written: list[Any] = []
 
@@ -474,14 +485,16 @@ async def test_an_empty_queue_moves_the_cursor_to_the_reads_cutoff(monkeypatch) 
 @pytest.mark.asyncio
 async def test_links_name_only_repositories_the_caller_may_read(monkeypatch) -> None:
     rows = [
-        {
-            "memory_id": "m",
-            "code_namespace": cns,
-            "path": f"{cns}.py",
-            "qualified_name": "f",
-            "state": "fresh",
-            "inputs_hash": _inputs(_row("m")),
-        }
+        _full(
+            {
+                "memory_id": "m",
+                "code_namespace": cns,
+                "path": f"{cns}.py",
+                "qualified_name": "f",
+                "state": "fresh",
+                "inputs_hash": _inputs(_row("m")),
+            }
+        )
         for cns in ("code-open", "code-secret")
     ]
 
@@ -573,7 +586,7 @@ def served(monkeypatch):
 
     async def for_memories(org, ids):
         made = {h["mid"]: _inputs(h) for h in heads}
-        return [{"inputs_hash": made.get(m, ""), **a} for m in ids for a in links.get(m, [])]
+        return [_full({"inputs_hash": made.get(m, ""), **a}) for m in ids for a in links.get(m, [])]
 
     async def policies(org, nss):
         return {ns: policy[ns] for ns in nss if ns in policy}
@@ -863,7 +876,7 @@ async def test_a_mirror_git_cannot_read_raises_and_a_missing_file_does_not(tmp_p
 @pytest.mark.asyncio
 async def test_a_recheck_cut_short_resumes_after_the_last_path_it_wrote(monkeypatch) -> None:
     paths = [f"src/f{i:03d}.py" for i in range(2 * code_links._PATHS_PER_WRITE + 5)]
-    rows = [{"path": p, "qualified_name": "f", "memory_id": p} for p in paths]
+    rows = [_full({"path": p, "qualified_name": "f", "memory_id": p}) for p in paths]
     cursor: dict[str, str] = {}
     seen: list[str] = []
 
@@ -939,23 +952,25 @@ async def test_new_fingerprint_rules_rehash_links_from_their_own_commits(monkeyp
     from server.code.domain.declaration import fingerprint_version
 
     def link(state: str) -> dict[str, Any]:
-        return {
-            "org": "o",
-            "code_namespace": "code-a",
-            "path": "src/a.py",
-            "qualified_name": "a::f",
-            "anchored_name": "a::f",
-            "anchored_path": "src/a.py",
-            "anchored_commit": "c0" if state == "changed" else "c1",
-            "checked_commit": "c2",
-            "anchored_hash": "old1",
-            "checked_hash": "old2",
-            "body_hash": "old1" if state == "changed" else "old2",
-            "state": state,
-            "memory_id": state,
-            "version": 7,
-            "fingerprint_version": "0-old",
-        }
+        return _full(
+            {
+                "org": "o",
+                "code_namespace": "code-a",
+                "path": "src/a.py",
+                "qualified_name": "a::f",
+                "anchored_name": "a::f",
+                "anchored_path": "src/a.py",
+                "anchored_commit": "c0" if state == "changed" else "c1",
+                "checked_commit": "c2",
+                "anchored_hash": "old1",
+                "checked_hash": "old2",
+                "body_hash": "old1" if state == "changed" else "old2",
+                "state": state,
+                "memory_id": state,
+                "version": 7,
+                "fingerprint_version": "0-old",
+            }
+        )
 
     async def stale(org, cns, version, *, limit, offset=0):
         assert version == fingerprint_version()
@@ -990,13 +1005,20 @@ async def test_a_missing_link_named_in_a_changed_file_and_every_unresolved_one_a
     from server.code.domain.anchor import Definition
 
     lost = [
-        {"path": "src/A.cpp", "qualified_name": "DB::fetch_rows", "memory_id": "m1"},
-        {"path": "src/C.cpp", "qualified_name": "DB::other_rows", "memory_id": "m2"},
+        _full({"path": "src/A.cpp", "qualified_name": "DB::fetch_rows", "memory_id": "m1"}),
+        _full({"path": "src/C.cpp", "qualified_name": "DB::other_rows", "memory_id": "m2"}),
     ]
     lost = [a | {"state": "missing"} for a in lost]
     # an unresolved link is rechecked every pass: a rival candidate may go anywhere
     lost.append(
-        {"path": "src/D.cpp", "qualified_name": "DB::d", "memory_id": "m3", "state": "unresolved"}
+        _full(
+            {
+                "path": "src/D.cpp",
+                "qualified_name": "DB::d",
+                "memory_id": "m3",
+                "state": "unresolved",
+            }
+        )
     )
 
     async def read_lost(org, cns, *, missing_days):
@@ -1019,23 +1041,25 @@ async def test_a_hash_whose_code_is_gone_is_cleared_and_every_page_is_rehashed(
     from server.code.domain.declaration import fingerprint_version
 
     def link(mid: str, state: str, body: str, checked: str) -> dict[str, Any]:
-        return {
-            "org": "o",
-            "code_namespace": "code-a",
-            "path": "src/a.py",
-            "qualified_name": "a::f",
-            "anchored_name": "a::f",
-            "anchored_path": "src/a.py",
-            "anchored_commit": "c1",
-            "checked_commit": "c2",
-            "anchored_hash": "old-a",
-            "checked_hash": checked,
-            "body_hash": body,
-            "state": state,
-            "memory_id": mid,
-            "version": 1,
-            "fingerprint_version": "0-old",
-        }
+        return _full(
+            {
+                "org": "o",
+                "code_namespace": "code-a",
+                "path": "src/a.py",
+                "qualified_name": "a::f",
+                "anchored_name": "a::f",
+                "anchored_path": "src/a.py",
+                "anchored_commit": "c1",
+                "checked_commit": "c2",
+                "anchored_hash": "old-a",
+                "checked_hash": checked,
+                "body_hash": body,
+                "state": state,
+                "memory_id": mid,
+                "version": 1,
+                "fingerprint_version": "0-old",
+            }
+        )
 
     pages = [
         [link("m1", "missing", "old-a", "old-a"), link("m2", "missing", "old-a", "old-c")],
@@ -1074,12 +1098,14 @@ async def test_stale_links_are_the_current_links_of_served_memories_in_readable_
     monkeypatch,
 ) -> None:
     def link(mid: str, cns: str = "code-a") -> dict[str, Any]:
-        return {
-            "memory_id": mid,
-            "code_namespace": cns,
-            "inputs_hash": f"i-{mid}",
-            "state": "missing",
-        }
+        return _full(
+            {
+                "memory_id": mid,
+                "code_namespace": cns,
+                "inputs_hash": f"i-{mid}",
+                "state": "missing",
+            }
+        )
 
     def head(mid: str, status: str = "active", tombstoned: Any = None) -> dict[str, Any]:
         return {"mid": mid, "status": status, "tombstoned_at": tombstoned}
@@ -1115,22 +1141,24 @@ async def test_a_change_only_new_rules_see_reads_changed(monkeypatch) -> None:
     from server.code.domain.anchor import Definition
 
     # fresh under the old rules, which did not see `if True` become `if False`
-    a = {
-        "org": "o",
-        "code_namespace": "code-a",
-        "path": "src/a.py",
-        "qualified_name": "a::f",
-        "anchored_name": "a::f",
-        "anchored_path": "src/a.py",
-        "anchored_commit": "c1",
-        "checked_commit": "c2",
-        "anchored_hash": "old",
-        "checked_hash": "old",
-        "body_hash": "old",
-        "state": "fresh",
-        "memory_id": "m",
-        "version": 1,
-    }
+    a = _full(
+        {
+            "org": "o",
+            "code_namespace": "code-a",
+            "path": "src/a.py",
+            "qualified_name": "a::f",
+            "anchored_name": "a::f",
+            "anchored_path": "src/a.py",
+            "anchored_commit": "c1",
+            "checked_commit": "c2",
+            "anchored_hash": "old",
+            "checked_hash": "old",
+            "body_hash": "old",
+            "state": "fresh",
+            "memory_id": "m",
+            "version": 1,
+        }
+    )
 
     async def defs(commit, path, qn):
         return [
@@ -1161,19 +1189,21 @@ async def _same_everywhere(commit, path, qn):
 
 @pytest.mark.asyncio
 async def test_a_rehash_trusts_the_old_match_once_the_anchored_commit_is_gone(monkeypatch) -> None:
-    a = {
-        "org": "o",
-        "code_namespace": "code-a",
-        "path": "src/a.py",
-        "qualified_name": "a::f",
-        "anchored_name": "a::f",
-        "anchored_path": "src/a.py",
-        "anchored_commit": "rewritten",
-        "checked_commit": "c2",
-        "body_hash": "old",
-        "checked_hash": "old",
-        "state": "fresh",
-    }
+    a = _full(
+        {
+            "org": "o",
+            "code_namespace": "code-a",
+            "path": "src/a.py",
+            "qualified_name": "a::f",
+            "anchored_name": "a::f",
+            "anchored_path": "src/a.py",
+            "anchored_commit": "rewritten",
+            "checked_commit": "c2",
+            "body_hash": "old",
+            "checked_hash": "old",
+            "state": "fresh",
+        }
+    )
 
     async def has(commit):
         return commit != "rewritten"
@@ -1187,24 +1217,29 @@ async def test_a_rehash_trusts_the_old_match_once_the_anchored_commit_is_gone(mo
 
 def _changed_link(**change: Any) -> dict[str, Any]:
     """A link the old rules read changed, with a correction judged for it."""
-    return {
-        "org": "o",
-        "namespace": "ns",
-        "code_namespace": "code-a",
-        "path": "src/a.py",
-        "qualified_name": "a::f",
-        "anchored_name": "a::f",
-        "anchored_path": "src/a.py",
-        "anchored_commit": "c1",
-        "checked_commit": "c2",
-        "body_hash": "old-1",
-        "checked_hash": "old-2",
-        "judged_hash": "old-2",
-        "suggestion": "`f` returns two",
-        "policy_due": 1,
-        "state": "changed",
-        "changed_since": "c2",
-    } | change
+    return (
+        _full(
+            {
+                "org": "o",
+                "namespace": "ns",
+                "code_namespace": "code-a",
+                "path": "src/a.py",
+                "qualified_name": "a::f",
+                "anchored_name": "a::f",
+                "anchored_path": "src/a.py",
+                "anchored_commit": "c1",
+                "checked_commit": "c2",
+                "body_hash": "old-1",
+                "checked_hash": "old-2",
+                "judged_hash": "old-2",
+                "suggestion": "`f` returns two",
+                "policy_due": 1,
+                "state": "changed",
+                "changed_since": "c2",
+            }
+        )
+        | change
+    )
 
 
 async def _refingerprinted(monkeypatch, row, policies, defs, has=None) -> dict[str, Any]:
@@ -1280,22 +1315,24 @@ async def test_a_missing_link_is_rehashed_from_the_commit_it_was_last_read_at(mo
     from server.code.domain.anchor import Definition
 
     # missing at the head: its row keeps c2, the commit that last had the code
-    a = {
-        "org": "o",
-        "code_namespace": "code-a",
-        "path": "src/a.py",
-        "qualified_name": "a::f",
-        "anchored_name": "a::f",
-        "anchored_path": "src/a.py",
-        "anchored_commit": "c1",
-        "checked_commit": "c2",
-        "anchored_hash": "old-a",
-        "checked_hash": "old-c",
-        "body_hash": "old-c",
-        "state": "missing",
-        "memory_id": "m",
-        "version": 1,
-    }
+    a = _full(
+        {
+            "org": "o",
+            "code_namespace": "code-a",
+            "path": "src/a.py",
+            "qualified_name": "a::f",
+            "anchored_name": "a::f",
+            "anchored_path": "src/a.py",
+            "anchored_commit": "c1",
+            "checked_commit": "c2",
+            "anchored_hash": "old-a",
+            "checked_hash": "old-c",
+            "body_hash": "old-c",
+            "state": "missing",
+            "memory_id": "m",
+            "version": 1,
+        }
+    )
 
     async def defs(commit, path, qn):
         return [Definition(path, qn, "f", body_hash=f"new-{commit}", shape=Shape("same", "", ""))]
@@ -1390,19 +1427,21 @@ async def test_a_missing_link_is_not_handed_to_a_definition_added_later(monkeypa
     _reads(monkeypatch, files, at)
     monkeypatch.setattr(code_links.code, "candidates", candidates)
     # deleted at c2: missing, still holding c1, the commit it was last read at
-    row = {
-        "org": "o",
-        "code_namespace": "code-a",
-        "path": "m.py",
-        "qualified_name": "m::fetch_rows",
-        "body_hash": "h",
-        "checked_hash": "h",
-        "state": "missing",
-        "changed_since": "c2",
-        "checked_commit": "c1",
-        "memory_id": "m1",
-        "version": 1,
-    }
+    row = _full(
+        {
+            "org": "o",
+            "code_namespace": "code-a",
+            "path": "m.py",
+            "qualified_name": "m::fetch_rows",
+            "body_hash": "h",
+            "checked_hash": "h",
+            "state": "missing",
+            "changed_since": "c2",
+            "checked_commit": "c1",
+            "memory_id": "m1",
+            "version": 1,
+        }
+    )
     moves = await code_links._recheck(
         "o", "code-a", [row], code_links._Range("c1", {"m.py": "m.py"}), "c3", files
     )
@@ -1423,16 +1462,18 @@ async def test_code_not_found_keeps_the_commit_it_was_last_read_at(monkeypatch) 
 
     monkeypatch.setattr(code_links.store, "insert", insert)
     monkeypatch.setattr(code_links, "_revised_namespaces", revised)
-    row = {
-        "org": "o",
-        "namespace": "ns",
-        "code_namespace": "code-a",
-        "path": "m.py",
-        "qualified_name": "m::f",
-        "checked_commit": "c1",
-        "memory_id": "m1",
-        "version": 1,
-    }
+    row = _full(
+        {
+            "org": "o",
+            "namespace": "ns",
+            "code_namespace": "code-a",
+            "path": "m.py",
+            "qualified_name": "m::f",
+            "checked_commit": "c1",
+            "memory_id": "m1",
+            "version": 1,
+        }
+    )
     moves = [
         code_links.Move({**row, "memory_id": state}, Link("m.py", "m::f", "h", state))
         for state in ("missing", "unresolved", "fresh", "changed")
@@ -1537,7 +1578,7 @@ def _repository(monkeypatch, *, head: str, checked: str, cursor: str, diffs: dic
         if states:
             return []
         state["read"].append(paths)
-        return [{"path": p, "qualified_name": "m::f", "memory_id": p} for p in paths or []]
+        return [_full({"path": p, "qualified_name": "m::f", "memory_id": p}) for p in paths or []]
 
     async def recheck(org, cns, part, changed, at, files):
         state["rechecked"].append((at, [a["path"] for a in part]))
@@ -1631,7 +1672,7 @@ async def test_a_link_whose_last_read_commit_is_gone_is_unresolved(monkeypatch) 
 
     monkeypatch.setattr(code_links.Files, "has", has)
     files = code_links.Files("o", "code-a")
-    row = {"checked_commit": "gone", "path": "m.py", "qualified_name": "m::f"}
+    row = _full({"checked_commit": "gone", "path": "m.py", "qualified_name": "m::f"})
     found = await code_links._renamed(files, code_links._link_of(row), row, "m.py", "h3")
     assert found.definition is None and found.uncertain
 
@@ -1690,17 +1731,19 @@ async def test_a_rehash_from_a_lost_commit_keeps_a_baseline_no_new_hash_matches(
     monkeypatch.setattr(code_links.Files, "has", has)
     files = code_links.Files("o", "code-a")
     monkeypatch.setattr(files, "defs", _differs_by_commit)
-    link = {
-        "path": "a.py",
-        "qualified_name": "a::f",
-        "anchored_name": "a::f",
-        "anchored_path": "a.py",
-        "anchored_commit": "c1",
-        "checked_commit": "c2",
-        "body_hash": "old",
-        "checked_hash": "old",
-        "state": "fresh",
-    }
+    link = _full(
+        {
+            "path": "a.py",
+            "qualified_name": "a::f",
+            "anchored_name": "a::f",
+            "anchored_path": "a.py",
+            "anchored_commit": "c1",
+            "checked_commit": "c2",
+            "body_hash": "old",
+            "checked_hash": "old",
+            "state": "fresh",
+        }
+    )
     assert (await code_links._rehashed(link, files))["body_hash"] == "new-c1"
     gone = link | {"anchored_commit": "c0"}  # both lost: the old hash, which matches nothing
     assert (await code_links._rehashed(gone, files))["body_hash"] == "old"
@@ -1730,14 +1773,16 @@ def _judged_files(monkeypatch, texts: dict[str, str], path: str = "a.ts"):
 
 
 def _judged_link(qn: str, path: str = "a.ts") -> dict[str, Any]:
-    return {
-        "path": path,
-        "qualified_name": qn,
-        "anchored_commit": "c1",
-        "anchored_path": path,
-        "anchored_name": qn,
-        "state": "changed",
-    }
+    return _full(
+        {
+            "path": path,
+            "qualified_name": qn,
+            "anchored_commit": "c1",
+            "anchored_path": path,
+            "anchored_name": qn,
+            "state": "changed",
+        }
+    )
 
 
 @pytest.mark.asyncio
@@ -1786,7 +1831,7 @@ async def test_a_link_the_judge_cannot_read_costs_no_judgement(monkeypatch) -> N
 
     monkeypatch.setattr(code_links.Files, "has", has)
     budget = code_links.Budget(judgements=1)
-    link = {"path": "a.py", "qualified_name": "a::f", "anchored_commit": "gone"}
+    link = _full({"path": "a.py", "qualified_name": "a::f", "anchored_commit": "gone"})
     assert await code_links._judge(code_links.Files("o", "c"), "claim", link, "h", budget) is None
     assert budget.judgements == 1
 
@@ -1816,13 +1861,15 @@ async def test_the_judge_reads_an_overload_that_was_removed(monkeypatch) -> None
     _reads(monkeypatch, files, at)
     monkeypatch.setattr(files, "has", has)
     monkeypatch.setattr(code_link_judge, "judge_claim", judge)
-    link = {
-        "path": "a.cpp",
-        "qualified_name": "f",
-        "anchored_commit": "c1",
-        "anchored_path": "a.cpp",
-        "anchored_name": "f",
-    }
+    link = _full(
+        {
+            "path": "a.cpp",
+            "qualified_name": "f",
+            "anchored_commit": "c1",
+            "anchored_path": "a.cpp",
+            "anchored_name": "f",
+        }
+    )
     assert (
         await code_links._judge(files, "claim", link, "c2", code_links.Budget(judgements=1)) is None
     )
@@ -1854,7 +1901,7 @@ async def test_a_full_recheck_after_a_lost_head_resumes_as_one(monkeypatch) -> N
         return (
             []
             if states
-            else [{"path": p, "qualified_name": "m::f", "memory_id": p} for p in listed]
+            else [_full({"path": p, "qualified_name": "m::f", "memory_id": p}) for p in listed]
         )
 
     globals_paths = paths
@@ -1923,19 +1970,21 @@ async def test_a_function_moved_into_another_module_and_edited(
     _reads(monkeypatch, files, at)
     _history(monkeypatch, files, commits)
     monkeypatch.setattr(code_links.code, "candidates", candidates)
-    row = {
-        "org": "o",
-        "code_namespace": "code-a",
-        "path": "pkg/a.py",
-        "qualified_name": "pkg.a::fetch_rows",
-        "body_hash": "h",
-        "checked_hash": "h",
-        "state": "fresh",
-        "changed_since": "",
-        "checked_commit": "c1",
-        "memory_id": "m1",
-        "version": 1,
-    }
+    row = _full(
+        {
+            "org": "o",
+            "code_namespace": "code-a",
+            "path": "pkg/a.py",
+            "qualified_name": "pkg.a::fetch_rows",
+            "body_hash": "h",
+            "checked_hash": "h",
+            "state": "fresh",
+            "changed_since": "",
+            "checked_commit": "c1",
+            "memory_id": "m1",
+            "version": 1,
+        }
+    )
     # the range lists what it added, as git does
     changed = code_links._Range("c1", {"pkg/a.py": "pkg/a.py"} | {p: p for p in moved_to})
     moves = await code_links._recheck("o", "code-a", [row], changed, "c2", files)
@@ -1974,19 +2023,21 @@ async def test_a_namesake_already_in_another_module_never_takes_a_deleted_functi
     _reads(monkeypatch, files, at)
     _history(monkeypatch, files, commits)
     monkeypatch.setattr(code_links.code, "candidates", candidates)
-    row = {
-        "org": "o",
-        "code_namespace": "code-a",
-        "path": "pkg/a.py",
-        "qualified_name": "pkg.a::fetch_rows",
-        "body_hash": "h",
-        "checked_hash": "h",
-        "state": "fresh",
-        "changed_since": "",
-        "checked_commit": "c1",
-        "memory_id": "m1",
-        "version": 1,
-    }
+    row = _full(
+        {
+            "org": "o",
+            "code_namespace": "code-a",
+            "path": "pkg/a.py",
+            "qualified_name": "pkg.a::fetch_rows",
+            "body_hash": "h",
+            "checked_hash": "h",
+            "state": "fresh",
+            "changed_since": "",
+            "checked_commit": "c1",
+            "memory_id": "m1",
+            "version": 1,
+        }
+    )
     moves = await code_links._recheck(
         "o", "code-a", [row], code_links._Range("c1", {"pkg/a.py": "pkg/a.py"}), "c2", files
     )
@@ -2024,19 +2075,21 @@ async def test_a_namesake_carried_in_by_a_file_rename_is_not_new(monkeypatch) ->
     _reads(monkeypatch, files, at)
     _history(monkeypatch, files, commits, {"pkg/c.py": "pkg/b.py"})
     monkeypatch.setattr(code_links.code, "candidates", candidates)
-    row = {
-        "org": "o",
-        "code_namespace": "code-a",
-        "path": "pkg/a.py",
-        "qualified_name": "pkg.a::fetch_rows",
-        "body_hash": "h",
-        "checked_hash": "h",
-        "state": "fresh",
-        "changed_since": "",
-        "checked_commit": "c1",
-        "memory_id": "m1",
-        "version": 1,
-    }
+    row = _full(
+        {
+            "org": "o",
+            "code_namespace": "code-a",
+            "path": "pkg/a.py",
+            "qualified_name": "pkg.a::fetch_rows",
+            "body_hash": "h",
+            "checked_hash": "h",
+            "state": "fresh",
+            "changed_since": "",
+            "checked_commit": "c1",
+            "memory_id": "m1",
+            "version": 1,
+        }
+    )
     kept = {"pkg/a.py": "pkg/a.py", "pkg/c.py": "pkg/b.py"}
     moves = await code_links._recheck(
         "o", "code-a", [row], code_links._Range("c1", kept), "c2", files
@@ -2072,19 +2125,21 @@ async def _recheck_across(
     monkeypatch.setattr(files, "range", range_from)
     _history(monkeypatch, files, commits, renames, traceable=traceable)
     monkeypatch.setattr(code_links.code, "candidates", candidates)
-    row = {
-        "org": "o",
-        "code_namespace": "code-a",
-        "path": "pkg/a.py",
-        "qualified_name": "pkg.a::fetch_rows",
-        "body_hash": "h",
-        "checked_hash": "h",
-        "state": state,
-        "changed_since": "",
-        "checked_commit": checked,
-        "memory_id": "m1",
-        "version": 1,
-    }
+    row = _full(
+        {
+            "org": "o",
+            "code_namespace": "code-a",
+            "path": "pkg/a.py",
+            "qualified_name": "pkg.a::fetch_rows",
+            "body_hash": "h",
+            "checked_hash": "h",
+            "state": state,
+            "changed_since": "",
+            "checked_commit": checked,
+            "memory_id": "m1",
+            "version": 1,
+        }
+    )
     kept = {"pkg/a.py": "pkg/a.py", "pkg/b.py": "pkg/b.py"}
     changed = code_links._Range(since, kept) if since else None
     moves = await code_links._recheck("o", "code-a", [row], changed, "c2", files)
@@ -2235,19 +2290,21 @@ async def test_a_link_made_inside_the_range_follows_its_own_commit(
     )
     linked = await code_links.code.parsed("o", "code-a", made, "p.py")
     (d,) = linked.defs
-    row = {
-        "org": "o",
-        "code_namespace": "code-a",
-        "path": "p.py",
-        "qualified_name": d.qualified_name,
-        "body_hash": d.body_hash,
-        "checked_hash": d.body_hash,
-        "state": "fresh",
-        "changed_since": "",
-        "checked_commit": made,
-        "memory_id": "m1",
-        "version": 1,
-    }
+    row = _full(
+        {
+            "org": "o",
+            "code_namespace": "code-a",
+            "path": "p.py",
+            "qualified_name": d.qualified_name,
+            "body_hash": d.body_hash,
+            "checked_hash": d.body_hash,
+            "state": "fresh",
+            "changed_since": "",
+            "checked_commit": made,
+            "memory_id": "m1",
+            "version": 1,
+        }
+    )
     cursor: dict[str, str] = {}
     moves: list[Any] = []
 
@@ -2331,19 +2388,21 @@ async def test_an_unresolved_link_follows_its_renamed_file_on_a_later_pass(monke
     _reads(monkeypatch, files, at)
     monkeypatch.setattr(files, "descends", descends)
     monkeypatch.setattr(code_links.code, "candidates", candidates)
-    row = {
-        "org": "o",
-        "code_namespace": "code-a",
-        "path": "pkg/a.py",
-        "qualified_name": "pkg.a::fetch_rows",
-        "body_hash": "h",
-        "checked_hash": "h",
-        "state": "fresh",
-        "changed_since": "",
-        "checked_commit": "c0",
-        "memory_id": "m1",
-        "version": 1,
-    }
+    row = _full(
+        {
+            "org": "o",
+            "code_namespace": "code-a",
+            "path": "pkg/a.py",
+            "qualified_name": "pkg.a::fetch_rows",
+            "body_hash": "h",
+            "checked_hash": "h",
+            "state": "fresh",
+            "changed_since": "",
+            "checked_commit": "c0",
+            "memory_id": "m1",
+            "version": 1,
+        }
+    )
     renamed = code_links._Range("c0", {"pkg/a.py": "pkg/b.py"})
     (move,) = await code_links._recheck("o", "code-a", [row], renamed, "c1", files)
     after = move.after
@@ -2401,7 +2460,9 @@ async def test_a_pending_name_resolves_by_the_files_its_memory_names(monkeypatch
     ]
 
     async def rows(org, cns, *, days):
-        return [{"qualified_name": "Reader.get", "expired": 0, "version": 1, "memory_id": "m1"}]
+        return [
+            _full({"qualified_name": "Reader.get", "expired": 0, "version": 1, "memory_id": "m1"})
+        ]
 
     async def heads(org, ids):
         return [{"mid": "m1", "files": ["src/reader.py"]}]
@@ -2506,20 +2567,22 @@ async def test_a_lost_link_whose_file_moved_is_found_in_another_module(
     monkeypatch.setattr(files, "touched", touched)
     monkeypatch.setattr(files, "edits_of", edits_of)
     monkeypatch.setattr(code_links.code, "candidates", candidates)
-    row = {
-        "org": "o",
-        "code_namespace": "code-a",
-        "path": "src/v.py" if followed else "src/u.py",
-        "checked_path": "src/u.py" if followed else "",
-        "qualified_name": "src.u::fetch_rows",
-        "body_hash": d.body_hash,
-        "checked_hash": d.body_hash,
-        "state": "missing",
-        "changed_since": "c1",
-        "checked_commit": "c1",
-        "memory_id": "m1",
-        "version": 1,
-    }
+    row = _full(
+        {
+            "org": "o",
+            "code_namespace": "code-a",
+            "path": "src/v.py" if followed else "src/u.py",
+            "checked_path": "src/u.py" if followed else "",
+            "qualified_name": "src.u::fetch_rows",
+            "body_hash": d.body_hash,
+            "checked_hash": d.body_hash,
+            "state": "missing",
+            "changed_since": "c1",
+            "checked_commit": "c1",
+            "memory_id": "m1",
+            "version": 1,
+        }
+    )
     moves = await code_links._recheck("o", "code-a", [row], None, "c2", files)
     assert [(m.after.state, m.after.path) for m in moves] == [("moved", "src/w.py")]
 
@@ -2557,19 +2620,21 @@ async def test_an_identical_copy_there_all_along_never_takes_a_removed_definitio
     _reads(monkeypatch, files, at)
     _history(monkeypatch, files, commits)
     monkeypatch.setattr(code_links.code, "candidates", candidates)
-    row = {
-        "org": "o",
-        "code_namespace": "code-a",
-        "path": ours,
-        "qualified_name": mine.qualified_name,
-        "body_hash": mine.body_hash,
-        "checked_hash": mine.body_hash,
-        "state": "fresh",
-        "changed_since": "",
-        "checked_commit": "c1",
-        "memory_id": "m1",
-        "version": 1,
-    }
+    row = _full(
+        {
+            "org": "o",
+            "code_namespace": "code-a",
+            "path": ours,
+            "qualified_name": mine.qualified_name,
+            "body_hash": mine.body_hash,
+            "checked_hash": mine.body_hash,
+            "state": "fresh",
+            "changed_since": "",
+            "checked_commit": "c1",
+            "memory_id": "m1",
+            "version": 1,
+        }
+    )
     changed = code_links._Range("c1", {ours: "" if deleted else ours})
     moves = await code_links._recheck("o", "code-a", [row], changed, "c2", files)
     assert [(m.after.state, m.after.path) for m in moves] == [("missing", ours)]
@@ -2620,19 +2685,21 @@ def _common_name_world(monkeypatch, files, changed_paths, moved_text=None, touch
     monkeypatch.setattr(files, "renamed_from", renamed_from)
     monkeypatch.setattr(code_links.code, "candidates", candidates)
     (d,) = _file("tests/a/test.py", mine).defs
-    row = {
-        "org": "o",
-        "code_namespace": "code-a",
-        "path": "tests/a/test.py",
-        "qualified_name": d.qualified_name,
-        "body_hash": d.body_hash,
-        "checked_hash": d.body_hash,
-        "state": "fresh",
-        "changed_since": "",
-        "checked_commit": "c1",
-        "memory_id": "m1",
-        "version": 1,
-    }
+    row = _full(
+        {
+            "org": "o",
+            "code_namespace": "code-a",
+            "path": "tests/a/test.py",
+            "qualified_name": d.qualified_name,
+            "body_hash": d.body_hash,
+            "checked_hash": d.body_hash,
+            "state": "fresh",
+            "changed_since": "",
+            "checked_commit": "c1",
+            "memory_id": "m1",
+            "version": 1,
+        }
+    )
     return row, code_links._Range("c1", changed_paths), others, read
 
 
@@ -2702,19 +2769,21 @@ async def test_the_state_a_history_ends_in_does_not_depend_on_when_passes_ran(
     _history(monkeypatch, files, commits)
     monkeypatch.setattr(code_links.code, "candidates", candidates)
     (d,) = [x for x in _file("pkg/a.py", _ROWS).defs if x.name == "fetch_rows"]
-    row = {
-        "org": "o",
-        "code_namespace": "code-a",
-        "path": "pkg/a.py",
-        "qualified_name": d.qualified_name,
-        "body_hash": d.body_hash,
-        "checked_hash": d.body_hash,
-        "state": "fresh",
-        "changed_since": "",
-        "checked_commit": "c0",
-        "memory_id": "m1",
-        "version": 1,
-    }
+    row = _full(
+        {
+            "org": "o",
+            "code_namespace": "code-a",
+            "path": "pkg/a.py",
+            "qualified_name": d.qualified_name,
+            "body_hash": d.body_hash,
+            "checked_hash": d.body_hash,
+            "state": "fresh",
+            "changed_since": "",
+            "checked_commit": "c0",
+            "memory_id": "m1",
+            "version": 1,
+        }
+    )
     moves = await code_links._recheck("o", "code-a", [row], changed, "c2", files)
     assert [(m.after.state, m.after.path) for m in moves] == [("missing", "pkg/a.py")]
 
@@ -2767,19 +2836,21 @@ async def test_an_earlier_edit_to_the_file_does_not_move_where_its_code_was_last
     _history(monkeypatch, files, commits)
     monkeypatch.setattr(code_links.code, "candidates", candidates)
     (d,) = [x for x in _file("pkg/a.py", _ROWS).defs if x.name == "fetch_rows"]
-    row = {
-        "org": "o",
-        "code_namespace": "code-a",
-        "path": "pkg/a.py",
-        "qualified_name": d.qualified_name,
-        "body_hash": d.body_hash,
-        "checked_hash": d.body_hash,
-        "state": "fresh",
-        "changed_since": "",
-        "checked_commit": base,  # a pass that reached it rechecked the link there
-        "memory_id": "m1",
-        "version": 1,
-    }
+    row = _full(
+        {
+            "org": "o",
+            "code_namespace": "code-a",
+            "path": "pkg/a.py",
+            "qualified_name": d.qualified_name,
+            "body_hash": d.body_hash,
+            "checked_hash": d.body_hash,
+            "state": "fresh",
+            "changed_since": "",
+            "checked_commit": base,  # a pass that reached it rechecked the link there
+            "memory_id": "m1",
+            "version": 1,
+        }
+    )
     paths = {"pkg/a.py": "pkg/a.py"} | ({"pkg/b.py": "pkg/b.py"} if base < "c2" else {})
     moves = await code_links._recheck(
         "o", "code-a", [row], code_links._Range(base, paths), "c3", files
@@ -2828,19 +2899,21 @@ async def test_where_its_code_was_last_follows_its_file_through_a_rename(
         if separate
         else ("pkg/a.py", d.qualified_name, "c0")
     )
-    row = {
-        "org": "o",
-        "code_namespace": "code-a",
-        "path": path,
-        "qualified_name": qualified_name,
-        "body_hash": d.body_hash,
-        "checked_hash": d.body_hash,
-        "state": "fresh",
-        "changed_since": "",
-        "checked_commit": checked,
-        "memory_id": "m1",
-        "version": 1,
-    }
+    row = _full(
+        {
+            "org": "o",
+            "code_namespace": "code-a",
+            "path": path,
+            "qualified_name": qualified_name,
+            "body_hash": d.body_hash,
+            "checked_hash": d.body_hash,
+            "state": "fresh",
+            "changed_since": "",
+            "checked_commit": checked,
+            "memory_id": "m1",
+            "version": 1,
+        }
+    )
     paths = (
         {"pkg/c.py": "pkg/c.py"} if separate else {"pkg/a.py": "pkg/c.py", "pkg/b.py": "pkg/b.py"}
     )
@@ -2909,19 +2982,21 @@ async def test_code_whose_scope_was_renamed_away_as_it_moved_is_followed(
         return [theirs]
 
     monkeypatch.setattr(code_links.code, "candidates", candidates)
-    row = {
-        "org": "o",
-        "code_namespace": "c",
-        "path": old,
-        "qualified_name": d.qualified_name,
-        "body_hash": d.body_hash,
-        "checked_hash": d.body_hash,
-        "state": "fresh",
-        "changed_since": "",
-        "checked_commit": base,
-        "memory_id": "m1",
-        "version": 1,
-    }
+    row = _full(
+        {
+            "org": "o",
+            "code_namespace": "c",
+            "path": old,
+            "qualified_name": d.qualified_name,
+            "body_hash": d.body_hash,
+            "checked_hash": d.body_hash,
+            "state": "fresh",
+            "changed_since": "",
+            "checked_commit": base,
+            "memory_id": "m1",
+            "version": 1,
+        }
+    )
     files = code_links.Files("o", "c")
     changed = await files.range(base, head)
     moves = await code_links._recheck("o", "c", [row], changed, head, files)
@@ -2954,19 +3029,21 @@ async def test_code_gone_in_a_way_the_edit_filter_missed_is_unsure(monkeypatch) 
     monkeypatch.setattr(files, "edits_of", no_edits)
     monkeypatch.setattr(code_links.code, "candidates", candidates)
     (d,) = _file("pkg/a.py", _ROWS).defs
-    row = {
-        "org": "o",
-        "code_namespace": "code-a",
-        "path": "pkg/a.py",
-        "qualified_name": d.qualified_name,
-        "body_hash": d.body_hash,
-        "checked_hash": d.body_hash,
-        "state": "fresh",
-        "changed_since": "",
-        "checked_commit": "c0",
-        "memory_id": "m1",
-        "version": 1,
-    }
+    row = _full(
+        {
+            "org": "o",
+            "code_namespace": "code-a",
+            "path": "pkg/a.py",
+            "qualified_name": d.qualified_name,
+            "body_hash": d.body_hash,
+            "checked_hash": d.body_hash,
+            "state": "fresh",
+            "changed_since": "",
+            "checked_commit": "c0",
+            "memory_id": "m1",
+            "version": 1,
+        }
+    )
     changed = code_links._Range("c0", {"pkg/a.py": "pkg/a.py", "pkg/b.py": "pkg/b.py"})
     moves = await code_links._recheck("o", "code-a", [row], changed, "c1", files)
     assert [m.after.state for m in moves] == ["unresolved"]
@@ -3090,7 +3167,7 @@ def test_the_edit_pattern_is_plain_posix() -> None:
 def test_a_carried_link_serves_no_suggestion_its_hashes_still_match(monkeypatch) -> None:
     monkeypatch.setattr(code_link_reads, "inputs_now", lambda org, memory: "i")
     monkeypatch.setattr(code_link_reads.code_change, "held", lambda row: False)
-    link = {"inputs_hash": "i", "suggestion": "returns three", "judged_hash": "h"}
+    link = _full({"inputs_hash": "i", "suggestion": "returns three", "judged_hash": "h"})
     link["checked_hash"] = "h"
     served = code_link_reads.current("o", {"mid": "m"}, [link, {**link, "carried": 1}])
     assert [a["suggestion"] for a in served] == ["returns three", ""]

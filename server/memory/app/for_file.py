@@ -268,14 +268,14 @@ async def _linked(input: MemoryForFileInput, path: str, nss: list[str]) -> dict[
             input.org, trunks, paths=[path], namespaces=nss, states=list(STATE_RANK)
         )
         links = await current_links(input.org, links)
-        seen = await readable_code(input.org, {str(a["code_namespace"]) for a in links})
+        seen = await readable_code(input.org, {a["code_namespace"] for a in links})
     except Exception as e:  # noqa: BLE001 — the links are additive; the files match stands
         log.debug("memory.for_file: code links skipped: %s", e)
         return {}
     out: dict[str, list[str]] = defaultdict(list)
     for a in links:
         if a["code_namespace"] in seen:
-            out[str(a["memory_id"])].append(str(a["state"]))
+            out[a["memory_id"]].append(a["state"])
     return out
 
 

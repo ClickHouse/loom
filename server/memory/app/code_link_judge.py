@@ -5,9 +5,9 @@ correction is served as the link's `suggestion`."""
 from __future__ import annotations
 
 import json
-from typing import Any
 
 from server.code.domain.anchor import Definition
+from server.memory.store.code_links import LinkRow
 
 # A claim or code longer than the judge reads is never judged.
 _JUDGE_CLAIM_CHARS = 2000
@@ -53,8 +53,8 @@ def readable(claim: str, old: str, new: str) -> bool:
 
 
 async def judge(
-    claim: str, link: dict[str, Any], old: str, new: str, d: Definition, head: str
-) -> dict[str, Any] | None:
+    claim: str, link: LinkRow, old: str, new: str, d: Definition, head: str
+) -> LinkRow | None:
     """`link` once its claim is judged against the code it was written for (`old`) and
     the code now (`new`, `d` at `head`): a claim that holds re-anchors it; a
     contradicted one keeps it `changed` with the corrected claim as `suggestion`. None

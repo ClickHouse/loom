@@ -27,7 +27,7 @@ from collections import OrderedDict, defaultdict
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from server.code.app import memory_links as code
 from server.code.domain.anchor import (
@@ -58,6 +58,7 @@ from server.memory.app.code_link_reads import (
 from server.memory.domain import code_change
 from server.memory.domain.code_change import REVISE
 from server.memory.store import code_links as store
+from server.memory.store.code_links import LinkRow, PendingLink
 from server.memory.store.key_write_lock import KeyWriteLocks
 from server.settings import settings
 
@@ -97,7 +98,7 @@ class _Read:
     """A link as a recheck read it: the range it is followed over, its file at the head
     and what is there, and what the search in that file found."""
 
-    row: dict[str, Any]
+    row: LinkRow
     range: _Range | None
     before: Link
     now: str
@@ -108,12 +109,12 @@ class _Read:
 
 @dataclass
 class Move:
-    before: dict[str, Any]  # the link row
+    before: LinkRow
     after: Link
 
 
 # The links a policy updated and those it left due, by (path, qualified_name).
-_Revised = tuple[dict[tuple[str, str], dict[str, Any]], set[tuple[str, str]]]
+_Revised = tuple[dict[tuple[str, str], LinkRow], set[tuple[str, str]]]
 
 
 @dataclass
@@ -251,20 +252,20 @@ def _text(value: Any) -> str:
     return claim if claim is not None else str(value)
 
 
-def _link_of(row: dict[str, Any]) -> Link:
+def _link_of(row: LinkRow) -> Link:
     return Link(
-        path=str(row["path"]),
-        qualified_name=str(row["qualified_name"]),
-        body_hash=str(row.get("body_hash") or ""),
-        checked_hash=str(row.get("checked_hash") or ""),
-        state=str(row.get("state") or "fresh"),
-        changed_since=str(row.get("changed_since") or ""),
-        start_line=int(row.get("start_line") or 0),
-        end_line=int(row.get("end_line") or 0),
-        carried=bool(row.get("carried")),
-        anchored_path=str(row.get("anchored_path") or ""),
-        anchored_name=str(row.get("anchored_name") or ""),
-        checked_path=str(row.get("checked_path") or ""),
+        path=row["path"],
+        qualified_name=row["qualified_name"],
+        body_hash=row["body_hash"],
+        checked_hash=row["checked_hash"],
+        state=row["state"],
+        changed_since=row["changed_since"],
+        start_line=row["start_line"],
+        end_line=row["end_line"],
+        carried=bool(row["carried"]),
+        anchored_path=row["anchored_path"],
+        anchored_name=row["anchored_name"],
+        checked_path=row["checked_path"],
     )
 
 
@@ -320,11 +321,11 @@ async def _link_org(
     Links are last-write-wins, and a worker that read an older value of a memory may
     write after the one that linked its newer value; so each writer re-reads the heads it
     linked and relinks those its links no longer match, `rereads` times at most."""
-    existing: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    existing: dict[str, list[LinkRow]] = defaultdict(list)
     for a in await store.for_memories(org, [str(r["mid"]) for r in rows]):
-        existing[str(a["memory_id"])].append(a)
+        existing[a["memory_id"]].append(a)
     todo: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    stale: list[dict[str, Any]] = []
+    stale: list[LinkRow] = []
     deleted: set[str] = set()
     for r in rows:
         links = existing.get(str(r["mid"]), [])
@@ -347,7 +348,7 @@ async def _link_org(
             stale.extend(links)
     if deleted:
         result.unlinked += await store.drop_gone(org, deleted)
-    out: list[dict[str, Any]] = store.tombstones(stale)
+    out = store.tombstones(stale)
     result.unlinked += len(stale)
     linked: list[str] = []
     for cns, memories in todo.items():
@@ -372,9 +373,7 @@ async def _link_org(
         await _link_org(org, await store.memory_heads(org, linked), result, rereads=rereads - 1)
 
 
-def _names_a_repository(
-    memory: dict[str, Any], tags: list[str], links: list[dict[str, Any]]
-) -> bool:
+def _names_a_repository(memory: dict[str, Any], tags: list[str], links: list[LinkRow]) -> bool:
     """Whether `memory` still names a repository: a `repo:` tag, or written in the code
     namespace its links are in."""
     in_code = any(a["code_namespace"] == memory["namespace"] for a in links)
@@ -385,17 +384,17 @@ async def _link_each(
     org: str,
     cns: str,
     memories: list[dict[str, Any]],
-    existing: dict[str, list[dict[str, Any]]],
+    existing: dict[str, list[LinkRow]],
     files: Files,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[list[LinkRow], list[LinkRow], list[dict[str, Any]]]:
     """`_link`, and the memories it could not link because a file they name does not
     parse; the others are linked all the same."""
     try:
         return *await _link(org, cns, memories, existing, files), []
     except code.ParseFailed:
         pass
-    rows: list[dict[str, Any]] = []
-    gone: list[dict[str, Any]] = []
+    rows: list[LinkRow] = []
+    gone: list[LinkRow] = []
     unparsed: list[dict[str, Any]] = []
     for m in memories:
         try:
@@ -412,9 +411,9 @@ async def _link(
     org: str,
     cns: str,
     memories: list[dict[str, Any]],
-    existing: dict[str, list[dict[str, Any]]],
+    existing: dict[str, list[LinkRow]],
     files: Files,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[list[LinkRow], list[LinkRow]]:
     """The link rows of `memories` (one repository's) at its indexed head, and their
     existing links that no longer hold. Before the repository's first index each memory
     gets a `*` marker instead, resolved once the index exists."""
@@ -429,8 +428,8 @@ async def _link(
     found = await code.candidates(org, cns, names=names) if names else []
     refs = sorted({str(f) for r in memories for f in r.get("files") or []})
     paths = await code.live_paths(org, cns, refs) if refs else {}
-    rows: list[dict[str, Any]] = []
-    gone: list[dict[str, Any]] = []
+    rows: list[LinkRow] = []
+    gone: list[LinkRow] = []
     for r in memories:
         files_named = [str(f) for f in r.get("files") or []]
         links, waiting, complete = _plan(named[r["mid"]], found, files_named, paths)
@@ -451,12 +450,12 @@ async def _link(
         gone.extend(
             a
             for a in existing.get(r["mid"], [])
-            if (str(a["code_namespace"]), str(a["path"]), str(a["qualified_name"])) not in keep
+            if (a["code_namespace"], a["path"], a["qualified_name"]) not in keep
         )
     return rows, gone
 
 
-def _awaiting(memory: dict[str, Any], cns: str) -> dict[str, Any]:
+def _awaiting(memory: dict[str, Any], cns: str) -> LinkRow:
     """The `*` marker of a memory whose repository is not linked yet."""
     return _link_row(memory, cns, "", _AWAITING_INDEX, "", state="pending")
 
@@ -511,7 +510,7 @@ def _link_row(
     d: Definition | None = None,
     state: str = "fresh",
     complete: bool = True,
-) -> dict[str, Any]:
+) -> LinkRow:
     start, end = (d.start_line, d.end_line) if d else (0, 0)
     return store.link_row(
         org=str(memory["org"]),
@@ -672,7 +671,7 @@ async def _refingerprint(org: str, cns: str, files: Files, result: PassResult) -
             if owed or "state" in fields:
                 fields["policy_due"] = int(owed and (a["org"], a["namespace"]) in revised)
             out.append(
-                store.link_row(a, follows=int(a["version"]), fingerprint_version=version, **fields)
+                store.link_row(a, follows=a["version"], fingerprint_version=version, **fields)
             )
         await store.insert(out)
         result.rechecked += len(out)
@@ -680,7 +679,7 @@ async def _refingerprint(org: str, cns: str, files: Files, result: PassResult) -
             break
 
 
-async def _rehashed(a: dict[str, Any], files: Files) -> dict[str, Any]:
+async def _rehashed(a: LinkRow, files: Files) -> dict[str, Any]:
     """A symbol link's hashes, former baselines included, re-hashed under the current
     rules from the commits they were taken at, its judgement dropped, and its state set
     by what these rules see between the checked text and the baseline. No hash is ever
@@ -695,8 +694,8 @@ async def _rehashed(a: dict[str, Any], files: Files) -> dict[str, Any]:
         return (found[0].body_hash, found[0].shape.exact) if found else ("", "")
 
     link = _link_of(a)
-    anchored = await read_at(str(a["anchored_commit"]), link.anchored_path, link.anchored_name)
-    checked = await read_at(str(a["checked_commit"]), link.read_path, link.qualified_name)
+    anchored = await read_at(a["anchored_commit"], link.anchored_path, link.anchored_name)
+    checked = await read_at(a["checked_commit"], link.read_path, link.qualified_name)
     out: dict[str, Any] = {
         "anchored_hash": anchored[0] if anchored else "",
         "checked_hash": checked[0] if checked else "",
@@ -707,17 +706,17 @@ async def _rehashed(a: dict[str, Any], files: Files) -> dict[str, Any]:
     }
     # a check that matched the baseline read its text; else the text the baseline was
     # taken from, while these rules still see the rename that moved it as one
-    rebased = await read_at(*_baseline_source(a)) if a.get("baseline_commit") else None
+    rebased = await read_at(*_baseline_source(a)) if a["baseline_commit"] else None
     if link.matched_baseline() and checked is not None and _agree(anchored, checked):
         out["body_hash"] = checked[0] or out["anchored_hash"]
     elif rebased is not None and rebased[0] and _agree(anchored, rebased):
         out["body_hash"] = rebased[0]
     else:
-        out |= {"body_hash": out["anchored_hash"] or str(a["body_hash"]), "baseline_commit": ""}
+        out |= {"body_hash": out["anchored_hash"] or a["body_hash"], "baseline_commit": ""}
     baseline = out["body_hash"]
     if a["state"] in ("fresh", "moved") and out["checked_hash"] not in ("", baseline):
         # these rules see a change the old ones did not
-        out |= {"state": "changed", "changed_since": str(a["checked_commit"])}
+        out |= {"state": "changed", "changed_since": a["checked_commit"]}
     elif a["state"] == "changed" and not link.carried and out["checked_hash"] == baseline != "":
         # nor one they did: the checked text is the anchored one under these rules
         state = "moved" if link.moved_from_anchor(link.read_path, link.qualified_name) else "fresh"
@@ -725,32 +724,32 @@ async def _rehashed(a: dict[str, Any], files: Files) -> dict[str, Any]:
     return out
 
 
-def _baseline_source(a: dict[str, Any]) -> tuple[str, str, str]:
+def _baseline_source(a: LinkRow) -> tuple[str, str, str]:
     """(commit, path, qualified name) of the text `a`'s baseline hashes: the anchor,
     unless a rename moved the baseline onto the renamed text."""
-    if a.get("baseline_commit"):
-        return str(a["baseline_commit"]), str(a["baseline_path"]), str(a["baseline_name"])
-    return str(a["anchored_commit"]), str(a["anchored_path"]), str(a["anchored_name"])
+    if a["baseline_commit"]:
+        return a["baseline_commit"], a["baseline_path"], a["baseline_name"]
+    return a["anchored_commit"], a["anchored_path"], a["anchored_name"]
 
 
-def _former_baselines(a: dict[str, Any]) -> list[tuple[str, str, str]]:
+def _former_baselines(a: LinkRow) -> list[tuple[str, str, str]]:
     """The source of each former identity's baseline, oldest first."""
     return list(
         zip(
-            a.get("former_baseline_commits") or [],
-            a.get("former_baseline_paths") or [],
-            a.get("former_baseline_names") or [],
+            a["former_baseline_commits"],
+            a["former_baseline_paths"],
+            a["former_baseline_names"],
             strict=True,
         )
     )
 
 
-def _owes(a: dict[str, Any], fields: dict[str, Any]) -> bool:
+def _owes(a: LinkRow, fields: dict[str, Any]) -> bool:
     """A re-hash leaves link `a` due for its policy, as a recheck would: it newly reads
     changed, or stays changed and was judged (a re-hash drops every judgement)."""
     if fields.get("state", a["state"]) != "changed":
         return False
-    return "state" in fields or (bool(fields) and bool(a.get("judged_hash")))
+    return "state" in fields or (bool(fields) and bool(a["judged_hash"]))
 
 
 def _agree(anchored: tuple[str, str] | None, checked: tuple[str, str]) -> bool:
@@ -781,11 +780,11 @@ async def _follow(
         made = [c for c in await code.commits_after(org, cns, checked, head) if c != head]
         if made:
             rows += await store.for_code(org, [cns], checked_commits=made)
-    unique = {(a["path"], a["qualified_name"], str(a["memory_id"])): a for a in rows}
-    by_path: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    unique = {(a["path"], a["qualified_name"], a["memory_id"]): a for a in rows}
+    by_path: dict[str, list[LinkRow]] = defaultdict(list)
     for a in unique.values():
         if a["path"]:
-            by_path[str(a["path"])].append(a)
+            by_path[a["path"]].append(a)
     after = str(done.get("after", "")) if done.get("head") == head else ""
     paths = [p for p in sorted(by_path) if p > after]
     unparsed = await _unparsed(org, cns)
@@ -807,7 +806,7 @@ async def _follow(
 async def _recheck_paths(
     org: str,
     cns: str,
-    by_path: dict[str, list[dict[str, Any]]],
+    by_path: dict[str, list[LinkRow]],
     paths: list[str],
     changed: _Range | None,
     head: str,
@@ -836,15 +835,15 @@ async def _retry_unparsed(org: str, cns: str, head: str, files: Files, result: P
     paths = await _unparsed(org, cns)
     if not paths or not head:
         return
-    by_commit: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_commit: dict[str, list[LinkRow]] = defaultdict(list)
     for a in await store.for_code(org, [cns], paths=sorted(paths)):
-        by_commit[str(a["checked_commit"])].append(a)
+        by_commit[a["checked_commit"]].append(a)
     still: set[str] = set()
     for commit, rows in by_commit.items():
         changed = await files.range(commit, head) if commit else None
-        by_path: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        by_path: dict[str, list[LinkRow]] = defaultdict(list)
         for a in rows:
-            by_path[str(a["path"])].append(a)
+            by_path[a["path"]].append(a)
         paths_now = sorted(by_path)
         moves = await _recheck_paths(org, cns, by_path, paths_now, changed, head, files, still)
         await _write_moves(await _current_moves(org, moves), head)
@@ -862,24 +861,24 @@ async def _set_unparsed(org: str, cns: str, paths: set[str]) -> None:
     await code.set_link_cursor(f"unparsed/{org}/{cns}", json.dumps(sorted(paths)))
 
 
-async def _lost(org: str, cns: str, paths: set[str]) -> list[dict[str, Any]]:
+async def _lost(org: str, cns: str, paths: set[str]) -> list[LinkRow]:
     """Every unresolved link (a rival candidate may have gone anywhere), and the links
     missing for at most `_MISSING_SEARCHED_DAYS` whose name the index places in one of
     `paths`. One missing longer is found again only in its own file."""
     lost = await store.lost(org, cns, missing_days=_MISSING_SEARCHED_DAYS)
     unresolved = [a for a in lost if a["state"] == "unresolved"]
     missing = [a for a in lost if a["state"] == "missing" and a["qualified_name"]]
-    names = sorted({bare_name(str(a["qualified_name"])) for a in missing})
+    names = sorted({bare_name(a["qualified_name"]) for a in missing})
     if not names or not paths:
         return unresolved
     found = {d.name for d in await code.candidates(org, cns, names=names) if d.path in paths}
-    return unresolved + [a for a in missing if bare_name(str(a["qualified_name"])) in found]
+    return unresolved + [a for a in missing if bare_name(a["qualified_name"]) in found]
 
 
 async def _recheck(
     org: str,
     cns: str,
-    rows: list[dict[str, Any]],
+    rows: list[LinkRow],
     changed: _Range | None,
     head: str,
     files: Files,
@@ -889,7 +888,7 @@ async def _recheck(
     found: list[_Read] = []
     lost: dict[str, str] = {}  # qualified name -> the path it was lost from
     for a in rows:
-        checked, own = str(a["checked_commit"]), changed
+        checked, own = a["checked_commit"], changed
         if changed is not None and checked not in ("", changed.base):
             if not await files.descends(checked, changed.base):
                 # checked after the range starts: from its own commit, once head has it
@@ -949,7 +948,7 @@ async def _recheck(
 async def _namesakes(
     files: Files,
     before: Link,
-    a: dict[str, Any],
+    a: LinkRow,
     candidates: list[Definition],
     changed: _Range | None,
     head: str,
@@ -958,7 +957,7 @@ async def _namesakes(
     code was last in its own file; None when that cannot be told, or when more than
     `_MAX_ELSEWHERE` files were touched since."""
     live = changed is not None and before.state not in _LOST_STATES
-    start = changed.base if changed is not None and live else str(a["checked_commit"])
+    start = changed.base if changed is not None and live else a["checked_commit"]
     local = local_name(before.qualified_name, before.read_path)
     anchor = await _last_in_place(files, before, start, head, local)
     touched = await files.touched(anchor, head) if anchor else None
@@ -1019,7 +1018,7 @@ async def _defines(files: Files, commit: str, path: str, local: str) -> bool:
 
 
 async def _moved_and_edited(
-    files: Files, before: Link, a: dict[str, Any], new: list[Definition], head: str
+    files: Files, before: Link, a: LinkRow, new: list[Definition], head: str
 ) -> Successor:
     """The one definition with its name in another module among `new` (namesakes new
     since the link was in place), edited as it moved: followed as changed when its text
@@ -1031,7 +1030,7 @@ async def _moved_and_edited(
     if len(namesakes) != 1:
         return Successor(None, uncertain=bool(namesakes))
     (d,) = namesakes
-    checked = str(a["checked_commit"])
+    checked = a["checked_commit"]
     key = ("elsewhere", checked, before.read_path, before.qualified_name, head, d.path)
     if (known := files.successors.get(key)) is not None:
         return known
@@ -1045,10 +1044,10 @@ async def _moved_and_edited(
     return files.successors[key]
 
 
-async def _renamed(files: Files, before: Link, a: dict[str, Any], now: str, head: str) -> Successor:
+async def _renamed(files: Files, before: Link, a: LinkRow, now: str, head: str) -> Successor:
     """What the linked definition became at `head` in `now` when its name is gone there
     (`successor.successor`): read against the file as the link was last checked."""
-    checked = str(a["checked_commit"])
+    checked = a["checked_commit"]
     key = ("here", checked, before.read_path, before.qualified_name, head, now)
     if (known := files.successors.get(key)) is not None:
         return known
@@ -1101,26 +1100,29 @@ async def _resolve_pending(
     names = [r for r in rows if r["qualified_name"] != _AWAITING_INDEX]
     if not names:
         return []
-    wanted = sorted({bare_name(str(r["qualified_name"])) for r in names})
+    wanted = sorted({bare_name(r["qualified_name"]) for r in names})
     defs = await code.candidates(org, cns, names=wanted)
     # the files each memory names pick between namesakes, as when it was first linked
-    heads = await store.memory_heads(org, sorted({str(r["memory_id"]) for r in names}))
+    heads = await store.memory_heads(org, sorted({r["memory_id"] for r in names}))
     named = {str(h["mid"]): [str(f) for f in h.get("files") or []] for h in heads}
     moves = []
     for r in names:
-        m = str(r["qualified_name"])
-        d = resolve(
-            m, [x for x in defs if x.name == bare_name(m)], named.get(str(r["memory_id"]), [])
-        )
+        m = r["qualified_name"]
+        d = resolve(m, [x for x in defs if x.name == bare_name(m)], named.get(r["memory_id"], []))
         try:
             here = await _at_head(files, head, d) if d is not None else None
         except code.ParseFailed:
             continue  # stays pending: retried next pass
         if here is None:
             continue
-        anchored: dict[str, Any] = {"anchored_commit": head, "anchored_path": here.path}
-        anchored |= {"anchored_hash": here.body_hash, "anchored_name": here.qualified_name}
-        anchored["baseline_commit"] = ""  # the baseline is the new anchor
+        anchored: PendingLink = {
+            **r,
+            "anchored_commit": head,
+            "anchored_path": here.path,
+            "anchored_hash": here.body_hash,
+            "anchored_name": here.qualified_name,
+            "baseline_commit": "",  # the baseline is the new anchor
+        }
         link = Link(
             path=here.path,
             qualified_name=here.qualified_name,
@@ -1129,34 +1131,34 @@ async def _resolve_pending(
             end_line=here.end_line,
             checked_hash=here.body_hash,
         )
-        moves.append(Move({**r, **anchored}, link))
+        moves.append(Move(anchored, link))
     return moves
 
 
 async def _relink(
-    org: str, cns: str, markers: list[dict[str, Any]], files: Files, result: PassResult
+    org: str, cns: str, markers: list[PendingLink], files: Files, result: PassResult
 ) -> None:
     """Link the memories waiting behind a `*` marker (written before the repository's
     first index, or while it could not be read), dropping the links of their earlier
     values; their markers go in the same insert. Every row follows its marker's version:
     a relink the queue wrote since the marker was read is newer and stays."""
-    ids = [str(m["memory_id"]) for m in markers]
+    ids = [m["memory_id"] for m in markers]
     memories = await store.memory_heads(org, ids)
     served = [m for m in memories if m["status"] in SERVED and m.get("tombstoned_at") is None]
     for m in served:
         m["inputs"] = memory_inputs(m, cns)
-    existing: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    existing: dict[str, list[LinkRow]] = defaultdict(list)
     for a in await store.for_memories(org, ids):
         if a["code_namespace"] == cns and a["qualified_name"] != _AWAITING_INDEX:
-            existing[str(a["memory_id"])].append(a)
+            existing[a["memory_id"]].append(a)
     rows, gone, unparsed = (
         await _link_each(org, cns, served, existing, files) if served else ([], [], [])
     )
     waiting = {str(m["mid"]) for m in unparsed}  # their markers stay
-    read = {str(m["memory_id"]): int(m["version"]) for m in markers}
+    read = {m["memory_id"]: m["version"] for m in markers}
     for r in rows:
-        r["version"] = read[str(r["memory_id"])] + 1
-    done = [m for m in markers if str(m["memory_id"]) not in waiting]
+        r["version"] = read[r["memory_id"]] + 1
+    done: list[LinkRow] = [m for m in markers if m["memory_id"] not in waiting]
     await store.insert(store.tombstones(done + gone) + rows)
     result.linked += len(rows)
     result.unlinked += len(gone)
@@ -1170,11 +1172,11 @@ async def _current_moves(org: str, moves: list[Move]) -> list[Move]:
         return []
     heads = {
         str(h["mid"]): h
-        for h in await store.memory_heads(org, [str(m.before["memory_id"]) for m in moves])
+        for h in await store.memory_heads(org, [m.before["memory_id"] for m in moves])
     }
     out = []
     for m in moves:
-        head = heads.get(str(m.before["memory_id"]))
+        head = heads.get(m.before["memory_id"])
         if head is not None and current(org, head, [m.before]):
             out.append(m)
     return out
@@ -1184,7 +1186,17 @@ async def _current_moves(org: str, moves: list[Move]) -> list[Move]:
 _FORMER = 16
 
 
-_FORMER_COLUMNS = (
+_FORMER_COLUMNS: tuple[
+    Literal[
+        "former_paths",
+        "former_names",
+        "former_hashes",
+        "former_baseline_commits",
+        "former_baseline_paths",
+        "former_baseline_names",
+    ],
+    ...,
+] = (
     "former_paths",
     "former_names",
     "former_hashes",
@@ -1194,25 +1206,25 @@ _FORMER_COLUMNS = (
 )
 
 
-def _former(a: dict[str, Any], moved_from: bool) -> dict[str, list[str]]:
+def _former(a: LinkRow, moved_from: bool) -> dict[str, list[str]]:
     """The identities `a` had before, oldest first, each with the baseline it had there
     and where that baseline's text is, with the one it leaves when it moves."""
-    out = {c: list(a.get(c) or []) for c in _FORMER_COLUMNS}
+    out = {c: list(a[c]) for c in _FORMER_COLUMNS}
     if moved_from:
         source = _baseline_source(a)
         for column, value in zip(
             _FORMER_COLUMNS,
-            (a["path"], a["qualified_name"], a.get("body_hash") or "", *source),
+            (a["path"], a["qualified_name"], a["body_hash"], *source),
             strict=True,
         ):
-            out[column].append(str(value))
+            out[column].append(value)
     return {c: v[-_FORMER:] for c, v in out.items()}
 
 
-def _baseline_moved(a: dict[str, Any], link: Link, head: str) -> dict[str, str]:
+def _baseline_moved(a: LinkRow, link: Link, head: str) -> dict[str, str]:
     """Where the moved link's baseline text is now: the renamed text at `head` when the
     move rebased the baseline onto it, else where it was."""
-    if link.body_hash == str(a.get("body_hash") or "") or link.body_hash != link.checked_hash:
+    if link.body_hash == a["body_hash"] or link.body_hash != link.checked_hash:
         return {}
     return {
         "baseline_commit": head,
@@ -1224,8 +1236,8 @@ def _baseline_moved(a: dict[str, Any], link: Link, head: str) -> dict[str, str]:
 async def _write_moves(moves: list[Move], head: str) -> None:
     """One new version per moved link, above the one read (a newer write stays); a link
     whose key changed is replaced in the same insert."""
-    rows: list[dict[str, Any]] = []
-    gone: list[dict[str, Any]] = []
+    rows: list[LinkRow] = []
+    gone: list[LinkRow] = []
     revised = await _revised_namespaces([m.before for m in moves])
     for m in moves:
         a, link = m.before, m.after
@@ -1239,7 +1251,7 @@ async def _write_moves(moves: list[Move], head: str) -> None:
         rows.append(
             store.link_row(
                 a,
-                follows=int(a["version"]),
+                follows=a["version"],
                 path=link.path,
                 qualified_name=link.qualified_name,
                 body_hash=link.body_hash,
@@ -1252,40 +1264,40 @@ async def _write_moves(moves: list[Move], head: str) -> None:
                 # code not found: keep the commit it was last read at, so a later pass
                 # (or a re-hash) still has the text the link was checked against
                 checked_commit=(
-                    str(a["checked_commit"])
-                    if link.state in _LOST_STATES and a.get("checked_commit")
+                    a["checked_commit"]
+                    if link.state in _LOST_STATES and a["checked_commit"]
                     else head
                 ),
                 checked_path=link.checked_path,
                 checked_at=naive_utc_now(),
                 **_former(a, moved_from),
                 **_baseline_moved(a, link, head),
-                suggestion=a.get("suggestion", "") if corrected else "",
-                judged_hash=a.get("judged_hash", "") if corrected else "",
+                suggestion=a["suggestion"] if corrected else "",
+                judged_hash=a["judged_hash"] if corrected else "",
                 policy_due=int(
                     link.state == "changed"
                     and (a["org"], a["namespace"]) in revised
-                    and (_edited(a, link) or bool(a.get("policy_due")))
+                    and (_edited(a, link) or bool(a["policy_due"]))
                 ),
             )
         )
     await store.insert(store.tombstones(gone) + rows)
 
 
-def _edited(a: dict[str, Any], link: Link) -> bool:
+def _edited(a: LinkRow, link: Link) -> bool:
     """The link reads changed for an edit not yet judged: newly, or edited again. A move
     or a shift of its lines is no edit."""
-    return a["state"] != "changed" or str(a["checked_hash"]) != link.checked_hash
+    return a["state"] != "changed" or a["checked_hash"] != link.checked_hash
 
 
 # ---- policy ---------------------------------------------------------------------------
 
 
-async def _revised_namespaces(links: list[dict[str, Any]]) -> set[tuple[str, str]]:
+async def _revised_namespaces(links: list[LinkRow]) -> set[tuple[str, str]]:
     """The (org, namespace) pairs among `links`' memories whose policy is `revise`."""
     by_org: dict[str, set[str]] = defaultdict(set)
     for a in links:
-        by_org[str(a["org"])].add(str(a["namespace"]))
+        by_org[a["org"]].add(a["namespace"])
     out: set[tuple[str, str]] = set()
     for org, nss in by_org.items():
         policies = await store.code_change_policies(org, sorted(nss))
@@ -1301,15 +1313,15 @@ async def _apply_policies(
     due = await store.policy_due(org, cns)
     if not due:
         return
-    links: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    links: dict[str, list[LinkRow]] = defaultdict(list)
     for a in await store.for_memories(org, due):
         if a["state"] != "pending":
-            links[str(a["memory_id"])].append(a)
+            links[a["memory_id"]].append(a)
     heads = {str(h["mid"]): h for h in await store.memory_heads(org, due)}
     policies = await store.code_change_policies(
         org, sorted({h["namespace"] for h in heads.values()})
     )
-    rows: list[dict[str, Any]] = []
+    rows: list[LinkRow] = []
     for mid in due:
         try:
             row = heads.get(mid)
@@ -1334,9 +1346,7 @@ async def _apply_policies(
                 if not _judgeable(latest):
                     updated = {}  # held or labelled high while the last judgement ran
             rows += [
-                store.link_row(
-                    updated.get(k, a), follows=int(a["version"]), policy_due=int(k in left)
-                )
+                store.link_row(updated.get(k, a), follows=a["version"], policy_due=int(k in left))
                 for a in mine
                 for k in [(a["path"], a["qualified_name"])]
             ]
@@ -1348,7 +1358,7 @@ async def _apply_policies(
 async def _revise(
     org: str,
     row: dict[str, Any],
-    links: list[dict[str, Any]],
+    links: list[LinkRow],
     policy: str,
     head: str,
     files: Files,
@@ -1359,16 +1369,14 @@ async def _revise(
     (past the budget), by (path, qualified_name); None when the whole memory is deferred
     to the next pass. Each changed definition is judged on its own."""
     changed = [
-        a
-        for a in links
-        if a["state"] == "changed" and a["qualified_name"] and int(a.get("policy_due") or 0)
+        a for a in links if a["state"] == "changed" and a["qualified_name"] and a["policy_due"]
     ]
     if policy != code_change.REVISE or not changed or not _judgeable(row):
         return {}, set()
     claim = _claim(row["value"])
     if claim is None:
         return {}, set()
-    updated: dict[tuple[str, str], dict[str, Any]] = {}
+    updated: dict[tuple[str, str], LinkRow] = {}
     due: set[tuple[str, str]] = set()
     for a in changed:
         key = (a["path"], a["qualified_name"])
@@ -1398,20 +1406,18 @@ def _judgeable(row: dict[str, Any]) -> bool:
 
 
 async def _judge(
-    files: Files, claim: str, link: dict[str, Any], head: str, budget: Budget
-) -> dict[str, Any] | None:
+    files: Files, claim: str, link: LinkRow, head: str, budget: Budget
+) -> LinkRow | None:
     """`link` judged against the code it was written for and the code now, spending one
     of `budget`'s judgements; None when it is not judged: a method its renamed class
     carried (its text cannot show what changed in the class), either side gone, the same
     text on both, text past the judge's reach, or an unsure verdict."""
-    if int(link.get("carried") or 0):
+    if link["carried"]:
         return None
-    path, qn = str(link["path"]), str(link["qualified_name"])
-    if not await files.has(str(link["anchored_commit"])):
+    if not await files.has(link["anchored_commit"]):
         return None  # the code it was written against went with a rewrite
-    anchored = str(link["anchored_commit"]), str(link["anchored_path"])
-    was = await files.defs(*anchored, str(link["anchored_name"]))
-    group = await files.defs(head, path, qn)
+    was = await files.defs(link["anchored_commit"], link["anchored_path"], link["anchored_name"])
+    group = await files.defs(head, link["path"], link["qualified_name"])
     if not was or not group:
         return None
     # what each side's fingerprint covers, overloads and conditions with it

@@ -338,7 +338,7 @@ async def _code_links_stale(params: dict[str, Any]) -> list[dict[str, Any]]:
             "memory_key": a["memory_key"],
             "symbol": a["qualified_name"],
             "path": a["path"],
-            "state": str(a["state"]),
+            "state": a["state"],
             "since": a["changed_since"],
         }
         for a in links[: params["lim"]]

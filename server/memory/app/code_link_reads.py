@@ -13,6 +13,7 @@ from typing import Any
 from server.code.app import memory_links as code
 from server.memory.domain import code_change
 from server.memory.store import code_links as store
+from server.memory.store.code_links import LinkRow
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -37,7 +38,7 @@ def memory_inputs(memory: dict[str, Any], cns: str) -> str:
     return inputs_hash(str(memory.get("sha") or ""), files, cns, str(memory.get("user_id") or ""))
 
 
-def current(org: str, memory: dict[str, Any], links: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def current(org: str, memory: dict[str, Any], links: list[LinkRow]) -> list[LinkRow]:
     """The links made from `memory` as it is now: one made for an older value, files,
     repository or user is about something else until relinking replaces it. A suggested
     correction is served only for the code it was judged against, and never on a memory a
@@ -45,7 +46,7 @@ def current(org: str, memory: dict[str, Any], links: list[dict[str, Any]]) -> li
     want = inputs_now(org, memory)
     held = code_change.held(memory)
     return [
-        a if a.get("suggestion") and not held and _judged_here(a) else {**a, "suggestion": ""}
+        a if a["suggestion"] and not held and _judged_here(a) else {**a, "suggestion": ""}
         for a in links
         if a["inputs_hash"] == want
     ]
@@ -57,31 +58,29 @@ def inputs_now(org: str, memory: dict[str, Any]) -> str:
     return memory_inputs(memory, code_namespace_for(org, str(memory["namespace"]), tags))
 
 
-def _judged_here(link: dict[str, Any]) -> bool:
+def _judged_here(link: LinkRow) -> bool:
     """The suggestion was judged against the code the link last saw, and that code is all
     it covers: a method its renamed class carried may behave differently at the same text."""
-    if int(link.get("carried") or 0):
+    if link["carried"]:
         return False
-    return bool(link.get("judged_hash")) and link["judged_hash"] == link.get("checked_hash")
+    return bool(link["judged_hash"]) and link["judged_hash"] == link["checked_hash"]
 
 
 async def current_links(
-    org: str, links: list[dict[str, Any]], *, served_only: bool = False
-) -> list[dict[str, Any]]:
+    org: str, links: list[LinkRow], *, served_only: bool = False
+) -> list[LinkRow]:
     """`links` (any memories') less those `current` drops, and those of a memory no longer
     stored (with `served_only`, no longer served either)."""
-    by_mid: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_mid: dict[str, list[LinkRow]] = defaultdict(list)
     for a in links:
-        by_mid[str(a["memory_id"])].append(a)
+        by_mid[a["memory_id"]].append(a)
     heads = await store.memory_heads(org, list(by_mid))
     if served_only:
         heads = [h for h in heads if h["status"] in SERVED and h.get("tombstoned_at") is None]
     return [a for h in heads for a in current(org, h, by_mid.get(str(h["mid"]), []))]
 
 
-async def stale_links(
-    org: str, namespace: str, keys: Sequence[str] | None = None
-) -> list[dict[str, Any]]:
+async def stale_links(org: str, namespace: str, keys: Sequence[str] | None = None) -> list[LinkRow]:
     """The namespace's changed, unresolved and missing links into repositories the caller
     may read, of its served memories (those under `keys` when given) as they are now."""
     rows = await store.for_code(
@@ -92,7 +91,7 @@ async def stale_links(
         states=["changed", "unresolved", "missing"],
     )
     links = await current_links(org, rows, served_only=True)
-    seen = await readable_code(org, {str(a["code_namespace"]) for a in links})
+    seen = await readable_code(org, {a["code_namespace"] for a in links})
     return [a for a in links if a["code_namespace"] in seen]
 
 
@@ -113,21 +112,21 @@ async def links_of(org: str, memory_ids: list[str]) -> dict[str, list[dict[str, 
     read's `code` field; {} when the links cannot be read."""
     try:
         rows = await current_links(org, await store.for_memories(org, memory_ids))
-        seen = await readable_code(org, {str(a["code_namespace"]) for a in rows})
+        seen = await readable_code(org, {a["code_namespace"] for a in rows})
     except Exception as e:  # noqa: BLE001 — the links are additive to the read
         log.debug("code links unavailable: %s", e)
         return {}
     out: dict[str, list[dict[str, str]]] = defaultdict(list)
-    for a in sorted(rows, key=lambda a: (str(a["path"]), str(a["qualified_name"]))):
+    for a in sorted(rows, key=lambda a: (a["path"], a["qualified_name"])):
         if a["state"] != "pending" and a["code_namespace"] in seen:
-            out[str(a["memory_id"])].append(
+            out[a["memory_id"]].append(
                 {
-                    "code_namespace": str(a["code_namespace"]),
-                    "path": str(a["path"]),
-                    "symbol": str(a["qualified_name"]),
-                    "state": str(a["state"]),
-                    "changed_since": str(a.get("changed_since") or ""),
-                    "suggestion": str(a.get("suggestion") or ""),
+                    "code_namespace": a["code_namespace"],
+                    "path": a["path"],
+                    "symbol": a["qualified_name"],
+                    "state": a["state"],
+                    "changed_since": a["changed_since"],
+                    "suggestion": a["suggestion"],
                 }
             )
     return dict(out)
@@ -175,9 +174,9 @@ async def hit_memories(input: Any, hits: list[Any]) -> list[dict[str, Any] | Non
     for h, key in zip(hits, keys, strict=True):
         fits = [r for r in by_key.get(key, []) if _may_be(r, h, bound)]
         out.append(fits[0] if len(fits) == 1 else None)
-    links: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    links: dict[str, list[LinkRow]] = defaultdict(list)
     for a in await store.for_memories(input.org, [m["mid"] for m in out if m]):
-        links[str(a["memory_id"])].append(a)
+        links[a["memory_id"]].append(a)
     return [
         {**m, "links": current(input.org, m, links.get(m["mid"], []))} if m else None for m in out
     ]
@@ -189,7 +188,7 @@ async def annotate_hits(input: Any, hits: list[Any]) -> None:
     about code that is gone (`code_change.hidden`)."""
     try:
         memories = await hit_memories(input, hits)
-        cns = {str(a["code_namespace"]) for m in memories if m for a in m["links"]}
+        cns = {a["code_namespace"] for m in memories if m for a in m["links"]}
         seen = await readable_code(input.org, cns)
         nss = {str(m["namespace"]) for m in memories if m and m["links"]}
         policies = await store.code_change_policies(input.org, sorted(nss))
@@ -198,7 +197,7 @@ async def annotate_hits(input: Any, hits: list[Any]) -> None:
         return
     kept = []
     for h, m in zip(hits, memories, strict=True):
-        links = (m or {}).get("links", [])
+        links: list[LinkRow] = (m or {}).get("links", [])
         # a link into code the caller may not read counts as live: whether a hit goes
         # must not tell them that code is gone
         judged = [a if a["code_namespace"] in seen else a | {"state": "fresh"} for a in links]
@@ -208,16 +207,16 @@ async def annotate_hits(input: Any, hits: list[Any]) -> None:
             a for a in links if a["state"] in code_change.STATE_RANK and a["code_namespace"] in seen
         ]
         h._code_links = readable
-        states = [str(a["state"]) for a in readable]
+        states = [a["state"] for a in readable]
         h.code_state = max(states, key=code_change.STATE_RANK.__getitem__) if states else ""
         kept.append(h)
     hits[:] = kept
 
 
-def _hidden(memory: dict[str, Any], links: list[dict[str, Any]], policies: dict[str, str]) -> bool:
+def _hidden(memory: dict[str, Any], links: list[LinkRow], policies: dict[str, str]) -> bool:
     if not settings.memory_code_links_enabled:
         return False  # links that are not kept current never hide a memory
     policy = code_change.policy_of(policies.get(str(memory["namespace"]), ""))
     complete = all(a["complete"] for a in links)
-    states = [str(a["state"]) for a in links]
+    states = [a["state"] for a in links]
     return code_change.hidden(states, complete, policy, code_change.held(memory))
