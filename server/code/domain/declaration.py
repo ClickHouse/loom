@@ -426,7 +426,7 @@ class Declarations:
             if not wraps:
                 break
             node = parent
-        return _prefixed(node)
+        return _prefixed(node, self.grammar)
 
     def _sole_on(self, line: int, name: str, node: Any) -> Any:
         """The one declaration on `line` naming `name` (`node` when it is that one), or
@@ -552,6 +552,7 @@ class Declarations:
         comments = [
             (c.prev_sibling.end_byte if c.prev_sibling else c.start_byte, c.end_byte)
             for c in _comments_within(*at)
+            if not _directive(c, self.grammar)
         ]
         cut = self._cut(found[0]) if found else None
         siblings = cut.spans(found[0]) if cut is not None and found else []
@@ -674,7 +675,7 @@ class Declarations:
         if key not in self._families:
             out = []
             for node in self._members(scope).get(_spelled(found[1]), []):
-                out.append(self._member(_prefixed(node), name, shapes))
+                out.append(self._member(_prefixed(node, self.grammar), name, shapes))
             self._families[key] = out
         return key if self._families[key] else None
 
@@ -830,12 +831,13 @@ def _name_node(decl: Any) -> Any:
     return node
 
 
-def _prefixed(node: Any) -> tuple[Any, Any]:
-    """(first node, `node`): the decorators and attributes written as siblings before it."""
+def _prefixed(node: Any, grammar: str) -> tuple[Any, Any]:
+    """(first node, `node`): the decorators, attributes and Go directives written as
+    siblings before it."""
     first = node
     prev = node.prev_named_sibling
     while prev is not None and prev.type in _PREFIXES | _COMMENTS:
-        if prev.type in _PREFIXES:
+        if prev.type in _PREFIXES or grammar == "go" and _directive(prev, grammar):
             first = prev
         prev = prev.prev_named_sibling
     return first, node
@@ -1027,7 +1029,7 @@ def _leaves(
         stack: list[tuple[Any, bool]] = [(node, False)]
         while stack:
             n, closing = stack.pop()
-            if not closing and (n.type in _LAYOUT or _formatting(n, grammar)):
+            if not closing and (_layout(n, grammar) or _formatting(n, grammar)):
                 continue
             if closing:
                 pending.append(")")
@@ -1079,6 +1081,21 @@ def _sole_child(node: Any) -> Any:
     """`node`'s one named child, comments aside; None for none or several."""
     named = [c for c in node.named_children if c.type not in _COMMENTS]
     return named[0] if len(named) == 1 else None
+
+
+def _layout(node: Any, grammar: str) -> bool:
+    """A comment or a Python `\\` line continuation, but a directive (`_directive`)."""
+    return node.type in _LAYOUT and not _directive(node, grammar)
+
+
+def _directive(comment: Any, grammar: str) -> bool:
+    """A comment the toolchain reads: Go's `//go:noinline`, `//go:embed`, cgo's `//export`,
+    a Python `# type:` comment."""
+    if comment.type not in _COMMENTS:
+        return False
+    if grammar == "go":
+        return bool(comment.text.startswith((b"//go:", b"//export ")))
+    return grammar == "python" and comment.text[1:].lstrip().startswith(b"type:")
 
 
 def _formatting(node: Any, grammar: str) -> bool:

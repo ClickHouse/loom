@@ -274,9 +274,10 @@ A qualified name trunk does not define yet waits for `memory_code_links_pending_
 (14), so a memory about unmerged code links once it merges.
 
 A link records the definition's fingerprint: all its overloads and the conditions that
-select them, as tokens, so whitespace, comments and what formatters change (trailing
-commas, a JavaScript `;`, quote style, parentheses in Python, JavaScript and TypeScript)
-leave it as it was, and any other edit does not.
+select them, as tokens, so whitespace, comments (not a Go `//go:` directive or a Python
+`# type:` comment) and what formatters change (trailing commas, a JavaScript `;`, quote
+style, parentheses in Python, JavaScript and TypeScript) leave it as it was, and any other
+edit does not.
 What a file defines is read from the file at the repository's indexed head in its bare
 git mirror. On every indexed commit the worker follows the commit's renames and edits:
 

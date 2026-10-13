@@ -989,3 +989,35 @@ def test_parentheses_a_formatter_adds_keep_the_fingerprint(
 )
 def test_parentheses_that_mean_something_change_it(path: str, before: str, after: str) -> None:
     assert _value(path, before) != _value(path, after)
+
+
+@pytest.mark.parametrize(
+    ("path", "before", "after"),
+    [
+        (
+            "a.go",
+            "package a\n\n//go:noinline\nfunc value() int { return 1 }\n",
+            "package a\n\nfunc value() int { return 1 }\n",
+        ),
+        (
+            "a.go",
+            "package a\n\n//go:embed a.txt\nvar value string\n",
+            "package a\n\n//go:embed b.txt\nvar value string\n",
+        ),
+        (
+            "a.py",
+            "def value():\n    x = []  # type: list[int]\n    return x\n",
+            "def value():\n    x = []  # type: list[str]\n    return x\n",
+        ),
+    ],
+    ids=["go-directive", "go-embed", "py-type-comment"],
+)
+def test_a_directive_comment_changes_it(path: str, before: str, after: str) -> None:
+    assert _value(path, before) != _value(path, after)
+
+
+def test_a_go_directive_starts_its_definition_and_its_doc_comment_does_not() -> None:
+    src = "package a\n\n// value is one.\n//go:noinline\nfunc value() int { return 1 }\n"
+    (d,) = file_definitions("a.go", src.encode())
+    assert d.start_line == 4 and d.shown.startswith("//go:noinline\nfunc value()")
+    assert _value("a.go", src.replace("is one", "is two")) == d.body_hash
