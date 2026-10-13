@@ -41,7 +41,8 @@ def _row(mid: str, **kw: Any) -> dict[str, Any]:
 
 @pytest.mark.asyncio
 async def test_an_insert_for_a_memory_erased_meanwhile_is_deleted_again() -> None:
-    ch = _CH({"FROM loom.memory FINAL": [[{"mid": "live"}]]})
+    erasing = {"FROM loom.erasure_requests": [[{"org": "o"}]]}
+    ch = _CH({**erasing, "FROM loom.memory FINAL": [[{"mid": "live"}]]})
     await store.insert([_row("live"), _row("erased")], ch=ch)
     assert [r["memory_id"] for r in ch.inserted] == ["live", "erased"]
     (delete, params) = ch.sql[-1]
@@ -49,10 +50,17 @@ async def test_an_insert_for_a_memory_erased_meanwhile_is_deleted_again() -> Non
     assert (params["org"], params["ids"]) == ("o", ["erased"])
     # only rows older than the liveness read: a link written after it (a restore) stays
     assert "version < {before:UInt64}" in delete and isinstance(params["before"], int)
-    ch = _CH({"FROM loom.memory FINAL": [[{"mid": "live"}]]})
+    ch = _CH({**erasing, "FROM loom.memory FINAL": [[{"mid": "live"}]]})
     await store.insert([_row("live")], ch=ch)
     assert not any(sql.startswith("DELETE") for sql, _ in ch.sql)
     await store.insert([], ch=ch)
+
+
+@pytest.mark.asyncio
+async def test_an_insert_reads_no_memory_where_nothing_is_being_erased() -> None:
+    ch = _CH()
+    await store.insert([_row("m")], ch=ch)
+    assert [sql for sql, _ in ch.sql if "loom.memory FINAL" in sql] == []
 
 
 def test_a_write_that_follows_a_read_takes_the_version_after_it() -> None:
@@ -270,3 +278,12 @@ def test_a_tombstone_keeps_no_suggestion() -> None:
     (gone,) = store.tombstones([judged])
     assert (gone["suggestion"], gone["judged_hash"]) == ("", "")
     assert gone["tombstoned_at"] is not None and gone["version"] > judged["version"]
+
+
+def test_the_queue_ttl_is_the_tables() -> None:
+    from pathlib import Path
+
+    schema = Path(__file__).parents[2].joinpath("schemas", "schema.sql").read_text()
+    table = schema[schema.index("CREATE TABLE IF NOT EXISTS loom.memory_code_link_queue") :]
+    ttl = table[table.index("TTL ") : table.index("\n", table.index("TTL "))]
+    assert ttl == f"TTL toDateTime(queued_at) + toIntervalDay({store.QUEUE_TTL_DAYS})"

@@ -75,11 +75,10 @@ def link_row(
 
 
 async def insert(rows: list[dict[str, Any]], *, ch: _CHClient | None = None) -> None:
-    """Write `rows`, then drop them again for any memory that is gone by now: a writer
-    that read before an erasure and wrote after it would otherwise bring back what the
-    erasure removed. An erasure tombstones its memories before it deletes their links,
-    so a write it overlaps is either caught here or deleted by its own link step; a
-    cleanup that fails here is retried by `sweep_page`."""
+    """Write `rows`; in an org an erasure is running in, or ran in today, then drop them
+    again for any memory that is gone by now. A writer that read before the erasure and
+    wrote after it would otherwise bring back what it removed; `sweep_page` catches what
+    this misses."""
     if not rows:
         return
     ch = ch or _default_client()
@@ -87,7 +86,18 @@ async def insert(rows: list[dict[str, Any]], *, ch: _CHClient | None = None) -> 
     by_org: dict[str, set[str]] = defaultdict(set)
     for r in rows:
         by_org[str(r["org"])].add(str(r["memory_id"]))
-    await _drop_gone(ch, by_org)
+    erasing = await _erasing(ch, sorted(by_org))
+    await _drop_gone(ch, {org: ids for org, ids in by_org.items() if org in erasing})
+
+
+async def _erasing(ch: _CHClient, orgs: list[str]) -> set[str]:
+    """The orgs among `orgs` with an erasure not completed, or completed in the last day."""
+    rows = await ch.query_all(
+        "SELECT DISTINCT org FROM loom.erasure_requests FINAL WHERE org IN {orgs:Array(String)} "
+        "AND (status != 'completed' OR completed_at > now() - INTERVAL 1 DAY)",
+        params={"orgs": orgs},
+    )
+    return {str(r["org"]) for r in rows}
 
 
 _KEY = "org, code_namespace, path, qualified_name, namespace, memory_id"
@@ -348,7 +358,7 @@ _QUEUE_KEY = (
 _POSITION = "Tuple(Int64, UInt64, String, String, String, String, String, String)"
 
 
-# The queue's TTL (migration 025): a cursor older than this may have missed writes.
+# loom.memory_code_link_queue's TTL: a cursor older than this may have missed writes.
 QUEUE_TTL_DAYS = 7
 
 
