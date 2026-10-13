@@ -127,9 +127,11 @@ _RECEIVER = re.compile(r"^(?:self|cls|this)\.")
 
 
 def mentions(text: str, *, cap: int = 16) -> list[Mention]:
-    """Code-shaped names in `text`, each once, in order: backticked identifiers, `A::b`,
-    `a.b(` and `f()` calls, camelCase / PascalCase and snake_case. Plain words never
-    qualify, and a part of a qualified name is not a mention of its own."""
+    """The first `cap` code-shaped names in `text`, each once: its backticked identifiers
+    in text order, then by kind (`A::b`, `a.b(` calls, `f()` calls, camelCase /
+    PascalCase, snake_case), each kind in text order; so a backticked name is never
+    capped out by one of the prose. Plain words never qualify, and a part of a qualified
+    name is not a mention of its own."""
     text = text or ""
     found: list[tuple[int, int, str, bool]] = []
     for m in _TICKS.finditer(text):
