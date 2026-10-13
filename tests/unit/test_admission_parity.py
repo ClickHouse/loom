@@ -90,7 +90,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         return {k: dict(v) for k, v in _PAYLOAD.items()}
 
     async def _fanout(org: str) -> Fanout:
-        return Fanout(org=org, namespaces=tuple([NS]), skipped=())
+        return Fanout(org=org, namespaces=(NS,), skipped=())
 
     async def _defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:
         return {"org": ORG, "namespace": NS, "agent": "a"}

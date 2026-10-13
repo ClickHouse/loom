@@ -6,16 +6,17 @@ always the namespace the call addressed."""
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
 
 import pytest
 
 import server.auth.context as ctx
 import server.identity.app.namespace_kinds as nk
-from server.auth.context import Fanout, with_addressed
+import server.identity.app.namespace_visibility as nv
+from server.auth.context import Fanout, namespaces_to_search, with_addressed
 from server.auth.jwt import AuthInfo
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app.search import scope
-from server.memory.app.search.evidence import _merge_namespace_scope
 from server.operations.base import Role
 from server.settings import settings
 from server.transport import mcp_call
@@ -24,7 +25,7 @@ ORG = "dev"
 
 
 @pytest.fixture
-def grants(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[str]]:
+def grants(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, list[str]]]:
     """Grant rows by subject, served by a fake ClickHouse client."""
     by_subject: dict[str, list[str]] = {}
 
@@ -44,8 +45,18 @@ def grants(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[str]]:
     ctx.set_current_auth(None)
 
 
-def _fanout(org: str = ORG) -> Fanout:
-    return asyncio.run(ctx.resolve_fanout(org))
+def _flat(*namespaces: str) -> AuthInfo:
+    return AuthInfo(
+        subject="alice",
+        org=ORG,
+        namespaces=namespaces,
+        roles=(Role.WRITER,),
+        is_service_account=False,
+    )
+
+
+def _fanout() -> Fanout:
+    return asyncio.run(ctx.resolve_fanout(ORG))
 
 
 def test_auth_off_fans_out_over_the_single_users_namespaces(
@@ -65,34 +76,53 @@ def test_auth_on_without_a_token_reads_no_ones_grants(
     assert _fanout().namespaces == ()
 
 
-def test_the_cap_keeps_the_first_namespaces_and_names_the_rest(
+def test_the_cap_keeps_private_namespaces_and_names_the_rest(
     grants: dict[str, list[str]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    async def _visibility(org: str, namespaces: list[str]) -> dict[str, str]:
+        return {"a-team": "public", "b-team": "public"}
+
+    monkeypatch.setattr(nv, "visibility_map", _visibility)
     monkeypatch.setattr(settings, "memory_search_fanout_max_namespaces", 2)
-    ctx.set_current_auth(
-        AuthInfo(
-            subject="alice",
-            org=ORG,
-            namespaces=("a", "b", "c", "d"),
-            roles=(Role.WRITER,),
-            is_service_account=False,
-        )
-    )
+    ctx.set_current_auth(_flat("a-team", "alice", "b-team", "notes"))
     fanout = _fanout()
-    assert fanout.namespaces == ("a", "b")
-    assert fanout.skipped == ("c", "d")
-    assert asyncio.run(ctx.resolve_fanout_namespaces(ORG)) == ["a", "b"]
+    assert fanout.namespaces == ("alice", "notes")
+    assert fanout.skipped == ("a-team", "b-team")
 
 
-def test_the_addressed_namespace_is_always_read() -> None:
+def test_the_cap_keeps_a_scoped_tokens_own_order(
+    grants: dict[str, list[str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "memory_search_fanout_max_namespaces", 1)
+    scoped = AuthInfo(
+        subject="sa:bot",
+        org=ORG,
+        namespaces=("team", "alice"),
+        roles=(),
+        is_service_account=True,
+        ns_roles=(("team", "viewer"), ("alice", "writer")),
+    )
+    ctx.set_current_auth(scoped)
+    fanout = _fanout()
+    assert (fanout.namespaces, fanout.skipped) == (("team",), ("alice",))
+
+
+def test_the_addressed_namespace_leads_when_the_fanout_lacks_it() -> None:
     assert with_addressed("mine", ["team"]) == ["mine", "team"]
-    assert with_addressed("mine", ["team", "mine"]) == ["team", "mine"]
+    assert with_addressed("mine", ("team", "mine")) == ["team", "mine"]
     assert with_addressed("mine", []) == ["mine"]
+    assert with_addressed("mine", ["", "team"]) == ["mine", "team"]
     assert with_addressed("", ["team"]) == ["team"]
-    # A scoped token keeps its order; the addressed namespace it lacks is read last.
-    assert _merge_namespace_scope("mine", ["t1", "t2"], ordered=True) == ["t1", "t2", "mine"]
-    assert _merge_namespace_scope("t2", ["t1", "t2"], ordered=True) == ["t1", "t2"]
-    assert _merge_namespace_scope("mine", [], ordered=True) == ["mine"]
+
+
+def test_every_leg_reads_the_addressed_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _fanout(org: str) -> Fanout:
+        return Fanout(org=org, namespaces=("team",), skipped=("mine",))
+
+    monkeypatch.setattr(ctx, "resolve_fanout", _fanout)
+    assert asyncio.run(namespaces_to_search(ORG, "mine", "all_mine")) == ["mine", "team"]
+    assert asyncio.run(namespaces_to_search(ORG, "mine", "this")) == ["mine"]
+    assert asyncio.run(namespaces_to_search(ORG, "mine", None)) == ["mine"]
 
 
 def test_memory_search_names_what_the_cap_skipped_except_the_addressed_one() -> None:
@@ -127,13 +157,6 @@ def test_an_unaddressed_search_starts_at_home_even_past_the_cap(
         return Fanout(org=org, namespaces=("aaa-team",), skipped=("alice",))
 
     monkeypatch.setattr(ctx, "resolve_fanout", _fanout)
-    auth = AuthInfo(
-        subject="alice@example.com",
-        org=ORG,
-        namespaces=("*",),
-        roles=(Role.WRITER,),
-        is_service_account=False,
-    )
     arguments = {"org": ORG, "namespace": "aaa-team", "namespace_scope": "all_mine"}
-    asyncio.run(mcp_call._address_home(arguments, auth))
+    asyncio.run(mcp_call._address_home(arguments, _flat("*")))
     assert arguments["namespace"] == "alice"

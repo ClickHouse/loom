@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from server.code.domain.index import repos
 from server.code.domain.index.repos import RepoConfig
-from server.identity.app import namespace_classification, namespace_kinds
+from server.identity.app import namespace_classification, namespace_kinds, namespace_visibility
 
 
 class IdentityDirectory:
@@ -38,3 +38,7 @@ class IdentityDirectory:
         if not namespaces or not keep:
             return namespaces
         return namespace_kinds.keep_kinds(namespaces, await namespace_kinds.kind_map(org), keep)
+
+    async def private_first(self, org: str, namespaces: list[str]) -> list[str]:
+        visibility = await namespace_visibility.visibility_map(org, namespaces)
+        return sorted(namespaces, key=lambda ns: visibility.get(ns, "private") != "private")

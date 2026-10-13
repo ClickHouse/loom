@@ -321,3 +321,17 @@ async def test_tier_stop_cutoff_is_setting_driven(env, monkeypatch: pytest.Monke
     await _run_scoped(auth, namespace="priv", namespace_scope="all_mine")
     queried = {q.namespace for q in env.search_queries}
     assert "pub" not in queried
+
+
+async def test_tier_waterfall_reads_an_addressed_namespace_first_when_the_token_lacks_it(
+    env,
+) -> None:
+    """A scoped token's own order is kept, but an addressed namespace its list
+    lacks (cut by the fan-out cap, or of another kind) leads the waterfall, so
+    a confident hit further down cannot keep it from being read."""
+    auth = _scoped_auth("o", priv="admin", pub="viewer")
+    env.hits_by_ns["mine"] = [_svc_hit("m1", sim=0.30)]
+    env.hits_by_ns["priv"] = [_svc_hit("p1", sim=0.55)]
+    await _run_scoped(auth, namespace="mine", namespace_scope="all_mine")
+    queried = list(dict.fromkeys(q.namespace for q in env.search_queries))
+    assert queried == ["mine", "priv"]

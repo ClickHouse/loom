@@ -13,7 +13,6 @@ from typing import Any
 from server.core.background import create_deferred_task
 from server.core.ch import get_client
 from server.memory.api.models_search import MemorySearchInput
-from server.memory.app.search.evidence import _merge_namespace_scope
 from server.memory.app.search.query_plan import _enrichment_parser_gate_active
 
 log = logging.getLogger(__package__)
@@ -125,12 +124,12 @@ async def _scope_inputs(
     `entity_filter` wins over the entities the intent parser found. "all_mine" fans out across
     every namespace the caller belongs to, but the addressed `input.namespace` is ALWAYS in the
     set: membership may only widen the search, never redirect it."""
+    from server.auth.context import with_addressed
+
     entity_filter = list(input.entity_filter or []) or list(llm_query_entities)
     if run.my_namespaces_task is not None:
         fanout = await run.my_namespaces_task
-        namespaces = _merge_namespace_scope(
-            input.namespace, list(fanout.namespaces), ordered=run.order_authoritative
-        )
+        namespaces = with_addressed(input.namespace, fanout.namespaces)
         run.namespaces_skipped = [ns for ns in fanout.skipped if ns not in namespaces]
     else:
         namespaces = [input.namespace]

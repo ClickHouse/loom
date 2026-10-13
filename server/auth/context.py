@@ -64,7 +64,7 @@ class Fanout:
 # The fan-out the current principal resolved in `org`, kept for the rest of
 # its request: MCP resolves it to address an unaddressed search, and the
 # search handler reads it again. Binding a principal clears it.
-_fanout_memo: ContextVar[Fanout | None] = ContextVar("loom_fanout_namespaces", default=None)
+_fanout_memo: ContextVar[Fanout | None] = ContextVar("loom_fanout", default=None)
 
 # A delegated token's creator grants, (org, namespace, creator) -> role, read
 # once per request by `authz._check_delegated`. Binding a principal resets it.
@@ -173,21 +173,26 @@ async def _delegated_namespaces(auth: AuthInfo, org: str) -> list[str]:
     return [ns for ns in auth.namespaces if ns in granted]
 
 
-async def resolve_fanout_namespaces(org: str) -> list[str]:
-    """The namespaces a `namespace_scope=all_mine` search spans (`resolve_fanout`)."""
-    return list((await resolve_fanout(org)).namespaces)
-
-
-def with_addressed(namespace: str, fanout: list[str]) -> list[str]:
+def with_addressed(namespace: str, fanout: list[str] | tuple[str, ...]) -> list[str]:
     """The namespaces an all_mine leg reads: `fanout`, led by the addressed
     `namespace` when the fan-out lacks it (cut at the cap, or of another
     kind). The transport authorized that namespace, and a fan-out only widens
     a search, never moves it."""
-    return fanout if not namespace or namespace in fanout else [namespace, *fanout]
+    out = [ns for ns in fanout if ns]
+    return out if not namespace or namespace in out else [namespace, *out]
+
+
+async def namespaces_to_search(org: str, namespace: str, namespace_scope: str | None) -> list[str]:
+    """The namespaces one search leg reads: the addressed `namespace`, and
+    under `all_mine` the caller's fan-out besides."""
+    if namespace_scope != "all_mine":
+        return [namespace]
+    return with_addressed(namespace, (await resolve_fanout(org)).namespaces)
 
 
 async def resolve_fanout(org: str) -> Fanout:
-    """`resolve_my_namespaces` narrowed to the kinds in
+    """The namespaces a `namespace_scope=all_mine` search spans:
+    `resolve_my_namespaces` narrowed to the kinds in
     `memory_search_fanout_kinds`, then cut at
     `memory_search_fanout_max_namespaces`. A code or QA index is a namespace
     the caller can read, not one a personal-fact search should sweep; it is
@@ -202,9 +207,14 @@ async def resolve_fanout(org: str) -> Fanout:
         return memo
     # With auth off there is no token, but the single user's grants still say
     # which namespaces are theirs. With auth on, no token means no namespaces.
-    subject = auth_off_subject() if current_auth() is None else None
+    auth = current_auth()
+    subject = auth_off_subject() if auth is None else None
     mine = await directory().fanout_namespaces(org, await resolve_my_namespaces(org, subject))
     cap = settings.memory_search_fanout_max_namespaces
+    if len(mine) > cap and not (auth is not None and auth.has_ns_roles()):
+        # Only a scoped token orders its namespaces; any other list is sorted
+        # by name, so the cut keeps the private ones, which the search reads first.
+        mine = await directory().private_first(org, mine)
     memo = Fanout(org=org, namespaces=tuple(mine[:cap]), skipped=tuple(mine[cap:]))
     _fanout_memo.set(memo)
     return memo

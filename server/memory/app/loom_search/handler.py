@@ -17,13 +17,13 @@ async def handle_search(input: SearchInput) -> SearchOutput:
     memory-kind namespaces; when they cannot be resolved it narrows to
     `namespace`, never widens. Prompt text is captured at the most
     restrictive consent of every namespace read."""
-    from server.auth.context import resolve_fanout_namespaces
+    from server.auth.context import resolve_fanout
     from server.observability.capture_consent import narrow_to
 
     fanout: list[str] = []
     if input.namespace_scope == "all_mine":
         try:
-            fanout = await resolve_fanout_namespaces(input.org)
+            fanout = list((await resolve_fanout(input.org)).namespaces)
         except Exception as e:  # noqa: BLE001 — no fan-out namespaces narrows the search, never widens
             log.warning("search namespace resolution failed (non-fatal): %s", e)
     await narrow_to(input.org, [input.namespace, *fanout])

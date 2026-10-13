@@ -20,11 +20,10 @@ class MemorySearchSettings(BaseModel):
     # kind. Code and QA indexes are reached by name or their own tools
     # (measured sweep of 24 namespaces: 6.2 s).
     memory_search_fanout_kinds: str = "memory"
-    # Most of the caller's namespaces an all_mine fan-out reads (the addressed
-    # one is read regardless); the rest are named in memory.search's
-    # `namespaces_skipped`. The knowledge leg runs two statements per namespace
-    # at once, so the sweep is bounded here, not by how many namespaces the
-    # caller belongs to.
+    # Upper bound on how many of the caller's namespaces an all_mine fan-out
+    # reads (the addressed one is read regardless); the rest are named in
+    # memory.search's `namespaces_skipped`. Every leg issues at least one
+    # statement per namespace.
     memory_search_fanout_max_namespaces: int = Field(default=32, ge=1)
     # Key-embedding axis on the fact leg: "on" scores least(value_dist,
     # key_dist) and reads both vector columns (measured 399 vs 203 MB/query on

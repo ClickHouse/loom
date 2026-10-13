@@ -490,12 +490,9 @@ async def handle_conversation_search(
     if query_vec is None:
         return await _search_substring_fallback(input)
 
-    if input.namespace_scope == "all_mine":
-        from server.auth.context import resolve_fanout_namespaces, with_addressed
+    from server.auth.context import namespaces_to_search
 
-        namespaces = with_addressed(input.namespace, await resolve_fanout_namespaces(input.org))
-    else:
-        namespaces = [input.namespace]
+    namespaces = await namespaces_to_search(input.org, input.namespace, input.namespace_scope)
 
     async def _search_one(ns: str) -> tuple[str, list[ConversationHit]]:
         return ns, await vector_search(

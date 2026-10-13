@@ -1736,7 +1736,7 @@ Semantic search over the agent's own memory.
 | `bodies_returned` | `int` | bodies="unit" accounting: whole values served / withheld for budget, and the estimated tokens those bodies added (len/4). |
 | `bodies_elided` | `int` | Hits whose whole value was withheld because `body_budget_tokens` ran out. |
 | `tokens_returned` | `int` | Estimated tokens (chars / 4) the whole values served under bodies="unit" added. |
-| `namespaces_searched` | `list[str]` | The namespaces this search actually read: the addressed one first, then the fan-out under namespace_scope=all_mine. |
+| `namespaces_searched` | `list[str]` | The namespaces in this search's scope: the addressed one first, then the fan-out under namespace_scope=all_mine. |
 | `namespaces_skipped` | `list[str]` | Namespaces of the caller the fan-out did not read because it stops at `memory_search_fanout_max_namespaces`; address one by name to search it. |
 | `candidates_total` | `int` | Distinct memories in the fused pool before the top_k cut ("showing 10 of 124"); the handle that serves the next slice when the caller asked for paging and there was more; and this page's offset into the parked list (0 for a fresh search). |
 | `next_page` | `str` | Handle to pass as `page` for the next slice; empty when `paging` was off or no more candidates remained. |

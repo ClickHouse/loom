@@ -67,6 +67,11 @@ class NamespaceDirectory(Protocol):
         """`namespaces` in order, narrowed to the kinds a fan-out spans."""
         ...
 
+    async def private_first(self, org: str, namespaces: list[str]) -> list[str]:
+        """`namespaces` with the private ones ahead of the public ones, each
+        group in its own order. A namespace of unknown visibility counts as private."""
+        ...
+
 
 _directory: NamespaceDirectory | None = None
 

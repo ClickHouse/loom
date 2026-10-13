@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import re
 
 import pytest
 
@@ -59,21 +60,21 @@ def test_resolver_narrows_my_namespaces_by_kind(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(ctx, "resolve_my_namespaces", _mine)
     monkeypatch.setattr(nk, "kind_map", _kinds)
     monkeypatch.setattr(nk, "fanout_kinds", lambda: frozenset({"memory"}))
-    assert asyncio.run(ctx.resolve_fanout_namespaces(ORG)) == [
+    assert list(asyncio.run(ctx.resolve_fanout(ORG)).namespaces) == [
         "jdoe",
         "team-alerts",
         "legacy-ns",
     ]
     # An empty setting sweeps every namespace; an unreadable directory narrows nothing.
     monkeypatch.setattr(nk, "fanout_kinds", lambda: frozenset())
-    assert asyncio.run(ctx.resolve_fanout_namespaces(ORG)) == MINE
+    assert list(asyncio.run(ctx.resolve_fanout(ORG)).namespaces) == MINE
 
     async def _no_dir(org):
         return {}
 
     monkeypatch.setattr(nk, "fanout_kinds", lambda: frozenset({"memory"}))
     monkeypatch.setattr(nk, "kind_map", _no_dir)
-    assert asyncio.run(ctx.resolve_fanout_namespaces(ORG)) == MINE
+    assert list(asyncio.run(ctx.resolve_fanout(ORG)).namespaces) == MINE
 
 
 def test_kind_map_fails_open_without_a_connection(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -102,10 +103,10 @@ def test_every_all_mine_leg_and_the_tool_call_the_fanout_resolver() -> None:
         }
     )
     for name, src in sources.items():
-        assert "resolve_fanout" in src, name
+        call = re.search(r"\b(resolve_fanout|namespaces_to_search)\(", src)
+        assert call, name
         # The unnarrowed resolver is for listings and authz, not a search sweep.
-        body = src.split("resolve_fanout", 1)[0]
-        assert "await resolve_my_namespaces(" not in body, name
+        assert "await resolve_my_namespaces(" not in src[: call.start()], name
 
 
 def test_profile_prose_does_not_match_on_stopwords() -> None:

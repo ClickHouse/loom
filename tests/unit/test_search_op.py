@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import server.transport.mcp_call as mcp_call
+from server.auth.context import Fanout
 from server.operations.registry import OPERATIONS_BY_NAME
 from server.settings import settings
 
@@ -38,14 +39,14 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
         seen.append(kw)
         return {k: dict(v) for k, v in PAYLOAD.items()}
 
-    async def _fanout(org: str) -> list[str]:
-        return ["n", "team"]
+    async def _fanout(org: str) -> Fanout:
+        return Fanout(org=org, namespaces=("n", "team"), skipped=())
 
     async def _defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:
         return {"org": "o", "namespace": "n", "agent": "a"}
 
     monkeypatch.setattr(handler_mod, "search_sections", _sections)
-    monkeypatch.setattr("server.auth.context.resolve_fanout_namespaces", _fanout)
+    monkeypatch.setattr("server.auth.context.resolve_fanout", _fanout)
     monkeypatch.setattr(mcp_call, "_caller_defaults", _defaults)
     for mod in (mcp_call, mcp_outcome):
         monkeypatch.setattr(mod, "_emit_mcp_event", lambda *a, **k: None)
@@ -157,7 +158,7 @@ def test_unresolvable_consent_or_fan_out_never_widens_capture(
 
     seen = _consent(monkeypatch, {"n": "all"})
 
-    async def _no_fanout(org: str) -> list[str]:
+    async def _no_fanout(org: str) -> Fanout:
         raise RuntimeError("grants unreadable")
 
     async def _run(start: str) -> None:
@@ -166,13 +167,13 @@ def test_unresolvable_consent_or_fan_out_never_widens_capture(
 
     # The fan-out cannot be resolved: the search narrows to the home namespace
     # and never raises the level the transport set.
-    monkeypatch.setattr("server.auth.context.resolve_fanout_namespaces", _no_fanout)
+    monkeypatch.setattr("server.auth.context.resolve_fanout", _no_fanout)
     asyncio.run(_run("query"))
 
     # A fanned-out namespace whose consent lookup fails captures nothing.
-    async def _unknown(org: str) -> list[str]:
-        return ["n", "unknown"]
+    async def _unknown(org: str) -> Fanout:
+        return Fanout(org=org, namespaces=("n", "unknown"), skipped=())
 
-    monkeypatch.setattr("server.auth.context.resolve_fanout_namespaces", _unknown)
+    monkeypatch.setattr("server.auth.context.resolve_fanout", _unknown)
     asyncio.run(_run("all"))
     assert seen == ["query", "off"]

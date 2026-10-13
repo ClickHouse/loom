@@ -27,13 +27,14 @@ if TYPE_CHECKING:
 
 
 async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearchOutput:
+    from server.auth.context import namespaces_to_search
     from server.observability.otel import traced
 
     embedder = get_embedder()
     with traced("embed.compute.query", model=embedder.model_name):
         query_vec = await embedder.embed(input.query)
     search_one = _namespace_search(input, embedder, query_vec)
-    namespaces = await _namespaces_of(input)
+    namespaces = await namespaces_to_search(input.org, input.namespace, input.namespace_scope)
     results_per_ns = await _search_private_first(input, namespaces, search_one)
     all_hits = _as_search_hits(results_per_ns)
     all_hits.sort(key=lambda x: (x.score, x.similarity), reverse=True)
@@ -43,16 +44,6 @@ async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearc
     if input.narrow_spans and top:
         await _narrow_spans(embedder, query_vec, top)
     return KnowledgeSearchOutput(results=top, embedding_model=embedder.model_name)
-
-
-async def _namespaces_of(input: KnowledgeSearchInput) -> list[str]:
-    """The namespaces the search covers: the one asked for, and under
-    `all_mine` the caller's own besides."""
-    if input.namespace_scope != "all_mine":
-        return [input.namespace]
-    from server.auth.context import resolve_fanout_namespaces, with_addressed
-
-    return with_addressed(input.namespace, await resolve_fanout_namespaces(input.org))
 
 
 def _namespace_search(

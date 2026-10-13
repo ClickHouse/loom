@@ -669,9 +669,10 @@ class MemorySearchOutput(BaseModel):
     bodies_elided: int = 0
     # Estimated tokens (chars / 4) the whole values served under bodies="unit" added.
     tokens_returned: int = 0
-    # The namespaces this search actually read: the
-    # addressed one first, then the fan-out under namespace_scope=all_mine.
-    # A single-namespace caller sees exactly [input.namespace].
+    # The namespaces in this search's scope: the addressed one first, then the
+    # fan-out under namespace_scope=all_mine. A tiered all_mine search can stop
+    # before it reaches the last of them. A single-namespace caller sees
+    # exactly [input.namespace].
     namespaces_searched: list[str] = Field(default_factory=list)
     # Namespaces of the caller the fan-out did not read because it stops at
     # `memory_search_fanout_max_namespaces`; address one by name to search it.
