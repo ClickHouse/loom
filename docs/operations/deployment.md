@@ -198,13 +198,13 @@ and the `LOOM_OIDC_*` settings ([auth settings](../reference/configuration.md#au
 
 ### Process and scale
 
-| Variable                         | Default     | Set it when                                                                                                                                                                                                                                    |
-| -------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `LOOM_BACKGROUND_WORKERS`        | `auto`      | `off` on web replicas, `on` in the one workers container. `auto` elects one process per host by a file lock.                                                                                                                                   |
-| `LOOM_WEB_WORKERS`               | one per CPU | uvicorn processes per container. Unset, the image starts one per CPU the container may use (its cpuset, lowered by a `--cpus` quota), at most one per 512 MB of its memory limit. Set a number to leave cores for ClickHouse on a shared host. |
-| `LOOM_REPLICA_COUNT`             | `1`         | Several web replicas: rate limits are per replica and divided by this count.                                                                                                                                                                   |
-| `LOOM_LATENCY_BUDGET_MULTIPLIER` | `1.0`       | ClickHouse is across a WAN: about `20`, or every call reports a budget violation.                                                                                                                                                              |
-| `LOOM_LOG_FORMAT`                | `text`      | `json` for a log pipeline.                                                                                                                                                                                                                     |
+| Variable                         | Default                     | Set it when                                                                                                                                                                                                                                         |
+| -------------------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LOOM_BACKGROUND_WORKERS`        | `auto`                      | `off` on web replicas, `on` in the one workers container. `auto` elects one process per host by a file lock.                                                                                                                                        |
+| `LOOM_WEB_WORKERS`               | image: one per CPU, up to 8 | uvicorn processes per container. Unset, the image starts one per CPU the container may use (its cpuset, lowered by a `--cpus` quota), at most one per GiB of its memory and at most 8. Set a number to leave cores for ClickHouse on a shared host. |
+| `LOOM_REPLICA_COUNT`             | `1`                         | Several web replicas: rate limits are per replica and divided by this count.                                                                                                                                                                        |
+| `LOOM_LATENCY_BUDGET_MULTIPLIER` | `1.0`                       | ClickHouse is across a WAN: about `20`, or every call reports a budget violation.                                                                                                                                                                   |
+| `LOOM_LOG_FORMAT`                | `text`                      | `json` for a log pipeline.                                                                                                                                                                                                                          |
 
 Runtime overrides set through one web process (`admin/budget.set`, `admin/ratelimit.set`)
 bind every process on the host on its next request. They do not cross containers: for
@@ -535,7 +535,7 @@ The repository [`Dockerfile`](../../Dockerfile) builds the one image every rung 
 
 The runtime exposes 7777, has a built-in `/v1/health` healthcheck (30 s interval), and
 runs `scripts/serve.sh`, which starts `uvicorn server.main:app` with `LOOM_WEB_WORKERS`
-processes (unset: one per CPU the container may use, bounded by its memory). `LOOM_UVICORN_LOOP`
+processes (unset: one per CPU the container may use, at most one per GiB of memory and at most 8). `LOOM_UVICORN_LOOP`
 (`auto`, `asyncio`, `uvloop`) and `LOOM_GRACEFUL_SHUTDOWN_S` (default 10) are read by
 that script. `LOOM_BUILD_COMMIT`, stamped at build time, is what `/v1/health`
 reports as `build_commit`.

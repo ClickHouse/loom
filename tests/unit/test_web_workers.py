@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from server.core import web_workers
-from server.core.web_workers import WORKER_MEMORY_BYTES, default_workers
+from server.core.web_workers import MAX_WORKERS, WORKER_MEMORY_BYTES, default_workers
 
 GB = 1024**3
 BIG_MEM = "MemTotal:       134217728 kB\n"  # 128 GiB
@@ -23,7 +23,12 @@ def _w(root: Path, rel: str, name: str, value: str) -> None:
 
 def test_unlimited_container_gets_one_per_cpu(tmp_path: Path) -> None:
     _w(tmp_path, "/", "cpu.max", "max 100000")
-    assert default_workers(cpus=14, proc_cgroup="0::/\n", meminfo=BIG_MEM, root=tmp_path) == 14
+    assert default_workers(cpus=6, proc_cgroup="0::/\n", meminfo=BIG_MEM, root=tmp_path) == 6
+
+
+def test_a_large_host_is_capped(tmp_path: Path) -> None:
+    got = default_workers(cpus=64, proc_cgroup="0::/\n", meminfo=BIG_MEM, root=tmp_path)
+    assert got == MAX_WORKERS
 
 
 def test_cpu_quota_rounds_up(tmp_path: Path) -> None:
@@ -32,15 +37,15 @@ def test_cpu_quota_rounds_up(tmp_path: Path) -> None:
 
 
 def test_memory_limit_bounds_the_count(tmp_path: Path) -> None:
-    _w(tmp_path, "/", "memory.max", str(512 * 1024 * 1024))
-    assert default_workers(cpus=14, proc_cgroup="0::/\n", meminfo=BIG_MEM, root=tmp_path) == 1
+    _w(tmp_path, "/", "memory.max", str(WORKER_MEMORY_BYTES // 2))
+    assert default_workers(cpus=6, proc_cgroup="0::/\n", meminfo=BIG_MEM, root=tmp_path) == 1
     _w(tmp_path, "/", "memory.max", str(3 * WORKER_MEMORY_BYTES + 1))
-    assert default_workers(cpus=14, proc_cgroup="0::/\n", meminfo=BIG_MEM, root=tmp_path) == 3
+    assert default_workers(cpus=6, proc_cgroup="0::/\n", meminfo=BIG_MEM, root=tmp_path) == 3
 
 
 def test_host_memory_bounds_the_count(tmp_path: Path) -> None:
     meminfo = f"MemTotal:       {2 * GB // 1024} kB\n"
-    assert default_workers(cpus=32, proc_cgroup="0::/\n", meminfo=meminfo, root=tmp_path) == 4
+    assert default_workers(cpus=6, proc_cgroup="0::/\n", meminfo=meminfo, root=tmp_path) == 2
 
 
 def test_never_below_one(tmp_path: Path) -> None:

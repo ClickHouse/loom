@@ -28,10 +28,8 @@ class RuntimeSettings(BaseModel):
     # The in-process rate limiter divides every cap by this count so the
     # replicas' sum matches the target (approximate, not cluster-strict).
     replica_count: int = Field(default=1, ge=1)
-    # uvicorn worker processes per container, read by the image's
-    # scripts/serve.sh (unset there = server.core.web_workers: one per CPU the
-    # container may use, bounded by its memory, which it exports) and by the
-    # rate limiter (N workers count as N replicas).
+    # uvicorn processes per container (the image's default: server.core.web_workers);
+    # the rate limiter counts N workers as N replicas.
     web_workers: int = Field(default=1, ge=1)
     # Entity-graph write marks shared by the processes of one server
     # (server/memory/app/graph_write_marks.py): each namespace's last graph write and its

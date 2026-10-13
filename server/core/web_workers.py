@@ -1,6 +1,6 @@
 """Default uvicorn worker count for the image (`scripts/serve.sh` prints it when
 LOOM_WEB_WORKERS is unset): one per CPU this process may run on, bounded by the
-memory it may use.
+memory it may use, and never more than `MAX_WORKERS`.
 
 CPUs: the scheduler affinity (a cpuset; `nproc` would read OMP_NUM_THREADS),
 lowered by the tightest CPU quota on this process's own cgroup path, v2
@@ -19,8 +19,12 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-# Peak RSS budget per web process; an idle one holds about 150 MB.
-WORKER_MEMORY_BYTES = 512 * 1024 * 1024
+# Memory budget per web process: a busy one with a real embedder and an
+# indexed code namespace holds several hundred MB.
+WORKER_MEMORY_BYTES = 1024 * 1024 * 1024
+# Each process opens its own ClickHouse pool and calibrates its embedder at boot;
+# past this, more processes add load on a shared host rather than throughput.
+MAX_WORKERS = 8
 _UNLIMITED = 1 << 60
 
 
@@ -127,7 +131,7 @@ def default_workers(
         _min_limit(_cgroup_dirs(proc_cgroup, root, "memory"), _v1_mem),
         _mem_total(meminfo),
     )
-    n = float(cpus)
+    n = float(min(cpus, MAX_WORKERS))
     if quota != math.inf:
         n = min(n, math.ceil(quota))
     if mem != math.inf:
