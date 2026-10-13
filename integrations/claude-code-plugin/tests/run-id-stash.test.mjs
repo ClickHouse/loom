@@ -167,6 +167,41 @@ test("a begin whose answer was lost is recovered, not duplicated, on the next pr
   });
 });
 
+test("every retry re-sends the first begin's goal and request", async () => {
+  const tmp = freshTmp();
+  await withServer({ beginRunId: "late", delayMs: 2500 }, async (url) => {
+    await runHook("UserPromptSubmit", { session_id: "s9", cwd: tmp, prompt: "first ask" }, { tmp, url });
+  });
+  await withServer({ beginRunId: "x", beginStatus: 403 }, async (url, seen) => {
+    const payload = { session_id: "s9", cwd: tmp, prompt: "a follow-up" };
+    await runHook("UserPromptSubmit", payload, { tmp, url });
+    await runHook("SessionEnd", { ...payload, reason: "exit" }, { tmp, url });
+    const begins = seen.filter((r) => r.url.endsWith("/run.begin"));
+    assert.equal(begins.length, 2, "the refused prompt and SessionEnd");
+    for (const r of begins) {
+      assert.equal(r.body.goal, "first ask");
+      assert.equal(r.body.user_request, "first ask");
+    }
+  });
+});
+
+test("the retry state holds the redacted body, never the raw prompt", async () => {
+  const tmp = freshTmp();
+  const secret = "ghp_" + "abcdefghijklmnopqrstuvwxyz0123456789";
+  // One credential well inside the body, one straddling the request's cut.
+  const prompt = `use ${secret} here ` + "x".repeat(8000 - 30) + ` ${secret} tail`;
+  await withServer({ beginRunId: "late", delayMs: 2500 }, async (url) => {
+    await runHook("UserPromptSubmit", { session_id: "s10", cwd: tmp, prompt }, { tmp, url });
+  });
+  const raw = fs.readFileSync(
+    withTmpdir(tmp, () => sessionStatePath("run", "s10")),
+    "utf8",
+  );
+  assert.ok(withTmpdir(tmp, () => readRunState("s10")).attempted);
+  for (const frag of ["ghp_", "abcdefghijklmnopqrstuvwxyz"]) assert.ok(!raw.includes(frag), frag);
+  assert.equal(raw.includes(" tail"), false, "nothing past the request's cut");
+});
+
 test("a 429 is a busy moment: the next prompt asks again", async () => {
   const tmp = freshTmp();
   await withServer({ beginRunId: "x", beginStatus: 429 }, async (url) => {
@@ -194,6 +229,17 @@ test("a refusal after an unanswered begin is asked once more at SessionEnd", asy
     // token refused run.begin is refused run.complete too, so nothing is closed.
     assert.equal(seen.filter((r) => r.url.endsWith("/run.begin")).length, 2);
     assert.equal(seen.filter((r) => r.url.endsWith("/run.complete")).length, 0);
+  });
+});
+
+test("a 2xx without a usable run id leaves the begin attempted", async () => {
+  const tmp = freshTmp();
+  await withServer({ beginRunId: "" }, async (url) => {
+    await runHook("UserPromptSubmit", { session_id: "s8", cwd: tmp, prompt: "p" }, { tmp, url });
+  });
+  withTmpdir(tmp, () => {
+    assert.equal(readRunState("s8").attempted, true);
+    assert.equal(readRunState("s8").refused, undefined);
   });
 });
 

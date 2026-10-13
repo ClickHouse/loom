@@ -174,8 +174,10 @@ def read_scope(op: Operation, auth: AuthInfo | None, input_obj: Any) -> Any:
 
     Not obvious: a body user the token is not pinned to, or `*` under a narrowed scope, is
     refused for every op, writes included. A scope that does not resolve is refused here for
-    a read op (`SCOPED_OPS`) and by the first read for any other op. An op that cannot keep
-    its answer inside a narrowed scope is refused with AuthInsufficientError."""
+    a read op (`SCOPED_OPS`) and for an op that would otherwise write or count as user '-'
+    (`_would_act_as_nobody`); any other op is admitted and its first memory read raises.
+    An op that cannot keep its answer inside a narrowed scope is refused with
+    AuthInsufficientError."""
     from server.core.errors import AuthInsufficientError
     from server.identity.domain.read_scope import (
         SCOPED_OPS,
@@ -206,13 +208,25 @@ def read_scope(op: Operation, auth: AuthInfo | None, input_obj: Any) -> Any:
     if isinstance(result, AuthInsufficientError):
         raise result
     if isinstance(result, Exception):
-        # A read whose scope does not resolve is refused here, and so is any op whose
-        # body carries an identity: run unpinned it would write (or count) as user '-'.
-        fields = getattr(op.input_model, "model_fields", {})
-        if op.name in SCOPED_OPS or "user_id" in fields or "session_id" in fields:
+        if op.name in SCOPED_OPS or _would_act_as_nobody(op):
             raise result
+        # Bound above: a memory read inside this op raises the same refusal.
         return input_obj
     return with_read_identity(input_obj, result)
+
+
+def _would_act_as_nobody(op: Operation) -> bool:
+    """An op that, admitted under a scope that did not resolve, would write or count
+    as user '-': a write whose body carries a user or session, and cost.summary (its
+    counts are filtered by the body's user). Code-index ops carry a user field but
+    reach no user's rows: their memory reads raise the bound refusal on their own."""
+    from server.identity.domain.read_scope import _CODE_INDEX, NARROW_SAFE_OPS
+
+    if NARROW_SAFE_OPS.get(op.name) == _CODE_INDEX:
+        return False
+    fields = getattr(op.input_model, "model_fields", {})
+    carries_identity = "user_id" in fields or "session_id" in fields
+    return carries_identity and (not op.read_only or op.name == "cost.summary")
 
 
 def _fail_open(gate: str, op_name: str, err: BaseException) -> None:

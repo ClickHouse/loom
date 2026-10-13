@@ -326,7 +326,11 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "task.": "the task inbox: tasks, not memory",
     "inbox.": "inbox registrations and policies",
     "grants.": "namespace grants",
-    "policy.": "history policy rules; decisions only the caller's own",
+    # Not policy.set / policy.delete: a rule is namespace-wide and denies every user's
+    # writes, a Refuse the token can't manage (as blacklist.* below).
+    "policy.list": "history policy rules",
+    "policy.check": "whether a write would pass the history policy",
+    "policy.decisions": "the caller's own policy decisions",
     # Not cost.agent_summary: it has no user axis, and its session_id grouping lists
     # every user's sessions and spend.
     "cost.summary": "the caller's own cost counters (pinned through its user_id)",
@@ -339,7 +343,9 @@ NARROW_SAFE_OPS: dict[str, str] = {
     # Not blacklist.*: a pattern has no user axis (created_by is the token subject,
     # which many users' tokens can share). List, remove and sweep would reach another
     # user's patterns, and an add would be a namespace-wide Refuse the token can't manage.
-    "memory_schema.": "value schemas",
+    # Not memory_schema.register / propose / approve: a schema is namespace-wide and
+    # refuses every user's non-matching writes.
+    "memory_schema.list": "value schemas",
     "admin.users": "the deployment's users",
     # Not agents.connected: no user axis; it lists every user's agents, their ops,
     # when they were seen and what they cost.

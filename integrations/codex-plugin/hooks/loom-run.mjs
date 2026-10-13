@@ -82,17 +82,20 @@ async function main() {
     // derived id; SessionEnd asks once more if no answer ever came, and closes the
     // run it answers. A repeated begin is idempotent: the server re-opens the run
     // the lost answer opened (under the derived id, or the caller's own server-made
-    // id for it), it never opens a second one.
-    const res = await postBoundedResult("run.begin", beginBody(scope, payload, prompt), opts);
+    // id for it), it never opens a second one. Every retry re-sends the first
+    // attempt's body (bounded and redacted), so a later prompt does not rewrite the
+    // run's goal; the raw prompt is never written to the state file.
+    const body = prior.attempted && prior.body ? prior.body : beginBody(scope, payload, prompt);
+    const res = await postBoundedResult("run.begin", body, opts);
     const runId = res.status >= 200 && res.status < 300 && res.body ? res.body.run_id : "";
     // 408 and 429 are a busy moment, not a refusal. An earlier unanswered attempt is
     // kept through a refusal: SessionEnd still closes the run it may have opened.
     // A 2xx without a usable id (a body cut off after its headers) may have opened the run.
-    const transient =
-      res.status === 0 || res.status === 408 || res.status === 429 || res.status >= 500 || res.status < 300;
+    const transient = res.status === 408 || res.status === 429 || res.status >= 500 || res.status < 300;
     if (typeof runId === "string" && runId) writeRunBegun(sessionId, runId);
-    else if (transient) writeJsonFile(sp, { attempted: true, prompt: prompt.slice(0, 8000), at: Date.now() });
-    else writeJsonFile(sp, { refused: true, attempted: Boolean(prior.attempted), at: Date.now() });
+    else if (transient) writeJsonFile(sp, { attempted: true, body, at: Date.now() });
+    else if (prior.attempted) writeJsonFile(sp, { refused: true, attempted: true, body, at: Date.now() });
+    else writeJsonFile(sp, { refused: true, at: Date.now() });
     scheduleExit(0);
     return;
   }
@@ -101,8 +104,8 @@ async function main() {
     let state = readRunState(sessionId);
     if (!state.begun && state.attempted) {
       // Asked with no answer: the begin may have opened a run. Asked again, it answers
-      // that run's id (or opens one, which this hook then closes).
-      const res = await postBoundedResult("run.begin", beginBody(scope, payload, state.prompt || ""), opts);
+      // that run's id (or opens one, which this hook then closes), with the body first sent.
+      const res = await postBoundedResult("run.begin", state.body || beginBody(scope, payload, ""), opts);
       const runId = res.status >= 200 && res.status < 300 && res.body ? res.body.run_id : "";
       if (typeof runId === "string" && runId) writeRunBegun(sessionId, runId);
       state = readRunState(sessionId);

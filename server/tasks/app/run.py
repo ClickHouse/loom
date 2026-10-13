@@ -178,10 +178,16 @@ async def _target_run(
     if existing is not None and not _owned_by(existing, _user_of(input)):
         # Another user's run: start the caller's own run instead of taking that one over.
         return await _own_run(ch, input, run_id)
-    if existing is None and claim is runs_store.NoClaim.UNAVAILABLE and request_narrowed():
-        # Nothing atomic keeps another user's concurrent first begin off this id,
-        # so a narrowed caller opens a new id only under its own server-made id.
-        return await _own_run(ch, input, run_id)
+    if existing is None:
+        # A begin that went to the caller's own id (no claim then) and lost its answer
+        # is re-sent: it re-opens that run, whether or not a claim can be made now.
+        own_id, own_row = await _own_run(ch, input, run_id)
+        if own_row is not None:
+            return own_id, own_row
+        if claim is runs_store.NoClaim.UNAVAILABLE and request_narrowed():
+            # Nothing atomic keeps another user's concurrent first begin off this id,
+            # so a narrowed caller opens a new id only under its own server-made id.
+            return own_id, None
     return run_id, existing
 
 

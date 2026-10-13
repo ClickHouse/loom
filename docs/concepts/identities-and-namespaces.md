@@ -243,9 +243,15 @@ than `namespace`:
   would overwrite another user's row: `memory.record.write`, `decision.record`,
   `procedure.record_run` and `context.offload`. `memory.set_from_messages` skips its
   `record_schema` projection into records and says so in `degraded`. A token whose
-  scope does not resolve (an `own_session` ceiling and a body naming no session) is
-  refused on every op whose body carries a user or session, rather than run as user
-  `-`. The list is
+  scope does not resolve (an `own_session` ceiling and a body naming no session, or an
+  unpinned `own_user` token and a body naming no user) is refused on every read it
+  scopes and on every write whose body carries a user or session (and `cost.summary`),
+  rather than run as user `-`. Under `own_session`, ops with no session field
+  (`cost.summary`, `memory.outcome`) are therefore always refused. The code-index ops
+  (`code.*`) carry a user for attribution only and are admitted; a memory read inside
+  them is refused. Namespace-wide rules (`policy.set`, `policy.delete`,
+  `memory_schema.register` / `propose` / `approve`, `blacklist.*`) need a
+  namespace-scoped token. The list is
   `server/identity/domain/read_scope.py` (`SCOPED_OPS`, `NARROW_SAFE_OPS`), and an op
   it does not name is refused.
 

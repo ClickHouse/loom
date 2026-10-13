@@ -895,3 +895,43 @@ def test_a_re_sent_begin_without_a_keeper_lands_on_the_same_run(monkeypatch) -> 
     assert first == again != "shared"
     assert other not in (first, "shared")
     assert sorted(final) == sorted({first, other})
+
+
+def test_a_begin_re_sent_after_the_keeper_returns_re_opens_its_own_run(monkeypatch) -> None:
+    """The first begin had no claim and went to the caller's own id; its answer was
+    lost and the Keeper came back before the retry. The retry wins the claim on the
+    requested id but re-opens the first run: same id, same start, one ledger row."""
+    from server.tasks.app import run as run_app
+
+    final: dict[str, dict[str, Any]] = {}
+    claims = iter(
+        [
+            run_app.runs_store.NoClaim.UNAVAILABLE,
+            run_app.runs_store.RunClaim(won=True, user_id="U", session_id="-"),
+        ]
+    )
+
+    async def fetch_run(ch, org, ns, run_id):
+        return final.get(run_id)
+
+    async def insert_runs(ch, rows):
+        final.update({r["run_id"]: dict(r) for r in rows})
+
+    async def claim(*_a, **_k):
+        return next(claims)
+
+    async def delete_claim(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(run_app, "get_client", lambda: None)
+    monkeypatch.setattr(run_app.runs_store, "fetch_run", fetch_run)
+    monkeypatch.setattr(run_app.runs_store, "insert_runs", insert_runs)
+    monkeypatch.setattr(run_app.runs_store, "claim_run", claim)
+    monkeypatch.setattr(run_app.runs_store, "delete_claim", delete_claim)
+
+    first = asyncio.run(_begin_as(_pinned("U"), "U", "g"))
+    started = final[first]["started_at"]
+    again = asyncio.run(_begin_as(_pinned("U"), "U", "g"))
+    assert again == first != "shared"
+    assert list(final) == [first]
+    assert final[first]["started_at"] == started
