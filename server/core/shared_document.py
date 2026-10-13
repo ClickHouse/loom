@@ -13,33 +13,15 @@ import fcntl
 import json
 import logging
 import os
-import stat
 import tempfile
 from collections.abc import Callable
 from typing import Any
 
+from server.core.runtime_files import open_private
+
 log = logging.getLogger(__name__)
 
-FILE_MODE = 0o600
 _Version = tuple[int, int, int]  # inode, mtime_ns, size
-
-
-def open_private(path: str, flags: int) -> int:
-    """Open `path` never through a symlink, as a regular file owned by this
-    process, created (with O_CREAT) or tightened to 0600. Raises OSError."""
-    fd = os.open(path, flags | os.O_NOFOLLOW, FILE_MODE)
-    try:
-        st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode):
-            raise OSError(f"{path}: not a regular file")
-        if st.st_uid != os.geteuid():
-            raise OSError(f"{path}: owned by uid {st.st_uid}, this process is {os.geteuid()}")
-        if stat.S_IMODE(st.st_mode) & 0o077:
-            os.fchmod(fd, FILE_MODE)
-    except BaseException:
-        os.close(fd)
-        raise
-    return fd
 
 
 def _version(st: os.stat_result) -> _Version:
@@ -47,12 +29,14 @@ def _version(st: os.stat_result) -> _Version:
 
 
 class SharedDocument[T]:
-    """`decode` turns the parsed JSON into the caller's state; a document it
-    cannot decode is corrupt."""
+    """`decode` turns the parsed JSON into the caller's state and `encode` turns
+    the state back; a document `decode` cannot read is corrupt."""
 
-    def __init__(self, path: str, decode: Callable[[Any], T]) -> None:
+    def __init__(
+        self, path: str, decode: Callable[[Any], T], encode: Callable[[T], object]
+    ) -> None:
         self.path = path
-        self._decode = decode
+        self._decode, self._encode = decode, encode
         # The version last adopted, published or found corrupt.
         self._seen: _Version | None = None
         # The last read failure warned about, so a lasting one is logged once.
@@ -69,16 +53,18 @@ class SharedDocument[T]:
                 log.warning("%s unreadable (%s); keeping the current state", self.path, e)
             return None
 
-    def update(self, change: Callable[[T | None], T], encode: Callable[[T], object]) -> T:
-        """Under the lock, publish and return `change(latest)`. `latest` is None when
-        there is no document yet, or it is corrupt and this replaces it. Raises
-        OSError, before anything is published, when it cannot be read or written."""
+    def update(self, change: Callable[[T], T], default: T) -> T:
+        """Under the lock, publish and return `change(latest)`; `default` stands in
+        when there is no document yet, or it is corrupt and this replaces it.
+        Raises OSError, before anything is published, when it cannot be read or
+        written."""
         lock = open_private(self.path + ".lock", os.O_RDWR | os.O_CREAT)
         try:
             fcntl.flock(lock, fcntl.LOCK_EX)
             self._seen = None
-            new = change(self._read_changed())
-            self._seen = _publish(self.path, encode(new))
+            latest = self._read_changed()
+            new = change(default if latest is None else latest)
+            self._seen = _publish(self.path, self._encode(new))
             return new
         finally:
             os.close(lock)

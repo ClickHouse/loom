@@ -305,10 +305,6 @@ def _encode_overrides(o: _Overrides) -> dict[str, list[list[object]]]:
     }
 
 
-def _without[K, V](mapping: dict[K, V], key: K) -> dict[K, V]:
-    return {k: v for k, v in mapping.items() if k != key}
-
-
 class Limiter:
     """Two-tier in-process registry: per-namespace AND per-org buckets.
 
@@ -411,7 +407,9 @@ class Limiter:
                 path = server_file("ratelimit-overrides") + ".json"
             else:
                 path = None
-            self._overrides_doc = None if path is None else SharedDocument(path, _decode_overrides)
+            self._overrides_doc = (
+                None if path is None else SharedDocument(path, _decode_overrides, _encode_overrides)
+            )
         return self._overrides_doc
 
     def _sync_overrides(self) -> None:
@@ -457,16 +455,12 @@ class Limiter:
         that cannot be shared is refused and this worker keeps its own."""
         doc = self._overrides_document()
         mine = self._overrides()
-        if doc is None:
-            self._adopt(change(mine))
-            return
         try:
-            shared = doc.update(
-                lambda latest: change(mine if latest is None else latest), _encode_overrides
-            )
+            new = change(mine) if doc is None else doc.update(change, mine)
         except OSError as e:
             raise BackendUnavailableError(f"rate-limit override not applied: {e}") from e
-        self._adopt(shared)
+        self._rebase_buckets(mine, new)
+        self._adopt(new)
 
     @property
     def shared_active(self) -> bool:
@@ -700,28 +694,28 @@ class Limiter:
         """Install a per-namespace override for one op_class."""
         key = (namespace, op_class)
         self._change_overrides(lambda o: replace(o, ns={**o.ns, key: limit}))
-        # The namespace's buckets in every org (key element 0 is the org).
-        self._apply_override(self._ns_buckets, key, limit, skip=1)
 
     def clear_namespace_limit(self, namespace: str, op_class: str) -> None:
-        self._change_overrides(lambda o: replace(o, ns=_without(o.ns, (namespace, op_class))))
+        key = (namespace, op_class)
+        self._change_overrides(lambda o: replace(o, ns={k: v for k, v in o.ns.items() if k != key}))
 
     def set_org_limit(self, org: str, op_class: str, limit: Limit) -> None:
         """Install a per-org override for one op_class. Bounds the total
         fan-out across all of the org's namespaces for this op class."""
         key = (org, op_class)
         self._change_overrides(lambda o: replace(o, org={**o.org, key: limit}))
-        self._apply_override(self._org_buckets, key, limit)
 
     def clear_org_limit(self, org: str, op_class: str) -> None:
-        self._change_overrides(lambda o: replace(o, org=_without(o.org, (org, op_class))))
+        key = (org, op_class)
+        self._change_overrides(
+            lambda o: replace(o, org={k: v for k, v in o.org.items() if k != key})
+        )
 
     def set_actor_limit(self, namespace: str, actor: str, op_class: str, limit: Limit) -> None:
         """Install a per-(namespace, actor) override for one op_class. Creates
         the actor bucket even when the deployment fraction is 1.0."""
         key = (namespace, actor, op_class)
         self._change_overrides(lambda o: replace(o, actor={**o.actor, key: limit}))
-        self._apply_override(self._actor_buckets, key, limit, skip=1)
 
     def _apply_override(
         self,

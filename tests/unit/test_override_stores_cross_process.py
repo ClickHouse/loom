@@ -241,3 +241,26 @@ def test_a_check_resolves_the_override_file_once(
     for _ in range(5):
         lim.check("ns1", "memory.set", org="o")
     assert calls == ["ratelimit-overrides"]
+
+
+def test_clearing_an_override_frees_the_clearing_worker_too(settings_override) -> None:
+    settings_override(ratelimit_shared="off", web_workers=3)
+    a = Limiter(clock=lambda: 0.0)  # no refill
+    a.set_namespace_limit("hot", "memory", Limit(capacity=3, rate=0.0))  # one token here
+    assert a.check("hot", "memory.set", org="o").allowed
+    assert not a.check("hot", "memory.set", org="o").allowed
+    a.clear_namespace_limit("hot", "memory")
+    assert a.check("hot", "memory.set", org="o").allowed
+    a.reset_all()
+
+
+def test_a_siblings_override_seen_inside_an_update_resizes_this_worker(settings_override) -> None:
+    settings_override(ratelimit_shared="off", web_workers=3)
+    a, b = Limiter(clock=lambda: 0.0), Limiter(clock=lambda: 0.0)
+    assert b.check("hot", "memory.set", org="o").allowed  # a default-sized bucket
+    a.set_namespace_limit("hot", "memory", Limit(capacity=3, rate=0.0))
+    b.set_namespace_limit("other", "memory", Limit(capacity=30, rate=0.0))  # b learns of "hot" here
+    result = b.check("hot", "memory.set", org="o")
+    assert result.limit == 1.0 and not b.check("hot", "memory.set", org="o").allowed
+    a.reset_all()
+    b.reset_all()

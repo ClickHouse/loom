@@ -19,8 +19,7 @@ from server.core.ratelimit_shared import (
     default_path,
     open_table_fd,
 )
-from server.core.runtime_files import runtime_dir, server_file
-from server.core.shared_document import FILE_MODE
+from server.core.runtime_files import FILE_MODE, runtime_dir, server_file
 
 
 def _mode(p: Path) -> int:

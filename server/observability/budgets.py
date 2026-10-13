@@ -100,10 +100,6 @@ def _encode(budgets: _Budgets) -> dict[str, Any]:
     }
 
 
-def _without[K, V](mapping: dict[K, V], key: K) -> dict[K, V]:
-    return {k: v for k, v in mapping.items() if k != key}
-
-
 class BudgetOverrides:
     """Singleton overrides registry: op_name → budget_ms, plus
     (consumer, op_name | "*") → budget_ms or multiplier."""
@@ -120,18 +116,20 @@ class BudgetOverrides:
         self._settings_map: dict[str, dict[str, int | float]] = {}
         # Shared with the server's other web processes (`_document`).
         self._doc: SharedDocument[_Budgets] | None = None
+        self._doc_key: int | None = None
 
     # -- the host file the web processes share -----------------------------
 
     def _document(self) -> SharedDocument[_Budgets] | None:
-        """This server's runtime overrides file; None with one web process."""
-        if self._doc is None:
-            from server.settings import settings
+        """This server's runtime overrides file; None with one web process.
+        Resolved once per setting, as the rate limiter's is."""
+        from server.settings import settings
 
-            if self._path is not None:
-                self._doc = SharedDocument(self._path, _decode)
-            elif int(settings.web_workers) > 1:
-                self._doc = SharedDocument(server_file("budgets") + ".json", _decode)
+        workers = int(settings.web_workers)
+        if workers != self._doc_key:
+            self._doc_key = workers
+            path = self._path or (server_file("budgets") + ".json" if workers > 1 else None)
+            self._doc = None if path is None else SharedDocument(path, _decode, _encode)
         return self._doc
 
     def _poll(self) -> None:
@@ -147,15 +145,10 @@ class BudgetOverrides:
         with self._lock:
             doc = self._document()
             mine = _Budgets(self._overrides, self._by_consumer)
-            if doc is None:
-                new = change(mine)
-            else:
-                try:
-                    new = doc.update(
-                        lambda latest: change(mine if latest is None else latest), _encode
-                    )
-                except OSError as e:
-                    raise BackendUnavailableError(f"budget override not applied: {e}") from e
+            try:
+                new = change(mine) if doc is None else doc.update(change, mine)
+            except OSError as e:
+                raise BackendUnavailableError(f"budget override not applied: {e}") from e
             self._overrides, self._by_consumer = new.ops, new.by_consumer
 
     # -- per op (unchanged API) -------------------------------------------
@@ -171,7 +164,7 @@ class BudgetOverrides:
             return self._overrides.get(op_name)
 
     def clear(self, op_name: str) -> None:
-        self._change(lambda b: replace(b, ops=_without(b.ops, op_name)))
+        self._change(lambda b: replace(b, ops={k: v for k, v in b.ops.items() if k != op_name}))
 
     def snapshot(self) -> dict[str, int]:
         with self._lock:
@@ -201,7 +194,9 @@ class BudgetOverrides:
 
     def clear_for_consumer(self, consumer: str, op_name: str = ANY_OP) -> None:
         key = (consumer, op_name or ANY_OP)
-        self._change(lambda b: replace(b, by_consumer=_without(b.by_consumer, key)))
+        self._change(
+            lambda b: replace(b, by_consumer={k: v for k, v in b.by_consumer.items() if k != key})
+        )
 
     def snapshot_by_consumer(self) -> dict[str, dict[str, int | float]]:
         with self._lock:

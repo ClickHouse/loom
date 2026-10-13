@@ -1,9 +1,12 @@
-"""Files one server's web processes share, in a per-user runtime directory.
+"""Files one server's web processes share, in a per-user runtime directory, and
+how they are opened (`open_private`).
 
 The workers of one `uvicorn --workers N` share a parent, so a file is named by
-the parent's pid and start time: two servers on one host get two files, and a
-later server that reuses the pid (a restarted container) starts afresh. Files
-of servers no longer running are removed the first time this process names one.
+the parent's pid namespace, pid and start time: two servers on one host get two
+files, a later server that reuses the pid (a restarted container) starts afresh,
+and two containers sharing the directory never take each other's. Files of a
+server provably gone from this pid namespace are removed the first time this
+process names one; files of other namespaces are left alone.
 """
 
 from __future__ import annotations
@@ -12,12 +15,14 @@ import contextlib
 import os
 import re
 import shutil
+import stat
 from pathlib import Path
 
+FILE_MODE = 0o600
 RUN_DIR = "/run/loom"
 _TMP_DIR = "/tmp"
-# loom-<name>-<pid>-<start time>, then any suffix (".json", ".lock", ...).
-_OWNED = re.compile(r"^loom-[a-z-]+-(\d+)-(\d+)(?:\..*)?$")
+# loom-<name>-<pid namespace>-<pid>-<start time>, then any suffix (".json", ".lock", ...).
+_OWNED = re.compile(r"^loom-[a-z-]+-(\d+)-(\d+)-(\d+)(?:\..*)?$")
 # Directories this process has pruned: once each is enough.
 _pruned: set[str] = set()
 
@@ -47,25 +52,33 @@ def _started(pid: int) -> str:
     return stat.rsplit(")", 1)[1].split()[19]
 
 
+def _pid_namespace() -> str:
+    """This process's pid namespace (the inode of /proc/self/ns/pid); '' when unknown."""
+    try:
+        return re.sub(r"\D", "", os.readlink("/proc/self/ns/pid"))
+    except OSError:
+        return ""
+
+
 def server_file(name: str) -> str:
-    """`<runtime dir>/loom-<name>-<parent pid>-<parent start time>`."""
+    """`<runtime dir>/loom-<name>-<pid namespace>-<parent pid>-<parent start time>`."""
     base = runtime_dir()
-    if base not in _pruned:
+    namespace = _pid_namespace()
+    if namespace and base not in _pruned:
         _pruned.add(base)
-        _prune(base)
+        _prune(base, namespace)
     ppid = os.getppid()
-    return os.path.join(base, f"loom-{name}-{ppid}-{_started(ppid) or 0}")
+    return os.path.join(base, f"loom-{name}-{namespace or 0}-{ppid}-{_started(ppid) or 0}")
 
 
-def _prune(base: str) -> None:
-    """Remove this user's server files whose server is no longer running
-    (only where /proc says which processes are)."""
-    if not os.path.isdir("/proc"):
-        return
+def _prune(base: str, namespace: str) -> None:
+    """Remove this user's files of servers that `namespace`'s /proc shows are gone."""
     with contextlib.suppress(OSError):
         for entry in os.scandir(base):
             owned = _OWNED.match(entry.name)
-            if owned is None or _started(int(owned.group(1))) == owned.group(2):
+            if owned is None or owned.group(1) != namespace:
+                continue
+            if _started(int(owned.group(2))) == owned.group(3):
                 continue
             with contextlib.suppress(OSError):
                 if entry.stat(follow_symlinks=False).st_uid != os.geteuid():
@@ -74,3 +87,21 @@ def _prune(base: str) -> None:
                     shutil.rmtree(entry.path)
                 else:
                     os.unlink(entry.path)
+
+
+def open_private(path: str, flags: int) -> int:
+    """Open `path` never through a symlink, as a regular file owned by this
+    process, created (with O_CREAT) or tightened to 0600. Raises OSError."""
+    fd = os.open(path, flags | os.O_NOFOLLOW, FILE_MODE)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise OSError(f"{path}: not a regular file")
+        if st.st_uid != os.geteuid():
+            raise OSError(f"{path}: owned by uid {st.st_uid}, this process is {os.geteuid()}")
+        if stat.S_IMODE(st.st_mode) & 0o077:
+            os.fchmod(fd, FILE_MODE)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd

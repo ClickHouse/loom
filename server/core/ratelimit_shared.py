@@ -38,8 +38,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from server.core.runtime_files import server_file
-from server.core.shared_document import open_private
+from server.core.runtime_files import open_private, server_file
 
 MAGIC = b"LRL1"
 VERSION = 2  # 2: bucket keys carry the traffic class
