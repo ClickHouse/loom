@@ -197,8 +197,8 @@ def _own_run_id(input: RunBeginInput, requested: str) -> str:
     """The server-made id a caller gets for `requested` when it cannot have that id:
     derived from (org, namespace, user, session, requested), so a retry of a begin
     whose answer was lost lands on the same run, and no other user or session can."""
-    seed = "\x1f".join(
-        (input.org, input.namespace, _user_of(input), input.session_id or "-", requested)
+    seed = json.dumps(
+        [input.org, input.namespace, _user_of(input), input.session_id or "-", requested]
     )
     return "r" + hashlib.sha256(seed.encode()).hexdigest()[:31]
 

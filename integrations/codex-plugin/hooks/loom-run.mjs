@@ -75,22 +75,13 @@ async function main() {
       scheduleExit(0);
       return;
     }
-    // Awaited: the server may answer another run id than the derived one (no
-    // Keeper, narrowed token), and every later hook must use that one. Begun only
-    // with an answered id. A refusal (4xx) is final for the session. A timeout, a
-    // network error or a 5xx is asked again on the next prompt with the same
-    // derived id; SessionEnd asks once more if no answer ever came, and closes the
-    // run it answers. A repeated begin is idempotent: the server re-opens the run
-    // the lost answer opened (under the derived id, or the caller's own server-made
-    // id for it), it never opens a second one. Every retry re-sends the first
-    // attempt's body (bounded and redacted), so a later prompt does not rewrite the
-    // run's goal; the raw prompt is never written to the state file.
+    // Awaited: the server may answer another id than the derived one, and later hooks
+    // use it. A begin may commit before its answer arrives, so every retry re-sends
+    // the first redacted body (the README's hooks table has the retry rules).
     const body = prior.attempted && prior.body ? prior.body : beginBody(scope, payload, prompt);
     const res = await postBoundedResult("run.begin", body, opts);
     const runId = res.status >= 200 && res.status < 300 && res.body ? res.body.run_id : "";
-    // 408 and 429 are a busy moment, not a refusal. An earlier unanswered attempt is
-    // kept through a refusal: SessionEnd still closes the run it may have opened.
-    // A 2xx without a usable id (a body cut off after its headers) may have opened the run.
+    // 408, 429 and a 2xx with no usable id may still have opened the run.
     const transient = res.status === 408 || res.status === 429 || res.status >= 500 || res.status < 300;
     if (typeof runId === "string" && runId) writeRunBegun(sessionId, runId);
     else if (transient) writeJsonFile(sp, { attempted: true, body, at: Date.now() });

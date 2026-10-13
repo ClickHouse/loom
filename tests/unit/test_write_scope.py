@@ -935,3 +935,16 @@ def test_a_begin_re_sent_after_the_keeper_returns_re_opens_its_own_run(monkeypat
     assert again == first != "shared"
     assert list(final) == [first]
     assert final[first]["started_at"] == started
+
+
+def test_fallback_run_ids_do_not_collide_across_a_separator_in_the_identity() -> None:
+    from server.tasks.api.models_run import RunBeginInput
+    from server.tasks.app.run import _own_run_id
+
+    def own(user: str, session: str) -> str:
+        inp = RunBeginInput(
+            org="o", namespace="n", agent="a", user_id=user, session_id=session, goal="g"
+        )
+        return _own_run_id(inp, "req")
+
+    assert own("u\x1fs", "t") != own("u", "s\x1ft")
