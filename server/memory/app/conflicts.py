@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.ch import get_client
+from server.core.conflict_judge_switch import conflict_judge_on
 from server.core.errors import AuthInsufficientError, IdentityIncompleteError
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import (
@@ -649,7 +650,7 @@ async def _policy_for(org: str, namespace: str, judged: Any) -> str:
 
 async def _judge_conflict(new_value: str, peers: list[ConflictPeer]) -> Any:
     """One cheap call labels the closest peers. None when off."""
-    if not bool(settings.memory_conflict_judge):
+    if not conflict_judge_on():
         return None
     from server.memory.app import conflict_judge
 
@@ -667,7 +668,7 @@ async def _judge_conflict(new_value: str, peers: list[ConflictPeer]) -> Any:
 
 
 def judge_enabled() -> bool:
-    return bool(settings.memory_conflict_judge)
+    return conflict_judge_on()
 
 
 async def _judge_or_defer(pj: PendingJudge, defer: bool) -> ConflictResult:

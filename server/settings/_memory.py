@@ -4,9 +4,17 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, Field
 
 from server.settings._env import CaseFolded
+
+
+def _unset_is_none(v: object) -> object:
+    """An empty value or "auto" means unset, so a compose passthrough
+    (`${LOOM_MEMORY_CONFLICT_JUDGE:-}`) follows the provider instead of failing boot."""
+    if isinstance(v, str) and v.strip().lower() in ("", "auto"):
+        return None
+    return v
 
 
 class MemorySettings(BaseModel):
@@ -80,15 +88,17 @@ class MemorySettings(BaseModel):
     # for text-embedding-3-*; 1.0 disables. Per-namespace override:
     # loom.namespaces.conflict_threshold.
     conflict_threshold: float = 0.85
-    # When a write has a peer the conflict check reads (cosine at or above
-    # memory_conflict_judge_min_similarity), one cheap LLM call labels the closest
-    # peers (contradiction / elaboration / restatement / related / unrelated) and the
-    # verdict follows: conflict / refines (supersedes with a `refines` edge) / merge /
-    # clear. One call per such write; a write with no close peer makes none. Unset =
-    # on when a real LLM provider is configured (LOOM_LLM_PROVIDER resolves to openai
-    # or anthropic), off on the fake one; false turns it off, true forces it on.
-    # Resolved once at load, so the value is always true or false.
-    memory_conflict_judge: bool | None = None
+    # Unset (or empty, or "auto") = follow the LLM provider: on while the resolved
+    # LLM provider is openai or anthropic and its key is present (env or saved from
+    # the dashboard), off otherwise, checked on each use so a key added later turns
+    # it on; false turns it off, true forces it on. Read it through
+    # `server.core.conflict_judge_switch.conflict_judge_on()`. When on, a write with
+    # a peer the conflict check reads (cosine at or above
+    # memory_conflict_judge_min_similarity) gets at most one cheap LLM call labelling
+    # the closest peers (contradiction / elaboration / restatement / related /
+    # unrelated); the verdict follows: conflict / refines (supersedes with a `refines`
+    # edge) / merge / clear. A write with no close peer makes none.
+    memory_conflict_judge: Annotated[bool | None, BeforeValidator(_unset_is_none)] = None
     # Closest peers the conflict judge labels in its one call per flagged write.
     memory_conflict_judge_max_peers: int = Field(default=3, ge=1)
     # With the judge on, peers down to this cosine are judged too (never

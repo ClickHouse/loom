@@ -114,8 +114,8 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
     must not retire anyone's fact. The refusal names no row, id or value, so the narrowed
     token learns only that its write was refused.
 
-    With `LOOM_MEMORY_CONFLICT_JUDGE` on (the default with a real LLM provider; off on the
-    fake one), an LLM judge
+    With `LOOM_MEMORY_CONFLICT_JUDGE` on (the default while a real LLM provider and its key are
+    configured; off otherwise), an LLM judge
     (`memory/app/conflict_judge.py`) labels close peers, and peers down to
     `LOOM_MEMORY_CONFLICT_JUDGE_MIN_SIMILARITY`, as `conflict`, `refines`, `merge` or
     `clear`. It runs after the insert (`memory/app/conflict_deferred.py`): the row lands `active` with

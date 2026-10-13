@@ -20,8 +20,8 @@ compare the new value with the active rows of the same `memory_type` in the name
 - Cosine at or above the conflict threshold with a different value is a **conflict**:
   the new row and each peer get `status='conflicted'` and are cross-linked through
   `conflict_with`.
-- With the LLM judge on (`LOOM_MEMORY_CONFLICT_JUDGE`: on by default when a real LLM provider
-  is configured, off on the fake one; `false` turns it off), one call labels
+- With the LLM judge on (`LOOM_MEMORY_CONFLICT_JUDGE`: on by default while a real LLM
+  provider and its key are configured, off otherwise; `false` turns it off), one call labels
   the closest peers as contradiction, elaboration, restatement or unrelated. The judge
   also reads peers down to `LOOM_MEMORY_CONFLICT_JUDGE_MIN_SIMILARITY` (0.7), which
   catches an update filed under a different key.
@@ -200,15 +200,15 @@ not erasing: to remove a person's data, use [erasure](./retention-and-erasure.md
 
 ## Settings
 
-| Setting                                         | Default                     | Effect                                              |
-| ----------------------------------------------- | --------------------------- | --------------------------------------------------- |
-| `LOOM_CONFLICT_THRESHOLD`                       | 0.85                        | Fallback conflict cosine; 1.0 disables flagging.    |
-| `LOOM_DUPLICATE_THRESHOLD`                      | 0.97                        | Fallback duplicate cosine.                          |
-| `LOOM_ADAPTIVE_THRESHOLDS`                      | true                        | Calibrate both thresholds from the live embedder.   |
-| `LOOM_MEMORY_CONFLICT_JUDGE`                    | on with a real LLM provider | LLM labelling of close peers; `false` turns it off. |
-| `LOOM_MEMORY_CONFLICT_JUDGE_MIN_SIMILARITY`     | 0.7                         | Lowest cosine the judge reads.                      |
-| `LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES`          | 200                         | Entries per `memory.bulk_set` checked; 0 = none.    |
-| `LOOM_BLACKLIST_VERSION_CHECK_INTERVAL_SECONDS` | 2.0                         | Cross-replica pattern refresh bound.                |
+| Setting                                         | Default                                 | Effect                                                                                                                                 |
+| ----------------------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `LOOM_CONFLICT_THRESHOLD`                       | 0.85                                    | Fallback conflict cosine; 1.0 disables flagging.                                                                                       |
+| `LOOM_DUPLICATE_THRESHOLD`                      | 0.97                                    | Fallback duplicate cosine.                                                                                                             |
+| `LOOM_ADAPTIVE_THRESHOLDS`                      | true                                    | Calibrate both thresholds from the live embedder.                                                                                      |
+| `LOOM_MEMORY_CONFLICT_JUDGE`                    | on with a real LLM provider and its key | LLM labelling of close peers: at most one call per write with a peer at the judge's band, inline on bulk writes; `false` turns it off. |
+| `LOOM_MEMORY_CONFLICT_JUDGE_MIN_SIMILARITY`     | 0.7                                     | Lowest cosine the judge reads.                                                                                                         |
+| `LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES`          | 200                                     | Entries per `memory.bulk_set` checked; 0 = none.                                                                                       |
+| `LOOM_BLACKLIST_VERSION_CHECK_INTERVAL_SECONDS` | 2.0                                     | Cross-replica pattern refresh bound.                                                                                                   |
 
 See the [configuration reference](../../reference/configuration.md#conflict-detection).
 

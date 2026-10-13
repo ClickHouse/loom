@@ -69,10 +69,9 @@ class ProviderSettings(ModelSettings):
     # explicit, else the evidence ("LOOM_LLM_MODEL=…", "OPENAI_API_KEY is set",
     # "nothing set"). Read through `llm_provider_source()`; not an env var.
     _llm_provider_source: str = PrivateAttr(default="LOOM_LLM_PROVIDER")
-    # The fields load filled in because the env left them unset: `llm_provider` and
-    # `llm_model` when the env set neither, and `memory_conflict_judge`. Assigning
-    # them marks them set, but they are not the env's choice: a read-replica takes
-    # the main Loom's values over them.
+    # `llm_provider` and `llm_model` when the env set neither and load filled
+    # both in. Assigning them marks them set, but they are not the env's
+    # choice: a read-replica takes the main Loom's pair over them.
     _llm_inferred_fields: frozenset[str] = PrivateAttr(default=frozenset())
 
     @model_validator(mode="after")
