@@ -274,3 +274,25 @@ def test_only_a_busy_override_is_waited_out() -> None:
 
     with pytest.raises(OverloadedError):
         asyncio.run(shared_document.waiting_out_siblings(update))
+
+
+def test_a_path_that_will_not_resolve_is_asked_for_again_sparingly(tmp_path: Path) -> None:
+    asked: list[int] = []
+    fixed = False
+
+    def where() -> str:
+        asked.append(1)
+        if not fixed:
+            raise OSError("no private runtime directory")
+        return str(tmp_path / "doc.json")
+
+    doc = SharedDocument(where, lambda d: d, lambda d: d, name="budgets")
+    for _ in range(100):  # every request polls
+        assert doc.poll() is None
+    assert len(asked) == 1 and doc.path is None
+    with pytest.raises(OSError):
+        doc.update(lambda d: {**d, "a": 1}, {})  # an update asks again at once
+    assert len(asked) == 2
+    fixed = True
+    assert doc.update(lambda d: {**d, "a": 1}, {}) == {"a": 1}
+    assert doc.path == str(tmp_path / "doc.json")

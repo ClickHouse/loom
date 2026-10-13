@@ -394,8 +394,10 @@ def attach(app: FastAPI) -> None:
         """The Streamable HTTP transport lets a client end its session with
         `DELETE` + `Mcp-Session-Id`. The session's implicit run closes here
         (status completed, outcome none); the `mcp_session_run_sweep` worker
-        closes the ones that go idle. No admission gates run: the close is
-        bounded by the caller's ClickHouse quota, which it is counted against."""
+        closes the ones that go idle. No admission gates run, so it is not rate
+        limited: a DELETE costs one indexed read of the run by (org, id), and a
+        close when it finds one, all counted against the caller's ClickHouse
+        quota. It names no namespace for the limiter to key a bucket on."""
         from server.auth.jwt import TokenError
 
         mode = _effective_auth_mode()

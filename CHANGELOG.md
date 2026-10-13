@@ -35,7 +35,10 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   `clickhouse/clickhouse-server:head`, unsupported).
 - **Operators:** with `LOOM_WEB_WORKERS` unset, the image starts one web process per CPU the
   container may use, at most one per GiB of memory and at most 8, instead of one. Set it to
-  keep the old behaviour or to leave cores for ClickHouse on a shared host.
+  keep the old behaviour or to leave cores for ClickHouse on a shared host. Several
+  processes share files in a private runtime directory (`/run/loom`, which the compose files
+  mount as a tmpfs); with none, as on a read-only root without one, the image starts one
+  process and says so, and an explicit `LOOM_WEB_WORKERS` above 1 refuses to start.
 - **Operators:** the image owns `/run/loom` (uid 999) and the compose files mount it as a
   tmpfs. Runtime files under the earlier names (`loom-ratelimit-<pid>.buckets`,
   `loom-graph-marks-<pid>/`) are not removed automatically; delete them once the old server is

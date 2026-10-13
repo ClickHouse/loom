@@ -400,8 +400,10 @@ def test_an_integer_too_large_for_a_float_is_refused_and_never_breaks_a_read(
 def test_with_no_private_runtime_directory_overrides_are_refused_not_kept_local(
     settings_override, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Several workers and nowhere to share: reads keep each worker's state, and
-    an update answers OVERRIDE_NOT_SHARED rather than binding one worker."""
+    """Several workers and nowhere to share: reads keep each worker's state, an
+    update answers OVERRIDE_NOT_SHARED rather than binding one worker, and once
+    the directory is fixed the next update binds every worker, those that read
+    before the fix too."""
 
     def nowhere(name: str) -> str:
         raise OSError("none of /run/loom, /tmp/loom-1 is a directory only this user can enter")
@@ -409,17 +411,21 @@ def test_with_no_private_runtime_directory_overrides_are_refused_not_kept_local(
     settings_override(ratelimit_shared="off", web_workers=3)
     real = shared_document.server_file
     monkeypatch.setattr(shared_document, "server_file", nowhere)
-    budgets = BudgetOverrides()
-    for _ in range(2):
-        assert budgets.get("memory.search") is None
-        with pytest.raises(OverrideNotSharedError):
-            budgets.set("memory.search", 123)
-    lim = Limiter()
-    assert lim.check("ns1", "memory.set", org="o").allowed
+    monkeypatch.setattr(shared_document, "RESOLVE_RETRY_S", 0.0)
+    a, b = BudgetOverrides(), BudgetOverrides()
+    la, lb = Limiter(clock=lambda: 0.0), Limiter(clock=lambda: 0.0)
+    assert a.get("memory.search") is None and b.get("memory.search") is None
+    assert la.check("ns1", "memory.set", org="o").allowed
+    assert lb.check("ns1", "memory.set", org="o").allowed
     with pytest.raises(OverrideNotSharedError):
-        lim.set_namespace_limit("ns1", "memory", Limit(capacity=1, rate=1.0))
-    lim.reset_all()  # nothing to remove, and nothing else removed
-    # The directory is fixed: the same processes share from the next update on.
-    monkeypatch.setattr(shared_document, "server_file", real)
-    budgets.set("memory.search", 123)
-    assert BudgetOverrides().get("memory.search") == 123
+        a.set("memory.search", 123)
+    with pytest.raises(OverrideNotSharedError):
+        la.set_namespace_limit("ns1", "memory", Limit(capacity=3, rate=0.0))
+    monkeypatch.setattr(shared_document, "server_file", real)  # the directory is fixed
+    a.set("memory.search", 123)
+    la.set_namespace_limit("ns1", "memory", Limit(capacity=3, rate=0.0))  # a token a worker
+    assert b.get("memory.search") == 123
+    assert lb.check("ns1", "memory.set", org="o").allowed
+    assert not lb.check("ns1", "memory.set", org="o").allowed  # b took a's limit
+    la.reset_all()
+    lb.reset_all()

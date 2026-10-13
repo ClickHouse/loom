@@ -359,6 +359,9 @@ class Limiter:
     # -- backend selection ---------------------------------
 
     def _store(self) -> SharedBucketStore | None:
+        """The host-shared table, chosen once per setting: a table that cannot be
+        opened leaves this process on its own buckets until a restart (the
+        overrides, unlike the buckets, look for their directory again)."""
         mode = str(settings.ratelimit_shared)
         path = str(settings.ratelimit_shared_path)
         slots = int(settings.ratelimit_shared_slots)
@@ -766,11 +769,10 @@ class Limiter:
         if self._shared is not None:
             self._shared.reset()
         if self._overrides_doc is not None:
-            with contextlib.suppress(OSError):  # its path may never have resolved
-                path = self._overrides_doc.path
-                for name in (path, path + ".lock"):
-                    with contextlib.suppress(OSError):
-                        os.remove(name)
+            path = self._overrides_doc.path  # None: it never found a directory
+            for name in (path, f"{path}.lock") if path else ():
+                with contextlib.suppress(OSError):
+                    os.remove(name)
             self._overrides_doc, self._overrides_key = None, None
 
 

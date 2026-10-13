@@ -236,7 +236,8 @@ _marks: GraphWriteMarks | None = None
 
 
 def marks() -> GraphWriteMarks:
-    """This process's marks, resolved from settings on first use."""
+    """This process's marks, resolved from settings on first use: a directory
+    that cannot be used then keeps them in-process until a restart."""
     global _marks
     if _marks is None:
         _marks = GraphWriteMarks(_resolve_dir())

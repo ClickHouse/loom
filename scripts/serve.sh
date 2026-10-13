@@ -6,16 +6,25 @@
 # lock and runs the background workers.
 set -eu
 
+chosen=""
 if [ -z "${LOOM_WEB_WORKERS:-}" ]; then
   LOOM_WEB_WORKERS=$(python -m server.core.web_workers)
+  chosen=1
+fi
+# One directory for the files the processes share, chosen before they start.
+# A single process shares none, so it needs none; with no private directory
+# (a read-only root without a tmpfs) a chosen count falls back to one process.
+if [ -z "${LOOM_RUNTIME_DIR:-}" ] && [ "$LOOM_WEB_WORKERS" -gt 1 ]; then
+  if LOOM_RUNTIME_DIR=$(python -m server.core.runtime_files); then
+    export LOOM_RUNTIME_DIR
+  elif [ -n "$chosen" ]; then
+    echo "loom: starting one web process, which needs no shared directory" >&2
+    LOOM_WEB_WORKERS=1
+  else
+    exit 2
+  fi
 fi
 export LOOM_WEB_WORKERS
-# One directory for the files the processes share, chosen before they start;
-# a single process shares none, so it starts without one (a read-only root).
-if [ -z "${LOOM_RUNTIME_DIR:-}" ] && [ "$LOOM_WEB_WORKERS" -gt 1 ]; then
-  LOOM_RUNTIME_DIR=$(python -m server.core.runtime_files)
-  export LOOM_RUNTIME_DIR
-fi
 
 # LOOM_UVICORN_LOOP is uvicorn's --loop: `asyncio` switches back from uvloop
 # without a rebuild. LOOM_GRACEFUL_SHUTDOWN_S bounds the wait for in-flight

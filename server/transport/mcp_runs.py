@@ -247,9 +247,9 @@ async def ensure(
 async def _begin(run: SessionRun, *, now: float, first: bool) -> None:
     """`run.begin` for a registered run, unless another web process of this server
     began it already. A re-opened run keeps the session's first goal. A
-    `first` begin that fails forgets the run and the session waits out the idle
-    window before the next attempt; a failed check of a run already begun keeps
-    it, and the next check tries again."""
+    `first` begin that fails forgets the run and the session waits
+    CHECK_INTERVAL_S before the next attempt; a failed check of a run already
+    begun keeps it, and the next check tries again."""
     _attribute(run.quota_key)
     try:
         from server.tasks.api.models_run import RunBeginInput

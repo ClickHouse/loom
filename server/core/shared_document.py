@@ -29,6 +29,9 @@ _Version = tuple[int, int, int]  # inode, mtime_ns, size
 # How long `waiting_out_siblings` retries an update a sibling's lock refused; an
 # update holds the lock for one read and one atomic replace.
 LOCK_WAIT_S = 1.0
+# How often a poll asks again for a path that would not resolve; an update asks
+# every time.
+RESOLVE_RETRY_S = 5.0
 
 
 def _version(st: os.stat_result) -> _Version:
@@ -41,28 +44,42 @@ class LockBusy(OSError):
 
 class SharedDocument[T]:
     """`decode` turns the parsed JSON into the caller's state and `encode` turns
-    the state back; a document `decode` cannot read is corrupt. `path` may be a
-    function: it is called until it answers, and while it raises OSError a poll
-    keeps the current state and an update is refused."""
+    the state back; a document `decode` cannot read is corrupt. `where` is the
+    file's path, or finds it (`server_document`): while that raises OSError a
+    poll keeps the current state and an update is refused."""
 
     def __init__(
         self,
-        path: str | Callable[[], str],
+        where: str | Callable[[], str],
         decode: Callable[[Any], T],
         encode: Callable[[T], object],
+        *,
+        name: str = "",
     ) -> None:
-        self._path = path
+        # The file; None until `where` finds it.
+        self.path: str | None = None if callable(where) else where
+        self.name = name or str(self.path)
+        self._where = where if callable(where) else lambda: where
+        self._retry_at, self._unresolved = 0.0, ""
         self._decode, self._encode = decode, encode
         # The version last adopted, published or found corrupt.
         self._seen: _Version | None = None
         # The last read failure warned about, so a lasting one is logged once.
         self._warned = ""
 
-    @property
-    def path(self) -> str:
-        if callable(self._path):
-            self._path = self._path()
-        return self._path
+    def _file(self, *, now: bool) -> str:
+        """`path`, found on first use. Raises OSError while it cannot be; `now`
+        asks again at once, else at most every RESOLVE_RETRY_S."""
+        if self.path is not None:
+            return self.path
+        if not now and time.monotonic() < self._retry_at:
+            raise OSError(self._unresolved)  # the same reason, so it is warned about once
+        try:
+            self.path = self._where()
+        except OSError as e:
+            self._retry_at, self._unresolved = time.monotonic() + RESOLVE_RETRY_S, str(e)
+            raise
+        return self.path
 
     def poll(self) -> T | None:
         """The document if it changed since the last poll or update, else None.
@@ -72,7 +89,7 @@ class SharedDocument[T]:
         except OSError as e:
             if str(e) != self._warned:
                 self._warned = str(e)
-                log.warning("shared document unreadable (%s); keeping the current state", e)
+                log.warning("%s unreadable (%s); keeping the current state", self.name, e)
             return None
 
     def update(self, change: Callable[[T], T], default: T) -> T:
@@ -80,14 +97,15 @@ class SharedDocument[T]:
         when there is no document yet, or it is corrupt and this replaces it.
         Raises OSError, before anything is published, when it cannot be read or
         written."""
-        lock = open_private(self.path + ".lock", os.O_RDWR | os.O_CREAT)
+        path = self._file(now=True)
+        lock = open_private(path + ".lock", os.O_RDWR | os.O_CREAT)
         try:
-            _try_lock(lock, self.path)
+            _try_lock(lock, path)
             self._seen = None
             try:
                 latest = self._read_changed()
                 new = change(default if latest is None else latest)
-                self._seen = _publish(self.path, self._encode(new))
+                self._seen = _publish(path, self._encode(new))
             except BaseException:
                 self._seen = None  # the caller kept its state, so the next poll adopts `latest`
                 raise
@@ -96,14 +114,15 @@ class SharedDocument[T]:
             os.close(lock)
 
     def _read_changed(self) -> T | None:
+        path = self._file(now=False)
         try:
-            version = _version(os.lstat(self.path))
+            version = _version(os.lstat(path))
         except FileNotFoundError:
             return None
         if version == self._seen:
             return None
         try:
-            fd = open_private(self.path, os.O_RDONLY)
+            fd = open_private(path, os.O_RDONLY)
         except FileNotFoundError:
             return None
         with os.fdopen(fd, encoding="utf-8") as fh:
@@ -111,7 +130,7 @@ class SharedDocument[T]:
             try:
                 state = self._decode(json.load(fh))
             except (ValueError, LookupError, TypeError, AttributeError) as e:
-                log.warning("%s is corrupt (%s); ignored until it is replaced", self.path, e)
+                log.warning("%s is corrupt (%s); ignored until it is replaced", path, e)
                 state = None
         # Seen once read or found corrupt; a read that failed is tried again.
         self._seen = version
@@ -124,7 +143,7 @@ def server_document[T](
     """The document `name` this server's web processes share, in the runtime
     directory (`server_file`), found on first use: until a private directory
     exists, updates answer OVERRIDE_NOT_SHARED and each process keeps its own."""
-    return SharedDocument(lambda: server_file(name) + ".json", decode, encode)
+    return SharedDocument(lambda: server_file(name) + ".json", decode, encode, name=name)
 
 
 def share_override[T](
