@@ -780,7 +780,7 @@ WHAT: Fetch one memory by exact `memory_key`.
 | `source_class` | `str` | How the content entered memory: asserted \| extracted \| observed \| derived \| imported \| external; '' when not found. |
 | `agent` | `str` | Writer agent of the resolved row. |
 | `status` | `str \| None` | Lifecycle state from loom.memory.status. |
-| `code` | `list[dict[str, str]]` | The code this memory is linked to, each {code_namespace, path, symbol ('' for the file), state, changed_since, suggestion}. state is `fresh`, `moved` (followed to a new place), `changed` (its code changed since commit `changed_since`)… |
+| `code` | `list[CodeLink]` | The code this memory is linked to: each link's path, symbol, state (`fresh`, `moved`, `changed`, `unresolved` or `missing`) and the `revise` policy's suggestion. |
 | `superseded_by` | `str` | For a `status='superseded'` row, the memory_id of the row that replaced it ('' otherwise) — the bundle turns it into a `supersedes` edge on the newer row. |
 | `duplicate_of` | `str` | The row this one duplicates (status='duplicate'), and the verdict the row shows on read — `pending` while a deferred judge still holds it, else derived from `status` (active → clear, conflicted → conflict, duplicate, superseded). |
 | `conflict_verdict` | `str` | pending \| clear \| conflict \| duplicate \| superseded, as described above. |

@@ -540,7 +540,7 @@ async def test_links_name_only_repositories_the_caller_may_read(monkeypatch) -> 
     monkeypatch.setattr(code_link_reads, "readable_code", readable)
     monkeypatch.setattr(code_link_reads, "code_namespace_for", lambda org, ns, tags: "code-a")
     links = await code_link_reads.links_of("o", _row("m"))
-    assert [x["code_namespace"] for x in links] == ["code-open"]
+    assert [x.code_namespace for x in links] == ["code-open"]
 
 
 def test_a_memory_naming_more_than_the_cap_is_marked_incomplete() -> None:

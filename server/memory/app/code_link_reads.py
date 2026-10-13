@@ -12,6 +12,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
 from server.code.app import memory_links as code
+from server.memory.api.models_crud import CodeLink
 from server.memory.domain import code_change
 from server.memory.store import code_links as store
 from server.memory.store.code_links import LinkRow
@@ -126,7 +127,7 @@ def head_of(row: Any) -> dict[str, Any]:
     }
 
 
-async def links_of(org: str, memory: dict[str, Any]) -> list[dict[str, str]]:
+async def links_of(org: str, memory: dict[str, Any]) -> list[CodeLink]:
     """The code `memory` (a head) is linked to, in repositories the caller may read, for
     a read's `code` field; [] when the links cannot be read."""
     if not code.code_namespaces():
@@ -138,14 +139,16 @@ async def links_of(org: str, memory: dict[str, Any]) -> list[dict[str, str]]:
         log.debug("code links unavailable: %s", e)
         return []
     return [
-        {
-            "code_namespace": a["code_namespace"],
-            "path": a["path"],
-            "symbol": a["qualified_name"],
-            "state": a["state"],
-            "changed_since": a["changed_since"],
-            "suggestion": a["suggestion"],
-        }
+        CodeLink.model_validate(
+            {
+                "code_namespace": a["code_namespace"],
+                "path": a["path"],
+                "symbol": a["qualified_name"],
+                "state": a["state"],
+                "changed_since": a["changed_since"],
+                "suggestion": a["suggestion"],
+            }
+        )
         for a in sorted(rows, key=lambda a: (a["path"], a["qualified_name"]))
         if a["state"] != "pending" and a["code_namespace"] in seen
     ]
@@ -248,8 +251,7 @@ async def annotate_hits(input: Any, hits: list[Any]) -> None:
             a for a in links if a["state"] in code_change.STATE_RANK and a["code_namespace"] in seen
         ]
         h._code_links = readable
-        states = [a["state"] for a in readable]
-        h.code_state = max(states, key=code_change.STATE_RANK.__getitem__) if states else ""
+        h.code_state = code_change.worst([a["state"] for a in readable])
         kept.append(h)
     hits[:] = kept
 

@@ -3568,7 +3568,7 @@ export interface MemorySearchHit {
   version?: number;
   created_at?: string;
   namespace?: string;
-  code_state?: string;
+  code_state?: "fresh" | "moved" | "changed" | "unresolved" | "missing" | "";
   body_truncated?: boolean;
   next?: string;
   source_resource_id?: string;
@@ -3774,7 +3774,7 @@ export interface MemoryGetOutput {
   source_class?: string;
   agent?: string;
   status?: string | null;
-  code?: Array<Record<string, string>>;
+  code?: CodeLink[];
   superseded_by?: string;
   duplicate_of?: string;
   conflict_verdict?: string;
@@ -3795,6 +3795,15 @@ export interface MemoryGetOutput {
   locked_by?: string;
   recall_by_agent?: RecallByAgent[];
   sensitivity?: string;
+}
+
+export interface CodeLink {
+  code_namespace: string;
+  path: string;
+  symbol?: string;
+  state: "fresh" | "moved" | "changed" | "unresolved" | "missing";
+  changed_since?: string;
+  suggestion?: string;
 }
 
 export interface RecallByAgent {
@@ -4304,7 +4313,7 @@ export interface MemoryForFileHit {
   supersedes_key?: string;
   supersedes?: string;
   matched_files?: string[];
-  code_state?: string;
+  code_state?: "fresh" | "moved" | "changed" | "unresolved" | "missing" | "";
 }
 
 export interface MemoryForFileOutput {

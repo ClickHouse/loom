@@ -17,7 +17,7 @@ from server.memory.api.models_for_file import (
     MemoryForFileOutput,
     _MemoryForFileHit,
 )
-from server.memory.domain.code_change import STATE_RANK
+from server.memory.domain.code_change import STATE_RANK, worst
 
 log = logging.getLogger(__name__)
 
@@ -244,14 +244,10 @@ async def _rows_for(
         {
             **r,
             "namespace": namespace,
-            "code_state": _worst(states_of.get(str(r.get("memory_id")), [])),
+            "code_state": worst(states_of.get(str(r.get("memory_id")), [])),
         }
         for r in rows
     ]
-
-
-def _worst(states: list[str]) -> str:
-    return max(states, key=STATE_RANK.__getitem__, default="")
 
 
 async def _linked(input: MemoryForFileInput, path: str, nss: list[str]) -> dict[str, list[str]]:
@@ -367,7 +363,7 @@ async def handle_memory_for_file(input: MemoryForFileInput) -> MemoryForFileOutp
                 supersedes_key=str(r.get("supersedes_key") or ""),
                 supersedes=str(r.get("supersedes") or ""),
                 matched_files=[str(f) for f in (r.get("matched_files") or [])],
-                code_state=str(r.get("code_state") or ""),
+                code_state=r.get("code_state", ""),
             )
         )
 

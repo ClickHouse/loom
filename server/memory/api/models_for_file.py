@@ -20,8 +20,11 @@ merged in the same order, team rows marked with their author.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
+
+from server.memory.domain.code_change import CodeState
 
 
 class MemoryForFileInput(BaseModel):
@@ -74,7 +77,7 @@ class _MemoryForFileHit(BaseModel):
     # The worst state of the row's links to code in the file ('' when it only names the
     # file in `files`): `fresh`, `moved`, `changed` (that code changed since the row was
     # written), `unresolved` (renamed or removed and not followed) or `missing` (gone).
-    code_state: str = ""
+    code_state: CodeState | Literal[""] = ""
 
 
 class MemoryForFileOutput(BaseModel):

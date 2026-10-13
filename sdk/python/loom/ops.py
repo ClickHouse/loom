@@ -9503,7 +9503,9 @@ class MemorySearchHit(TypedDict, total=False):
     version: NotRequired[int]
     created_at: NotRequired[str]
     namespace: NotRequired[str]
-    code_state: NotRequired[str]
+    code_state: NotRequired[
+        Union[Literal["fresh", "moved", "changed", "unresolved", "missing"], Literal[""]]
+    ]
     body_truncated: NotRequired[bool]
     next: NotRequired[str]
     source_resource_id: NotRequired[str]
@@ -9705,7 +9707,7 @@ class MemoryGetOutput(TypedDict, total=False):
     source_class: NotRequired[str]
     agent: NotRequired[str]
     status: NotRequired[Optional[str]]
-    code: NotRequired[list[dict[str, str]]]
+    code: NotRequired[list["CodeLink"]]
     superseded_by: NotRequired[str]
     duplicate_of: NotRequired[str]
     conflict_verdict: NotRequired[str]
@@ -9726,6 +9728,17 @@ class MemoryGetOutput(TypedDict, total=False):
     locked_by: NotRequired[str]
     recall_by_agent: NotRequired[list["RecallByAgent"]]
     sensitivity: NotRequired[str]
+
+
+class CodeLink(TypedDict, total=False):
+    "A memory's link to code."
+
+    code_namespace: Required[str]
+    path: Required[str]
+    symbol: NotRequired[str]
+    state: Required[Literal["fresh", "moved", "changed", "unresolved", "missing"]]
+    changed_since: NotRequired[str]
+    suggestion: NotRequired[str]
 
 
 class RecallByAgent(TypedDict, total=False):
@@ -10450,7 +10463,9 @@ class MemoryForFileHit(TypedDict, total=False):
     supersedes_key: NotRequired[str]
     supersedes: NotRequired[str]
     matched_files: NotRequired[list[str]]
-    code_state: NotRequired[str]
+    code_state: NotRequired[
+        Union[Literal["fresh", "moved", "changed", "unresolved", "missing"], Literal[""]]
+    ]
 
 
 class MemoryGetInput(TypedDict, total=False):

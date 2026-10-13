@@ -13,6 +13,7 @@ from pydantic import (
 )
 
 from server.memory.api.models_common import MemoryType, _Identity
+from server.memory.domain.code_change import CodeState
 from server.memory.domain.rerank_names import RerankName
 from server.operations.base import MCP_HIDDEN
 
@@ -602,7 +603,7 @@ class _MemorySearchHit(BaseModel):
     # The hit's worst link to code ('' when it names no indexed code): `fresh`, `moved`,
     # `changed` (that code changed since the memory was written: check it), `unresolved`
     # (renamed or removed, and not followed: check it) or `missing`.
-    code_state: str = ""
+    code_state: CodeState | Literal[""] = ""
     # bodies="unit": true when the whole value did not fit the budget and
     # content_excerpt is still the clip; `next` is the one call that fetches it.
     body_truncated: bool = False

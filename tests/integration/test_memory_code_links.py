@@ -235,7 +235,7 @@ async def _links(memory_id: str) -> list[dict[str, str]]:
     from server.memory.store.code_links import memory_heads
 
     heads = await memory_heads(ORG, [memory_id])
-    return await links_of(ORG, heads[0]) if heads else []
+    return [link.model_dump() for link in await links_of(ORG, heads[0])] if heads else []
 
 
 async def _row(memory_id: str) -> Any:
@@ -374,7 +374,7 @@ async def test_memories_follow_their_code(env, monkeypatch) -> None:
     got = await handle_memory_get(
         MemoryGetInput(org=ORG, namespace=MEM, agent="claude-code", memory_key="fetch-retry")
     )
-    assert [(c["path"], c["state"]) for c in got.code] == [("src/widgets/readers.py", "changed")]
+    assert [(c.path, c.state) for c in got.code] == [("src/widgets/readers.py", "changed")]
     states = await _search(MEM, "fetch_page retries on code 115")
     assert states.get("fetch-retry") == "changed", states
     report = await handle_namespace_validate(NamespaceValidateInput(org=ORG, namespace=MEM))
@@ -1409,7 +1409,7 @@ async def test_a_late_link_of_an_older_value_is_relinked_to_the_newest(env) -> N
     got = await handle_memory_get(
         MemoryGetInput(org=ORG, namespace=MEM, agent="claude-code", memory_key="late")
     )
-    assert [c["symbol"].rsplit("::", 1)[-1] for c in got.code] == ["fetch_rows"]
+    assert [c.symbol.rsplit("::", 1)[-1] for c in got.code] == ["fetch_rows"]
 
 
 async def test_a_rename_after_an_edit_still_reads_changed(env) -> None:
@@ -3322,7 +3322,7 @@ async def test_a_class_rename_drops_the_suggestion_its_method_carried(env, monke
     got = await handle_memory_get(
         MemoryGetInput(org=ORG, namespace=MEM, agent="claude-code", memory_key="suggested")
     )
-    assert [c.get("suggestion", "") for c in got.code] == [""]
+    assert [c.suggestion for c in got.code] == [""]
     (lesson,) = await _lessons(TRUNK, "Sink.fetch_rows")
     assert (lesson["code_state"], lesson["suggestion"]) == ("changed", "")
 

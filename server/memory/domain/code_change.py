@@ -23,8 +23,9 @@ from typing import Any, Literal, get_args
 
 from server.memory.domain.trust import verification_state
 
-# a link's states from best to worst: a memory shows its worst link's
-STATE_RANK = {"fresh": 0, "moved": 1, "changed": 2, "unresolved": 3, "missing": 4}
+# a served link's states from best to worst: a memory shows its worst link's
+CodeState = Literal["fresh", "moved", "changed", "unresolved", "missing"]
+STATE_RANK: dict[str, int] = {s: i for i, s in enumerate(get_args(CodeState))}
 
 CodeChangePolicy = Literal["retire_removed", "flag", "revise"]
 POLICIES: tuple[CodeChangePolicy, ...] = get_args(CodeChangePolicy)
@@ -33,6 +34,12 @@ RETIRE_REMOVED, FLAG, REVISE = POLICIES
 
 def policy_of(raw: str) -> CodeChangePolicy:
     return next((p for p in POLICIES if p == raw), RETIRE_REMOVED)
+
+
+def worst(states: Sequence[str]) -> CodeState | Literal[""]:
+    """The worst of `states` that are served; '' when none is."""
+    served = [s for s in get_args(CodeState) if s in states]
+    return served[-1] if served else ""
 
 
 def code_removed(states: Sequence[str]) -> bool:
