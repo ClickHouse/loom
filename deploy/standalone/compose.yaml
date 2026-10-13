@@ -5,7 +5,9 @@
 
 services:
   clickhouse:
-    image: clickhouse/clickhouse-server:26.7.28.6
+    # LOOM_CLICKHOUSE_IMAGE overrides the tested release, e.g.
+    # clickhouse/clickhouse-server:head for a master build (unsupported).
+    image: ${LOOM_CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:26.7.28.6}
     restart: unless-stopped
     environment:
       CLICKHOUSE_DB: loom

@@ -233,6 +233,11 @@ out of `.env`.
   Claude Code and Codex plugins switch to it once run.begin answers). Known gap: a namespace-wide caller whose claim
   hits a Keeper error while a narrowed user wins the claim on the same new id at the
   same moment can end up sharing that id with them.
+- **Another ClickHouse image.** The compose files run the release CI tests; set
+  `LOOM_CLICKHOUSE_IMAGE` in `.env` to run another, such as
+  `clickhouse/clickhouse-server:head` for a build of ClickHouse master. A master build is
+  unsupported: Loom depends on experimental features master can change, and a data volume
+  it writes may not open on an older release.
 - **ClickHouse Cloud.** Loom's DDL uses plain `MergeTree` engines, which Cloud runs as
   `SharedMergeTree`, so replication and durability come with the service. The one
   migration that needs the NLP functions is skipped and recorded, so the lexical leg
