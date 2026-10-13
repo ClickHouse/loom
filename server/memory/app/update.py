@@ -15,6 +15,7 @@ from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value as _content_sha256
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
+from server.core.vectors import codes_state
 from server.embedding import get_embedder
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_crud import (
@@ -611,6 +612,8 @@ async def _write_revision(
     key_embedding: list[float] = []
     key_text = ""
     if embedder is not None:
+        # Before the version row lands beside an embedding the coded table refuses.
+        codes_state.refuse_width("memory_embeddings", embedder.dim)
         # Same embed text as memory.set (topic-keying aside). Recompute the
         # key embedding too (its vector lives only on the embeddings table)
         # and mirror the prior ranking signals forward, else FINAL surfaces

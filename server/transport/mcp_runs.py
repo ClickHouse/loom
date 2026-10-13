@@ -63,7 +63,6 @@ class SessionRun:
     session_id: str
     last_seen: float
     goal: str = ""
-    calls: int = 0
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -152,7 +151,6 @@ async def ensure(
     run = _RUNS.get(session_id)
     if run is not None:
         run.last_seen = now
-        run.calls += 1
         return run
     failed_at = _BEGIN_FAILED_AT.get(session_id)
     if failed_at is not None and now - failed_at < idle_seconds():
@@ -178,7 +176,6 @@ async def ensure(
         session_id=session_id,
         last_seen=now,
         goal=goal,
-        calls=1,
     )
     _RUNS[session_id] = run
     _BEGIN_FAILED_AT.pop(session_id, None)

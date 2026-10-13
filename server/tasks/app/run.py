@@ -227,9 +227,9 @@ def _user_of(input: RunBeginInput) -> str:
 async def idle_session_run(
     org: str, namespace: str, agent: str, run_id: str, *, idle_s: float | None
 ) -> int | None:
-    """The calls of an implicit session run that no web process still serves, or
-    None when it is not active or a call reached the ledger in the last `idle_s`
-    seconds (None: closed by the client, so no wait)."""
+    """The ledger's call count for a session's implicit run; None when the run
+    is no longer active or, with `idle_s`, when a call reached the ledger within
+    the last `idle_s` seconds."""
     ch = get_client()
     with sequential_reads():
         existing = await runs_store.fetch_run(ch, org, namespace, run_id)

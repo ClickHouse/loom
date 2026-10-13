@@ -619,8 +619,6 @@ async def _memory_set_phases(input: MemorySetInput) -> MemorySetOutput:
     The shared request state is `w` (_SetWrite). Early returns: a lock/pin
     refusal, the non-embedded path, a dry-run 'rejected', a merge, a dry run.
     """
-    # Before any work it pays for: a vector the coded table cannot take fails the write.
-    codes_state.refuse_width("memory_embeddings", get_embedder().dim)
     ch = get_client()
     version = next_version()
 
@@ -656,7 +654,9 @@ async def _memory_set_phases(input: MemorySetInput) -> MemorySetOutput:
 
     # Searchable: build + insert the embedding row too. The two inserts
     # hit different tables and don't depend on each other; parallelize to
-    # pay 1×RTT instead of 2 (RTT dominates on CH Cloud).
+    # pay 1×RTT instead of 2 (RTT dominates on CH Cloud). A vector the coded
+    # table cannot take fails the write before the calls it pays for.
+    codes_state.refuse_width("memory_embeddings", get_embedder().dim)
     await _set_embed(w)
 
     _cfg, conflict_result, peers_out, _rejected_dry_run = await _set_conflict_verdict(w, _cfg_task)

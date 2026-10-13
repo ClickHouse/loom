@@ -625,8 +625,6 @@ async def handle_memory_bulk_set(
     each unique (nanosecond) to preserve LWW semantics."""
     ch = get_client()
     embedder = get_embedder()
-    # Before any work it pays for: a vector the coded table cannot take fails the write.
-    codes_state.refuse_width("memory_embeddings", embedder.dim)
     now_utc = datetime.now(UTC)
     # The write names its phases on the response.
     from server.memory.app.search.clock import StageClock
@@ -643,6 +641,9 @@ async def handle_memory_bulk_set(
 
     _bulk_clock.mark("entity_resolution")
     await _bulk_build_rows(input, state, identity_dupes, entity_resolution, now_utc)
+    if state.pending:
+        # Before the calls it pays for: a vector the coded table cannot take fails the batch.
+        codes_state.refuse_width("memory_embeddings", embedder.dim)
 
     emb_idx_of, value_vectors, entity_embeddings = await _bulk_embed_rows(
         input, state, embedder, entity_resolution, _bulk_clock, now_utc

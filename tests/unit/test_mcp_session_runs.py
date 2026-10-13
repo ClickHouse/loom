@@ -132,7 +132,7 @@ def test_ensure_mints_one_run_per_session_and_reuses_it(ledger: _Ledger) -> None
         r3 = await mcp_runs.ensure("sess-2", DEFAULTS, goal="other session", now=102.0)
         assert r1 is not None and r2 is r1 and r1.run_id == "mcp-sess-1"
         assert r3 is not None and r3.run_id == "mcp-sess-2"
-        assert r1.calls == 2 and r1.last_seen == 101.0
+        assert r1.last_seen == 101.0
         await mcp_runs.drain_begins()  # run.begin lands off the call's path
         b = ledger.begins[0]
         assert b.run_id == "mcp-sess-1"

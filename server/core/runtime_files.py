@@ -28,17 +28,24 @@ _pruned: set[str] = set()
 
 
 def runtime_dir() -> str:
-    """`$XDG_RUNTIME_DIR/loom`, else `/run/loom`, else `/tmp`: the first that
-    exists or can be created. The first two are per-user or per-service tmpfs
-    paths another local account cannot list; `/tmp` is the fallback for a
-    container without one. Permissions play no part, so every worker of a
-    server names the same files: a directory that turns unwritable fails their
-    updates rather than sending one worker elsewhere."""
+    """`LOOM_RUNTIME_DIR` when set: `scripts/serve.sh` resolves it once, before
+    the workers start, so every one of them names the same files. Else
+    `choose_runtime_dir()`."""
+    from server.settings import settings
+
+    return str(settings.runtime_dir).strip() or choose_runtime_dir()
+
+
+def choose_runtime_dir() -> str:
+    """`$XDG_RUNTIME_DIR/loom` when the variable names a writable directory,
+    else `/run/loom` when it is one or can be created, else `/tmp`. The first
+    two are per-user or per-service tmpfs paths another local account cannot
+    list; `/tmp` is the fallback for a container without one."""
     xdg = str(os.environ.get("XDG_RUNTIME_DIR") or "").strip()
     for base in ([os.path.join(xdg, "loom")] if xdg else []) + [RUN_DIR]:
         with contextlib.suppress(OSError):
             os.makedirs(base, mode=0o700, exist_ok=True)
-        if os.path.isdir(base):
+        if os.path.isdir(base) and os.access(base, os.W_OK | os.X_OK):
             return base
     return _TMP_DIR
 
@@ -109,3 +116,7 @@ def open_private(path: str, flags: int) -> int:
         os.close(fd)
         raise
     return fd
+
+
+if __name__ == "__main__":
+    print(choose_runtime_dir())

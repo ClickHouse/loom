@@ -68,6 +68,9 @@ x-loom-common: &loom-common
 
 services:
   loom:
+    # The per-server runtime files (server/core/runtime_files.py), empty on every start.
+    tmpfs:
+      - /run/loom:uid=999,gid=999,mode=0700
     <<: *loom-common
     # Server lifespan applies pending schema migrations on boot (see
     # server/main.py:lifespan). The `loom migrate` CLI is still
@@ -105,6 +108,9 @@ services:
       start_period: 45s
 
   loom-workers:
+    # The per-server runtime files (server/core/runtime_files.py), empty on every start.
+    tmpfs:
+      - /run/loom:uid=999,gid=999,mode=0700
     <<: *loom-common
     container_name: loom-workers
     # Listens on loopback only: nothing outside this container calls it.

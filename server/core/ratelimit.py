@@ -19,6 +19,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import math
 import os
 import time
 from collections.abc import Callable
@@ -287,13 +288,20 @@ class _Overrides:
     actor: dict[tuple[str, str, str], Limit]
 
 
+def _stored_limit(capacity: Any, rate: Any) -> Limit:
+    """A limit as the setters store it; anything else makes the document corrupt."""
+    for value in (capacity, rate):
+        number = isinstance(value, int | float) and not isinstance(value, bool)
+        if not number or not math.isfinite(value) or value < 0:
+            raise ValueError(f"not a rate limit: {value!r}")
+    return Limit(float(capacity), float(rate))
+
+
 def _decode_overrides(data: Any) -> _Overrides:
     return _Overrides(
-        ns={(str(a), str(b)): Limit(float(c), float(r)) for a, b, c, r in data["ns"]},
-        org={(str(a), str(b)): Limit(float(c), float(r)) for a, b, c, r in data["org"]},
-        actor={
-            (str(a), str(b), str(o)): Limit(float(c), float(r)) for a, b, o, c, r in data["actor"]
-        },
+        ns={(str(a), str(b)): _stored_limit(c, r) for a, b, c, r in data["ns"]},
+        org={(str(a), str(b)): _stored_limit(c, r) for a, b, c, r in data["org"]},
+        actor={(str(a), str(b), str(o)): _stored_limit(c, r) for a, b, o, c, r in data["actor"]},
     )
 
 

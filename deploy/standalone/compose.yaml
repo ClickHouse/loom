@@ -33,6 +33,9 @@ services:
       retries: 30
 
   loom:
+    # The per-server runtime files (server/core/runtime_files.py), empty on every start.
+    tmpfs:
+      - /run/loom:uid=999,gid=999,mode=0700
     image: "${LOOM_IMAGE_REPOSITORY:-ghcr.io/clickhouse/loom}:${LOOM_VERSION:-latest}"
     restart: unless-stopped
     stop_grace_period: 45s

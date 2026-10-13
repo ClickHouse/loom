@@ -294,9 +294,10 @@ def test_a_refused_update_still_adopts_a_siblings_change(
 def test_a_worker_that_starts_after_the_runtime_dir_turns_read_only_still_shares_it(
     settings_override, tmp_path: Path
 ) -> None:
-    """No worker falls back to another directory, where its updates would
-    succeed out of its siblings' sight."""
-    settings_override(web_workers=3)
+    """With the launcher's directory, no worker falls back to another one, where
+    its updates would succeed out of its siblings' sight."""
+    settings_override(web_workers=3, runtime_dir=str(tmp_path / "run" / "loom"))
+    (tmp_path / "run" / "loom").mkdir(parents=True)
     a = BudgetOverrides()
     a.set_for_consumer("c1", "*", 4)
     shared = tmp_path / "run" / "loom"
@@ -331,3 +332,18 @@ def test_a_budget_that_is_not_one_makes_the_file_corrupt(
     assert b.get_for_consumer("c1", "*") == 3.0  # the corrupt version is not adopted
     b.set_for_consumer("c2", "*", 7)
     assert json.loads(path.read_text())["consumer"] == [["c1", "*", 3.0], ["c2", "*", 7]]
+
+
+@pytest.mark.parametrize("bad", ["5", "nan", True, -1, float("inf")])
+def test_a_rate_limit_that_is_not_one_makes_the_file_corrupt(
+    limiters: tuple[Limiter, Limiter, Path], bad: object
+) -> None:
+    a, b, overrides = limiters
+    a.set_namespace_limit("ns1", "memory", Limit(capacity=1, rate=0.0))
+    b.check("ns0", "memory.set", org="o")
+    assert b._ns_overrides == {("ns1", "memory"): Limit(capacity=1, rate=0.0)}
+    overrides.write_text(json.dumps({"ns": [["ns1", "memory", bad, 0.0]], "org": [], "actor": []}))
+    b.check("ns0", "memory.set", org="o")
+    assert b._ns_overrides == {("ns1", "memory"): Limit(capacity=1, rate=0.0)}  # not adopted
+    a.reset_all()
+    b.reset_all()

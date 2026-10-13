@@ -10,6 +10,11 @@ if [ -z "${LOOM_WEB_WORKERS:-}" ]; then
   LOOM_WEB_WORKERS=$(python -m server.core.web_workers)
 fi
 export LOOM_WEB_WORKERS
+# One directory for the files the processes share, chosen before they start.
+if [ -z "${LOOM_RUNTIME_DIR:-}" ]; then
+  LOOM_RUNTIME_DIR=$(python -m server.core.runtime_files)
+fi
+export LOOM_RUNTIME_DIR
 
 # LOOM_UVICORN_LOOP is uvicorn's --loop: `asyncio` switches back from uvloop
 # without a rebuild. LOOM_GRACEFUL_SHUTDOWN_S bounds the wait for in-flight

@@ -161,10 +161,12 @@ COPY dev ./dev
 # at /v1/admin/* stay reachable via curl regardless.
 COPY --from=frontend-builder /frontend/dist ./frontend/dist
 
-# Non-root runtime
-RUN groupadd -r loom && useradd -r -g loom -d /app loom \
+# Non-root runtime. uid/gid 999: the compose files mount /run/loom (the
+# per-server runtime files) as a tmpfs owned by it.
+RUN groupadd -r -g 999 loom && useradd -r -u 999 -g loom -d /app loom \
     && mkdir -p /app/var/code_repos /app/var/blobs /app/var/gomodcache /app/var/gocache /app/var/cron/locks \
-    && chown -R loom:loom /app
+    && chown -R loom:loom /app \
+    && install -d -o loom -g loom -m 0700 /run/loom
 USER loom
 
 # LOOM_BIND_HOST is the address the port is published on, which the startup

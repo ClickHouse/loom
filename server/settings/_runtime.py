@@ -38,6 +38,11 @@ class RuntimeSettings(BaseModel):
     # graph_write_marks_dir is set or web_workers > 1; on = always; off =
     # process-local only.
     graph_write_marks_shared: Literal["auto", "on", "off"] = "auto"
+    # Directory of the files one server's web processes share (rate-limit table,
+    # runtime overrides, graph marks); "" = chosen per process by
+    # server/core/runtime_files.py. scripts/serve.sh sets it once, before the
+    # workers start, so all of them name the same files.
+    runtime_dir: str = ""
     # Directory of the shared marks; "" = one per server in the runtime dir
     # (server/core/runtime_files.py). Set it to a directory every process that
     # writes the graph mounts, the workers container too.

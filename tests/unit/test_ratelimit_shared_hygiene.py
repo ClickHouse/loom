@@ -88,10 +88,6 @@ def test_default_path_prefers_the_runtime_dir_and_falls_back_to_tmp(
     (tmp_path / "run-user").mkdir()
     assert runtime_dir() == str(tmp_path / "run-user" / "loom")
     assert stat.S_IMODE((tmp_path / "run-user" / "loom").stat().st_mode) == 0o700
-    # a directory that turns unwritable is still the one every worker names
-    (tmp_path / "run-user" / "loom").chmod(0o500)
-    assert runtime_dir() == str(tmp_path / "run-user" / "loom")
-    (tmp_path / "run-user" / "loom").chmod(0o700)
     assert default_path() == server_file("ratelimit") + ".buckets"
     assert os.path.dirname(default_path()) == str(tmp_path / "run-user" / "loom")
     # no XDG dir and no writable /run/loom: the /tmp fallback
@@ -109,14 +105,44 @@ def test_default_path_prefers_the_runtime_dir_and_falls_back_to_tmp(
     monkeypatch.setattr(rs, "RUN_DIR", str(tmp_path / "run" / "loom"))
     assert runtime_dir() == str(tmp_path / "run" / "loom")
     assert stat.S_IMODE((tmp_path / "run" / "loom").stat().st_mode) == 0o700
-    # a stale XDG_RUNTIME_DIR (the directory is gone) falls through
+    if os.geteuid() == 0:
+        return
+    # a stale XDG_RUNTIME_DIR (the directory is gone) and an unwritable one fall through
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "logged-out" / "1000"))
     (tmp_path / "logged-out").mkdir(mode=0o500)
+    (tmp_path / "run-user" / "loom").chmod(0o500)
     try:
-        if os.geteuid() != 0:
-            assert runtime_dir() == str(tmp_path / "run" / "loom")
+        assert runtime_dir() == str(tmp_path / "run" / "loom")
+        monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run-user"))
+        assert runtime_dir() == str(tmp_path / "run" / "loom")
     finally:
         (tmp_path / "logged-out").chmod(0o700)
+        (tmp_path / "run-user" / "loom").chmod(0o700)
+
+
+def test_the_launchers_choice_binds_every_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, settings_override
+) -> None:
+    """scripts/serve.sh resolves the directory once and exports it; the
+    processes then take it as it is, whatever its permissions."""
+    import subprocess
+    import sys
+
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "xdg"))
+    (tmp_path / "xdg").mkdir()
+    chosen = subprocess.run(
+        [sys.executable, "-m", "server.core.runtime_files"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert chosen == str(tmp_path / "xdg" / "loom")
+    settings_override(runtime_dir=chosen)
+    (tmp_path / "xdg" / "loom").chmod(0o500)
+    try:
+        assert runtime_dir() == chosen
+    finally:
+        (tmp_path / "xdg" / "loom").chmod(0o700)
 
 
 def test_the_limiter_uses_the_hardened_open(tmp_path: Path, settings_override) -> None:

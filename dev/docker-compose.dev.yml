@@ -62,6 +62,9 @@ services:
       retries: 20
 
   loom:
+    # The per-server runtime files (server/core/runtime_files.py), empty on every start.
+    tmpfs:
+      - /run/loom:uid=999,gid=999,mode=0700
     build:
       context: ..
       dockerfile: Dockerfile

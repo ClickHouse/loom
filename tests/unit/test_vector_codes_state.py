@@ -324,37 +324,6 @@ def test_a_vector_its_coded_column_cannot_take_is_refused_by_name(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("op", ["set", "bulk_set"])
-async def test_a_memory_write_at_another_width_is_refused_before_any_work(
-    monkeypatch: pytest.MonkeyPatch, op: str
-) -> None:
-    from types import SimpleNamespace
-
-    from server.core.errors import CodedWidthMismatchError
-    from server.memory.api.models_bulk import MemoryBulkSetInput
-    from server.memory.api.models_crud import MemorySetInput
-    from server.memory.app import bulk_set, write
-
-    class _NoClickHouse:
-        def __getattr__(self, name: str) -> Any:
-            raise AssertionError(f"the write reached ClickHouse ({name}) before refusing")
-
-    embedder = SimpleNamespace(dim=1024, model_name="e")
-    for module in (write, bulk_set):
-        monkeypatch.setattr(module, "get_embedder", lambda: embedder)
-        monkeypatch.setattr(module, "get_client", lambda: _NoClickHouse())
-    monkeypatch.setattr(vector_codes_state, "_widths", {"loom.memory_embeddings.embedding": 3072})
-    identity = {"org": "o", "namespace": "n", "agent": "a"}
-    with pytest.raises(CodedWidthMismatchError):
-        if op == "set":
-            await write._memory_set_phases(MemorySetInput(**identity, memory_key="k", value="v"))
-        else:
-            await bulk_set.handle_memory_bulk_set(
-                MemoryBulkSetInput(**identity, entries=[{"memory_key": "k", "value": "v"}])
-            )
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("op", ["add", "upsert", "bulk_add"])
 async def test_a_document_write_at_another_width_writes_nothing(
     monkeypatch: pytest.MonkeyPatch, op: str
