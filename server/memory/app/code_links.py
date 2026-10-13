@@ -1231,6 +1231,8 @@ async def _revise(
     ]
     if policy != code_change.REVISE or not changed or code_change.held(row):
         return {}, set()
+    if row.get("sensitivity") == "high":
+        return {}, set()  # its value never goes to the judge's model: it stays changed
     claim = _claim(row["value"])
     if claim is None:
         return {}, set()

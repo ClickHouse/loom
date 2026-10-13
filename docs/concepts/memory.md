@@ -319,10 +319,11 @@ one version above the row it read, so a link another writer moved meanwhile keep
 newer state. `revise` judges a link once per edit, within a per-pass budget shared out
 across repositories; what is left stays due for the next pass. A namespace switched to
 `revise` judges a link at its code's next edit, not the changes it already flagged. The
-judge reads every declaration the fingerprint covers, overload signatures included, and a
-change it could not see is not judged: a method its renamed class carried drops any
-correction it had and stays `changed` until the memory is rewritten. A
-lost link is weighed only against the files touched since its code was last in its file
+judge reads every declaration the fingerprint covers, overload signatures included. A
+memory labelled `high` sensitivity is never judged: its value never goes to the model, and
+its link stays `changed`. A change it could not see is not judged either: a method its
+renamed class carried drops any correction it had and stays `changed` until the memory is
+rewritten. A lost link is weighed only against the files touched since its code was last in its file
 that define its name; past 32 such files a link that was in place reads `unresolved`,
 and one already `missing` stays `missing`.
 

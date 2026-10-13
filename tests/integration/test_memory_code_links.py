@@ -2897,6 +2897,34 @@ async def test_a_method_its_renamed_class_carried_is_never_judged(env, monkeypat
     assert [(x["memory_key"], x["code_state"]) for x in lessons] == [("carried", "changed")]
 
 
+@pytest.mark.parametrize("labelled", ["at_write", "after_linking"])
+async def test_a_high_sensitivity_memory_is_never_judged(env, monkeypatch, labelled) -> None:
+    from server.memory.app import code_link_judge
+
+    c1 = env.commit({"src/s.py": "def secret_rows():\n    return 1\n"})
+    await _index(TRUNK, env, c1, ["src/s.py"])
+    await _set_policy(MEM, "revise")
+    claim = f"`secret_rows` returns one ({MEM})"
+    first = {"sensitivity": "high"} if labelled == "at_write" else {}
+    mid = await _remember(MEM, "secret", claim, **first)
+    await _pass()
+    if labelled == "after_linking":
+        assert await _remember(MEM, "secret", claim, sensitivity="high") == mid
+        await _pass()
+    calls: list[str] = []
+
+    async def judge(judged: str, before: str, after: str) -> tuple[str, str]:
+        calls.append(judged)
+        return "contradicted", "`secret_rows` returns two"
+
+    monkeypatch.setattr(code_link_judge, "judge_claim", judge)
+    await _relink_once(env, "src/s.py", "def secret_rows():\n    return 2\n")
+    await _pass()
+    assert calls == []  # its value never reaches the judge's model
+    (link,) = await _links(mid)
+    assert (link["state"], link["suggestion"]) == ("changed", "")
+
+
 async def test_a_class_rename_drops_the_suggestion_its_method_carried(env, monkeypatch) -> None:
     from server.memory.api.models_crud import MemoryGetInput
     from server.memory.app import code_link_judge
