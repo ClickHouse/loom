@@ -6,6 +6,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
+from server.core.errors import EmbedTimeoutError
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app.search.budget import SearchBudget
 from server.memory.app.search.query_spelling import embed_query
@@ -44,17 +45,9 @@ async def _bounded_query_embed(
             if actual_work is not None:
                 actual_work["embed_timeouts"] = int(actual_work.get("embed_timeouts", 0) or 0) + 1
             log.warning("query embed exceeded %.1fs (attempt %d/%d)", bound, attempt, attempts)
-    from fastapi import HTTPException
-
-    raise HTTPException(
-        status_code=503,
-        detail={
-            "code": "EMBED_TIMEOUT",
-            "message": (
-                f"the embedding provider did not answer within {bound:.1f}s on "
-                f"{attempts} attempt(s); retry the search"
-            ),
-        },
+    raise EmbedTimeoutError(
+        f"the embedding provider did not answer within {bound:.1f}s on "
+        f"{attempts} attempt(s); retry the search"
     )
 
 

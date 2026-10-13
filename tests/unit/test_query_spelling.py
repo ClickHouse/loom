@@ -528,29 +528,57 @@ async def test_an_outage_with_only_the_respelled_text_cached_serves_it_cached_or
         )
 
 
-async def test_a_hung_embedder_answers_embed_timeout_within_one_bound_on_a_cached_rewrite(
-    monkeypatch,
-):
-    from fastapi import HTTPException
+class _Hung:
+    """A provider that hangs on every text but those the embedding cache holds."""
 
-    from server.memory.app.search.embed import _bounded_query_embed
+    def __init__(self, cached: dict[str, list[float]]) -> None:
+        self.cached = cached
+        self.texts: list[str] = []
+
+    async def embed(self, text: str) -> list[float]:
+        self.texts.append(text)
+        if text in self.cached:
+            return self.cached[text]
+        await asyncio.sleep(60)
+        return [0.0]
+
+
+@pytest.fixture
+def short_bound(monkeypatch):
     from server.settings import settings
 
-    monkeypatch.setattr(settings, "memory_search_embed_bound_s", 0.1)
-    monkeypatch.setattr(settings, "memory_search_embed_bound_retries", 1)
+    # Longer than the lookup's bound, as in production (2.5 s against 0.25 s).
+    monkeypatch.setattr(settings, "memory_search_embed_bound_s", 0.3)
+    monkeypatch.setattr(settings, "memory_search_embed_bound_retries", 0)
+
+
+async def _embed_with(provider: _Hung) -> tuple[list[float], dict[str, str] | None]:
+    from server.memory.app.search.embed import _bounded_query_embed
+
+    return await app.embed_query(
+        lambda text: _bounded_query_embed(provider, text), "datalakecatalog", _input(), "m"
+    )
+
+
+async def test_a_hung_provider_answers_embed_timeout_without_a_second_bounded_wait(
+    monkeypatch, short_bound
+):
+    from server.core.errors import EmbedTimeoutError
+
     _lookup_returns(monkeypatch, {"DataLakeCatalog": 9})
     await _spellings(_input())  # the rewrite is cached
+    provider = _Hung({})
+    with pytest.raises(EmbedTimeoutError):
+        await _embed_with(provider)
+    # The bounded attempt at the respelled text, then a try as typed cut at the lookup's bound.
+    assert provider.texts == ["DataLakeCatalog", "datalakecatalog"]
 
-    class Hung:
-        async def embed(self, _text: str) -> list[float]:
-            await asyncio.sleep(60)
-            return [1.0]
 
-    t = time.monotonic()
-    with pytest.raises(HTTPException) as raised:
-        await app.embed_query(
-            lambda text: _bounded_query_embed(Hung(), text), "datalakecatalog", _input(), "m"
-        )
-    assert raised.value.detail["code"] == "EMBED_TIMEOUT"
-    # One bounded embed (two 0.1 s attempts), not a second one for the text as typed.
-    assert time.monotonic() - t < 0.35
+@pytest.mark.parametrize("warm", [False, True])
+async def test_a_hung_provider_still_serves_the_text_as_typed_from_the_embedding_cache(
+    monkeypatch, short_bound, warm
+):
+    _lookup_returns(monkeypatch, {"DataLakeCatalog": 9})
+    if warm:
+        await _spellings(_input())
+    assert await _embed_with(_Hung({"datalakecatalog": [1.0]})) == ([1.0], None)

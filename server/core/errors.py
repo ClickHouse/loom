@@ -141,6 +141,15 @@ class BackendTimeoutError(LoomServerError):
         super().__init__(message, statement_class=statement_class, timeout_s=timeout_s)
 
 
+class EmbedTimeoutError(LoomServerError):
+    """503 — the query embedding did not answer within
+    `memory_search_embed_bound_s` on any attempt; the search can be retried
+    at once."""
+
+    code = "EMBED_TIMEOUT"
+    status_code = 503
+
+
 class SchemaPendingError(LoomServerError):
     """503 — the statement names a table that a migration this build carries
     but the service has not applied would create. Refused

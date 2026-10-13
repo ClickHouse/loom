@@ -341,7 +341,7 @@ Raised in `server/auth/self_signup.py`.
 
 #### `EMBED_TIMEOUT`
 
-Raised in `server/memory/app/search/embed.py`.
+HTTP 503, raised as `server.core.errors.EmbedTimeoutError`. 503 — the query embedding did not answer within `memory_search_embed_bound_s` on any attempt; the search can be retried at once.
 
 #### `EMPTY_PREDICATE`
 
