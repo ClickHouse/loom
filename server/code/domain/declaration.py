@@ -485,10 +485,6 @@ class Declarations:
     def _text(self, node: Any) -> str:
         return self.source[node.start_byte : node.end_byte].decode("utf-8", "replace")
 
-    def _spellings(self, leaves: Sequence[Any]) -> list[str]:
-        """Each token's text, a string's delimiters as `_quote` spells them."""
-        return [_quote(x, self._text(x), self.grammar) for x in leaves]
-
     def start(self, line: int) -> int:
         """The line the definition at `line` starts on, its decorators counted."""
         at = self._at(line)
@@ -507,31 +503,27 @@ class Declarations:
         select it, as its fingerprint covers them and as the judge reads them: one
         `(selected when: ...)` line a condition, then the code as written, from the
         indent of its first line."""
-        guard, own = self._guard(at[1]), self._own_text(at, name)
+        found = self._declared(at[1], name)
+        guard, own = self._guard(at[1]), self._own_text(at, found)
         conditions = "".join(f"(selected when: {g})\n" for g in guard.splitlines())
         start = at[0].start_byte
         indent = self.source[self.source.rfind(b"\n", 0, start) + 1 : start]
         shown = conditions + (indent.decode() if indent.isspace() else "") + own
-        shape = self._shape_at(at, name) if shapes else NO_SHAPE
-        hashed = self._hashed(at, name, own)
+        if found is None:
+            hashed, shape = own, NO_SHAPE
+        else:
+            tokens = self._tokens(at, found[0])
+            hashed = _hashed(tokens)
+            shape = self._shape(found, name, guard, tokens) if shapes else NO_SHAPE
         return Member(f"{guard}\n{hashed}" if guard else hashed, shape, shown)
 
-    def _hashed(self, at: tuple[Any, Any], name: str, own: str) -> str:
-        """What a declaration's fingerprint covers: its tokens as the parser nests them,
-        less what formatters change (`_formatting`, `_quote`), so a reformat or a comment
-        changes nothing while a literal's bytes still do; its own text when its name
-        cannot be found. A Python block is a node, so a statement
-        moved into or out of one changes it; the spaces in an f-string's `{x = }`, which
-        it prints, are no token and change nothing."""
-        found = self._declared(at[1], name)
-        if found is None:
-            return own
-        leaves, marks = _leaves(*at, _Fields(), self.source, _skipped(at, found[0]), self.grammar)
-        texts = self._spellings(leaves)
-        return "\n".join([*(f"{m} {t}" for m, t in zip(marks, texts, strict=False)), marks[-1]])
+    def _tokens(self, at: tuple[Any, Any], decl: Any) -> _Tokens:
+        fields = _Fields()
+        leaves, marks = _leaves(*at, fields, self.source, _skipped(at, decl), self.grammar)
+        texts = [_quote(x, self._text(x), self.grammar) for x in leaves]
+        return _Tokens(leaves, marks, texts, fields)
 
-    def _own_text(self, at: tuple[Any, Any], name: str) -> str:
-        found = self._declared(at[1], name)
+    def _own_text(self, at: tuple[Any, Any], found: tuple[Any, Any, Any] | None) -> str:
         out, pos = [], at[0].start_byte
         # each comment from the end of the node before it
         comments = [
@@ -671,18 +663,11 @@ class Declarations:
         self._scopes[_key(scope)] = out
         return out
 
-    def _shape_at(self, at: tuple[Any, Any], name: str) -> Shape:
-        """Its rename shapes; `NO_SHAPE` when its name node cannot be found. A bare call
-        inside a method only means the method in C++ and Java, so elsewhere a method that
-        calls its own name has no exact shape."""
-        found = self._declared(at[1], name)
-        if found is None:
-            return NO_SHAPE
+    def _shape(self, found: tuple[Any, Any, Any], name: str, guard: str, tokens: _Tokens) -> Shape:
+        """Its rename shapes. A bare call inside a method only means the method in C++ and
+        Java, so elsewhere a method that calls its own name has no exact shape."""
         decl, named, body = found
-        guard = self._guard(at[1])
-        fields = _Fields()
-        leaves, marks = _leaves(*at, fields, self.source, _skipped(at, decl), self.grammar)
-        texts = self._spellings(leaves)
+        leaves, marks, texts, fields = tokens
         uses = {
             i: _use(x, self.grammar, decl, body, fields)
             for i, x in enumerate(leaves)
@@ -693,16 +678,35 @@ class Declarations:
         )
 
         def form(blanked: set[str]) -> str:
-            tokens = [
+            out = [
                 marks[i] + " " + ("_" if _same(x, named) or uses.get(i) in blanked else texts[i])
                 for i, x in enumerate(leaves)
             ]
-            tokens.append(marks[-1])
-            tokens.insert(0, guard)
-            return hashlib.sha256("\0".join(tokens).encode()).hexdigest()
+            out.append(marks[-1])
+            out.insert(0, guard)
+            return hashlib.sha256("\0".join(out).encode()).hexdigest()
 
         both = form({"call", "read", "call?", "read?"})
         return Shape(both if sure else "", form({"call", "call?"}), both)
+
+
+class _Tokens(NamedTuple):
+    """A declaration's tokens (`_leaves`), the nesting marks before each and their text."""
+
+    leaves: list[Any]
+    marks: list[str]
+    texts: list[str]
+    fields: _Fields
+
+
+def _hashed(tokens: _Tokens) -> str:
+    """What a declaration's fingerprint covers: its tokens as the parser nests them, less
+    what formatters change (`_formatting`, `_quote`), so a reformat or a comment changes
+    nothing while a literal's bytes still do. A Python block is a node, so a statement
+    moved into or out of one changes it; the spaces in an f-string's `{x = }`, which
+    it prints, are no token and change nothing."""
+    _, marks, texts, _ = tokens
+    return "\n".join([*(f"{m} {t}" for m, t in zip(marks, texts, strict=False)), marks[-1]])
 
 
 def _undefined(cond: Any) -> Any:

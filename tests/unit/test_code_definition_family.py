@@ -114,18 +114,39 @@ def test_overload_signatures_sharing_a_line_are_in_the_family() -> None:
 def test_a_family_is_read_once_for_all_its_numbered_declarations(monkeypatch) -> None:
     # `fetch_rows`, `fetch_rows#2`, … are one family: its members are shaped once each
     calls = 0
-    shape_at = Declarations._shape_at
+    shape = Declarations._shape
 
     def counted(self: Declarations, *args: object) -> object:
         nonlocal calls
         calls += 1
-        return shape_at(self, *args)  # type: ignore[arg-type]
+        return shape(self, *args)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(Declarations, "_shape_at", counted)
+    monkeypatch.setattr(Declarations, "_shape", counted)
     src = "".join(f"function fetch_rows() {{ return {i}; }}\n" for i in range(64))
     defs = file_definitions("m.js", src.encode())
     assert len(defs) == 64 and len({d.body_hash for d in defs}) == 1
     assert calls <= 2 * 64
+
+
+def test_a_member_is_walked_once(monkeypatch: Any) -> None:
+    from server.code.domain import declaration
+
+    calls: dict[str, int] = {"leaves": 0, "guard": 0}
+    leaves, guard = declaration._leaves, Declarations._guard
+
+    def counted_leaves(*args: Any) -> Any:
+        calls["leaves"] += 1
+        return leaves(*args)
+
+    def counted_guard(self: Declarations, node: Any) -> str:
+        calls["guard"] += 1
+        return guard(self, node)
+
+    monkeypatch.setattr(declaration, "_leaves", counted_leaves)
+    monkeypatch.setattr(Declarations, "_guard", counted_guard)
+    src = "".join(f"function f{i}() {{ return {i}; }}\n" for i in range(16))
+    assert len(file_definitions("m.js", src.encode())) == 16
+    assert calls == {"leaves": 16, "guard": 16}
 
 
 @pytest.mark.parametrize(
