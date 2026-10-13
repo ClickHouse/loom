@@ -9,7 +9,7 @@ name or by their own tools, never swept for a personal fact.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from server.auth import context
@@ -38,20 +38,6 @@ def with_addressed(namespace: str, fanout: Sequence[str]) -> list[str]:
     return [namespace, *rest] if namespace else rest
 
 
-def private_first(
-    namespace: str, namespaces: Sequence[str], visibility: Mapping[str, str]
-) -> tuple[list[str], list[str]]:
-    """The two passes of a private-first search: the addressed `namespace`
-    and the private ones, then the public ones. Both empty when no namespace
-    is known to be private (or `visibility` is empty): read them all at once.
-    A namespace missing from a non-empty `visibility` counts as private."""
-    private = {ns for ns in namespaces if visibility.get(ns, "private") == "private"}
-    if not visibility or not private:
-        return [], []
-    first = [ns for ns in namespaces if ns in private or ns == namespace]
-    return first, [ns for ns in namespaces if ns not in first]
-
-
 async def namespaces_to_search(org: str, namespace: str, namespace_scope: str | None) -> list[str]:
     """The namespaces one search leg reads: the addressed `namespace`, and
     under `all_mine` the caller's fan-out besides."""
@@ -65,9 +51,9 @@ async def resolve_fanout(org: str) -> Fanout:
     `memory_search_fanout_max_namespaces`; the kept ones stay in their order,
     which is a priority only when `ordered` (a scoped token). Memoised per
     bound principal and org."""
-    memo = context.fanout_memo.get()
-    if memo is not None and memo.org == org:
-        return memo
+    cached = context.fanout_memo.get()
+    if cached is not None and cached.org == org:
+        return cached
     # With auth off there is no token, but the single user's grants still say
     # which namespaces are theirs. With auth on, no token means no namespaces.
     auth = context.current_auth()
@@ -76,18 +62,16 @@ async def resolve_fanout(org: str) -> Fanout:
     mine = await directory().fanout_namespaces(org, readable)
     cap = settings.memory_search_fanout_max_namespaces
     ordered = auth is not None and auth.has_ns_roles()
-    ranked = mine
-    if len(mine) > cap and not ordered:
-        # Only a scoped token's order is a priority. For anyone else the cut
-        # keeps the private namespaces, the ones the search reads first.
-        public = await directory().public_namespaces(org, mine)
-        ranked = sorted(mine, key=lambda ns: ns in public)
-    keep = set(ranked[:cap])
-    memo = Fanout(
+    # Only a scoped token's order is a priority. For anyone else the cut keeps
+    # the private namespaces, the ones the search reads first.
+    cut_by_visibility = len(mine) > cap and not ordered
+    public = await directory().public_namespaces(org, mine) if cut_by_visibility else set()
+    keep = set(sorted(mine, key=lambda ns: ns in public)[:cap])
+    fanout = Fanout(
         org=org,
         namespaces=tuple(ns for ns in mine if ns in keep),
         skipped=tuple(ns for ns in mine if ns not in keep),
         ordered=ordered,
     )
-    context.fanout_memo.set(memo)
-    return memo
+    context.fanout_memo.set(fanout)
+    return fanout

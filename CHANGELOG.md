@@ -46,7 +46,21 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   `/v1/health` reports `repo_jobs_unsandboxed` as an error. `loom code init`'s first bare
   clone stays a plain `git clone`.
 
+- `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES` (default 32) caps how many of the caller's
+  namespaces a `namespace_scope=all_mine` search reads; the addressed one is read regardless.
+  For anyone but a scoped token the cap keeps private namespaces ahead of public ones.
+  `memory.search` names the rest in a new output field, `namespaces_skipped`, and the
+  `loom_search` text lists them.
+
 ### Changed
+
+- With auth off, an `all_mine` search also reads every namespace the single user registered,
+  not only the addressed one.
+- The addressed namespace is always searched first. A scoped token's other namespaces follow
+  in its order, so a confident hit in a namespace the token lists first no longer ends the
+  search before the addressed one is read. Without a scoped token, an addressed public
+  namespace is read in the private pass. Knowledge, conversation and profile search read it
+  even when the fan-out does not list it.
 
 - **Breaking:** `rerank` (`memory.search`, `memory.search_trace`, `code.search`, `code.ask`)
   and a namespace's `rerank_endpoint` take a name, not a URL: `none`, `builtin:openai[:model]`,

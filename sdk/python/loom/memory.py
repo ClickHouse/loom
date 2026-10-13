@@ -2060,8 +2060,8 @@ class MemoryClient:
             queries. Others: "semantic", "lexical", "hybrid" (alpha blend),
             "bm25_hybrid", "related", "graph", "temporal".
           • `namespace_scope=None` — the deployment default (`this`).
-            "all_mine" unions every namespace the caller is a member of;
-            "this" pins the addressed one.
+            "all_mine" also reads the caller's own namespaces, up to the
+            fan-out cap; "this" pins the addressed one.
 
         Every other knob rides only when set, so the server's default governs
         an unset one; `loom.ops.MemorySearchInput` documents each field, and a

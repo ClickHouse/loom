@@ -9,8 +9,9 @@ import dataclasses
 import logging
 from typing import TYPE_CHECKING
 
-from server.auth.fanout import namespaces_to_search, private_first
+from server.auth.fanout import namespaces_to_search
 from server.embedding import get_embedder
+from server.identity.app.namespace_visibility import private_first_passes
 from server.knowledge.api.models_knowledge import (
     KnowledgeSearchInput,
     KnowledgeSearchOutput,
@@ -106,17 +107,14 @@ async def _search_private_first(
 ) -> list[tuple[str, list[ChunkHit]]]:
     from server.observability.otel import traced
 
-    # Private-first fallback (mirrors memory.search): when scope=all_mine,
-    # search private namespaces first; only fan out to public team
-    # namespaces if the private pass came up dry.
+    # Private-first (mirrors memory.search): under all_mine, the addressed
+    # namespace and the private ones first; the public ones only if that pass
+    # came up dry.
     PRIVATE_HIT_THRESHOLD = 0.30
     private_ns: list[str] = []
     public_ns: list[str] = []
     if input.namespace_scope == "all_mine" and len(namespaces) > 1:
-        from server.identity.app.namespace_visibility import visibility_map
-
-        visibility = await visibility_map(input.org, list(namespaces))
-        private_ns, public_ns = private_first(input.namespace, namespaces, visibility)
+        private_ns, public_ns = await private_first_passes(input.org, input.namespace, namespaces)
     if private_ns:
         with traced(
             "ch.query.chunks",

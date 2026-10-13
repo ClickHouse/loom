@@ -21,8 +21,8 @@ class MemoryDemonstrateInput(BaseModel):
     example_tag: str = Field(default="example", min_length=1, max_length=64)
     # The label rides as a second tag: "<label_prefix><label>".
     label_prefix: str = Field(default="label:", min_length=1, max_length=32)
-    # `this` searches `namespace`; `all_mine` every namespace the caller belongs to,
-    # but labels are read from `namespace` only.
+    # `this` searches `namespace`; `all_mine` also the caller's own namespaces (up to the
+    # fan-out cap), but labels are read from `namespace` only.
     namespace_scope: Literal["this", "all_mine"] = "this"
     # Below this normalised top-vote margin the prediction is reported but
     # `abstain` is set, so a caller can fall back to its own reasoning.

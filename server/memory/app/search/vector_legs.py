@@ -8,7 +8,7 @@ import asyncio
 import logging
 from typing import Any
 
-from server.auth.fanout import private_first
+from server.identity.app.namespace_visibility import private_first_passes
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app.search.context import SearchContext
 from server.memory.app.search.filters import read_filters
@@ -188,19 +188,16 @@ async def _run_vector_legs(
     else:
         # ---- unscoped path (no scoped-token order): visibility-based private-first
         # fallback, else a flat concurrent fan-out.
-        do_private_first = input.namespace_scope == "all_mine" and len(ctx.namespaces) > 1
-
         private_ns: list[str] = []
         public_ns: list[str] = []
-        if do_private_first:
-            from server.identity.app.namespace_visibility import visibility_map
-
-            # TTL-cached, so a multi-namespace search does not pay a `loom.namespaces FINAL`
-            # round trip. With no private namespace (or no answer) both passes come back
-            # empty and the search is the flat fan-out below: common in practice, well over
-            # a third of searches in one measured namespace.
-            visibility = await visibility_map(input.org, list(ctx.namespaces))
-            private_ns, public_ns = private_first(input.namespace, ctx.namespaces, visibility)
+        if input.namespace_scope == "all_mine" and len(ctx.namespaces) > 1:
+            # Visibility is TTL-cached, so a multi-namespace search does not pay a
+            # `loom.namespaces FINAL` round trip. With no private namespace (or no answer)
+            # both passes are empty and the search is the flat fan-out below: common in
+            # practice, well over a third of searches in one measured namespace.
+            private_ns, public_ns = await private_first_passes(
+                input.org, input.namespace, list(ctx.namespaces)
+            )
 
         if private_ns:
             with traced(

@@ -558,7 +558,7 @@ Test-time learning from memory: the nearest memories tagged as examples (default
 | `k` | `int` | `8` | At most this many labelled examples feed the vote and the block, 1-50. |
 | `example_tag` | `str` | `'example'` | Only memories carrying this tag are examples. |
 | `label_prefix` | `str` | `'label:'` | The label rides as a second tag: "<label_prefix><label>". |
-| `namespace_scope` | `Literal['this', 'all_mine']` | `'this'` | `this` searches `namespace`; `all_mine` every namespace the caller belongs to, but labels are read from `namespace` only. |
+| `namespace_scope` | `Literal['this', 'all_mine']` | `'this'` | `this` searches `namespace`; `all_mine` also the caller's own namespaces (up to the fan-out cap), but labels are read from `namespace` only. |
 | `min_margin` | `float` | `0.0` | Below this normalised top-vote margin the prediction is reported but `abstain` is set, so a caller can fall back to its own reasoning. |
 | `max_block_chars` | `int` | `6000` | Character budget of `few_shot_block`; the nearest example is always included. |
 
@@ -1660,7 +1660,7 @@ Semantic search over the agent's own memory.
 | `memory_type` | `Literal['semantic', 'procedural', 'preference', 'reflection', 'decision'] \| None` | `None` | None = every searchable type except the hidden-by-default ones (reflection). "reflection" = only process lessons (what worked / failed in past runs), which never surface in an unfiltered search. |
 | `tags` | `list[str]` | *(computed)* | OR-filter on tags (set semantics). |
 | `scope` | `Literal['private', 'shared']` | `'private'` | Which rows to read: "private" = per-agent rows (narrowed to `agent` when it names one), "shared" = rows promoted to the namespace's shared scope. |
-| `namespace_scope` | `Literal['this', 'all_mine'] \| None` | `None` | "all_mine" also reads the caller's own namespaces ("Reading several namespaces", docs/concepts/identities-and-namespaces.md); "this" scopes to input.namespace only. |
+| `namespace_scope` | `Literal['this', 'all_mine'] \| None` | `None` | "all_mine" also reads the caller's own namespaces, see docs/concepts/identities-and-namespaces.md#reading-several-namespaces; "this" scopes to input.namespace only. |
 | `search_mode` | `Literal['semantic', 'lexical', 'hybrid', 'bm25_hybrid', 'related', 'graph', 'rrf', 'temporal']` | `'rrf'` | Recall fusion mode. |
 | `recipe` | `Literal['', 'fast', 'balanced', 'quality', 'verbatim', 'code', 'temporal', 'graph']` | `''` | Named presets over the lower-level knobs. |
 | `alpha` | `float` | `0.5` | Lexical weight for `search_mode` "hybrid" / "bm25_hybrid": the score is alpha * lexical + (1 - alpha) * cosine. |
@@ -1788,7 +1788,7 @@ Same shape as memory.search; returns the per-candidate scoring breakdown instead
 | `memory_type` | `Literal['semantic', 'procedural', 'preference', 'reflection', 'decision'] \| None` | `None` | None = every searchable type except the hidden-by-default ones (reflection). "reflection" = only process lessons (what worked / failed in past runs), which never surface in an unfiltered search. |
 | `tags` | `list[str]` | *(computed)* | OR-filter on tags (set semantics). |
 | `scope` | `Literal['private', 'shared']` | `'private'` | Which rows to read: "private" = per-agent rows (narrowed to `agent` when it names one), "shared" = rows promoted to the namespace's shared scope. |
-| `namespace_scope` | `Literal['this', 'all_mine'] \| None` | `None` | "all_mine" also reads the caller's own namespaces ("Reading several namespaces", docs/concepts/identities-and-namespaces.md); "this" scopes to input.namespace only. |
+| `namespace_scope` | `Literal['this', 'all_mine'] \| None` | `None` | "all_mine" also reads the caller's own namespaces, see docs/concepts/identities-and-namespaces.md#reading-several-namespaces; "this" scopes to input.namespace only. |
 | `search_mode` | `Literal['semantic', 'lexical', 'hybrid', 'bm25_hybrid', 'related', 'graph', 'rrf', 'temporal']` | `'rrf'` | Recall fusion mode. |
 | `recipe` | `Literal['', 'fast', 'balanced', 'quality', 'verbatim', 'code', 'temporal', 'graph']` | `''` | Named presets over the lower-level knobs. |
 | `alpha` | `float` | `0.5` | Lexical weight for `search_mode` "hybrid" / "bm25_hybrid": the score is alpha * lexical + (1 - alpha) * cosine. |

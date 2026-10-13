@@ -31,8 +31,8 @@ class MemorySearchInput(BaseModel):
     `namespace_scope` controls which namespaces the query spans:
       • "this"      — `input.namespace` only.
       • "all_mine"  — also the caller's own namespaces, up to the fan-out cap
-                      (the rest in `namespaces_skipped`; see "Reading
-                      several namespaces").
+                      (the rest in `namespaces_skipped`); see
+                      docs/concepts/identities-and-namespaces.md#reading-several-namespaces.
       • unset       — the deployment default (setting
                       `memory_search_default_namespace_scope`, default
                       "this").
@@ -66,8 +66,8 @@ class MemorySearchInput(BaseModel):
     # Which rows to read: "private" = per-agent rows (narrowed to `agent` when it names
     # one), "shared" = rows promoted to the namespace's shared scope.
     scope: Literal["private", "shared"] = "private"
-    # "all_mine" also reads the caller's own namespaces ("Reading several
-    # namespaces", docs/concepts/identities-and-namespaces.md); "this"
+    # "all_mine" also reads the caller's own namespaces, see
+    # docs/concepts/identities-and-namespaces.md#reading-several-namespaces; "this"
     # scopes to input.namespace only. None → the deployment
     # default `memory_search_default_namespace_scope` (default "this"; an
     # operator may set all_mine to search the union).

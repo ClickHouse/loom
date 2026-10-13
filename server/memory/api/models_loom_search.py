@@ -19,9 +19,9 @@ class SearchInput(BaseModel):
 
     `namespace` is the namespace the search addresses (and is authorized
     against); `namespace_scope="all_mine"` also reads the caller's own
-    memory-kind namespaces (docs/concepts/identities-and-namespaces.md,
-    "Reading several namespaces"). `page` is a `memory.next_page` handle
-    from an earlier answer."""
+    memory-kind namespaces, see
+    docs/concepts/identities-and-namespaces.md#reading-several-namespaces. `page` is a
+    `memory.next_page` handle from an earlier answer."""
 
     org: str
     namespace: str

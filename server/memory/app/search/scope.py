@@ -111,21 +111,20 @@ async def _scope_inputs(
     run: _SearchRun,
     llm_query_entities: list[str],
     actual_work: dict[str, Any],
-) -> tuple[list[str], list[str]]:
-    """(entity filter, namespaces searched), before canonicalisation. The caller's explicit
-    `entity_filter` wins over the entities the intent parser found. "all_mine" reads the
-    caller's fan-out (`server.auth.fanout`: its kinds, its cap) led by the addressed
-    `input.namespace`: membership may only widen the search, never redirect it. Records on
-    `run` whether that order is a priority and what the cap left out."""
-    entity_filter = list(input.entity_filter or []) or list(llm_query_entities)
-    namespaces = [input.namespace]
+) -> list[str]:
+    """Settle the namespaces this search reads on `run`, and return the entity filter before
+    canonicalisation. The caller's explicit `entity_filter` wins over the entities the intent
+    parser found. "all_mine" reads the caller's fan-out (`server.auth.fanout`: its kinds, its
+    cap) led by the addressed `input.namespace`: membership may only widen the search, never
+    redirect it."""
+    run.namespaces = [input.namespace]
     if run.fanout_task is not None:
         fanout = await run.fanout_task
-        namespaces = with_addressed(input.namespace, fanout.namespaces)
+        run.namespaces = with_addressed(input.namespace, fanout.namespaces)
         run.order_authoritative = fanout.ordered
         run.namespaces_skipped = [ns for ns in fanout.skipped if ns != input.namespace]
-    actual_work["namespace_count"] = len(namespaces)
-    return entity_filter, namespaces
+    actual_work["namespace_count"] = len(run.namespaces)
+    return list(input.entity_filter or []) or list(llm_query_entities)
 
 
 async def _prelaunch_canonical_lookup(
@@ -144,19 +143,16 @@ async def _prelaunch_canonical_lookup(
     # serial.
     _canonical_task: asyncio.Task[list[str]] | None = None
     effective_entity_filter: list[str] = []
-    namespaces: list[str] = []
     _canonical_prelaunched = False
     if _enrichment_parser_gate_active(input):
-        effective_entity_filter, namespaces = await _scope_inputs(
-            input, run, llm_query_entities, actual_work
-        )
+        effective_entity_filter = await _scope_inputs(input, run, llm_query_entities, actual_work)
         if effective_entity_filter:
             from server.memory.app.entity_resolution import lookup_canonical_entities
 
             # Snapshot the inputs the task closes over so the parallel and
             # serial paths resolve the same canonical set.
             _canonical_entity_texts = list(effective_entity_filter)
-            _canonical_namespaces = list(namespaces)
+            _canonical_namespaces = list(run.namespaces)
             _canonical_task = create_deferred_task(
                 lookup_canonical_entities(
                     get_client(),
@@ -169,7 +165,6 @@ async def _prelaunch_canonical_lookup(
         _canonical_prelaunched = True
     run.canonical_task = _canonical_task
     run.effective_entity_filter = effective_entity_filter
-    run.namespaces = namespaces
     run.canonical_prelaunched = _canonical_prelaunched
 
 
@@ -182,16 +177,13 @@ async def _resolve_entity_scope(
     """Phase 11: settle the namespaces searched and the canonical entity
     filter — serially here, or by awaiting the lookup phase 9 prelaunched.
     Writes the result into `run`."""
-    namespaces = run.namespaces
     effective_entity_filter = run.effective_entity_filter
     _canonical_prelaunched = run.canonical_prelaunched
     _canonical_task = run.canonical_task
     if not _canonical_prelaunched:
         # Default (serial) path: entity-filter build, namespace resolution,
         # and canonical lookup all run here, after the embed.
-        effective_entity_filter, namespaces = await _scope_inputs(
-            input, run, llm_query_entities, actual_work
-        )
+        effective_entity_filter = await _scope_inputs(input, run, llm_query_entities, actual_work)
         if effective_entity_filter:
             try:
                 from server.memory.app.entity_resolution import (
@@ -201,7 +193,7 @@ async def _resolve_entity_scope(
                 effective_entity_filter = await lookup_canonical_entities(
                     get_client(),
                     org=input.org,
-                    namespaces=namespaces,
+                    namespaces=run.namespaces,
                     entity_texts=effective_entity_filter,
                 )
             except Exception as e:  # noqa: BLE001 — canonical entity lookup is optional; raw filter kept
@@ -213,5 +205,4 @@ async def _resolve_entity_scope(
             effective_entity_filter = await _canonical_task
         except Exception as e:  # noqa: BLE001 — canonical entity lookup is optional; raw filter kept
             log.warning("entity canonical lookup failed (non-fatal): %s", e)
-    run.namespaces = namespaces
     run.effective_entity_filter = effective_entity_filter

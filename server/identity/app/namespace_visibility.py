@@ -17,10 +17,11 @@ therefore cost relevance (a just-privatised namespace keeps being searched in
 the public tier for up to `_TTL_S`) but cannot widen access. Access control
 lives in the token and `ctx.namespaces`.
 
-Fails open by design: on any error the caller gets no answer for that namespace
-and falls back to the flat concurrent fan-out, which searches everything. That
-is the safe direction — it can only search more than needed, never less.
-Under the all_mine fan-out cap a failed lookup cuts in plain order instead.
+Fails open by design: on any error the caller gets no answer for the namespaces
+it could not read. With no answer at all, a search is the flat concurrent
+fan-out, which searches everything; otherwise a namespace without an answer
+counts as private and is read in the first pass. Under the all_mine fan-out
+cap a failed lookup cuts in plain order.
 """
 
 from __future__ import annotations
@@ -52,8 +53,8 @@ async def visibility_map(org: str, namespaces: list[str]) -> dict[str, str]:
     """Resolve `namespace -> visibility` for `namespaces` under `org`.
 
     Answers cached namespaces from memory and queries only the misses. Returns a
-    partial map on error rather than raising; namespaces absent from the result
-    are unknown to the caller, not "private".
+    partial map on error rather than raising; a namespace absent from the result
+    has no row or could not be read, and the caller decides what that means.
     """
     now = time.monotonic()
     out: dict[str, str] = {}
@@ -99,3 +100,18 @@ async def visibility_map(org: str, namespaces: list[str]) -> dict[str, str]:
         _cache[(org, ns)] = (expires, vis)
         out[ns] = vis
     return out
+
+
+async def private_first_passes(
+    org: str, namespace: str, namespaces: list[str]
+) -> tuple[list[str], list[str]]:
+    """The two passes of a private-first search over `namespaces`: the
+    addressed `namespace` and the private ones, then the public ones. Both are
+    empty when the lookup answers nothing or names no private namespace: read
+    them all at once. A namespace without an answer counts as private."""
+    visibility = await visibility_map(org, namespaces)
+    private = {ns for ns in namespaces if visibility.get(ns, "private") == "private"}
+    if not visibility or not private:
+        return [], []
+    first = [ns for ns in namespaces if ns in private or ns == namespace]
+    return first, [ns for ns in namespaces if ns not in first]
