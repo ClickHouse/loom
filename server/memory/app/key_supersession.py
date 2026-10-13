@@ -324,7 +324,8 @@ async def judge_same_key_rows(
     newest live rows of each (key, subject) the write carries, judge them against
     the new rows and stamp the new rows that lose (`stamp_new_row_retirements`).
     The stored rows that lose are returned for `retire_judged_peers` after the
-    insert. At most `bulk_conflict_check_max_entries` new rows are judged,
+    insert. A 'high' row is neither judged nor a peer: its value never reaches the
+    LLM. At most `bulk_conflict_check_max_entries` new rows are judged,
     `bulk_conflict_check_concurrency` calls at once, each against at most
     `memory_conflict_judge_max_peers` peers. Best effort: on any error nothing
     retires."""
@@ -347,6 +348,8 @@ async def judge_same_key_rows(
             for r in memory_rows
             if str(r.get("memory_key") or "")
             and str(r.get("status") or "active") in ("active", "conflicted")
+            # A 'high' row's value never reaches an LLM (it keeps no vector either).
+            and str(r.get("sensitivity") or "") != "high"
         ][:cap]
         if not judged_rows:
             return JudgedRetirements()
@@ -358,7 +361,7 @@ async def judge_same_key_rows(
             FROM loom.memory FINAL
             WHERE org = {org:String} AND namespace = {ns:String}
               AND memory_key IN {keys:Array(String)} AND user_id IN {users:Array(String)}
-              AND tombstoned_at IS NULL AND pinned = 0
+              AND tombstoned_at IS NULL AND pinned = 0 AND sensitivity != 'high'
               AND status IN ('active', 'duplicate', 'conflicted')
               AND toString(memory_id) NOT IN {ids:Array(String)}
             ORDER BY coalesce(valid_at, created_at) DESC, created_at DESC

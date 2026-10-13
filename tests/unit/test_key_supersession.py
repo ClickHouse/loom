@@ -317,6 +317,7 @@ class _CH:
 
     async def query_all(self, sql: str, params: dict) -> list[dict]:
         self.seen["queries"].append(params)
+        self.seen["sql"] = sql
         return self.rows
 
 
@@ -342,6 +343,16 @@ async def test_the_judge_reads_the_newest_rows_of_each_key_and_user_only(monkeyp
     (params,) = seen["queries"]
     assert params["keys"] == ["user_ethnicity"] and params["users"] == ["u"]
     assert params["ids"] == ["n1"] and params["n"] == 3
+
+
+async def test_a_high_sensitivity_row_never_reaches_the_judge(monkeypatch) -> None:
+    seen = _wire_judged(monkeypatch, {"o1": "contradiction"})
+    rows = [{**_row("n1", _d(20)), "sensitivity": "high"}]
+    out = await _judge(rows, [_row("o1", _d(23))], seen)
+    assert _pairs(out) == ([], []) and seen["queries"] == [] and seen["judged"] == []
+    # The stored side is filtered in the read.
+    await _judge([_row("n2", _d(30))], [], seen)
+    assert "sensitivity != 'high'" in seen["sql"]
 
 
 async def test_a_late_old_session_lands_superseded(monkeypatch) -> None:
