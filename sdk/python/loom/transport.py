@@ -191,6 +191,9 @@ _CUT_OFF_ERRORS = (httpx.ReadError, httpx.RemoteProtocolError, httpx.DecodingErr
 # handler never ran — a 408 (the request never fully arrived) or a refusal
 # the server makes before dispatch.
 _NEVER_RAN_CODES = frozenset({"AUTH_UNAVAILABLE"})
+# 5xx answers to a deployment's configuration, which no retry changes: the
+# operator's fix is named in the error (and in /v1/health).
+_CONFIGURATION_CODES = frozenset({"CODED_WIDTH_MISMATCH", "OVERRIDE_NOT_SHARED"})
 
 
 def _never_ran(status: int, code: str) -> bool:
@@ -552,6 +555,7 @@ class Transport:
                 allowed = (
                     resp.status_code != 429
                     and policy.retries_status(resp.status_code)
+                    and err.code not in _CONFIGURATION_CODES
                     and (idempotent or _never_ran(resp.status_code, err.code))
                 )
                 delay = self._retry_delay(

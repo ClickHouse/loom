@@ -224,17 +224,18 @@ def _user_of(input: RunBeginInput) -> str:
 # ------------------------------------------------------------------- handlers
 
 
-async def begin_session_run(input: RunBeginInput) -> bool:
+async def begin_session_run(input: RunBeginInput, *, started_at: datetime) -> bool:
     """Open (or re-open) an MCP session's implicit run under the id the transport
-    made for it, which binds the session's user (`mcp_runs.run_id_for`): no other
-    user can name it, so it takes no claim, and the id the session's calls carry
-    is the one stored. False, writing nothing, when the id holds another user's run."""
+    made for it, which binds the session's caller (`mcp_runs.run_id_for`): no other
+    caller can name it, so it takes no claim, and the id the session's calls carry
+    is the one stored. A new row starts at `started_at`, when the transport
+    registered it. False, writing nothing, when the id holds another user's run."""
     ch = get_client()
     with sequential_reads():
         existing = await runs_store.fetch_run(ch, input.org, input.namespace, input.run_id)
     if existing is not None and not _owned_by(existing, _user_of(input)):
         return False
-    await _open_run(ch, input, input.run_id, existing)
+    await _open_run(ch, input, input.run_id, existing, started_at=started_at)
     return True
 
 
@@ -247,13 +248,13 @@ async def active_session_run(org: str, run_id: str) -> RunLedgerRow | None:
 
 async def session_run_calls(org: str, run_id: str) -> tuple[str, int, datetime | None] | None:
     """An active implicit session run's namespace, how many requests the ledger
-    labels with it in any namespace, and when the last one was; None when the
-    run is not active."""
+    labels with it (in any org or namespace a call named), and when the last one
+    was; None when the run is not active."""
     existing = await active_session_run(org, run_id)
     if existing is None:
         return None
     calls, last = await runs_store.ledgered_calls(
-        get_client(), org, run_id, since=existing["started_at"]
+        get_client(), run_id, since=existing["started_at"]
     )
     return str(existing["namespace"]), calls, None if last is None else last.replace(tzinfo=None)
 
@@ -284,16 +285,22 @@ async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:
 
 
 async def _open_run(
-    ch: Any, input: RunBeginInput, run_id: str, existing: RunLedgerRow | None
+    ch: Any,
+    input: RunBeginInput,
+    run_id: str,
+    existing: RunLedgerRow | None,
+    *,
+    started_at: datetime | None = None,
 ) -> RunBeginOutput:
-    """Write the run's active row and answer with its id."""
+    """Write the run's active row and answer with its id. A new row starts at
+    `started_at` (default: now)."""
     # The begin row in the ledger carries the run it opened, so begin and complete join
     # on `run_id` (the body names none; the transport's fallback is the header run, empty
     # for a bare client).
     from server.observability.run_context import set_ledger_run
 
     set_ledger_run(run_id)
-    started = _now()
+    started = started_at or _now()
     if existing is not None and existing.get("started_at"):
         # Same run_id re-sent (hook retry, tracing id reuse): a replace that
         # keeps the original start so duration stays honest.

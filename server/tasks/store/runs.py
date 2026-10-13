@@ -13,6 +13,7 @@ import enum
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from server.core.ch import sequential_reads
@@ -337,15 +338,16 @@ async def active_run_by_id(ch: Any, org: str, run_id: str) -> RunLedgerRow | Non
     return row
 
 
-async def ledgered_calls(ch: Any, org: str, run_id: str, since: Any) -> tuple[int, Any]:
-    """How many requests the ledger labels with `run_id` since `since`, in any
-    namespace of `org`, and the time of the last one (None when there is none)."""
+async def ledgered_calls(ch: Any, run_id: str, since: datetime) -> tuple[int, datetime | None]:
+    """How many requests the ledger labels with `run_id` since `since`, and the
+    time of the last one. The run id binds one caller's session, so a call that
+    named another org or namespace still counts."""
     row = await ch.query_one(
         """
-        SELECT count() AS n, if(n = 0, NULL, max(ts)) AS last FROM loom.agent_events
-        WHERE org = {org:String} AND ts >= {since:DateTime64(3)} AND run_id = {rid:String}
+        SELECT count() AS n, maxOrNull(ts) AS last FROM loom.agent_events
+        WHERE ts >= {since:DateTime64(3)} AND run_id = {rid:String}
         """,
-        params={"org": org, "rid": run_id, "since": since},
+        params={"rid": run_id, "since": since},
     )
     return int((row or {}).get("n") or 0), (row or {}).get("last")
 

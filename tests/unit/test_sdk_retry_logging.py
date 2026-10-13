@@ -210,6 +210,24 @@ async def test_a_5xx_is_retried_for_a_non_idempotent_op_only_when_it_never_ran(
     await t.close()
 
 
+@pytest.mark.parametrize("code", ["CODED_WIDTH_MISMATCH", "OVERRIDE_NOT_SHARED"])
+async def test_a_configuration_error_is_not_retried(sleeps: list[float], code: str) -> None:
+    """A 503 an operator must fix: a retry gets the same answer."""
+    calls = 0
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(503, json={"detail": {"code": code, "message": "x"}})
+
+    t = Transport("http://x")
+    _mock(t, handler)
+    with pytest.raises(BackendUnavailable):
+        await t.post("/v1/memory.get", {})  # idempotent, yet not retried
+    assert calls == 1 and sleeps == []
+    await t.close()
+
+
 async def test_timeouts_retry_only_for_idempotent_ops_unless_told(sleeps: list[float]) -> None:
     calls: list[str] = []
 

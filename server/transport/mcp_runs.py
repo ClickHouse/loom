@@ -10,8 +10,10 @@ client never names a run of its own. The transport mints the run itself:
 - Writes get the run stamped into their `run_id` argument (provenance, and
   the cross-scope `duplicate` rule); reads are labelled through the
   ledger ContextVar (`server.observability.run_context`) and never filtered.
-- The run closes on `DELETE /mcp` or after `mcp_session_run_idle_seconds`
-  without a call to any web process of the server (the ledger says which) —
+- The run lives in the caller's org, and the ledger counts the session's calls
+  by run id in any org and namespace. It closes on `DELETE /mcp` or after
+  `mcp_session_run_idle_seconds` without a call to any web process of the
+  server (the ledger says which) —
   `status="completed"`, `outcome="none"` (the transport knows the session
   ended, not how it went, and never guesses). The sweep is request-driven
   (once a minute at most) so it needs no worker.
@@ -27,7 +29,8 @@ import hashlib
 import json
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Literal
 
 from server.core.background import TaskSet
@@ -56,21 +59,44 @@ _RUN_SCOPED_PREFIXES = ("working_memory.",)
 _LABELLED_READS = frozenset({"search.query"})
 
 
+@dataclass(frozen=True)
+class Caller:
+    """Whose session it is: the token's subject, and the user and session it acts
+    as (`ledger_identity`); "-" for each with no auth."""
+
+    subject: str = "-"
+    user_id: str = "-"
+    session_id: str = "-"
+
+    @classmethod
+    def current(cls) -> Caller:
+        """The caller of the request being served."""
+        from server.auth.context import current_auth
+        from server.transport._common import ledger_identity
+
+        who = ledger_identity({})
+        subject = getattr(current_auth(), "subject", "") or "-"
+        return cls(subject=subject, user_id=who["user_id"], session_id=who["session_id"])
+
+
 @dataclass
 class SessionRun:
     run_id: str
     org: str
     namespace: str
     agent: str
-    session_id: str
+    caller: Caller
+    # The session its row is filed under: the one the token pins, else the MCP session.
+    row_session_id: str
+    goal: str
+    # Wall clock when this process registered it: a new row starts here, before
+    # the first call's ledger row.
+    started_at: datetime
     last_seen: float
-    # The run row's owner: the user (and session) the caller's token acts as.
-    user_id: str = "-"
-    row_session_id: str = ""
     # When this process last asked the ledger whether the run is still open.
-    checked_at: float = 0.0
-    goal: str = ""
-    extra: dict[str, Any] = field(default_factory=dict)
+    checked_at: float
+    begin_task: asyncio.Task[None] | None = None
+    begin_failed: bool = False
 
 
 # Keyed by run id: two callers sending one session id hold two runs.
@@ -144,13 +170,15 @@ def current(run_id: str) -> SessionRun | None:
 async def ensure(
     session_id: str | None,
     defaults: dict[str, str] | None,
+    caller: Caller,
     *,
     goal: str,
     now: float | None = None,
 ) -> SessionRun | None:
-    """The session's run, begun on first use. None when the transport has no
-    session or caller identity, the feature is off, or `run.begin` failed
-    (retried after the idle window, not on every call)."""
+    """The session's run, begun on first use, in the caller's org and the
+    namespace `defaults` name. None when the transport has no session or caller
+    identity, the feature is off, or `run.begin` failed (retried after the idle
+    window, not on every call)."""
     if not session_id or not defaults:
         return None
     now = time.monotonic() if now is None else now
@@ -159,7 +187,7 @@ async def ensure(
     agent = str(defaults.get("agent") or "")
     if any(v in ("", "-") for v in (org, namespace, agent)):
         return None
-    run_id = run_id_for(org, str(defaults.get("principal") or "-"), session_id)
+    run_id = run_id_for(org, caller, session_id)
     run = _RUNS.get(run_id)
     if run is not None:
         run.last_seen = now
@@ -168,8 +196,8 @@ async def ensure(
             # DELETE, a cap eviction): ask the ledger, off the call's path, and
             # re-open it if so.
             run.checked_at = now
-            run.extra["begin_task"] = _PENDING.spawn(
-                _begin(run, goal=goal, now=now, first=False), name=f"mcp-run-check:{run_id}"
+            run.begin_task = _PENDING.spawn(
+                _begin(run, now=now, first=False), name=f"mcp-run-check:{run_id}"
             )
         return run
     failed_at = _BEGIN_FAILED_AT.get(run_id)
@@ -184,6 +212,8 @@ async def ensure(
         _PENDING.spawn(
             _close(idlest, reason="evicted"), name=f"mcp-run-evict:{idlest.run_id}", detached=True
         )
+    from server.core.datetimes import naive_utc_now
+
     # The run is registered now, under a deterministic id, and its begin lands
     # in the background: an awaited agent_runs insert would hold every session's
     # first tool call for ~3 s on ClickHouse Cloud, and the id is all the call
@@ -193,41 +223,35 @@ async def ensure(
         org=org,
         namespace=namespace,
         agent=agent,
-        session_id=session_id,
-        last_seen=now,
-        user_id=str(defaults.get("user_id") or "-"),
-        row_session_id=str(defaults.get("session_id") or session_id),
-        checked_at=now,
+        caller=caller,
+        row_session_id=caller.session_id if caller.session_id != "-" else session_id,
         goal=goal,
+        started_at=naive_utc_now(),
+        last_seen=now,
+        checked_at=now,
     )
     _RUNS[run_id] = run
     _BEGIN_FAILED_AT.pop(run_id, None)
-    run.extra["begin_task"] = _PENDING.spawn(
-        _begin(run, goal=goal, now=now, first=True), name=f"mcp-run-begin:{run_id}"
+    run.begin_task = _PENDING.spawn(
+        _begin(run, now=now, first=True), name=f"mcp-run-begin:{run_id}"
     )
     return run
 
 
-def principal_of(auth: Any, user_id: str) -> str:
-    """Whose session it is, for `run_id_for`: the token's subject and the user it
-    acts as ("-" with no auth)."""
-    return f"{getattr(auth, 'subject', '') or '-'}/{user_id}"
-
-
-def run_id_for(org: str, principal: str, session_id: str) -> str:
+def run_id_for(org: str, caller: Caller, session_id: str) -> str:
     """The implicit run's id: the same for every call and web process of the
-    session, and one no other caller can make by sending the same session id
-    (`principal` is the token's subject, and the user it pins)."""
-    seed = json.dumps([org, principal, session_id])
+    session, and one no other caller can make by sending the same session id."""
+    seed = json.dumps([org, caller.subject, caller.user_id, session_id])
     return "mcp-" + hashlib.sha256(seed.encode()).hexdigest()[:40]
 
 
-async def _begin(run: SessionRun, *, goal: str, now: float, first: bool) -> None:
+async def _begin(run: SessionRun, *, now: float, first: bool) -> None:
     """`run.begin` for a registered run, unless another web process of this server
     began it already (in whichever namespace the session's first call named, which
-    the close must name too). A `first` begin that fails forgets the run and the
-    session waits out the idle window before the next attempt; a failed check of a
-    run already begun keeps it, and the next check tries again."""
+    the close must name too). A re-opened run keeps the session's first goal. A
+    `first` begin that fails forgets the run and the session waits out the idle
+    window before the next attempt; a failed check of a run already begun keeps
+    it, and the next check tries again."""
     try:
         from server.tasks.api.models_run import RunBeginInput
         from server.tasks.app.run import active_session_run, begin_session_run
@@ -242,19 +266,21 @@ async def _begin(run: SessionRun, *, goal: str, now: float, first: bool) -> None
                 namespace=run.namespace,
                 agent=run.agent,
                 run_id=run.run_id,
-                user_id=run.user_id,
+                user_id=run.caller.user_id,
                 session_id=run.row_session_id,
-                goal=goal or "mcp session",
+                goal=run.goal or "mcp session",
                 environment="mcp",
                 consumer=run.agent[:64],
                 metadata={"implicit": True, "transport": "mcp"},
-            )
+            ),
+            started_at=run.started_at,
         )
         if not began:
             raise RuntimeError(f"{run.run_id} holds another user's run")
     except Exception as e:  # noqa: BLE001 — the ledger never fails a tool call
         log.warning("mcp session run: run.begin failed for %s (non-fatal): %s", run.run_id, e)
         if first:
+            run.begin_failed = True
             if _RUNS.get(run.run_id) is run:
                 _RUNS.pop(run.run_id, None)
             _BEGIN_FAILED_AT[run.run_id] = now
@@ -273,11 +299,10 @@ _Closed = Literal["closed", "gone", "later"]
 
 
 async def _close(run: SessionRun, *, reason: str) -> _Closed:
-    begin_task = run.extra.get("begin_task")
-    if isinstance(begin_task, asyncio.Task) and not begin_task.done():
-        await asyncio.gather(begin_task, return_exceptions=True)  # complete after begin
-    if _BEGIN_FAILED_AT.get(run.run_id) is not None and _RUNS.get(run.run_id) is not run:
-        return "gone"
+    if run.begin_task is not None and not run.begin_task.done():
+        await asyncio.gather(run.begin_task, return_exceptions=True)  # complete after begin
+    if run.begin_failed:
+        return "gone"  # this process's begin never landed
     try:
         from server.core.datetimes import naive_utc_now
         from server.tasks.api.models_run import RunCompleteInput
@@ -311,21 +336,27 @@ async def _close(run: SessionRun, *, reason: str) -> _Closed:
         return "later"
 
 
-async def close_session(session_id: str | None, org: str = "", principal: str = "-") -> bool:
+async def close_session(session_id: str | None, org: str, caller: Caller) -> bool:
     """`DELETE /mcp`: the client ended the session; close its run, the one its id
-    names for this caller (`run_id_for`), whichever web process served it."""
+    names for this caller in its org (`run_id_for`), whichever web process
+    served it."""
     if not session_id or not org:
         return False
-    run_id = run_id_for(org, principal, session_id)
+    run_id = run_id_for(org, caller, session_id)
     run = _RUNS.pop(run_id, None)
     if run is None:
+        now = time.monotonic()
         run = SessionRun(
             run_id=run_id,
             org=org,
             namespace="",
             agent="",
-            session_id=session_id,
-            last_seen=time.monotonic(),
+            caller=caller,
+            row_session_id="",
+            goal="",
+            started_at=datetime.min,
+            last_seen=now,
+            checked_at=now,
         )
     return await _close(run, reason="session_end") == "closed"
 
@@ -363,6 +394,7 @@ __all__ = [
     "GOAL_MAX_CHARS",
     "SESSION_RUN_CAP",
     "SWEEP_MIN_INTERVAL_S",
+    "Caller",
     "SessionRun",
     "close_session",
     "current",

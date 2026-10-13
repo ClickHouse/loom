@@ -18,9 +18,12 @@ from server.transport import mcp_runs
 DEFAULTS = {"org": "clickhouse", "namespace": "ns-a", "agent": "cursor"}
 
 
+CALLER = mcp_runs.Caller()
+
+
 def rid(session_id: str) -> str:
     """The implicit run id of `session_id` under DEFAULTS' org, for an unpinned caller."""
-    return mcp_runs.run_id_for("clickhouse", "-", session_id)
+    return mcp_runs.run_id_for("clickhouse", CALLER, session_id)
 
 
 @pytest.fixture(autouse=True)
@@ -41,7 +44,7 @@ def test_ensure_returns_before_run_begin_lands_and_close_waits_for_it(monkeypatc
     gate = asyncio.Event()
     order: list[str] = []
 
-    async def slow_begin(inp: Any) -> bool:
+    async def slow_begin(inp: Any, *, started_at: Any) -> bool:
         await gate.wait()
         order.append(f"begin:{inp.run_id}")
         return True
@@ -58,10 +61,12 @@ def test_ensure_returns_before_run_begin_lands_and_close_waits_for_it(monkeypatc
     monkeypatch.setattr(h, "session_run_calls", AsyncMock(return_value=("ns-a", 1, None)))
 
     async def _run() -> None:
-        run = await asyncio.wait_for(mcp_runs.ensure("sess-9", DEFAULTS, goal="g", now=1.0), 0.5)
+        run = await asyncio.wait_for(
+            mcp_runs.ensure("sess-9", DEFAULTS, CALLER, goal="g", now=1.0), 0.5
+        )
         assert run is not None and run.run_id == rid("sess-9"), "the call has its id at once"
         assert order == [], "run.begin has not landed and the call did not wait for it"
-        closer = asyncio.create_task(mcp_runs.close_session("sess-9", "clickhouse"))
+        closer = asyncio.create_task(mcp_runs.close_session("sess-9", "clickhouse", CALLER))
         await asyncio.sleep(0)
         assert order == [], "close waits for the begin"
         gate.set()

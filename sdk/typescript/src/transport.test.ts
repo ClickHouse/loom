@@ -113,6 +113,19 @@ describe("Transport", () => {
     expect(sleeps.length).toBe(1);
   });
 
+  it("never retries a 5xx that names a configuration fault", async () => {
+    for (const code of ["CODED_WIDTH_MISMATCH", "OVERRIDE_NOT_SHARED"]) {
+      sleeps.length = 0;
+      const { t, calls } = transport([
+        { status: 503, body: { detail: { code, message: "fix the deployment" } } },
+        { status: 200, body: {} },
+      ]);
+      await expect(t.post("memory.get", {})).rejects.toMatchObject({ code });
+      expect(calls.length).toBe(1);
+      expect(sleeps.length).toBe(0);
+    }
+  });
+
   it("names the unreachable base URL and sets code NETWORK when fetch itself fails", async () => {
     const cause = new TypeError("fetch failed");
     const { t, calls } = transport([{ status: 0, throw: cause }], { retry: { retryConnectionErrors: false } });
