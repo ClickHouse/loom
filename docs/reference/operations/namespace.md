@@ -126,7 +126,7 @@ Fetch one namespace's metadata + settings (owner, visibility, feature flags, ret
 | `classify_endpoint` | `str \| None` | URL `memory.set(classify=true)` calls to classify a write; empty when none. |
 | `default_conflict_policy` | `str \| None` | How close writes are settled: `auto_reinforce` (the default when unset), `manual_review`, `newest_wins` or `append_only`. |
 | `proposal_policy` | `ProposalPolicy \| None` | How proposals (`memory.set proposed=true`) are decided; the manual default when unset. |
-| `code_change_policy` | `str \| None` | How reads treat the namespace's code-linked memories when their code changes: `retire_removed` (the default), `flag` or `revise`. |
+| `code_change_policy` | `Literal['retire_removed', 'flag', 'revise'] \| None` | How reads treat the namespace's code-linked memories when their code changes: `retire_removed` (the default), `flag` or `revise`. |
 | `tag_registry` | `list[dict[str, Any]] \| None` | Per-tag configuration rows (retention, dedup threshold, hot quota, conflict policy); empty when none are registered. |
 | `classification` | `Literal['standard', 'restricted'] \| None` | `standard` or `restricted` (loom.namespaces.classification). |
 | `created_at` | `datetime \| None` | When the namespace was first registered (UTC). |

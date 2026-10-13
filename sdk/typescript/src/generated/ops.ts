@@ -6080,7 +6080,7 @@ export interface NamespaceGetOutput {
   classify_endpoint?: string | null;
   default_conflict_policy?: string | null;
   proposal_policy?: ProposalPolicy | null;
-  code_change_policy?: string | null;
+  code_change_policy?: "retire_removed" | "flag" | "revise" | null;
   tag_registry?: Array<Record<string, unknown>> | null;
   classification?: "standard" | "restricted" | null;
   created_at?: string | null;

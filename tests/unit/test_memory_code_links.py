@@ -266,9 +266,15 @@ def test_the_queue_records_every_memory_insert_when_it_runs() -> None:
 
 
 def test_the_policy_word_defaults_to_retire_removed() -> None:
+    from server.identity.api.models import NamespaceGetOutput, NamespaceRegisterInput
+
+    for model in (NamespaceRegisterInput, NamespaceGetOutput):
+        field = model.model_fields["code_change_policy"]
+        assert field.annotation == code_change.CodeChangePolicy | None
     assert code_change.policy_of("") == code_change.RETIRE_REMOVED
     assert code_change.policy_of("bogus") == code_change.RETIRE_REMOVED
     assert code_change.policy_of("flag") == code_change.FLAG
+    assert code_change.POLICIES == ("retire_removed", "flag", "revise")
     assert code_change.code_removed(["missing", "missing"])
     assert not code_change.code_removed(["missing", "moved"]) and not code_change.code_removed([])
 

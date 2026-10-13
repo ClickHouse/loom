@@ -13142,7 +13142,7 @@ class NamespaceGetOutput(TypedDict, total=False):
     classify_endpoint: NotRequired[Optional[str]]
     default_conflict_policy: NotRequired[Optional[str]]
     proposal_policy: NotRequired[Optional["ProposalPolicy"]]
-    code_change_policy: NotRequired[Optional[str]]
+    code_change_policy: NotRequired[Optional[Literal["retire_removed", "flag", "revise"]]]
     tag_registry: NotRequired[Optional[list[dict[str, Any]]]]
     classification: NotRequired[Optional[Literal["standard", "restricted"]]]
     created_at: NotRequired[Optional[str]]

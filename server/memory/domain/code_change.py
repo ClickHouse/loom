@@ -19,21 +19,20 @@ A memory a person pinned, locked or verified is only flagged.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, Literal, get_args
 
 from server.memory.domain.trust import verification_state
 
 # a link's states from best to worst: a memory shows its worst link's
 STATE_RANK = {"fresh": 0, "moved": 1, "changed": 2, "unresolved": 3, "missing": 4}
 
-RETIRE_REMOVED = "retire_removed"
-FLAG = "flag"
-REVISE = "revise"
-POLICIES = (RETIRE_REMOVED, FLAG, REVISE)
+CodeChangePolicy = Literal["retire_removed", "flag", "revise"]
+POLICIES: tuple[CodeChangePolicy, ...] = get_args(CodeChangePolicy)
+RETIRE_REMOVED, FLAG, REVISE = POLICIES
 
 
-def policy_of(raw: str) -> str:
-    return raw if raw in POLICIES else RETIRE_REMOVED
+def policy_of(raw: str) -> CodeChangePolicy:
+    return next((p for p in POLICIES if p == raw), RETIRE_REMOVED)
 
 
 def code_removed(states: Sequence[str]) -> bool:

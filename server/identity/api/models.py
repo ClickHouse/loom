@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from server.memory.domain.code_change import CodeChangePolicy
 from server.memory.domain.proposal_policy import ProposalPolicy
 from server.memory.domain.rerank_names import RerankName
 from server.operations.base import GrantRoleStr
@@ -181,7 +182,7 @@ class NamespaceRegisterInput(BaseModel):
     # `revise` (as retire_removed, and a changed claim is re-checked against the new code;
     # one that no longer holds gets a suggested correction, from the code's next edit on).
     # Loom never writes the memory. None keeps the stored policy.
-    code_change_policy: Literal["retire_removed", "flag", "revise"] | None = None
+    code_change_policy: CodeChangePolicy | None = None
 
 
 class NamespaceRegisterOutput(BaseModel):
@@ -281,7 +282,7 @@ class NamespaceGetOutput(BaseModel):
     proposal_policy: ProposalPolicy | None = None
     # How reads treat the namespace's code-linked memories when their code changes:
     # `retire_removed` (the default), `flag` or `revise`.
-    code_change_policy: str | None = None
+    code_change_policy: CodeChangePolicy | None = None
     # Per-tag configuration rows (retention, dedup threshold, hot quota, conflict policy);
     # empty when none are registered.
     tag_registry: list[dict[str, Any]] | None = None
