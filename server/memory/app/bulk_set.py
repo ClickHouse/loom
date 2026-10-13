@@ -324,8 +324,6 @@ async def _bulk_judge_same_key(
             (n, p) for n, p in plan.conflict_marks if key_of.get(n) not in behind
         ]
         plan.refines = [r for r in plan.refines if key_of.get(r[0]) not in behind]
-        plan.conflicted = [k for k in plan.conflicted if k not in behind]
-        plan.refined = [k for k in plan.refined if k not in behind]
         _settle_results(state, plan, behind=behind)
     return judged
 
@@ -358,29 +356,40 @@ def _settle_results(
     behind: dict[str, str] | None = None,
     retired_peers: set[str] | None = None,
 ) -> None:
-    """Make each entry's result say what the same-key judge did. An entry whose
-    key landed superseded (`behind`: key -> the row it landed behind) answers
-    `superseded` with that row's id and no peers or `next`. An entry whose peers
-    the judge retired (`retired_peers`) drops them; a `conflict` or `refines` left
-    with none answers `clear` and leaves the plan's lists, so neither the response
-    nor the audit reports a conflict nothing is marked for."""
+    """Make each entry's result and the plan's lists say what the same-key judge
+    did. An entry of a key that landed superseded (`behind`: key -> the row it
+    landed behind) answers `superseded` with that row's id and no peers or `next`,
+    if it wrote a row. After `_drop_retired_peers`, the plan's own marks decide: a
+    key whose rows no longer carry a conflict mark (or a refine) leaves
+    `conflicted` (or `refined`) and its result answers `clear`. The result's
+    peers are what the caller may read, so they only lose the retired rows."""
     from server.memory.app.set_commit import _set_next
 
     behind = behind or {}
     retired_peers = retired_peers or set()
+    key_of = {
+        str(r.get("memory_id") or ""): str(r.get("memory_key") or "") for r in state.memory_rows
+    }
+    still_marked = {key_of.get(n, "") for n, _p in plan.conflict_marks}
+    still_refined = {key_of.get(r[0], "") for r in plan.refines}
+    unmarked = {k for k in plan.conflicted if k not in still_marked}
+    unrefined = {k for k in plan.refined if k not in still_refined}
+    plan.conflicted = [k for k in plan.conflicted if k not in unmarked]
+    plan.refined = [k for k in plan.refined if k not in unrefined]
     for res in state.results:
-        if res.memory_key in behind:
+        if res.memory_key in behind and int(res.version) > 0:
             res.superseded_by = behind[res.memory_key]
             res.conflict_verdict, res.peers, res.next = "superseded", [], ""
             continue
         kept = [p for p in res.peers if str(p.memory_id) not in retired_peers]
-        if len(kept) == len(res.peers):
+        cleared = (res.conflict_verdict == "conflict" and res.memory_key in unmarked) or (
+            res.conflict_verdict == "refines" and res.memory_key in unrefined
+        )
+        if not cleared and len(kept) == len(res.peers):
             continue
         res.peers = kept
-        if not kept and res.conflict_verdict in ("conflict", "refines"):
+        if cleared:
             res.conflict_verdict = "clear"
-            plan.conflicted = [k for k in plan.conflicted if k != res.memory_key]
-            plan.refined = [k for k in plan.refined if k != res.memory_key]
         res.next = _set_next(res.conflict_verdict, kept)
 
 

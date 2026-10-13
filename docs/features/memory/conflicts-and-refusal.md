@@ -38,15 +38,16 @@ duplicate threshold follows the same order without the type step, ending at
 Every write answers with `conflict_verdict`, the `peers` it was judged against (closest
 first, at most five) and a `next` hint such as `memory.update(memory_key=<peer>, ...)`.
 
-| Verdict     | Meaning                                                      | Row written                                                        |
-| ----------- | ------------------------------------------------------------ | ------------------------------------------------------------------ |
-| `clear`     | Nothing close.                                               | Yes, `active`.                                                     |
-| `merge`     | The same fact after canonicalisation is already stored.      | No. The stored row is reinforced; `noop=true`, `merged_into_key`.  |
-| `duplicate` | Near-identical to a peer but not canonically equal.          | Yes, `status='duplicate'` with `duplicate_of`.                     |
-| `conflict`  | Close to a peer but different.                               | Yes; both rows `conflicted` and cross-linked.                      |
-| `refines`   | The LLM judge read it as an elaboration of a peer.           | Yes; the refined peer is superseded.                               |
-| `rejected`  | Close to a pinned peer, or a changed value for a pinned key. | No. 409 `PINNED_CONFLICT` (a dry run returns the verdict instead). |
-| `pending`   | The LLM judge runs after the write.                          | Yes, `active`; the settled verdict lands on the row later.         |
+| Verdict      | Meaning                                                                                                                      | Row written                                                        |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `clear`      | Nothing close.                                                                                                               | Yes, `active`.                                                     |
+| `merge`      | The same fact after canonicalisation is already stored.                                                                      | No. The stored row is reinforced; `noop=true`, `merged_into_key`.  |
+| `duplicate`  | Near-identical to a peer but not canonically equal.                                                                          | Yes, `status='duplicate'` with `duplicate_of`.                     |
+| `conflict`   | Close to a peer but different.                                                                                               | Yes; both rows `conflicted` and cross-linked.                      |
+| `refines`    | The LLM judge read it as an elaboration of a peer.                                                                           | Yes; the refined peer is superseded.                               |
+| `rejected`   | Close to a pinned peer, or a changed value for a pinned key.                                                                 | No. 409 `PINNED_CONFLICT` (a dry run returns the verdict instead). |
+| `pending`    | The LLM judge runs after the write.                                                                                          | Yes, `active`; the settled verdict lands on the row later.         |
+| `superseded` | Bulk writes only, with the judge on: a stored row of the same key and subject is the later statement this entry contradicts. | Yes, `superseded`, with `superseded_by` naming that row.           |
 
 - `merge`, `duplicate` and `rejected` are deterministic and settled inline.
 - `refines` and `pending` need the judge. It runs after the write unless the request

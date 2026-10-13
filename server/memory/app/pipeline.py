@@ -968,10 +968,8 @@ async def _step_bulk_write(
         entries=entries,
     )
     bulk_out = await handle_memory_bulk_set(bulk_input)
-    state.written = [
-        {"memory_key": r.memory_key, "version": r.version, "superseded_by": r.superseded_by}
-        for r in bulk_out.written
-    ]
+    # The whole per-entry result, so set_from_messages answers what bulk_set did.
+    state.written = [r.model_dump() for r in bulk_out.written]
     for _phase, _ms in (getattr(bulk_out, "stage_ms", None) or {}).items():
         state.stage_ms[f"bulk.{_phase}"] = float(_ms)
     return state

@@ -773,17 +773,30 @@ def test_results_say_what_the_judge_did() -> None:
             next="memory.update(...)",
         )
 
+    keys = ["user_ethnicity", "user_heritage", "user_home", "user_age", "user_job", "user_pet"]
     state = _BulkWriteState()
+    state.memory_rows = [{"memory_id": f"n-{k}", "memory_key": k} for k in keys]
     state.results = [
         res("user_ethnicity", "conflict", ["q"]),
         res("user_heritage", "conflict", ["p"]),
         res("user_home", "conflict", ["p", "r"]),
         res("user_age", "conflict", ["s"]),
+        # The caller may not read x: its result shows p only, its marks hold both.
+        res("user_job", "conflict", ["p"]),
+        # No read scope resolved: the result shows no peer, the marks hold p.
+        res("user_pet", "conflict", []),
+        # Another entry of user_ethnicity that wrote nothing (rejected): left as it is.
+        _BulkSetResult(memory_key="user_ethnicity", version=0, conflict_verdict="rejected"),
     ]
     plan = BulkVerdictPlan()
-    plan.conflicted = ["user_ethnicity", "user_heritage", "user_home", "user_age"]
-    # The new row of user_ethnicity landed behind q.
+    plan.conflicted = list(keys)
+    marks = {"user_heritage": ["p"], "user_home": ["p", "r"], "user_age": ["s"]}
+    marks |= {"user_job": ["p", "x"], "user_pet": ["p"]}
+    # The new row of user_ethnicity landed behind q: its mark has gone already.
+    plan.conflict_marks = [(f"n-{k}", v) for k, v in marks.items()]
     _settle_results(state, plan, behind={"user_ethnicity": "q"})
+    assert state.results[-1].conflict_verdict == "rejected"
+    assert state.results[-1].superseded_by == ""
     eth = state.results[0]
     assert (eth.conflict_verdict, eth.superseded_by, eth.peers, eth.next) == (
         "superseded",
@@ -791,14 +804,20 @@ def test_results_say_what_the_judge_did() -> None:
         [],
         "",
     )
-    # Stored p retired: a conflict left with no peer is clear; one with others keeps them.
+    # Stored p retired; the plan's marks decide, as `_drop_retired_peers` left them.
+    from server.memory.app.bulk_set import _drop_retired_peers
+
+    _drop_retired_peers(plan, {"p"})
     _settle_results(state, plan, retired_peers={"p"})
-    her, home, age = state.results[1:]
+    her, home, age, job, pet = state.results[1:6]
     assert (her.conflict_verdict, her.peers, her.next) == ("clear", [], "")
     assert home.conflict_verdict == "conflict" and [p.memory_id for p in home.peers] == ["r"]
     assert "user_city" in home.next
     assert age.conflict_verdict == "conflict" and age.next == "memory.update(...)"
-    assert plan.conflicted == ["user_ethnicity", "user_home", "user_age"]
+    # x is still marked, so the row lands conflicted and the result says so.
+    assert job.conflict_verdict == "conflict" and job.peers == []
+    assert pet.conflict_verdict == "clear"
+    assert plan.conflicted == ["user_home", "user_age", "user_job"]
 
 
 async def test_newest_wins_still_retires_every_older_same_key_row_unjudged(monkeypatch) -> None:

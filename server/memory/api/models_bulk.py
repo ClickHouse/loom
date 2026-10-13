@@ -299,7 +299,8 @@ class _BulkSetResult(BaseModel):
     memory_key: str
     version: int
     # The per-row verdict memory.set returns, so a caller of
-    # bulk_set can act on one entry without decoding the aggregate lists.
+    # bulk_set can act on one entry without decoding the aggregate lists, plus
+    # `superseded` (bulk only: see `superseded_by`).
     # Empty when the entry was not checked (non-searchable, past the cap).
     conflict_verdict: str = ""
     peers: list[MemorySetPeer] = Field(default_factory=list)
