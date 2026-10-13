@@ -139,15 +139,16 @@ The lookup runs beside the embed of the query as typed, and its answer is cached
 minute. A rewrite shows in `retrieval_work.query_spellings` (`memory.search_trace`:
 `query_spellings`). The first time, it costs a second embed, of the respelled text; while
 cached, only the respelled text is embedded, and the text as typed only if that embed
-fails. A search fails only when every embed it tried failed, so a dead embedder fails it
-once the lookup has answered (at most 0.25 s). The query embeds as typed, with
-`retrieval_work.query_spellings_skipped` set (`memory.search_trace`:
+fails other than by timing out (a hung provider answers `EMBED_TIMEOUT` within one embed
+bound, as without this). A search fails only when every embed it tried failed, so a
+provider that refuses fails it once the lookup has answered (at most 0.25 s). The query
+embeds as typed, with `retrieval_work.query_spellings_skipped` set (`memory.search_trace`:
 `query_spellings_skipped`), when the lookup fails or runs past 0.25 s, when the namespace
 is backing off after such a failure (a minute, doubling with each failure in a row up to
-an hour), or when the respelled embed fails.
-`retrieval_cost_estimate` is made before the lookup answers, so it counts one embed even
-when a rewrite adds a second. `loom.search_trace_log` keeps the query as typed, so a
-logged query can score differently from a fresh embed of the same text.
+an hour), or when the respelled embed fails. `retrieval_cost_estimate` is made before the
+lookup answers, so it counts one embed even when a rewrite adds a second.
+`loom.search_trace_log` keeps the query as typed, so a logged query can score differently
+from a fresh embed of the same text.
 
 ### Similarity floor and abstain
 

@@ -134,8 +134,9 @@ async def embed_query(
     words applied, and those spellings; None when `text` was embedded as
     typed because the lookup did not answer or the respelled embed failed.
     A lookup runs beside the embed of `text` as typed; a cached answer
-    embeds only the text it names, and as typed only if that fails. The
-    search fails only when every embed it tried failed."""
+    embeds only the text it names, and as typed only if that fails other
+    than by timing out. The search fails only when every embed it tried
+    failed."""
     found = _lookup_key(input, embedding_model)
     if found is None:
         return await embed(text), {}
@@ -150,12 +151,25 @@ async def embed_query(
             return await (as_typed or embed(text)), spellings
         try:
             return await embed(apply_spellings(text, spellings)), spellings
-        except Exception as e:  # noqa: BLE001 — the rewrite is a recall aid; the vector as typed serves
+        except Exception as e:  # the rewrite is a recall aid; the vector as typed serves
+            # A provider that timed out on one text will on the other; with no
+            # as-typed embed already running, a second wait doubles the 503's.
+            if as_typed is None and _timed_out(e):
+                raise
             failure = e
         vec = await (as_typed or embed(text))
-        log.warning("embedding the respelled query failed, using it as typed: %r", failure)
+        # Per request it shows as query_spellings_skipped; an outage would log it on every search.
+        log.debug("embedding the respelled query failed, using it as typed: %r", failure)
         return vec, None
     finally:
         if as_typed is not None:
             as_typed.cancel()
             await asyncio.gather(as_typed, return_exceptions=True)
+
+
+def _timed_out(e: BaseException) -> bool:
+    """A timed-out embed: the bounded embed's 503 EMBED_TIMEOUT, or a bare timeout."""
+    detail = getattr(e, "detail", None)
+    return isinstance(e, TimeoutError) or (
+        isinstance(detail, dict) and detail.get("code") == "EMBED_TIMEOUT"
+    )

@@ -526,3 +526,31 @@ async def test_an_outage_with_only_the_respelled_text_cached_serves_it_cached_or
             [2.0],
             {"datalakecatalog": "DataLakeCatalog"},
         )
+
+
+async def test_a_hung_embedder_answers_embed_timeout_within_one_bound_on_a_cached_rewrite(
+    monkeypatch,
+):
+    from fastapi import HTTPException
+
+    from server.memory.app.search.embed import _bounded_query_embed
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_search_embed_bound_s", 0.1)
+    monkeypatch.setattr(settings, "memory_search_embed_bound_retries", 1)
+    _lookup_returns(monkeypatch, {"DataLakeCatalog": 9})
+    await _spellings(_input())  # the rewrite is cached
+
+    class Hung:
+        async def embed(self, _text: str) -> list[float]:
+            await asyncio.sleep(60)
+            return [1.0]
+
+    t = time.monotonic()
+    with pytest.raises(HTTPException) as raised:
+        await app.embed_query(
+            lambda text: _bounded_query_embed(Hung(), text), "datalakecatalog", _input(), "m"
+        )
+    assert raised.value.detail["code"] == "EMBED_TIMEOUT"
+    # One bounded embed (two 0.1 s attempts), not a second one for the text as typed.
+    assert time.monotonic() - t < 0.35
