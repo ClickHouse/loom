@@ -9,7 +9,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from server.core.errors import PreconditionFailedError
+from server.memory.store.key_write_lock import LeaseBusy
 from server.workers.status import log_pass_errors, record_pass
 
 if TYPE_CHECKING:
@@ -35,7 +35,7 @@ async def run_pass() -> dict[str, Any]:
             # one host reads the queue at a time: two would link the same writes twice
             async with code_links.queue_lease():
                 await _link_writes(batch, result)
-        except PreconditionFailedError:
+        except LeaseBusy:
             pass  # another host is linking them
         await code_links.recheck_all(result)
         rec.outcome = result.as_dict()

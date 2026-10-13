@@ -46,7 +46,6 @@ from server.code.domain.declaration import fingerprint_version
 from server.code.domain.index.repos import repo_for_namespace
 from server.code.domain.successor import Side, Successor, close_to, successor
 from server.core.datetimes import naive_utc_now
-from server.core.errors import PreconditionFailedError
 from server.memory.app import code_link_judge
 from server.memory.app.code_link_reads import (
     SERVED,
@@ -59,7 +58,7 @@ from server.memory.domain import code_change
 from server.memory.domain.code_change import REVISE
 from server.memory.store import code_links as store
 from server.memory.store.code_links import LinkRow, PendingLink
-from server.memory.store.key_write_lock import KeyWriteLocks
+from server.memory.store.key_write_lock import KeyWriteLocks, LeaseBusy
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -578,9 +577,9 @@ async def recheck_all(result: PassResult) -> None:
         granted = (left + rest - 1) // rest
         budget = Budget(judgements=granted)
         try:
-            async with _repository_locks.hold_name(_lock_name(org, cns)):
+            async with _repository_locks.lease(_lock_name(org, cns)):
                 await _recheck_repository(org, cns, budget, result)
-        except PreconditionFailedError:
+        except LeaseBusy:
             pass  # another host is checking this repository
         except Exception as e:  # noqa: BLE001 — one repository's failure never stops the pass
             result.errors.append(f"recheck {org}/{cns}: {e}")
@@ -588,9 +587,8 @@ async def recheck_all(result: PassResult) -> None:
 
 
 def queue_lease() -> AbstractAsyncContextManager[None]:
-    """The lease on reading the memory queue; PreconditionFailedError while another
-    host holds it."""
-    return _repository_locks.hold_name("code_links/queue")
+    """The lease on reading the memory queue; LeaseBusy while another host holds it."""
+    return _repository_locks.lease("code_links/queue")
 
 
 def _lock_name(org: str, cns: str) -> str:

@@ -784,7 +784,7 @@ async def test_only_links_still_due_spend_the_budget(world, monkeypatch) -> None
 async def test_a_repository_another_host_holds_is_skipped(monkeypatch) -> None:
     from contextlib import asynccontextmanager
 
-    from server.core.errors import PreconditionFailedError
+    from server.memory.store.key_write_lock import LeaseBusy
 
     async def namespaces():
         return [("o", "code-a"), ("o", "code-b")]
@@ -795,14 +795,14 @@ async def test_a_repository_another_host_holds_is_skipped(monkeypatch) -> None:
         ran.append(cns)
 
     @asynccontextmanager
-    async def hold(name):
+    async def lease(name):
         if name == code_links._lock_name("o", "code-a"):
-            raise PreconditionFailedError("held")
+            raise LeaseBusy(name)
         yield
 
     monkeypatch.setattr(code_links.store, "code_namespaces", namespaces)
     monkeypatch.setattr(code_links, "_recheck_repository", recheck)
-    monkeypatch.setattr(code_links._repository_locks, "hold_name", hold)
+    monkeypatch.setattr(code_links._repository_locks, "lease", lease)
     monkeypatch.setattr(code_links, "repo_for_namespace", lambda org, cns: object())
     result = code_links.PassResult()
     await code_links.recheck_all(result)

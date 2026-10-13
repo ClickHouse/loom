@@ -39,6 +39,8 @@ class FakeKeeper:
             if row:
                 raise RuntimeError("Code: 999. KEEPER_EXCEPTION: Node exists")
             self.rows[name] = {"holder": params["me"], "stale": False}
+        elif " UPDATE " in sql and "old" not in params:
+            pass  # a renewal: the fake keeps no time
         elif " UPDATE " in sql and row and row["holder"] == params["old"] and row["stale"]:
             self.rows[name] = {"holder": params["me"], "stale": False}
         elif " DELETE " in sql and row and row["holder"] == params["me"]:
@@ -197,3 +199,32 @@ def _row(*, version: int) -> Any:
         memory_key=_IDENT[5],
         version=version,
     )
+
+
+async def test_a_held_lease_is_busy_and_the_body_errors_are_its_own(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ch = FakeKeeper()
+    ch.rows["job"] = {"holder": "other", "stale": False}
+    locks = _locks(ch, monkeypatch)
+    with pytest.raises(kl.LeaseBusy):
+        async with locks.lease("job"):
+            pytest.fail("entered a held lease")
+    # a refusal raised inside the body is not mistaken for a busy lease
+    with pytest.raises(PreconditionFailedError):
+        async with locks.lease("other-job"):
+            raise PreconditionFailedError("the body's own")
+    assert "other-job" not in ch.rows  # released
+
+
+async def test_a_lease_is_renewed_and_a_lost_one_stops_the_body() -> None:
+    ch = FakeKeeper()
+    locks = kl.KeyWriteLocks(ch, wait_s=0.3, ttl_s=0.03)  # type: ignore[arg-type]
+    async with locks.lease("job"):
+        await asyncio.sleep(0.05)  # past a third of the TTL: renewed, still ours
+        assert ch.rows["job"]["holder"]
+    with pytest.raises(kl.LeaseLost):
+        async with locks.lease("job"):
+            ch.rows["job"] = {"holder": "other", "stale": False}  # taken over meanwhile
+            await asyncio.sleep(1)
+            pytest.fail("the body ran on without its lease")
