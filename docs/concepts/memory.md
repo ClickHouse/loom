@@ -324,8 +324,9 @@ The links are read where the code is:
 - `memory.for_file` serves memories linked to code in the file beside those whose
   `files` name it.
 - `memory.get` returns the links as `code` (with any `suggestion`); `memory.search` hits
-  carry their worst link as `code_state`; `memory.ask` notes the memories whose code
-  moved, changed or went.
+  read from a memory's own row carry its worst link as `code_state` (a chunk, record or
+  summary hit carries none and is never left out); `memory.ask` notes the memories whose
+  code moved, changed or went.
 - `namespace.validate` lists memories whose code changed, was not found again or is
   gone, in the repositories the caller may read.
 

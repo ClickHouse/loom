@@ -3680,3 +3680,14 @@ async def test_validate_counts_stale_memories_past_the_sample_limit(env) -> None
     every = await stale(10)
     assert every.count == 2 and {s["memory_key"] for s in every.samples} == {"first", "second"}
     assert (await stale(1)).samples == every.samples[:1]
+
+
+async def test_the_recent_tier_carries_code_state_and_leaves_out_gone_code(env) -> None:
+    await _drop_fetch_rows(env, TRUNK)
+    await _remember(MEM, "gone", "`fetch_rows` returns n")
+    await _remember(MEM, "kept", "`other` returns zero")
+    await _pass()
+    await _remove_fetch_rows(env, TRUNK)
+    await _pass()
+    served = await _search(MEM, "zebra crossings at noon", recent_first=5)
+    assert "gone" not in served and served.get("kept") == "fresh"
