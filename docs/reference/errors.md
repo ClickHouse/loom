@@ -58,7 +58,7 @@ JSON-RPC error frame but show a tool result to the model:
   not found `-32601`, invalid params `-32602` (a `tools/call` without a string
   `name` or with non-object `arguments`, an unknown resource), unsupported protocol version `-32022`, and a server fault
   `-32000 "tool execution failed"`. A fault Loom names (`OVERLOADED`,
-  `BACKEND_TIMEOUT`, `SCHEMA_PENDING`) puts its code and message in that error
+  `BACKEND_TIMEOUT`, `SCHEMA_PENDING`, `EMBED_TIMEOUT`) puts its code and message in that error
   with the HTTP `detail` plus `status` in `error.data`; any other fault says only
   `internal error` and the request id.
 
@@ -86,6 +86,7 @@ SDK has no class for raises the class its HTTP status maps to (a 409
 | `OVERLOADED`       | 503    | Yes, after `retry_after_s` (1 s by default). The request was refused before it queued, so any op is safe to resend.                                    |
 | `AUTH_UNAVAILABLE` | 503    | Yes, after `Retry-After` (5 s). The process has not loaded the token revocation list yet; the op did not run, so the SDKs retry it for any op.         |
 | `SCHEMA_PENDING`   | 503    | After the migration it names has run. No `Retry-After`: the wait is an operator action, not a timer.                                                   |
+| `EMBED_TIMEOUT`    | 503    | Yes, at once: the query embedding did not answer within its bound and the search wrote nothing.                                                        |
 | `BACKEND_TIMEOUT`  | 504    | Only an idempotent op, and preferably a narrower request. The statement exceeded its class deadline and the server does not retry it.                  |
 | `INTERNAL_ERROR`   | 500    | An idempotent op, once. Report the `request_id` if it repeats.                                                                                         |
 | 4xx other than 429 | 4xx    | No. The same request gets the same answer; fix the request, the token or the data first.                                                               |
@@ -117,6 +118,7 @@ deduplicates; a `Retry-After` honoured up to 60 s. Each op's kind is in the
 | `OVERLOADED`                        | 503  | Every pooled ClickHouse connection of the serving process stayed busy longer than `LOOM_CH_POOL_WAIT_MS`.                                                                                               | Retry after `retry_after_s`. Repeated across callers, the deployment needs more capacity or has a slow query holding connections; see [Troubleshooting](../operations/troubleshooting.md). |
 | `BACKEND_TIMEOUT`                   | 504  | A ClickHouse statement ran past its class deadline (by default reads 30 s, writes 60 s, DDL 300 s: `LOOM_CH_TIMEOUT_READ_S`, `_WRITE_S`, `_DDL_S`); `detail.statement_class` and `timeout_s` say which. | Narrow the request (a smaller `top_k`, a namespace or path filter). Retry only an idempotent op.                                                                                           |
 | `SCHEMA_PENDING`                    | 503  | The call needs a table from a migration this build carries but the database has not applied (`table`, `migration`).                                                                                     | An operator runs `loom migrate` (or restarts with `LOOM_BOOT_MIGRATE=true`); see [Upgrades](../operations/upgrades.md).                                                                    |
+| `EMBED_TIMEOUT`                     | 503  | The embedding provider did not answer a search's query embedding within `LOOM_MEMORY_SEARCH_EMBED_BOUND_S` on any attempt (`LOOM_MEMORY_SEARCH_EMBED_BOUND_RETRIES`).                                   | Retry the search. Repeated, the provider is slow or down: `/v1/health` shows `provider_failing:<name>`; see [Troubleshooting](../operations/troubleshooting.md).                           |
 | `UNKNOWN_OP`, `OP_NOT_ON_MCP` (MCP) | —    | `loom_op` named an op that does not exist or is not reachable on this connection, or a hidden op was called over MCP.                                                                                   | Use the suggestion in the result (`did_you_mean`, `instead`), or `loom_op {"op": "help", "query": "<words>"}` to list ops.                                                                 |
 
 ## How the entries below are generated
@@ -341,7 +343,7 @@ Raised in `server/auth/self_signup.py`.
 
 #### `EMBED_TIMEOUT`
 
-HTTP 503, raised as `server.core.errors.EmbedTimeoutError`. 503 — the query embedding did not answer within `memory_search_embed_bound_s` on any attempt; the search can be retried at once.
+HTTP 503, raised as `server.core.errors.EmbedTimeoutError`. 503 — the query embedding did not answer within `memory_search_embed_bound_s` on any attempt; the search can be retried at once. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `EMPTY_PREDICATE`
 

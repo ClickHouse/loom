@@ -552,11 +552,13 @@ def short_bound(monkeypatch):
     monkeypatch.setattr(settings, "memory_search_embed_bound_retries", 0)
 
 
-async def _embed_with(provider: _Hung) -> tuple[list[float], dict[str, str] | None]:
+async def _embed_with(
+    provider: _Hung, work: dict[str, Any] | None = None
+) -> tuple[list[float], dict[str, str] | None]:
     from server.memory.app.search.embed import _bounded_query_embed
 
     return await app.embed_query(
-        lambda text: _bounded_query_embed(provider, text), "datalakecatalog", _input(), "m"
+        lambda text: _bounded_query_embed(provider, text, work), "datalakecatalog", _input(), "m"
     )
 
 
@@ -568,10 +570,13 @@ async def test_a_hung_provider_answers_embed_timeout_without_a_second_bounded_wa
     _lookup_returns(monkeypatch, {"DataLakeCatalog": 9})
     await _spellings(_input())  # the rewrite is cached
     provider = _Hung({})
+    work: dict[str, Any] = {}
     with pytest.raises(EmbedTimeoutError):
-        await _embed_with(provider)
+        await _embed_with(provider, work)
     # The bounded attempt at the respelled text, then a try as typed cut at the lookup's bound.
     assert provider.texts == ["DataLakeCatalog", "datalakecatalog"]
+    # Only the first ran out its own bound; the cut try never reached its timeout.
+    assert work["embed_timeouts"] == 1
 
 
 @pytest.mark.parametrize("warm", [False, True])
@@ -582,3 +587,26 @@ async def test_a_hung_provider_still_serves_the_text_as_typed_from_the_embedding
     if warm:
         await _spellings(_input())
     assert await _embed_with(_Hung({"datalakecatalog": [1.0]})) == ([1.0], None)
+
+
+def test_a_namespace_failing_for_weeks_stays_at_the_hour_and_never_fails_the_search(monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(app.time, "monotonic", lambda: clock[0])
+    _lookup_returns(monkeypatch, TimeoutError())
+    for _ in range(1100):  # past 2**1024, where an uncapped exponent overflows a float
+        failed_at = clock[0]
+        assert asyncio.run(_spellings(_input())) is None
+        clock[0] = app._failed[("o", "ns")][1] + 1
+    failures, retry_at = app._failed[("o", "ns")]
+    assert failures == 1100 and retry_at - failed_at == app._MAX_BACKOFF_S
+
+
+def test_a_namespace_whose_streak_ended_long_ago_starts_a_new_one(monkeypatch, caplog):
+    clock = [1000.0]
+    monkeypatch.setattr(app.time, "monotonic", lambda: clock[0])
+    _lookup_returns(monkeypatch, TimeoutError())
+    app._failed[("o", "ns")] = (4, clock[0] - app._MAX_BACKOFF_S - 1)  # ended over an hour ago
+    with caplog.at_level(logging.WARNING, logger=app.log.name):
+        assert asyncio.run(_spellings(_input())) is None
+    assert app._failed[("o", "ns")] == (1, clock[0] + app._CACHE_TTL_S)
+    assert len(caplog.records) == 1  # a new streak warns again

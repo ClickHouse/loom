@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Literal
 
+from server.core.errors import LoomServerError
 from server.knowledge.app.repo_docs import knowledge_with_repo_docs
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app.loom_search.answer_first import answer_first
@@ -250,11 +251,11 @@ async def search_sections(
     # The QA verdict leads when the question is a defect report.
     payload: dict[str, Any] = {"tracker": t_section} if isinstance(t_section, dict) else {}
     if isinstance(mem_result, Exception):
-        payload["memory"] = {"error": str(mem_result), "results": []}
+        payload["memory"] = {"error": _leg_error(mem_result), "results": []}
     else:
         payload["memory"] = drop_flagged_hits(mem_result.model_dump())
     if isinstance(know_result, Exception):
-        payload["knowledge"] = {"error": str(know_result), "results": []}
+        payload["knowledge"] = {"error": _leg_error(know_result), "results": []}
     else:
         payload["knowledge"] = knowledge_above_floor(know_result.model_dump())
     payload["profile"] = {
@@ -265,7 +266,7 @@ async def search_sections(
     # lands in the same call.
     conv_hits: list[dict[str, Any]] = []
     if isinstance(conv_result, Exception):
-        payload["conversations"] = {"error": str(conv_result), "results": []}
+        payload["conversations"] = {"error": _leg_error(conv_result), "results": []}
     else:
         conv_dump = conv_result.model_dump()
         conv_hits = conv_dump.get("results") or conv_dump.get("hits") or []
@@ -275,3 +276,11 @@ async def search_sections(
 
     payload = answer_first(payload, namespace, explain=explain)
     return payload
+
+
+def _leg_error(e: Exception) -> str:
+    """A failed leg's error as the payload shows it: a Loom error leads with
+    its code (`EMBED_TIMEOUT: ...`), so an agent can tell what to do."""
+    if isinstance(e, LoomServerError):
+        return f"{e.code}: {e.message}"
+    return str(e)

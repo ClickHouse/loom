@@ -36,6 +36,7 @@ _cache: OrderedDict[tuple[str, tuple[str, ...]], tuple[float, dict[str, str]]] =
 # entry is dropped an hour after its back-off ends, and the oldest go first
 # past the size bound.
 _MAX_BACKOFF_S = 3600.0
+_MAX_DOUBLINGS = 6  # 60 s doubled six times passes the hour
 _FAILED_SIZE = 4096
 _failed: OrderedDict[tuple[str, str], tuple[int, float]] = OrderedDict()
 
@@ -95,7 +96,9 @@ async def _lookup(
         now = time.monotonic()
         if retry_at > now:
             return None
-        backoff = min(_CACHE_TTL_S * 2**failures, _MAX_BACKOFF_S)
+        if retry_at + _MAX_BACKOFF_S < now:
+            failures = 0  # the last streak ended over an hour ago: this one is new
+        backoff = min(_CACHE_TTL_S * 2 ** min(failures, _MAX_DOUBLINGS), _MAX_BACKOFF_S)
         _record_failure(where, failures + 1, now + backoff, now)
         # One warning per streak; the retries after it log at debug.
         level = logging.WARNING if failures == 0 else logging.DEBUG
