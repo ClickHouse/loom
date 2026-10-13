@@ -352,3 +352,29 @@ def test_an_override_set_through_one_worker_binds_every_worker_on_the_host(
     assert a._org_overrides[("o", "memory")] == Limit(capacity=5, rate=1.0)
     a.reset_all()
     b.reset_all()
+
+
+def test_a_read_of_an_unreadable_override_file_keeps_the_cached_overrides(
+    shared_on: str,
+) -> None:
+    """Reads fall back to what the worker last adopted; only updates refuse."""
+    a, b = Limiter(clock=FakeClock()), Limiter(clock=FakeClock())
+    a.set_namespace_limit("ns1", "memory", Limit(capacity=1, rate=0.0))
+    b.check("ns0", "memory.set", org="o")
+    Path(shared_on + ".overrides.json").write_text("{not json")
+    assert b.check("ns1", "memory.set", org="o").allowed
+    assert not b.check("ns1", "memory.set", org="o").allowed
+    a.reset_all()
+    b.reset_all()
+
+
+def test_an_org_limit_cleared_through_one_worker_clears_on_the_other(shared_on: str) -> None:
+    a, b = Limiter(clock=FakeClock()), Limiter(clock=FakeClock())
+    a.set_org_limit("o", "memory", Limit(capacity=5, rate=1.0))
+    b.check("ns0", "memory.set", org="o")
+    assert ("o", "memory") in b._org_overrides
+    a.clear_org_limit("o", "memory")
+    b.check("ns0", "memory.set", org="o")
+    assert ("o", "memory") not in b._org_overrides
+    a.reset_all()
+    b.reset_all()
