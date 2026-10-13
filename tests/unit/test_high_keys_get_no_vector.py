@@ -61,7 +61,7 @@ async def test_a_merged_row_that_reads_as_high_gets_no_vector(
         _Embedder(),
         cluster,
         canonical_key="a",
-        canonical_value="the deploy key is sk-proj-ABCDEFGHIJKLMNOPQRSTUVWX0123",
+        canonical_value="the deploy key is sk-proj-test-ABCDEFGHIJKLMNOPQRSTUVWX0123",
         now_naive=datetime(2026, 10, 1),
     )
     assert row["sensitivity"] == "high"
