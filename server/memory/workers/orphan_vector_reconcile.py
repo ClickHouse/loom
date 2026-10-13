@@ -20,8 +20,10 @@ This pass heals the gauge instead of only reading it:
      post-filter drops the vector);
   3. re-emit the same keys' `loom.entity_vectors` rows with `tombstoned_at`
      set, per namespace (`memory_repo.tombstone_entity_vectors_for_keys`, with
-     the cutoff every retire uses: a row created after the pass's version's
-     second is a newer write's and is kept). That table is `ReplacingMergeTree(created_at)`, so
+     the pass's version as the cutoff: a row created in a later second is
+     kept). That table has no session column, so another session's live write
+     of the same key made before the pass loses its entity vectors (ranking
+     only). It is `ReplacingMergeTree(created_at)`, so
      the re-emit carries `created_at` unchanged: equal versions collapse to
      the last inserted row, and the row stays in its partition. No mutation
      anywhere in this pass (tombstones are never written with ALTER UPDATE).
@@ -133,8 +135,7 @@ async def run_pass(ch: _CHClient | None = None) -> OrphanReconcileResult:
             result.identities_healed += 1
             by_ns[(k[0], k[1])].append(k)
 
-        # The cutoff `retire_vectors_for_keys` uses: entity_vectors rows created in
-        # a later second than the pass's version belong to a newer write, and stay.
+        # entity_vectors rows created in a later second than the pass's version stay.
         cutoff = memory_repo.version_second(version)
         for (_org, ns), ns_keys in by_ns.items():
             try:

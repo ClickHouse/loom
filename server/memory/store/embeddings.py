@@ -246,9 +246,9 @@ async def reconcile_embedding_status(
     if not rows:
         counts["mirrored"] = 0
         return counts
-    # Only a copy that hides the row is a retire, stamped with the pre-scan version so
-    # a late metadata copy can't bring it back. One that serves the row again takes
-    # read + 1, so a memory.delete racing the pass keeps its (later) retire.
+    # A copy to a status not served by default is a retire, stamped with the pre-scan
+    # version so a late metadata copy can't bring it back. One that serves the row
+    # again takes read + 1, so a memory.delete racing the pass keeps its retire.
     counts["mirrored"] = await mirror_status_to_embeddings(
         [
             dict(r) | ({} if str(r["status"]) in SERVED_STATUSES else {"version": version})
