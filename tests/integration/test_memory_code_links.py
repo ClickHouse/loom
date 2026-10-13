@@ -584,6 +584,33 @@ async def test_removed_code_that_returns_elsewhere_is_found_and_served_again(env
     assert "fetch" in await _search(MEM, "DB::fetch_rows returns its argument")
 
 
+async def test_code_gone_past_the_search_window_returns_only_in_its_own_file(
+    env, ch_client
+) -> None:
+    repo = env
+    cpp = "namespace DB {\nint fetch_rows(int n) { return n; }\n}\n"
+    c1 = repo.commit({"src/A.cpp": cpp})
+    await _index(TRUNK, repo, c1, ["src/A.cpp"])
+    mid = await _remember(MEM, "fetch", "`DB::fetch_rows` returns its argument")
+    await _pass()
+    c2 = repo.commit({"src/A.cpp": None})
+    await _index(TRUNK, repo, c2, ["src/A.cpp"])
+    await _pass()
+    ch_client.command(
+        "ALTER TABLE loom.memory_code_links UPDATE checked_at = now() - INTERVAL 31 DAY "
+        "WHERE org = {o:String} AND namespace = {n:String} SETTINGS mutations_sync = 2",
+        parameters={"o": ORG, "n": MEM},
+    )
+    c3 = repo.commit({"src/B.cpp": cpp})
+    await _index(TRUNK, repo, c3, ["src/B.cpp"])
+    await _pass()
+    assert [(x["path"], x["state"]) for x in await _links(mid)] == [("src/A.cpp", "missing")]
+    c4 = repo.commit({"src/A.cpp": cpp})
+    await _index(TRUNK, repo, c4, ["src/A.cpp"])
+    await _pass()
+    assert [(x["path"], x["state"]) for x in await _links(mid)] == [("src/A.cpp", "fresh")]
+
+
 async def test_a_bulk_write_larger_than_a_page_is_linked_whole(env) -> None:
     """One bulk insert shares one queue time; pages split it by position, never by time."""
     from server.code.domain.index.remote import repo_tag

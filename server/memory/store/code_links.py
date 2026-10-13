@@ -290,6 +290,18 @@ async def pending(
     )
 
 
+async def lost(
+    org: str, code_namespace: str, *, missing_days: int, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """The namespace's unresolved links, and those missing for at most `missing_days`."""
+    return await (ch or _default_client()).query_all(
+        f"SELECT * {_LIVE} AND org = {{org:String}} AND code_namespace = {{cns:String}} "
+        "AND (state = 'unresolved' OR (state = 'missing' "
+        "AND checked_at > now() - INTERVAL {days:UInt32} DAY))",
+        params={"org": org, "cns": code_namespace, "days": int(missing_days)},
+    )
+
+
 async def policy_due(org: str, code_namespace: str, *, ch: _CHClient | None = None) -> list[str]:
     """The memories with a link of `code_namespace` whose policy has yet to run."""
     rows = await (ch or _default_client()).query_all(

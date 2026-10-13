@@ -603,6 +603,8 @@ def _progress(org: str, cns: str) -> str:
 
 # paths rechecked between two writes: a pass the deadline cuts keeps what it did
 _PATHS_PER_WRITE = 50
+# days a missing link's name is looked for in other files
+_MISSING_SEARCHED_DAYS = 30
 # files of namesakes a lost link is weighed against: past it, the answer is unsure
 _MAX_ELSEWHERE = 32
 # versions of its file a lost link's code is looked for in: past it, likewise
@@ -822,9 +824,10 @@ async def _set_unparsed(org: str, cns: str, paths: set[str]) -> None:
 
 
 async def _lost(org: str, cns: str, paths: set[str]) -> list[dict[str, Any]]:
-    """Every unresolved link (a rival candidate may have gone anywhere), and the missing
-    ones whose name the index places in one of `paths`."""
-    lost = await store.for_code(org, [cns], states=["missing", "unresolved"])
+    """Every unresolved link (a rival candidate may have gone anywhere), and the links
+    missing for at most `_MISSING_SEARCHED_DAYS` whose name the index places in one of
+    `paths`. One missing longer is found again only in its own file."""
+    lost = await store.lost(org, cns, missing_days=_MISSING_SEARCHED_DAYS)
     unresolved = [a for a in lost if a["state"] == "unresolved"]
     missing = [a for a in lost if a["state"] == "missing" and a["qualified_name"]]
     names = sorted({bare_name(str(a["qualified_name"])) for a in missing})

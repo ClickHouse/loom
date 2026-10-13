@@ -134,6 +134,10 @@ def _cleared(world) -> list[str]:
     return sorted({r["memory_id"] for r in world.cleared if r["policy_due"] == 0})
 
 
+async def _none_lost(org, cns, *, missing_days):
+    return []
+
+
 @pytest.mark.asyncio
 async def test_only_revise_judges_and_every_other_policy_just_clears_the_mark(world) -> None:
     world.rows.update(
@@ -886,6 +890,7 @@ async def test_a_recheck_cut_short_resumes_after_the_last_path_it_wrote(monkeypa
 
     monkeypatch.setattr(code_links.code, "kept_paths", kept_paths)
     monkeypatch.setattr(code_links.store, "for_code", for_code)
+    monkeypatch.setattr(code_links.store, "lost", _none_lost)
     monkeypatch.setattr(code_links, "_recheck", recheck)
     monkeypatch.setattr(code_links, "_current_moves", nothing)
     monkeypatch.setattr(code_links, "_write_moves", nothing)
@@ -994,14 +999,14 @@ async def test_a_missing_link_named_in_a_changed_file_and_every_unresolved_one_a
         {"path": "src/D.cpp", "qualified_name": "DB::d", "memory_id": "m3", "state": "unresolved"}
     )
 
-    async def for_code(org, cns, *, states=None, **kw):
-        assert states == ["missing", "unresolved"]
+    async def read_lost(org, cns, *, missing_days):
+        assert missing_days == code_links._MISSING_SEARCHED_DAYS
         return lost
 
     async def candidates(org, cns, *, names):
         return [Definition("src/B.cpp", "DB::fetch_rows", "fetch_rows")]
 
-    monkeypatch.setattr(code_links.store, "for_code", for_code)
+    monkeypatch.setattr(code_links.store, "lost", read_lost)
     monkeypatch.setattr(code_links.code, "candidates", candidates)
     found = await code_links._lost("o", "code-a", {"src/B.cpp"})
     assert [a["memory_id"] for a in found] == ["m3", "m1"]
@@ -1096,6 +1101,7 @@ async def test_stale_links_are_the_current_links_of_served_memories_in_readable_
         return {n for n in nss if n != "code-secret"}
 
     monkeypatch.setattr(code_links.store, "for_code", for_code)
+    monkeypatch.setattr(code_links.store, "lost", _none_lost)
     monkeypatch.setattr(code_links.store, "memory_heads", heads)
     monkeypatch.setattr(code_link_reads, "readable_code", readable)
     monkeypatch.setattr(code_link_reads, "inputs_now", lambda org, memory: f"i-{memory['mid']}")
@@ -1507,6 +1513,7 @@ async def test_a_resumed_recheck_reads_the_links_a_cut_pass_already_moved(monkey
 
     monkeypatch.setattr(code_links.code, "kept_paths", kept_paths)
     monkeypatch.setattr(code_links.store, "for_code", for_code)
+    monkeypatch.setattr(code_links.store, "lost", _none_lost)
     monkeypatch.setattr(code_links.code, "link_cursor", get)
     monkeypatch.setattr(code_links.code, "set_link_cursor", put)
     await code_links._follow(
@@ -1562,6 +1569,7 @@ def _repository(monkeypatch, *, head: str, checked: str, cursor: str, diffs: dic
         monkeypatch.setattr(code_links, name, nothing)
     monkeypatch.setattr(code_links, "_recheck", recheck)
     monkeypatch.setattr(code_links.store, "for_code", for_code)
+    monkeypatch.setattr(code_links.store, "lost", _none_lost)
     for name, fn in (
         ("kept_paths", kept_paths),
         ("link_cursor", get),
@@ -2263,6 +2271,7 @@ async def test_a_link_made_inside_the_range_follows_its_own_commit(
         return found
 
     monkeypatch.setattr(code_links.store, "for_code", for_code)
+    monkeypatch.setattr(code_links.store, "lost", _none_lost)
     monkeypatch.setattr(code_links.code, "candidates", none)
     monkeypatch.setattr(code_links.code, "link_cursor", get)
     monkeypatch.setattr(code_links.code, "set_link_cursor", put)

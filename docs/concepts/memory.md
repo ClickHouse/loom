@@ -299,7 +299,8 @@ renamed and edited is followed only when its new name is related to the old one:
 or shrunk (`fetch` -> `fetch_all`), a `v` version bumped (`parse_v1` -> `parse_v2`), or
 keeping a word past the ones both begin with (`fetch_rows` -> `load_rows`, not
 `fetch_users`). A link already `missing` is found again only when its own name comes
-back, here or in another file, never by a definition added later.
+back, in its own file or, for 30 days after it went missing, in another; never by a
+definition added later.
 
 Each link records the fingerprint rules its hashes were computed with. After an upgrade
 the worker re-hashes every link from the commits its hashes were taken at, including the
