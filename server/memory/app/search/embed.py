@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any
 
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app.search.budget import SearchBudget
+from server.memory.app.search.query_casing import corpus_spellings
+from server.memory.domain.query_casing import apply_spellings
 from server.memory.domain.search_prompts import _HYDE_PROMPT
 from server.observability.genai import llm_stage
 
@@ -136,6 +138,13 @@ async def _embed_search_query(
                 hyde_query = f"{input.query}\n{hyde_text}{date_suffix}"
         except Exception as e:  # noqa: BLE001 — HyDE is optional; the plain query embed still runs
             log.warning("HyDE generation failed (non-fatal): %s", e)
+
+    # The embedder reads a lowercased identifier as another string: embed the
+    # namespace's own spelling of the query's lowercase words.
+    spellings = await corpus_spellings(input.org, input.namespace, input.query)
+    if spellings:
+        actual_work["query_spellings"] = spellings
+        hyde_query = apply_spellings(hyde_query, spellings)
 
     with traced("embed.compute.query", model=embedder.model_name):
         actual_work["embedding_calls"] = int(actual_work["embedding_calls"]) + 1

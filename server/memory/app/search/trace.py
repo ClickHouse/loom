@@ -16,8 +16,10 @@ from server.memory.api.models_search import (
     _SearchTraceLogRow,
 )
 from server.memory.app.search.embed import _bounded_query_embed
+from server.memory.app.search.query_casing import corpus_spellings
 from server.memory.app.search.vector_legs import _plane_fields
 from server.memory.app.served_superseded import served_flags as _served
+from server.memory.domain.query_casing import apply_spellings
 
 
 async def handle_memory_search_trace(input: MemorySearchTraceInput) -> Any:
@@ -32,8 +34,9 @@ async def handle_memory_search_trace(input: MemorySearchTraceInput) -> Any:
 
     input, _ = pin_read_filters(input, current_auth())
     embedder = get_embedder()
+    spellings = await corpus_spellings(input.org, input.namespace, input.query)
     with traced("embed.compute.query", model=embedder.model_name):
-        query_vec = await _bounded_query_embed(embedder, input.query)
+        query_vec = await _bounded_query_embed(embedder, apply_spellings(input.query, spellings))
 
     entity_filter_lower = [t.lower() for t in (input.entity_filter or [])]
 
