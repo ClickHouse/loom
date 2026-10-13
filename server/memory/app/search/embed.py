@@ -139,9 +139,7 @@ async def _embed_search_query(
         except Exception as e:  # noqa: BLE001 — HyDE is optional; the plain query embed still runs
             log.warning("HyDE generation failed (non-fatal): %s", e)
 
-    # The embedder reads a lowercased identifier as another string: embed the
-    # namespace's own spelling of the query's lowercase words.
-    spellings = await corpus_spellings(input.org, input.namespace, input.query)
+    spellings = await corpus_spellings(input, embedder.model_name)
     if spellings:
         actual_work["query_spellings"] = spellings
         hyde_query = apply_spellings(hyde_query, spellings)

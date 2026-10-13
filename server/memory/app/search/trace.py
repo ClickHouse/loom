@@ -34,7 +34,7 @@ async def handle_memory_search_trace(input: MemorySearchTraceInput) -> Any:
 
     input, _ = pin_read_filters(input, current_auth())
     embedder = get_embedder()
-    spellings = await corpus_spellings(input.org, input.namespace, input.query)
+    spellings = await corpus_spellings(input, embedder.model_name)
     with traced("embed.compute.query", model=embedder.model_name):
         query_vec = await _bounded_query_embed(embedder, apply_spellings(input.query, spellings))
 

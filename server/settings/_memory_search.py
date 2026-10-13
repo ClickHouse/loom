@@ -155,12 +155,10 @@ class MemorySearchSettings(BaseModel):
     memory_search_embed_bound_s: float = 2.5
     # Retries after a timed-out first attempt, each with the bound above.
     memory_search_embed_bound_retries: int = 1
-    # Query words of 4+ letters written all-lowercase are embedded in the
-    # spelling the namespace's own rows use most ("datalakecatalog" ->
-    # "DataLakeCatalog"): the embedder reads the lowercased identifier as a
-    # different string, and the vector leg loses the rows that name it. Only
-    # queries of at most this many words are looked up (one bounded read of
-    # matching excerpts, fail-open to the query as typed). 0 = off.
+    # A query of at most this many words embeds each all-lowercase word of 4+
+    # letters in the spelling the rows it may read use most
+    # ("datalakecatalog" -> "DataLakeCatalog"); one bounded read, fail-open.
+    # 0 = off.
     memory_search_corpus_casing_max_words: int = Field(default=6, ge=0)
     # Body length (chars) for bodies="excerpt" (the MCP search default).
     memory_search_excerpt_chars: int = Field(default=200, ge=1)
