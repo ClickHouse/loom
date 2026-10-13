@@ -11,6 +11,7 @@ export const MODEL_JOBS = {
   memory_ask_mid_model: "Middle answer tier (optional)",
   profile_consolidation_model: "Profile consolidation",
   reflection_distill_model: "Reflection",
+  code_link_revise_model: "Code-linked memory checks",
   session_brief_llm_model: "Session briefs",
   code_ask_llm_model: "Code answers",
   code_search_hyde_model: "Code search expansion (optional)",

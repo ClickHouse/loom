@@ -928,6 +928,7 @@ Source: `server/settings/_models.py`
 | `LOOM_MEMORY_EXTRACT_VERIFY_MODELS` | `str` | `'claude-opus-5-5'` | The durability check on a coding capture: one batched call per capture per listed model (CSV) judges each fact durable or not and folds same-claim paraphrases and replaced states. A fact is dropped only when every model says drop; folds come from the first. Fails open. "" turns it off. |
 | `LOOM_PROFILE_CONSOLIDATION_MODEL` | `str` | `''` | The profile fold. |
 | `LOOM_REFLECTION_DISTILL_MODEL` | `str` | `''` | Reflection distillation: the outcome labeller and the contrast writer. |
+| `LOOM_CODE_LINK_REVISE_MODEL` | `str` | `''` | The code-link `revise` judge: does a memory's claim still hold for its code's new text. |
 | `LOOM_SESSION_BRIEF_LLM_MODEL` | `str` | `'gpt-6-luna'` | Session briefs; without its provider's key the deployment's LLM writes them. |
 
 ### Code

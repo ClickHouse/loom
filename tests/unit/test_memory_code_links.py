@@ -3078,3 +3078,24 @@ def test_a_carried_link_serves_no_suggestion_its_hashes_still_match(monkeypatch)
     link["checked_hash"] = "h"
     served = code_link_reads.current("o", {"mid": "m"}, [link, {**link, "carried": 1}])
     assert [a["suggestion"] for a in served] == ["returns three", ""]
+
+
+@pytest.mark.asyncio
+async def test_the_revise_judge_runs_on_its_own_model(monkeypatch) -> None:
+    from server.llm import client as llm_client
+    from server.memory.app import code_link_judge
+
+    picked: list[str | None] = []
+
+    class _LLM:
+        async def complete(self, *a: Any, **kw: Any) -> Any:
+            return SimpleNamespace(text='{"verdict": "holds"}')
+
+    def for_model(model: str | None) -> _LLM:
+        picked.append(model)
+        return _LLM()
+
+    monkeypatch.setattr(llm_client, "get_llm_client_for_model", for_model)
+    monkeypatch.setattr(settings, "code_link_revise_model", "fake-revise-1")
+    assert await code_link_judge.judge_claim("returns rows", "a", "b") == ("holds", "")
+    assert picked == ["fake-revise-1"]

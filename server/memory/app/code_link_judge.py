@@ -24,12 +24,13 @@ _JUDGE = (
 async def judge_claim(claim: str, before: str, after: str) -> tuple[str, str]:
     """(verdict, revised claim) for `claim` once its code went from `before` to `after`;
     ("unsure", "") when the model's answer is not one of the verdicts."""
-    from server.llm.client import get_llm_client
+    from server.llm.client import get_llm_client_for_model
     from server.llm.json_text import strip_code_fence
     from server.observability.genai import llm_stage
+    from server.settings import settings
 
     with llm_stage("code_link_revise"):
-        res = await get_llm_client().complete(
+        res = await get_llm_client_for_model(settings.code_link_revise_model).complete(
             _JUDGE,
             f"CLAIM:\n{claim}\n\nCODE BEFORE:\n{before}\n\nCODE NOW:\n{after}",
             max_tokens=500,
