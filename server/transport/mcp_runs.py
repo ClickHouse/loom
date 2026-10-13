@@ -1,4 +1,4 @@
-"""MCP transport — one implicit run per `Mcp-Session-Id`.
+"""MCP transport — one implicit run per token and `Mcp-Session-Id`.
 
 Leaf module: an in-process registry of the run each MCP session is bound to.
 `run.begin` / `run.complete` are not listed in `core`, so a default-tier MCP
@@ -6,14 +6,16 @@ client never names a run of its own. The transport mints the run itself:
 
 - The first run-scoped tool call of a session begins a run (goal = that
   call's query or key, `environment="mcp"`, `consumer=<client agent>`,
-  `metadata.implicit=true`), filed under the user and session the call acts as.
-  Its id binds the token's subject (`run_id_for`).
+  `metadata.implicit=true`), in the caller's org and default namespace, filed
+  under the user and session the call acts as. Its id binds the token's
+  subject (`session_run_id`).
 - Writes get the run stamped into their `run_id` argument (provenance, and
   the cross-scope `duplicate` rule); reads are labelled through the
   ledger ContextVar (`server.observability.run_context`) and never filtered.
-- The run lives in the caller's org, and the ledger counts the session's calls
-  by run id and token subject, in any org and namespace. A call on the session
-  after its DELETE re-opens the run. It closes on `DELETE /mcp` or after
+- The ledger holds the session's calls (`agent_events` by run id and token
+  subject, in any org and namespace a call named); the closed run freezes no
+  count, since a call's row lands a moment after it answers. A call on the
+  session after its DELETE re-opens the run. It closes on `DELETE /mcp` or after
   `mcp_session_run_idle_seconds` without a call to any web process of the
   server (the ledger says which) —
   `status="completed"`, `outcome="none"` (the transport knows the session
@@ -25,7 +27,9 @@ client never names a run of its own. The transport mints the run itself:
   none at all).
 
 Bounded like the session→agent cache: at the cap the idlest run is closed
-and evicted. Ledger failures never fail a tool call.
+and evicted. A close the ledger did not answer is retried by the sweep of a
+web process serving the run, unless the session goes on. Ledger failures never
+fail a tool call.
 """
 
 from __future__ import annotations
@@ -47,6 +51,8 @@ log = logging.getLogger(__name__)
 SESSION_RUN_CAP = 4096
 # The sweep runs at most this often, from the request path.
 SWEEP_MIN_INTERVAL_S = 60.0
+# Closes one sweep retries at most, oldest first.
+CLOSE_RETRIES_PER_SWEEP = 64
 GOAL_MAX_CHARS = 2000
 
 # Ops that never take the session run: the ledger's own verbs (an explicit
@@ -127,11 +133,13 @@ class SessionRun:
 # Keyed by run id: two callers sending one session id hold two runs.
 _RUNS: dict[str, SessionRun] = {}
 _BEGIN_FAILED_AT: dict[str, float] = {}
-# Closes the ledger did not answer for runs this process began (a DELETE, an
-# eviction): run id -> (org, subject, reason), retried by every sweep until they
-# land. Capped like _RUNS: past the cap the oldest waits for an idle sweep
-# elsewhere.
-_CLOSE_LATER: dict[str, tuple[str, str, str]] = {}
+# Closes the ledger did not answer for runs this process served (a DELETE, an
+# eviction): run id -> (org, subject, reason, when it was asked), oldest first.
+# Each sweep retries a few and stops at the first the ledger still refuses. A
+# close is dropped when the session goes on, and given up with a warning once
+# it is an idle window old or past the cap; the run then stays open in the
+# ledger for `run.complete`.
+_CLOSE_LATER: dict[str, tuple[str, str, str, datetime]] = {}
 _PENDING = TaskSet()  # in-flight run.begin, and evicted runs' closes
 _last_sweep: float = 0.0
 
@@ -206,10 +214,9 @@ async def ensure(
     goal: str,
     now: float | None = None,
 ) -> SessionRun | None:
-    """The session's run, begun on first use, in the caller's org and the
-    namespace `defaults` name. None when the transport has no session or caller
-    identity, the feature is off, or `run.begin` failed (retried after the idle
-    window, not on every call)."""
+    """The session's run, begun on first use, in the org and namespace `defaults`
+    name. None when the transport has no session or caller identity, or
+    `run.begin` failed (retried after the idle window, not on every call)."""
     if not session_id or not defaults:
         return None
     now = time.monotonic() if now is None else now
@@ -218,7 +225,7 @@ async def ensure(
     agent = str(defaults.get("agent") or "")
     if any(v in ("", "-") for v in (org, namespace, agent)):
         return None
-    run_id = run_id_for(org, caller.subject, session_id)
+    run_id = session_run_id(org, caller.subject, session_id)
     run = _RUNS.get(run_id)
     if run is not None:
         run.last_seen = now
@@ -262,22 +269,16 @@ async def ensure(
     )
     _RUNS[run_id] = run
     _BEGIN_FAILED_AT.pop(run_id, None)
+    _CLOSE_LATER.pop(run_id, None)  # the session goes on: its close is void
     run.begin_task = _PENDING.spawn(
         _begin(run, now=now, first=True), name=f"mcp-run-begin:{run_id}", detached=True
     )
     return run
 
 
-def run_id_for(org: str, subject: str, session_id: str) -> str:
-    """The implicit run's id (`session_run_id`); a DELETE, which has no body,
-    rebuilds it from the token alone."""
-    return session_run_id(org, subject, session_id)
-
-
 async def _begin(run: SessionRun, *, now: float, first: bool) -> None:
     """`run.begin` for a registered run, unless another web process of this server
-    began it already (in whichever namespace the session's first call named, which
-    the close must name too). A re-opened run keeps the session's first goal. A
+    began it already. A re-opened run keeps the session's first goal. A
     `first` begin that fails forgets the run and the session waits out the idle
     window before the next attempt; a failed check of a run already begun keeps
     it, and the next check tries again."""
@@ -285,9 +286,7 @@ async def _begin(run: SessionRun, *, now: float, first: bool) -> None:
         from server.tasks.api.models_run import RunBeginInput
         from server.tasks.app.run import active_session_runs, begin_session_run
 
-        active = await active_session_runs(run.org, run.run_id)
-        if active:
-            run.namespace = str(active[0]["namespace"])
+        if await active_session_runs(run.org, run.run_id):
             return
         await begin_session_run(
             RunBeginInput(
@@ -325,19 +324,24 @@ async def drain_ledger_writes() -> None:
 _Closed = Literal["closed", "gone", "later"]
 
 
-async def _close(org: str, run_id: str, subject: str, *, reason: str) -> _Closed:
+async def _close(
+    org: str, run_id: str, subject: str, *, reason: str, asked_at: datetime | None = None
+) -> _Closed:
     """Complete the run if the ledger says the session is over. An idle close
     waits until no call reached the ledger within the idle window; a DELETE or an
-    eviction does not wait."""
+    eviction does not wait. A retried close (`asked_at`) is void when the session
+    made a call after it was asked: it went on, on some web process."""
     try:
         from server.core.datetimes import naive_utc_now
         from server.tasks.api.models_run import RunCompleteInput
-        from server.tasks.app.run import handle_run_complete, session_run_calls
+        from server.tasks.app.run import handle_run_complete, session_run_activity
 
-        found = await session_run_calls(org, run_id, "" if subject == "-" else subject)
+        found = await session_run_activity(org, run_id, "" if subject == "-" else subject)
         if found is None:
             return "gone"
-        namespaces, calls, last_call = found
+        namespaces, last_call = found
+        if asked_at is not None and last_call is not None and last_call > asked_at:
+            return "gone"
         if reason == "idle" and last_call is not None:
             if (naive_utc_now() - last_call).total_seconds() < idle_seconds():
                 return "later"  # a sibling web process served it lately
@@ -353,7 +357,7 @@ async def _close(org: str, run_id: str, subject: str, *, reason: str) -> _Closed
                     outcome="none",
                     # 0: from the run's start, which every web process shares.
                     duration_ms=0,
-                    metadata={"closed_by": f"mcp_{reason}", "calls": calls},
+                    metadata={"closed_by": f"mcp_{reason}"},
                 )
             )
         return "closed"
@@ -374,24 +378,50 @@ async def _close_run(run: SessionRun, *, reason: str) -> _Closed:
 async def _end(run: SessionRun, *, reason: str) -> _Closed:
     """Close a run this process has let go of (a DELETE, an eviction); a close
     the ledger did not answer is kept for the next sweep."""
+    from server.core.datetimes import naive_utc_now
+
+    asked_at = naive_utc_now()
     outcome = await _close_run(run, reason=reason)
     if outcome == "later":
         if len(_CLOSE_LATER) >= SESSION_RUN_CAP:
-            _CLOSE_LATER.pop(next(iter(_CLOSE_LATER)))
-        _CLOSE_LATER[run.run_id] = (run.org, run.caller.subject, reason)
+            _give_up(next(iter(_CLOSE_LATER)), "too many closes waiting")
+        _CLOSE_LATER[run.run_id] = (run.org, run.caller.subject, reason, asked_at)
     return outcome
+
+
+def _give_up(run_id: str, why: str) -> None:
+    _CLOSE_LATER.pop(run_id, None)
+    log.warning("mcp session run: gave up closing %s (%s); it stays open", run_id, why)
+
+
+async def _retry_closes() -> int:
+    """Retry the oldest closes the ledger did not answer; returns how many closed."""
+    from server.core.datetimes import naive_utc_now
+
+    closed = 0
+    for run_id in list(_CLOSE_LATER)[:CLOSE_RETRIES_PER_SWEEP]:
+        org, subject, reason, asked_at = _CLOSE_LATER[run_id]
+        outcome = await _close(org, run_id, subject, reason=reason, asked_at=asked_at)
+        if outcome == "later":
+            if (naive_utc_now() - asked_at).total_seconds() >= idle_seconds():
+                _give_up(run_id, "the ledger did not answer for an idle window")
+                continue
+            break  # the ledger is still down; the next sweep tries again
+        _CLOSE_LATER.pop(run_id, None)
+        closed += outcome == "closed"
+    return closed
 
 
 async def close_session(session_id: str | None, org: str, subject: str) -> bool:
     """`DELETE /mcp`: the client ended the session; close its run, the one its id
-    names for this token in its org (`run_id_for`), whichever web process served
-    it. A close the ledger did not answer is retried by this process's sweep
-    when it began the run, else left to the idle sweep of the one that did."""
+    names for this token in its org (`session_run_id`), whichever web process
+    served it. A close the ledger did not answer is retried by this process's
+    sweep when it was serving the run, else left to the idle sweep of one that is."""
     if not session_id or not org:
         return False
     from server.core.background import detached_task
 
-    run_id = run_id_for(org, subject, session_id)
+    run_id = session_run_id(org, subject, session_id)
     run = _RUNS.pop(run_id, None)
     ending = (
         _end(run, reason="session_end")
@@ -420,11 +450,7 @@ async def sweep_idle(*, now: float | None = None, force: bool = False) -> int:
         if _RUNS.get(run.run_id) is run:
             _RUNS.pop(run.run_id)
         closed += outcome == "closed"
-    for run_id, (org, subject, reason) in list(_CLOSE_LATER.items()):
-        outcome = await _close(org, run_id, subject, reason=reason)
-        if outcome != "later":
-            _CLOSE_LATER.pop(run_id, None)
-            closed += outcome == "closed"
+    closed += await _retry_closes()
     for run_id, failed_at in list(_BEGIN_FAILED_AT.items()):
         if now - failed_at >= idle:
             _BEGIN_FAILED_AT.pop(run_id, None)
@@ -441,15 +467,16 @@ __all__ = [
     "SWEEP_MIN_INTERVAL_S",
     "Caller",
     "SessionRun",
-    "subject_of",
     "close_session",
     "current",
+    "drain_ledger_writes",
     "ensure",
     "goal_of",
     "idle_seconds",
     "live_count",
     "reset",
     "stamps_run",
+    "subject_of",
     "sweep_due",
     "sweep_idle",
     "takes_run",

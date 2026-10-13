@@ -71,6 +71,7 @@ NON_SETTINGS_ENV = frozenset(
         "LOOM_HOOK_TIMEOUT_MS",
         "LOOM_INIT",
         "LOOM_INSTANCE_LABEL",
+        "LOOM_LISTEN_HOST",
         "LOOM_NAMESPACE",
         "LOOM_OP",
         "LOOM_OP_TOOL_NAME",

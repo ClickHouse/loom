@@ -19,7 +19,6 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-import math
 import os
 import time
 from collections.abc import Callable
@@ -27,7 +26,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from server.core.runtime_files import server_file
-from server.core.shared_document import SharedDocument, share_override
+from server.core.shared_document import SharedDocument, share_override, usable_number
 from server.settings import settings
 
 if TYPE_CHECKING:
@@ -290,8 +289,7 @@ class _Overrides:
 def _stored_limit(capacity: Any, rate: Any) -> Limit:
     """A limit as the setters store it; anything else makes the document corrupt."""
     for value in (capacity, rate):
-        number = isinstance(value, int | float) and not isinstance(value, bool)
-        if not number or not math.isfinite(value) or value < 0:
+        if not usable_number(value):
             raise ValueError(f"not a rate limit: {value!r}")
     return Limit(float(capacity), float(rate))
 

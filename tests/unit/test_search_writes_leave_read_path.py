@@ -1,6 +1,5 @@
 """A search's writes leave the read path. The MCP session run
-is registered at once under `mcp-<session_id>` while `run.begin` lands in the
-background; closing waits for the begin so complete never precedes it; the
+is registered at once under its id while `run.begin` lands in the background; closing waits for the begin so complete never precedes it; the
 page park is a fire-and-forget insert whose key is known before the row."""
 
 from __future__ import annotations
@@ -13,6 +12,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from server.memory.app import search_pages as sp
+from server.tasks.domain.session_runs import session_run_id
 from server.transport import mcp_runs
 
 DEFAULTS = {"org": "clickhouse", "namespace": "ns-a", "agent": "cursor"}
@@ -23,7 +23,7 @@ CALLER = mcp_runs.Caller()
 
 def rid(session_id: str) -> str:
     """The implicit run id of `session_id` under DEFAULTS' org, for an unpinned caller."""
-    return mcp_runs.run_id_for("clickhouse", CALLER.subject, session_id)
+    return session_run_id("clickhouse", CALLER.subject, session_id)
 
 
 @pytest.fixture(autouse=True)
@@ -57,7 +57,7 @@ def test_ensure_returns_before_run_begin_lands_and_close_waits_for_it(monkeypatc
     monkeypatch.setattr(h, "begin_session_run", slow_begin)
     monkeypatch.setattr(h, "handle_run_complete", complete)
     monkeypatch.setattr(h, "active_session_runs", AsyncMock(return_value=[]))
-    monkeypatch.setattr(h, "session_run_calls", AsyncMock(return_value=(["ns-a"], 1, None)))
+    monkeypatch.setattr(h, "session_run_activity", AsyncMock(return_value=(["ns-a"], None)))
 
     async def _run() -> None:
         run = await asyncio.wait_for(

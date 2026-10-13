@@ -1,6 +1,6 @@
 """An MCP session's implicit run, as the ledger decides it, on live ClickHouse:
 `active_session_runs` finds the run a sibling web process began, in whichever
-namespace, and `session_run_calls` counts the calls labelled with it in every
+namespace, and `session_run_activity` sees the calls labelled with it in every
 namespace.
 
 Skips cleanly when LOOM_CH_HOST is unset.
@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 from server.core.datetimes import naive_utc_now
+from server.tasks.domain.session_runs import session_run_id
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("LOOM_CH_HOST"),
@@ -59,10 +60,10 @@ async def _ledger_call(ch: Any, namespace: str, run_id: str, subject: str = "") 
 @pytest.mark.asyncio
 async def test_the_ledger_decides_when_a_session_run_ends(ch: Any) -> None:
     from server.tasks.api.models_run import RunBeginInput
-    from server.tasks.app.run import active_session_runs, begin_session_run, session_run_calls
+    from server.tasks.app.run import active_session_runs, begin_session_run, session_run_activity
 
     first, other = (f"itest-{uuid.uuid4().hex[:12]}" for _ in range(2))
-    run_id = f"mcp-{uuid.uuid4().hex[:12]}"
+    run_id = session_run_id(ORG, "", uuid.uuid4().hex)
     try:
         assert await active_session_runs(ORG, run_id) == []
         await begin_session_run(
@@ -80,16 +81,16 @@ async def test_the_ledger_decides_when_a_session_run_ends(ch: Any) -> None:
         assert [r["namespace"] for r in await active_session_runs(ORG, run_id)] == [first]
 
         # Nothing ledgered yet.
-        assert await session_run_calls(ORG, run_id, "") == ([first], 0, None)
+        assert await session_run_activity(ORG, run_id, "") == ([first], None)
         # A call the session made in another namespace counts.
         await _ledger_call(ch, other, run_id)
-        namespaces, calls, last = await session_run_calls(ORG, run_id, "") or ([], 0, None)
-        assert (namespaces, calls) == ([first], 1)
+        namespaces, last = await session_run_activity(ORG, run_id, "") or ([], None)
+        assert namespaces == [first]
         assert last is not None and (naive_utc_now() - last).total_seconds() < 120
-        assert await session_run_calls(ORG, "mcp-never-begun", "") is None
+        assert await session_run_activity(ORG, session_run_id(ORG, "", "never-begun"), "") is None
         # Another token labelling a request with the run's id is not the session.
         await _ledger_call(ch, other, run_id, subject="sa:eve")
-        assert (await session_run_calls(ORG, run_id, "") or ("", 0, None))[1] == 1
+        assert await session_run_activity(ORG, run_id, "") == ([first], last)
     finally:
         for table in ("agent_runs", "agent_events"):
             await ch.execute(
@@ -102,8 +103,8 @@ async def test_the_ledger_decides_when_a_session_run_ends(ch: Any) -> None:
 @pytest.mark.asyncio
 async def test_a_scoped_callers_session_run_is_its_own(ch: Any) -> None:
     """A token pinned to one user: the run the transport begins is filed under
-    that user and the id its calls carry, so the caller reads and closes it
-    through the ownership checks run.get and run.complete apply."""
+    that user, and its DELETE completes it on a web process that never served
+    it."""
     from server.auth.context import set_current_auth
     from server.auth.jwt import AuthInfo
     from server.tasks.api.models_run import RunGetInput
@@ -132,7 +133,7 @@ async def test_a_scoped_callers_session_run_is_its_own(ch: Any) -> None:
         defaults = {"org": ORG, "namespace": namespace, "agent": AGENT}
         run = await mcp_runs.ensure(session, defaults, caller, goal="first call")
         await mcp_runs.drain_ledger_writes()
-        assert run is not None and run.run_id == mcp_runs.run_id_for(ORG, caller.subject, session)
+        assert run is not None and run.run_id == session_run_id(ORG, caller.subject, session)
         got = await handle_run_get(RunGetInput(org=ORG, namespace=namespace, run_id=run.run_id))
         assert got.found and got.run is not None and got.run.user_id == "review-user"
         mcp_runs.reset()  # the DELETE reaches a web process that never served it
@@ -184,10 +185,10 @@ async def test_two_callers_sending_one_session_id_keep_their_own_runs(ch: Any) -
 
 
 @pytest.mark.asyncio
-async def test_a_session_run_counts_a_call_that_lands_before_its_begin(ch: Any) -> None:
+async def test_a_session_run_sees_a_call_that_lands_before_its_begin(ch: Any) -> None:
     """The run starts when the transport registered it, so a first call that
-    answers before the begin's write is in the count."""
-    from server.tasks.app.run import session_run_calls
+    answers before the begin's write is the session's."""
+    from server.tasks.app.run import session_run_activity
     from server.transport import mcp_runs
 
     namespace = f"itest-{uuid.uuid4().hex[:12]}"
@@ -198,8 +199,8 @@ async def test_a_session_run_counts_a_call_that_lands_before_its_begin(ch: Any) 
         assert run is not None
         await _ledger_call(ch, namespace, run.run_id)  # before the begin lands
         await mcp_runs.drain_ledger_writes()
-        found = await session_run_calls(ORG, run.run_id, "")
-        assert found is not None and found[:2] == ([namespace], 1)
+        found = await session_run_activity(ORG, run.run_id, "")
+        assert found is not None and found[0] == [namespace] and found[1] is not None
     finally:
         mcp_runs.reset()
         for table in ("agent_runs", "agent_events"):
@@ -216,7 +217,7 @@ async def test_a_reopened_session_run_keeps_its_first_goal_and_owner(ch: Any) ->
     from server.tasks.store.runs import fetch_run
 
     namespace = f"itest-{uuid.uuid4().hex[:12]}"
-    run_id = f"mcp-{uuid.uuid4().hex[:12]}"
+    run_id = session_run_id(ORG, "sub", uuid.uuid4().hex)
 
     def begin(user: str, goal: str) -> RunBeginInput:
         return RunBeginInput(
@@ -243,15 +244,15 @@ async def test_a_reopened_session_run_keeps_its_first_goal_and_owner(ch: Any) ->
 
 @pytest.mark.asyncio
 async def test_a_close_completes_the_rows_two_racing_first_begins_wrote(ch: Any) -> None:
-    """Two web processes' first calls named different namespaces and both began
-    the run: the session's close completes both."""
+    """One subject's tokens default to different namespaces, so the run has a
+    row in each: the session's close completes both."""
     from server.tasks.api.models_run import RunBeginInput
     from server.tasks.app.run import active_session_runs, begin_session_run
     from server.transport import mcp_runs
 
     first, other = (f"itest-{uuid.uuid4().hex[:12]}" for _ in range(2))
     session = uuid.uuid4().hex
-    run_id = mcp_runs.run_id_for(ORG, "sub", session)
+    run_id = session_run_id(ORG, "sub", session)
     try:
         for namespace in (first, other):
             await begin_session_run(

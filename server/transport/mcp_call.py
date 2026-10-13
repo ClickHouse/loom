@@ -345,14 +345,15 @@ async def _bind_session_run(
         from server.auth.context import current_auth
         from server.observability.run_context import set_ledger_run
 
-        caller = _mcp_runs.Caller.of_call(current_auth(), arguments)
-        if defaults and caller is not None and _mcp_runs.takes_run(op):
-            # The run row lives in the caller's org and where the session's first
-            # call worked: its explicit namespace when it named one, else the
-            # caller's default.
+        caller = None
+        if defaults and _mcp_runs.takes_run(op):
+            caller = _mcp_runs.Caller.of_call(current_auth(), arguments)
+        if defaults and caller is not None:
+            # The run row lives in the caller's org and default namespace, whatever
+            # namespace a call names, so every web process files it under one key.
             _run = await _mcp_runs.ensure(
                 mcp_session_id,
-                {**defaults, "namespace": str(arguments.get("namespace") or defaults["namespace"])},
+                defaults,
                 caller,
                 goal=_mcp_runs.goal_of(arguments, f"mcp session ({defaults['agent']})"),
             )

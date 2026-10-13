@@ -86,7 +86,7 @@ async def test_a_session_runs_calls_are_read_org_wide(monkeypatch, active):
             await super().query_one(sql, params)
             assert "namespace =" not in sql and "agent_events" in sql
             assert params["since"] == started and params["subject"] == "sa:t"
-            return {"n": 4, "last": last}
+            return {"last": last}
 
         async def query_all(self, sql: str, params=None):
             self.sequential_reads.append(sequential_reads_active())
@@ -95,8 +95,8 @@ async def test_a_session_runs_calls_are_read_org_wide(monkeypatch, active):
 
     client = _Ledger()
     monkeypatch.setattr(run_handlers, "get_client", lambda: client)
-    got = await run_handlers.session_run_calls("o", "mcp-s", "sa:t")
-    assert got == ((["ns-first"], 4, last) if active else None)
+    got = await run_handlers.session_run_activity("o", "mcp-s", "sa:t")
+    assert got == ((["ns-first"], last) if active else None)
     assert client.sequential_reads[0] is True
 
 

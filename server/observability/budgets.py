@@ -44,7 +44,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from server.core.runtime_files import server_file
-from server.core.shared_document import SharedDocument, share_override
+from server.core.shared_document import SharedDocument, share_override, usable_number
 
 log = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ def _parse_value(raw: Any) -> int | float | None:
     if isinstance(raw, bool):
         return None
     if isinstance(raw, int | float):
-        return int(raw) if math.isfinite(raw) and raw >= 0 else None
+        return int(raw) if usable_number(raw) else None
     if isinstance(raw, str):
         text = raw.strip().lower()
         try:
@@ -85,15 +85,14 @@ class _Budgets:
 
 def _stored_ms(raw: Any) -> int:
     """An op budget as `set` stores it; anything else makes the document corrupt."""
-    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+    if not isinstance(raw, int) or not usable_number(raw):
         raise ValueError(f"not a budget: {raw!r}")
     return raw
 
 
 def _stored_budget(raw: Any) -> int | float:
     """A consumer budget as `set_for_consumer` stores it: ms, or a float multiplier."""
-    finite = isinstance(raw, float) and math.isfinite(raw) and raw >= 0
-    return raw if finite else _stored_ms(raw)
+    return raw if isinstance(raw, float) and usable_number(raw) else _stored_ms(raw)
 
 
 def _decode(data: Any) -> _Budgets:

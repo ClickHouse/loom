@@ -8,18 +8,23 @@ run's stored id, and the client's DELETE /mcp completes it.
 Two tokens sending the same (client-chosen) session id hold two runs: each
 one's writes carry its own, and each one's DELETE completes only its own.
 
+A DELETE right after a call, on another connection, completes the run without
+freezing a count the ledger had not caught up with: every call is there by id.
+
 Needs a server that enforces auth (the isolation step of CI); skips otherwise,
 and without LOOM_BASE_URL (tests/integration/conftest.py).
 """
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any
 
 import httpx
 import pytest
 
+from tests.integration._eventually import eventually
 from tests.integration._resources import unique_org
 
 USER, APP_SESSION = "user-s", "app-session-1"
@@ -121,3 +126,36 @@ async def test_two_tokens_sending_one_session_id_hold_two_runs(
         parameters={"org": org},
     ).result_rows
     assert stamped == [("ns-a", 1), ("ns-b", 1)]
+
+
+@pytest.mark.asyncio
+async def test_a_delete_right_after_a_call_keeps_every_call_in_the_ledger(
+    control_plane_url: str, ch_client: Any
+) -> None:
+    org, ns, session = unique_org("mcp-fast"), "ns", uuid.uuid4().hex
+    token = _mint(org, ns)
+    async with httpx.AsyncClient(base_url=control_plane_url, timeout=30) as c:
+        await _require_auth(c)
+        for i in range(3):
+            await _memory_set(c, token, session, ns, f"rv/fact/{i}")
+    async with httpx.AsyncClient(base_url=control_plane_url, timeout=30) as c:
+        r = await c.delete("/mcp", headers=_headers(token, session))
+        assert r.status_code == 200 and r.json()["run_closed"] is True, r.text[:400]
+
+    ((run_id, status, metadata),) = ch_client.query(
+        "SELECT run_id, status, metadata FROM loom.agent_runs FINAL WHERE org = {org:String}",
+        parameters={"org": org},
+    ).result_rows
+    assert status == "completed" and "calls" not in json.loads(metadata)
+
+    async def _all_ledgered() -> bool:
+        return (
+            ch_client.query(
+                "SELECT count() FROM loom.agent_events WHERE run_id = {rid:String} "
+                "AND operation = 'memory.set'",
+                parameters={"rid": run_id},
+            ).result_rows[0][0]
+            == 3
+        )
+
+    await eventually(_all_ledgered, description="the session's three calls in the ledger")

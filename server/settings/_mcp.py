@@ -62,7 +62,8 @@ class McpSettings(BaseModel):
     # empty = none.
     mcp_always_load_tools: str = "code.search,code.symbol"
     # Seconds without a tool call after which an MCP session's implicit run (one
-    # per `Mcp-Session-Id`, begun on the first run-scoped tool call) is closed.
+    # per token and `Mcp-Session-Id`, begun on the first run-scoped tool call) is
+    # closed.
     mcp_session_run_idle_seconds: int = Field(default=1800, ge=1)
     # A rate-limited tool call waits out its Retry-After once and re-checks
     # before returning RATE_LIMITED (MCP clients don't retry). This is the

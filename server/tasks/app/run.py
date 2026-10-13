@@ -253,20 +253,21 @@ async def active_session_runs(org: str, run_id: str) -> list[RunLedgerRow]:
         return await runs_store.active_runs_by_id(get_client(), org, run_id)
 
 
-async def session_run_calls(
+async def session_run_activity(
     org: str, run_id: str, subject: str
-) -> tuple[list[str], int, datetime | None] | None:
-    """The namespaces an implicit session run is active in, how many requests the
-    token `subject` made under it (in any org or namespace a call named), and
-    when the last one was; None when the run is not active."""
+) -> tuple[list[str], datetime | None] | None:
+    """The namespaces an implicit session run is active in, and when the token
+    `subject` last made a request under it (in any org or namespace a call
+    named); None when the run is not active."""
     active = await active_session_runs(org, run_id)
     if not active:
         return None
-    calls, last = await runs_store.ledgered_calls(
+    last = await runs_store.last_ledgered_call(
         get_client(), run_id, subject, since=min(r["started_at"] for r in active)
     )
-    last_call = None if last is None else last.replace(tzinfo=None)
-    return [str(r["namespace"]) for r in active], calls, last_call
+    return [str(r["namespace"]) for r in active], None if last is None else last.replace(
+        tzinfo=None
+    )
 
 
 async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:

@@ -356,3 +356,21 @@ def test_a_budget_that_is_not_finite_is_refused(tmp_path: Path, value: object) -
     with pytest.raises(ValueError):
         a.set_for_consumer("c1", "*", value)  # type: ignore[arg-type]
     assert not path.exists()
+
+
+def test_an_integer_too_large_for_a_float_is_refused_and_never_breaks_a_read(
+    tmp_path: Path, limiters: tuple[Limiter, Limiter, Path]
+) -> None:
+    huge = 10**400
+    a, b, path = _budgets(tmp_path)
+    with pytest.raises(ValueError):
+        a.set_for_consumer("c1", "*", huge)
+    a.set_for_consumer("c1", "*", 4)
+    path.write_text(json.dumps({"ops": {}, "consumer": [["c1", "*", huge]]}))
+    assert b.get_for_consumer("c1", "*") is None  # corrupt: not adopted, not raised
+    la, lb, overrides = limiters
+    la.set_namespace_limit("ns1", "memory", Limit(capacity=1, rate=0.0))
+    overrides.write_text(json.dumps({"ns": [["ns1", "memory", huge, 0]], "org": [], "actor": []}))
+    assert lb.check("ns0", "memory.set", org="o").allowed
+    la.reset_all()
+    lb.reset_all()

@@ -186,8 +186,8 @@ the one tool that is not a registry op).
    and fill omitted namespace and agent from the token and the caller's saved default.
    Explicit arguments win. `code.*` ops default to the deployment's code namespace. The
    reads in `_MCP_CROSS_AGENT_READS` default `agent` to `*`.
-3. **Session run.** One implicit run per `Mcp-Session-Id`: a write that names no run gets
-   the session's `run_id`.
+3. **Session run.** One implicit run per (org, token subject, `Mcp-Session-Id`), filed in the
+   caller's default namespace: a write that names no run gets the session's `run_id`.
 4. **Idempotency key.** An idempotent tool takes `_idempotency_key` (or `idempotency_key`)
    in its arguments, popped before validation.
 5. **Arguments** (`_validated_input`). The misspelled-argument refusal, then validation. A

@@ -20,10 +20,11 @@ export LOOM_RUNTIME_DIR
 # without a rebuild. LOOM_GRACEFUL_SHUTDOWN_S bounds the wait for in-flight
 # requests on SIGTERM, so one slow request cannot hold the container until
 # docker's SIGKILL skips the lifespan drains. LOOM_TRUSTED_PROXIES names the
-# peers whose X-Forwarded-For/Proto uvicorn applies.
+# peers whose X-Forwarded-For/Proto uvicorn applies. LOOM_LISTEN_HOST is the
+# address to bind: every interface in a container, loopback on a bare host.
 # exec: uvicorn must be PID 1 to receive docker's SIGTERM (a POSIX shell does
 # not forward it to its child).
-exec uvicorn server.main:app --host 0.0.0.0 --port "${PORT:-7777}" \
+exec uvicorn server.main:app --host "${LOOM_LISTEN_HOST:-0.0.0.0}" --port "${PORT:-7777}" \
   --workers "$LOOM_WEB_WORKERS" --loop "${LOOM_UVICORN_LOOP:-auto}" \
   --timeout-graceful-shutdown "${LOOM_GRACEFUL_SHUTDOWN_S:-10}" \
   --proxy-headers --forwarded-allow-ips="${LOOM_TRUSTED_PROXIES:-127.0.0.1}"

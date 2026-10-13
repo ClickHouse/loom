@@ -16,6 +16,7 @@ import pytest
 from server.observability import run_context
 from server.observability.ledger import run_id_of
 from server.operations.registry import OPERATIONS_BY_NAME
+from server.tasks.domain.session_runs import session_run_id
 from server.transport import mcp_runs
 
 DEFAULTS = {"org": "clickhouse", "namespace": "ns-a", "agent": "cursor"}
@@ -26,7 +27,7 @@ CALLER = mcp_runs.Caller()
 
 def rid(session_id: str) -> str:
     """The implicit run id of `session_id` under DEFAULTS' org, for an unpinned caller."""
-    return mcp_runs.run_id_for("clickhouse", CALLER.subject, session_id)
+    return session_run_id("clickhouse", CALLER.subject, session_id)
 
 
 @pytest.fixture(autouse=True)
@@ -56,13 +57,13 @@ class _Ledger:
     async def active_runs(self, org: str, run_id: str) -> list[dict[str, Any]]:
         return [{"namespace": self.active[run_id]}] if run_id in self.active else []
 
-    async def calls(self, org: str, run_id: str, subject: str) -> Any:
+    async def activity(self, org: str, run_id: str, subject: str) -> Any:
         if run_id not in self.active:
             return None
         from server.core.datetimes import naive_utc_now
 
         last = naive_utc_now() if run_id in self.served_elsewhere else None
-        return [self.active[run_id]], 7, last  # the run's namespaces, the ledger's count
+        return [self.active[run_id]], last
 
     async def begin(self, inp: Any, *, started_at: Any) -> None:
         if self.fail_begin:
@@ -85,7 +86,7 @@ def ledger(monkeypatch) -> _Ledger:
     led = _Ledger()
     monkeypatch.setattr(h, "begin_session_run", led.begin)
     monkeypatch.setattr(h, "handle_run_complete", led.complete)
-    monkeypatch.setattr(h, "session_run_calls", led.calls)
+    monkeypatch.setattr(h, "session_run_activity", led.activity)
     monkeypatch.setattr(h, "active_session_runs", led.active_runs)
     return led
 
@@ -242,7 +243,7 @@ def test_close_session_completes_with_outcome_none(ledger: _Ledger) -> None:
         assert (c.org, c.namespace, c.run_id) == ("clickhouse", "ns-a", rid("s"))
         assert c.status == "completed" and c.outcome == "none" and c.memories_used == []
         assert c.duration_ms == 0  # from the run's start, which every process shares
-        assert c.metadata == {"closed_by": "mcp_session_end", "calls": 7}
+        assert c.metadata == {"closed_by": "mcp_session_end"}  # the ledger holds the calls
         assert mcp_runs.live_count() == 0
 
     asyncio.run(_run())
@@ -458,8 +459,8 @@ def test_an_eviction_closes_a_run_a_sibling_then_reopens(ledger: _Ledger, monkey
 
 def test_a_session_run_lives_in_the_callers_org(monkeypatch) -> None:
     """A DELETE knows only the caller, never a call's arguments, so the run sits
-    in the caller's org whatever org a call names; the ledger counts that call by
-    run id."""
+    in the caller's org and default namespace whatever a call names; the ledger
+    counts that call by run id."""
     from server.operations.registry import OPERATIONS_BY_NAME
     from server.transport import mcp_call
 
@@ -474,7 +475,7 @@ def test_a_session_run_lives_in_the_callers_org(monkeypatch) -> None:
     asyncio.run(
         mcp_call._bind_session_run(OPERATIONS_BY_NAME["memory.set"], arguments, DEFAULTS, "s")
     )
-    assert (seen[0]["org"], seen[0]["namespace"]) == ("clickhouse", "ns-b")
+    assert (seen[0]["org"], seen[0]["namespace"]) == ("clickhouse", "ns-a")
 
 
 def test_two_callers_sending_one_session_id_hold_two_runs(ledger: _Ledger) -> None:
@@ -616,12 +617,108 @@ def test_a_delete_the_ledger_did_not_answer_is_retried_by_the_sweep(
         async def _down(org: str, run_id: str, subject: str) -> Any:
             raise ConnectionError("ledger down")
 
-        monkeypatch.setattr(h, "session_run_calls", _down)
+        monkeypatch.setattr(h, "session_run_activity", _down)
         assert await mcp_runs.close_session("s", "clickhouse", "-") is False
         assert mcp_runs.sweep_due(now=1000.0)
-        monkeypatch.setattr(h, "session_run_calls", ledger.calls)
+        monkeypatch.setattr(h, "session_run_activity", ledger.activity)
         assert await mcp_runs.sweep_idle(now=1000.0, force=True) == 1
         assert [c.metadata["closed_by"] for c in ledger.completes] == ["mcp_session_end"]
         assert await mcp_runs.sweep_idle(now=2000.0, force=True) == 0  # retried once
+
+    asyncio.run(_run())
+
+
+def _ledger_down(monkeypatch) -> tuple[list[str], Any]:
+    """The ledger refuses every close; returns the run ids tried and the restore."""
+    import server.tasks.app.run as h
+
+    good, tried = h.session_run_activity, []
+
+    async def _down(org: str, run_id: str, subject: str) -> Any:
+        tried.append(run_id)
+        raise ConnectionError("ledger down")
+
+    monkeypatch.setattr(h, "session_run_activity", _down)
+    return tried, lambda: monkeypatch.setattr(h, "session_run_activity", good)
+
+
+async def _failed_deletes(monkeypatch, *sessions: str) -> tuple[list[str], Any]:
+    for session in sessions:
+        await mcp_runs.ensure(session, DEFAULTS, CALLER, goal="g", now=0.0)
+    await mcp_runs.drain_ledger_writes()
+    tried, restore = _ledger_down(monkeypatch)
+    for session in sessions:
+        assert await mcp_runs.close_session(session, "clickhouse", "-") is False
+    tried.clear()
+    return tried, restore
+
+
+def test_a_session_that_goes_on_here_voids_its_retried_delete(ledger: _Ledger, monkeypatch) -> None:
+    async def _run() -> None:
+        _, restore = await _failed_deletes(monkeypatch, "s")
+        restore()
+        await mcp_runs.ensure("s", DEFAULTS, CALLER, goal="g", now=1000.0)  # the next call
+        await mcp_runs.drain_ledger_writes()
+        assert await mcp_runs.sweep_idle(now=1000.0, force=True) == 0
+        assert ledger.completes == []
+
+    asyncio.run(_run())
+
+
+def test_a_session_that_goes_on_elsewhere_voids_its_retried_delete(
+    ledger: _Ledger, monkeypatch
+) -> None:
+    async def _run() -> None:
+        _, restore = await _failed_deletes(monkeypatch, "s")
+        restore()
+        ledger.served_elsewhere.add(rid("s"))  # a sibling served a later call
+        assert await mcp_runs.sweep_idle(now=1000.0, force=True) == 0
+        assert ledger.completes == []
+        assert mcp_runs.live_count() == 0 and not mcp_runs._CLOSE_LATER
+
+    asyncio.run(_run())
+
+
+def test_a_sweep_stops_retrying_closes_while_the_ledger_is_down(
+    ledger: _Ledger, monkeypatch
+) -> None:
+    async def _run() -> None:
+        tried, restore = await _failed_deletes(monkeypatch, "a", "b", "c")
+        assert await mcp_runs.sweep_idle(now=1000.0, force=True) == 0
+        assert tried == [rid("a")]  # one try, not the whole backlog
+        restore()
+        monkeypatch.setattr(mcp_runs, "CLOSE_RETRIES_PER_SWEEP", 2)
+        assert await mcp_runs.sweep_idle(now=2000.0, force=True) == 2
+        assert await mcp_runs.sweep_idle(now=3000.0, force=True) == 1
+
+    asyncio.run(_run())
+
+
+def test_a_close_the_ledger_refuses_for_an_idle_window_is_given_up(
+    ledger: _Ledger, monkeypatch
+) -> None:
+    from datetime import timedelta
+
+    async def _run() -> None:
+        await _failed_deletes(monkeypatch, "s")
+        org, subject, reason, asked_at = mcp_runs._CLOSE_LATER[rid("s")]
+        old = asked_at - timedelta(seconds=mcp_runs.idle_seconds())
+        mcp_runs._CLOSE_LATER[rid("s")] = (org, subject, reason, old)
+        assert await mcp_runs.sweep_idle(now=1000.0, force=True) == 0
+        assert not mcp_runs._CLOSE_LATER
+
+    asyncio.run(_run())
+
+
+def test_the_closes_waiting_are_capped(ledger: _Ledger, monkeypatch) -> None:
+    async def _run() -> None:
+        for session in ("a", "b", "c"):
+            await mcp_runs.ensure(session, DEFAULTS, CALLER, goal="g", now=0.0)
+        await mcp_runs.drain_ledger_writes()
+        monkeypatch.setattr(mcp_runs, "SESSION_RUN_CAP", 2)
+        _ledger_down(monkeypatch)
+        for session in ("a", "b", "c"):
+            assert await mcp_runs.close_session(session, "clickhouse", "-") is False
+        assert list(mcp_runs._CLOSE_LATER) == [rid("b"), rid("c")]
 
     asyncio.run(_run())

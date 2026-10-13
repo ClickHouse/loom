@@ -5,9 +5,11 @@ against a live ClickHouse; skips without LOOM_CH_HOST."""
 from __future__ import annotations
 
 import os
+from typing import Any
 
 import pytest
 
+from tests.integration._eventually import eventually
 from tests.integration._resources import unique_org
 
 pytestmark = pytest.mark.asyncio
@@ -335,7 +337,12 @@ async def test_a_name_whose_article_hides_a_dot_keeps_its_boost_and_graph_path(
     boosts = {h.memory_key: h.score_components["entity_boost_sql"] for h in out.results}
     assert boosts == {"raw": 0.5, "canonical": 0.5}
     for seed in (raw, canonical):
-        path = await handle_facts_path(
-            FactsPathInput(org=ORG, namespace=ns, entity_a=seed, entity_b="Latency")
-        )
-        assert path.found and path.path == ["net service", "latency"], seed
+        # The edges land through an async insert that the write does not wait for.
+        async def _path(seed: str = seed) -> Any:
+            got = await handle_facts_path(
+                FactsPathInput(org=ORG, namespace=ns, entity_a=seed, entity_b="Latency")
+            )
+            return got if got.found else None
+
+        path = await eventually(_path, description=f"a graph path from {seed!r}")
+        assert path.path == ["net service", "latency"], seed

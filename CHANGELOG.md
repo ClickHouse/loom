@@ -18,10 +18,15 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 - `LOOM_RUNTIME_DIR`: the directory one server's web processes share files in.
   `scripts/serve.sh` chooses it once and exports it; set it for another launcher that starts
   several workers.
+- `LOOM_LISTEN_HOST`: the address `scripts/serve.sh` binds, every interface by default.
 - Migration `026` adds `run_id` skip indexes to `agent_events` and `agent_runs`.
 
 ### Changed
 
+- **Breaking:** `rerank` (`memory.search`, `memory.search_trace`, `code.search`, `code.ask`)
+  and a namespace's `rerank_endpoint` take a name, not a URL: `none`, `builtin:openai[:model]`,
+  `builtin:cohere[:model]`, or an endpoint the operator names in `LOOM_RERANK_ENDPOINTS_JSON`.
+  A URL or an unknown name is a 422. A namespace that still stores a URL is no longer reranked.
 - **Operators:** every stack runs ClickHouse **26.9.17.8**. A fresh install creates its vector
   columns coded (`Quantized('rabitq', dim, 0)`) when the width is a multiple of 8; an install
   whose vector tables are plain stays plain until `scripts/ops/vector_codec_rebuild.py` moves
@@ -38,14 +43,11 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   `bge-small`).
 - `loom reembed` refuses a width the coded vector tables do not take; change a model of another
   width in Settings → Models & keys, which rebuilds the tables.
-- An MCP session's implicit run is shared by every web process of the server and filed under
-  the user and session the call acts as. A `run.begin` naming an id of its shape (`mcp-` and 40
-  hex digits) is answered with an id of its own.
-
-- **Breaking:** `rerank` (`memory.search`, `memory.search_trace`, `code.search`, `code.ask`)
-  and a namespace's `rerank_endpoint` take a name, not a URL: `none`, `builtin:openai[:model]`,
-  `builtin:cohere[:model]`, or an endpoint the operator names in `LOOM_RERANK_ENDPOINTS_JSON`.
-  A URL or an unknown name is a 422. A namespace that still stores a URL is no longer reranked.
+- An MCP session's implicit run is shared by every web process of the server, filed in the
+  caller's default namespace under the user and session the call acts as. Its id binds the
+  token's subject and is no longer `mcp-<Mcp-Session-Id>`; a `run.begin` naming an id of its
+  shape (`mcp-` and 40 hex digits) is answered with an id of its own. Its close no longer
+  writes `metadata.calls`: count the `agent_events` rows with its `run_id`.
 
 ## [1.0.0] - 2026-10-16
 
