@@ -559,19 +559,18 @@ def _link_row(
 _SWEEP_EVERY_S = 3600
 
 
-async def sweep_erased(cursor: str, limit: int, result: PassResult) -> str:
+async def sweep_erased(cursor: dict[str, Any], limit: int, result: PassResult) -> dict[str, Any]:
     """Drop the links of gone memories in the next page of the link table, a page a pass,
     a new cycle an hour after the last; the cursor to store."""
-    state = json.loads(cursor or "{}")
-    if time.time() - float(state.get("done_at", 0)) < _SWEEP_EVERY_S:
+    if time.time() - float(cursor.get("done_at", 0)) < _SWEEP_EVERY_S:
         return cursor
     try:
-        nxt, dropped = await store.sweep_page(tuple(state.get("after") or ()) or None, limit)
+        nxt, dropped = await store.sweep_page(tuple(cursor.get("after") or ()) or None, limit)
     except Exception as e:  # noqa: BLE001 — the same page is swept next pass
         result.errors.append(f"sweep: {e}")
         return cursor
     result.unlinked += dropped
-    return json.dumps({"after": list(nxt)} if nxt else {"done_at": time.time()})
+    return {"after": list(nxt)} if nxt else {"done_at": time.time()}
 
 
 async def recheck_all(result: PassResult) -> None:
@@ -620,13 +619,11 @@ async def _recheck_repository(org: str, cns: str, budget: Budget, result: PassRe
     await _refingerprint(org, cns, files, result)
     await _retry_unparsed(org, cns, head, files, result)
     if head and head != checked:
-        cut_at = str(
-            json.loads(await code.link_cursor(_progress(org, cns)) or "{}").get("head", "")
-        )
+        cut_at = (await _progress(org, cns).read()).get("head", "")
         if cut_at and cut_at != head and not await files.has(cut_at):
             # gone with a rewrite: what that pass already wrote is in no diff, so every
             # link is rechecked, as after a force-push
-            await code.set_link_cursor(_progress(org, cns), "")
+            await _progress(org, cns).clear()
             await code.set_checked_head(org, cns, "")  # a cut full recheck resumes as one
             checked = ""
         elif cut_at and cut_at != head:
@@ -640,9 +637,9 @@ async def _recheck_repository(org: str, cns: str, budget: Budget, result: PassRe
     await _apply_policies(org, cns, head, files, budget, result)
 
 
-def _progress(org: str, cns: str) -> str:
+def _progress(org: str, cns: str) -> code.Cursor[dict[str, str]]:
     """The cursor a repository's recheck records its head and last path done in."""
-    return f"recheck/{org}/{cns}"
+    return code.Cursor(f"recheck/{org}/{cns}", {})
 
 
 # paths rechecked between two writes: a pass the deadline cuts keeps what it did
@@ -773,7 +770,7 @@ async def _follow(
     without a range), writing every `_PATHS_PER_WRITE` paths and recording the last one
     done, so a cut pass resumes."""
     progress = _progress(org, cns)
-    done = json.loads(await code.link_cursor(progress) or "{}")
+    done = await progress.read()
     changed = await files.range(checked, head) if checked else None
     kept = changed.paths if changed is not None else None
     # old and new paths: a cut pass may have moved links to a new path already
@@ -806,8 +803,8 @@ async def _follow(
         result.rechecked += len(moves)
         if len(unparsed) > known:  # owed before the cursor moves past them
             await _set_unparsed(org, cns, unparsed)
-        await code.set_link_cursor(progress, json.dumps({"head": head, "after": part[-1]}))
-    await code.set_link_cursor(progress, "")
+        await progress.write({"head": head, "after": part[-1]})
+    await progress.clear()
     if new := sorted(unparsed - before):
         result.errors.append(f"recheck {org}/{cns}: did not parse: {', '.join(new)}")
 
@@ -863,11 +860,11 @@ async def _retry_unparsed(org: str, cns: str, head: str, files: Files, result: P
 
 
 async def _unparsed(org: str, cns: str) -> set[str]:
-    return set(json.loads(await code.link_cursor(f"unparsed/{org}/{cns}") or "[]"))
+    return set(await code.Cursor[list[str]](f"unparsed/{org}/{cns}", []).read())
 
 
 async def _set_unparsed(org: str, cns: str, paths: set[str]) -> None:
-    await code.set_link_cursor(f"unparsed/{org}/{cns}", json.dumps(sorted(paths)))
+    await code.Cursor[list[str]](f"unparsed/{org}/{cns}", []).write(sorted(paths))
 
 
 async def _lost(org: str, cns: str, paths: set[str]) -> list[LinkRow]:

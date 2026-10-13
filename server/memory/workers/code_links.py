@@ -5,7 +5,6 @@ policy (`server.memory.app.code_links`)."""
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -17,7 +16,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-_DONE = "done"
 # queue pages read a pass, each `memory_code_links_batch` long, while they come full
 _QUEUE_PAGES = 10
 
@@ -49,36 +47,38 @@ async def _link_writes(batch: int, result: PassResult) -> None:
     from server.memory.app import code_links
     from server.memory.store import code_links as store
 
-    raw = await code.link_cursor("queue")
-    stored = backfill = await code.link_cursor("backfill")
-    if not raw:
+    queue_cursor = code.Cursor[list[Any] | None]("queue", None)
+    backfill_cursor = code.Cursor[dict[str, Any]]("backfill", {})
+    repos_cursor = code.Cursor[list[list[str]]]("repos", [])
+    sweep_cursor = code.Cursor[dict[str, Any]]("sweep", {})
+    queue = await queue_cursor.read()
+    stored = backfill = await backfill_cursor.read()
+    if queue is None:
         # first pass: the queue starts at its tail; everything before it is backfilled
-        tail = await store.queue_tail()
-        raw, backfill = json.dumps(list(tail) if tail else []), ""
-    queue = tuple(json.loads(raw)) or None
-    if queue and int(queue[0]) < await store.queue_horizon() and backfill == _DONE:
-        backfill = ""  # stopped longer than the queue's TTL: writes may have aged out
+        queue, backfill = list(await store.queue_tail() or []), {}
+    if queue and int(queue[0]) < await store.queue_horizon() and backfill.get("done"):
+        backfill = {}  # stopped longer than the queue's TTL: writes may have aged out
     configured = code.configured_code_namespaces()
-    seen = {tuple(r) for r in json.loads(await code.link_cursor("repos") or "[]")}
-    if {tuple(r) for r in configured} - seen:
-        backfill = ""  # a repository configured since: memories read before it now resolve
+    if {tuple(r) for r in configured} - {tuple(r) for r in await repos_cursor.read()}:
+        backfill = {}  # a repository configured since: memories read before it now resolve
     if backfill != stored:
         # owed before the queue or the repositories are acknowledged: a pass that fails
         # after either still owes it
-        await code.set_link_cursor("backfill", backfill)
-    await code.set_link_cursor("repos", json.dumps(configured))
+        await backfill_cursor.write(backfill)
+    await repos_cursor.write(configured)
+    position = tuple(queue) or None
     for _ in range(_QUEUE_PAGES):
         read = result.queued
-        queue = await code_links.link_queued(queue, batch, result)
-        await code.set_link_cursor("queue", json.dumps(list(queue or [])))
+        position = await code_links.link_queued(position, batch, result)
+        await queue_cursor.write(list(position or []))
         if result.queued - read < batch:
             break
-    if backfill != _DONE:
-        nxt = await code_links.backfill(tuple(json.loads(backfill or "[]")) or None, batch, result)
-        backfill = _DONE if nxt is None else json.dumps(list(nxt))
-    await code.set_link_cursor("backfill", backfill)
-    swept = await code_links.sweep_erased(await code.link_cursor("sweep"), batch, result)
-    await code.set_link_cursor("sweep", swept)
+    if not backfill.get("done"):
+        nxt = await code_links.backfill(tuple(backfill.get("after") or ()) or None, batch, result)
+        backfill = {"done": True} if nxt is None else {"after": list(nxt)}
+    await backfill_cursor.write(backfill)
+    swept = await code_links.sweep_erased(await sweep_cursor.read(), batch, result)
+    await sweep_cursor.write(swept)
 
 
 __all__ = ["run_pass"]

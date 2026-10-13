@@ -7,8 +7,9 @@ candidates."""
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from server.code.app.index import gitrepo
 from server.code.domain.anchor import Definition
@@ -280,3 +281,20 @@ async def link_cursor(name: str) -> str:
 
 async def set_link_cursor(name: str, value: str) -> None:
     await CodeRepo().set_state("", _CURSOR_NS, name, value)
+
+
+class Cursor[T]:
+    """One of the link worker's cursors, kept as JSON; `empty` until it is written."""
+
+    def __init__(self, name: str, empty: T) -> None:
+        self.name, self.empty = name, empty
+
+    async def read(self) -> T:
+        raw = await link_cursor(self.name)
+        return cast(T, json.loads(raw)) if raw else self.empty
+
+    async def write(self, value: T) -> None:
+        await set_link_cursor(self.name, json.dumps(value))
+
+    async def clear(self) -> None:
+        await set_link_cursor(self.name, "")

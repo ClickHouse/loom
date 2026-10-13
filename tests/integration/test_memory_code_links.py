@@ -29,6 +29,8 @@ TRUNK = BRANCH = MEM = FLAGGED = ""
 # The queue's newest write when the test started: the suite shares one queue, and every
 # other test's writes come before this test's own.
 QUEUE_START: Any = None
+# the backfill cursor once a scan is done
+_BACKFILL_DONE = '{"done": true}'
 
 _READER = """class Reader:
     def read_rows(self, limit):
@@ -779,7 +781,7 @@ async def test_existing_memories_are_backfilled_on_the_first_pass(env, ch_client
     await memory_links.set_link_cursor("backfill", "")
     for _ in range(50):
         await run_pass()
-        if await memory_links.link_cursor("backfill") == "done":
+        if await memory_links.link_cursor("backfill") == _BACKFILL_DONE:
             break
     assert [link["symbol"].rsplit("::", 1)[-1] for link in await _links(mid)] == ["legacy_value"]
 
@@ -866,10 +868,10 @@ async def test_a_worker_stopped_past_the_queue_ttl_backfills_an_empty_queue(env,
     horizon = await store.queue_horizon()
     old = [horizon - 10**6, 0, "", "", "", "", "", ""]
     await memory_links.set_link_cursor("queue", json.dumps(old))
-    await memory_links.set_link_cursor("backfill", "done")
+    await memory_links.set_link_cursor("backfill", _BACKFILL_DONE)
     for _ in range(50):
         await run_pass()
-        if await memory_links.link_cursor("backfill") == "done":
+        if await memory_links.link_cursor("backfill") == _BACKFILL_DONE:
             break
     assert [link["symbol"].rsplit("::", 1)[-1] for link in await _links(mid)] == ["q_two"]
     assert json.loads(await memory_links.link_cursor("queue"))[0] > horizon
@@ -894,7 +896,7 @@ async def test_a_pass_behind_the_queue_ttl_that_fails_still_owes_its_backfill(
     ch_client.command("TRUNCATE TABLE loom.memory_code_link_queue")  # aged out
     horizon = await store.queue_horizon()
     await memory_links.set_link_cursor("queue", json.dumps([horizon - 10**6, 0, *[""] * 6]))
-    await memory_links.set_link_cursor("backfill", "done")
+    await memory_links.set_link_cursor("backfill", _BACKFILL_DONE)
     # no repository is new: only the queue's TTL owes the backfill
     configured = memory_links.configured_code_namespaces()
     await memory_links.set_link_cursor("repos", json.dumps(configured))
@@ -909,7 +911,7 @@ async def test_a_pass_behind_the_queue_ttl_that_fails_still_owes_its_backfill(
     assert json.loads(await memory_links.link_cursor("queue"))[0] > horizon
     for _ in range(50):
         await run_pass()
-        if await memory_links.link_cursor("backfill") == "done":
+        if await memory_links.link_cursor("backfill") == _BACKFILL_DONE:
             break
     assert [link["symbol"].rsplit("::", 1)[-1] for link in await _links(mid)] == ["q_two"]
 
@@ -2171,7 +2173,7 @@ async def test_a_repository_configured_later_links_the_memories_read_before_it(
     set_registry_repos([])
     mid = await _remember(MEM, "early", "`fetch_rows` returns one")
     await run_pass()  # read before its repository is configured: nothing to link it to
-    await code.set_link_cursor("backfill", "done")
+    await code.set_link_cursor("backfill", _BACKFILL_DONE)
     await run_pass()
     assert await _links(mid) == []
     set_registry_repos(entries)
@@ -2197,7 +2199,7 @@ async def test_a_pass_that_fails_after_a_repository_is_configured_still_backfill
     set_registry_repos([])
     mid = await _remember(MEM, "early", "`fetch_rows` returns one")
     await run_pass()
-    await code.set_link_cursor("backfill", "done")
+    await code.set_link_cursor("backfill", _BACKFILL_DONE)
     await run_pass()
     set_registry_repos(entries)
     c1 = env.commit({"src/k.py": "def fetch_rows():\n    return 1\n"})
@@ -2228,7 +2230,7 @@ async def test_another_org_configuring_the_same_namespace_name_backfills(env, mo
     set_registry_repos([dataclasses.replace(c, org=f"{ORG}-other") for c in entries])
     mid = await _remember(MEM, "early", "`fetch_rows` returns one")
     await run_pass()
-    await code.set_link_cursor("backfill", "done")
+    await code.set_link_cursor("backfill", _BACKFILL_DONE)
     await run_pass()
     assert await _links(mid) == []
     set_registry_repos(entries)
@@ -3454,7 +3456,7 @@ async def test_a_memory_stored_without_a_user_or_session_keeps_its_links_through
     await memory_links.set_link_cursor("backfill", "")
     for _ in range(50):
         await run_pass()
-        if await memory_links.link_cursor("backfill") == "done":
+        if await memory_links.link_cursor("backfill") == _BACKFILL_DONE:
             break
     assert [link["symbol"].rsplit("::", 1)[-1] for link in await _links(mid)] == ["legacy_value"]
 

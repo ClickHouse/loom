@@ -990,7 +990,6 @@ async def _record(seen: list[str], part: list[dict[str, Any]]) -> list[Any]:
 
 @pytest.mark.asyncio
 async def test_a_finished_sweep_waits_before_its_next_cycle(monkeypatch) -> None:
-    import json
     import time
 
     pages: list[Any] = []
@@ -1000,10 +999,10 @@ async def test_a_finished_sweep_waits_before_its_next_cycle(monkeypatch) -> None
         return None, 0
 
     monkeypatch.setattr(code_links.store, "sweep_page", sweep_page)
-    done = await code_links.sweep_erased("", 10, code_links.PassResult())
-    assert pages == [None] and "done_at" in json.loads(done)
+    done = await code_links.sweep_erased({}, 10, code_links.PassResult())
+    assert pages == [None] and "done_at" in done
     assert await code_links.sweep_erased(done, 10, code_links.PassResult()) == done
-    stale = json.dumps({"done_at": time.time() - code_links._SWEEP_EVERY_S - 1})
+    stale = {"done_at": time.time() - code_links._SWEEP_EVERY_S - 1}
     await code_links.sweep_erased(stale, 10, code_links.PassResult())
     assert pages == [None, None]
 
