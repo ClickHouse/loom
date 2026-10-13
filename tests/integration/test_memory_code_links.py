@@ -443,6 +443,20 @@ async def test_a_rename_alone_moves_the_link(env) -> None:
     assert (link["symbol"].rsplit("::", 1)[-1], link["state"]) == ("load_rows", "moved")
 
 
+async def test_a_file_named_by_its_basename_resolves_to_its_one_live_path(env) -> None:
+    from server.code.app.memory_links import live_paths
+
+    repo = env
+    files = {"src/widgets/reader.py": _READER, "src/widgets/util.py": _UTIL, "lib/util.py": _UTIL}
+    c1 = repo.commit(files)
+    await _index(TRUNK, repo, c1, list(files))
+    refs = ["reader.py", "util.py", "absent.py", "lib/util.py"]
+    assert await live_paths(ORG, TRUNK, refs) == {
+        "reader.py": "src/widgets/reader.py",
+        "lib/util.py": "lib/util.py",
+    }
+
+
 async def test_an_edit_deep_in_a_long_definition_or_to_any_overload_reads_changed(env) -> None:
     repo = env
     body = "".join(f"    total += step({i}) * {i}\n" for i in range(400))

@@ -245,11 +245,9 @@ async def live_paths(org: str, namespace: str, refs: list[str]) -> dict[str, str
     repo = CodeRepo()
     present = await repo.live_paths_present(org, namespace, refs)
     out = {r: r for r in refs if r in present}
-    for ref in refs:
-        if ref not in out and "/" not in ref:
-            named = await repo.live_paths_named(org, namespace, ref, limit=2)
-            if len(named) == 1:
-                out[ref] = named[0]
+    bare = [r for r in refs if r not in out and "/" not in r]
+    named = await repo.live_paths_by_basename(org, namespace, bare) if bare else {}
+    out.update((r, paths[0]) for r, paths in named.items() if len(paths) == 1)
     return out
 
 
