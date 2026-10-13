@@ -191,11 +191,11 @@ Then the list is narrowed:
   tools.
 - **Restricted namespaces** stay only when the caller passes the restricted check.
 - **The cap.** Besides the addressed namespace, at most
-  `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES` (default 32) are read, in their order: a
-  scoped token's first ones, anyone else's private namespaces before public ones (by name
-  within each). Memory
-  search names the rest in `namespaces_skipped`, and `loom_search` says so in its text;
-  address one by name to read it.
+  `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES` (default 32) are read, each in the caller's
+  list order (by name, or a scoped or delegated token's own order). A scoped token keeps
+  its first ones; for anyone else the cut keeps private namespaces ahead of public ones.
+  Memory search names the rest in `namespaces_skipped`, and `loom_search` says so in its
+  text; address one by name to read it.
 
 The addressed namespace is always searched, and first: the fan-out only widens a search.
 Memory search then reads in tiers. For a scoped token the other namespaces follow in its

@@ -34,8 +34,8 @@ class Fanout:
 
     def reads(self, namespace: str) -> tuple[list[str], list[str]]:
         """(read, skipped) for a search addressed to `namespace`: it first, then
-        up to `cap` of the others, private ones before public, each kept in its
-        order; skipped are the others the cap left out."""
+        up to `cap` of the others, read in their own order. When the cap cuts,
+        private ones are kept ahead of public ones; skipped are the ones left out."""
         others = [ns for ns in self.namespaces if ns != namespace]
         keep = set(sorted(others, key=lambda ns: ns in self.public)[: self.cap])
         read = [ns for ns in others if ns in keep]

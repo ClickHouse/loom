@@ -66,11 +66,9 @@ class MemorySearchInput(BaseModel):
     # Which rows to read: "private" = per-agent rows (narrowed to `agent` when it names
     # one), "shared" = rows promoted to the namespace's shared scope.
     scope: Literal["private", "shared"] = "private"
-    # "all_mine" also reads the caller's own namespaces, see
-    # docs/concepts/identities-and-namespaces.md#reading-several-namespaces; "this"
-    # scopes to input.namespace only. None → the deployment
-    # default `memory_search_default_namespace_scope` (default "this"; an
-    # operator may set all_mine to search the union).
+    # "this" reads input.namespace only; "all_mine" also the caller's own
+    # namespaces, see docs/concepts/identities-and-namespaces.md#reading-several-namespaces.
+    # None → `memory_search_default_namespace_scope` (default "this").
     namespace_scope: Literal["this", "all_mine"] | None = None
     # Recall fusion mode. Default "rrf" = Reciprocal Rank Fusion of lexical +
     # semantic — parameter-free and score-scale-independent, so heterogeneous
