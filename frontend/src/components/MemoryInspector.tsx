@@ -1352,8 +1352,11 @@ function CodeLinks({ links }: { links: CodeLink[] }) {
           return (
             <li key={`${l.code_namespace}:${l.path}:${l.symbol}`} className="min-w-0">
               <div className="flex items-center gap-2 min-w-0">
-                <span className="font-mono text-xs truncate" title={`${l.code_namespace} · ${l.path}`}>
-                  {l.symbol ? l.symbol.split("::").pop() : l.path}
+                <span
+                  className="font-mono text-xs truncate"
+                  title={`${l.code_namespace} · ${l.path}${l.symbol ? ` · ${l.symbol}` : ""}`}
+                >
+                  {l.symbol || l.path}
                 </span>
                 <Badge tone={state.tone} label={state.label + since} />
               </div>

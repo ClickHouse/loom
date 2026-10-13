@@ -135,7 +135,7 @@ describe("MemoryInspector reads what is open", () => {
     } as MemoryDetail);
     open();
     await screen.findByText("Linked code");
-    expect(screen.getByText("read")).toBeInTheDocument();
+    expect(screen.getByText("a::Reader::read")).toBeInTheDocument();
     expect(screen.getByText("Code changed since abc1234")).toBeInTheDocument();
     expect(screen.getByText("Suggested: Reader.read returns bytes now")).toBeInTheDocument();
     expect(screen.getByText("docs/b.md")).toBeInTheDocument();
