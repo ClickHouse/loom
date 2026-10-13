@@ -3850,6 +3850,7 @@ export interface BulkSetResult {
   conflict_verdict?: string;
   peers?: MemorySetPeer[];
   next?: string;
+  superseded_by?: string;
 }
 
 export interface MemorySetPeer {
@@ -3872,7 +3873,6 @@ export interface MemoryBulkSetOutput {
   unchecked?: number;
   retyped?: string[];
   identity_duplicates?: Record<string, string>;
-  superseded_on_write?: string[];
   stage_ms?: Record<string, number>;
 }
 

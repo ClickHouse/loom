@@ -306,6 +306,7 @@ async def _bulk_judge_same_key(
         now=datetime.now(UTC).replace(tzinfo=None),
     )
     retired = {n for n, _w in judged.new_rows}
+    state.judged_follow_pairs = list(judged.new_rows)
     if retired:
         plan.conflict_marks = [(n, p) for n, p in plan.conflict_marks if n not in retired]
         plan.refines = [r for r in plan.refines if r[0] not in retired]
@@ -315,11 +316,14 @@ async def _bulk_judge_same_key(
             if str(r.get("memory_id") or "") not in retired
         }
         plan.conflicted = [k for k in plan.conflicted if k in live_keys]
-        state.superseded_on_write = [
-            str(r.get("memory_key") or "")
+        # The entry's result names the row it landed behind.
+        behind = {
+            (str(r.get("memory_key") or ""), int(r.get("version") or 0)): str(r["superseded_by"])
             for r in state.memory_rows
             if str(r.get("memory_id") or "") in retired
-        ]
+        }
+        for res in state.results:
+            res.superseded_by = behind.get((res.memory_key, int(res.version)), "")
     return judged
 
 
@@ -418,7 +422,10 @@ async def _bulk_post_insert_links(
     if judged.peers:
         from server.memory.app.key_supersession import retire_judged_peers
 
-        _n_key_superseded += await retire_judged_peers(input.org, judged.peers, ch=ch)
+        _retired = await retire_judged_peers(input.org, judged.peers, ch=ch)
+        _n_key_superseded += len(_retired)
+        # Only the rows that did retire: the triple plane must not close a live row's triples.
+        state.judged_follow_pairs += [(v["memory_id"], v["superseded_by"]) for v in _retired]
 
     # Value-update supersession (memory.app.value_updates). Runs after the
     # insert so the new row's id exists for the cross-link; fail-open; off by
@@ -644,13 +651,15 @@ async def _bulk_follow_row_supersessions(
     value_links: list[Any],
     intra_pairs: list[tuple[str, str]],
     clock: StageClock,
+    judged_pairs: list[tuple[str, str]] | None = None,
 ) -> None:
     """Phase 14: the triple plane follows the rows this write retired."""
     # The triple plane follows the rows this write retired. The predecessor's open triples
     # close and the successor triple is written under the predecessor's relation name, after
     # the projections, so a successor the extractor did emit is seen and not repeated.
     # Fail-open.
-    _pairs: list[tuple[str, str]] = _supersede_pairs(plan)
+    # The judged same-key retirements first: the step reads a bounded number of pairs.
+    _pairs: list[tuple[str, str]] = [*(judged_pairs or []), *_supersede_pairs(plan)]
     _pairs += [(str(ln.older_id), str(ln.newer_id)) for ln in value_links]
     _pairs += intra_pairs
     if _pairs:
@@ -699,11 +708,6 @@ async def handle_memory_bulk_set(
 
     _judged = await _bulk_judge_same_key(ch, input, state, plan)
     _bulk_clock.mark("same_key_judge")
-    # The triple plane follows the judged retirements as it does the batch's own.
-    _intra_pairs += [
-        *_judged.new_rows,
-        *[(v["memory_id"], v["superseded_by"]) for v in _judged.peers],
-    ]
 
     await _bulk_insert(ch, state)
     _bulk_clock.mark("insert")
@@ -718,7 +722,15 @@ async def handle_memory_bulk_set(
         ch, input, state, plan, embedder, entity_resolution, entity_embeddings
     )
     _bulk_clock.mark("projections")
-    await _bulk_follow_row_supersessions(ch, input, plan, _value_links, _intra_pairs, _bulk_clock)
+    await _bulk_follow_row_supersessions(
+        ch,
+        input,
+        plan,
+        _value_links,
+        _intra_pairs,
+        _bulk_clock,
+        judged_pairs=state.judged_follow_pairs,
+    )
     _bulk_clock.finish()
 
     return MemoryBulkSetOutput(
@@ -735,7 +747,6 @@ async def handle_memory_bulk_set(
         conflicted=plan.conflicted,
         unchecked=plan.unchecked,
         identity_duplicates=state.identity_duplicates,
-        superseded_on_write=state.superseded_on_write,
         stage_ms=dict(_bulk_work.get("stage_ms", {})),
     )
 

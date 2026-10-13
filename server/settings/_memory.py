@@ -86,8 +86,8 @@ class MemorySettings(BaseModel):
     # edge) / merge / clear. One call per flagged write. On a bulk write under
     # auto_reinforce it also judges, before the insert, each new row against the newest
     # live rows of its key and user from other writes (one call per such row, bounded by
-    # bulk_conflict_check_max_entries and _concurrency): the older of a contradicting
-    # pair lands or turns superseded.
+    # bulk_conflict_check_max_entries and _concurrency): the older row of a contradiction,
+    # or of an elaboration by the newer row, lands or turns superseded.
     memory_conflict_judge: bool = False
     # Closest peers the conflict judge labels in its one call per flagged write.
     memory_conflict_judge_max_peers: int = Field(default=3, ge=1)

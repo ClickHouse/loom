@@ -262,7 +262,10 @@ async def _set_record_from_messages(
     _account_build(input.namespace, llm.tokens_in, llm.tokens_out, len(bulk_out.written), len(msgs))
     return MemorySetFromMessagesOutput(
         written=[
-            _BulkSetResult(memory_key=r.memory_key, version=r.version) for r in bulk_out.written
+            _BulkSetResult(
+                memory_key=r.memory_key, version=r.version, superseded_by=r.superseded_by
+            )
+            for r in bulk_out.written
         ],
         tokens_in=llm.tokens_in,
         tokens_out=llm.tokens_out,
@@ -610,7 +613,12 @@ async def handle_memory_set_from_messages(
     )
     return MemorySetFromMessagesOutput(
         written=[
-            _BulkSetResult(memory_key=w["memory_key"], version=w["version"]) for w in state.written
+            _BulkSetResult(
+                memory_key=w["memory_key"],
+                version=w["version"],
+                superseded_by=str(w.get("superseded_by") or ""),
+            )
+            for w in state.written
         ],
         tokens_in=state.tokens_in,
         tokens_out=state.tokens_out,

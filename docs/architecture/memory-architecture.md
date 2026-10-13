@@ -192,34 +192,57 @@ that a later session states again is a second live row, and the conflict check s
 same-key peers. Under `newest_wins` the newer write retires the older row. Under
 `auto_reinforce` a shared key alone is not evidence of one attribute: extraction reuses
 generic keys (`assistant_recommended_3`, `user_attended`) for different items, and in a
-sample of 60 same-key pairs from chat-history namespaces 58 were different facts. So,
-before its insert, a bulk write asks the conflict judge about the newest live rows of
+sample of 60 same-key pairs from chat-history namespaces 58 were different facts.
+
+So, before its insert, a bulk write asks the conflict judge about the newest live rows of
 each key it writes for the same subject: the same `user_id`, or for the anonymous user
-`-` the same agent (`key_supersession.judge_same_key_rows`). At most
-`LOOM_MEMORY_CONFLICT_JUDGE_MAX_PEERS` (3) rows per key and subject are judged, so an
-older row past them stays live. Only the older row of a pair ever retires: older in
-valid time, else in write time, then by id, in UTC. Two writers that judge each other
-therefore never retire both, and an old session ingested late never buries the current
-value.
+`-` the same agent (`key_supersession.judge_same_key_rows`).
+
+- **What gets judged.** Entries of one bulk share an identity, so for a key written
+  twice only the highest version, the one `FINAL` keeps, is judged.
+- **The cap.** At most `LOOM_MEMORY_CONFLICT_JUDGE_MAX_PEERS` (3) stored rows per key
+  and subject are read, newest first. An older row past them stays live until a later
+  write of the key reaches it.
+- **Which row is older.** Only the older row of a pair ever retires. When both rows
+  carry a valid time and the times differ, the valid time decides. Otherwise the
+  earlier write is older (`updated_at`, since a revision carries `created_at` forward
+  from the key's first version), then the smaller id. Times are compared in UTC to the
+  second. Two writers that judge each other never retire both, because each reads
+  before its own insert. An old session ingested late whose rows carry their session
+  date doesn't bury the current value. An undated late row counts as the later
+  statement.
+- **Amounts.** The older row retires only if the newer row keeps every amount it states
+  (`preserves_quantities`, the guard the flag path's refines and `newest_wins` apply).
+
+Then by label:
 
 - **`contradiction`.** When the stored row is the later one, the new row lands
-  `superseded` behind it, is listed in the bulk output's `superseded_on_write`, and
-  leaves the write's conflict marks, refines and value-update linking. Otherwise the
-  stored row retires after the insert.
+  `superseded` behind it (`invalid_at` = the write time, as for any retirement). Its
+  entry's result carries `superseded_by`, and the row leaves the write's conflict marks,
+  refines and value-update linking. Otherwise the stored row retires after the insert.
 - **`elaboration` by the newer row.** The older row retires.
 - **Anything else.** `restatement`, `related`, `unrelated` and a peer the judge left
   unlabelled all keep both rows. The flag path reads an unlabelled peer as a
   contradiction; a retirement does not.
 
-This costs one judge call per new row that has such peers. The calls are bounded like
-the bulk conflict check (`LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES`,
-`LOOM_BULK_CONFLICT_CHECK_CONCURRENCY`), and they add one LLM round trip to a bulk write
-that has any. Without this, "User is Asian American" (05-23) and "The user has mixed
-Irish and Italian ethnicity" (05-30) both stayed live under `user_ethnicity`, and a reader
-shown both merged them into one answer. The point write keeps the documented
-`auto_reinforce` behaviour and its latency: it doesn't call the judge for same-key rows.
-The judge is off by default (`LOOM_MEMORY_CONFLICT_JUDGE`); with it off, same-key rows
-stay live as before.
+`superseded_by` names the row that was the later statement when the retirement
+happened. That row can itself retire later, so a reader follows the chain. A row
+labelled `sensitivity='high'` is never judged or read as a peer, so its value never
+reaches the LLM. The read is bounded by the writer's read scope, like every same-key
+retirement.
+
+This costs one judge call per new row that has such peers, on top of the bulk conflict
+check's own calls. The calls are bounded by the same settings
+(`LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES`, `LOOM_BULK_CONFLICT_CHECK_CONCURRENCY`), and
+they add one LLM round trip to a bulk write that has any. The policy is the namespace's,
+as for the write's conflict verdicts.
+
+Without this, "User is Asian American" (05-23) and "The user has mixed Irish and Italian
+ethnicity" (05-30) both stayed live under `user_ethnicity`, and a reader shown both
+merged them into one answer. The point write keeps the documented `auto_reinforce`
+behaviour and its latency: it doesn't call the judge for same-key rows. The judge is off
+by default (`LOOM_MEMORY_CONFLICT_JUDGE`); with it off, same-key rows stay live as
+before.
 
 The extraction also writes its inputs:
 

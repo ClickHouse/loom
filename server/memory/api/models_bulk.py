@@ -304,6 +304,12 @@ class _BulkSetResult(BaseModel):
     conflict_verdict: str = ""
     peers: list[MemorySetPeer] = Field(default_factory=list)
     next: str = ""
+    # Set when the entry landed superseded: under `auto_reinforce` with the conflict judge
+    # on, a stored row of the same key and subject (the user; for the anonymous user `-`,
+    # the agent) is the later statement it contradicts, such as an old session ingested
+    # late. The id of that row; the entry's row is kept for history, recall serves the
+    # later one. Empty otherwise.
+    superseded_by: str = ""
 
 
 class MemoryBulkSetOutput(BaseModel):
@@ -339,10 +345,6 @@ class MemoryBulkSetOutput(BaseModel):
     # carries the same content: entry key -> the keeper's key.
     # The keeper was reinforced instead.
     identity_duplicates: dict[str, str] = Field(default_factory=dict)
-    # Keys written already superseded: under `auto_reinforce` with the conflict judge on, a
-    # stored row of the same key and user is a later statement that contradicts the entry
-    # (an old session ingested late). The row is kept for history; recall serves the later one.
-    superseded_on_write: list[str] = Field(default_factory=list)
     # Wall time per phase of the write (existing_lookup, entity_resolution,
     # prepare, embed, verdicts, same_key_judge, insert, value_updates, projections, total) —
     # Diagnostic; readers tolerate unknown keys.

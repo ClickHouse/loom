@@ -200,7 +200,7 @@ async def test_bulk_write_step_carries_bulk_phases_onto_the_state(
     state = pipeline_state.WorkflowState(
         org="o", namespace="n", extracted_facts=[{"key": "home", "value": "Lisbon"}]
     )
-    state = await pipe._step_bulk_write(state, {})
+    assert state.written == [{"memory_key": "home", "version": 1, "superseded_by": ""}]
     assert state.written == [{"memory_key": "home", "version": 1}]
     assert state.stage_ms["bulk.embed"] == 12.5 and state.stage_ms["bulk.total"] == 40.0
 

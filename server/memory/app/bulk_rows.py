@@ -102,9 +102,9 @@ class _BulkWriteState:
     # A byte-identical restatement of the SAME key is the frequency signal: it reinforces the
     # live row instead of vanishing.
     restated_ids: list[str] = field(default_factory=list)
-    # Keys whose new row landed superseded: the judge read a later statement of the same
-    # attribute already stored (`key_supersession.judge_same_key_rows`).
-    superseded_on_write: list[str] = field(default_factory=list)
+    # (retired id, the row it retired behind) per same-key retirement the judge decided
+    # (`key_supersession.judge_same_key_rows`), for the triple plane's follow step.
+    judged_follow_pairs: list[tuple[str, str]] = field(default_factory=list)
     memory_rows: list[dict[str, Any]] = field(default_factory=list)
     embedding_rows: list[dict[str, Any]] = field(default_factory=list)
     results: list[_BulkSetResult] = field(default_factory=list)

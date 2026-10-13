@@ -27,6 +27,7 @@ import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import cmp_to_key
 from typing import Any, NamedTuple
 
 from server.core.datetimes import parse_iso_dt, to_naive_utc
@@ -155,7 +156,7 @@ def same_key_peers(
             and not bool(m.get("pinned"))
         ]
         if rid and peers:
-            out[rid] = sorted(peers, key=_order, reverse=True)
+            out[rid] = sorted(peers, key=cmp_to_key(_cmp), reverse=True)
     return out
 
 
@@ -175,12 +176,21 @@ def judged_victims(
     labels: Mapping[tuple[str, str], str],
 ) -> JudgedRetirements:
     """Pure: which rows retire once the judge has labelled (new row id, peer id)
-    pairs. Only the older row of a pair ever retires (`_order`), so two writers
-    that judge each other cannot retire both. A contradiction from a newer peer
+    pairs. Only the older row of a pair ever retires (`_older`), so two writers
+    that judge each other cannot retire both, and only when the newer row keeps
+    every amount the older one states (`preserves_quantities`, the guard the flag
+    path's refines and `newest_wins` apply). A contradiction from a newer peer
     retires the new row (behind the newest such peer) unless it is pinned, and a
     new row that retires retires nothing itself; otherwise a contradiction or an
     elaboration retires the older peer. Any other label, or none, retires
     nothing."""
+    from server.memory.domain.conflicts import preserves_quantities
+
+    def retires(newer: Mapping[str, Any], older: Mapping[str, Any]) -> bool:
+        return _older(older, newer) and preserves_quantities(
+            str(newer.get("value") or ""), str(older.get("value") or "")
+        )
+
     by_id = {str(r.get("memory_id") or ""): r for r in new_rows}
     out = JudgedRetirements()
     peer_victims: dict[str, dict[str, Any]] = {}
@@ -191,7 +201,7 @@ def judged_victims(
                 p
                 for p in peers
                 if labels.get((new_id, str(p.get("memory_id") or ""))) == CONTRADICTION
-                and _order(new) < _order(p)
+                and retires(p, new)
             ),
             None,
         )
@@ -200,9 +210,7 @@ def judged_victims(
             continue
         for peer in peers:
             peer_id = str(peer.get("memory_id") or "")
-            if labels.get((new_id, peer_id)) in (CONTRADICTION, ELABORATION) and _order(
-                peer
-            ) < _order(new):
+            if labels.get((new_id, peer_id)) in (CONTRADICTION, ELABORATION) and retires(new, peer):
                 peer_victims.setdefault(peer_id, _victim(peer, new_id))
     # A new row that retires behind a peer another new row retires points at that
     # row instead, so no `superseded_by` names a dead row.
@@ -214,29 +222,43 @@ def judged_victims(
     return out
 
 
-def _order(row: Mapping[str, Any]) -> tuple[datetime, datetime, str]:
-    """Which of two rows is the later statement: when its fact became true
-    (`valid_at`, else when it was written), then when it was written, then its id,
-    so every pair has one older row. Times in UTC."""
-    created = _utc(row.get("created_at"))
-    return (
-        _utc(row.get("valid_at")) or created or datetime.min,
-        created or datetime.min,
-        str(row.get("memory_id") or ""),
+def _older(a: Mapping[str, Any], b: Mapping[str, Any]) -> bool:
+    """Whether `a` is the earlier statement of the two. When both carry a valid
+    time and they differ, it decides; otherwise the earlier write is (`updated_at`:
+    a revision carries `created_at` forward from the key's first version), then
+    the smaller id, so exactly one of `_older(a, b)` and `_older(b, a)` holds for two
+    distinct rows. Times in UTC, to the second."""
+    va, vb = _utc(a.get("valid_at")), _utc(b.get("valid_at"))
+    if va is not None and vb is not None and va != vb:
+        return va < vb
+    return (_written(a), str(a.get("memory_id") or "")) < (
+        _written(b),
+        str(b.get("memory_id") or ""),
     )
 
 
+def _cmp(a: Mapping[str, Any], b: Mapping[str, Any]) -> int:
+    return -1 if _older(a, b) else (1 if _older(b, a) else 0)
+
+
+def _written(row: Mapping[str, Any]) -> datetime:
+    return _utc(row.get("updated_at")) or _utc(row.get("created_at")) or datetime.min
+
+
 def _utc(raw: Any) -> datetime | None:
+    """A datetime or ISO string as naive UTC to the second (ClickHouse `DateTime`
+    stores whole seconds, a row built in Python has microseconds); None otherwise."""
+    dt: datetime | None = None
     if isinstance(raw, datetime):
-        return parse_iso_dt(to_naive_utc(raw))
-    if isinstance(raw, str) and raw.strip():
+        dt = parse_iso_dt(to_naive_utc(raw))
+    elif isinstance(raw, str) and raw.strip():
         try:
-            return parse_iso_dt(
+            dt = parse_iso_dt(
                 to_naive_utc(datetime.fromisoformat(raw.strip().replace("Z", "+00:00")))
             )
         except ValueError:
-            return parse_iso_dt(raw)
-    return None
+            dt = parse_iso_dt(raw)
+    return dt.replace(microsecond=0) if dt is not None else None
 
 
 class _Peer(NamedTuple):
@@ -280,34 +302,30 @@ def stamp_new_row_retirements(
     memory_rows: list[dict[str, Any]],
     embedding_rows: list[dict[str, Any]],
     retired: list[tuple[str, str]],
-    peers: Mapping[str, Mapping[str, Any]],
     now: datetime,
 ) -> None:
     """Land each retired new row superseded: `status`, `superseded_by` and
-    `invalid_at` (the winner's `valid_at`, else `now`) on its memory row and on its
-    embedding row (matched by identity: embedding rows carry no id). Every memory
-    row keeps the same key set, as `ch.insert` derives its columns from row 0."""
+    `invalid_at` = `now` (when the record retired it, as `supersede_duplicates`
+    stamps a stored row) on its memory row and on its embedding row, matched by
+    identity and version (embedding rows carry no id). Every memory row keeps the
+    same key set, as `ch.insert` derives its columns from row 0."""
     for row in memory_rows:
         row.setdefault("superseded_by", "")
         row.setdefault("invalid_at", None)
     winner_of = dict(retired)
-    ident = ("memory_key", "agent", "user_id", "session_id")
+    ident = ("memory_key", "agent", "user_id", "session_id", "version")
     emb_by_ident = {tuple(str(e.get(c) or "") for c in ident): e for e in embedding_rows}
-    rows_by_id = {str(r.get("memory_id") or ""): r for r in memory_rows}
     for row in memory_rows:
         winner = winner_of.get(str(row.get("memory_id") or ""))
         if winner is None:
             continue
-        w = peers.get(winner) or rows_by_id.get(winner) or {}
-        inv = w.get("valid_at")
-        inv = to_naive_utc(inv) if isinstance(inv, datetime) else now
         row["status"] = "superseded"
         row["superseded_by"] = winner
-        row["invalid_at"] = inv
+        row["invalid_at"] = now
         e = emb_by_ident.get(tuple(str(row.get(c) or "") for c in ident))
         if e is not None:
             e["status"] = "superseded"
-            e["invalid_at"] = inv
+            e["invalid_at"] = now
 
 
 async def judge_same_key_rows(
@@ -342,9 +360,18 @@ async def judge_same_key_rows(
         if await namespace_conflict_policy(org, namespace, ch=ch) != DEFAULT_CONFLICT_POLICY:
             return JudgedRetirements()
         cap = max(int(settings.bulk_conflict_check_max_entries), 0)
+        # Entries of a bulk share one identity, so two entries of one key are two
+        # versions of one row: only the highest (the one FINAL keeps) is judged.
+        winner: dict[str, dict[str, Any]] = {}
+        for r in memory_rows:
+            key = str(r.get("memory_key") or "")
+            if key not in winner or int(r.get("version") or 0) >= int(
+                winner[key].get("version") or 0
+            ):
+                winner[key] = r
         judged_rows = [
             r
-            for r in memory_rows
+            for r in winner.values()
             if str(r.get("memory_key") or "")
             and str(r.get("status") or "active") in ("active", "conflicted")
             # A 'high' row's value never reaches an LLM (it keeps no vector either).
@@ -365,14 +392,14 @@ async def judge_same_key_rows(
         live = await ch.query_all(
             f"""
             SELECT toString(memory_id) AS memory_id, namespace, agent, user_id, session_id,
-                   memory_key, value, pinned, valid_at, created_at
+                   memory_key, value, pinned, valid_at, created_at, updated_at
             FROM loom.memory FINAL
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND memory_key IN {{keys:Array(String)}} AND user_id IN {{users:Array(String)}}
               AND tombstoned_at IS NULL AND pinned = 0 AND sensitivity != 'high'
               AND status IN ('active', 'duplicate', 'conflicted')
               AND toString(memory_id) NOT IN {{ids:Array(String)}}{in_scope}
-            ORDER BY coalesce(valid_at, created_at) DESC, created_at DESC
+            ORDER BY coalesce(valid_at, updated_at) DESC, updated_at DESC
             LIMIT {{n:UInt32}} BY memory_key, user_id, if(user_id = '-', agent, '')
             SETTINGS select_sequential_consistency = 1
             """,
@@ -386,8 +413,7 @@ async def judge_same_key_rows(
         )
         out = judged_victims(judged_rows, peers, labels)
         if out.new_rows:
-            peer_by_id = {str(p.get("memory_id") or ""): p for ps in peers.values() for p in ps}
-            stamp_new_row_retirements(memory_rows, embedding_rows, out.new_rows, peer_by_id, now)
+            stamp_new_row_retirements(memory_rows, embedding_rows, out.new_rows, now)
         if out.new_rows or out.peers:
             log.info(
                 "same-key judge: %d new and %d stored rows retire in %s/%s",
@@ -402,19 +428,34 @@ async def judge_same_key_rows(
         return JudgedRetirements()
 
 
-async def retire_judged_peers(org: str, victims: list[dict[str, Any]], *, ch: Any) -> int:
+async def retire_judged_peers(
+    org: str, victims: list[dict[str, Any]], *, ch: Any
+) -> list[dict[str, Any]]:
     """After the insert: retire the stored rows `judge_same_key_rows` found older
-    than a row of this write (a lock refuses it). Best effort. Returns how many."""
+    than a row of this write. Returns the victims that retired: not one a lock
+    refused, and none when the count does not add up (a row that could not be
+    read) or the write failed, so nothing follows a row that is still live. Best
+    effort."""
     if not victims:
-        return 0
+        return []
     try:
         from server.memory.domain.lock import refuses_retirement
         from server.memory.store import supersede_duplicates
 
-        return await supersede_duplicates(org, victims, ch=ch, skip=refuses_retirement)
+        refused: set[str] = set()
+
+        def skip(row: Any) -> bool:
+            if refuses_retirement(row):
+                refused.add(str(row.memory_id))
+                return True
+            return False
+
+        n = await supersede_duplicates(org, victims, ch=ch, skip=skip)
+        retired = [v for v in victims if str(v["memory_id"]) not in refused]
+        return retired if n == len(retired) else []
     except Exception as e:  # noqa: BLE001 — the rows are in; retirement is best effort
         log.warning("same-key judged retirement failed (non-fatal): %s", e)
-        return 0
+        return []
 
 
 async def supersede_same_key_rows(
