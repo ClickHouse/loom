@@ -103,10 +103,9 @@ same key written by two agents or in two sessions is two rows. Under the namespa
 the namespace, whoever wrote it. Extraction mints keys from the subject and attribute,
 never from the value, so a later session that states the same attribute lands on the
 same key. Under the default `auto_reinforce`, with the conflict judge on, a bulk write
-(extraction writes through one) asks the judge about the same user's rows of that key
-from other sessions. A contradiction retires the row that is older in valid time, and an
-elaboration retires the row it elaborates. Two different facts under a reused key stay
-live.
+(extraction writes through one) asks the judge about the same user's newest stored rows of
+each key it writes. A contradiction retires whichever row is older, and an elaboration by
+the newer row retires the older. Two different facts under a reused key stay live.
 
 ## Memory types
 

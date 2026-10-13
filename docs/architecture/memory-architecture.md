@@ -129,8 +129,8 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
     joins back to `memory`. Conflict marks then go on the peers, or `refines`
     supersedes them.
 13. **After the write** (`_set_after_write`, `_set_post_insert`). Same-key supersession
-    under `newest_wins` (`memory/app/key_supersession.py`; a bulk write also judges
-    same-key rows under `auto_reinforce`, see below) and the hash-only audit row are
+    under `newest_wins` (`memory/app/key_supersession.py`; under `auto_reinforce` a bulk
+    write judges same-key rows before its insert, see below) and the hash-only audit row are
     awaited in one round trip. The entity-graph projection is scheduled beside the
     response (`memory/app/after_write.py`) and repaired by `entity_extractor` if lost. A
     long value is also split into `memory_chunks`, fail-open.
@@ -192,19 +192,34 @@ that a later session states again is a second live row, and the conflict check s
 same-key peers. Under `newest_wins` the newer write retires the older row. Under
 `auto_reinforce` a shared key alone is not evidence of one attribute: extraction reuses
 generic keys (`assistant_recommended_3`, `user_attended`) for different items, and in a
-sample of 60 same-key pairs from chat-history namespaces 58 were different facts. So a
-bulk write asks the conflict judge about each same-key row of the same user that
-another session wrote (`supersede_same_key_rows(judged=True)`). A `contradiction`
-retires the row older in valid time. Sessions are ingested concurrently, so the row
-retired can be the one just written. An `elaboration` retires the row it elaborates;
-`restatement`, `related` and `unrelated` keep both, and so does a
-peer the judge left unlabelled (the flag path reads that as a contradiction; a
-retirement does not). Without this, "User is Asian
-American" (05-23) and "The user has mixed Irish and Italian ethnicity" (05-30) both
-stayed live under `user_ethnicity`, and a reader shown both merged them into one
-answer. The point write keeps the documented `auto_reinforce` behaviour and its latency:
-it does not call the judge for same-key rows. The judge is off by default
-(`LOOM_MEMORY_CONFLICT_JUDGE`), and with it off same-key rows stay live as before.
+sample of 60 same-key pairs from chat-history namespaces 58 were different facts. So,
+before its insert, a bulk write asks the conflict judge about the newest live rows of
+each key it writes for the same subject: the same `user_id`, or for the anonymous user
+`-` the same agent (`key_supersession.judge_same_key_rows`). At most
+`LOOM_MEMORY_CONFLICT_JUDGE_MAX_PEERS` (3) rows per key and subject are judged, so an
+older row past them stays live. Only the older row of a pair ever retires: older in
+valid time, else in write time, then by id, in UTC. Two writers that judge each other
+therefore never retire both, and an old session ingested late never buries the current
+value.
+
+- **`contradiction`.** When the stored row is the later one, the new row lands
+  `superseded` behind it, is listed in the bulk output's `superseded_on_write`, and
+  leaves the write's conflict marks, refines and value-update linking. Otherwise the
+  stored row retires after the insert.
+- **`elaboration` by the newer row.** The older row retires.
+- **Anything else.** `restatement`, `related`, `unrelated` and a peer the judge left
+  unlabelled all keep both rows. The flag path reads an unlabelled peer as a
+  contradiction; a retirement does not.
+
+This costs one judge call per new row that has such peers. The calls are bounded like
+the bulk conflict check (`LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES`,
+`LOOM_BULK_CONFLICT_CHECK_CONCURRENCY`), and they add one LLM round trip to a bulk write
+that has any. Without this, "User is Asian American" (05-23) and "The user has mixed
+Irish and Italian ethnicity" (05-30) both stayed live under `user_ethnicity`, and a reader
+shown both merged them into one answer. The point write keeps the documented
+`auto_reinforce` behaviour and its latency: it doesn't call the judge for same-key rows.
+The judge is off by default (`LOOM_MEMORY_CONFLICT_JUDGE`); with it off, same-key rows
+stay live as before.
 
 The extraction also writes its inputs:
 

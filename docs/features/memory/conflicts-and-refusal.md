@@ -60,12 +60,12 @@ first, at most five) and a `next` hint such as `memory.update(memory_key=<peer>,
 
 `namespace.register` takes `default_conflict_policy`:
 
-| Policy                     | Behaviour                                                                                                                                                                                                                         |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `auto_reinforce` (default) | Conflicts are flagged; both facts stay live until resolved. With the judge on, a bulk write retires a same-key row of another session that the judge reads as the same attribute: the older one in valid time on a contradiction. |
-| `manual_review`            | The same: both stay live and the pair waits for review.                                                                                                                                                                           |
-| `newest_wins`              | A judged contradiction retires the older row as `superseded` (history kept). A write for a key retires every older live row with that key, whoever wrote it.                                                                      |
-| `append_only`              | Every write is an event: no merge, duplicate or conflict verdict. A same-key rewrite stays last-writer-wins. The writer owns dedup.                                                                                               |
+| Policy                     | Behaviour                                                                                                                                                                                                                               |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auto_reinforce` (default) | Conflicts are flagged; both facts stay live until resolved. With the judge on, a bulk write judges the same user's stored rows of each key it writes: the older row of a contradiction, or of an elaboration by the newer row, retires. |
+| `manual_review`            | The same: both stay live and the pair waits for review.                                                                                                                                                                                 |
+| `newest_wins`              | A judged contradiction retires the older row as `superseded` (history kept). A write for a key retires every older live row with that key, whoever wrote it.                                                                            |
+| `append_only`              | Every write is an event: no merge, duplicate or conflict verdict. A same-key rewrite stays last-writer-wins. The writer owns dedup.                                                                                                     |
 
 Superseded rows are served only to reads that pass `include_superseded=true`, and a
 served one names its successor.

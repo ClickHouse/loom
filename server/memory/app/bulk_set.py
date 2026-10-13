@@ -31,6 +31,7 @@ from server.memory.app.entity_projections import (
     _write_derived_facts,
 )
 from server.memory.app.high_fence import fence_high
+from server.memory.app.key_supersession import JudgedRetirements
 from server.memory.app.projection_errors import (
     bulk_projection_payload,
     bulk_source_resource_id,
@@ -284,6 +285,44 @@ async def _bulk_intra_batch_pairs(
     return _intra_pairs
 
 
+async def _bulk_judge_same_key(
+    ch: Any, input: MemoryBulkSetInput, state: _BulkWriteState, plan: BulkVerdictPlan
+) -> JudgedRetirements:
+    """Phase 9b: under `auto_reinforce` with the conflict judge on, the judge
+    reads each new row against the newest live rows of its key and subject, before
+    the insert (`key_supersession.judge_same_key_rows`). A new row that loses lands
+    superseded and leaves the plan's conflict marks and refines, so nothing after
+    the insert revives it or retires a peer behind it."""
+    from server.memory.app.key_supersession import judge_same_key_rows
+
+    if not state.memory_rows:
+        return JudgedRetirements()
+    judged = await judge_same_key_rows(
+        org=input.org,
+        namespace=input.namespace,
+        memory_rows=state.memory_rows,
+        embedding_rows=state.embedding_rows,
+        ch=ch,
+        now=datetime.now(UTC).replace(tzinfo=None),
+    )
+    retired = {n for n, _w in judged.new_rows}
+    if retired:
+        plan.conflict_marks = [(n, p) for n, p in plan.conflict_marks if n not in retired]
+        plan.refines = [r for r in plan.refines if r[0] not in retired]
+        live_keys = {
+            str(r.get("memory_key") or "")
+            for r in state.memory_rows
+            if str(r.get("memory_id") or "") not in retired
+        }
+        plan.conflicted = [k for k in plan.conflicted if k in live_keys]
+        state.superseded_on_write = [
+            str(r.get("memory_key") or "")
+            for r in state.memory_rows
+            if str(r.get("memory_id") or "") in retired
+        ]
+    return judged
+
+
 async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
     """Phase 10: the two core writes — the memory rows and their embedding
     rows — gathered, each a committed insert."""
@@ -357,15 +396,15 @@ def _vectors_to_retire(state: _BulkWriteState) -> dict[str, tuple[Any, int]]:
 
 
 async def _bulk_post_insert_links(
-    ch: Any, input: MemoryBulkSetInput, state: _BulkWriteState
+    ch: Any, input: MemoryBulkSetInput, state: _BulkWriteState, judged: JudgedRetirements
 ) -> list[Any]:
-    """Phase 11, after the insert so the new ids exist: same-key supersession,
-    then value-update linking; returns the value-update links the triple
-    plane follows."""
+    """Phase 11, after the insert so the new ids exist: same-key supersession
+    (the judged peers too), then value-update linking; returns the value-update
+    links the triple plane follows."""
     # Same-key supersession: under `newest_wins` the rows just written retire every older
-    # live row sharing their key, from any session; under `auto_reinforce` the ones the
-    # conflict judge reads as the same attribute. After the insert so the new ids are
-    # visible; fail-open.
+    # live row sharing their key, from any session; under `auto_reinforce` the stored rows
+    # the judge found older than a row of this write (decided before the insert). After the
+    # insert so the new ids are visible; fail-open.
     _n_key_superseded = 0
     if state.memory_rows:
         from server.memory.app.key_supersession import supersede_same_key_rows
@@ -375,15 +414,20 @@ async def _bulk_post_insert_links(
             namespace=input.namespace,
             new_rows=state.memory_rows,
             ch=ch,
-            judged=True,
         )
+    if judged.peers:
+        from server.memory.app.key_supersession import retire_judged_peers
+
+        _n_key_superseded += await retire_judged_peers(input.org, judged.peers, ch=ch)
 
     # Value-update supersession (memory.app.value_updates). Runs after the
     # insert so the new row's id exists for the cross-link; fail-open; off by
-    # default. Only rows this batch actually wrote (memory_rows) are checked.
+    # default. Only rows this batch actually wrote (memory_rows) and left live are checked:
+    # a row that landed superseded must not retire anything behind itself.
     _n_value_links = 0
     _value_links: list[Any] = []
-    if state.memory_rows and value_updates_enabled(input.detect_updates):
+    _live_rows = [r for r in state.memory_rows if str(r.get("status") or "") != "superseded"]
+    if _live_rows and value_updates_enabled(input.detect_updates):
         try:
             from server.memory.app.value_updates import link_value_updates
             from server.settings import settings
@@ -391,7 +435,7 @@ async def _bulk_post_insert_links(
             _report = await link_value_updates(
                 org=input.org,
                 namespace=input.namespace,
-                rows=state.memory_rows,
+                rows=_live_rows,
                 embeddings_by_key={
                     str(e.get("memory_key") or ""): list(e.get("embedding") or [])
                     for e in state.embedding_rows
@@ -653,10 +697,18 @@ async def handle_memory_bulk_set(
 
     _intra_pairs = await _bulk_intra_batch_pairs(ch, input, state)
 
+    _judged = await _bulk_judge_same_key(ch, input, state, plan)
+    _bulk_clock.mark("same_key_judge")
+    # The triple plane follows the judged retirements as it does the batch's own.
+    _intra_pairs += [
+        *_judged.new_rows,
+        *[(v["memory_id"], v["superseded_by"]) for v in _judged.peers],
+    ]
+
     await _bulk_insert(ch, state)
     _bulk_clock.mark("insert")
 
-    _value_links = await _bulk_post_insert_links(ch, input, state)
+    _value_links = await _bulk_post_insert_links(ch, input, state, _judged)
 
     _bulk_clock.mark("value_updates")
 
@@ -683,6 +735,7 @@ async def handle_memory_bulk_set(
         conflicted=plan.conflicted,
         unchecked=plan.unchecked,
         identity_duplicates=state.identity_duplicates,
+        superseded_on_write=state.superseded_on_write,
         stage_ms=dict(_bulk_work.get("stage_ms", {})),
     )
 
