@@ -35,6 +35,7 @@ import { MentorPanel } from "../components/MentorPanel";
 import { Tip } from "../components/ui";
 import { READ_ONLY_TIP, canWrite, useNamespaceRole } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
+import { KEYWORD_PAGE, keywordThenRanked } from "../lib/searchOrder";
 
 // Server caps memory.list at 1000 rows/call (MemoryListInput.limit le=1000).
 // The browse feed pages up to this; past it, search covers the whole namespace.
@@ -60,8 +61,6 @@ const MEMORIES_LIST_FIELDS = [
   "verification",
 ];
 const MEMORIES_PREVIEW_CHARS = 160;
-// Keyword matches a search shows ahead of the ranked hits (a viewer's list page is 100).
-const KEYWORD_PAGE = 100;
 
 // The cards the first screen shows. A page of a hundred mounts them all in one task
 // (395–681 ms of long tasks at 4x CPU, LCP 0.9–1.4 s); the first screen is about two
@@ -273,10 +272,10 @@ export function Recent() {
         setRanking(false);
         if (r === null) return;
         const results = r.results || [];
-        const hits = [
-          ...kwEntries.map((e) => e.memory_key),
-          ...results.map((h) => h.memory_key).filter((k) => !kwKeys.has(k)),
-        ];
+        const hits = keywordThenRanked(
+          kwEntries.map((e) => e.memory_key),
+          results.map((h) => h.memory_key),
+        );
         setSearchHits(hits);
         setSearchWhy(new Map(results.map((h) => [h.memory_key, h] as const)));
         // The server hedges (abstain) when the top hit is below threshold;

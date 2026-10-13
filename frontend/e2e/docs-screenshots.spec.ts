@@ -558,8 +558,13 @@ async function installDemoApi(page: Page): Promise<void> {
       case "/v1/memory.list": {
         if (body.count_only) return json({ total: MEMORIES.length });
         if (body.memory_type === "profile") return json({ entries: [], total: 0, today: 0, truncated: false });
-        // Newest first, as the server orders the page.
-        const rows = [...MEMORIES].sort((x, y) => x.hours - y.hours).map(listEntry);
+        // Newest first, as the server orders the page; `contains` keeps the rows whose key
+        // or value holds the text, any case.
+        const contains = String(body.contains ?? "").toLowerCase();
+        const rows = [...MEMORIES]
+          .filter((m) => !contains || `${m.key} ${m.value}`.toLowerCase().includes(contains))
+          .sort((x, y) => x.hours - y.hours)
+          .map(listEntry);
         return json({
           entries: rows,
           total: rows.length,
@@ -707,7 +712,7 @@ test.describe("docs screenshots", () => {
     await page.goto("/me/recall");
     const input = page.getByLabel("Recall query");
     await input.fill("when can I deploy to production?");
-    await expect(page.getByText(/5 candidates/)).toBeVisible();
+    await expect(page.getByText(/5 rows/)).toBeVisible();
     await input.blur();
     await capture(page, "dashboard-recall");
   });

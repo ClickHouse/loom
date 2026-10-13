@@ -16,8 +16,8 @@ from server.memory.domain.search_types import SearchQuery
 from server.memory.store.query_spellings import spelling_rows
 from server.observability import degradations
 
-# The lookup's deadline, enforced by ClickHouse. It reads every row of the
-# namespace (40-180 ms on the largest) and runs beside the embed (~120 ms).
+# The lookup's deadline. It reads every row of the namespace (40-180 ms on
+# the largest) and runs beside the embed.
 _LOOKUP_BOUND_S = 0.25
 
 
@@ -42,8 +42,11 @@ async def corpus_spellings(input: MemorySearchInput, embedding_model: str) -> di
         top_k=0,
     )
     try:
-        with statement_timeout(_LOOKUP_BOUND_S):
-            rows = await spelling_rows(get_client(), q, tokens)
+        # The outer bound also covers the wait for a pool slot and a
+        # reconnect; the inner one makes ClickHouse stop the statement.
+        async with asyncio.timeout(_LOOKUP_BOUND_S):
+            with statement_timeout(_LOOKUP_BOUND_S):
+                rows = await spelling_rows(get_client(), q, tokens)
     except Exception as e:  # noqa: BLE001 — the spelling is a recall aid; the query embeds as typed
         degradations.note("query_spelling", "embedded_as_typed", e)
         return {}

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import time
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -149,3 +152,51 @@ def test_an_embed_failure_still_fails_the_search(monkeypatch):
     _lookup_returns(monkeypatch, {})
     with pytest.raises(RuntimeError, match="embedder down"):
         asyncio.run(app.embed_query(_Embedder(fail=True), "datalakecatalog", _input(), "m"))
+
+
+def _ch_client(query: Any) -> Any:
+    """A real CHClient (slot gate, retry ladder) over a fake driver `query`."""
+    import server.core.ch as ch_mod
+
+    c = ch_mod.CHClient.__new__(ch_mod.CHClient)
+    c._client = SimpleNamespace(query=query)
+    return c
+
+
+async def _no_rows(*_a: Any, **_kw: Any) -> Any:
+    return SimpleNamespace(column_names=["spelling", "n"], result_rows=[])
+
+
+async def _embed_beside(monkeypatch: Any, client: Any) -> tuple[list[float], dict[str, str], float]:
+    monkeypatch.setattr(app, "get_client", lambda: client)
+    t = time.monotonic()
+    vec, spellings = await app.embed_query(_Embedder(), "datalakecatalog", _input(), "m")
+    return vec, spellings, time.monotonic() - t
+
+
+async def test_a_busy_pool_does_not_hold_back_the_embed(monkeypatch):
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "ch_pool_wait_ms", 5000)
+    client = _ch_client(_no_rows)
+    client._ensure_state()
+    client._slots = asyncio.Semaphore(1)
+    await client._slots.acquire()  # every connection is busy
+    vec, spellings, took = await _embed_beside(monkeypatch, client)
+    assert (vec, spellings) == ([1.0], {})
+    assert took < app._LOOKUP_BOUND_S + 0.2
+
+
+async def test_a_slow_reconnect_does_not_hold_back_the_embed(monkeypatch):
+    async def dropped(*_a: Any, **_kw: Any) -> Any:
+        raise ConnectionResetError("peer closed")
+
+    client = _ch_client(dropped)
+
+    async def slow_connect() -> None:
+        await asyncio.sleep(5)
+
+    client.connect = slow_connect
+    vec, spellings, took = await _embed_beside(monkeypatch, client)
+    assert (vec, spellings) == ([1.0], {})
+    assert took < app._LOOKUP_BOUND_S + 0.2

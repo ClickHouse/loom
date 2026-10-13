@@ -14,6 +14,7 @@ vi.mock("../api", async (importOriginal) => {
   return {
     ...actual,
     searchMemory: (...args: unknown[]) => searchMemory(...args),
+    listMemories: vi.fn(async () => ({ entries: [], total: 0, today: 0, truncated: false })),
     listSearchTraceLog: vi.fn(async () => ({ rows: [] })),
     isAuthDisabled: () => false,
   };

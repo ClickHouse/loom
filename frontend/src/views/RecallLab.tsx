@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { FlaskConical, Search, History } from "lucide-react";
-import { searchMemory, listSearchTraceLog, type SearchHit, type SearchTraceLogRow } from "../api";
+import { listMemories, searchMemory, listSearchTraceLog, type SearchHit, type SearchTraceLogRow } from "../api";
 import { useStore, useIdentity } from "../lib/state";
 import { PageContainer } from "../layout/PageContainer";
 import { MemoryTabs } from "../components/MemoryTabs";
 import { EmptyState } from "../components/EmptyState";
 import { ScopeBadge } from "../components/ScopeBadge";
-import { humanizeError, relativeTime, displayAgent } from "../lib/format";
+import { humanizeError, relativeTime, displayAgent, previewValue } from "../lib/format";
+import { KEYWORD_PAGE, keywordThenRanked } from "../lib/searchOrder";
 import { signed, whyTerms } from "../lib/whyNote";
 
 // One recorded search, expanded in place. A person reading "my agent answered badly an
@@ -254,8 +255,33 @@ function RecallHistory() {
   );
 }
 
-// Recall Lab — the "why did this rank here" surface: the Memories list's own search
-// (memory.search with `explain: true`), each hit with the terms that ranked it.
+/** A ranked hit's similarity, final score and the terms that moved it. */
+function RankedTerms({ hit }: { hit: SearchHit }) {
+  return (
+    <>
+      <span title="cosine similarity (1 − distance)">sim {(1 - hit.distance).toFixed(3)}</span>
+      <span title="final score the ranked hits are ordered by">score {hit.rank_score.toFixed(3)}</span>
+      {whyTerms(hit.score_components).map((t) => (
+        <span key={t.label} className={t.value < 0 ? "text-[var(--color-warn)]" : "text-[var(--color-accent)]"}>
+          {t.label} {signed(t.value)}
+        </span>
+      ))}
+      {hit.source && <span className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)]">{hit.source}</span>}
+    </>
+  );
+}
+
+/** One row of the Memories list's search order: a keyword match, a ranked hit, or both. */
+interface RecallRow {
+  key: string;
+  text: string;
+  memoryType: string;
+  keyword: boolean;
+  hit?: SearchHit;
+}
+
+// Recall Lab — the "why did this rank here" surface: the rows the Memories list shows for a
+// search, in its order, each with what put it there.
 export function RecallLab() {
   const identity = useIdentity();
   // A run's "Recall history for this run" opens the lab with the run filter set. The
@@ -268,7 +294,7 @@ export function RecallLab() {
     if (runFilter) setTab("history");
   }, [runFilter]);
   const [query, setQuery] = useState("");
-  const [hits, setHits] = useState<SearchHit[] | null>(null);
+  const [rows, setRows] = useState<RecallRow[] | null>(null);
   const [abstain, setAbstain] = useState(false);
   const [model, setModel] = useState("");
   const [loading, setLoading] = useState(false);
@@ -278,8 +304,9 @@ export function RecallLab() {
 
   useEffect(() => {
     const q = query.trim();
-    if (!q) {
-      setHits(null);
+    // The Memories list waits for two characters; so does this.
+    if (q.length < 2) {
+      setRows(null);
       setError(null);
       // A query cleared mid-flight drops that answer below, so its "Scoring…" ends here.
       setLoading(false);
@@ -293,16 +320,39 @@ export function RecallLab() {
       setLoading(true);
       setError(null);
       try {
-        // The same search the Memories list runs, with every hit's ranking terms.
-        const r = await searchMemory(identity, q, { top_k: 25, explain: true, legs: ["memory"], signal: ac.signal });
+        // The two reads the Memories list makes for a search, with the same arguments.
+        const [kw, r] = await Promise.all([
+          listMemories(identity, KEYWORD_PAGE, {
+            contains: q,
+            fields: ["memory_key", "memory_type", "value"],
+            signal: ac.signal,
+          }).catch(() => null),
+          searchMemory(identity, q, { top_k: 50, explain: true, legs: ["memory"], signal: ac.signal }),
+        ]);
         if (ac.signal.aborted) return;
-        setHits(r.results || []);
-        setAbstain(Boolean(r.abstain));
+        const keyword = new Map((kw?.entries ?? []).map((e) => [e.memory_key, e] as const));
+        const ranked = new Map((r.results || []).map((h) => [h.memory_key, h] as const));
+        const order = keywordThenRanked([...keyword.keys()], [...ranked.keys()]);
+        setRows(
+          order.map((key) => {
+            const hit = ranked.get(key);
+            const entry = keyword.get(key);
+            return {
+              key,
+              text: hit?.content_excerpt ?? previewValue(entry?.value),
+              memoryType: hit?.memory_type ?? entry?.memory_type ?? "",
+              keyword: entry !== undefined,
+              hit,
+            };
+          }),
+        );
+        // Keyword matches are real matches: the list hedges only when there are none.
+        setAbstain(Boolean(r.abstain) && keyword.size === 0);
         setModel(r.embedding_model || "");
       } catch (e) {
         if (ac.signal.aborted) return;
         setError(humanizeError(e));
-        setHits([]);
+        setRows([]);
       } finally {
         if (!ac.signal.aborted) setLoading(false);
       }
@@ -314,7 +364,7 @@ export function RecallLab() {
   }, [query, identity]);
 
   const showResults = !abstain || showWeak;
-  const topScore = hits && hits.length > 0 ? hits[0].rank_score : 0;
+  const topScore = Math.max(0, ...(rows ?? []).map((row) => row.hit?.rank_score ?? 0));
 
   return (
     <PageContainer>
@@ -329,8 +379,9 @@ export function RecallLab() {
         </h2>
         {tab === "score" && (
           <p className="mt-1 text-sm text-[var(--color-text-muted)] max-w-2xl">
-            Why did a memory rank where it did? This runs the same search as the Memories list and shows each hit's
-            similarity, final score and the ranking terms that moved it (key match, entity, recency, …).
+            Why did a memory land where it did on the Memories list? These are the rows it shows for a query, in its
+            order: memories whose text holds the query come first, newest first; then the ranked search, each hit with
+            its similarity, final score and the terms that moved it (key match, entity, recency, …).
           </p>
         )}
       </div>
@@ -373,7 +424,7 @@ export function RecallLab() {
       {tab === "score" && loading && <div className="text-sm text-[var(--color-text-muted)] px-1">Scoring…</div>}
       {tab === "score" && error && <div className="text-sm text-[var(--color-danger)] px-1">{error}</div>}
 
-      {tab === "score" && hits != null && !loading && !error && hits.length === 0 && (
+      {tab === "score" && rows != null && !loading && !error && rows.length === 0 && (
         <EmptyState
           icon={FlaskConical}
           title="No candidates"
@@ -381,7 +432,7 @@ export function RecallLab() {
         />
       )}
 
-      {tab === "score" && hits != null && hits.length > 0 && (
+      {tab === "score" && rows != null && rows.length > 0 && (
         <>
           {abstain && (
             <div className="mb-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
@@ -393,7 +444,7 @@ export function RecallLab() {
                     onClick={() => setShowWeak(true)}
                     className="underline underline-offset-2 hover:text-[var(--color-text)] transition-colors"
                   >
-                    Show {hits.length} anyway
+                    Show {rows.length} anyway
                   </button>
                 </>
               )}
@@ -401,15 +452,14 @@ export function RecallLab() {
           )}
           {model && showResults && (
             <div className="text-2xs text-[var(--color-text-subtle)] mb-2 px-1">
-              {hits.length} candidate{hits.length === 1 ? "" : "s"} · embedder{" "}
-              <span className="font-mono">{model}</span>
+              {rows.length} row{rows.length === 1 ? "" : "s"} · embedder <span className="font-mono">{model}</span>
             </div>
           )}
           {showResults && (
             <div className="space-y-1.5">
-              {hits.map((h, i) => (
+              {rows.map((row, i) => (
                 <div
-                  key={h.memory_key}
+                  key={row.key}
                   className="p-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]"
                 >
                   <div className="flex items-start gap-3">
@@ -417,32 +467,31 @@ export function RecallLab() {
                       #{i + 1}
                     </span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm text-[var(--color-text)] break-words">{h.content_excerpt}</p>
+                      <p className="text-2xs font-mono text-[var(--color-text-subtle)] break-all">{row.key}</p>
+                      <p className="text-sm text-[var(--color-text)] break-words">{row.text}</p>
                       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs font-mono text-[var(--color-text-muted)]">
-                        <span title="cosine similarity (1 − distance)">sim {(1 - h.distance).toFixed(3)}</span>
-                        <span title="final score the list is ordered by">score {h.rank_score.toFixed(3)}</span>
-                        {whyTerms(h.score_components).map((t) => (
+                        {row.keyword && (
                           <span
-                            key={t.label}
-                            className={t.value < 0 ? "text-[var(--color-warn)]" : "text-[var(--color-accent)]"}
+                            className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text)]"
+                            title="its text holds the query; the Memories list shows these first, newest first"
                           >
-                            {t.label} {signed(t.value)}
+                            keyword match
                           </span>
-                        ))}
-                        {h.source && (
-                          <span className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)]">{h.source}</span>
                         )}
-                        <span className="text-[var(--color-text-subtle)]">{h.memory_type}</span>
+                        {row.hit && <RankedTerms hit={row.hit} />}
+                        <span className="text-[var(--color-text-subtle)]">{row.memoryType}</span>
                       </div>
-                      {/* score bar, relative to the top hit */}
-                      <div className="mt-1.5 h-1 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-                        <div
-                          className="h-full bg-[var(--color-accent)]"
-                          style={{
-                            width: `${topScore > 0 ? Math.max(0, Math.min(100, (h.rank_score / topScore) * 100)).toFixed(1) : 0}%`,
-                          }}
-                        />
-                      </div>
+                      {row.hit && (
+                        // score bar, relative to the top ranked hit
+                        <div className="mt-1.5 h-1 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
+                          <div
+                            className="h-full bg-[var(--color-accent)]"
+                            style={{
+                              width: `${topScore > 0 ? Math.max(0, Math.min(100, (row.hit.rank_score / topScore) * 100)).toFixed(1) : 0}%`,
+                            }}
+                          />
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
