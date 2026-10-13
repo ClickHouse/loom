@@ -10,6 +10,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
+from server.memory.store.embeddings import retire_copies_under_unembedded_heads
 from server.memory.store.inserts import insert_embedding_rows, insert_memory_versions
 from server.memory.store.reads import memory_rows_by_identity_keys
 from server.memory.store.rows import (
@@ -240,7 +241,7 @@ async def apply_entities_batch(
         await insert_memory_versions(mem_rows, ch=ch)
         written["memory"] = len(mem_rows)
     # A key whose head keeps no vector ('high', unsearchable) gets no mirror copy.
-    keys = [k for k in keys if k not in existing or _embedded(existing[k])]
+    keys = [k for k in keys if k in existing and _embedded(existing[k])]
     emb_rows = await _mirror_rows_for_keys(ch, keys)
     seen = {_identity_key(r) for r in emb_rows}
     missing = [k for k in keys if k in existing and k not in seen]
@@ -248,18 +249,17 @@ async def apply_entities_batch(
         await asyncio.sleep(ENTITY_MIRROR_RETRY_DELAY_S)
         emb_rows.extend(await _mirror_rows_for_keys(ch, missing))
     if emb_rows:
-        await insert_embedding_rows(
-            [
-                build_embedding_row(
-                    **(
-                        {k: v for k, v in r.items() if k in EMBEDDING_PERSISTED_COLS}
-                        | {"entities": list(wanted[_identity_key(r)]), "version": reemit_version(r)}
-                    )
+        copies = [
+            build_embedding_row(
+                **(
+                    {k: v for k, v in r.items() if k in EMBEDDING_PERSISTED_COLS}
+                    | {"entities": list(wanted[_identity_key(r)]), "version": reemit_version(r)}
                 )
-                for r in emb_rows
-            ],
-            ch=ch,
-        )
+            )
+            for r in emb_rows
+        ]
+        await insert_embedding_rows(copies, ch=ch)
+        await retire_copies_under_unembedded_heads(copies, ch=ch)
         written["memory_embeddings"] = len(emb_rows)
     return written
 
@@ -313,16 +313,15 @@ async def heal_divergent_entities(*, limit: int = 200, ch: _CHClient | None = No
     emb_rows = [r for r in emb_rows if _identity_key(r) in entities_by_key]
     if not emb_rows:
         return 0
-    await insert_embedding_rows(
-        [
-            build_embedding_row(
-                **(
-                    {k: v for k, v in r.items() if k in EMBEDDING_PERSISTED_COLS}
-                    | {"entities": entities_by_key[_identity_key(r)], "version": reemit_version(r)}
-                )
+    copies = [
+        build_embedding_row(
+            **(
+                {k: v for k, v in r.items() if k in EMBEDDING_PERSISTED_COLS}
+                | {"entities": entities_by_key[_identity_key(r)], "version": reemit_version(r)}
             )
-            for r in emb_rows
-        ],
-        ch=ch,
-    )
+        )
+        for r in emb_rows
+    ]
+    await insert_embedding_rows(copies, ch=ch)
+    await retire_copies_under_unembedded_heads(copies, ch=ch)
     return len(emb_rows)

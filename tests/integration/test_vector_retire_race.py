@@ -1436,3 +1436,100 @@ async def test_two_copies_of_a_reindexed_row_under_a_high_head_are_never_made(
                 f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
                 params={"o": ORG, "n": ns},
             )
+
+
+async def test_copies_that_read_the_head_before_the_high_write_retire_themselves(
+    ch: Any, monkeypatch: Any
+) -> None:
+    """Two touches read the (embedded) head, then a 'high' write lands, then reindex
+    writes above its fence and the touches copy that row up one at a time, past the
+    re-check's retire. Each copy re-reads the head after its insert and retires one
+    above itself, so nothing is live under the high head."""
+    import server.core.ch as ch_mod
+    import server.memory.store as M
+    from server.memory.api.models_admin import MemoryReindexInput
+    from server.memory.api.models_crud import MemorySetInput, MemoryTouchInput
+    from server.memory.app import handlers, ops, write
+
+    ns = f"itest-{uuid.uuid4().hex[:12]}"
+    key = f"r41_{uuid.uuid4().hex[:6]}"
+    ident = {"org": ORG, "namespace": ns, "agent": AGENT, "memory_key": key}
+    secret = "sk-proj-" + uuid.uuid4().hex + uuid.uuid4().hex[:8]
+    await _memory_only_row(ch, ns, key, "OLDVALUE the deploy uses blue")
+
+    orig = M.reemit_embedding_rows_for_key
+    entered = {"A": asyncio.Event(), "B": asyncio.Event()}
+    go_a, go_b_read, b_read_done, go_b_insert = (asyncio.Event() for _ in range(4))
+    calls: list[str] = []
+
+    async def wrapped(o, n, a, u, s, k, *, ch=None, **ov):  # type: ignore[no-untyped-def]
+        who = "A" if not calls else "B"
+        calls.append(who)
+        entered[who].set()
+        if who == "A":
+            await go_a.wait()
+            return await orig(o, n, a, u, s, k, ch=ch, **ov)
+        await go_b_read.wait()
+        rows = await M.live_embedding_rows_for_key(
+            ch, org=o, namespace=n, agent=a, user_id=u, session_id=s, memory_key=k
+        )
+        b_read_done.set()
+        await go_b_insert.wait()
+        from server.memory.store.embeddings import _reemit_rows
+
+        return await _reemit_rows(rows, ov, ch=ch)
+
+    monkeypatch.setattr(M, "reemit_embedding_rows_for_key", wrapped)
+    monkeypatch.setattr(handlers, "get_client", lambda: ch)
+    tasks: list[asyncio.Task[Any]] = []
+
+    async def before_max() -> None:
+        monkeypatch.setattr(ch_mod, "get_client", lambda: ch)
+        # both touches read the (embedded) head and insert their memory rows first
+        tasks.append(
+            asyncio.create_task(
+                handlers.handle_memory_touch(MemoryTouchInput(**ident, ttl_seconds=3600))
+            )
+        )
+        await asyncio.wait_for(entered["A"].wait(), 30)
+        tasks.append(
+            asyncio.create_task(
+                handlers.handle_memory_touch(MemoryTouchInput(**ident, ttl_seconds=7200))
+            )
+        )
+        await asyncio.wait_for(entered["B"].wait(), 30)
+        await write.handle_memory_set(MemorySetInput(**ident, value=f"root token {secret}"))
+
+    async def before_retire() -> None:
+        go_a.set()
+        await asyncio.wait_for(tasks[0], 30)  # A copies the reindexed row at +1
+        go_b_read.set()
+        await asyncio.wait_for(b_read_done.wait(), 30)  # B read A's copy
+
+    proxy = _ProxyBeforeRetireRead(ch, before_max, before_retire)
+    monkeypatch.setattr(ch_mod, "get_client", lambda: proxy)
+    try:
+        await ops.handle_memory_reindex(MemoryReindexInput(org=ORG, namespace=ns))
+        go_b_insert.set()
+        await asyncio.wait_for(tasks[1], 30)
+        monkeypatch.setattr(ch_mod, "get_client", lambda: ch)
+        assert proxy.fired == ["max", "head", "retire"]
+        head = await ch.query_one(
+            "SELECT sensitivity, version FROM loom.memory FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND memory_key = {k:String}",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        live = await ch.query_one(
+            "SELECT count() AS n FROM loom.memory_embeddings FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND memory_key = {k:String}"
+            " AND tombstoned_at IS NULL AND embedding_dim > 0",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        assert head["sensitivity"] == "high"
+        assert int(live["n"]) == 0
+    finally:
+        for table in ("memory", "memory_embeddings", "entity_vectors", "memory_chunks"):
+            await ch.execute(
+                f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
+                params={"o": ORG, "n": ns},
+            )

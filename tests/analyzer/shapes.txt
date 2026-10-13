@@ -139,6 +139,7 @@
 19e0c0351625	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 19e52017d32e	SELECT coalesce( nullIf(toString(value_json.x), ?), JSONExtractString(value, ?)) AS x_g, count() AS metric FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agen
 19f1db04c7f7	ALTER TABLE loom.entity_triples DELETE WHERE (org = {org:String} AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
+19fc53d37c4d	SELECT m.org AS org, m.namespace AS namespace, m.agent AS agent, m.user_id AS user_id, m.session_id AS session_id, m.memory_key AS memory_key, m.entities AS entities FROM (SELECT org, namespace, agent
 1a1a496f7a14	SELECT session_id, substring(summary_text, ?, ?) AS content_excerpt, cosineDistance(summary_embedding, {q:Array(Float32)}) AS distance, -- NB: alias must NOT be `valid_at` — under the analyzer a -- SE
 1a5f28267e85	ALTER TABLE loom.session_summaries UPDATE tombstoned_at = {now:DateTime} WHERE (org = {org:String} AND tombstoned_at IS NULL AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_
 1aa923f6431a	SELECT count() AS n FROM loom.conversations WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agent:String} AND thread_id = {tid:String} AND tombstoned_at IS NULL
@@ -623,7 +624,6 @@
 6ddfc6087488	WITH (SELECT toFloat64(count()) FROM loom.memory_embeddings FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL) AS n_keys, (SELECT mapFromArrays(groupArray(s), groupA
 6df2c5d02921	SELECT org, namespace, agent, user_id, session_id, run_id, goal, user_request, expected_outcome, environment, model, consumer, status, started_at, completed_at, duration_ms, final_response, confidence
 6e07272917e3	SELECT count() AS n FROM loom.memory_versions WHERE org = {org:String} AND namespace = {ns:String} AND ?
-6e2bd7b72f84	SELECT DISTINCT org, namespace, agent, user_id, session_id, memory_key, scope, embedding_model FROM loom.memory_embeddings WHERE (org, namespace, agent, user_id, session_id, memory_key) IN {keys:Array
 6e6652fa6539	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, cosineDistance(e.embedding, {q:Array(Float32)}) AS dist
 6e6cedc90c5b	SELECT count() AS n FROM loom.llm_response_cache WHERE org = {org:String} AND hasAny(window_keys, (SELECT groupUniqArray(memory_key) FROM loom.memory WHERE org = {org:String} AND user_id = {uid:String
 6e894706d089	SELECT count() AS n FROM loom.code_search_outcome WHERE org = {org:String} AND namespace IN {ns:Array(String)} AND ?
@@ -1465,7 +1465,6 @@ e7b41d6c92db	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.
 e7d4c583cc0e	ALTER TABLE loom.procedure_runs DELETE WHERE (org = {org:String} AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 e7f2d506204a	SELECT org, namespace, agent, user_id, session_id, scope, embedding_model, memory_key FROM loom.memory_embeddings PREWHERE embedding_dim = ? WHERE tombstoned_at IS NULL AND embed_failed_at IS NULL AND
 e82c945354c8	SELECT namespace, ifNull(kind, ?) AS kind, toString(visibility) AS visibility, description FROM loom.namespaces FINAL WHERE org = {org:String} AND namespace IN {ns:Array(String)}
-e88216405b5a	SELECT m.org AS org, m.namespace AS namespace, m.agent AS agent, m.user_id AS user_id, m.session_id AS session_id, m.memory_key AS memory_key, m.entities AS entities FROM (SELECT org, namespace, agent
 e891b9021aa6	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 e8a23d47be35	SELECT c.session_id AS session_id, c.chunk_index AS chunk_index, c.parent_memory_key AS parent_memory_key, cosineDistance(c.embedding, {q:Array(Float32)}) AS distance FROM loom.memory_chunks AS c WHER
 e8a941c1c526	SELECT memory_id, org, namespace, agent, user_id, session_id, memory_key, if(length(toString(value_json)) > ?, toString(value_json), value) AS value FROM loom.memory FINAL WHERE tombstoned_at IS NULL 

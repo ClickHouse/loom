@@ -134,6 +134,7 @@ async def mirror_status_to_embeddings(
     if out:
         try:
             await insert_embedding_rows(out, ch=ch)
+            await retire_copies_under_unembedded_heads(out, ch=ch)
         except Exception as e:  # noqa: BLE001 — projection, never the write; reconcile-status repairs
             _log.warning("status mirror: embeddings re-emit failed (%d rows): %s", len(out), e)
             return 0
@@ -324,6 +325,7 @@ async def reemit_embedding_rows_for_keys(
                 out.append(row)
         if out:
             await insert_embedding_rows(out, ch=ch)
+            await retire_copies_under_unembedded_heads(out, ch=ch)
             written += len(out)
     return written
 
@@ -383,7 +385,44 @@ async def _reemit_rows(
     out = [row for r in rows if (row := _copy_row(r, overrides)) is not None]
     if out:
         await insert_embedding_rows(out, ch=ch)
+        await retire_copies_under_unembedded_heads(out, ch=ch)
     return len(out)
+
+
+async def retire_copies_under_unembedded_heads(
+    written: list[dict[str, Any]], *, ch: _CHClient | None = None
+) -> int:
+    """After a copy of live vector rows (a touch, a verify, a tag, a status mirror),
+    re-read the keys' heads strongly; a key whose head keeps no vector ('high',
+    unsearchable, deleted) has the copy retired one above it. A copy that read its
+    head before a 'high' write landed would otherwise carry the vector up past that
+    write's retire, and copies chain: each one checks after its own insert, so the
+    last to land retires above itself. Tombstones and shared-scope rows (no head of
+    their own) are not checked. Returns the rows retired."""
+    from server.memory.domain.memory_types import is_embedded
+    from server.memory.store.reads import memory_rows_by_identity_keys
+    from server.memory.store.sql import read_your_writes_enabled
+
+    newest: dict[EmbeddingKey, int] = {}
+    for r in written:
+        if r.get("tombstoned_at") is not None or str(r.get("scope") or "") == "shared":
+            continue
+        if not int(r.get("embedding_dim") or 0):
+            continue
+        key = embedding_key(r)
+        newest[key] = max(newest.get(key, 0), int(r["version"]))
+    if not newest:
+        return 0
+    ch = ch or _default_client()
+    heads = await memory_rows_by_identity_keys(
+        list(newest), ch=ch, sequential=read_your_writes_enabled()
+    )
+    stale = [
+        (key, version + 1)
+        for key, version in newest.items()
+        if (head := heads.get(key)) is None or not is_embedded(head.memory_type, head.sensitivity)
+    ]
+    return await retire_vectors_for_keys(stale, ch=ch) if stale else 0
 
 
 _EMB_SHARED_PREWHERE = (
@@ -629,6 +668,7 @@ async def unsupersede_embeddings(
     ]
     if out:
         await insert_embedding_rows(out, ch=ch)
+        await retire_copies_under_unembedded_heads(out, ch=ch)
     return len(out)
 
 

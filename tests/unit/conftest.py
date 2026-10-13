@@ -249,6 +249,32 @@ def _no_repo_job_sandbox() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _no_copy_head_check(request: pytest.FixtureRequest) -> Iterator[None]:
+    """A vector copy re-reads its keys' heads after its insert
+    (`retire_copies_under_unembedded_heads`); unit fakes answer statements by
+    count and shape, so that read is off unless a test is marked `copy_head_check`."""
+    if request.node.get_closest_marker("copy_head_check"):
+        yield
+        return
+    from server.memory.store import embeddings, entities
+
+    async def _skip(*_a: object, **_k: object) -> int:
+        return 0
+
+    before = (
+        embeddings.retire_copies_under_unembedded_heads,
+        entities.retire_copies_under_unembedded_heads,
+    )
+    embeddings.retire_copies_under_unembedded_heads = _skip  # type: ignore[assignment]
+    entities.retire_copies_under_unembedded_heads = _skip  # type: ignore[assignment]
+    yield
+    (
+        embeddings.retire_copies_under_unembedded_heads,
+        entities.retire_copies_under_unembedded_heads,
+    ) = before
+
+
+@pytest.fixture(autouse=True)
 def _no_run_claims() -> Iterator[None]:
     """run.begin sees no Keeper unless a test says otherwise: the claims-table
     check is cached per process, so without this the first test to ask decides
