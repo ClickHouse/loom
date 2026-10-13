@@ -142,3 +142,33 @@ def test_a_lasting_read_failure_warns_once_and_recovers(
     assert sum("unreadable" in r.getMessage() for r in caplog.records) == 1
     monkeypatch.undo()
     assert reader.poll() == {"x": 1}
+
+
+def test_a_document_of_the_wrong_shape_is_corrupt_and_replaced(tmp_path: Path) -> None:
+    path = tmp_path / "d.json"
+    path.write_text(json.dumps({"v": []}))  # decoding calls .items() on a list
+    os.chmod(path, 0o600)
+    doc = SharedDocument(str(path), lambda data: dict(data["v"].items()))
+    assert doc.poll() is None
+    assert doc.update(lambda latest: {"x": 1} if latest is None else latest, _encode) == {"x": 1}
+
+
+def test_a_read_that_fails_after_opening_is_retried(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "d.json"
+    writer, reader = _doc(path), _doc(path)
+    writer.update(lambda _: {"x": 30}, _encode)
+    assert reader.poll() == {"x": 30}
+    writer.update(lambda _: {"x": 1}, _encode)
+    real = json.load
+    failures = [OSError(errno.EIO, "injected read error")]
+
+    def load(fh: Any) -> Any:
+        if failures:
+            raise failures.pop()
+        return real(fh)
+
+    monkeypatch.setattr(shared_document.json, "load", load)
+    assert reader.poll() is None
+    assert reader.poll() == {"x": 1}  # the same version, read again

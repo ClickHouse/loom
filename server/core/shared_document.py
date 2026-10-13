@@ -48,7 +48,7 @@ def _version(st: os.stat_result) -> _Version:
 
 class SharedDocument[T]:
     """`decode` turns the parsed JSON into the caller's state; a document it
-    rejects (ValueError, KeyError, TypeError) is corrupt."""
+    cannot decode is corrupt."""
 
     def __init__(self, path: str, decode: Callable[[Any], T]) -> None:
         self.path = path
@@ -95,12 +95,15 @@ class SharedDocument[T]:
         except FileNotFoundError:
             return None
         with os.fdopen(fd, encoding="utf-8") as fh:
-            self._seen = _version(os.fstat(fh.fileno()))
+            version = _version(os.fstat(fh.fileno()))
             try:
-                return self._decode(json.load(fh))
-            except (ValueError, KeyError, TypeError) as e:
+                state = self._decode(json.load(fh))
+            except (ValueError, LookupError, TypeError, AttributeError) as e:
                 log.warning("%s is corrupt (%s); ignored until it is replaced", self.path, e)
-                return None
+                state = None
+        # Seen once read or found corrupt; a read that failed is tried again.
+        self._seen = version
+        return state
 
 
 def _publish(path: str, data: object) -> _Version:

@@ -353,6 +353,7 @@ class Limiter:
         # With several web workers the admin overrides live in a host file, so
         # one set through any worker binds them all.
         self._overrides_doc: SharedDocument[_Overrides] | None = None
+        self._overrides_key: tuple[str, int] | None = None
 
     # -- backend selection ---------------------------------
 
@@ -399,28 +400,50 @@ class Limiter:
 
     def _overrides_document(self) -> SharedDocument[_Overrides] | None:
         """Beside an explicit shared table (two servers sharing a cap share their
-        overrides too), else one per server once there are several workers."""
-        explicit = str(settings.ratelimit_shared_path)
-        if explicit:
-            path = f"{explicit}.overrides.json"
-        elif int(settings.web_workers) > 1:
-            path = server_file("ratelimit-overrides") + ".json"
-        else:
-            return None
-        if self._overrides_doc is None or self._overrides_doc.path != path:
-            self._overrides_doc = SharedDocument(path, _decode_overrides)
+        overrides too), else one per server once there are several workers.
+        Resolved once per setting, as `_store` is."""
+        explicit, workers = str(settings.ratelimit_shared_path), int(settings.web_workers)
+        if (explicit, workers) != self._overrides_key:
+            self._overrides_key = (explicit, workers)
+            if explicit:
+                path: str | None = f"{explicit}.overrides.json"
+            elif workers > 1:
+                path = server_file("ratelimit-overrides") + ".json"
+            else:
+                path = None
+            self._overrides_doc = None if path is None else SharedDocument(path, _decode_overrides)
         return self._overrides_doc
 
     def _sync_overrides(self) -> None:
-        """Adopt the host's overrides when another worker changed them. This
-        process's buckets were sized from the old ones, so they start afresh."""
+        """Adopt the host's overrides when another worker changed them."""
         doc = self._overrides_document()
         latest = doc.poll() if doc is not None else None
         if latest is not None:
+            self._rebase_buckets(self._overrides(), latest)
             self._adopt(latest)
-            self._ns_buckets.clear()
-            self._org_buckets.clear()
-            self._actor_buckets.clear()
+
+    def _rebase_buckets(self, old: _Overrides, new: _Overrides) -> None:
+        """Re-size this process's buckets for the overrides another worker changed,
+        as the setting worker did its own; a removed override's buckets restart
+        at the default limit."""
+        self._rebase(self._ns_buckets, old.ns, new.ns, skip=1)
+        self._rebase(self._org_buckets, old.org, new.org, skip=0)
+        self._rebase(self._actor_buckets, old.actor, new.actor, skip=1)
+
+    def _rebase[K: tuple[str, ...]](
+        self,
+        buckets: dict[tuple[str, ...], TokenBucket],
+        before: dict[K, Limit],
+        after: dict[K, Limit],
+        *,
+        skip: int,
+    ) -> None:
+        for key, limit in after.items():
+            if before.get(key) != limit:
+                self._apply_override(buckets, key, limit, skip=skip)
+        for key in before.keys() - after.keys():
+            for full_key in [k for k in buckets if self._reaches(k, key, skip)]:
+                del buckets[full_key]
 
     def _overrides(self) -> _Overrides:
         return _Overrides(self._ns_overrides, self._org_overrides, self._actor_overrides)
@@ -700,29 +723,35 @@ class Limiter:
         self._change_overrides(lambda o: replace(o, actor={**o.actor, key: limit}))
         self._apply_override(self._actor_buckets, key, limit, skip=1)
 
-    @staticmethod
     def _apply_override(
+        self,
         buckets: dict[tuple[str, ...], TokenBucket],
         base: tuple[str, ...],
         limit: Limit,
         *,
         skip: int = 0,
     ) -> None:
-        """Resize the live bucket(s) an override reaches: the base key and every
-        class-suffixed key on it, each at its own class fraction. The
-        unscaled override is what the base (production / interactive) bucket
-        gets; a carved-out class bucket gets the override × its fraction, as a
-        fresh bucket would. `skip` leading key elements (the org) are
-        not part of what the override names."""
+        """Resize the live bucket(s) an override reaches, as a fresh bucket would
+        be sized: the base key and every class-suffixed key on it, divided across
+        the processes that hold copies, each at its own class fraction. `skip`
+        leading key elements (the org) are not part of what the override names."""
+        per_process = _scale_for_replicas(limit, shared=self._shared_active)
         for full_key, existing in buckets.items():
-            key = full_key[skip:]
-            if key[: len(base)] != base or len(key) > len(base) + 1:
+            if not self._reaches(full_key, base, skip):
                 continue
+            key = full_key[skip:]
             cls = key[len(base)] if len(key) > len(base) else ""
-            scaled = _scale_for_class(limit, cls)
+            scaled = _scale_for_class(per_process, cls)
             existing.capacity = scaled.capacity
             existing.rate = scaled.rate
             existing.tokens = min(existing.tokens, scaled.capacity)
+
+    @staticmethod
+    def _reaches(full_key: tuple[str, ...], base: tuple[str, ...], skip: int) -> bool:
+        """Whether an override on `base` governs the bucket `full_key`: the base
+        key or one class-suffixed key on it, after `skip` leading elements."""
+        key = full_key[skip:]
+        return key[: len(base)] == base and len(key) <= len(base) + 1
 
     def reset(self) -> None:
         """Test hook. Clears bucket state but keeps overrides — admin policy
@@ -744,9 +773,10 @@ class Limiter:
         if self._shared is not None:
             self._shared.reset()
         if self._overrides_doc is not None:
-            with contextlib.suppress(OSError):
-                os.remove(self._overrides_doc.path)
-            self._overrides_doc = None
+            for path in (self._overrides_doc.path, self._overrides_doc.path + ".lock"):
+                with contextlib.suppress(OSError):
+                    os.remove(path)
+            self._overrides_doc, self._overrides_key = None, None
 
 
 _limiter = Limiter()

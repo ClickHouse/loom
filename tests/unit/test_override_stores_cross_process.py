@@ -200,3 +200,44 @@ async def test_admin_ratelimit_set_cannot_acknowledge_a_change_it_could_not_shar
         )
     assert refused.value.status_code == 503
     assert ("ns1", "memory") not in lim._ns_overrides
+
+
+def test_a_siblings_unrelated_override_keeps_this_workers_bucket_state(settings_override) -> None:
+    settings_override(ratelimit_shared="off", web_workers=3)
+    a, b = Limiter(clock=lambda: 0.0), Limiter(clock=lambda: 0.0)  # no refill
+    b.set_namespace_limit("hot", "memory", Limit(capacity=3, rate=0.0))  # one token per worker
+    assert b.check("hot", "memory.set", org="o").allowed
+    assert not b.check("hot", "memory.set", org="o").allowed
+    a.set_namespace_limit("other", "memory", Limit(capacity=30, rate=0.0))
+    assert not b.check("hot", "memory.set", org="o").allowed
+    a.clear_namespace_limit("hot", "memory")
+    assert b.check("hot", "memory.set", org="o").allowed  # back at the default limit
+    a.reset_all()
+    b.reset_all()
+
+
+def test_an_override_resizes_live_buckets_as_it_sizes_new_ones(settings_override) -> None:
+    """Three workers with per-process buckets: a cap of 3 is one token each,
+    whether the bucket predates the override or not."""
+    settings_override(ratelimit_shared="off", web_workers=3)
+    lim = Limiter(clock=lambda: 0.0)
+    assert lim.check("ns1", "memory.set", org="o").allowed  # the bucket exists before
+    lim.set_namespace_limit("ns1", "memory", Limit(capacity=3, rate=0.0))
+    assert lim.check("ns1", "memory.set", org="o").allowed
+    assert not lim.check("ns1", "memory.set", org="o").allowed
+    lim.reset_all()
+
+
+def test_a_check_resolves_the_override_file_once(
+    settings_override, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.core import ratelimit
+
+    settings_override(ratelimit_shared="off", web_workers=3)
+    calls: list[str] = []
+    real = ratelimit.server_file
+    monkeypatch.setattr(ratelimit, "server_file", lambda name: calls.append(name) or real(name))
+    lim = Limiter()
+    for _ in range(5):
+        lim.check("ns1", "memory.set", org="o")
+    assert calls == ["ratelimit-overrides"]

@@ -3,7 +3,7 @@
 The workers of one `uvicorn --workers N` share a parent, so a file is named by
 the parent's pid and start time: two servers on one host get two files, and a
 later server that reuses the pid (a restarted container) starts afresh. Files
-of servers no longer running are removed when a name is first taken.
+of servers no longer running are removed the first time this process names one.
 """
 
 from __future__ import annotations
@@ -18,6 +18,8 @@ RUN_DIR = "/run/loom"
 _TMP_DIR = "/tmp"
 # loom-<name>-<pid>-<start time>, then any suffix (".json", ".lock", ...).
 _OWNED = re.compile(r"^loom-[a-z-]+-(\d+)-(\d+)(?:\..*)?$")
+# Directories this process has pruned: once each is enough.
+_pruned: set[str] = set()
 
 
 def runtime_dir() -> str:
@@ -48,7 +50,9 @@ def _started(pid: int) -> str:
 def server_file(name: str) -> str:
     """`<runtime dir>/loom-<name>-<parent pid>-<parent start time>`."""
     base = runtime_dir()
-    _prune(base)
+    if base not in _pruned:
+        _pruned.add(base)
+        _prune(base)
     ppid = os.getppid()
     return os.path.join(base, f"loom-{name}-{ppid}-{_started(ppid) or 0}")
 
