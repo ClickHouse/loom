@@ -216,11 +216,11 @@ async def _rows_for(
     path: str,
     base: str,
     tags: list[str],
-    linked: dict[str, list[str]],
+    linked: asyncio.Task[dict[str, list[str]]],
 ) -> list[dict[str, Any]]:
     """One namespace's rows naming the file or linked to code still in it (`linked`:
-    memory_id -> the states of its links here), each stamped with its namespace and the
-    worst of those states."""
+    memory_id -> the states of its links here, read alongside the files match), each
+    stamped with its namespace and the worst of those states."""
     statuses = ["active", "conflicted"] if input.include_conflicted else ["active"]
     params = {
         "org": input.org,
@@ -231,9 +231,9 @@ async def _rows_for(
         "statuses": statuses,
         "lim": int(input.top_k),
     }
-    ids = sorted(m for m, states in linked.items() if set(states) != {"missing"})
     ch = get_client()
-    found = await ch.query_all(_FILES_SQL, params)
+    found, states_of = await asyncio.gather(ch.query_all(_FILES_SQL, params), linked)
+    ids = sorted(m for m, states in states_of.items() if set(states) != {"missing"})
     # a hot file's links are bound a slice at a time; the best of the files match and
     # of each slice's own top `lim` are the namespace's
     if ids:
@@ -241,7 +241,11 @@ async def _rows_for(
     unique = {str(r["memory_id"]): r for r in found}.values()
     rows = sorted(unique, key=_order_key)[: int(input.top_k)]
     return [
-        {**r, "namespace": namespace, "code_state": _worst(linked.get(str(r.get("memory_id")), []))}
+        {
+            **r,
+            "namespace": namespace,
+            "code_state": _worst(states_of.get(str(r.get("memory_id")), [])),
+        }
         for r in rows
     ]
 
@@ -313,13 +317,17 @@ async def _merged_rows(input: MemoryForFileInput, path: str, base: str) -> list[
     only), merged in constraint-first order, deduplicated by (namespace, memory_key), cut at
     top_k. An extra namespace's failed read is dropped; the caller's own raises."""
     extras = await _readable_extras(input)
-    linked = await _linked(input, path, [input.namespace, *extras])
-    own = await _rows_for(input, input.namespace, path, base, list(input.tags or []), linked)
-    if not extras:
-        return _supersede_order(own)
-    got = await asyncio.gather(
-        *(_rows_for(input, ns, path, base, [], linked) for ns in extras), return_exceptions=True
-    )
+    linked = asyncio.ensure_future(_linked(input, path, [input.namespace, *extras]))
+    try:
+        own = await _rows_for(input, input.namespace, path, base, list(input.tags or []), linked)
+        if not extras:
+            return _supersede_order(own)
+        got = await asyncio.gather(
+            *(_rows_for(input, ns, path, base, [], linked) for ns in extras),
+            return_exceptions=True,
+        )
+    finally:
+        linked.cancel()  # a no-op once read; the own read's error leaves it running
     rows = list(own)
     for ns, res in zip(extras, got, strict=True):
         if isinstance(res, BaseException):

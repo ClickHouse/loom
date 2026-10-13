@@ -7,6 +7,7 @@ and says how many it left out; every caller value is a bound parameter.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import Any
 
@@ -166,7 +167,12 @@ async def test_a_hot_files_links_are_bound_in_slices_and_the_best_of_all_are_kep
 
     monkeypatch.setattr(mff, "get_client", lambda: _Sliced())
     request = MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp", top_k=3)
-    rows = await mff._rows_for(request, "ns", "src/a.cpp", "a.cpp", [], linked)
+
+    async def links() -> dict[str, list[str]]:
+        return linked
+
+    task = asyncio.ensure_future(links())
+    rows = await mff._rows_for(request, "ns", "src/a.cpp", "a.cpp", [], task)
     assert file_scans == 1  # the files match runs once, not once per slice
     assert len(bound) > 1 and sorted(m for part in bound for m in part) == sorted(linked)
     assert [r["memory_key"] for r in rows] == ["named", f"k{len(bound)}", f"k{len(bound) - 1}"]
