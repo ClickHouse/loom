@@ -5,6 +5,9 @@ public, and always to the address it vetted (never the name again)."""
 from __future__ import annotations
 
 import asyncio
+import shutil
+import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +24,15 @@ NAMES = {
     "metadata.example": ["169.254.169.254"],
     "mapped.example": ["::ffff:127.0.0.1"],
 }
+
+
+@pytest.fixture
+def tmp_path() -> Iterator[Path]:
+    """A short directory for the proxy's socket: an AF_UNIX path is capped near 104
+    bytes on macOS, and pytest's default temporary directory there is longer."""
+    short = Path(tempfile.mkdtemp(prefix="egress-", dir="/tmp"))
+    yield short
+    shutil.rmtree(short, ignore_errors=True)
 
 
 @pytest.fixture(autouse=True)

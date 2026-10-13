@@ -103,6 +103,8 @@ export function completeBody(scope, payload, finalText, env = process.env, recal
   const body = {
     org: scope.org,
     namespace: scope.namespace,
+    // The run's conversation, as begin sent it: a session-scoped token completes its own run.
+    session_id: String(payload.session_id || "-"),
     run_id: sessionRunId(payload.session_id),
     status: statusFor(payload.reason),
     final_response: redactHead(finalText, FINAL_MAX).slice(0, FINAL_MAX),

@@ -74,10 +74,11 @@ async function main() {
       return;
     }
     // Awaited: the server may answer another run id than the derived one (no
-    // Keeper, narrowed token), and every later hook must use that one. A
-    // timeout or error keeps the derived id.
+    // Keeper, narrowed token), and every later hook must use that one. Begun only
+    // with an answered id: after a timeout or an error the next prompt asks again
+    // (the same derived id, so a run that did open is re-opened, not duplicated).
     const begun = await postBounded("run.begin", beginBody(scope, payload, prompt), opts);
-    writeRunBegun(sessionId, begun ? begun.run_id : "");
+    if (begun && typeof begun.run_id === "string" && begun.run_id) writeRunBegun(sessionId, begun.run_id);
     scheduleExit(0);
     return;
   }

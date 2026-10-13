@@ -622,6 +622,8 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
 
     with traced("ch.insert.dual_write", concurrent=2):
         await asyncio.gather(_insert_memory(), _insert_embedding())
+    # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
+    await memory_repo.index_late_rows([embedding_row], ch=ch)
     _cd.schedule_settle(input, conflict_result, memory_id=memory_id, cfg=_cfg)
 
     # Post-insert (so the new row's UUID exists for the cross-link): flag

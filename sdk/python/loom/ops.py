@@ -14749,6 +14749,8 @@ class RunBeginOutput(TypedDict, total=False):
 class RunCompleteInput(TypedDict, total=False):
     org: Required[str]
     namespace: Required[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
     run_id: Required[str]
     status: Required[Literal["completed", "failed", "cancelled"]]
     final_response: NotRequired[str]
@@ -14779,6 +14781,8 @@ class RunReflection(TypedDict, total=False):
 class RunCompleteBody(TypedDict, total=False):
     org: NotRequired[str]
     namespace: NotRequired[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
     run_id: NotRequired[str]
     status: Required[Literal["completed", "failed", "cancelled"]]
     final_response: NotRequired[str]

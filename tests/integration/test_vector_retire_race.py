@@ -1684,3 +1684,69 @@ async def test_a_stub_above_a_high_fence_is_never_sent_to_the_embedder(
                 f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
                 params={"o": ORG, "n": ns},
             )
+
+
+async def test_a_slow_writes_embedding_is_still_counted_in_the_bm25_stats(ch: Any) -> None:
+    """An embedding row carries its memory row's version, drawn when the write began.
+    When it lands after the refresh views' watermark moved past that version, no pass
+    counts it; the write indexes its own row (`index_late_rows`). A late row that does
+    not is the control: absent from both tables after the next refresh."""
+    import time
+
+    from server.embedding import get_embedder
+    from server.memory import store as M
+
+    async def refresh() -> None:
+        for view in ("memory_doc_stats_refresh", "memory_term_freq_refresh"):
+            await ch.execute(f"SYSTEM REFRESH VIEW loom.{view}")
+            await ch.execute(f"SYSTEM WAIT VIEW loom.{view}")
+
+    ns = f"itest-{uuid.uuid4().hex[:12]}"
+    word = f"zq{uuid.uuid4().hex[:8]}"
+    embedder = get_embedder()
+
+    def late_row(key: str, *, ago_s: int = 30) -> dict[str, Any]:
+        return M.build_embedding_row(
+            org=ORG,
+            namespace=ns,
+            agent=AGENT,
+            user_id=USER,
+            session_id=SESSION,
+            memory_key=key,
+            memory_type="semantic",
+            scope="private",
+            content_excerpt=f"the {word} runbook",
+            embedding_model=embedder.model_name,
+            embedding_dim=embedder.dim,
+            embedding=[0.1] * embedder.dim,
+            created_at=datetime.now(UTC).replace(tzinfo=None),
+            version=time.time_ns() - ago_s * 1_000_000_000,  # drawn ago_s seconds ago
+        )
+
+    try:
+        # A row drawn 15 s ago, so the next pass moves the watermarks past it (and past
+        # the late rows below, drawn 30 s ago).
+        await M.insert_embedding_rows([late_row("marker", ago_s=15)], ch=ch)
+        await refresh()
+        indexed, control = late_row("slow_write"), late_row("slow_write_unindexed")
+        await M.insert_embedding_rows([indexed, control], ch=ch)
+        assert await M.index_late_rows([indexed], ch=ch) == 1
+        await refresh()
+        stats = await ch.query_all(
+            "SELECT memory_key FROM loom.memory_doc_stats FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String}",
+            params={"o": ORG, "n": ns},
+        )
+        assert sorted(r["memory_key"] for r in stats) == ["marker", "slow_write"]
+        df = await ch.query_one(
+            "SELECT uniqExactMerge(df_state) AS n FROM loom.memory_term_freq"
+            " WHERE org = {o:String} AND namespace = {n:String} AND term = {t:String}",
+            params={"o": ORG, "n": ns, "t": word},
+        )
+        assert int(df["n"]) == 2  # the marker and the indexed late row, not the control
+    finally:
+        for table in ("memory_embeddings", "memory_doc_stats", "memory_term_freq"):
+            await ch.execute(
+                f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
+                params={"o": ORG, "n": ns},
+            )

@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { completeBody, sessionRunId, writeRunBegun } from "../lib/run-hook.mjs";
+import { completeBody, readRunState, sessionRunId, writeRunBegun } from "../lib/run-hook.mjs";
 import { STALE_STATE_MS, sessionStatePath, sweepStaleStateFiles } from "../lib/tmp-state.mjs";
 import { recallBody } from "../lib/prompt-recall.mjs";
 import { sessionMemoryBody } from "../lib/session-memory.mjs";
@@ -93,14 +93,22 @@ test("the id run.begin answers is used by run.complete, prompt recall and sessio
   });
 });
 
-test("a run.begin that times out keeps the derived id", async () => {
+test("a run.begin that times out is asked again, and the run it opens is completed", async () => {
   const tmp = freshTmp();
   await withServer({ beginRunId: "late", delayMs: 2500 }, async (url) => {
     await runHook("UserPromptSubmit", { session_id: "s2", cwd: tmp, prompt: "p" }, { tmp, url });
   });
-  withTmpdir(tmp, () => {
-    assert.equal(sessionRunId("s2"), "cc-s2");
-    assert.equal(completeBody(scope, { session_id: "s2", reason: "exit" }, "").run_id, "cc-s2");
+  // Not begun: nothing was answered, so nothing is marked.
+  withTmpdir(tmp, () => assert.equal(readRunState("s2").begun, undefined));
+  await withServer({ beginRunId: "0a1b2c3d" }, async (url, seen) => {
+    const payload = { session_id: "s2", cwd: tmp, prompt: "next" };
+    await runHook("UserPromptSubmit", payload, { tmp, url });
+    await runHook("SessionEnd", { ...payload, reason: "exit" }, { tmp, url });
+    const begin = seen.find((r) => r.url.endsWith("/run.begin"));
+    const complete = seen.find((r) => r.url.endsWith("/run.complete"));
+    assert.equal(begin.body.run_id, "cc-s2", "the retry asks for the same derived id");
+    assert.equal(complete.body.run_id, "0a1b2c3d", "the run the retry opened is the one completed");
+    assert.equal(complete.body.session_id, "s2");
   });
 });
 

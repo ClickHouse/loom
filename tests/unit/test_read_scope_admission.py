@@ -175,6 +175,7 @@ def test_a_pinned_token_reaches_only_ops_that_honour_its_scope(op: Any) -> None:
         "memory.dedup_list",
         "decision.precedents",
         "profile.activity",
+        "erasure.request",
     ],
 )
 def test_ops_that_cannot_bound_their_answer_are_refused(name: str) -> None:
@@ -754,3 +755,23 @@ def test_every_code_op_is_classified_by_name() -> None:
     code_ops = {op.name for op in ALL_OPERATIONS if op.name.startswith("code.")}
     unclassified = sorted(n for n in code_ops if n not in NARROW_SAFE_OPS and n not in SCOPED_OPS)
     assert not unclassified, unclassified
+
+
+def test_a_narrowed_namespace_admin_cannot_start_an_erasure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An erasure's target is a namespace or a user id; its handler checks admin
+    authority on it, not the token's user/session pin. A narrowed token is refused at
+    admission, before the handler (and its saga) runs."""
+    from server.erasure.app import handlers
+
+    started: list[Any] = []
+
+    async def _saga(**kw: Any) -> Any:
+        started.append(kw)
+
+    monkeypatch.setattr(handlers, "run_saga", _saga)
+    narrowed = _auth(read_scope="own_user", read_user_id="u1", ns_roles=(("ns", "admin"),))
+    with pytest.raises(AuthInsufficientError):
+        gates.read_scope(OPERATIONS_BY_NAME["erasure.request"], narrowed, SimpleNamespace())
+    assert started == []

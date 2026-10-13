@@ -7177,6 +7177,8 @@ export interface RunReflection {
 export interface RunCompleteInput {
   org: string;
   namespace: string;
+  user_id?: string;
+  session_id?: string;
   run_id: string;
   status: "completed" | "failed" | "cancelled";
   final_response?: string;

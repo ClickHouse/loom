@@ -682,6 +682,8 @@ async def _write_revision(
             # After the retire (at the same version, the later insert wins the tie),
             # and even when the gather failed: the version row may be in.
             await fence_high([(memory_repo.embedding_key(existing), new_version)], ch=ch)
+    # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
+    await memory_repo.index_late_rows(emb_rows, ch=ch)
     cfg = await cfg_task
     _cd.schedule_settle(
         _settle_identity(input.org, existing, revision_run_id),

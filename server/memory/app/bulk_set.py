@@ -304,6 +304,9 @@ async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
         _insert_memory_rows(),
         memory_repo.insert_embedding_rows(state.embedding_rows, ch=ch),
     )
+    # The entries' versions were drawn before the batch embedded: a slow batch indexes
+    # its own BM25 stats.
+    await memory_repo.index_late_rows(state.embedding_rows, ch=ch)
     await memory_repo.retire_vectors_for_keys(list(retire.values()), ch=ch)
     fences = _high_winners(state)
     if fences:

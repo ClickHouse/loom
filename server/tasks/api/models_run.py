@@ -109,6 +109,10 @@ class RunReflection(BaseModel):
 class RunCompleteInput(BaseModel):
     org: str
     namespace: str
+    # The run's user and conversation, as run.begin took them: a token narrowed to
+    # one session resolves its scope from these, and completes only its own run.
+    user_id: str = Field(default=SENTINEL)
+    session_id: str = Field(default=SENTINEL)
     run_id: str = Field(min_length=1, max_length=128)
     # How the run ended: `completed`, `failed` or `cancelled`; also picks the default `outcome`.
     status: Literal["completed", "failed", "cancelled"]

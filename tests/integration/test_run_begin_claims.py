@@ -182,3 +182,31 @@ async def test_without_keeper_a_narrowed_new_supplied_id_is_replaced(
         assert other["run_id"] != "mine"
         got = await _call(c, wide, "run.get", {"org": org, "namespace": ns, "run_id": "mine"})
     assert got["run"]["user_id"] == U and got["run"]["goal"] == "u"
+
+
+@pytest.mark.asyncio
+async def test_a_session_scoped_token_begins_and_completes_its_own_run(
+    control_plane_url: str,
+) -> None:
+    """A token narrowed to one session resolves its scope from the body's user and
+    session; run.complete carries them as run.begin does, so the token closes its own
+    run (and a run of another session stays out of reach)."""
+    org, ns = unique_org("run-claims"), "run-claims"
+    tok = _mint(org, ns, read_user_id=U, read_scope="own_session")
+    wide = _mint(org, ns)
+    ident = {"org": org, "namespace": ns, "user_id": U, "session_id": "s1"}
+    async with httpx.AsyncClient(base_url=control_plane_url, timeout=60.0) as c:
+        begun = await _call(c, tok, "run.begin", {**ident, "agent": "a", "goal": "mine"})
+        run_id = begun["run_id"]
+        done = await _call(
+            c, tok, "run.complete", {**ident, "run_id": run_id, "status": "completed"}
+        )
+        assert done["run_id"] == run_id and done["status"] == "completed"
+        got = await _call(c, wide, "run.get", {"org": org, "namespace": ns, "run_id": run_id})
+        assert got["found"] and got["run"]["status"] == "completed"
+        r = await c.post(
+            "/v1/run.complete",
+            json={**ident, "session_id": "s2", "run_id": run_id, "status": "failed"},
+            headers={"Authorization": f"Bearer {tok}"},
+        )
+        assert r.status_code != 200 or r.json().get("status") != "failed", r.text[:300]
