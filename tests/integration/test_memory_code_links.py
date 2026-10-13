@@ -205,16 +205,16 @@ async def _set_policy(namespace: str, policy: str) -> None:
 
 
 async def _pass() -> Any:
-    from server.memory.app import code_links
+    from server.memory.app import code_link_recheck, code_link_repo, code_links
 
-    result = code_links.PassResult()
+    result = code_link_repo.PassResult()
     cursor = QUEUE_START
     while True:
         read = result.queued
         cursor = await code_links.link_queued(cursor, 10_000, result)
         if result.queued - read < 10_000:
             break
-    await code_links.recheck_all(result)
+    await code_link_recheck.recheck_all(result)
     assert not result.errors, result.errors
     return result
 
@@ -548,7 +548,7 @@ async def test_a_write_landing_after_later_ones_is_still_linked(env) -> None:
     """A writer takes its version before it embeds; one that lands after the cursor moved
     past later writes is read by when it was inserted."""
     import server.memory.store as memory_repo
-    from server.memory.app import code_links
+    from server.memory.app import code_link_repo, code_links
 
     repo = env
     c1 = repo.commit({"src/late.py": "def late_value():\n    return 9\n"})
@@ -556,14 +556,14 @@ async def test_a_write_landing_after_later_ones_is_still_linked(env) -> None:
     mid = await _remember(MEM, "early", "plain words first")
     early_version = memory_repo.next_version()  # a writer takes its version, then embeds
     await _remember(MEM, "later", "an unrelated later write")
-    first = code_links.PassResult()
+    first = code_link_repo.PassResult()
     cursor = await code_links.link_queued(QUEUE_START, 10_000, first)  # past both
     head = await _row(mid)
     row = memory_repo.build_memory_version_row(
         head, value='"`late_value` is nine"', content_sha256="late", version=early_version
     )
     await memory_repo.insert_memory_versions([row])  # lands now, with an older version
-    second = code_links.PassResult()
+    second = code_link_repo.PassResult()
     await code_links.link_queued(cursor, 10_000, second)
     assert [link["symbol"].rsplit("::", 1)[-1] for link in await _links(mid)] == ["late_value"]
 
@@ -663,7 +663,7 @@ async def test_a_bulk_write_larger_than_a_page_is_linked_whole(env) -> None:
     """One bulk insert shares one queue time; pages split it by position, never by time."""
     from server.code.domain.index.remote import repo_tag
     from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry
-    from server.memory.app import code_links
+    from server.memory.app import code_link_repo, code_links
     from server.memory.app.bulk_set import handle_memory_bulk_set
 
     repo = env
@@ -681,7 +681,7 @@ async def test_a_bulk_write_larger_than_a_page_is_linked_whole(env) -> None:
     await handle_memory_bulk_set(
         MemoryBulkSetInput(org=ORG, namespace=MEM, agent="claude-code", entries=entries)
     )
-    result = code_links.PassResult()
+    result = code_link_repo.PassResult()
     for _ in range(10):
         nxt = await code_links.link_queued(cursor, 5, result)
         if nxt == cursor:
@@ -920,7 +920,7 @@ async def test_the_backfill_drops_links_of_a_memory_that_no_longer_names_a_repos
     env, ch_client
 ) -> None:
     from server.memory.api.models_crud import MemorySetInput
-    from server.memory.app import code_links
+    from server.memory.app import code_link_repo, code_links
     from server.memory.app.write import handle_memory_set
 
     repo = env
@@ -943,7 +943,7 @@ async def test_the_backfill_drops_links_of_a_memory_that_no_longer_names_a_repos
     ch_client.command("OPTIMIZE TABLE loom.memory FINAL")  # and the tagged version merged away
     cursor: tuple[str, ...] | None = None
     while True:
-        cursor = await code_links.backfill(cursor, 500, code_links.PassResult())
+        cursor = await code_links.backfill(cursor, 500, code_link_repo.PassResult())
         if cursor is None:
             break
     assert await _links(mid) == []
@@ -1149,7 +1149,7 @@ async def test_a_flipped_condition_is_changed_code(env, monkeypatch) -> None:
 
 async def test_an_unreadable_mirror_is_retried_not_read_as_removed_code(env) -> None:
     from server.code.app import memory_links as code
-    from server.memory.app import code_links
+    from server.memory.app import code_link_recheck, code_link_repo
 
     repo = env
     src = "def kept_rows():\n    return 1\n\n\ndef other():\n    return 0\n"
@@ -1162,8 +1162,8 @@ async def test_an_unreadable_mirror_is_retried_not_read_as_removed_code(env) -> 
     git_dir = repo.root / ".git"
     git_dir.rename(repo.root / ".git-away")
     try:
-        result = code_links.PassResult()
-        await code_links.recheck_all(result)
+        result = code_link_repo.PassResult()
+        await code_link_recheck.recheck_all(result)
         assert result.errors  # reported, not read as a deletion
     finally:
         (repo.root / ".git-away").rename(git_dir)
@@ -1177,7 +1177,7 @@ async def test_an_unreadable_mirror_is_retried_not_read_as_removed_code(env) -> 
 async def test_a_parser_failure_is_retried_not_read_as_removed_code(env, monkeypatch) -> None:
     from server.code.app import memory_links as code
     from server.code.app.index import ingest_parse
-    from server.memory.app import code_links
+    from server.memory.app import code_link_recheck, code_link_repo
 
     repo = env
     src = "def kept_rows():\n    return 1\n"
@@ -1193,8 +1193,8 @@ async def test_a_parser_failure_is_retried_not_read_as_removed_code(env, monkeyp
 
     with monkeypatch.context() as m:
         m.setitem(ingest_parse._PARSERS, "python", broken)
-        result = code_links.PassResult()
-        await code_links.recheck_all(result)
+        result = code_link_repo.PassResult()
+        await code_link_recheck.recheck_all(result)
     assert result.errors  # reported, not read as a deletion
     assert [link["state"] for link in await _links(mid)] == ["fresh"]
     assert await code.checked_head(ORG, TRUNK) == c2  # the repository moves on
@@ -1204,7 +1204,7 @@ async def test_a_parser_failure_is_retried_not_read_as_removed_code(env, monkeyp
 
 async def test_a_file_that_never_parses_holds_back_no_other_file(env, monkeypatch) -> None:
     from server.code.app.index import ingest_parse
-    from server.memory.app import code_links
+    from server.memory.app import code_link_recheck, code_link_repo
 
     repo = env
     c1 = repo.commit(
@@ -1227,8 +1227,8 @@ async def test_a_file_that_never_parses_holds_back_no_other_file(env, monkeypatc
 
     monkeypatch.setitem(ingest_parse._PARSERS, "python", b_never_parses)
     for _ in range(2):
-        result = code_links.PassResult()
-        await code_links.recheck_all(result)
+        result = code_link_repo.PassResult()
+        await code_link_recheck.recheck_all(result)
         assert any("src/b.py" in e for e in result.errors)
     assert [x["state"] for x in await _links(alpha)] == ["changed"]
     assert [x["state"] for x in await _links(beta)] == ["fresh"]  # as last checked
@@ -1255,7 +1255,7 @@ async def test_a_host_that_does_not_know_the_repository_keeps_its_links(env) -> 
 
 
 async def test_a_name_two_files_define_never_links_to_the_one_left(env) -> None:
-    from server.memory.app import code_links
+    from server.memory.app import code_link_recheck, code_link_repo
     from server.memory.store import code_links as store
 
     reader = "class Reader:\n    def close(self):\n        return {}\n"
@@ -1267,7 +1267,7 @@ async def test_a_name_two_files_define_never_links_to_the_one_left(env) -> None:
     assert await store.for_memories(ORG, [mid]) == []  # neither linked nor waiting
     c2 = env.commit({paths[1]: None})
     await _index(TRUNK, env, c2, paths[1:])
-    await code_links.recheck_all(code_links.PassResult())  # the commit, no new write
+    await code_link_recheck.recheck_all(code_link_repo.PassResult())  # the commit, no new write
     assert await store.for_memories(ORG, [mid]) == []
 
 
@@ -1288,7 +1288,7 @@ def _python_parser_fails_for(monkeypatch, suffix: str) -> Any:
 
 async def test_a_rehash_the_parser_failed_stays_due(env, ch_client, monkeypatch) -> None:
     from server.code.domain.declaration import fingerprint_version
-    from server.memory.app import code_links
+    from server.memory.app import code_link_recheck, code_link_repo
     from server.memory.store import code_links as store
 
     c1 = env.commit({"src/k.py": "def kept_rows():\n    return 1\n"})
@@ -1297,7 +1297,7 @@ async def test_a_rehash_the_parser_failed_stays_due(env, ch_client, monkeypatch)
     await _pass()
     _as_old_rules(ch_client, body_hash="old", checked_hash="old", anchored_hash="old")
     restore = _python_parser_fails_for(monkeypatch, "k.py")
-    await code_links.recheck_all(code_links.PassResult())
+    await code_link_recheck.recheck_all(code_link_repo.PassResult())
     ((row,),) = [await store.for_memories(ORG, [mid])]
     assert (row["fingerprint_version"], row["body_hash"]) == ("old", "old")  # still due
     restore()
@@ -1309,7 +1309,7 @@ async def test_a_rehash_the_parser_failed_stays_due(env, ch_client, monkeypatch)
 
 async def test_a_path_that_did_not_parse_is_owed_before_its_batch_is_done(env, monkeypatch) -> None:
     from server.code.app import memory_links as code
-    from server.memory.app import code_links
+    from server.memory.app import code_link_recheck, code_link_repo
 
     files = {"src/a.py": "def alpha():\n    return 1\n", "src/b.py": "def beta():\n    return 1\n"}
     c1 = env.commit(files)
@@ -1318,7 +1318,7 @@ async def test_a_path_that_did_not_parse_is_owed_before_its_batch_is_done(env, m
     await _pass()
     c2 = env.commit({p: t.replace("return 1", "return 2") for p, t in files.items()})
     await _index(TRUNK, env, c2, list(files))
-    monkeypatch.setattr(code_links, "_PATHS_PER_WRITE", 1)
+    monkeypatch.setattr(code_link_recheck, "_PATHS_PER_WRITE", 1)
     restore = _python_parser_fails_for(monkeypatch, "b.py")
     write = code.set_link_cursor
 
@@ -1329,8 +1329,8 @@ async def test_a_path_that_did_not_parse_is_owed_before_its_batch_is_done(env, m
 
     with monkeypatch.context() as m:
         m.setattr(code, "set_link_cursor", cut_after_b)
-        await code_links.recheck_all(code_links.PassResult())
-    await code_links.recheck_all(code_links.PassResult())  # finishes the head
+        await code_link_recheck.recheck_all(code_link_repo.PassResult())
+    await code_link_recheck.recheck_all(code_link_repo.PassResult())  # finishes the head
     restore()
     await _pass()
     assert [x["state"] for x in await _links(beta)] == ["changed"]
@@ -1343,23 +1343,23 @@ async def test_a_memory_whose_file_does_not_parse_holds_back_no_other(env, monke
     restore = _python_parser_fails_for(monkeypatch, "b.py")
     alpha = await _remember(MEM, "alpha", "`alpha` returns one", files=["src/a.py"])
     beta = await _remember(MEM, "beta", "`beta` returns one", files=["src/b.py"])
-    from server.memory.app import code_links
+    from server.memory.app import code_link_recheck, code_link_repo, code_links
 
     for _ in range(2):  # the first link, then the retry of the one left waiting
-        result = code_links.PassResult()
+        result = code_link_repo.PassResult()
         cursor = QUEUE_START
         cursor = await code_links.link_queued(cursor, 10_000, result)
-        await code_links.recheck_all(result)
+        await code_link_recheck.recheck_all(result)
     assert [x["state"] for x in await _links(alpha)] == ["fresh"]
     assert await _links(beta) == []
     restore()
-    await code_links.recheck_all(code_links.PassResult())  # its marker is relinked
+    await code_link_recheck.recheck_all(code_link_repo.PassResult())  # its marker is relinked
     assert [x["state"] for x in await _links(beta)] == ["fresh"]
 
 
 async def test_a_late_link_of_an_older_value_is_relinked_to_the_newest(env) -> None:
     from server.memory.api.models_crud import MemoryGetInput
-    from server.memory.app import code_links
+    from server.memory.app import code_link_repo, code_links
     from server.memory.app.handlers import handle_memory_get
     from server.memory.store import code_links as store
 
@@ -1371,7 +1371,7 @@ async def test_a_late_link_of_an_older_value_is_relinked_to_the_newest(env) -> N
     assert await _remember(MEM, "late", "`fetch_rows` returns one, always") == mid
     await _pass()
     # a worker that read the older value before the rewrite writes its links last
-    await code_links.link_memories([older], code_links.PassResult())
+    await code_links.link_memories([older], code_link_repo.PassResult())
     got = await handle_memory_get(
         MemoryGetInput(org=ORG, namespace=MEM, agent="claude-code", memory_key="late")
     )
@@ -1586,7 +1586,7 @@ async def test_a_short_qualified_method_is_linked(env) -> None:
 async def test_a_recheck_never_supersedes_a_relink_written_after_its_read(env) -> None:
     from dataclasses import replace
 
-    from server.memory.app import code_links
+    from server.memory.app import code_link_recheck, code_link_repo
     from server.memory.store import code_links as store
 
     repo = env
@@ -1600,8 +1600,8 @@ async def test_a_recheck_never_supersedes_a_relink_written_after_its_read(env) -
     # the memory is edited, still about the same function, and the queue relinks it
     await _remember(MEM, "q", "`first_one` returns one, always")
     await _pass()
-    stale = code_links.Move(read, replace(code_links._link_of(read), state="changed"))
-    await code_links._write_moves([stale], c1)  # the recheck resumes
+    stale = code_link_recheck.Move(read, replace(code_link_repo.link_of(read), state="changed"))
+    await code_link_recheck._write_moves([stale], c1)  # the recheck resumes
     assert [(x["symbol"].rsplit("::", 1)[-1], x["state"]) for x in await _links(mid)] == [
         ("first_one", "fresh")
     ]
@@ -2535,7 +2535,7 @@ async def test_a_delayed_cleanup_keeps_links_made_after_a_restore(env) -> None:
 
 async def test_a_stale_rename_never_holds_the_current_links_back(env, monkeypatch) -> None:
     from server.code.domain.anchor import Link
-    from server.memory.app import code_link_judge, code_links
+    from server.memory.app import code_link_judge, code_link_recheck, code_link_repo
     from server.memory.store import code_links as store
 
     repo = env
@@ -2550,11 +2550,11 @@ async def test_a_stale_rename_never_holds_the_current_links_back(env, monkeypatc
     await _index(TRUNK, repo, c2, ["src/st.py"])
     await _remember(MEM, "st", "`store_rows` returns two")  # rewritten and relinked
     await _pass()
-    stale = code_links.Move(
+    stale = code_link_recheck.Move(
         read, Link("src/st.py", "src.st::load_rows", read["body_hash"], "moved")
     )
-    assert await code_links._current_moves(ORG, [stale]) == []  # the recheck drops it
-    await code_links._write_moves([stale], c2)  # and if a race lets it in anyway
+    assert await code_link_recheck._current_moves(ORG, [stale]) == []  # the recheck drops it
+    await code_link_recheck._write_moves([stale], c2)  # and if a race lets it in anyway
     calls: list[str] = []
 
     async def judge(claim: str, before: str, after: str) -> tuple[str, str]:
@@ -2564,8 +2564,8 @@ async def test_a_stale_rename_never_holds_the_current_links_back(env, monkeypatc
     monkeypatch.setattr(code_link_judge, "judge_claim", judge)
     c3 = repo.commit({"src/st.py": src.replace("fetch_rows", "load_rows").replace("2", "3")})
     await _index(TRUNK, repo, c3, ["src/st.py"])
-    result = code_links.PassResult()
-    await code_links.recheck_all(result)  # the queue acknowledged the rewrite long ago
+    result = code_link_repo.PassResult()
+    await code_link_recheck.recheck_all(result)  # the queue acknowledged the rewrite long ago
     assert not result.errors and calls == ["`store_rows` returns two"]
     links = await store.for_memories(ORG, [mid])
     assert [(x["qualified_name"].rsplit("::", 1)[-1], x["suggestion"]) for x in links] == [
@@ -2638,7 +2638,7 @@ async def _moved_to_another_repository(
 async def test_a_stale_link_into_another_repository_never_reaches_its_policy(
     env, monkeypatch, tmp_path
 ) -> None:
-    from server.memory.app import code_link_judge, code_links
+    from server.memory.app import code_link_judge, code_link_recheck, code_link_repo
     from server.memory.store import code_links as store
 
     src = "def load_rows(n):\n    return n\n"  # the same path and name in both
@@ -2653,8 +2653,8 @@ async def test_a_stale_link_into_another_repository_never_reaches_its_policy(
     monkeypatch.setattr(code_link_judge, "judge_claim", judge)
     edited = src.replace("return n", "return n + 1")
     await _index(other_ns, other, other.commit({"src/io.py": edited}), ["src/io.py"])
-    result = code_links.PassResult()
-    await code_links.recheck_all(result)  # the queue acknowledged the rewrite long ago
+    result = code_link_repo.PassResult()
+    await code_link_recheck.recheck_all(result)  # the queue acknowledged the rewrite long ago
     assert not result.errors, result.errors
     links = await store.for_memories(ORG, [mid])
     assert calls == ["`load_rows` returns n"]

@@ -1,7 +1,7 @@
 """Code link pass: link the memories written since the last pass to the code they name
 (and, on the first pass or after falling behind the queue, the ones written before),
 then follow every repository's links to its indexed head and run the memories' `revise`
-policy (`server.memory.app.code_links`)."""
+policy (`server.memory.app.code_links`, `code_link_recheck`)."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from server.memory.store.key_write_lock import LeaseBusy
 from server.workers.status import log_pass_errors, record_pass
 
 if TYPE_CHECKING:
-    from server.memory.app.code_links import PassResult
+    from server.memory.app.code_link_repo import PassResult
 
 log = logging.getLogger(__name__)
 
@@ -22,11 +22,11 @@ _QUEUE_PAGES = 10
 
 async def run_pass() -> dict[str, Any]:
     from server.code.app import memory_links as code
-    from server.memory.app import code_links
+    from server.memory.app import code_link_recheck, code_link_repo, code_links
     from server.settings import settings
 
     batch = int(settings.memory_code_links_batch)
-    result = code_links.PassResult()
+    result = code_link_repo.PassResult()
     with record_pass("memory_code_links") as rec:
         await code.refresh_repos()
         try:
@@ -35,7 +35,7 @@ async def run_pass() -> dict[str, Any]:
                 await _link_writes(batch, result)
         except LeaseBusy:
             pass  # another host is linking them
-        await code_links.recheck_all(result)
+        await code_link_recheck.recheck_all(result)
         rec.outcome = result.as_dict()
         log_pass_errors(log, "memory_code_links", result.errors)
     return result.as_dict()
