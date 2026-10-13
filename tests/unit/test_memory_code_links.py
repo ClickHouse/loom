@@ -74,6 +74,7 @@ def _row(mid: str, **kw: Any) -> dict[str, Any]:
         "value": "claim",
         "pinned": 0,
         "lock_mode": "",
+        "lock_until": None,
         "verified_by": "",
         "verified_sha256": "",
         "sha": "s",
@@ -331,7 +332,9 @@ def test_search_hides_only_a_complete_unheld_memory_whose_code_is_all_gone() -> 
 
 def test_the_held_rows() -> None:
     assert code_change.held(_row("p", pinned=1))
-    assert code_change.held(_row("l", lock_mode="value"))
+    assert code_change.held(_row("l", lock_mode="read_only"))
+    assert code_change.held(_row("t", lock_mode="no_delete", lock_until=datetime(2999, 1, 1)))
+    assert not code_change.held(_row("z", lock_mode="read_only", lock_until=datetime(2020, 1, 1)))
     assert code_change.held(_row("v", verified_by="human:ann", verified_sha256="s"))
     assert not code_change.held(_row("x", verified_by="human:ann", verified_sha256="old"))
     assert not code_change.held(_row("n"))
@@ -896,7 +899,7 @@ async def test_a_policy_write_follows_the_version_it_read(world) -> None:
 async def test_a_hold_taken_during_judgement_only_flags(world, monkeypatch) -> None:
     async def judge(claim, link, texts, head, budget):
         budget.judgements -= 1  # the judge was asked
-        world.rows["m"]["lock_mode"] = "value"  # a person locked it meanwhile
+        world.rows["m"]["lock_mode"] = "read_only"  # a person locked it meanwhile
         return {**link, "suggestion": "the fix"}
 
     monkeypatch.setattr(code_link_policy, "_judge", judge)

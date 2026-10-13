@@ -122,6 +122,7 @@ def head_of(row: Any) -> dict[str, Any]:
         "sha": get("content_sha256"),
         "pinned": get("pinned", False),
         "lock_mode": get("lock_mode"),
+        "lock_until": get("lock_until", None),
         "verified_by": get("verified_by"),
         "verified_sha256": get("verified_sha256"),
     }

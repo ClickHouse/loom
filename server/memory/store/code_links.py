@@ -434,7 +434,7 @@ SELECT org, namespace, agent, user_id, session_id, memory_key,
        toString(memory_id) AS mid, value, tags, files,
        toString(content_sha256) AS sha,
        CAST(status AS String) AS status, tombstoned_at,
-       pinned, lock_mode, verified_by, verified_sha256, sensitivity
+       pinned, lock_mode, lock_until, verified_by, verified_sha256, sensitivity
 FROM loom.memory FINAL
 """
 

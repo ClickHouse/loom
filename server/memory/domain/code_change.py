@@ -19,8 +19,10 @@ A memory a person pinned, locked or verified is only flagged.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from types import SimpleNamespace
 from typing import Any, Literal, get_args
 
+from server.memory.domain.lock import effective_mode
 from server.memory.domain.trust import verification_state
 
 # a served link's states from best to worst: a memory shows its worst link's
@@ -48,11 +50,12 @@ def code_removed(states: Sequence[str]) -> bool:
 
 
 def held(row: Mapping[str, Any]) -> bool:
-    """A person's hold on the memory: pinned, locked or verified by a human."""
+    """A person's hold on the memory: pinned, under a lock in force, or verified by a human."""
     verified = verification_state(
         row.get("verified_by"), row.get("verified_sha256"), row.get("sha")
     )
-    return bool(row.get("pinned") or row.get("lock_mode") or verified == "human")
+    lock = SimpleNamespace(lock_mode=row.get("lock_mode"), lock_until=row.get("lock_until"))
+    return bool(row.get("pinned") or effective_mode(lock) or verified == "human")
 
 
 def hidden(states: Sequence[str], complete: bool, policy: str, is_held: bool) -> bool:

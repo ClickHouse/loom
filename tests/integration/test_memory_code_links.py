@@ -3625,3 +3625,18 @@ async def test_a_memory_whose_judgement_fails_goes_behind_the_others(env, monkey
         await code_link_recheck.recheck_all(code_link_pass.PassResult())
         await asyncio.sleep(1.1)  # the failure's stamp is a second later than the rest
     assert len(set(asked)) == 2, asked
+
+
+async def test_a_lapsed_lock_no_longer_keeps_a_memory_whose_code_is_gone(env) -> None:
+    from server.memory.api.models_lock import MemoryLockInput
+    from server.memory.app.lock import handle_memory_lock
+
+    await _drop_fetch_rows(env, TRUNK)
+    await _remember(MEM, "note", "`fetch_rows` returns n")
+    await _pass()
+    lock = {"org": ORG, "namespace": MEM, "agent": "claude-code", "memory_key": "note"}
+    await handle_memory_lock(MemoryLockInput(**lock, mode="no_delete", reason="r", ttl_seconds=1))
+    await asyncio.sleep(2)
+    await _remove_fetch_rows(env, TRUNK)
+    await _pass()
+    assert "note" not in await _search(MEM, "fetch_rows returns n")
