@@ -24,9 +24,10 @@ import json
 import logging
 import time
 from collections import OrderedDict, defaultdict
+from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from server.code.app import memory_links as code
 from server.code.domain.anchor import (
@@ -135,85 +136,101 @@ _FILES_CACHED = 512
 _LOST_STATES = ("unresolved", "missing")
 
 
+class _Recent[K, V](OrderedDict[K, V]):
+    """A mapping that keeps its last `size` used entries."""
+
+    def __init__(self, size: int) -> None:
+        super().__init__()
+        self.size = size
+
+    def used(self, key: K) -> V | None:
+        if key not in self:
+            return None
+        self.move_to_end(key)
+        return self[key]
+
+    def keep(self, key: K, value: V) -> None:
+        self[key] = value
+        while len(self) > self.size:
+            self.popitem(last=False)
+
+
 class Files:
-    """Files of one repository at a commit, read and parsed once per pass while they
-    are among the last `_FILES_CACHED` read."""
+    """One repository's files and history, each read once per pass; parsed files while
+    they are among the last `_FILES_CACHED` read."""
 
     def __init__(self, org: str, cns: str) -> None:
         self.org, self.cns = org, cns
-        self._seen: OrderedDict[tuple[str, str], code.FileAt | None] = OrderedDict()
-        self._commits: dict[str, bool] = {}
-        self._ranges: dict[tuple[str, str], _Range | None] = {}
-        self._descends: dict[tuple[str, str], bool] = {}
-        self._touched: dict[tuple[str, str], set[str] | None] = {}
-        self._edits: dict[tuple[str, ...], list[tuple[str, str]] | None] = {}
-        self._names: dict[tuple[str, str], set[str] | None] = {}
-        self._renamed: dict[tuple[str, ...], dict[str, str] | None] = {}
+        self._parsed: _Recent[tuple[str, str], code.FileAt | None] = _Recent(_FILES_CACHED)
+        self._read: dict[tuple[Any, ...], Any] = {}
         # ("here" | "elsewhere", …): the same-file search and the one in another module
         self.successors: dict[tuple[str, ...], Successor] = {}
 
+    async def _once[T](self, key: tuple[Any, ...], read: Callable[[], Awaitable[T]]) -> T:
+        if key not in self._read:
+            self._read[key] = await read()
+        return cast(T, self._read[key])
+
     async def at(self, commit: str, path: str) -> code.FileAt | None:
         key = (commit, path)
-        if key in self._seen:
-            self._seen.move_to_end(key)
-            return self._seen[key]
-        self._seen[key] = await code.parsed(self.org, self.cns, commit, path)
-        if len(self._seen) > _FILES_CACHED:
-            self._seen.popitem(last=False)
-        return self._seen[key]
+        if key in self._parsed:
+            return self._parsed.used(key)
+        parsed = await code.parsed(self.org, self.cns, commit, path)
+        self._parsed.keep(key, parsed)
+        return parsed
 
     async def has(self, commit: str) -> bool:
         """The mirror still holds `commit`: an old one may be gone after a history rewrite."""
-        if commit not in self._commits:
-            self._commits[commit] = await code.has_commit(self.org, self.cns, commit)
-        return self._commits[commit]
+        return await self._once(
+            ("has", commit), lambda: code.has_commit(self.org, self.cns, commit)
+        )
 
     async def range(self, base: str, head: str) -> _Range | None:
         """None after a force-push or when git cannot tell."""
-        if (base, head) not in self._ranges:
+
+        async def read() -> _Range | None:
             kept = await code.kept_paths(self.org, self.cns, base, head)
-            self._ranges[(base, head)] = None if kept is None else _Range(base, kept)
-        return self._ranges[(base, head)]
+            return None if kept is None else _Range(base, kept)
+
+        return await self._once(("range", base, head), read)
 
     async def renamed_from(self, base: str, head: str, paths: list[str]) -> dict[str, str] | None:
         """Path at `head` -> its path at `base` for those of `paths` renamed since."""
-        key = (base, head, *paths)
-        if key not in self._renamed:
-            self._renamed[key] = await code.renamed_from(self.org, self.cns, base, head, paths)
-        return self._renamed[key]
+        return await self._once(
+            ("renamed", base, head, *paths),
+            lambda: code.renamed_from(self.org, self.cns, base, head, paths),
+        )
 
     async def names(self, commit: str, path: str) -> set[str] | None:
         """The qualified names `path` defines at `commit`, read without fingerprints."""
-        key = (commit, path)
-        if key in self._seen:  # parsed in full already
-            parsed = self._seen[key]
+        if (commit, path) in self._parsed:  # parsed in full already
+            parsed = self._parsed.used((commit, path))
             return {d.qualified_name for d in parsed.defs} if parsed is not None else None
-        if key not in self._names:
-            self._names[key] = await code.names_at(self.org, self.cns, commit, path)
-        return self._names[key]
+        return await self._once(
+            ("names", commit, path), lambda: code.names_at(self.org, self.cns, commit, path)
+        )
 
     async def edits_of(
         self, base: str, head: str, path: str, name: str
     ) -> list[tuple[str, str]] | None:
         """`gitrepo.edits_of`: the commits of `base..head` that can change whether `path`
         defines the dotted `name`."""
-        key = (base, head, path, name)
-        if key not in self._edits:
-            self._edits[key] = await code.edits_of(self.org, self.cns, *key)
-        return self._edits[key]
+        return await self._once(
+            ("edits", base, head, path, name),
+            lambda: code.edits_of(self.org, self.cns, base, head, path, name),
+        )
 
     async def touched(self, base: str, head: str) -> set[str] | None:
         """The paths at `head` that `base..head` added or changed."""
-        if (base, head) not in self._touched:
-            self._touched[(base, head)] = await code.touched_paths(self.org, self.cns, base, head)
-        return self._touched[(base, head)]
+        return await self._once(
+            ("touched", base, head), lambda: code.touched_paths(self.org, self.cns, base, head)
+        )
 
     async def descends(self, ancestor: str, descendant: str) -> bool:
-        if (ancestor, descendant) not in self._descends:
-            self._descends[(ancestor, descendant)] = await code.descends(
-                self.org, self.cns, ancestor, descendant
-            )
-        return self._descends[(ancestor, descendant)]
+        return await self._once(
+            ("descends", ancestor, descendant),
+            lambda: code.descends(self.org, self.cns, ancestor, descendant),
+        )
 
     async def defs(self, commit: str, path: str, qualified_name: str) -> list[Definition]:
         f = await self.at(commit, path)
@@ -592,8 +609,7 @@ _MAX_ELSEWHERE = 32
 _MAX_EDITS = 32
 # (org, repository, start, path, name) -> (the commit that removed its code from its
 # file, the last one it was in), the last `_ANCHORS_KEPT` used
-_anchors: OrderedDict[tuple[str, ...], tuple[str, str]] = OrderedDict()
-_ANCHORS_KEPT = 4096
+_anchors: _Recent[tuple[str, ...], tuple[str, str]] = _Recent(4096)
 # links re-fingerprinted per write after the fingerprint rules or grammars changed
 _REFINGERPRINT_PAGE = 500
 
@@ -937,8 +953,7 @@ async def _last_in_place(
     or declaring a scope of it, are read. A commit found is the history's, so it is
     remembered across passes."""
     key = (files.org, files.cns, start, before.read_path, local)
-    if (known := _anchors.get(key)) is not None and await files.descends(known[0], head):
-        _anchors.move_to_end(key)
+    if (known := _anchors.used(key)) is not None and await files.descends(known[0], head):
         return known[1]  # the commit that removed it is still in this history
     path, since = before.read_path, start
     while True:
@@ -955,9 +970,7 @@ async def _last_in_place(
                 break
             if not await _defines(files, parent, path, local):
                 return None  # it went at a commit the filter missed: unsure
-            _anchors[key] = (commit, parent)
-            while len(_anchors) > _ANCHORS_KEPT:
-                _anchors.popitem(last=False)
+            _anchors.keep(key, (commit, parent))
             return parent
         else:
             # no commit read lost it: it is there, or it went in a way the filter missed
