@@ -11,10 +11,11 @@ if [ -z "${LOOM_WEB_WORKERS:-}" ]; then
   LOOM_WEB_WORKERS=$(python -m server.core.web_workers)
   chosen=1
 fi
-# One directory for the files the processes share, chosen before they start.
-# A single process shares none, so it needs none; with no private directory
-# (a read-only root without a tmpfs) a chosen count falls back to one process.
-if [ -z "${LOOM_RUNTIME_DIR:-}" ] && [ "$LOOM_WEB_WORKERS" -gt 1 ]; then
+# One directory for the files the processes share, LOOM_RUNTIME_DIR or one
+# chosen now, checked before they start. A single process shares none, so it
+# needs none; with no private directory (a read-only root without a tmpfs) a
+# chosen count falls back to one process.
+if [ "$LOOM_WEB_WORKERS" -gt 1 ]; then
   if LOOM_RUNTIME_DIR=$(python -m server.core.runtime_files); then
     export LOOM_RUNTIME_DIR
   elif [ -n "$chosen" ]; then

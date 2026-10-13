@@ -151,7 +151,7 @@ def open_private(path: str, flags: int) -> int:
 
 if __name__ == "__main__":
     try:
-        print(choose_runtime_dir())
+        print(runtime_dir())
     except OSError as e:
         print(f"loom: {e}", file=sys.stderr)
         raise SystemExit(2) from None

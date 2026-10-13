@@ -769,10 +769,11 @@ class Limiter:
         if self._shared is not None:
             self._shared.reset()
         if self._overrides_doc is not None:
-            path = self._overrides_doc.path  # None: it never found a directory
-            for name in (path, f"{path}.lock") if path else ():
-                with contextlib.suppress(OSError):
-                    os.remove(name)
+            path = self._overrides_doc.path  # None: never used, or no directory
+            if path:
+                for name in (path, path + ".lock"):
+                    with contextlib.suppress(OSError):
+                        os.remove(name)
             self._overrides_doc, self._overrides_key = None, None
 
 

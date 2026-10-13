@@ -296,3 +296,27 @@ def test_a_path_that_will_not_resolve_is_asked_for_again_sparingly(tmp_path: Pat
     fixed = True
     assert doc.update(lambda d: {**d, "a": 1}, {}) == {"a": 1}
     assert doc.path == str(tmp_path / "doc.json")
+
+
+def test_a_sibling_whose_poll_was_turned_away_adopts_within_the_retry_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The price of polling sparingly: a reader turned away just before the
+    directory was fixed sees the next update once RESOLVE_RETRY_S has passed."""
+    now = [100.0]
+    monkeypatch.setattr(shared_document.time, "monotonic", lambda: now[0])
+    fixed = False
+
+    def where() -> str:
+        if not fixed:
+            raise OSError("no private runtime directory")
+        return str(tmp_path / "doc.json")
+
+    writer = SharedDocument(where, lambda d: d, lambda d: d, name="budgets")
+    reader = SharedDocument(where, lambda d: d, lambda d: d, name="budgets")
+    assert reader.poll() is None  # turned away
+    fixed = True
+    writer.update(lambda d: {**d, "a": 1}, {})
+    assert reader.poll() is None  # still inside the window
+    now[0] += shared_document.RESOLVE_RETRY_S
+    assert reader.poll() == {"a": 1}

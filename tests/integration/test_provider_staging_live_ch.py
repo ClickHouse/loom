@@ -26,6 +26,15 @@ from server.insights.store.provider_verify import (
     verify_reembedded_target,
 )
 
+_OPT_IN = "Set LOOM_PROVIDER_STAGING_LIVE_TEST=1 for a disposable, freshly migrated database"
+
+
+async def _require_empty(client, table: str) -> None:
+    """A rebuild stages its whole table, so rows other tests left would fail it."""
+    row = await client.query_one(f"SELECT count() AS n FROM loom.{table}")
+    if row is not None and int(row["n"]):
+        pytest.skip(f"loom.{table} holds rows; this test needs a freshly migrated database")
+
 
 class _TestEmbedder:
     """Deterministic local test double, not a real-provider quality test."""
@@ -41,9 +50,10 @@ class _TestEmbedder:
 @pytest.mark.parametrize("table", REBUILD_TABLES)
 async def test_snapshot_sql_and_cursor_on_live_clickhouse(table):
     if os.environ.get("LOOM_PROVIDER_STAGING_LIVE_TEST") != "1":
-        pytest.skip("Set LOOM_PROVIDER_STAGING_LIVE_TEST=1 for a disposable migrated database")
+        pytest.skip(_OPT_IN)
     client = _default_client()
     await client.connect()
+    await _require_empty(client, table)
     names = StagingNames(uuid4(), table)
     identity = None
     target_uuid = None
@@ -260,11 +270,12 @@ async def test_a_populated_coded_source_rebuilds_at_another_width():
     """Staging must take the new model's width from a coded source table, whose
     copies ClickHouse would otherwise hold to the source codec's width."""
     if os.environ.get("LOOM_PROVIDER_STAGING_LIVE_TEST") != "1":
-        pytest.skip("Set LOOM_PROVIDER_STAGING_LIVE_TEST=1 for a disposable migrated database")
+        pytest.skip(_OPT_IN)
     from server.settings import settings
 
     client = _default_client()
     await client.connect()
+    await _require_empty(client, "memory_embeddings")
     codec = await client.query_one(
         "SELECT compression_codec FROM system.columns WHERE database='loom' "
         "AND table='memory_embeddings' AND name='embedding'"
@@ -340,7 +351,7 @@ async def test_a_populated_coded_source_rebuilds_at_another_width():
 @pytest.mark.asyncio
 async def test_cleanup_refuses_a_live_create_query():
     if os.environ.get("LOOM_PROVIDER_STAGING_LIVE_TEST") != "1":
-        pytest.skip("Set LOOM_PROVIDER_STAGING_LIVE_TEST=1 for a disposable migrated database")
+        pytest.skip(_OPT_IN)
     client = _default_client()
     await client.connect()
     names = StagingNames(uuid4(), "memory_embeddings")

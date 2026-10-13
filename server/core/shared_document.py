@@ -56,9 +56,9 @@ class SharedDocument[T]:
         *,
         name: str = "",
     ) -> None:
-        # The file; None until `where` finds it.
-        self.path: str | None = None if callable(where) else where
-        self.name = name or str(self.path)
+        # The file; None until `where` gives it, on first use.
+        self.path: str | None = None
+        self.name = name or (where if isinstance(where, str) else "shared document")
         self._where = where if callable(where) else lambda: where
         self._retry_at, self._unresolved = 0.0, ""
         self._decode, self._encode = decode, encode

@@ -347,7 +347,11 @@ async def idle_session_runs(
     failing to close cannot hold the front of the queue. `org` narrows it to
     one org (a test's seam; "" = every org).
 
-    The plain read of `candidates` keeps the FINAL read to their rows.
+    Implicit runs are told by `metadata.implicit` and the `mcp-` prefix rather
+    than the transport's exact id shape, so the runs earlier servers opened as
+    `mcp-<session id>` close too; an explicit run that claims to be implicit
+    under such an id closes like one. The plain read of `candidates` keeps the
+    FINAL read to their rows.
     `version` is the time of the row's last write (a begin or a re-open), and
     the begin records the token's subject."""
     rows: list[RunLedgerRow] = await ch.query_all(
