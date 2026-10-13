@@ -710,7 +710,7 @@ async def test_a_vector_written_during_the_deletes_read_is_retired(monkeypatch) 
 
 @pytest.mark.copy_head_check
 @pytest.mark.asyncio
-async def test_a_copy_under_a_head_that_is_no_longer_embedded_is_retired_above_itself(
+async def test_a_copy_under_a_high_or_deleted_head_is_retired_above_itself(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A copy that read its head before a 'high' write landed re-reads the head after
@@ -741,9 +741,9 @@ async def test_a_copy_under_a_head_that_is_no_longer_embedded_is_retired_above_i
     ]
     assert await M.retire_copies_under_unembedded_heads(rows, ch=object()) == 3
     assert sorted((r["memory_key"], r["version"]) for r in inserted) == [
-        ("gone", 8),
-        ("hi", 11),
-        ("hi", 13),
+        ("gone", 9),
+        ("hi", 12),
+        ("hi", 14),
     ]
     assert all(r["tombstoned_at"] is not None for r in inserted)
 
@@ -758,3 +758,59 @@ async def test_a_failed_head_recheck_is_logged_not_raised(monkeypatch: pytest.Mo
     row = {"org": "o", "namespace": "n", "agent": "a", "user_id": "u", "session_id": "s"}
     row |= {"memory_key": "k", "version": 1, "embedding_dim": 3, "scope": "private"}
     assert await M.retire_copies_under_unembedded_heads([row], ch=object()) == 0
+
+
+@pytest.mark.parametrize("site", ["restamp", "dim0_repair", "reindex_same_value"])
+@pytest.mark.asyncio
+async def test_every_vector_copy_site_rechecks_its_head(site: str, monkeypatch) -> None:
+    """Each site that copies live vector rows runs the post-copy head re-check on what
+    it inserted; dropping the call from any of them fails here."""
+    from types import SimpleNamespace
+
+    from server.memory.store import embeddings, integrity
+
+    checked: list[list[dict[str, Any]]] = []
+
+    async def _check(rows: Any, **_k: Any) -> int:
+        checked.append(list(rows))
+        return 0
+
+    async def _insert(rows: Any, **_k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(embeddings, "retire_copies_under_unembedded_heads", _check)
+    monkeypatch.setattr(embeddings, "insert_embedding_rows", _insert)
+    monkeypatch.setattr(M, "retire_copies_under_unembedded_heads", _check)
+    monkeypatch.setattr(M, "insert_embedding_rows", _insert)
+    row = {**_LIVE, "version": 5}
+    if site == "restamp":
+        await M.restamp_embedding_rows([row], status="duplicate", version=9, ch=object())
+    elif site == "dim0_repair":
+        await integrity.repair_dim0_rows(
+            [{**row, "embedding_dim": 0, "embedding": [0.1, 0.2, 0.3]}], ch=object()
+        )
+    else:
+        from server.memory.app import ops
+
+        async def _heads(keys: Any, **_k: Any) -> dict[Any, Any]:
+            return {
+                k: SimpleNamespace(memory_type="semantic", sensitivity="", version=8) for k in keys
+            }
+
+        async def _mirror(keys: Any, **_k: Any) -> list[dict[str, Any]]:
+            ident = ("org", "namespace", "agent", "user_id", "session_id", "memory_key")
+            return [
+                {
+                    **{c: row[c] for c in ident},
+                    "content_excerpt": "same",
+                    "memory_type": "semantic",
+                    "created_at": datetime(2026, 1, 1),
+                    "version": 8,
+                }
+            ]
+
+        monkeypatch.setattr(M, "memory_rows_by_identity_keys", _heads)
+        monkeypatch.setattr(M, "memory_mirror_rows_for_keys", _mirror)
+        read = {**row, "memory_version": 5, "content_excerpt": "same", "memory_type": "semantic"}
+        await ops._recheck_reindexed_heads([read], [row], ch=object(), model="fake")
+    assert checked and checked[0][0]["memory_key"] == row["memory_key"]

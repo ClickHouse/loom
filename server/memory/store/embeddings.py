@@ -390,12 +390,16 @@ async def _reemit_rows(
     return len(out)
 
 
+# Identity keys per head read: past ~2,000 ClickHouse refuses the request's form field.
+_HEAD_READ_BATCH = 500
+
+
 async def retire_copies_under_unembedded_heads(
     written: list[dict[str, Any]], *, ch: _CHClient | None = None
 ) -> int:
     """After a copy of live vector rows (a touch, a verify, a tag, a status mirror),
     re-read the keys' heads; a key whose head is 'high' or deleted has each copied
-    row tombstoned one above itself. A copy that read its head before a 'high' write
+    row tombstoned two above itself. A copy that read its head before a 'high' write
     landed would otherwise carry the vector up past that write's retire, and copies
     chain: each one checks after its own insert, so the last to land retires above
     itself. Tombstones, dim-0 rows and shared-scope rows (no head of their own) are
@@ -429,7 +433,8 @@ async def retire_copies_under_unembedded_heads(
             build_embedding_row(
                 **(
                     {c: v for c, v in r.items() if c in EMBEDDING_PERSISTED_COLS}
-                    | {"tombstoned_at": now, "version": int(r["version"]) + 1}
+                    # two above: a read + 1 copy of this copy stays below it
+                    | {"tombstoned_at": now, "version": int(r["version"]) + 2}
                 )
             )
             for r in copies
@@ -440,9 +445,6 @@ async def retire_copies_under_unembedded_heads(
     except Exception as e:  # noqa: BLE001 — the copy landed; a missed check is logged, not raised
         _log.warning("vector copy: head re-check failed for %d rows: %s", len(copies), e)
         return 0
-
-
-_HEAD_READ_BATCH = 500
 
 
 async def _head_sensitivity(
@@ -756,4 +758,5 @@ async def restamp_embedding_rows(
     out = [row for r in rows if (row := _copy_row(r, overrides)) is not None]
     if out:
         await insert_embedding_rows(out, ch=ch)
+        await retire_copies_under_unembedded_heads(out, ch=ch)
     return len(out)
