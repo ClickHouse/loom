@@ -89,10 +89,12 @@ def successor(was: Definition, before: Side, now: Side) -> Successor:
         if _unnumbered(d) != _unnumbered(was) and scope_of(d) == scope
     ]
     in_scope = [d for d in fresh if scope_of(d) == target]
+    # a method keeps what surrounds it only when the class changed nothing but its name
+    carried = target != scope and not _renamed_alone(scope, target, before, now)
     if target != scope:
         namesake, rivals, in_scope = _across_renamed_class(was, rivals, in_scope)
         if namesake is not None:
-            return Successor(namesake, carried=True)
+            return Successor(namesake, exact=not carried, carried=carried)
     taken = {r.shape for r in rivals if r.shape and r.shape != was.shape}
     pool = [d for d in in_scope if d.shape not in taken]
     for found, exact in (
@@ -104,7 +106,7 @@ def successor(was: Definition, before: Side, now: Side) -> Successor:
             and _related(was, found[0], before)
             and not any(_loose(r, found[0]) for r in rivals)
         ):
-            return Successor(found[0], exact=exact, carried=target != scope)
+            return Successor(found[0], exact=exact, carried=carried)
         if found:
             return Successor(None, uncertain=True)
     scores = [(d, close_to(was, d, before, now)) for d in pool]
@@ -125,6 +127,18 @@ def successor(was: Definition, before: Side, now: Side) -> Successor:
         _loose(was, d) or _maybe_close(was, d, before, now) for d in in_scope if d.shape in taken
     )
     return Successor(None, uncertain=contested)
+
+
+def _renamed_alone(scope: str, target: str, before: Side, now: Side) -> bool:
+    """Whether class `scope` became `target` with nothing but its name changed: the
+    same rename shape."""
+
+    def shape(side: Side, name: str) -> str:
+        found = [d.shape for d in side.defs if local_name(d.qualified_name, d.path) == name]
+        return found[0] if len(found) == 1 else ""
+
+    old = shape(before, scope)
+    return bool(old) and old == shape(now, target)
 
 
 def _across_renamed_class(

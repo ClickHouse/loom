@@ -87,7 +87,7 @@ def test_a_method_follows_its_renamed_class() -> None:
         )
 
     after = _after(("reader.py", program("Reader")), ("reader.py", program("Loader")))
-    assert (after.state, after.qualified_name) == ("changed", "reader::Loader::fetch_rows")
+    assert (after.state, after.qualified_name) == ("moved", "reader::Loader::fetch_rows")
 
 
 def test_a_method_of_a_removed_class_never_moves_to_a_namesake_in_another() -> None:
@@ -359,15 +359,15 @@ def test_two_removed_definitions_alike_leave_their_successor_unsure(
 
 
 @pytest.mark.parametrize(
-    ("before", "after"),
+    ("before", "after", "state"),
     [
-        ((1, 1), (1, 1)),  # a twin with the same body
-        ((1, 2), (2, 3)),  # edited to a sibling's old body
-        ((1, 2), (2, 2)),
+        ((1, 1), (1, 1), "moved"),  # the class renamed alone: its method moved with it
+        ((1, 2), (2, 3), "changed"),  # edited to a sibling's old body
+        ((1, 2), (2, 2), "changed"),
     ],
 )
 def test_a_renamed_class_carries_its_method_whatever_its_siblings_were(
-    before: tuple[int, int], after: tuple[int, int]
+    before: tuple[int, int], after: tuple[int, int], state: str
 ) -> None:
     def program(cls: str, rows: int, cols: int) -> str:
         return (
@@ -377,7 +377,7 @@ def test_a_renamed_class_carries_its_method_whatever_its_siblings_were(
         )
 
     link = _after(("m.py", program("R", *before)), ("m.py", program("S", *after)))
-    assert (link.state, link.qualified_name) == ("changed", "m::S::fetch_rows")
+    assert (link.state, link.qualified_name) == (state, "m::S::fetch_rows")
 
 
 def test_a_successor_search_is_linear_in_the_file() -> None:

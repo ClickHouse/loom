@@ -291,8 +291,9 @@ A definition follows to one with the same qualified name; to the same name insid
 module after a file move; to the one new definition with its text under a new name; or,
 renamed and edited, to the one new definition in its scope close to its old text and in
 its place among the definitions that stayed (read `changed`). A method follows its
-class when the class was renamed and the new class keeps most of its members. A
-namesake in another class or namespace never inherits a link. A small definition
+class when the class was renamed and the new class keeps most of its members: `moved`
+when only the class's name changed, else `changed`, since the method's own text cannot
+show what changed around it. A namesake in another class or namespace never inherits a link. A small definition
 renamed and edited is followed only when its new name is related to the old one: grown
 or shrunk (`fetch` -> `fetch_all`), a `v` version bumped (`parse_v1` -> `parse_v2`), or
 keeping a word past the ones both begin with (`fetch_rows` -> `load_rows`, not
@@ -324,10 +325,10 @@ across repositories; what is left stays due for the next pass. A namespace switc
 judge reads every declaration the fingerprint covers, overload signatures included. A
 memory labelled `high` sensitivity is never judged: its value never goes to the model, and
 its link stays `changed`. The label is read again before each judgement, and a judgement
-that was running when the memory was labelled is dropped. A change it could not see is not judged either: a method its
-renamed class carried drops any correction it had and stays `changed` until the memory is
-rewritten. A lost link is weighed only against the files touched since its code was last in its file
-that define its name; past 32 such files a link that was in place reads `unresolved`,
+that was running when the memory was labelled is dropped. A change it could not see is
+not judged either: a method a renamed and edited class carried drops any correction it
+had and stays `changed` until the memory is rewritten. A lost link is weighed only
+against the files touched since its code was last in its file that define its name; past 32 such files a link that was in place reads `unresolved`,
 and one already `missing` stays `missing`.
 
 Loom never writes the memory. The namespace's `code_change_policy`

@@ -2933,6 +2933,22 @@ async def test_a_class_renamed_around_a_method_keeps_it_changed_after_later_comm
     assert [(x["memory_key"], x["code_state"]) for x in lessons] == [("limit", "changed")]
 
 
+async def test_a_method_of_a_class_renamed_alone_is_moved(env) -> None:
+    def program(cls: str) -> str:
+        return (
+            f"class {cls}:\n    def size(self):\n        return 3\n\n"
+            "    def close(self):\n        return None\n"
+        )
+
+    c1 = env.commit({"src/r.py": program("Reader")})
+    await _index(TRUNK, env, c1, ["src/r.py"])
+    mid = await _remember(MEM, "size", "`Reader.size` returns three")
+    await _pass()
+    await _relink_once(env, "src/r.py", program("RowReader"))
+    (link,) = await _links(mid)
+    assert (link["symbol"].rsplit("::", 2)[-2:], link["state"]) == (["RowReader", "size"], "moved")
+
+
 async def test_a_method_its_renamed_class_carried_is_never_judged(env, monkeypatch) -> None:
     from server.memory.app import code_link_judge
 
