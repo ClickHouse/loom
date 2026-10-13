@@ -219,13 +219,13 @@ def _resolve_dir() -> str | None:
     workers = max(1, int(settings.web_workers))
     if mode == "off" or (mode == "auto" and not configured and workers <= 1):
         return None
-    path = configured or _default_dir()
     try:
+        path = configured or _default_dir()
         os.makedirs(path, mode=_DIR_MODE, exist_ok=True)
     except OSError as e:
         log.warning(
             "graph write marks: cannot use %s (%s); walks read this process's own writes",
-            path,
+            configured or "the runtime directory",
             e,
         )
         return None

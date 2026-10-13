@@ -83,10 +83,10 @@ def current_query_tag() -> str:
 
 
 # The ClickHouse `quota_key` of the verified caller, `<org>:<subject>`, so a
-# server quota keyed by it gives each tenant its own bucket. Set only by
-# `server.auth.context.set_current_auth` from the verified token, never from a
-# request body; every query of the request carries it, and so does the ledger
-# work the MCP transport detaches for it (`mcp_runs`).
+# server quota keyed by it gives each tenant its own bucket. Set only from the
+# verified token (`server.auth.context.quota_key_for`), never from a request
+# body; every query of the request carries it, and so does the ledger work the
+# MCP transport detaches for it (`mcp_runs`).
 quota_key_var: ContextVar[str] = ContextVar("ch_quota_key", default="")
 
 

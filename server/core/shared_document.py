@@ -12,22 +12,21 @@ import asyncio
 import contextlib
 import errno
 import fcntl
-import functools
 import json
 import logging
 import os
 import tempfile
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from typing import Any
 
 from server.core.errors import OverloadedError, OverrideNotSharedError
-from server.core.runtime_files import open_private
+from server.core.runtime_files import open_private, server_file
 
 log = logging.getLogger(__name__)
 
 _Version = tuple[int, int, int]  # inode, mtime_ns, size
-# How long `waits_out_siblings` retries an update a sibling's lock refused; an
+# How long `waiting_out_siblings` retries an update a sibling's lock refused; an
 # update holds the lock for one read and one atomic replace.
 LOCK_WAIT_S = 1.0
 
@@ -104,11 +103,39 @@ class SharedDocument[T]:
         return state
 
 
+class _Unshared[T](SharedDocument[T]):
+    """Stands in for a document no private runtime directory can hold: every
+    process keeps its own state, and an update is refused (OVERRIDE_NOT_SHARED)
+    rather than applied to this process alone."""
+
+    def __init__(self, reason: str) -> None:
+        self.path, self._reason = "", reason
+
+    def poll(self) -> T | None:
+        return None
+
+    def update(self, change: Callable[[T], T], default: T) -> T:
+        raise OSError(self._reason)
+
+
+def server_document[T](
+    name: str, decode: Callable[[Any], T], encode: Callable[[T], object]
+) -> SharedDocument[T]:
+    """The document `name` this server's web processes share, in the runtime
+    directory (`server_file`)."""
+    try:
+        path = server_file(name) + ".json"
+    except OSError as e:
+        log.warning("%s cannot be shared: %s", name, e)
+        return _Unshared(str(e))
+    return SharedDocument(path, decode, encode)
+
+
 def share_override[T](
     doc: SharedDocument[T] | None, change: Callable[[T], T], current: T, *, what: str
 ) -> T:
     """`change(current)`, published to the server's other web processes through
-    `doc` (None: this process is the only one). Raises OverloadedError when a
+    `doc` (None: this process is the only one). Raises OverrideBusyError when a
     sibling's update holds the lock (a retry goes through), OverrideNotSharedError
     when the document cannot be shared at all; either way nothing changed."""
     if doc is None:
@@ -116,7 +143,7 @@ def share_override[T](
     try:
         return doc.update(change, current)
     except LockBusy as e:
-        raise OverloadedError(f"{what} not applied: another web process is updating it") from e
+        raise OverrideBusyError(f"{what} not applied: another web process is updating it") from e
     except OSError as e:
         log.warning("%s not shared: %s", what, e)
         raise OverrideNotSharedError(
@@ -124,34 +151,34 @@ def share_override[T](
         ) from e
 
 
-def waits_out_siblings[**P, R](
-    handler: Callable[P, Awaitable[R]],
-) -> Callable[P, Awaitable[R]]:
-    """Retry an override route for up to LOCK_WAIT_S while a sibling's update
-    holds the lock, awaiting between tries so the event loop serves the other
-    requests. The routes set values, so a retry repeats nothing."""
-
-    @functools.wraps(handler)
-    async def retried(*args: P.args, **kwargs: P.kwargs) -> R:
-        deadline = time.monotonic() + LOCK_WAIT_S
-        while True:
-            try:
-                return await handler(*args, **kwargs)
-            except OverloadedError:
-                if time.monotonic() >= deadline:
-                    raise
-                await asyncio.sleep(0.005)
-
-    return retried
+async def waiting_out_siblings[**P, R](
+    update: Callable[P, R], *args: P.args, **kwargs: P.kwargs
+) -> R:
+    """`update(...)`, tried again for up to LOCK_WAIT_S while a sibling's update
+    holds the document's lock, awaiting between tries so the event loop serves
+    other requests. For updates that set values, so a retry repeats nothing."""
+    deadline = time.monotonic() + LOCK_WAIT_S
+    while True:
+        try:
+            return update(*args, **kwargs)
+        except OverrideBusyError:
+            if time.monotonic() >= deadline:
+                raise
+            await asyncio.sleep(0.005)
 
 
 class LockBusy(OSError):
-    """A sibling web process held the document's lock past the wait."""
+    """A sibling web process holds the document's lock."""
+
+
+class OverrideBusyError(OverloadedError):
+    """A sibling web process was updating the same override document: retryable,
+    and nothing changed."""
 
 
 def _try_lock(fd: int, path: str) -> None:
     """Take the exclusive lock, or raise LockBusy at once: an update runs on the
-    event loop, so it never sleeps there (`waits_out_siblings` retries it)."""
+    event loop, so it never sleeps there (`waiting_out_siblings` retries it)."""
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:

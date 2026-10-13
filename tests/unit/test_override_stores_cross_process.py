@@ -22,7 +22,7 @@ from server.observability.budgets import BudgetOverrides
 ROOT = Path(__file__).resolve().parents[2]
 WRITERS, UPDATES = 4, 10
 
-# A writer retries OVERLOADED (a sibling held the lock past the wait) as a client does.
+# A writer retries OVERLOADED (a sibling held the lock) as a client does.
 _RETRY = """
 import sys
 from server.core.errors import OverloadedError
@@ -260,12 +260,12 @@ def test_an_override_resizes_live_buckets_as_it_sizes_new_ones(settings_override
 def test_a_check_resolves_the_override_file_once(
     settings_override, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from server.core import ratelimit
-
     settings_override(ratelimit_shared="off", web_workers=3)
     calls: list[str] = []
-    real = ratelimit.server_file
-    monkeypatch.setattr(ratelimit, "server_file", lambda name: calls.append(name) or real(name))
+    real = shared_document.server_file
+    monkeypatch.setattr(
+        shared_document, "server_file", lambda name: calls.append(name) or real(name)
+    )
     lim = Limiter()
     for _ in range(5):
         lim.check("ns1", "memory.set", org="o")
@@ -395,3 +395,25 @@ def test_an_integer_too_large_for_a_float_is_refused_and_never_breaks_a_read(
     assert lb.check("ns0", "memory.set", org="o").allowed
     la.reset_all()
     lb.reset_all()
+
+
+def test_with_no_private_runtime_directory_overrides_are_refused_not_kept_local(
+    settings_override, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Several workers and nowhere to share: reads keep each worker's state, and
+    an update answers OVERRIDE_NOT_SHARED rather than binding one worker."""
+
+    def nowhere(name: str) -> str:
+        raise OSError("none of /run/loom, /tmp/loom-1 is a directory only this user can enter")
+
+    settings_override(ratelimit_shared="off", web_workers=3)
+    monkeypatch.setattr(shared_document, "server_file", nowhere)
+    budgets = BudgetOverrides()
+    for _ in range(2):
+        assert budgets.get("memory.search") is None
+        with pytest.raises(OverrideNotSharedError):
+            budgets.set("memory.search", 123)
+    lim = Limiter()
+    assert lim.check("ns1", "memory.set", org="o").allowed
+    with pytest.raises(OverrideNotSharedError):
+        lim.set_namespace_limit("ns1", "memory", Limit(capacity=1, rate=1.0))

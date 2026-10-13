@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import errno
+import fcntl
 import json
 import logging
 import os
@@ -13,7 +15,8 @@ from typing import Any
 import pytest
 
 from server.core import shared_document
-from server.core.shared_document import SharedDocument
+from server.core.errors import OverloadedError, OverrideNotSharedError
+from server.core.shared_document import OverrideBusyError, SharedDocument
 
 
 def _encode(state: dict[str, Any]) -> dict[str, Any]:
@@ -196,18 +199,11 @@ def test_a_failed_update_leaves_a_siblings_newer_version_to_adopt(
     assert a.poll() == {"x": 1}
 
 
-def test_an_update_gives_up_on_a_lock_a_sibling_holds(tmp_path, monkeypatch) -> None:
-    import fcntl
-    import os
-
-    import pytest
-
-    from server.core import shared_document
-
+def test_an_update_gives_up_at_once_on_a_lock_a_sibling_holds(tmp_path: Path) -> None:
     path = str(tmp_path / "doc.json")
     holder = os.open(path + ".lock", os.O_RDWR | os.O_CREAT, 0o600)
     fcntl.flock(holder, fcntl.LOCK_EX)
-    doc = shared_document.SharedDocument(path, lambda d: d, lambda d: d)
+    doc = SharedDocument(path, lambda d: d, lambda d: d)
     try:
         with pytest.raises(OSError, match="held by another process"):
             doc.update(lambda d: {**d, "a": 1}, {})
@@ -216,21 +212,15 @@ def test_an_update_gives_up_on_a_lock_a_sibling_holds(tmp_path, monkeypatch) -> 
     assert doc.update(lambda d: {**d, "a": 1}, {}) == {"a": 1}
 
 
-def test_a_busy_lock_is_a_retry_and_an_unwritable_document_is_not(tmp_path, monkeypatch) -> None:
-    import fcntl
-    import os
-
-    import pytest
-
-    from server.core import shared_document
-    from server.core.errors import OverloadedError, OverrideNotSharedError
-
+def test_a_busy_lock_is_a_retry_and_an_unwritable_document_is_not(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     path = str(tmp_path / "doc.json")
-    doc = shared_document.SharedDocument(path, lambda d: d, lambda d: d)
+    doc = SharedDocument(path, lambda d: d, lambda d: d)
     holder = os.open(path + ".lock", os.O_RDWR | os.O_CREAT, 0o600)
     fcntl.flock(holder, fcntl.LOCK_EX)
     try:
-        with pytest.raises(OverloadedError):
+        with pytest.raises(OverrideBusyError):
             shared_document.share_override(doc, lambda d: d, {}, what="budget override")
     finally:
         os.close(holder)
@@ -243,21 +233,15 @@ def _refuse_publish(path: str, data: object) -> object:
     raise OSError(28, "No space left on device")
 
 
-def test_an_override_route_waits_out_a_siblings_lock_without_blocking(monkeypatch) -> None:
-    import asyncio
-
-    import pytest
-
-    from server.core import shared_document
-    from server.core.errors import OverloadedError
-
+def test_an_override_route_waits_out_a_siblings_lock_without_blocking(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tries: list[int] = []
 
-    @shared_document.waits_out_siblings
-    async def route(busy_for: int) -> str:
+    def update(busy_for: int) -> str:
         tries.append(1)
         if len(tries) <= busy_for:
-            raise OverloadedError("a sibling holds the lock")
+            raise OverrideBusyError("a sibling holds the lock")
         return "set"
 
     async def _run() -> None:
@@ -270,12 +254,23 @@ def test_an_override_route_waits_out_a_siblings_lock_without_blocking(monkeypatc
                 await asyncio.sleep(0)
 
         served = asyncio.create_task(other_requests())
-        assert await route(3) == "set" and len(tries) == 4
+        assert await shared_document.waiting_out_siblings(update, 3) == "set"
+        assert len(tries) == 4
         served.cancel()
         assert ticks > 0  # the loop served others while the route waited
         monkeypatch.setattr(shared_document, "LOCK_WAIT_S", 0.02)
         tries.clear()
-        with pytest.raises(OverloadedError):
-            await route(10**6)
+        with pytest.raises(OverrideBusyError):
+            await shared_document.waiting_out_siblings(update, 10**6)
 
     asyncio.run(_run())
+
+
+def test_only_a_busy_override_is_waited_out() -> None:
+    """A pool that is out of connections answers OVERLOADED at once."""
+
+    def update() -> None:
+        raise OverloadedError("every connection is busy")
+
+    with pytest.raises(OverloadedError):
+        asyncio.run(shared_document.waiting_out_siblings(update))

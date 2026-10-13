@@ -317,6 +317,7 @@ def test_delete_route_is_wired() -> None:
     src = inspect.getsource(mcp.attach)
     assert '@router.delete("/mcp"' in src
     assert "_mcp_runs.close_session(" in src and "_mcp_runs.subject_of(auth)" in src
+    assert src.index("set_quota_key(quota_key_for(auth))") < src.index("_mcp_runs.close_session(")
 
 
 def test_loom_search_labels_the_read_and_emits_the_run() -> None:
@@ -579,3 +580,26 @@ def test_the_detached_begin_counts_against_the_callers_quota(ledger: _Ledger, mo
 
     asyncio.run(_run())
     assert seen == [("tenant-a", "mcp.session_run")]
+
+
+def test_a_delete_closes_against_the_callers_quota(ledger: _Ledger, monkeypatch) -> None:
+    import server.tasks.app.run as h
+    from server.core.ch import quota_key_var, set_quota_key
+
+    seen: list[str] = []
+    complete = ledger.complete
+
+    async def counted(inp: Any) -> Any:
+        seen.append(quota_key_var.get())
+        return await complete(inp)
+
+    monkeypatch.setattr(h, "handle_run_complete", counted)
+
+    async def _run() -> None:
+        await mcp_runs.ensure("s", DEFAULTS, CALLER, goal="g", now=0.0)
+        await mcp_runs.drain_ledger_writes()
+        set_quota_key("tenant-a")  # as the DELETE route sets it from the token
+        assert await mcp_runs.close_session("s", "clickhouse", "-") is True
+
+    asyncio.run(_run())
+    assert seen == ["tenant-a"]

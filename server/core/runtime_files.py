@@ -31,10 +31,16 @@ _pruned: set[str] = set()
 def runtime_dir() -> str:
     """`LOOM_RUNTIME_DIR` when set: `scripts/serve.sh` resolves it once, before
     the workers start, so every one of them names the same files. Else
-    `choose_runtime_dir()`."""
+    `choose_runtime_dir()`. Either way a directory only this user can enter
+    (a pinned one may since have turned read-only); raises OSError when not."""
     from server.settings import settings
 
-    return str(settings.runtime_dir).strip() or choose_runtime_dir()
+    pinned = str(settings.runtime_dir).strip()
+    if not pinned:
+        return choose_runtime_dir()
+    if not _private_dir(pinned):
+        raise OSError(f"LOOM_RUNTIME_DIR={pinned} is not a directory only this user can enter")
+    return pinned
 
 
 def choose_runtime_dir() -> str:
@@ -46,14 +52,14 @@ def choose_runtime_dir() -> str:
     candidates = [os.path.join(xdg, "loom")] if xdg else []
     candidates += [RUN_DIR, os.path.join(_TMP_DIR, f"loom-{os.geteuid()}")]
     for base in candidates:
-        if _private_dir(base):
+        if _private_dir(base) and os.access(base, os.W_OK | os.X_OK):
             return base
     raise OSError(f"none of {', '.join(candidates)} is a directory only this user can enter")
 
 
 def _private_dir(path: str) -> bool:
-    """Whether `path` is, or is now, a writable directory of this user's that no
-    other account can enter (a looser mode of its own is tightened)."""
+    """Whether `path` is, or is now, a directory of this user's that no other
+    account can enter (a looser mode of its own is tightened)."""
     with contextlib.suppress(OSError):
         os.makedirs(path, mode=0o700, exist_ok=True)
     try:
@@ -64,7 +70,7 @@ def _private_dir(path: str) -> bool:
             os.chmod(path, 0o700)
     except OSError:
         return False
-    return os.access(path, os.W_OK | os.X_OK)
+    return True
 
 
 def _started(pid: int) -> str | None:

@@ -13,6 +13,7 @@ planes it summarises. The statements live in `server.tasks.store.runs`.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -263,27 +264,36 @@ async def close_session_run(org: str, run_id: str, *, reason: str) -> bool:
 
 
 async def close_idle_session_runs(
-    idle_seconds: int, *, limit: int = 500, budget_s: float = 120.0, org: str = ""
+    idle_seconds: int,
+    *,
+    limit: int = 500,
+    budget_s: float = 120.0,
+    at_once: int = 8,
+    org: str = "",
 ) -> int:
     """Complete the implicit session runs no call of their token reached within
     the idle window, from the ledger alone, so a run closes whichever web
-    process served it and after any restart. Closes up to `limit` until
-    `budget_s` is spent; the next pass takes the rest. Returns how many closed.
-    `org` narrows it to one org, a test's seam."""
+    process served it and after any restart. Closes up to `limit`, `at_once` at
+    a time, starting none once `budget_s` is spent; the next pass takes the
+    rest. Returns how many closed. `org` narrows it to one org, a test's seam."""
     deadline = time.monotonic() + budget_s
     stale = await runs_store.idle_session_runs(
         get_client(), idle_seconds=idle_seconds, limit=limit, org=org
     )
-    closed = 0
-    for row in stale:
-        if time.monotonic() >= deadline:
-            break
-        try:
-            await _complete_session_run(row, reason="idle")
-            closed += 1
-        except Exception as e:  # noqa: BLE001 — one run's close must not hold up the rest
-            log.warning("session run %s: idle close failed: %s", row["run_id"], e)
-    return closed
+    slots = asyncio.Semaphore(at_once)
+
+    async def close(row: RunLedgerRow) -> bool:
+        async with slots:
+            if time.monotonic() >= deadline:
+                return False
+            try:
+                await _complete_session_run(row, reason="idle")
+            except Exception as e:  # noqa: BLE001 — one run's close must not hold up the rest
+                log.warning("session run %s: idle close failed: %s", row["run_id"], e)
+                return False
+            return True
+
+    return sum(await asyncio.gather(*(close(row) for row in stale)))
 
 
 async def _complete_session_run(row: RunLedgerRow, *, reason: str) -> None:

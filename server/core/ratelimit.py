@@ -26,8 +26,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from server.core.numbers import finite_non_negative
-from server.core.runtime_files import server_file
-from server.core.shared_document import SharedDocument, share_override
+from server.core.shared_document import SharedDocument, server_document, share_override
 from server.settings import settings
 
 if TYPE_CHECKING:
@@ -384,8 +383,8 @@ class Limiter:
         from server.core.ratelimit_shared import SharedBucketStore as _Store
         from server.core.ratelimit_shared import default_path
 
-        target = path or default_path()
         try:
+            target = path or default_path()
             self._shared = _Store(target, slots, clock=self._clock)
         except Exception as e:  # noqa: BLE001 — fall back, say so in health
             self._shared_reason = (
@@ -407,15 +406,13 @@ class Limiter:
         explicit, workers = str(settings.ratelimit_shared_path), int(settings.web_workers)
         if (explicit, workers) != self._overrides_key:
             self._overrides_key = (explicit, workers)
+            codec = (_decode_overrides, _encode_overrides)
             if explicit:
-                path: str | None = f"{explicit}.overrides.json"
+                self._overrides_doc = SharedDocument(f"{explicit}.overrides.json", *codec)
             elif workers > 1:
-                path = server_file("ratelimit-overrides") + ".json"
+                self._overrides_doc = server_document("ratelimit-overrides", *codec)
             else:
-                path = None
-            self._overrides_doc = (
-                None if path is None else SharedDocument(path, _decode_overrides, _encode_overrides)
-            )
+                self._overrides_doc = None
         return self._overrides_doc
 
     def _sync_overrides(self) -> None:

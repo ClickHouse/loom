@@ -43,8 +43,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from server.core.numbers import finite_non_negative
-from server.core.runtime_files import server_file
-from server.core.shared_document import SharedDocument, share_override
+from server.core.shared_document import SharedDocument, server_document, share_override
 
 log = logging.getLogger(__name__)
 
@@ -137,8 +136,10 @@ class BudgetOverrides:
         workers = int(settings.web_workers)
         if workers != self._doc_key:
             self._doc_key = workers
-            path = self._path or (server_file("budgets") + ".json" if workers > 1 else None)
-            self._doc = None if path is None else SharedDocument(path, _decode, _encode)
+            if self._path:
+                self._doc = SharedDocument(self._path, _decode, _encode)
+            else:
+                self._doc = server_document("budgets", _decode, _encode) if workers > 1 else None
         return self._doc
 
     def _poll(self) -> None:

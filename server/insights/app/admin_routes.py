@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from server.core.paths import MIGRATIONS_DIR
-from server.core.shared_document import waits_out_siblings
+from server.core.shared_document import waiting_out_siblings
 from server.insights.app.admin_models import (
     AuditSummaryInput,
     AuditSummaryOutput,
@@ -422,7 +422,6 @@ async def admin_consumers(input: ConsumersInput) -> ConsumersOutput:
 
 
 @admin_router.post("/v1/admin/budget.set")
-@waits_out_siblings
 async def admin_budget_set(input: BudgetSetInput) -> BudgetSetOutput:
     """Install or clear a per-operation latency-budget override.
 
@@ -430,6 +429,10 @@ async def admin_budget_set(input: BudgetSetInput) -> BudgetSetOutput:
     With `consumer`: {consumer, op | "*", budget_ms | budget: "3x"}
     installs for that consumer only; {consumer, op, clear: true} removes it.
     """
+    return await waiting_out_siblings(_set_budget, input)
+
+
+def _set_budget(input: BudgetSetInput) -> BudgetSetOutput:
     from server.observability.budgets import get_overrides
 
     overrides = get_overrides()
@@ -482,7 +485,6 @@ async def admin_budget_set(input: BudgetSetInput) -> BudgetSetOutput:
 
 
 @admin_router.post("/v1/admin/ratelimit.set")
-@waits_out_siblings
 async def admin_ratelimit_set(input: RatelimitSetInput) -> RatelimitSetOutput:
     """Install a per-(namespace|org) rate-limit override.
 
@@ -492,6 +494,10 @@ async def admin_ratelimit_set(input: RatelimitSetInput) -> RatelimitSetOutput:
       {org,       op_class, capacity, rate}     — install (org-tier)
       {org,       op_class, clear: true}        — remove (org-tier)
     """
+    return await waiting_out_siblings(_set_ratelimit, input)
+
+
+def _set_ratelimit(input: RatelimitSetInput) -> RatelimitSetOutput:
     from server.core.ratelimit import Limit, get_limiter
 
     ns = input.namespace or ""

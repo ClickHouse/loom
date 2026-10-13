@@ -406,6 +406,10 @@ def attach(app: FastAPI) -> None:
             auth = None
         if mode != "open" and auth is None:
             return _reject_unauthenticated(request, response, None, message="missing bearer token")
+        from server.auth.context import quota_key_for
+        from server.core.ch import set_quota_key
+
+        set_quota_key(quota_key_for(auth))  # the run's close counts against the caller
         session_id = request.headers.get("mcp-session-id") or request.headers.get("Mcp-Session-Id")
         closed = await _mcp_runs.close_session(
             session_id, caller_org(auth) or "", _mcp_runs.subject_of(auth)

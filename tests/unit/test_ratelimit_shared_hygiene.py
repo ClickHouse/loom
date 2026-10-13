@@ -183,3 +183,30 @@ def test_a_runtime_directory_that_is_not_private_is_passed_over(
     (tmp_path / "tmp" / f"loom-{os.geteuid()}").symlink_to(tmp_path / "planted")
     with pytest.raises(OSError, match="only this user can enter"):
         rs.choose_runtime_dir()
+
+
+def test_a_pinned_runtime_directory_must_be_private(tmp_path: Path, settings_override) -> None:
+    from server.core import runtime_files as rs
+
+    own = tmp_path / "own"
+    settings_override(runtime_dir=str(own))
+    assert rs.runtime_dir() == str(own) and stat.S_IMODE(own.stat().st_mode) == 0o700
+    (tmp_path / "link").symlink_to(own)
+    settings_override(runtime_dir=str(tmp_path / "link"))
+    with pytest.raises(OSError, match="LOOM_RUNTIME_DIR"):
+        rs.runtime_dir()
+
+
+def test_an_unusable_runtime_directory_leaves_the_limiter_per_process(
+    settings_override, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.core import ratelimit_shared
+
+    def nowhere(name: str) -> str:
+        raise OSError("no private runtime directory")
+
+    monkeypatch.setattr(ratelimit_shared, "server_file", nowhere)
+    settings_override(ratelimit_shared="on")
+    lim = ratelimit.Limiter()
+    assert lim.check("ns1", "memory.set", org="o").allowed
+    assert not lim.shared_active

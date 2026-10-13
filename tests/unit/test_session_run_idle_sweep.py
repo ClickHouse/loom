@@ -66,8 +66,26 @@ async def test_a_pass_stops_closing_when_its_time_is_spent(monkeypatch) -> None:
         ledger.completes.append(inp)
 
     monkeypatch.setattr(run_handlers, "handle_run_complete", slow_complete)
-    assert await run_handlers.close_idle_session_runs(1800, budget_s=0.1) == 1
+    assert await run_handlers.close_idle_session_runs(1800, budget_s=0.1, at_once=1) == 1
     assert [c.run_id for c in ledger.completes] == ["slow"]  # "next" waits for the next pass
+
+
+@pytest.mark.asyncio
+async def test_a_pass_closes_a_few_runs_at_a_time(monkeypatch) -> None:
+    ledger = _ledger(monkeypatch, *(f"r{i}" for i in range(10)))
+    running, most = 0, 0
+
+    async def complete(inp: Any) -> None:
+        nonlocal running, most
+        running += 1
+        most = max(most, running)
+        await asyncio.sleep(0.01)
+        running -= 1
+        ledger.completes.append(inp)
+
+    monkeypatch.setattr(run_handlers, "handle_run_complete", complete)
+    assert await run_handlers.close_idle_session_runs(1800, at_once=3) == 10
+    assert most == 3
 
 
 @pytest.mark.asyncio
