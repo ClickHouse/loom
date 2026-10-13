@@ -173,8 +173,9 @@ class OverrideNotSharedError(LoomServerError):
 
 class CodedWidthMismatchError(LoomServerError):
     """503 — a vector in the write is not the width its `Quantized` column was
-    created at, so ClickHouse would refuse the insert. Refused before any row of
-    the write lands; `/v1/health` reports `coded_width_mismatch` with the fix."""
+    created at, so ClickHouse would refuse the insert. Memory and document writes
+    are refused before any of their rows lands, every other write at the insert
+    that carries the vector; `/v1/health` reports `coded_width_mismatch`."""
 
     code = "CODED_WIDTH_MISMATCH"
     status_code = 503

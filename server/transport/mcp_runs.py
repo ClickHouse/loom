@@ -196,12 +196,16 @@ def run_id_for(session_id: str) -> str:
 
 
 async def _begin(run: SessionRun, *, goal: str, now: float) -> None:
-    """`run.begin` for a registered run. On failure the run is forgotten and
-    the session waits out the idle window before the next attempt."""
+    """`run.begin` for a registered run, unless it is already active: another
+    web process of this server began it for the same session, with the goal of
+    the session's first call. On failure the run is forgotten and the session
+    waits out the idle window before the next attempt."""
     try:
         from server.tasks.api.models_run import RunBeginInput
-        from server.tasks.app.run import handle_run_begin
+        from server.tasks.app.run import handle_run_begin, run_is_active
 
+        if await run_is_active(run.org, run.namespace, run.run_id):
+            return
         await handle_run_begin(
             RunBeginInput(
                 org=run.org,

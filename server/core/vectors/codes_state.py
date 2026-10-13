@@ -121,26 +121,40 @@ def width_mismatches(served: int) -> dict[str, tuple[int, int]]:
     return out
 
 
+def _refuse(column: str, stored: int, written: int) -> None:
+    from server.core.errors import CodedWidthMismatchError
+
+    raise CodedWidthMismatchError(
+        f"{column} stores {stored}-dim vectors and this write carries {written}; "
+        "/v1/health says how to fix it",
+        column=column,
+        stored=stored,
+        written=written,
+    )
+
+
+def _coded_of(table: str) -> list[tuple[str, str, int]]:
+    """(qualified column, column name, stored width) of `table`'s coded columns."""
+    prefix = f"{_qualify(table)}."
+    return [(c, c[len(prefix) :], w) for c, w in _widths.items() if c.startswith(prefix)]
+
+
 def refuse_other_widths(table: str, rows: list[dict[str, Any]]) -> None:
     """Raise CodedWidthMismatchError when a row carries a vector its coded column
     cannot take; ClickHouse would fail the whole insert with code 190."""
-    prefix = f"{_qualify(table)}."
-    for column, stored in _widths.items():
-        if not column.startswith(prefix):
-            continue
-        name = column[len(prefix) :]
+    for column, name, stored in _coded_of(table):
         for row in rows:
             vector = row.get(name)
             if vector is not None and len(vector) and len(vector) != stored:
-                from server.core.errors import CodedWidthMismatchError
+                _refuse(column, stored, len(vector))
 
-                raise CodedWidthMismatchError(
-                    f"{column} stores {stored}-dim vectors and this write carries "
-                    f"{len(vector)}; /v1/health says how to fix it",
-                    column=column,
-                    stored=stored,
-                    written=len(vector),
-                )
+
+def refuse_width(table: str, dim: int) -> None:
+    """The same check for a write whose vectors will be `dim` wide, made before
+    any part of it is written."""
+    for column, _, stored in _coded_of(table):
+        if stored != dim:
+            _refuse(column, stored, dim)
 
 
 def is_coded(table: str, column: str) -> bool | None:
@@ -256,6 +270,7 @@ __all__ = [
     "is_coded",
     "probe",
     "refuse_other_widths",
+    "refuse_width",
     "reset",
     "set_coded",
 ]

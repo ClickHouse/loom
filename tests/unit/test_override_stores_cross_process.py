@@ -288,3 +288,34 @@ def test_a_refused_update_still_adopts_a_siblings_change(
         a.set("memory.search", 5)
     monkeypatch.undo()
     assert a.effective("memory.set", 99) == 1
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through any mode")
+def test_a_worker_that_starts_after_the_runtime_dir_turns_read_only_still_shares_it(
+    settings_override, tmp_path: Path
+) -> None:
+    """No worker falls back to another directory, where its updates would
+    succeed out of its siblings' sight."""
+    settings_override(web_workers=3)
+    a = BudgetOverrides()
+    a.set_for_consumer("c1", "*", 4)
+    shared = tmp_path / "run" / "loom"
+    shared.chmod(0o500)
+    try:
+        late = BudgetOverrides()
+        with pytest.raises(OverrideNotSharedError):
+            late.set_for_consumer("c2", "*", 4)
+        assert late.get_for_consumer("c1", "*") == 4
+        assert late._document().path == a._document().path  # type: ignore[union-attr]
+    finally:
+        shared.chmod(0o700)
+
+
+def test_a_consumer_budget_that_is_not_a_number_makes_the_file_corrupt(tmp_path: Path) -> None:
+    a, b, path = _budgets(tmp_path)
+    a.set_for_consumer("c1", "*", "3x")
+    assert b.get_for_consumer("c1", "*") == 3.0
+    path.write_text(json.dumps({"ops": {}, "consumer": [["c1", "*", "abc"]]}))
+    assert b.get_for_consumer("c1", "*") == 3.0  # the corrupt version is not adopted
+    b.set_for_consumer("c2", "*", 7)
+    assert json.loads(path.read_text())["consumer"] == [["c1", "*", 3.0], ["c2", "*", 7]]

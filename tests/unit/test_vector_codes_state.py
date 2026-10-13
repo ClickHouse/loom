@@ -345,3 +345,32 @@ async def test_a_refused_bulk_write_leaves_no_memory_row(monkeypatch: pytest.Mon
     with pytest.raises(CodedWidthMismatchError):
         await bulk_set._bulk_insert(object(), state)  # type: ignore[arg-type]
     assert written == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("op", ["add", "upsert", "bulk_add"])
+async def test_a_document_write_at_another_width_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, op: str
+) -> None:
+    """Refused before the handler reads or writes anything: no blob, no document
+    row, no superseded chunks."""
+    from types import SimpleNamespace
+
+    from server.core.errors import CodedWidthMismatchError
+    from server.knowledge.api import models_knowledge as m
+    from server.knowledge.app import writes
+
+    monkeypatch.setattr(vector_codes_state, "_widths", {"loom.chunks.embedding": 3072})
+    monkeypatch.setattr(writes, "get_embedder", lambda: SimpleNamespace(dim=1024, model_name="e"))
+    doc = {"org": "o", "namespace": "n", "source_uri": "rv://d", "content": "text"}
+    call = {
+        "add": lambda: writes.handle_knowledge_add(m.KnowledgeAddInput(**doc)),
+        "upsert": lambda: writes.handle_knowledge_upsert(m.KnowledgeUpsertInput(**doc)),
+        "bulk_add": lambda: writes.handle_knowledge_bulk_add(
+            m.KnowledgeBulkAddInput(org="o", namespace="n", entries=[doc])
+        ),
+    }[op]
+    with pytest.raises(CodedWidthMismatchError, match="loom.chunks.embedding stores 3072"):
+        await call()  # any store call would fail here: no ClickHouse in the unit suite
+    vector_codes_state.refuse_width("chunks", 3072)
+    vector_codes_state.refuse_width("memory_embeddings", 1024)  # not coded: nothing to refuse

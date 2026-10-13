@@ -88,6 +88,10 @@ def test_default_path_prefers_the_runtime_dir_and_falls_back_to_tmp(
     (tmp_path / "run-user").mkdir()
     assert runtime_dir() == str(tmp_path / "run-user" / "loom")
     assert stat.S_IMODE((tmp_path / "run-user" / "loom").stat().st_mode) == 0o700
+    # a directory that turns unwritable is still the one every worker names
+    (tmp_path / "run-user" / "loom").chmod(0o500)
+    assert runtime_dir() == str(tmp_path / "run-user" / "loom")
+    (tmp_path / "run-user" / "loom").chmod(0o700)
     assert default_path() == server_file("ratelimit") + ".buckets"
     assert os.path.dirname(default_path()) == str(tmp_path / "run-user" / "loom")
     # no XDG dir and no writable /run/loom: the /tmp fallback

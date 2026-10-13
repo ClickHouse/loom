@@ -224,6 +224,11 @@ def _user_of(input: RunBeginInput) -> str:
 # ------------------------------------------------------------------- handlers
 
 
+async def run_is_active(org: str, namespace: str, run_id: str) -> bool:
+    existing = await runs_store.fetch_run(get_client(), org, namespace, run_id)
+    return existing is not None and existing.get("status") == "active"
+
+
 async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:
     """Open a run. A caller-supplied run_id is claimed in Keeper, then checked
     against its row, then written, then released. A begin that finds the claim

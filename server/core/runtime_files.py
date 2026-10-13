@@ -23,24 +23,24 @@ RUN_DIR = "/run/loom"
 _TMP_DIR = "/tmp"
 # loom-<name>-<pid namespace>-<pid>-<start time>, then any suffix (".json", ".lock", ...).
 _OWNED = re.compile(r"^loom-[a-z-]+-(\d+)-(\d+)-(\d+)(?:\..*)?$")
+# The earlier names, by parent pid alone: removed once no such process runs.
+_EARLIER = re.compile(r"^loom-(?:ratelimit-(\d+)\.buckets|graph-marks-(\d+))$")
 # Directories this process has pruned: once each is enough.
 _pruned: set[str] = set()
 
 
 def runtime_dir() -> str:
-    """`$XDG_RUNTIME_DIR/loom` when the variable names a writable directory,
-    else `/run/loom` when it exists or can be created, else `/tmp`. The first
-    two are per-user or per-service tmpfs paths another local account cannot
-    list; `/tmp` is the fallback for a container without one."""
+    """`$XDG_RUNTIME_DIR/loom` when the variable is set, else `/run/loom` when it
+    exists or can be created, else `/tmp`. The first two are per-user or
+    per-service tmpfs paths another local account cannot list; `/tmp` is the
+    fallback for a container without one. Permissions play no part, so every
+    worker of a server names the same files: a directory that turns unwritable
+    fails their updates rather than sending one worker elsewhere."""
     xdg = str(os.environ.get("XDG_RUNTIME_DIR") or "").strip()
-    for base in ([os.path.join(xdg, "loom")] if xdg else []) + [RUN_DIR]:
-        try:
-            os.makedirs(base, mode=0o700, exist_ok=True)
-            if os.access(base, os.W_OK | os.X_OK):
-                return base
-        except OSError:
-            continue
-    return _TMP_DIR
+    base = os.path.join(xdg, "loom") if xdg else RUN_DIR
+    with contextlib.suppress(OSError):
+        os.makedirs(base, mode=0o700, exist_ok=True)
+    return base if xdg or os.path.isdir(base) else _TMP_DIR
 
 
 def _started(pid: int) -> str | None:
@@ -78,12 +78,15 @@ def _prune(base: str, namespace: str) -> None:
     """Remove this user's files of servers that `namespace`'s /proc shows are gone."""
     with contextlib.suppress(OSError):
         for entry in os.scandir(base):
-            owned = _OWNED.match(entry.name)
-            if owned is None or owned.group(1) != namespace:
+            if earlier := _EARLIER.match(entry.name):
+                if _started(int(earlier.group(1) or earlier.group(2))) != "":
+                    continue
+            elif (owned := _OWNED.match(entry.name)) and owned.group(1) == namespace:
+                started = _started(int(owned.group(2)))
+                if started is None or started == owned.group(3):
+                    continue  # running, or unknown: keep it
+            else:
                 continue
-            started = _started(int(owned.group(2)))
-            if started is None or started == owned.group(3):
-                continue  # running, or unknown: keep it
             with contextlib.suppress(OSError):
                 if entry.stat(follow_symlinks=False).st_uid != os.geteuid():
                     continue

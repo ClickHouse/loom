@@ -10,6 +10,7 @@ import inspect
 from typing import Any
 
 import pytest
+from unittest.mock import AsyncMock
 
 from server.memory.app import search_pages as sp
 from server.transport import mcp_runs
@@ -50,6 +51,7 @@ def test_ensure_returns_before_run_begin_lands_and_close_waits_for_it(monkeypatc
 
     monkeypatch.setattr(h, "handle_run_begin", slow_begin)
     monkeypatch.setattr(h, "handle_run_complete", complete)
+    monkeypatch.setattr(h, "run_is_active", AsyncMock(return_value=False))
 
     async def _run() -> None:
         run = await asyncio.wait_for(mcp_runs.ensure("sess-9", DEFAULTS, goal="g", now=1.0), 0.5)

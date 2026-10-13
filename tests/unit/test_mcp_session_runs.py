@@ -40,17 +40,23 @@ class _Ledger:
         self.begins: list[Any] = []
         self.completes: list[Any] = []
         self.fail_begin = False
+        self.active: set[str] = set()
+
+    async def is_active(self, org: str, namespace: str, run_id: str) -> bool:
+        return run_id in self.active
 
     async def begin(self, inp: Any) -> Any:
         if self.fail_begin:
             raise RuntimeError("ledger down")
         self.begins.append(inp)
+        self.active.add(inp.run_id)
         from server.tasks.api.models_run import RunBeginOutput
 
         return RunBeginOutput(run_id=f"run-{len(self.begins)}", started_at="t0")
 
     async def complete(self, inp: Any) -> Any:
         self.completes.append(inp)
+        self.active.discard(inp.run_id)
         from server.tasks.api.models_run import RunCompleteOutput
 
         return RunCompleteOutput(run_id=inp.run_id, status=inp.status, duration_ms=inp.duration_ms)
@@ -63,6 +69,7 @@ def ledger(monkeypatch) -> _Ledger:
     led = _Ledger()
     monkeypatch.setattr(h, "handle_run_begin", led.begin)
     monkeypatch.setattr(h, "handle_run_complete", led.complete)
+    monkeypatch.setattr(h, "run_is_active", led.is_active)
     return led
 
 
@@ -127,6 +134,25 @@ def test_ensure_mints_one_run_per_session_and_reuses_it(ledger: _Ledger) -> None
         assert b.goal == "what broke CI" and b.environment == "mcp" and b.consumer == "cursor"
         assert b.metadata == {"implicit": True, "transport": "mcp"}
         assert mcp_runs.live_count() == 2
+
+    asyncio.run(_run())
+
+
+def test_a_sibling_worker_does_not_begin_the_sessions_run_again(ledger: _Ledger) -> None:
+    """Another web process serving the same session finds the run active and
+    leaves its goal alone; once the run is closed, a later call reopens it."""
+
+    async def _run() -> None:
+        await mcp_runs.ensure("sess-1", DEFAULTS, goal="first call", now=100.0)
+        await mcp_runs.drain_begins()
+        mcp_runs.reset()  # the next call lands on a sibling worker
+        await mcp_runs.ensure("sess-1", DEFAULTS, goal="third call", now=101.0)
+        await mcp_runs.drain_begins()
+        assert [b.goal for b in ledger.begins] == ["first call"]
+        await mcp_runs.close_session("sess-1", now=102.0)
+        await mcp_runs.ensure("sess-1", DEFAULTS, goal="after close", now=103.0)
+        await mcp_runs.drain_begins()
+        assert [b.goal for b in ledger.begins] == ["first call", "after close"]
 
     asyncio.run(_run())
 

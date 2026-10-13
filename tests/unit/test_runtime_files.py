@@ -108,3 +108,20 @@ def test_a_live_owner_whose_proc_entry_cannot_be_read_keeps_its_files(
 
 def test_a_missing_proc_entry_means_the_owner_is_gone() -> None:
     assert runtime_files._started(2**22 + 12345) == ""  # beyond pid_max: no such process
+
+
+def test_earlier_names_go_once_no_process_has_their_pid(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server_file("budgets")
+    gone = 2**22 + 7  # above the default pid_max: no such process
+    (run_dir / f"loom-ratelimit-{gone}.buckets").write_text("")
+    (run_dir / f"loom-graph-marks-{gone}").mkdir()
+    (run_dir / f"loom-ratelimit-{os.getppid()}.buckets").write_text("")
+    (run_dir / f"loom-ratelimit-{gone}.buckets.bak").write_text("")  # not one of ours
+    _prune_again(monkeypatch)
+    server_file("budgets")
+    assert {p.name for p in run_dir.iterdir()} == {
+        f"loom-ratelimit-{gone}.buckets.bak",
+        f"loom-ratelimit-{os.getppid()}.buckets",
+    }
