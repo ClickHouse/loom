@@ -247,6 +247,16 @@ def joined(shapes: Sequence[Shape]) -> Shape:
     return Shape(*(fingerprint(part) if all(part) else "" for part in zip(*shapes, strict=True)))
 
 
+class Member(NamedTuple):
+    """One declaration: its text, the text its fingerprint covers, its rename shapes,
+    and the text the judge reads; the first two under its conditions."""
+
+    text: str
+    hashed: str
+    shape: Shape
+    shown: str
+
+
 class Prints(NamedTuple):
     """A definition's fingerprints, and the text the judge reads of it."""
 
@@ -254,15 +264,14 @@ class Prints(NamedTuple):
     shape: Shape
     shown: str
 
-
-class _Member(NamedTuple):
-    """One declaration of a family: its text, what its fingerprint covers, its rename
-    shapes, and the text the judge reads; the first two under its conditions."""
-
-    text: str
-    printed: str
-    shape: Shape
-    shown: str
+    @classmethod
+    def over(cls, members: Sequence[Member]) -> Prints:
+        """The fingerprints and judge's text of `members` together, in order."""
+        return cls(
+            fingerprint([m.hashed for m in members]),
+            joined([m.shape for m in members]),
+            "\n\n".join(m.shown for m in members),
+        )
 
 
 # Bump when fingerprints or shapes change for the same code: links hashed under another
@@ -353,7 +362,7 @@ class Declarations:
         self._rows: dict[int, dict[str, list[tuple[Any, Any]]]] = {}
         self._sole: dict[tuple[int, str], Any] = {}
         self._scopes: dict[tuple[int, int, str], dict[str, list[Any]]] = {}
-        self._families: dict[tuple[Any, ...], list[_Member]] = {}
+        self._families: dict[tuple[Any, ...], list[Member]] = {}
         self._prints: dict[tuple[tuple[Any, ...], ...], Prints] = {}
 
     @classmethod
@@ -483,49 +492,34 @@ class Declarations:
         at = self._at(line)
         return at[0].start_point[0] + 1 if at else line
 
-    def printed(self, line: int, name: str) -> str | None:
-        """What the fingerprint of the declaration at `line` covers (`_printed`); None as
-        `text`."""
+    def member(self, line: int, name: str, *, shapes: bool = True) -> Member | None:
+        """The declaration at `line` naming `name` (`LoomClient#2`: the index's second
+        one), decorators and template head included; its rename shapes only with
+        `shapes`. None when the line holds no such declaration or several."""
         name = unnumbered(name)
         at = self._at(line, name)
-        return None if at is None else self._member(at, name, False).printed
+        return None if at is None else self._member(at, name, shapes)
 
-    def text(self, line: int, name: str) -> str | None:
-        """The source of the declaration at `line` naming `name`, decorators and template
-        head included: its own bytes, not the lines it shares with others. None when the
-        line holds no such declaration or several."""
-        name = unnumbered(name)
-        at = self._at(line, name)
-        return None if at is None else self._text_at(at, name)
-
-    def shown(self, line: int, name: str) -> str | None:
-        """The declaration at `line` as the judge reads it (`_member`); None as `text`."""
-        name = unnumbered(name)
-        at = self._at(line, name)
-        return None if at is None else self._member(at, name, False).shown
-
-    def _text_at(self, at: tuple[Any, Any], name: str) -> str:
-        return self._member(at, name, False).text
-
-    def _member(self, at: tuple[Any, Any], name: str, shapes: bool) -> _Member:
-        """Its own bytes under the conditions that select it, as its fingerprint covers
-        them and as the judge reads them: one `(selected when: ...)` line a condition,
-        then the code as written, from the indent of its first line."""
+    def _member(self, at: tuple[Any, Any], name: str, shapes: bool) -> Member:
+        """Its own bytes (not the lines it shares with others) under the conditions that
+        select it, as its fingerprint covers them and as the judge reads them: one
+        `(selected when: ...)` line a condition, then the code as written, from the
+        indent of its first line."""
         guard, own = self._guard(at[1]), self._own_text(at, name)
         conditions = "".join(f"(selected when: {g})\n" for g in guard.splitlines())
         start = at[0].start_byte
         indent = self.source[self.source.rfind(b"\n", 0, start) + 1 : start]
         shown = conditions + (indent.decode() if indent.isspace() else "") + own
         shape = self._shape_at(at, name) if shapes else NO_SHAPE
-        printed = self._printed(at, name, own)
-        return _Member(
+        hashed = self._hashed(at, name, own)
+        return Member(
             f"{guard}\n{own}" if guard else own,
-            f"{guard}\n{printed}" if guard else printed,
+            f"{guard}\n{hashed}" if guard else hashed,
             shape,
             shown,
         )
 
-    def _printed(self, at: tuple[Any, Any], name: str, own: str) -> str:
+    def _hashed(self, at: tuple[Any, Any], name: str, own: str) -> str:
         """What a declaration's fingerprint covers: its own text in Python, where layout
         is behaviour; elsewhere its tokens as the parser nests them, so a reformat or a
         comment changes nothing while a literal's bytes still do."""
@@ -628,10 +622,7 @@ class Declarations:
         if keys is None:
             return None
         if keys not in self._prints:
-            members = [m for key in keys for m in self._families[key]]
-            body = fingerprint([m.printed for m in members])
-            shown = "\n\n".join(m.shown for m in members)
-            self._prints[keys] = Prints(body, joined([m.shape for m in members]), shown)
+            self._prints[keys] = Prints.over([m for key in keys for m in self._families[key]])
         return self._prints[keys]
 
     def _family_keys(
@@ -681,16 +672,10 @@ class Declarations:
         self._scopes[_key(scope)] = out
         return out
 
-    def shape(self, line: int, name: str) -> Shape:
-        """The rename shapes of the declaration at `line`; `NO_SHAPE` when the
-        declaration or its name node cannot be found. A bare call inside a method only
-        means the method in C++ and Java, so elsewhere a method that calls its own name
-        has no exact shape."""
-        name = unnumbered(name)  # `LoomClient#2`: the index's second declaration of it
-        at = self._at(line, name)
-        return NO_SHAPE if at is None else self._shape_at(at, name)
-
     def _shape_at(self, at: tuple[Any, Any], name: str) -> Shape:
+        """Its rename shapes; `NO_SHAPE` when its name node cannot be found. A bare call
+        inside a method only means the method in C++ and Java, so elsewhere a method that
+        calls its own name has no exact shape."""
         found = self._declared(at[1], name)
         if found is None:
             return NO_SHAPE

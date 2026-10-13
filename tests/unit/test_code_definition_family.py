@@ -261,6 +261,11 @@ def _defs(path: str, src: str, qualified_name: str) -> list:
     return [d for d in file_definitions(path, src.encode()) if d.qualified_name == qualified_name]
 
 
+def _shown(decls: Declarations | None, line: int, name: str) -> str | None:
+    m = decls.member(line, name, shapes=False) if decls else None
+    return None if m is None else m.shown
+
+
 def _conditions(shown: str | None) -> str:
     """The conditions heading what the judge reads, one a line."""
     heads = itertools.takewhile(
@@ -274,7 +279,7 @@ def _guard(path: str, src: str) -> str:
     decls = Declarations.parse(path, src.encode())
     assert decls is not None
     d = next(d for d in file_definitions(path, src.encode()) if d.name == "value")
-    return _conditions(decls.shown(d.start_line, "value"))
+    return _conditions(_shown(decls, d.start_line, "value"))
 
 
 _SELECTED = "#if 1\nint value() { return 3; }\n#else\nint value() { return 4; }\n#endif\n"
@@ -307,10 +312,10 @@ def test_the_guard_names_each_condition_and_branch() -> None:
     src = "if A:\n    pass\nelif B:\n    def value():\n        return 3\nelse:\n    def value():\n        return 4\n"
     decls = Declarations.parse("a.py", src.encode())
     assert decls is not None
-    assert _conditions(decls.shown(4, "value")) == "not if A\nelif B"
-    assert _conditions(decls.shown(7, "value")) == "not if A\nnot elif B"
+    assert _conditions(_shown(decls, 4, "value")) == "not if A\nelif B"
+    assert _conditions(_shown(decls, 7, "value")) == "not if A\nnot elif B"
     nested = Declarations.parse("b.cpp", _NESTED.encode())
-    assert nested is not None and _conditions(nested.shown(3, "value")) == "#ifdef A\n#if B"
+    assert nested is not None and _conditions(_shown(nested, 3, "value")) == "#ifdef A\n#if B"
 
 
 def test_a_sibling_in_the_same_branch_stays_out_of_the_guard() -> None:
@@ -401,8 +406,8 @@ _HANDLED = (
 def test_the_handler_a_definition_is_in_is_its_guard() -> None:
     decls = Declarations.parse("a.py", _HANDLED.encode())
     assert decls is not None
-    assert _conditions(decls.shown(4, "value")) == "except ValueError"
-    assert _conditions(decls.shown(7, "value")) == "not except ValueError\nexcept Exception"
+    assert _conditions(_shown(decls, 4, "value")) == "except ValueError"
+    assert _conditions(_shown(decls, 7, "value")) == "not except ValueError\nexcept Exception"
 
 
 def test_another_handler_type_changes_the_fingerprints() -> None:

@@ -6,8 +6,8 @@ from collections import defaultdict
 from collections.abc import Sequence
 from typing import Any
 
-from server.code.domain.anchor import NO_SHAPE, Definition, fingerprint
-from server.code.domain.declaration import Declarations, joined
+from server.code.domain.anchor import NO_SHAPE, Definition
+from server.code.domain.declaration import Declarations, Member, Prints
 
 
 def definitions(
@@ -29,30 +29,17 @@ def definitions(
         # per `#if` branch), which the index folds or numbers
         at = [s.start_line for s in syms]
         prints = decls.fingerprints(at, syms[0].name, shapes=not named) if decls else None
-        if prints:
-            body, shape, shown = prints
-        else:
+        if prints is None:
             # each declaration on its own; its lines when the parser cannot single it out
-            texts = [
-                (decls.text(s.start_line, s.name) if decls else None)
-                or "\n".join(lines[b - 1 : s.end_line])
-                for b, s in zip(starts, syms, strict=True)
-            ]
-            printed = [
-                (decls.printed(s.start_line, s.name) if decls else None) or text
-                for s, text in zip(syms, texts, strict=True)
-            ]
-            body = fingerprint(printed)
-            shape = joined(
-                [
-                    decls.shape(s.start_line, s.name) if decls and not named else NO_SHAPE
-                    for s in syms
-                ]
-            )
-            shown = "\n\n".join(
-                (decls.shown(s.start_line, s.name) if decls else None) or text
-                for s, text in zip(syms, texts, strict=True)
-            )
+            members = []
+            for b, s in zip(starts, syms, strict=True):
+                m = decls.member(s.start_line, s.name, shapes=not named) if decls else None
+                if m is None:
+                    text = "\n".join(lines[b - 1 : s.end_line])
+                    m = Member(text, text, NO_SHAPE, text)
+                members.append(m)
+            prints = Prints.over(members)
+        body, shape, shown = prints
         out.extend(
             Definition(
                 path=path,

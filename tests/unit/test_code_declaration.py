@@ -9,7 +9,8 @@ from typing import Any
 
 import pytest
 
-from server.code.domain.declaration import NO_SHAPE, Declarations
+from server.code.domain.anchor import NO_SHAPE, Shape
+from server.code.domain.declaration import Declarations
 from tests.unit.step_count import steps
 
 
@@ -17,6 +18,16 @@ def _start(path: str, src: str, line: int) -> int:
     decls = Declarations.parse(path, src.encode())
     assert decls is not None
     return decls.start(line)
+
+
+def _shape(decls: Declarations, line: int, name: str) -> Shape:
+    m = decls.member(line, name)
+    return NO_SHAPE if m is None else m.shape
+
+
+def _text(decls: Declarations, line: int, name: str) -> str | None:
+    m = decls.member(line, name, shapes=False)
+    return None if m is None else m.text
 
 
 def _shapes(path: str, src: str, name: str) -> tuple[str, tuple[str, str]]:
@@ -27,7 +38,7 @@ def _shapes(path: str, src: str, name: str) -> tuple[str, tuple[str, str]]:
         for i, s in enumerate(src.splitlines())
         if name in s and not s.lstrip().startswith(("@", "#[", "//"))
     )
-    exact, calls, reads = decls.shape(line, name)
+    exact, calls, reads = _shape(decls, line, name)
     return exact, (calls, reads)
 
 
@@ -421,7 +432,7 @@ def test_namesakes_on_one_line_have_no_shape(src: str) -> None:
     # a line and a name cannot tell overloads or two scopes apart: never a rename
     decls = Declarations.parse("m.cpp", src.encode())
     assert decls is not None
-    assert decls.shape(1, "fetch_rows") == NO_SHAPE
+    assert _shape(decls, 1, "fetch_rows") == NO_SHAPE
 
 
 def test_a_qualified_call_on_the_line_is_not_a_namesake() -> None:
@@ -429,11 +440,11 @@ def test_a_qualified_call_on_the_line_is_not_a_namesake() -> None:
     before, after = line.replace("NAME", "fetch_rows"), line.replace("NAME", "load_rows")
     decls = Declarations.parse("m.cpp", before.encode())
     assert decls is not None
-    one = decls.shape(1, "fetch_rows")
+    one = _shape(decls, 1, "fetch_rows")
     assert one[0]
     after_decls = Declarations.parse("m.cpp", after.encode())
     assert after_decls is not None
-    assert after_decls.shape(1, "load_rows")[0] == one[0]
+    assert _shape(after_decls, 1, "load_rows")[0] == one[0]
 
 
 def test_namesakes_on_one_line_are_told_apart_once() -> None:
@@ -442,7 +453,7 @@ def test_namesakes_on_one_line_are_told_apart_once() -> None:
         src = "".join(f"namespace N{i} {{ int fetch_rows() {{ return {i}; }} }} " for i in range(n))
         decls = Declarations.parse("m.cpp", src.encode())
         assert decls is not None
-        return steps(lambda: all(decls.shape(1, "fetch_rows") == NO_SHAPE for _ in range(n)))
+        return steps(lambda: all(_shape(decls, 1, "fetch_rows") == NO_SHAPE for _ in range(n)))
 
     assert asked(800) / asked(100) < 12
 
@@ -451,7 +462,7 @@ def test_overloads_on_their_own_lines_each_have_their_shape() -> None:
     src = "int fetch_rows(int n) { return 1; }\nint fetch_rows(double n) { return 3; }\n"
     decls = Declarations.parse("m.cpp", src.encode())
     assert decls is not None
-    one, two = decls.shape(1, "fetch_rows"), decls.shape(2, "fetch_rows")
+    one, two = _shape(decls, 1, "fetch_rows"), _shape(decls, 2, "fetch_rows")
     assert one[0] and two[0] and one != two
 
 
@@ -459,7 +470,7 @@ def test_a_function_named_inside_its_binding_is_one_declaration() -> None:
     src = "export const Icon = memo(function Icon(): number { return 3; });\n"
     decls = Declarations.parse("m.tsx", src.encode())
     assert decls is not None
-    assert all(decls.shape(1, "Icon")[1:])
+    assert all(_shape(decls, 1, "Icon")[1:])
 
 
 def _growth(program: Any, path: str = "m.py") -> float:
@@ -469,7 +480,7 @@ def _growth(program: Any, path: str = "m.py") -> float:
     def work(n: int) -> int:
         decls = Declarations.parse(path, program(n).encode())
         assert decls is not None
-        return steps(lambda: all(decls.shape(1, "fetch_rows")[1:]))
+        return steps(lambda: all(_shape(decls, 1, "fetch_rows")[1:]))
 
     return work(4000) / work(500)
 
@@ -539,7 +550,7 @@ def test_a_declarations_text_is_its_own_bytes(
 ) -> None:
     decls = Declarations.parse(path, src.encode())
     assert decls is not None
-    assert decls.text(line, "fetch_rows") == text
+    assert _text(decls, line, "fetch_rows") == text
 
 
 @pytest.mark.parametrize("path", ["m.js", "m.ts"])
@@ -556,8 +567,8 @@ def test_a_sibling_binding_is_not_part_of_the_declaration(path: str, line: str) 
 
     one, two = (Declarations.parse(path, program("fetch_rows", v).encode()) for v in (3, 4))
     assert one is not None and two is not None
-    assert one.text(1, "fetch_rows") == two.text(1, "fetch_rows")
-    assert "unrelated" not in (one.text(1, "fetch_rows") or "unrelated")
+    assert _text(one, 1, "fetch_rows") == _text(two, 1, "fetch_rows")
+    assert "unrelated" not in (_text(one, 1, "fetch_rows") or "unrelated")
     assert _match(path, program("fetch_rows", 3), program("load_rows", 4)) == "exact"
 
 
@@ -566,13 +577,13 @@ def test_a_binding_on_a_later_line_keeps_its_keyword_and_body(path: str) -> None
     src = "export const unrelated = () => 3,\n  fetch_rows = (n) => (n ? fetch_rows(n - 1) : 3);\n"
     decls = Declarations.parse(path, src.encode())
     assert decls is not None
-    assert decls.text(2, "fetch_rows") == (
+    assert _text(decls, 2, "fetch_rows") == (
         "export const\n  fetch_rows = (n) => (n ? fetch_rows(n - 1) : 3);"
     )
     assert decls.start(2) == 1
     assert _match(path, src, src.replace("fetch_rows", "load_rows")) == "exact"
     let = Declarations.parse(path, src.replace("const", "let").encode())
-    assert let is not None and let.text(2, "fetch_rows") != decls.text(2, "fetch_rows")
+    assert let is not None and _text(let, 2, "fetch_rows") != _text(decls, 2, "fetch_rows")
 
 
 @pytest.mark.parametrize("path", ["m.js", "m.ts"])
@@ -589,7 +600,9 @@ def test_a_siblings_comments_go_with_it(path: str, line: str) -> None:
 
     one, two = (Declarations.parse(path, program("fetch_rows", v).encode()) for v in (3, 4))
     assert one is not None and two is not None
-    assert one.text(1, "fetch_rows") == two.text(1, "fetch_rows") == "const fetch_rows = () => 3;"
+    assert (
+        _text(one, 1, "fetch_rows") == _text(two, 1, "fetch_rows") == "const fetch_rows = () => 3;"
+    )
     assert _match(path, program("fetch_rows", 3), program("load_rows", 4)) == "exact"
 
 
@@ -597,7 +610,7 @@ def test_a_bindings_own_comment_is_part_of_it() -> None:
     src = "const unrelated = () => 3, /* rows */ fetch_rows = () => 3;\n"
     decls = Declarations.parse("m.ts", src.encode())
     assert decls is not None
-    assert decls.text(1, "fetch_rows") == "const /* rows */ fetch_rows = () => 3;"
+    assert _text(decls, 1, "fetch_rows") == "const /* rows */ fetch_rows = () => 3;"
 
 
 @pytest.mark.parametrize(
@@ -612,7 +625,7 @@ def test_a_bindings_own_comment_is_part_of_it() -> None:
 def test_a_cpp_definition_returning_a_reference_has_a_declaration(line: str) -> None:
     src = "namespace DB {\n" + line + "\n}\n"
     decls = Declarations.parse("m.cpp", src.replace("NAME", "fetchRows").encode())
-    assert decls is not None and decls.text(2, "fetchRows")
+    assert decls is not None and _text(decls, 2, "fetchRows")
     assert (
         _match("m.cpp", src.replace("NAME", "fetch_rows"), src.replace("NAME", "load_rows"))
         == "exact"
@@ -625,4 +638,4 @@ def test_a_destructor_or_operator_has_a_declaration(name: str) -> None:
     decls = Declarations.parse("m.cpp", src.encode())
     assert decls is not None
     line = 2 if name.startswith("~") else 3
-    assert decls.text(line, name) and decls.shape(line, name).exact
+    assert _text(decls, line, name) and _shape(decls, line, name).exact
