@@ -193,8 +193,9 @@ attaches `score_components` to each served hit instead, including the RRF score 
 weight when that mode ran. With `LOOM_SEARCH_TRACE_LOG_ENABLED=true` every search also
 appends a row to `loom.search_trace_log` (returned keys, scores, abstain, risk,
 latency), readable with `memory.search_trace_log`; the query text is stored only when
-the namespace consents to text capture. The dashboard's Recall Lab (`/me`) renders the
-same trace.
+the namespace consents to text capture. The dashboard's Recall Lab (`/me`) shows the rows
+the Memories list shows for a query: keyword matches, then `memory.search` hits with their
+`score_components`.
 
 `memory.ask` retrieves the same way and then writes an answer from a narrower pool; see
 [search and ask](../features/memory/search-and-ask.md). The `loom_search` MCP tool (the

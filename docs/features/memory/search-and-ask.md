@@ -124,6 +124,33 @@ user-derived term off for one request.
 | Recency       | `recency_pool_weight` re-ranks a "latest" / "most recent" query by date.                                                                                                                                                                                                                                                                                        |
 | Reranker      | `rerank`, or the namespace's `rerank_endpoint`: `builtin:cohere[:model]`, `builtin:openai[:model]` or your own URL. On timeout it keeps the input order and says so in `degraded`; it never drops a candidate.                                                                                                                                                  |
 
+### Query spelling
+
+An embedder reads `datalakecatalog` and `DataLakeCatalog` as different strings. So a query
+of at most `LOOM_MEMORY_SEARCH_QUERY_SPELLING_MAX_WORDS` words (default 6) embeds each
+all-lowercase word of four or more letters in the identifier spelling the caller's rows in
+the addressed namespace use: one with a capital past the first letter (`DataLakeCatalog`,
+`PREWHERE`), used by at least two rows and by twice as many as write the word plainly. A
+sentence-initial capital is not evidence of how the corpus spells a word, so title case
+counts as plain and `what` never becomes `What`. Lexical matching is case-insensitive
+already and is unchanged.
+
+The lookup runs beside the embed of the query as typed, and its answer is cached for a
+minute. A rewrite shows in `retrieval_work.query_spellings` (`memory.search_trace`:
+`query_spellings`). The first time, it costs a second embed, of the respelled text; while
+cached, only the respelled text is embedded, and the text as typed only if that embed
+fails. After a timeout the try as typed gets 0.25 s, time for an embedding-cache hit, so a
+hung provider still answers `EMBED_TIMEOUT` within one embed bound plus 0.25 s. A search
+fails only when every embed it tried failed, so a provider that refuses fails it once the
+lookup has answered (at most 0.4 s). The query embeds as typed, with
+`retrieval_work.query_spellings_skipped` set (`memory.search_trace`:
+`query_spellings_skipped`), when the lookup fails or runs past 0.4 s, when the namespace
+is backing off after three such failures in a row (a minute, doubling with each further
+failure up to an hour; a success ends the streak), or when the respelled embed fails.
+`retrieval_cost_estimate` is made before the lookup answers, so it counts one embed even
+when a rewrite adds a second. `loom.search_trace_log` keeps the query as typed, so a
+logged query can score differently from a fresh embed of the same text.
+
 ### Similarity floor and abstain
 
 With `LOOM_ADAPTIVE_THRESHOLDS` on (the default), a boot probe derives the search gates
@@ -267,16 +294,17 @@ worker otherwise runs weekly).
 
 ## Settings
 
-| Setting                                      | Default    | Effect                                                       |
-| -------------------------------------------- | ---------- | ------------------------------------------------------------ |
-| `LOOM_MEMORY_SEARCH_DEFAULT_MODE`            | `semantic` | Mode for a request that sets neither mode nor recipe.        |
-| `LOOM_MEMORY_SEARCH_DEFAULT_NAMESPACE_SCOPE` | `this`     | `all_mine` searches every namespace the caller belongs to.   |
-| `LOOM_ADAPTIVE_THRESHOLDS`                   | true       | Derive similarity gates from the live embedder.              |
-| `LOOM_MEMORY_SEARCH_MIN_SIMILARITY`          | 0.22       | Scalar floor when adaptivity is off or the embedder is fake. |
-| `LOOM_MEMORY_SEARCH_ABSTAIN_THRESHOLD`       | 0.30       | Scalar abstain gate under the same conditions.               |
-| `LOOM_MEMORY_SEARCH_REINFORCEMENT_WEIGHT`    | 0.15       | Weight of the decayed-use term. 0 disables.                  |
-| `LOOM_MEMORY_SEARCH_TRUST_WEIGHT`            | 0          | Provenance term. 0 disables.                                 |
-| `LOOM_SEARCH_TRACE_LOG_ENABLED`              | false      | Record each search in `loom.search_trace_log`.               |
+| Setting                                       | Default    | Effect                                                                        |
+| --------------------------------------------- | ---------- | ----------------------------------------------------------------------------- |
+| `LOOM_MEMORY_SEARCH_DEFAULT_MODE`             | `semantic` | Mode for a request that sets neither mode nor recipe.                         |
+| `LOOM_MEMORY_SEARCH_DEFAULT_NAMESPACE_SCOPE`  | `this`     | `all_mine` searches every namespace the caller belongs to.                    |
+| `LOOM_ADAPTIVE_THRESHOLDS`                    | true       | Derive similarity gates from the live embedder.                               |
+| `LOOM_MEMORY_SEARCH_MIN_SIMILARITY`           | 0.22       | Scalar floor when adaptivity is off or the embedder is fake.                  |
+| `LOOM_MEMORY_SEARCH_ABSTAIN_THRESHOLD`        | 0.30       | Scalar abstain gate under the same conditions.                                |
+| `LOOM_MEMORY_SEARCH_REINFORCEMENT_WEIGHT`     | 0.15       | Weight of the decayed-use term. 0 disables.                                   |
+| `LOOM_MEMORY_SEARCH_TRUST_WEIGHT`             | 0          | Provenance term. 0 disables.                                                  |
+| `LOOM_SEARCH_TRACE_LOG_ENABLED`               | false      | Record each search in `loom.search_trace_log`.                                |
+| `LOOM_MEMORY_SEARCH_QUERY_SPELLING_MAX_WORDS` | 6          | Longest query whose lowercase words embed in the corpus spelling. 0 disables. |
 
 Per namespace, `namespace.register` sets `retrieval_defaults` (`search_mode`, `top_k`,
 `bodies`, `min_similarity`, `floor_mode`, `chunk_max_share`, `recency_pool_weight`,

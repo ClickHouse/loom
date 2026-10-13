@@ -35,6 +35,7 @@ import { MentorPanel } from "../components/MentorPanel";
 import { Tip } from "../components/ui";
 import { READ_ONLY_TIP, canWrite, useNamespaceRole } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
+import { KEYWORD_PAGE, keywordThenRanked, parseSearchQuery } from "../lib/memoriesSearch";
 
 // Server caps memory.list at 1000 rows/call (MemoryListInput.limit le=1000).
 // The browse feed pages up to this; past it, search covers the whole namespace.
@@ -60,8 +61,6 @@ const MEMORIES_LIST_FIELDS = [
   "verification",
 ];
 const MEMORIES_PREVIEW_CHARS = 160;
-// Keyword matches a search shows ahead of the ranked hits (a viewer's list page is 100).
-const KEYWORD_PAGE = 100;
 
 // The cards the first screen shows. A page of a hundred mounts them all in one task
 // (395–681 ms of long tasks at 4x CPU, LCP 0.9–1.4 s); the first screen is about two
@@ -196,18 +195,8 @@ export function Recent() {
   // tag/agent filters apply client-side over the semantic-search result
   // set OR the raw entries list, and intersect with the chip selections.
   const { rawQuery, queryTags, queryAgent } = useMemo(() => {
-    const tokens = query.trim().split(/\s+/).filter(Boolean);
-    const tags: string[] = [];
-    let agent: string | null = null;
-    const rest: string[] = [];
-    for (const tok of tokens) {
-      const mTag = /^tag:(.+)$/.exec(tok);
-      const mAgent = /^agent:(.+)$/.exec(tok);
-      if (mTag) tags.push(mTag[1].toLowerCase());
-      else if (mAgent) agent = mAgent[1].toLowerCase();
-      else rest.push(tok);
-    }
-    return { rawQuery: rest.join(" "), queryTags: tags, queryAgent: agent };
+    const parsed = parseSearchQuery(query);
+    return { rawQuery: parsed.text, queryTags: parsed.tags, queryAgent: parsed.agent };
   }, [query]);
 
   useEffect(() => {
@@ -273,10 +262,10 @@ export function Recent() {
         setRanking(false);
         if (r === null) return;
         const results = r.results || [];
-        const hits = [
-          ...kwEntries.map((e) => e.memory_key),
-          ...results.map((h) => h.memory_key).filter((k) => !kwKeys.has(k)),
-        ];
+        const hits = keywordThenRanked(
+          kwEntries.map((e) => e.memory_key),
+          results.map((h) => h.memory_key),
+        );
         setSearchHits(hits);
         setSearchWhy(new Map(results.map((h) => [h.memory_key, h] as const)));
         // The server hedges (abstain) when the top hit is below threshold;

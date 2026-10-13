@@ -106,6 +106,21 @@ each field means is in [monitoring](./monitoring.md#health-checks).
 
 ## Providers and search quality
 
+### Searches fail with 503 EMBED_TIMEOUT
+
+- **Cause:** the embedding provider did not answer the query embedding within
+  `LOOM_MEMORY_SEARCH_EMBED_BOUND_S` (2.5 s) on both of its attempts by default (one
+  retry, `LOOM_MEMORY_SEARCH_EMBED_BOUND_RETRIES`). A query whose vector is in the
+  embedding cache still answers.
+- **Check:** the server log's `query embed exceeded …s (attempt n/m)` warnings, and
+  `loom.agent_events` rows with `error_code = 'EMBED_TIMEOUT'`. A provider that hangs
+  sets no health flag; `/v1/health` shows `provider_failing:<name>` only when it also
+  answers errors. Also check the provider's status page.
+- **Fix:** a raw HTTP or MCP caller retries once; an SDK caller has already retried, so it
+  backs off. If it repeats, the provider is slow or down: wait it out, or raise the bound
+  for a provider that is slow but answering. Each failed search holds the server for up to
+  one bound per attempt.
+
 ### Search returns arbitrary results, or extraction writes nothing
 
 - **Symptom:** `set_from_messages` writes no facts, `memory.ask` returns empty answers,

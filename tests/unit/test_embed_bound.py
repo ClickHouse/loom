@@ -7,8 +7,8 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from fastapi import HTTPException
 
+from server.core.errors import EmbedTimeoutError
 from server.memory.app.search.embed import _bounded_query_embed
 
 
@@ -47,10 +47,10 @@ def test_one_slow_attempt_is_cancelled_and_retried(bound) -> None:
 
 def test_two_slow_attempts_answer_503_embed_timeout(bound) -> None:
     e = _Embedder([1.0, 1.0])
-    with pytest.raises(HTTPException) as ei:
+    with pytest.raises(EmbedTimeoutError) as ei:
         asyncio.run(_bounded_query_embed(e, "q"))
-    assert ei.value.status_code == 503 and ei.value.detail["code"] == "EMBED_TIMEOUT"
-    assert "retry the search" in ei.value.detail["message"]
+    assert ei.value.status_code == 503 and ei.value.code == "EMBED_TIMEOUT"
+    assert "the search wrote nothing" in ei.value.message
     assert e.calls == 2
 
 

@@ -11,10 +11,15 @@ export interface SearchHit {
   memory_type: string;
   content_excerpt: string;
   distance: number;
+  /** The hit's similarity as the search scored it; on some planes (records, the key
+   *  axis) it is not 1 − distance. */
+  similarity: number;
   rank_score: number;
   confidence: number;
   namespace?: string;
   tags?: string[];
+  /** Retrieval plane the hit came from ("fact", "chunk", …). */
+  source?: string;
   /** Ingest time (ISO); "" when unknown. */
   created_at?: string;
   /** Writer identity; "" when the leg did not read it. */
@@ -28,8 +33,7 @@ export interface SearchHit {
   score_components?: Record<string, number>;
 }
 
-/** Wrapper over POST /v1/memory.search for the Recall view.
- *  Use `memorySearchTrace` if you want per-result score breakdown. */
+/** POST /v1/memory.search. `explain: true` adds each hit's ranking terms. */
 export async function searchMemory(
   id: Identity,
   query: string,
@@ -97,55 +101,6 @@ export async function searchMemory(
   return post("/v1/memory.search", body, opts.signal);
 }
 
-/** A `memory.search_trace` candidate: the single VECTOR-leg relevance
- *  breakdown (cosine similarity + entity boost + blended rank_score), NOT the
- *  hybrid ranking `searchMemory` returns. Powers the Recall Lab. */
-export interface SearchTraceHit {
-  memory_key: string;
-  memory_type: string;
-  content_excerpt: string;
-  distance: number;
-  similarity: number;
-  entity_boost: number;
-  rank_score: number;
-  rank: number;
-  source: string;
-}
-
-/** POST /v1/memory.search_trace — per-candidate "why did this rank here"
- *  breakdown. This is the vector leg only; the production Recall list
- *  (`searchMemory`) runs the full hybrid pipeline, so the two orderings differ.
- *  The trace op ignores hybrid-only knobs (search_mode/pinned/hyde/tags), so we
- *  only expose what it actually consumes. */
-export async function memorySearchTrace(
-  id: Identity,
-  query: string,
-  opts: {
-    top_k?: number;
-    memory_type?: "semantic" | "procedural" | "preference";
-    entity_filter?: string[];
-    agent?: string;
-  } = {},
-): Promise<{ results: SearchTraceHit[]; embedding_model: string; entity_filter: string[] }> {
-  const body: Record<string, unknown> = {
-    // Operator browse: span every agent's memories by default ("*"), matching
-    // searchMemory/listMemories. A concrete `id.agent` would scope to only the
-    // session agent's rows and miss memories written by other agents.
-    org: id.org,
-    namespace: id.namespace,
-    agent: opts.agent ?? "*",
-    customer_id: "-",
-    scope: "private",
-    query,
-    top_k: opts.top_k ?? 20,
-  };
-  if (opts.memory_type) body["memory_type"] = opts.memory_type;
-  if (opts.entity_filter && opts.entity_filter.length > 0) {
-    body["entity_filter"] = opts.entity_filter;
-  }
-  return post("/v1/memory.search_trace", body);
-}
-
 /** One past search, as recorded in `loom.search_trace_log`. */
 export interface SearchTraceLogRow {
   ts: string;
@@ -171,8 +126,8 @@ export interface SearchTraceLogRow {
 
 /** Searches that already happened, newest first (`memory.search_trace_log`).
  *
- *  Distinct from `memorySearchTrace`, which re-runs a query against memory as
- *  it is *now*. Only this can answer "my agent gave a bad answer earlier — what
+ *  Distinct from `searchMemory`, which runs a query against memory as it is
+ *  *now*. Only this can answer "my agent gave a bad answer earlier — what
  *  did it actually retrieve at the time", because the memory may have changed
  *  since. VIEWER role, and the server scopes rows to namespaces the caller can
  *  reach, so this is safe to show a non-operator their own history. */

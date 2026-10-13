@@ -1859,6 +1859,8 @@ Same shape as memory.search; returns the per-candidate scoring breakdown instead
 | `results` | `list[_SearchTraceHit]` | Every candidate the fact leg scored, in final rank order, with its breakdown. |
 | `embedding_model` | `str` | The embedding model the query was embedded with. |
 | `entity_filter` | `list[str]` | The request's `entity_filter`, lowercased as it was matched. |
+| `query_spellings` | `dict[str, str]` | Query words embedded in the corpus's spelling instead of as typed (`memory_search_query_spelling_max_words`); {} when none was. |
+| `query_spellings_skipped` | `bool` | True when the query was embedded as typed because the spelling lookup did not answer (failed, timed out, namespace backing off) or the respelled text's embed failed. |
 
 ## `memory.search_trace_log`
 

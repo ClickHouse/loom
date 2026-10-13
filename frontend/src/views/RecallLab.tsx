@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { FlaskConical, Search, History } from "lucide-react";
-import { memorySearchTrace, listSearchTraceLog, type SearchTraceHit, type SearchTraceLogRow } from "../api";
+import { listMemories, searchMemory, listSearchTraceLog, type SearchHit, type SearchTraceLogRow } from "../api";
 import { useStore, useIdentity } from "../lib/state";
 import { PageContainer } from "../layout/PageContainer";
 import { MemoryTabs } from "../components/MemoryTabs";
 import { EmptyState } from "../components/EmptyState";
 import { ScopeBadge } from "../components/ScopeBadge";
-import { humanizeError, relativeTime, displayAgent } from "../lib/format";
+import { humanizeError, relativeTime, displayAgent, previewValue } from "../lib/format";
+import { KEYWORD_PAGE, keywordThenRanked, parseSearchQuery } from "../lib/memoriesSearch";
+import { signed, whyTerms } from "../lib/whyNote";
 
 // One recorded search, expanded in place. A person reading "my agent answered badly an
 // hour ago" needs more than the top score and the first eight keys — they need every key
@@ -253,12 +255,33 @@ function RecallHistory() {
   );
 }
 
-// Recall Lab — the "why did this rank here" surface. It calls
-// memory.search_trace, the single VECTOR leg of retrieval (cosine similarity +
-// entity boost + blended rank_score), and lays the per-candidate breakdown out
-// as ranked rows. Deliberately NOT the hybrid ranking the Memories list uses —
-// it's the relevance lens for debugging recall, which is exactly what the
-// server op was built for ("/me Recall Lab").
+/** A ranked hit's similarity, final score and the terms that moved it. */
+function RankedTerms({ hit }: { hit: SearchHit }) {
+  return (
+    <>
+      <span title="similarity the search reports for the hit">sim {hit.similarity.toFixed(3)}</span>
+      <span title="final score the ranked hits are ordered by">score {hit.rank_score.toFixed(3)}</span>
+      {whyTerms(hit.score_components).map((t) => (
+        <span key={t.label} className={t.value < 0 ? "text-[var(--color-warn)]" : "text-[var(--color-accent)]"}>
+          {t.label} {signed(t.value)}
+        </span>
+      ))}
+      {hit.source && <span className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)]">{hit.source}</span>}
+    </>
+  );
+}
+
+/** One row of the Memories list's search order: a keyword match, a ranked hit, or both. */
+interface RecallRow {
+  key: string;
+  text: string;
+  memoryType: string;
+  keyword: boolean;
+  hit?: SearchHit;
+}
+
+// Recall Lab — the "why did this rank here" surface: the rows the Memories list shows for a
+// search, in its order, each with what put it there.
 export function RecallLab() {
   const identity = useIdentity();
   // A run's "Recall history for this run" opens the lab with the run filter set. The
@@ -271,62 +294,90 @@ export function RecallLab() {
     if (runFilter) setTab("history");
   }, [runFilter]);
   const [query, setQuery] = useState("");
-  const [hits, setHits] = useState<SearchTraceHit[] | null>(null);
+  const [rows, setRows] = useState<RecallRow[] | null>(null);
+  const [abstain, setAbstain] = useState(false);
   const [model, setModel] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Low-confidence result sets stay collapsed until the user opts in.
+  // The ranked search failed while keyword rows stood: those still show, with this said.
+  const [rankedError, setRankedError] = useState<string | null>(null);
+  // A result set the search abstained on stays collapsed until the user opts in.
   const [showWeak, setShowWeak] = useState(false);
 
   useEffect(() => {
-    const q = query.trim();
-    if (!q) {
-      setHits(null);
+    // The text the Memories list would send; its tag: / agent: filters are not applied here.
+    const q = parseSearchQuery(query).text;
+    // The Memories list waits for two characters; so does this.
+    if (q.length < 2) {
+      setRows(null);
       setError(null);
+      setRankedError(null);
       // A query cleared mid-flight drops that answer below, so its "Scoring…" ends here.
       setLoading(false);
       return;
     }
-    setShowWeak(false); // each new query starts collapsed if weak
-    // Once the fetch is in flight, clearing the timer no longer stops it: an answer that
-    // lands after the query or namespace changed is dropped, not shown under the new query.
-    let live = true;
+    setShowWeak(false);
+    // An answer that lands after the query or namespace changed is dropped, not shown
+    // under the new query; the abort stops the request itself.
+    const ac = new AbortController();
     const t = setTimeout(async () => {
       setLoading(true);
       setError(null);
+      setRankedError(null);
       try {
-        const r = await memorySearchTrace(identity, q, { top_k: 25 });
-        if (!live) return;
-        setHits(r.results || []);
-        setModel(r.embedding_model || "");
+        // The two reads the Memories list makes for a search, with the same arguments.
+        const search = searchMemory(identity, q, { top_k: 50, explain: true, legs: ["memory"], signal: ac.signal });
+        search.catch(() => {}); // awaited below; a rejection before then is not unhandled
+        const kw = await listMemories(identity, KEYWORD_PAGE, {
+          contains: q,
+          fields: ["memory_key", "memory_type", "value"],
+          previewChars: 200,
+          signal: ac.signal,
+        }).catch(() => null);
+        // As on the Memories list, a failed ranked search keeps the keyword rows.
+        const [r, failure] = await (kw?.entries.length
+          ? search.then(
+              (res) => [res, null] as const,
+              (e: unknown) => [null, humanizeError(e)] as const,
+            )
+          : search.then((res) => [res, null] as const));
+        if (ac.signal.aborted) return;
+        const keyword = new Map((kw?.entries ?? []).map((e) => [e.memory_key, e] as const));
+        const ranked = new Map((r?.results ?? []).map((h) => [h.memory_key, h] as const));
+        const order = keywordThenRanked([...keyword.keys()], [...ranked.keys()]);
+        setRows(
+          order.map((key) => {
+            const hit = ranked.get(key);
+            const entry = keyword.get(key);
+            return {
+              key,
+              text: hit?.content_excerpt ?? previewValue(entry?.value),
+              memoryType: hit?.memory_type ?? entry?.memory_type ?? "",
+              keyword: entry !== undefined,
+              hit,
+            };
+          }),
+        );
+        // Keyword matches are real matches: the list hedges only when there are none.
+        setAbstain(Boolean(r?.abstain) && keyword.size === 0);
+        setModel(r?.embedding_model ?? "");
+        setRankedError(failure);
       } catch (e) {
-        if (!live) return;
+        if (ac.signal.aborted) return;
         setError(humanizeError(e));
-        setHits([]);
+        setRows([]);
       } finally {
-        if (live) setLoading(false);
+        if (!ac.signal.aborted) setLoading(false);
       }
     }, 250);
     return () => {
-      live = false;
+      ac.abort();
       clearTimeout(t);
     };
   }, [query, identity]);
 
-  // Best cosine similarity in the result set (hits are rank-ordered). Drives a
-  // confidence hint: text-embedding-3-small has a high baseline, so even
-  // unrelated queries return ~0.25-0.35 neighbours — a low top score means
-  // "nearest vectors", not real matches.
-  const topSim = hits && hits.length > 0 ? hits[0].similarity : 0;
-  const NOISE_FLOOR = 0.3; // mirrors server memory_search_abstain_threshold
-  const WEAK_MATCH = 0.5; // below this, matches are weak/semantically distant
-  const lowConfidence = hits != null && hits.length > 0 && topSim < WEAK_MATCH;
-  // Hide by default ONLY when the top match is below the noise floor (true
-  // junk). Weak-but-plausible matches (e.g. a bare acronym like "COW" at ~0.4,
-  // where the right memories are actually at the top) still show under the
-  // banner — collapsing those hid legitimate results.
-  const belowNoiseFloor = hits != null && hits.length > 0 && topSim < NOISE_FLOOR;
-  const showResults = !belowNoiseFloor || showWeak;
+  const showResults = !abstain || showWeak;
+  const topScore = Math.max(0, ...(rows ?? []).map((row) => row.hit?.rank_score ?? 0));
 
   return (
     <PageContainer>
@@ -341,9 +392,10 @@ export function RecallLab() {
         </h2>
         {tab === "score" && (
           <p className="mt-1 text-sm text-[var(--color-text-muted)] max-w-2xl">
-            Why did a memory rank where it did? These scores are the <strong>vector leg</strong> of retrieval — cosine
-            similarity, entity boost, and the blended rank score for each candidate. The Memories list runs the full
-            hybrid pipeline, so its ordering can differ.
+            Why did a memory land where it did on the Memories list? These are the rows it shows for a query with no
+            filters set, in its order: memories whose text holds the query come first, newest first; then the ranked
+            search, each hit with its similarity, final score and the terms that moved it (key match, entity, recency,
+            …).
           </p>
         )}
       </div>
@@ -385,8 +437,13 @@ export function RecallLab() {
 
       {tab === "score" && loading && <div className="text-sm text-[var(--color-text-muted)] px-1">Scoring…</div>}
       {tab === "score" && error && <div className="text-sm text-[var(--color-danger)] px-1">{error}</div>}
+      {tab === "score" && rankedError && !loading && (
+        <div className="mb-2 text-xs text-[var(--color-text-muted)] px-1">
+          Ranked search failed ({rankedError}); showing the keyword matches only.
+        </div>
+      )}
 
-      {tab === "score" && hits != null && !loading && !error && hits.length === 0 && (
+      {tab === "score" && rows != null && !loading && !error && rows.length === 0 && (
         <EmptyState
           icon={FlaskConical}
           title="No candidates"
@@ -394,31 +451,19 @@ export function RecallLab() {
         />
       )}
 
-      {tab === "score" && hits != null && hits.length > 0 && (
+      {tab === "score" && rows != null && rows.length > 0 && (
         <>
-          {lowConfidence && (
+          {abstain && (
             <div className="mb-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
-              {topSim < NOISE_FLOOR ? (
-                <>
-                  No strong match — the closest memory is only{" "}
-                  <strong className="text-[var(--color-text)]">{(topSim * 100).toFixed(0)}%</strong> similar, below the
-                  recall noise floor. These are the nearest vectors, not real matches.
-                </>
-              ) : (
-                <>
-                  Low-confidence matches — the closest is{" "}
-                  <strong className="text-[var(--color-text)]">{(topSim * 100).toFixed(0)}%</strong> similar. Recall Lab
-                  ranks by semantic (vector) similarity only; for exact keyword matches use the Memories search.
-                </>
-              )}
-              {belowNoiseFloor && !showWeak && (
+              No confident match — the search abstained on this query. These are the nearest memories, not real matches.
+              {!showWeak && (
                 <>
                   {" "}
                   <button
                     onClick={() => setShowWeak(true)}
                     className="underline underline-offset-2 hover:text-[var(--color-text)] transition-colors"
                   >
-                    Show {hits.length} anyway
+                    Show {rows.length} anyway
                   </button>
                 </>
               )}
@@ -426,45 +471,46 @@ export function RecallLab() {
           )}
           {model && showResults && (
             <div className="text-2xs text-[var(--color-text-subtle)] mb-2 px-1">
-              {hits.length} candidate{hits.length === 1 ? "" : "s"} · embedder{" "}
-              <span className="font-mono">{model}</span>
+              {rows.length} row{rows.length === 1 ? "" : "s"} · embedder <span className="font-mono">{model}</span>
             </div>
           )}
           {showResults && (
             <div className="space-y-1.5">
-              {hits.map((h) => (
+              {rows.map((row, i) => (
                 <div
-                  key={h.memory_key}
+                  key={row.key}
                   className="p-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]"
                 >
                   <div className="flex items-start gap-3">
                     <span className="shrink-0 mt-0.5 w-6 text-right text-xs font-mono text-[var(--color-text-subtle)]">
-                      #{h.rank}
+                      #{i + 1}
                     </span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm text-[var(--color-text)] break-words">{h.content_excerpt}</p>
+                      <p className="text-2xs font-mono text-[var(--color-text-subtle)] break-all">{row.key}</p>
+                      <p className="text-sm text-[var(--color-text)] break-words">{row.text}</p>
                       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs font-mono text-[var(--color-text-muted)]">
-                        <span title="cosine similarity (1 − distance)">sim {h.similarity.toFixed(3)}</span>
-                        {h.entity_boost > 0 && (
-                          <span className="text-[var(--color-accent)]" title="entity-filter overlap boost">
-                            entity +{h.entity_boost.toFixed(2)}
+                        {row.keyword && (
+                          <span
+                            className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text)]"
+                            title="its text holds the query; the Memories list shows these first, newest first"
+                          >
+                            keyword match
                           </span>
                         )}
-                        {/* score = similarity + boosts; only show it when a boost
-                          actually moved it, otherwise it just duplicates sim. */}
-                        {Math.abs(h.rank_score - h.similarity) > 0.0005 && (
-                          <span title="final blended score after boosts">score {h.rank_score.toFixed(3)}</span>
-                        )}
-                        <span className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)]">{h.source}</span>
-                        <span className="text-[var(--color-text-subtle)]">{h.memory_type}</span>
+                        {row.hit && <RankedTerms hit={row.hit} />}
+                        <span className="text-[var(--color-text-subtle)]">{row.memoryType}</span>
                       </div>
-                      {/* similarity bar — quick visual of relative relevance */}
-                      <div className="mt-1.5 h-1 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-                        <div
-                          className="h-full bg-[var(--color-accent)]"
-                          style={{ width: `${Math.max(0, Math.min(100, h.similarity * 100)).toFixed(1)}%` }}
-                        />
-                      </div>
+                      {row.hit && (
+                        // score bar, relative to the top ranked hit
+                        <div className="mt-1.5 h-1 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
+                          <div
+                            className="h-full bg-[var(--color-accent)]"
+                            style={{
+                              width: `${topScore > 0 ? Math.max(0, Math.min(100, (row.hit.rank_score / topScore) * 100)).toFixed(1) : 0}%`,
+                            }}
+                          />
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>

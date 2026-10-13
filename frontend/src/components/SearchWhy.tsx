@@ -15,7 +15,7 @@ interface SearchWhyProps {
 
 export function SearchWhy({ hit, rank }: SearchWhyProps) {
   const terms = whyTerms(hit.score_components);
-  const similarity = typeof hit.distance === "number" && Number.isFinite(hit.distance) ? 1 - hit.distance : null;
+  const similarity = Number.isFinite(hit.similarity) ? hit.similarity : null;
   const explanation = String(hit.explanation ?? "")
     .replace(/\n/g, " ")
     .trim();

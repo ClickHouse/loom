@@ -175,10 +175,10 @@ def _handler_failed(
     """The handler raised. A 4xx refusal (LOCKED, PINNED,
     a task state, BLACKLISTED, NOT_FOUND, 429 — not 401) is an `isError`
     result carrying its structured body, recorded under its own code. A 5xx
-    LoomServerError (OVERLOADED, BACKEND_TIMEOUT, SCHEMA_PENDING) stays a
-    JSON-RPC error that carries HTTP's body and is recorded under its code;
-    any other exception is one that says only "internal error" and is logged
-    with its traceback."""
+    LoomServerError (OVERLOADED, BACKEND_TIMEOUT, SCHEMA_PENDING, EMBED_TIMEOUT)
+    stays a JSON-RPC error that carries HTTP's body and is recorded under its
+    code; any other exception is one that says only "internal error" and is
+    logged with its traceback."""
     from server.transport.mcp_refusals import refusal_body, refusal_text, server_failure
 
     refused = refusal_body(e)
