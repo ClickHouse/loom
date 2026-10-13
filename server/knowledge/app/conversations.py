@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from server.auth.fanout import namespaces_to_search
 from server.core.cursors import decode_cursor as _decode_cursor
 from server.core.cursors import encode_cursor as _encode_cursor
 from server.core.datetimes import naive_utc_now
@@ -489,8 +490,6 @@ async def handle_conversation_search(
 
     if query_vec is None:
         return await _search_substring_fallback(input)
-
-    from server.auth.fanout import namespaces_to_search
 
     namespaces = await namespaces_to_search(input.org, input.namespace, input.namespace_scope)
 

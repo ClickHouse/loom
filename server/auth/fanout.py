@@ -2,12 +2,14 @@
 
 The caller's own namespaces (`resolve_my_namespaces`), narrowed to the kinds a
 fan-out sweeps and cut at `memory_search_fanout_max_namespaces`, plus the
-namespace the call addressed, which every leg reads whatever the list says.
+namespace the call addressed, which every leg reads first whatever the list
+says. Code and QA indexes are readable namespaces too, but they are reached by
+name or by their own tools, never swept for a personal fact.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from server.auth import context
@@ -36,6 +38,20 @@ def with_addressed(namespace: str, fanout: Sequence[str]) -> list[str]:
     return [namespace, *rest] if namespace else rest
 
 
+def private_first(
+    namespace: str, namespaces: Sequence[str], visibility: Mapping[str, str]
+) -> tuple[list[str], list[str]]:
+    """The two passes of a private-first search: the addressed `namespace`
+    and the private ones, then the public ones. Both empty when no namespace
+    is known to be private (or `visibility` is empty): read them all at once.
+    A namespace missing from a non-empty `visibility` counts as private."""
+    private = {ns for ns in namespaces if visibility.get(ns, "private") == "private"}
+    if not visibility or not private:
+        return [], []
+    first = [ns for ns in namespaces if ns in private or ns == namespace]
+    return first, [ns for ns in namespaces if ns not in first]
+
+
 async def namespaces_to_search(org: str, namespace: str, namespace_scope: str | None) -> list[str]:
     """The namespaces one search leg reads: the addressed `namespace`, and
     under `all_mine` the caller's fan-out besides."""
@@ -45,14 +61,10 @@ async def namespaces_to_search(org: str, namespace: str, namespace_scope: str | 
 
 
 async def resolve_fanout(org: str) -> Fanout:
-    """The namespaces a `namespace_scope=all_mine` search spans:
-    `resolve_my_namespaces` narrowed to the kinds in
-    `memory_search_fanout_kinds`, then cut at
-    `memory_search_fanout_max_namespaces`. A code or QA index is a namespace
-    the caller can read, not one a personal-fact search should sweep; it is
-    addressed by name or by its own tools. Order (= read priority) is kept.
-    Unknown kinds stay: the directory can only narrow, never widen. Resolved
-    once per bound principal and org."""
+    """The caller's namespaces of the fan-out kinds, cut at
+    `memory_search_fanout_max_namespaces`; the kept ones stay in their order,
+    which is a priority only when `ordered` (a scoped token). Memoised per
+    bound principal and org."""
     memo = context.fanout_memo.get()
     if memo is not None and memo.org == org:
         return memo

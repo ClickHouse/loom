@@ -1660,7 +1660,7 @@ Semantic search over the agent's own memory.
 | `memory_type` | `Literal['semantic', 'procedural', 'preference', 'reflection', 'decision'] \| None` | `None` | None = every searchable type except the hidden-by-default ones (reflection). "reflection" = only process lessons (what worked / failed in past runs), which never surface in an unfiltered search. |
 | `tags` | `list[str]` | *(computed)* | OR-filter on tags (set semantics). |
 | `scope` | `Literal['private', 'shared']` | `'private'` | Which rows to read: "private" = per-agent rows (narrowed to `agent` when it names one), "shared" = rows promoted to the namespace's shared scope. |
-| `namespace_scope` | `Literal['this', 'all_mine'] \| None` | `None` | "all_mine" also reads the caller's own namespaces (docs/concepts/ identities-and-namespaces.md, "Reading several namespaces"); "this" scopes to input.namespace only. |
+| `namespace_scope` | `Literal['this', 'all_mine'] \| None` | `None` | "all_mine" also reads the caller's own namespaces ("Reading several namespaces", docs/concepts/identities-and-namespaces.md); "this" scopes to input.namespace only. |
 | `search_mode` | `Literal['semantic', 'lexical', 'hybrid', 'bm25_hybrid', 'related', 'graph', 'rrf', 'temporal']` | `'rrf'` | Recall fusion mode. |
 | `recipe` | `Literal['', 'fast', 'balanced', 'quality', 'verbatim', 'code', 'temporal', 'graph']` | `''` | Named presets over the lower-level knobs. |
 | `alpha` | `float` | `0.5` | Lexical weight for `search_mode` "hybrid" / "bm25_hybrid": the score is alpha * lexical + (1 - alpha) * cosine. |
@@ -1788,7 +1788,7 @@ Same shape as memory.search; returns the per-candidate scoring breakdown instead
 | `memory_type` | `Literal['semantic', 'procedural', 'preference', 'reflection', 'decision'] \| None` | `None` | None = every searchable type except the hidden-by-default ones (reflection). "reflection" = only process lessons (what worked / failed in past runs), which never surface in an unfiltered search. |
 | `tags` | `list[str]` | *(computed)* | OR-filter on tags (set semantics). |
 | `scope` | `Literal['private', 'shared']` | `'private'` | Which rows to read: "private" = per-agent rows (narrowed to `agent` when it names one), "shared" = rows promoted to the namespace's shared scope. |
-| `namespace_scope` | `Literal['this', 'all_mine'] \| None` | `None` | "all_mine" also reads the caller's own namespaces (docs/concepts/ identities-and-namespaces.md, "Reading several namespaces"); "this" scopes to input.namespace only. |
+| `namespace_scope` | `Literal['this', 'all_mine'] \| None` | `None` | "all_mine" also reads the caller's own namespaces ("Reading several namespaces", docs/concepts/identities-and-namespaces.md); "this" scopes to input.namespace only. |
 | `search_mode` | `Literal['semantic', 'lexical', 'hybrid', 'bm25_hybrid', 'related', 'graph', 'rrf', 'temporal']` | `'rrf'` | Recall fusion mode. |
 | `recipe` | `Literal['', 'fast', 'balanced', 'quality', 'verbatim', 'code', 'temporal', 'graph']` | `''` | Named presets over the lower-level knobs. |
 | `alpha` | `float` | `0.5` | Lexical weight for `search_mode` "hybrid" / "bm25_hybrid": the score is alpha * lexical + (1 - alpha) * cosine. |

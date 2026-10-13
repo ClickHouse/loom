@@ -9,6 +9,7 @@ import dataclasses
 import logging
 from typing import TYPE_CHECKING
 
+from server.auth.fanout import namespaces_to_search, private_first
 from server.embedding import get_embedder
 from server.knowledge.api.models_knowledge import (
     KnowledgeSearchInput,
@@ -27,7 +28,6 @@ if TYPE_CHECKING:
 
 
 async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearchOutput:
-    from server.auth.fanout import namespaces_to_search
     from server.observability.otel import traced
 
     embedder = get_embedder()
@@ -110,18 +110,14 @@ async def _search_private_first(
     # search private namespaces first; only fan out to public team
     # namespaces if the private pass came up dry.
     PRIVATE_HIT_THRESHOLD = 0.30
-    do_private_first = input.namespace_scope == "all_mine" and len(namespaces) > 1
-    private: set[str] = set()
-    if do_private_first:
+    private_ns: list[str] = []
+    public_ns: list[str] = []
+    if input.namespace_scope == "all_mine" and len(namespaces) > 1:
         from server.identity.app.namespace_visibility import visibility_map
 
-        # Fails open: an unreadable directory counts every namespace private.
         visibility = await visibility_map(input.org, list(namespaces))
-        private = {n for n in namespaces if visibility.get(n, "private") == "private"}
-    if private:
-        # The addressed namespace joins the first pass whatever its visibility.
-        private_ns = [n for n in namespaces if n in private or n == input.namespace]
-        public_ns = [n for n in namespaces if n not in private_ns]
+        private_ns, public_ns = private_first(input.namespace, namespaces, visibility)
+    if private_ns:
         with traced(
             "ch.query.chunks",
             op="vector_search.private",

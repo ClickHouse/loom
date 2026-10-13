@@ -91,23 +91,23 @@ weak-result fallback calls for them.
 
 ### Filters and scope
 
-| Field                                                          | Effect                                                                                                                                     |
-| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `memory_type`                                                  | One type. Unset: every searchable type except `reflection`, which only an explicit filter returns.                                         |
-| `tags` / `tags_soft`                                           | OR filter on tags; with `tags_soft`, a boost (`tag_boost`) instead.                                                                        |
-| `category` / `category_soft`                                   | The same for a registered category.                                                                                                        |
-| `demote_tags`                                                  | Sinks matching rows to the bottom without dropping them.                                                                                   |
-| `entity_filter`                                                | Rows naming these entities.                                                                                                                |
-| `user_id`, `session_id`, `run_id`                              | Narrow to one end user, session or run.                                                                                                    |
-| `read_scope`                                                   | `own_user` or `own_session`. A token's `read_scope` claim is a ceiling a request can only narrow.                                          |
-| `namespace_scope`                                              | `this` (default) or `all_mine` (every namespace the caller belongs to, up to the fan-out cap; the rest come back in `namespaces_skipped`). |
-| `exclude_keys`                                                 | Up to 200 keys the caller already holds, removed before the window is cut.                                                                 |
-| `include_duplicates`, `include_superseded`, `include_proposed` | Serve rows the default hides.                                                                                                              |
-| `as_of`, `as_of_basis`                                         | Point-in-time replay: `valid_time` (default) or `knowledge_time`. See [validity time](./writing.md#validity-time-valid_at-and-valid_to).   |
-| `observation_date`                                             | `YYYY-MM-DD` anchor for relative dates in the query ("last week").                                                                         |
-| `top_k`                                                        | Window size, default 5, at most 500.                                                                                                       |
-| `bodies`, `body_budget_tokens`                                 | How much of each value rides the hit (`full`, `excerpt`, `none`, `unit`, `source`).                                                        |
-| `render="reader"`                                              | Also return the hits as `memory.ask` reads them (`reader_block`).                                                                          |
+| Field                                                          | Effect                                                                                                                                   |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory_type`                                                  | One type. Unset: every searchable type except `reflection`, which only an explicit filter returns.                                       |
+| `tags` / `tags_soft`                                           | OR filter on tags; with `tags_soft`, a boost (`tag_boost`) instead.                                                                      |
+| `category` / `category_soft`                                   | The same for a registered category.                                                                                                      |
+| `demote_tags`                                                  | Sinks matching rows to the bottom without dropping them.                                                                                 |
+| `entity_filter`                                                | Rows naming these entities.                                                                                                              |
+| `user_id`, `session_id`, `run_id`                              | Narrow to one end user, session or run.                                                                                                  |
+| `read_scope`                                                   | `own_user` or `own_session`. A token's `read_scope` claim is a ceiling a request can only narrow.                                        |
+| `namespace_scope`                                              | `this` (default) or `all_mine` (also the caller's own namespaces, up to the fan-out cap; the rest come back in `namespaces_skipped`).    |
+| `exclude_keys`                                                 | Up to 200 keys the caller already holds, removed before the window is cut.                                                               |
+| `include_duplicates`, `include_superseded`, `include_proposed` | Serve rows the default hides.                                                                                                            |
+| `as_of`, `as_of_basis`                                         | Point-in-time replay: `valid_time` (default) or `knowledge_time`. See [validity time](./writing.md#validity-time-valid_at-and-valid_to). |
+| `observation_date`                                             | `YYYY-MM-DD` anchor for relative dates in the query ("last week").                                                                       |
+| `top_k`                                                        | Window size, default 5, at most 500.                                                                                                     |
+| `bodies`, `body_budget_tokens`                                 | How much of each value rides the hit (`full`, `excerpt`, `none`, `unit`, `source`).                                                      |
+| `render="reader"`                                              | Also return the hits as `memory.ask` reads them (`reader_block`).                                                                        |
 
 ### Ranking terms beyond relevance
 

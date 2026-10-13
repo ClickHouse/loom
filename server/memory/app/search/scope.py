@@ -8,15 +8,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from server.auth.fanout import Fanout, resolve_fanout, with_addressed
 from server.core.background import create_deferred_task
 from server.core.ch import get_client
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app.search.query_plan import _enrichment_parser_gate_active
-
-if TYPE_CHECKING:
-    from server.auth.fanout import Fanout
 
 log = logging.getLogger(__package__)
 
@@ -98,8 +96,6 @@ def _launch_scope_reads(input: MemorySearchInput) -> _SearchRun:
     _calibration_task.add_done_callback(_retain_task_result)
     _fanout_task: asyncio.Task[Fanout] | None = None
     if input.namespace_scope == "all_mine":
-        from server.auth.fanout import resolve_fanout
-
         _fanout_task = create_deferred_task(resolve_fanout(input.org))
         _fanout_task.add_done_callback(_retain_task_result)
     return _SearchRun(
@@ -121,15 +117,13 @@ async def _scope_inputs(
     caller's fan-out (`server.auth.fanout`: its kinds, its cap) led by the addressed
     `input.namespace`: membership may only widen the search, never redirect it. Records on
     `run` whether that order is a priority and what the cap left out."""
-    from server.auth.fanout import with_addressed
-
     entity_filter = list(input.entity_filter or []) or list(llm_query_entities)
     namespaces = [input.namespace]
     if run.fanout_task is not None:
         fanout = await run.fanout_task
         namespaces = with_addressed(input.namespace, fanout.namespaces)
         run.order_authoritative = fanout.ordered
-        run.namespaces_skipped = [ns for ns in fanout.skipped if ns not in namespaces]
+        run.namespaces_skipped = [ns for ns in fanout.skipped if ns != input.namespace]
     actual_work["namespace_count"] = len(namespaces)
     return entity_filter, namespaces
 

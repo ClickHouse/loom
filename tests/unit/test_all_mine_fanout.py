@@ -15,7 +15,7 @@ import server.auth.context as ctx
 import server.auth.fanout as fanout_mod
 import server.identity.app.namespace_kinds as nk
 import server.identity.app.namespace_visibility as nv
-from server.auth.fanout import Fanout, namespaces_to_search, with_addressed
+from server.auth.fanout import Fanout, namespaces_to_search, private_first, with_addressed
 from server.auth.jwt import AuthInfo
 from server.knowledge.api.models_knowledge import KnowledgeSearchInput
 from server.knowledge.app import knowledge_search
@@ -144,6 +144,19 @@ def test_the_addressed_namespace_always_leads() -> None:
     assert with_addressed("mine", []) == ["mine"]
     assert with_addressed("mine", ["", "team"]) == ["mine", "team"]
     assert with_addressed("", ["team"]) == ["team"]
+
+
+def test_private_first_puts_the_addressed_namespace_in_the_first_pass() -> None:
+    names = ["team", "home", "wiki"]
+    visibility = {"home": "private", "team": "public", "wiki": "public"}
+    assert private_first("team", names, visibility) == (["team", "home"], ["wiki"])
+    assert private_first("team", names, {"team": "public", "wiki": "public"}) == (
+        ["team", "home"],
+        ["wiki"],
+    ), "a namespace missing from the map counts as private"
+    assert private_first("team", names, {}) == ([], []), "no answer: one flat pass"
+    everyone = dict.fromkeys(names, "public")
+    assert private_first("team", names, everyone) == ([], []), "nothing private: one flat pass"
 
 
 def test_namespaces_to_search_leads_with_the_addressed_namespace(

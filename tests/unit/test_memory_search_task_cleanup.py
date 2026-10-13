@@ -25,13 +25,12 @@ async def _forever(*_a: Any, **_k: Any) -> Any:
 @pytest.fixture
 def launched(monkeypatch: pytest.MonkeyPatch) -> list[scope._SearchRun]:
     """Scope reads that never finish, and the `_SearchRun` each pass launched."""
-    import server.auth.fanout as auth_fanout
     import server.memory.app.embedder_calibration as calibration
     import server.memory.app.rerank as rerank
 
     monkeypatch.setattr(calibration, "resolve_calibration", _forever)
     monkeypatch.setattr(rerank, "get_namespace_rerank_config", _forever)
-    monkeypatch.setattr(auth_fanout, "resolve_fanout", _forever)
+    monkeypatch.setattr(scope, "resolve_fanout", _forever)
 
     async def _resolve(inp: MemorySearchInput) -> Any:
         return inp, False, 0, None
