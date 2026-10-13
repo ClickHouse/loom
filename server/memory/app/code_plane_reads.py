@@ -74,7 +74,9 @@ async def lessons_for_symbol(
 
     trunk = code.trunk_namespace(org, code_namespace) or code_namespace
     stored, head = await asyncio.gather(
-        links_store.for_code_at(org, [trunk], list(paths), list(namespaces)),
+        links_store.for_paths(
+            org, [trunk], list(paths), include_former=True, namespaces=list(namespaces)
+        ),
         code.indexed_head(org, code_namespace),
     )
     links = [

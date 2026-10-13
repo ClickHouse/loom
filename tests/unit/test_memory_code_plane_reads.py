@@ -200,8 +200,8 @@ async def _lessons(
     from server.memory.store import code_links
     from server.memory.store import code_plane_reads as store
 
-    async def for_code_at(org, cns, paths, namespaces):
-        assert cns == ["code-a"] and paths == [path]
+    async def for_paths(org, cns, paths, *, include_former, namespaces):
+        assert cns == ["code-a"] and paths == [path] and include_former
         return links
 
     async def head(org, cns):
@@ -220,7 +220,7 @@ async def _lessons(
     async def current(org, rows):
         return rows
 
-    monkeypatch.setattr(code_links, "for_code_at", for_code_at)
+    monkeypatch.setattr(code_links, "for_paths", for_paths)
     monkeypatch.setattr(memory_links, "indexed_head", head)
     monkeypatch.setattr(memory_links, "parsed", parsed)
     monkeypatch.setattr(memory_links, "trunk_namespace", lambda org, n: "code-a")

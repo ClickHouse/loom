@@ -3,6 +3,7 @@ and loom.memory_code_link_queue (the memory writes the link worker reads)."""
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
@@ -257,42 +258,42 @@ async def for_memories(
     return _links(rows)
 
 
-async def for_code(
+async def for_paths(
     org: str,
     code_namespaces: Sequence[str] | None,
+    paths: Sequence[str],
     *,
-    paths: Sequence[str] | None = None,
+    include_former: bool = False,
     namespaces: Sequence[str] | None = None,
-    memory_keys: Sequence[str] | None = None,
     states: Sequence[str] | None = None,
-    checked_commits: Sequence[str] | None = None,
-    or_former_paths: bool = False,
     ch: _CHClient | None = None,
 ) -> list[LinkRow]:
-    """Live links of `code_namespaces` (None = every one), narrowed to `paths` (or, with
-    `or_former_paths`, links that lived there before a move or where they were made), the
-    memory `namespaces` and `memory_keys`, link `states` and the commits they were checked
-    at when given; by `paths` or by `checked_commits`, not both."""
-    if paths is not None and checked_commits is not None:
-        raise ValueError("for_code narrows by paths or by commits, not both")
+    """Live links of `code_namespaces` (None: every one) on `paths`; with
+    `include_former`, also those that were there before a move or were made there. Only
+    those of the memory `namespaces` and in `states`, when given."""
+    ch = ch or _default_client()
+    columns = ("path", "former_paths", "anchored_path") if include_former else ("path",)
+    narrow = {"namespace": namespaces, "state": states}
     # one read per column, each narrowed by its own index: an OR of them by none
-    columns = ("path", "former_paths", "anchored_path") if or_former_paths else ("path",)
-    rows: list[LinkRow] = []
-    for column in columns if paths is not None else ("path",):
-        rows += await _for_code(
-            ch or _default_client(),
-            org,
-            code_namespaces,
-            {
-                column: paths,
-                "namespace": namespaces,
-                "memory_key": memory_keys,
-                "state": states,
-                "checked_commit": checked_commits,
-            },
-        )
-    # a moved link answers to its path, its former ones and its anchor
-    return list({_key(r): r for r in rows}.values())
+    reads = await asyncio.gather(
+        *(_for_code(ch, org, code_namespaces, {column: paths, **narrow}) for column in columns)
+    )
+    return list({_key(r): r for rows in reads for r in rows}.values())
+
+
+async def in_code_namespace(
+    org: str, code_namespace: str, *, ch: _CHClient | None = None
+) -> list[LinkRow]:
+    """Every live link of `code_namespace`."""
+    return await _for_code(ch or _default_client(), org, [code_namespace], {})
+
+
+async def for_commits(
+    org: str, code_namespaces: Sequence[str], commits: Sequence[str], *, ch: _CHClient | None = None
+) -> list[LinkRow]:
+    """Live links of `code_namespaces` last checked at one of `commits`."""
+    narrow: dict[str, Sequence[str] | None] = {"checked_commit": commits}
+    return await _for_code(ch or _default_client(), org, code_namespaces, narrow)
 
 
 def _key(r: LinkRow) -> tuple[str, ...]:
@@ -648,27 +649,6 @@ async def embedding_identities(
         key = (str(r["namespace"]), str(r["memory_key"]), int(r["version"]))
         out[key].add((str(r["agent"]), str(r["user_id"]), str(r["session_id"])))
     return dict(out)
-
-
-async def for_code_at(
-    org: str,
-    code_namespaces: Sequence[str],
-    paths: Sequence[str],
-    namespaces: Sequence[str],
-    *,
-    ch: _CHClient | None = None,
-) -> list[LinkRow]:
-    """`for_code(..., or_former_paths=True)` with its three reads run at once."""
-    import asyncio
-
-    ch = ch or _default_client()
-    reads = await asyncio.gather(
-        *(
-            _for_code(ch, org, code_namespaces, {column: paths, "namespace": namespaces})
-            for column in ("path", "former_paths", "anchored_path")
-        )
-    )
-    return list({_key(r): r for rows in reads for r in rows}.values())
 
 
 async def stale_of_served(

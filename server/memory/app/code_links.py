@@ -784,14 +784,17 @@ async def _follow(
     kept = changed.paths if changed is not None else None
     # old and new paths: a cut pass may have moved links to a new path already
     paths = None if kept is None else sorted(set(kept) | {p for p in kept.values() if p})
-    rows = await store.for_code(org, [cns], paths=paths)
+    if paths is None:
+        rows = await store.in_code_namespace(org, cns)
+    else:
+        rows = await store.for_paths(org, [cns], paths)
     if kept is not None:
         rows += await _lost(org, cns, set(kept.values()) - {""})
         # made at a head the index reached first: this range need not show how their
         # files changed since
         made = [c for c in await code.commits_after(org, cns, checked, head) if c != head]
         if made:
-            rows += await store.for_code(org, [cns], checked_commits=made)
+            rows += await store.for_commits(org, [cns], made)
     unique = {(a["path"], a["qualified_name"], a["memory_id"]): a for a in rows}
     by_path: dict[str, list[LinkRow]] = defaultdict(list)
     for a in unique.values():
@@ -848,7 +851,7 @@ async def _retry_unparsed(org: str, cns: str, head: str, files: Files, result: P
     if not paths or not head:
         return
     by_commit: dict[str, list[LinkRow]] = defaultdict(list)
-    for a in await store.for_code(org, [cns], paths=sorted(paths)):
+    for a in await store.for_paths(org, [cns], sorted(paths)):
         by_commit[a["checked_commit"]].append(a)
     still: set[str] = set()
     for commit, rows in by_commit.items():

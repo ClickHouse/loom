@@ -264,8 +264,8 @@ async def _linked(input: MemoryForFileInput, path: str, nss: list[str]) -> dict[
     if not trunks:
         return {}
     try:
-        links = await code_links.for_code(
-            input.org, trunks, paths=[path], namespaces=nss, states=list(STATE_RANK)
+        links = await code_links.for_paths(
+            input.org, trunks, [path], namespaces=nss, states=list(STATE_RANK)
         )
         links = await current_links(input.org, links)
         seen = await readable_code(input.org, {a["code_namespace"] for a in links})

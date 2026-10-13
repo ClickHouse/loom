@@ -100,14 +100,8 @@ async def test_reads_are_scoped_as_their_callers_rely_on() -> None:
     assert await store.for_memories("o", [], ch=ch) == []
     await store.for_memories("o", ["m", "m"], ch=ch)
     assert ch.sql[-1][1]["ids"] == ["m"]
-    await store.for_code(
-        "o",
-        ["c"],
-        paths=["a.py"],
-        namespaces=["n"],
-        states=["changed"],
-        or_former_paths=True,
-        ch=ch,
+    await store.for_paths(
+        "o", ["c"], ["a.py"], include_former=True, namespaces=["n"], states=["changed"], ch=ch
     )
     # a link's path, its former ones and its anchor: a read each, narrowed by its own index
     reads = ch.sql[-3:]
@@ -126,9 +120,6 @@ async def test_reads_are_scoped_as_their_callers_rely_on() -> None:
             ["n"],
             ["changed"],
         )
-    await store.for_code("o", None, namespaces=["n"], memory_keys=["k"], ch=ch)
-    assert "memory_key IN {memory_key:Array(String)}" in ch.sql[-1][0]
-    assert ch.sql[-1][1]["memory_key"] == ["k"]
     await store.pending("o", "c", days=14, ch=ch)
     assert ch.sql[-1][1]["days"] == 14
     assert await store.policy_due("o", "c", ch=ch) == ["m"]
@@ -234,19 +225,17 @@ async def test_a_long_path_or_commit_list_is_read_in_slices_under_the_field_cap(
     row = {"org": "o", "code_namespace": "c", "path": paths[0], "qualified_name": "f"}
     row |= {"namespace": "n", "memory_id": "m"}
     ch = _CH({"FROM loom.memory_code_links": [[row]] * 50})
-    assert await store.for_code("o", ["c"], paths=paths, ch=ch) == [row]  # once, not per slice
+    assert await store.for_paths("o", ["c"], paths, ch=ch) == [row]  # once, not per slice
     bound = [p["path"] for _, p in ch.sql]
     assert len(bound) > 1 and [p for part in bound for p in part] == paths
     assert all(len(repr(part)) < 2 * _PARAM_BYTES for part in bound)
     ch = _CH()
-    await store.for_code("o", ["c"], checked_commits=commits, ch=ch)
+    await store.for_commits("o", ["c"], commits, ch=ch)
     assert len(ch.sql) > 1 and all("path" not in p for _, p in ch.sql)
     assert [c for _, p in ch.sql for c in p["checked_commit"]] == commits
     ch = _CH()
-    await store.for_code("o", ["c"], checked_commits=[], ch=ch)
+    await store.for_commits("o", ["c"], [], ch=ch)
     assert [p["checked_commit"] for _, p in ch.sql] == [[]]  # an empty list narrows to none
-    with pytest.raises(ValueError):
-        await store.for_code("o", ["c"], paths=paths, checked_commits=commits, ch=_CH())
 
 
 @pytest.mark.asyncio

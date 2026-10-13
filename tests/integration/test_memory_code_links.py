@@ -676,10 +676,15 @@ async def test_a_bulk_write_larger_than_a_page_is_linked_whole(env) -> None:
 
 
 async def _links_by_key(namespace: str) -> dict[str, list[dict[str, Any]]]:
-    from server.memory.store import code_links
+    from server.core.ch import get_client
 
+    rows = await get_client().query_all(
+        "SELECT * FROM loom.memory_code_links FINAL WHERE tombstoned_at IS NULL "
+        "AND org = {org:String} AND namespace = {ns:String}",
+        params={"org": ORG, "ns": namespace},
+    )
     out: dict[str, list[dict[str, Any]]] = {}
-    for a in await code_links.for_code(ORG, None, namespaces=[namespace]):
+    for a in rows:
         out.setdefault(str(a["memory_key"]), []).append(a)
     return out
 

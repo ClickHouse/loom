@@ -185,7 +185,7 @@ async def test_a_link_read_that_fails_leaves_the_file_match_standing(
     async def down(*a: Any, **k: Any) -> Any:
         raise ConnectionError("clickhouse")
 
-    monkeypatch.setattr(store_links, "for_code", one_link)
+    monkeypatch.setattr(store_links, "for_paths", one_link)
     monkeypatch.setattr(app_reads, "current_links", down)
     monkeypatch.setattr("server.code.app.memory_links.trunk_namespace", lambda org, ns: "code-a")
     request = MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp", extra_namespaces=["x"])

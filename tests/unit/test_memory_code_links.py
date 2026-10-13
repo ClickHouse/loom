@@ -141,6 +141,23 @@ def _cleared(world) -> list[str]:
     return sorted({r["memory_id"] for r in world.cleared if r["policy_due"] == 0})
 
 
+def _stub_reads(monkeypatch, read) -> None:
+    """Route the store's link reads by path, code namespace and commit to `read`, a
+    fake taking them as keywords."""
+
+    async def for_paths(org, cns, paths, **kw):
+        return await read(org, cns, paths=paths, **kw)
+
+    async def in_code_namespace(org, cns):
+        return await read(org, [cns])
+
+    async def for_commits(org, cns, commits):
+        return await read(org, cns, checked_commits=commits)
+
+    for fn in (for_paths, in_code_namespace, for_commits):
+        monkeypatch.setattr(code_links.store, fn.__name__, fn)
+
+
 async def _none_lost(org, cns, *, days):
     return []
 
@@ -931,7 +948,7 @@ async def test_a_recheck_cut_short_resumes_after_the_last_path_it_wrote(monkeypa
         return []
 
     monkeypatch.setattr(code_links.code, "kept_paths", kept_paths)
-    monkeypatch.setattr(code_links.store, "for_code", for_code)
+    _stub_reads(monkeypatch, for_code)
     monkeypatch.setattr(code_links.store, "lost", _none_lost)
     monkeypatch.setattr(code_links, "_recheck", recheck)
     monkeypatch.setattr(code_links, "_current_moves", nothing)
@@ -1593,7 +1610,7 @@ async def test_a_resumed_recheck_reads_the_links_a_cut_pass_already_moved(monkey
         return None
 
     monkeypatch.setattr(code_links.code, "kept_paths", kept_paths)
-    monkeypatch.setattr(code_links.store, "for_code", for_code)
+    _stub_reads(monkeypatch, for_code)
     monkeypatch.setattr(code_links.store, "lost", _none_lost)
     monkeypatch.setattr(code_links.code, "link_cursor", get)
     monkeypatch.setattr(code_links.code, "set_link_cursor", put)
@@ -1649,7 +1666,7 @@ def _repository(monkeypatch, *, head: str, checked: str, cursor: str, diffs: dic
     ):
         monkeypatch.setattr(code_links, name, nothing)
     monkeypatch.setattr(code_links, "_recheck", recheck)
-    monkeypatch.setattr(code_links.store, "for_code", for_code)
+    _stub_reads(monkeypatch, for_code)
     monkeypatch.setattr(code_links.store, "lost", _none_lost)
     for name, fn in (
         ("kept_paths", kept_paths),
@@ -1957,7 +1974,7 @@ async def test_a_full_recheck_after_a_lost_head_resumes_as_one(monkeypatch) -> N
     async def has(self, commit):
         return commit != "gone"
 
-    monkeypatch.setattr(code_links.store, "for_code", every)
+    _stub_reads(monkeypatch, every)
     monkeypatch.setattr(code_links, "_recheck", recheck)
     monkeypatch.setattr(code_links.Files, "has", has)
     budget, result = code_links.Budget(0), code_links.PassResult()
@@ -2367,7 +2384,7 @@ async def test_a_link_made_inside_the_range_follows_its_own_commit(
     async def current(org, found):
         return found
 
-    monkeypatch.setattr(code_links.store, "for_code", for_code)
+    _stub_reads(monkeypatch, for_code)
     monkeypatch.setattr(code_links.store, "lost", _none_lost)
     monkeypatch.setattr(code_links.code, "candidates", none)
     monkeypatch.setattr(code_links.code, "link_cursor", get)
