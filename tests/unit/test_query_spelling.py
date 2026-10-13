@@ -283,7 +283,7 @@ async def test_a_failed_rewrite_embed_serves_the_query_as_typed(monkeypatch):
     assert await app.embed_query(embed, "datalakecatalog", _input(), "m") == ([1.0], None)
 
 
-async def test_lookups_failing_together_count_and_warn_once(monkeypatch, caplog):
+async def test_lookups_failing_together_count_as_one_failure(monkeypatch, caplog):
     async def spelling_rows(_ch, _q, _tokens):
         await asyncio.sleep(0.05)
         raise TimeoutError()
@@ -294,9 +294,10 @@ async def test_lookups_failing_together_count_and_warn_once(monkeypatch, caplog)
     with caplog.at_level(logging.DEBUG, logger=app.log.name):
         got = await asyncio.gather(*(_spellings(_input(q)) for q in queries))
     assert got == [None] * 20
-    # Twenty in a row: the namespace backs off, and warns once.
-    assert app._failed[("o", "ns")][1] > time.monotonic()
-    assert [r.levelno for r in caplog.records].count(logging.WARNING) == 1
+    # One slow moment, twenty lookups caught in it: one failure, no back-off, no warning.
+    assert app._failed[("o", "ns")][0] == 1
+    assert app._failed[("o", "ns")][1] <= time.monotonic()
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]
 
 
 class _FakeEmbedder:
@@ -626,3 +627,22 @@ def test_one_slow_lookup_skips_only_its_own_query(monkeypatch):
     # The next query reads at once, and its success ends the streak.
     assert asyncio.run(_spellings(_input())) == {"datalakecatalog": "DataLakeCatalog"}
     assert ("o", "ns") not in app._failed
+
+
+async def test_one_stall_that_catches_several_lookups_does_not_switch_the_namespace_off(
+    monkeypatch,
+):
+    stalled = True
+
+    async def spelling_rows(_ch, _q, _tokens):
+        if stalled:
+            await asyncio.sleep(5)  # past the lookup's deadline
+        return {"DataLakeCatalog": 7}
+
+    monkeypatch.setattr(app, "spelling_rows", spelling_rows)
+    monkeypatch.setattr(app, "get_client", lambda: None)
+    monkeypatch.setattr(app, "_LOOKUP_BOUND_S", 0.05)
+    words = ["iceberg", "parquet", "keeper"]
+    assert await asyncio.gather(*(_spellings(_input(w)) for w in words)) == [None] * 3
+    stalled = False
+    assert await _spellings(_input()) == {"datalakecatalog": "DataLakeCatalog"}

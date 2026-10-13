@@ -26,8 +26,8 @@ are in [troubleshooting](../operations/troubleshooting.md).
 
 **Retryable answers.** `OVERLOADED`, `AUTH_UNAVAILABLE` and `RATE_LIMITED` carry
 `Retry-After` (and `retry_after_s`); retry after the hint. `SCHEMA_PENDING` clears when an
-operator applies the named migration. `EMBED_TIMEOUT` (the SDKs retry it for idempotent
-ops) is worth one more try, then a back-off.
+operator applies the named migration. `EMBED_TIMEOUT`: a raw HTTP or MCP
+caller retries once; an SDK caller has already retried (idempotent ops), so it backs off.
 `BACKEND_TIMEOUT` is retryable only for an `idempotent` op, with an idempotency key for a
 write. The full list is in the [errors reference](../reference/errors.md).
 

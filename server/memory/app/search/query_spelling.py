@@ -84,9 +84,9 @@ async def _lookup(
     instead ({} when none does), or None when the lookup did not answer (it
     failed or ran past its deadline, now or recently enough that the
     namespace is backing off). The answer is cached under `key`."""
-    now = time.monotonic()
+    started = time.monotonic()
     where = (q.org, q.namespace)
-    if _failed.get(where, (0, 0.0))[1] > now:
+    if _failed.get(where, (0, 0.0))[1] > started:
         return None
     try:
         # The outer bound also covers the wait for a pool slot and a
@@ -95,12 +95,12 @@ async def _lookup(
             with statement_timeout(_LOOKUP_BOUND_S):
                 rows = await spelling_rows(get_client(), q, tokens)
     except Exception as e:  # noqa: BLE001 — the spelling is a recall aid; the query embeds as typed
-        # Read after the await: the namespace may have started backing off
-        # while this lookup ran.
+        # Read after the await. A failure recorded since this lookup started
+        # (or a back-off begun) is the same slow moment, so it counts once.
         failures, retry_at = _failed.get(where, (0, 0.0))
-        now = time.monotonic()
-        if retry_at > now:
+        if retry_at > started:
             return None
+        now = time.monotonic()
         if retry_at + _MAX_BACKOFF_S < now:
             failures = 0  # the last streak ended over an hour ago: this one is new
         failures += 1
@@ -122,7 +122,7 @@ async def _lookup(
         return None
     _failed.pop(where, None)
     spellings = pick_spellings(tokens, rows)
-    _cache[key] = (now + _CACHE_TTL_S, spellings)
+    _cache[key] = (started + _CACHE_TTL_S, spellings)
     _cache.move_to_end(key)
     while len(_cache) > _CACHE_SIZE:
         _cache.popitem(last=False)
@@ -169,7 +169,7 @@ async def embed_query(
             failure = e
         if as_typed is None and isinstance(failure, EmbedTimeoutError):
             # The provider hangs: only an embedding-cache hit can still answer
-            # as typed, and one answers well inside the lookup's bound.
+            # as typed, and one answers within _CACHE_HIT_GRACE_S.
             try:
                 async with asyncio.timeout(_CACHE_HIT_GRACE_S):
                     return await embed(text), None
