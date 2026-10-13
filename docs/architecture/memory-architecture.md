@@ -225,10 +225,10 @@ Then by label:
 - **`contradiction`.** When the stored row is the later one, the new row lands
   `superseded` behind it (`invalid_at` = the write time, as for any retirement). A
   pinned new row stays live, and so does the later stored row; an older stored row it
-  contradicts still retires. The superseded entry's result answers `conflict_verdict:
-superseded` with `superseded_by` and no peers, and the row leaves the write's conflict
-  marks, refines and value-update linking. When the new row is the later one, the stored
-  row retires after the insert.
+  contradicts still retires. The superseded entry's result answers
+  `conflict_verdict: superseded` with `superseded_by` and no peers, and the row leaves
+  the write's conflict marks, refines and value-update linking. When the new row is the
+  later one, the stored row retires after the insert.
 - **`elaboration` by the newer row.** The older row retires.
 - **Anything else.** `restatement`, `related`, `unrelated` and a peer the judge left
   unlabelled all keep both rows. The flag path reads an unlabelled peer as a
@@ -237,11 +237,11 @@ superseded` with `superseded_by` and no peers, and the row leaves the write's co
 A stored row retires after the insert only if it isn't locked, and wasn't pinned,
 retired or revised since the judge read it (the retirement reads it read-your-writes).
 It also leaves the write's other conflict marks and refines, so no other verdict of the
-write re-emits it; an entry left with no peer answers `clear`. `superseded_by` names the
-row that was the later statement when the retirement happened. That row can itself
-retire later, so a reader follows the chain. A row labelled `sensitivity='high'` is
-never judged or read as a peer, so its value never reaches the LLM. The read is bounded
-by the writer's read scope, like every same-key retirement.
+write re-emits it; an entry whose key keeps no conflict mark or refine answers `clear`.
+`superseded_by` names the row that was the later statement when the retirement happened.
+That row can itself retire later, so a reader follows the chain. A row labelled
+`sensitivity='high'` is never judged or read as a peer, so its value never reaches the
+LLM. The read is bounded by the writer's read scope, like every same-key retirement.
 
 This costs one judge call per new row that has such peers, on top of the bulk conflict
 check's own calls. The calls are bounded by the same settings
