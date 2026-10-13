@@ -64,6 +64,7 @@ async def corpus_spellings(input: MemorySearchInput, embedding_model: str) -> di
     key = (repr(q), tuple(tokens))
     hit = _cache.get(key)
     if hit is not None and hit[0] > now:
+        _cache.move_to_end(key)
         return hit[1]
     where = (q.org, q.namespace)
     if _failed.get(where, (0, 0.0))[1] > now:
@@ -127,6 +128,11 @@ async def embed_query(
     try:
         as_typed = asyncio.create_task(embed(text))
         tasks.append(as_typed)
+        # An embed that fails at once fails the search at once, not after the lookup.
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        error = as_typed.exception() if as_typed.done() else None
+        if error is not None:
+            raise error
         spellings = await lookup
         if not spellings:
             return await as_typed, spellings

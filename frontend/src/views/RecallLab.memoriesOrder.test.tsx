@@ -125,7 +125,7 @@ describe("Recall Lab and the Memories list", () => {
     render(<RecallLab />);
     await userEvent.type(screen.getByLabelText("Recall query"), "Azure");
     await waitFor(() => expect(shownKeys()).toEqual(["newer_azure", "older_azure"]), { timeout: 3000 });
-    expect(screen.queryByText("search down")).toBeNull();
+    expect(screen.getByText(/Ranked search failed .*; showing the keyword matches only\./)).toBeInTheDocument();
   });
 
   it("send the text the Memories list sends: whitespace collapsed, tag: and agent: left out", async () => {

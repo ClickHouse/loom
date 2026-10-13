@@ -870,8 +870,9 @@ class MemorySearchTraceOutput(BaseModel):
     # Query words embedded in the corpus's spelling instead of as typed
     # (`memory_search_query_spelling_max_words`); {} when none was.
     query_spellings: dict[str, str] = Field(default_factory=dict)
-    # True when the spelling lookup did not answer (failed, timed out, or the
-    # namespace is backing off) and the query was embedded as typed.
+    # True when the query was embedded as typed because the spelling lookup
+    # did not answer (failed, timed out, namespace backing off) or the
+    # respelled text's embed failed.
     query_spellings_skipped: bool = False
 
 

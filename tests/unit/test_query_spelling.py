@@ -383,3 +383,50 @@ async def test_an_embed_that_raises_before_awaiting_leaves_no_task_running(monke
     with pytest.raises(RuntimeError, match="no embedder"):
         await app.embed_query(embed, "datalakecatalog", _input(), "m")
     assert asyncio.all_tasks() == before
+
+
+async def test_a_failed_rewrite_embed_still_counts_both_calls(monkeypatch):
+    from server.memory.app.search.embed import _embed_search_query
+
+    _lookup_returns(monkeypatch, {"DataLakeCatalog": 9})
+
+    class Flaky(_FakeEmbedder):
+        async def embed(self, text: str) -> list[float]:
+            if text == "DataLakeCatalog":
+                raise RuntimeError("provider error")
+            return [1.0]
+
+    actual_work: dict[str, Any] = {"embedding_calls": 0}
+    clock = SimpleNamespace(mark=lambda _stage: None)
+    no_hyde = _input().model_copy(update={"hyde": False})
+    vec = await _embed_search_query(
+        no_hyde, Flaky(), "datalakecatalog", "", None, actual_work, clock
+    )
+    assert vec == [1.0]
+    assert actual_work == {"embedding_calls": 2, "query_spellings_skipped": True}
+
+
+async def test_an_embed_that_fails_at_once_does_not_wait_for_the_lookup(monkeypatch):
+    async def spelling_rows(_ch, _q, _tokens):
+        await asyncio.sleep(5)
+        return {}
+
+    monkeypatch.setattr(app, "spelling_rows", spelling_rows)
+    monkeypatch.setattr(app, "get_client", lambda: None)
+
+    async def embed(_text: str) -> list[float]:
+        raise RuntimeError("401 from the provider")
+
+    t = time.monotonic()
+    with pytest.raises(RuntimeError, match="401"):
+        await app.embed_query(embed, "datalakecatalog", _input(), "m")
+    assert time.monotonic() - t < 0.1
+
+
+def test_a_cache_hit_keeps_the_answer_from_being_evicted_first(monkeypatch):
+    _lookup_returns(monkeypatch, {"DataLakeCatalog": 7})
+    monkeypatch.setattr(app, "_CACHE_SIZE", 2)
+    first, second, third = (_input(q) for q in ("datalakecatalog", "iceberg", "parquet"))
+    for inp in (first, second, first, third):
+        asyncio.run(app.corpus_spellings(inp, "m"))
+    assert [k[1] for k in app._cache] == [("datalakecatalog",), ("parquet",)]

@@ -299,6 +299,8 @@ export function RecallLab() {
   const [model, setModel] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The ranked search failed while keyword rows stood: those still show, with this said.
+  const [rankedError, setRankedError] = useState<string | null>(null);
   // A result set the search abstained on stays collapsed until the user opts in.
   const [showWeak, setShowWeak] = useState(false);
 
@@ -309,6 +311,7 @@ export function RecallLab() {
     if (q.length < 2) {
       setRows(null);
       setError(null);
+      setRankedError(null);
       // A query cleared mid-flight drops that answer below, so its "Scoring…" ends here.
       setLoading(false);
       return;
@@ -320,6 +323,7 @@ export function RecallLab() {
     const t = setTimeout(async () => {
       setLoading(true);
       setError(null);
+      setRankedError(null);
       try {
         // The two reads the Memories list makes for a search, with the same arguments.
         const search = searchMemory(identity, q, { top_k: 50, explain: true, legs: ["memory"], signal: ac.signal });
@@ -331,7 +335,13 @@ export function RecallLab() {
           signal: ac.signal,
         }).catch(() => null);
         // As on the Memories list, a failed ranked search keeps the keyword rows.
-        const r = await (kw?.entries.length ? search.catch(() => null) : search);
+        let failure: string | null = null;
+        const r = await (kw?.entries.length
+          ? search.catch((e: unknown) => {
+              failure = humanizeError(e);
+              return null;
+            })
+          : search);
         if (ac.signal.aborted) return;
         const keyword = new Map((kw?.entries ?? []).map((e) => [e.memory_key, e] as const));
         const ranked = new Map((r?.results ?? []).map((h) => [h.memory_key, h] as const));
@@ -352,6 +362,7 @@ export function RecallLab() {
         // Keyword matches are real matches: the list hedges only when there are none.
         setAbstain(Boolean(r?.abstain) && keyword.size === 0);
         setModel(r?.embedding_model ?? "");
+        setRankedError(failure);
       } catch (e) {
         if (ac.signal.aborted) return;
         setError(humanizeError(e));
@@ -427,6 +438,11 @@ export function RecallLab() {
 
       {tab === "score" && loading && <div className="text-sm text-[var(--color-text-muted)] px-1">Scoring…</div>}
       {tab === "score" && error && <div className="text-sm text-[var(--color-danger)] px-1">{error}</div>}
+      {tab === "score" && rankedError && !loading && (
+        <div className="mb-2 text-xs text-[var(--color-text-muted)] px-1">
+          Ranked search failed ({rankedError}); showing the keyword matches only.
+        </div>
+      )}
 
       {tab === "score" && rows != null && !loading && !error && rows.length === 0 && (
         <EmptyState
