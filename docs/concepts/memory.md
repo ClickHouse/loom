@@ -300,7 +300,8 @@ or shrunk (`fetch` -> `fetch_all`), a `v` version bumped (`parse_v1` -> `parse_v
 keeping a word past the ones both begin with (`fetch_rows` -> `load_rows`, not
 `fetch_users`). A link already `missing` is found again only when its own name comes
 back, in its own file or, for 30 days after it went missing, in another; never by a
-definition added later.
+definition added later. An `unresolved` link is weighed against new definitions in
+other files for those 30 days too, and after them only when its own file changes.
 
 Each link records the fingerprint rules its hashes were computed with. After an upgrade
 the worker re-hashes every link from the commits its hashes were taken at, including the

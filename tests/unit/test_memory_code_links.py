@@ -141,7 +141,7 @@ def _cleared(world) -> list[str]:
     return sorted({r["memory_id"] for r in world.cleared if r["policy_due"] == 0})
 
 
-async def _none_lost(org, cns, *, missing_days):
+async def _none_lost(org, cns, *, days):
     return []
 
 
@@ -1021,8 +1021,8 @@ async def test_a_missing_link_named_in_a_changed_file_and_every_unresolved_one_a
         )
     )
 
-    async def read_lost(org, cns, *, missing_days):
-        assert missing_days == code_links._MISSING_SEARCHED_DAYS
+    async def read_lost(org, cns, *, days):
+        assert days == code_links._LOST_SEARCHED_DAYS
         return lost
 
     async def candidates(org, cns, *, names):

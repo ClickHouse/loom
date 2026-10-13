@@ -376,14 +376,15 @@ async def pending(
 
 
 async def lost(
-    org: str, code_namespace: str, *, missing_days: int, ch: _CHClient | None = None
+    org: str, code_namespace: str, *, days: int, ch: _CHClient | None = None
 ) -> list[LinkRow]:
-    """The namespace's unresolved links, and those missing for at most `missing_days`."""
+    """The namespace's unresolved and missing links that entered that state at most
+    `days` ago."""
     rows = await (ch or _default_client()).query_all(
         f"SELECT * {_LIVE} AND org = {{org:String}} AND code_namespace = {{cns:String}} "
-        "AND (state = 'unresolved' OR (state = 'missing' "
-        "AND checked_at > now() - INTERVAL {days:UInt32} DAY))",
-        params={"org": org, "cns": code_namespace, "days": int(missing_days)},
+        "AND state IN ('unresolved', 'missing') "
+        "AND checked_at > now() - INTERVAL {days:UInt32} DAY",
+        params={"org": org, "cns": code_namespace, "days": int(days)},
     )
     return _links(rows)
 
