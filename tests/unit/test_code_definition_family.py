@@ -172,6 +172,17 @@ def test_reading_a_class_is_linear_in_its_members() -> None:
     assert work(800) / work(100) < 12
 
 
+def test_reading_a_namespace_is_linear_in_its_rows() -> None:
+    from tests.unit.step_count import steps
+
+    # each row ends on `;`, a token of the namespace body, not of the class
+    def work(n: int) -> int:
+        src = "namespace N {\n" + "".join(f"class C{i} {{ int m; }};\n" for i in range(n)) + "}\n"
+        return steps(lambda: file_definitions("a.cpp", src.encode()))
+
+    assert work(800) / work(100) < 12
+
+
 @pytest.mark.parametrize(
     ("path", "src"),
     [

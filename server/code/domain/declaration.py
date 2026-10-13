@@ -443,14 +443,20 @@ class Declarations:
         first = len(text) - len(text.lstrip())
         last = max(first, len(text.rstrip()))
         stack = [self.root.descendant_for_point_range((row, first), (row, last))]
+        cursor = self.root.walk()
         while stack:
             n = stack.pop()
-            if n.start_point[0] > row or n.end_point[0] < row:
-                continue
             if n.type in _DECLARATIONS and (named := _name_node(n)) is not None:
                 if named.start_point[0] == row:
                     out[self._text(named)].append((n, named))
-            stack.extend(n.children)
+            # only the children on the row: a namespace body holds thousands of rows
+            cursor.reset(n)
+            if cursor.goto_first_child_for_point((row, 0)) is None:
+                continue
+            while cursor.node.start_point[0] <= row:
+                stack.append(cursor.node)
+                if not cursor.goto_next_sibling():
+                    break
         self._rows[row] = out
         return out
 
