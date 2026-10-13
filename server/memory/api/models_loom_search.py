@@ -18,8 +18,9 @@ class SearchInput(BaseModel):
     """Search every plane of the caller's Loom content in one call.
 
     `namespace` is the namespace the search addresses (and is authorized
-    against); `namespace_scope="all_mine"` also reads every memory-kind
-    namespace the caller can read. `page` is a `memory.next_page` handle
+    against); `namespace_scope="all_mine"` also reads the caller's own
+    memory-kind namespaces (docs/concepts/identities-and-namespaces.md,
+    "Reading several namespaces"). `page` is a `memory.next_page` handle
     from an earlier answer."""
 
     org: str
@@ -31,8 +32,8 @@ class SearchInput(BaseModel):
     top_k: int = Field(default=5, ge=1, le=100)
     # Tag filter for the memory and knowledge legs; profile and conversations ignore it.
     tags: list[str] = Field(default_factory=list)
-    # `this` searches `namespace` only; `all_mine` (the default) also reads every
-    # memory-kind namespace the caller can read.
+    # `this` searches `namespace` only; `all_mine` (the default) also reads the
+    # caller's own memory-kind namespaces.
     namespace_scope: Literal["this", "all_mine"] = "all_mine"
     # Named `memory.search` preset for the memory leg (`fast`, `balanced`, `quality`, ...);
     # empty = the server's defaults.

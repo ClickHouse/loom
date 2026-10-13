@@ -30,13 +30,16 @@ class MemorySearchInput(BaseModel):
 
     `namespace_scope` controls which namespaces the query spans:
       • "this"      — `input.namespace` only.
-      • "all_mine"  — every namespace the caller belongs to (JWT + grants).
+      • "all_mine"  — every namespace the caller belongs to (JWT + grants), of
+                      the fan-out kinds and up to
+                      `memory_search_fanout_max_namespaces` (the rest in
+                      `namespaces_skipped`).
       • unset       — the deployment default (setting
                       `memory_search_default_namespace_scope`, default
                       "this").
-    The response names the namespaces actually searched
-    (`namespaces_searched`) and marks every hit from a namespace other than
-    the addressed one with `score_components.foreign = 1.0`.
+    The response names the namespaces in scope (`namespaces_searched`) and
+    marks every hit from a namespace other than the addressed one with
+    `score_components.foreign = 1.0`.
     """
 
     org: str

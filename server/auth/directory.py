@@ -1,4 +1,5 @@
-"""The namespace facts the authorization gate reads.
+"""The namespace facts the authorization gate reads, and the ones an all_mine
+fan-out narrows by (kind, visibility).
 
 The gate is platform code; what it decides on belongs to the domains: which
 namespaces of an org are restricted (the directory rows and the code-plane

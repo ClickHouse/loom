@@ -20,6 +20,7 @@ lives in the token and `ctx.namespaces`.
 Fails open by design: on any error the caller gets no answer for that namespace
 and falls back to the flat concurrent fan-out, which searches everything. That
 is the safe direction — it can only search more than needed, never less.
+Under the all_mine fan-out cap a failed lookup cuts in plain order instead.
 """
 
 from __future__ import annotations

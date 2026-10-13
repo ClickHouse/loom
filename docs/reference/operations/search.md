@@ -22,7 +22,7 @@ Search every plane of the caller's Loom content in one call.
 | `query` | `str` | required | The question, searched in every plane at once. |
 | `top_k` | `int` | `5` | At most this many hits per section (1-100); the tracker leg caps it at 10. |
 | `tags` | `list[str]` | *(computed)* | Tag filter for the memory and knowledge legs; profile and conversations ignore it. |
-| `namespace_scope` | `Literal['this', 'all_mine']` | `'all_mine'` | `this` searches `namespace` only; `all_mine` (the default) also reads every memory-kind namespace the caller can read. |
+| `namespace_scope` | `Literal['this', 'all_mine']` | `'all_mine'` | `this` searches `namespace` only; `all_mine` (the default) also reads the caller's own memory-kind namespaces. |
 | `recipe` | `Literal['', 'fast', 'balanced', 'quality', 'verbatim', 'code', 'temporal', 'graph']` | `''` | Named `memory.search` preset for the memory leg (`fast`, `balanced`, `quality`, ...); empty = the server's defaults. |
 | `bodies` | `Literal['full', 'excerpt', 'none', 'unit']` | `'excerpt'` | What each memory hit carries: `excerpt` (the first 200 characters), `full` (the stored clip), `none` (keys and scores only) or `unit` (whole values within a budget). |
 | `explain` | `bool` | `False` | Every section unwithheld, and the ranking terms of each memory hit. |

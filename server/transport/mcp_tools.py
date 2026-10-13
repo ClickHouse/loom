@@ -566,6 +566,10 @@ def _memory_section_lines(
     return out
 
 
+# How many skipped namespaces the loom_search text names before "and N more".
+_SKIPPED_NAMED = 5
+
+
 def search_answer(
     payload: dict[str, Any], arguments: dict[str, Any], namespace: str, mcp_session_id: str
 ) -> dict[str, Any]:
@@ -588,9 +592,12 @@ def search_answer(
         f"{'' if (mem_n + prof_n + know_n + conv_n) == 1 else 's'}.{withheld_note(payload)}"
     ]
     if skipped := payload["memory"].get("namespaces_skipped"):
+        named = ", ".join(skipped[:_SKIPPED_NAMED])
+        more = len(skipped) - _SKIPPED_NAMED
         lines.append(
-            f"Not read, over the fan-out cap: {', '.join(skipped)}. "
-            "Pass one as `namespace` to search it."
+            f"Not read, over the fan-out cap: {named}"
+            + (f" and {more} more (memory.namespaces_skipped)" if more > 0 else "")
+            + ". Pass one as `namespace` to search it."
         )
     if prof_hits:
         lines.append("\nProfile hits:")

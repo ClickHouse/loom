@@ -1,6 +1,6 @@
 """What a namespace_scope=all_mine search reads: the single user's own
 namespaces when auth is off, at most `memory_search_fanout_max_namespaces`
-of the caller's namespaces (the rest named, never dropped silently), and
+of the caller's namespaces (memory search names the rest), and
 always the namespace the call addressed."""
 
 from __future__ import annotations
@@ -133,6 +133,12 @@ def test_the_loom_search_text_names_the_skipped_namespaces() -> None:
     answer = mcp_tools.search_answer(payload, {"query": "q"}, "local", "session-1")
     text = answer["content"][0]["text"]
     assert "Not read, over the fan-out cap: work, home." in text
+
+    payload["memory"]["namespaces_skipped"] = [f"ns-{i}" for i in range(8)]
+    text = mcp_tools.search_answer(payload, {"query": "q"}, "local", "session-1")["content"][0][
+        "text"
+    ]
+    assert "ns-0, ns-1, ns-2, ns-3, ns-4 and 3 more (memory.namespaces_skipped)." in text
 
 
 def test_an_unaddressed_search_starts_at_home_even_past_the_cap(
