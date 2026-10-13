@@ -24,7 +24,10 @@ class PreparedDDL:
 
     def projection(self, columns: tuple[str, ...], dimensions: int) -> str:
         return ", ".join(
-            f"if(empty(`{column}`), arrayResize(`{column}`, {dimensions}, 0), `{column}`)"
+            # Empty and all-zero vectors are placeholders (server/core/vectors/placeholders.py);
+            # a coded column takes them only at its own width.
+            f"if(arrayAll(x -> x = 0, `{column}`), "
+            f"arrayResize(`{column}`, {dimensions}, 0), `{column}`)"
             if column in self.padded_columns
             else f"`{column}`"
             for column in columns

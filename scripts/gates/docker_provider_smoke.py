@@ -137,8 +137,8 @@ def smoke_providers(base: str, compose: list[str]) -> None:
     # A key-only change needs neither rebuild nor container recreation.
     rotation = dashboard_action(base, "apply", "docker-smoke-8", "8", "docker-smoke-rotated-key")
     assert rotation["state"] == "active", rotation
-    control(compose, "docker-smoke-12")
-    saved = dashboard_action(base, "apply", "docker-smoke-12", "12")
+    control(compose, "docker-smoke-16")
+    saved = dashboard_action(base, "apply", "docker-smoke-16", "16")
     assert saved["state"] == "queued", saved
     failed = wait_status(
         base, lambda row: bool(row["pending"] and row["pending"]["state"] == "failed")
@@ -168,14 +168,14 @@ def smoke_providers(base: str, compose: list[str]) -> None:
     run(*compose, "kill", "-s", "SIGKILL", "loom")
     run(*compose, "up", "-d", "--wait", "--wait-timeout", "180", "loom")
     status = wait_status(base, lambda row: row["pending"] is None)
-    assert status["embedding_model"] == "docker-smoke-12" and status["embedding_dimensions"] == 12
+    assert status["embedding_model"] == "docker-smoke-16" and status["embedding_dimensions"] == 16
     wait_admission(base)
-    data_check(compose, "docker-smoke-12", "12")
+    data_check(compose, "docker-smoke-16", "16")
     run(*compose, "up", "-d", "--force-recreate", "--wait", "--wait-timeout", "180", "loom")
     status = request(base, "/v1/admin/models")
-    assert status["source"] == "dashboard" and status["embedding_model"] == "docker-smoke-12"
+    assert status["source"] == "dashboard" and status["embedding_model"] == "docker-smoke-16"
     wait_admission(base)
-    data_check(compose, "docker-smoke-12", "12")
+    data_check(compose, "docker-smoke-16", "16")
     reset = dashboard_action(base, "reset")
     assert reset["state"] == "queued", reset
     status = wait_status(

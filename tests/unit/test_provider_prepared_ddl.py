@@ -32,7 +32,8 @@ def test_resizes_only_fixed_arity_codec_and_retains_every_other_clause(method, c
     assert plan.sql == expected
     assert plan.padded_columns == ("embedding",)
     assert plan.projection(("memory_key", "embedding", "version"), 8) == (
-        "`memory_key`, if(empty(`embedding`), arrayResize(`embedding`, 8, 0), `embedding`), `version`"
+        "`memory_key`, if(arrayAll(x -> x = 0, `embedding`), arrayResize(`embedding`, 8, 0), "
+        "`embedding`), `version`"
     )
 
 
