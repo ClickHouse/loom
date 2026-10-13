@@ -58,13 +58,17 @@ async def _link_writes(batch: int, result: PassResult) -> None:
     if queue is None:
         # first pass: the queue starts at its tail; everything before it is backfilled
         queue, backfill = list(await store.queue_tail() or []), {}
-    if queue and int(queue[0]) < await store.queue_horizon() and not backfill.get("stall"):
+    behind = bool(queue) and int(queue[0]) < await store.queue_horizon()
+    if behind and not backfill.get("stall"):
         # stopped longer than the queue's TTL: writes may have aged out, before or after
         # where a scan in progress is; a fresh scan, once while the queue catches up
         backfill = {"stall": True}
+    elif not behind and backfill.get("stall"):
+        backfill = {k: v for k, v in backfill.items() if k != "stall"}  # caught up
+    stall = {"stall": True} if backfill.get("stall") else {}
     configured = code.configured_code_namespaces()
     if {tuple(r) for r in configured} - {tuple(r) for r in await repos_cursor.read()}:
-        backfill = {}  # a repository configured since: memories read before it now resolve
+        backfill = stall  # a repository configured since: memories read before it now resolve
     if backfill != stored:
         # owed before the queue or the repositories are acknowledged: a pass that fails
         # after either still owes it
@@ -81,8 +85,7 @@ async def _link_writes(batch: int, result: PassResult) -> None:
         if not backfill.get("done"):
             after = tuple(backfill.get("after") or ()) or None
             nxt = await code_links.backfill(after, batch, result)
-            stall = {"stall": True} if backfill.get("stall") else {}
-            backfill = {"done": True} if nxt is None else {"after": list(nxt), **stall}
+            backfill = {"done": True, **stall} if nxt is None else {"after": list(nxt), **stall}
         await backfill_cursor.write(backfill)
     swept = await code_links.sweep_erased(await sweep_cursor.read(), batch, result)
     await sweep_cursor.write(swept)

@@ -3453,3 +3453,47 @@ async def test_the_policy_drops_the_links_of_a_memory_that_is_gone(world) -> Non
         ("deleted", True),
     }
 
+
+@pytest.mark.asyncio
+async def test_a_stalled_queue_is_backfilled_once_while_it_catches_up(monkeypatch) -> None:
+    from server.memory.workers import code_links as worker
+
+    cursors = {"queue": json.dumps([100, 0, "", "", "", "", "", ""]), "repos": '[["o", "c"]]'}
+    horizon = [10_000]  # the queue's cursor is behind its TTL
+
+    async def link_cursor(name):
+        return cursors.get(name, "")
+
+    async def set_link_cursor(name, value):
+        cursors[name] = value
+
+    async def queue_horizon():
+        return horizon[0]
+
+    async def link_queued(position, batch, result):
+        return (int(position[0]) + 1, *position[1:])  # catching up, slowly
+
+    scans: list[Any] = []
+
+    async def backfill(after, limit, result):
+        scans.append(after)
+        return None  # one page: done
+
+    async def sweep_erased(cursor, limit, result):
+        return cursor
+
+    monkeypatch.setattr(code_links.code, "link_cursor", link_cursor)
+    monkeypatch.setattr(code_links.code, "set_link_cursor", set_link_cursor)
+    monkeypatch.setattr(code_links.code, "configured_code_namespaces", lambda: [["o", "c"]])
+    monkeypatch.setattr(code_links.store, "queue_horizon", queue_horizon)
+    for fn in (link_queued, backfill, sweep_erased):
+        monkeypatch.setattr(code_links, fn.__name__, fn)
+    for _ in range(5):
+        await worker._link_writes(10, code_link_pass.PassResult())
+    assert scans == [None]
+    horizon[0] = 0  # caught up: the next stall scans again
+    await worker._link_writes(10, code_link_pass.PassResult())
+    assert json.loads(cursors["backfill"]) == {"done": True}
+    horizon[0] = 10_000
+    await worker._link_writes(10, code_link_pass.PassResult())
+    assert scans == [None, None]
