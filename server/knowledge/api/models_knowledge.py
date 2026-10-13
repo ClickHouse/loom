@@ -131,9 +131,7 @@ class KnowledgeSearchInput(BaseModel):
     # At most this many hits are returned (1-100).
     top_k: int = Field(default=5, ge=1, le=100)
     # "this" → input.namespace only; "all_mine" → also the caller's own
-    # namespaces, up to `memory_search_fanout_max_namespaces` (memory.search
-    # names the ones the cap leaves out), see
-    # docs/concepts/identities-and-namespaces.md#reading-several-namespaces.
+    # namespaces, up to `memory_search_fanout_max_namespaces`.
     namespace_scope: Literal["this", "all_mine"] = "all_mine"
     # hybrid: vector leg + BM25 lexical leg fused by reciprocal rank;
     # semantic: vector only;

@@ -54,6 +54,10 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 
 ### Changed
 
+- **Breaking:** `rerank` (`memory.search`, `memory.search_trace`, `code.search`, `code.ask`)
+  and a namespace's `rerank_endpoint` take a name, not a URL: `none`, `builtin:openai[:model]`,
+  `builtin:cohere[:model]`, or an endpoint the operator names in `LOOM_RERANK_ENDPOINTS_JSON`.
+  A URL or an unknown name is a 422. A namespace that still stores a URL is no longer reranked.
 - With auth off, an `all_mine` search also reads every namespace the single user registered,
   not only the addressed one.
 - The addressed namespace is always searched first. A scoped token's other namespaces follow

@@ -188,45 +188,45 @@ async def _run_vector_legs(
     else:
         # ---- unscoped path (no scoped-token order): visibility-based private-first
         # fallback, else a flat concurrent fan-out.
-        private_ns: list[str] = []
-        public_ns: list[str] = []
+        first_pass: list[str] = []
+        second_pass: list[str] = []
         if input.namespace_scope == "all_mine" and len(ctx.namespaces) > 1:
             # Visibility is TTL-cached, so a multi-namespace search does not pay a
             # `loom.namespaces FINAL` round trip. With no private namespace (or no answer)
             # both passes are empty and the search is the flat fan-out below: common in
             # practice, well over a third of searches in one measured namespace.
-            private_ns, public_ns = await private_first_passes(
+            first_pass, second_pass = await private_first_passes(
                 input.org, input.namespace, list(ctx.namespaces)
             )
 
-        if private_ns:
+        if first_pass:
             with traced(
                 "ch.query.memory_embeddings",
                 op="vector_search.private",
                 top_k=input.top_k,
-                namespaces=len(private_ns),
+                namespaces=len(first_pass),
             ):
                 results_per_ns = list(
-                    await asyncio.gather(*[_search_one(ctx, ns) for ns in private_ns])
+                    await asyncio.gather(*[_search_one(ctx, ns) for ns in first_pass])
                 )
-            # Did the private pass clear the relevance floor? Best
-            # similarity across all private hits has to exceed threshold.
-            best_private_similarity = 0.0
+            # Did the first pass (the addressed namespace and the private ones) clear
+            # the relevance floor? Its best similarity has to exceed the threshold.
+            best_first_pass_similarity = 0.0
             for _ns, hits in results_per_ns:
                 for h in hits:
                     sim = 1.0 - getattr(h, "distance", 1.0)
-                    if sim > best_private_similarity:
-                        best_private_similarity = sim
-            if best_private_similarity < PRIVATE_HIT_THRESHOLD and public_ns:
-                # Private pass was empty / noise — also search public and merge.
+                    if sim > best_first_pass_similarity:
+                        best_first_pass_similarity = sim
+            if best_first_pass_similarity < PRIVATE_HIT_THRESHOLD and second_pass:
+                # First pass was empty / noise — also search the public ones and merge.
                 with traced(
                     "ch.query.memory_embeddings",
                     op="vector_search.public",
                     top_k=input.top_k,
-                    namespaces=len(public_ns),
+                    namespaces=len(second_pass),
                 ):
                     public_results = await asyncio.gather(
-                        *[_search_one(ctx, ns) for ns in public_ns]
+                        *[_search_one(ctx, ns) for ns in second_pass]
                     )
                 results_per_ns = list(results_per_ns) + list(public_results)
         else:

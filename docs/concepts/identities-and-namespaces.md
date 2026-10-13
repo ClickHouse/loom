@@ -170,8 +170,9 @@ within the revocation cache interval.
 
 A search can read several namespaces at once: `namespace_scope` is `this` (the addressed
 namespace, the default) or `all_mine` (the addressed namespace plus the caller's own).
-The `loom_search` MCP tool and `context.pack` use the same fan-out, and memory search
-lists what it read in `namespaces_searched`.
+The `loom_search` MCP tool and `context.pack` use the same fan-out. Memory search lists the
+namespaces in scope in `namespaces_searched` (a tiered search can stop before the last of
+them) and the ones the cap left out in `namespaces_skipped`.
 
 The caller's own namespaces depend on the token:
 
