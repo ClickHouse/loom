@@ -16,10 +16,11 @@ fi
 # needs none; with no private directory (a read-only root without a tmpfs) a
 # chosen count falls back to one process.
 if [ "$LOOM_WEB_WORKERS" -gt 1 ]; then
-  if LOOM_RUNTIME_DIR=$(python -m server.core.runtime_files); then
+  if shared=$(python -m server.core.runtime_files); then
+    LOOM_RUNTIME_DIR=$shared
     export LOOM_RUNTIME_DIR
   elif [ -n "$chosen" ]; then
-    echo "loom: starting one web process, which needs no shared directory" >&2
+    echo "loom: no runtime directory to share; starting one web process" >&2
     LOOM_WEB_WORKERS=1
   else
     exit 2

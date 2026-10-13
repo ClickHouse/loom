@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from server.auth.context import current_auth
-from server.core.errors import AuthInsufficientError, IdentityIncompleteError
+from server.core.errors import AuthInsufficientError, IdentityIncompleteError, json_safe_loads
 from server.identity.domain.read_scope import ReadFilters, request_read_filters
 
 if TYPE_CHECKING:
@@ -235,9 +235,7 @@ def validation_errors(e: Any) -> list[dict[str, Any]]:
     a 500 for what is a 422. `e.json()` is the serialiser pydantic itself
     guarantees; round-tripping through it drops nothing a client can use. A
     non-finite input (`1e400`) comes back as a string: JSON has no inf."""
-    import json as _json
-
     try:
-        return list(_json.loads(e.json(include_url=False), parse_constant=str))
+        return list(json_safe_loads(e.json(include_url=False)))
     except Exception:  # noqa: BLE001 — never let the error report itself fail
         return [{"type": "validation_error", "msg": str(e)}]

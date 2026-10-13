@@ -3,7 +3,9 @@ PATH: how many web processes it starts and which runtime directory they share.""
 
 from __future__ import annotations
 
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -15,7 +17,7 @@ case "$*" in
   "-m server.core.web_workers") echo 4 ;;
   "-m server.core.runtime_files")
     [ "$STUB_RUNTIME_DIR" = none ] && { echo "loom: no private directory" >&2; exit 2; }
-    echo "$STUB_RUNTIME_DIR" ;;
+    echo "${LOOM_RUNTIME_DIR:-$STUB_RUNTIME_DIR}" ;;
   *) exit 99 ;;
 esac
 """
@@ -82,3 +84,32 @@ def test_an_explicit_count_with_nowhere_to_share_refuses_to_start(
     done = _launch(tmp_path, workers="3", runtime_dir="none", pinned=pinned)
     assert done.returncode == 2 and done.stdout == ""
     assert "no private directory" in done.stderr
+
+
+def test_a_usable_pinned_directory_is_shared_as_it_is(tmp_path: Path) -> None:
+    done = _launch(tmp_path, workers="", runtime_dir="/run/loom", pinned="/data/rt")
+    assert done.returncode == 0 and _workers(done.stdout) == "4"
+    assert done.stdout.strip().endswith("runtime=/data/rt")
+
+
+def test_the_launchers_check_refuses_a_pinned_directory_it_cannot_write(
+    tmp_path: Path,
+) -> None:
+    """The real check: a worker keeps a pinned directory that turns read-only,
+    but the launcher does not start several on one."""
+    pinned = tmp_path / "rt"
+    pinned.mkdir(mode=0o500)
+    try:
+        if os.geteuid() == 0:
+            pytest.skip("root can write anywhere")
+        done = subprocess.run(
+            [sys.executable, "-m", "server.core.runtime_files"],
+            env={**os.environ, "LOOM_RUNTIME_DIR": str(pinned)},
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert done.returncode == 2 and "not writable" in done.stderr
+    finally:
+        pinned.chmod(0o700)

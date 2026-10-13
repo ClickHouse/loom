@@ -149,9 +149,18 @@ def open_private(path: str, flags: int) -> int:
     return fd
 
 
+def launcher_dir() -> str:
+    """`runtime_dir()`, and writable now: what `scripts/serve.sh` checks before
+    the workers start (a worker keeps a pinned one that turns read-only later)."""
+    path = runtime_dir()
+    if not os.access(path, os.W_OK | os.X_OK):
+        raise OSError(f"{path} is not writable by this user")
+    return path
+
+
 if __name__ == "__main__":
     try:
-        print(runtime_dir())
+        print(launcher_dir())
     except OSError as e:
         print(f"loom: {e}", file=sys.stderr)
         raise SystemExit(2) from None

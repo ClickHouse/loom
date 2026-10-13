@@ -30,10 +30,11 @@ _OPT_IN = "Set LOOM_PROVIDER_STAGING_LIVE_TEST=1 for a disposable, freshly migra
 
 
 async def _require_empty(client, table: str) -> None:
-    """A rebuild stages its whole table, so rows other tests left would fail it."""
+    """A rebuild stages its whole table, so rows other tests left would fail it;
+    the opt-in promises a fresh database, so say so rather than skip."""
     row = await client.query_one(f"SELECT count() AS n FROM loom.{table}")
     if row is not None and int(row["n"]):
-        pytest.skip(f"loom.{table} holds rows; this test needs a freshly migrated database")
+        pytest.fail(f"loom.{table} holds rows; this test needs a freshly migrated database")
 
 
 class _TestEmbedder:
