@@ -363,6 +363,12 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
         raise TokenError(f"token expired: {e}") from e
     except jwt.PyJWTError as e:  # InvalidKeyError is not an InvalidTokenError
         raise TokenError(f"invalid token: {e}") from e
+    # PyJWT accepts a numeric string for these; delegation and revocation read them
+    # as numbers, so a string `exp` would mint an unbounded child. JSON numbers only.
+    for claim in ("exp", "iat"):
+        value = decoded.get(claim)
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int | float)):
+            raise TokenError(f"claim {claim!r} must be a number")
     if decoded.get("iss") not in trusted_issuers:
         # The trusted list is deployment config: logged, not told to the caller.
         logging.getLogger(__name__).warning(
@@ -405,7 +411,7 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
         parent_iats=tuple(_parent_iats(decoded)),
         creator=_creator_claim(decoded),
         issued_at=_iat_of(decoded),
-        expires_at=int(exp) if isinstance(exp, (int, float)) else None,
+        expires_at=int(exp) if exp is not None else None,
     )
 
 
