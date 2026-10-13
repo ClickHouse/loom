@@ -1736,25 +1736,6 @@ async def test_live_links_are_read_by_identity_through_the_key_index() -> None:
     assert "FINAL WHERE tombstoned_at IS NULL" in sql
 
 
-@pytest.mark.asyncio
-async def test_the_linked_keys_are_read_from_the_link_table() -> None:
-    from server.memory.store import code_links as store
-
-    class _Rec:
-        def __init__(self) -> None:
-            self.sql: list[tuple[str, Any]] = []
-
-        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
-            self.sql.append((sql, params))
-            return [{"namespace": "n", "memory_key": "k"}]
-
-    ch = _Rec()
-    assert await store.linked_keys("o", [("n", "k"), ("n", "j")], ch=ch) == {("n", "k")}
-    sql, params = ch.sql[0]
-    assert "FROM loom.memory_code_links WHERE" in sql and params["keys"] == [("n", "j"), ("n", "k")]
-    assert params["mks"] == ["j", "k"]  # the memory_key index narrows the read
-
-
 def test_links_off_never_hide_a_memory(monkeypatch) -> None:
     from server.settings import settings
 

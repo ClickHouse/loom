@@ -439,23 +439,6 @@ FROM loom.memory FINAL
 """
 
 
-async def linked_keys(
-    org: str, keys: Sequence[tuple[str, str]], *, ch: _CHClient | None = None
-) -> set[tuple[str, str]]:
-    """The (namespace, memory_key) pairs among `keys` that hold, or held, a link: a search
-    reads memory heads only for these. Read through the memory_key index and without FINAL,
-    so a key whose links are gone may still answer; the reads after it decide."""
-    if not keys:
-        return set()
-    rows = await (ch or _default_client()).query_all(
-        f"SELECT DISTINCT namespace, memory_key FROM {TABLE} WHERE org = {{org:String}} "
-        "AND memory_key IN {mks:Array(String)} "
-        "AND (namespace, memory_key) IN {keys:Array(Tuple(String, String))}",
-        params={"org": org, "keys": sorted(set(keys)), "mks": sorted({k for _, k in keys})},
-    )
-    return {(str(r["namespace"]), str(r["memory_key"])) for r in rows}
-
-
 async def served_heads(
     org: str, keys: Sequence[tuple[str, str]], *, ch: _CHClient | None = None
 ) -> list[dict[str, Any]]:
