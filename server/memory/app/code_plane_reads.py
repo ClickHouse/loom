@@ -4,6 +4,7 @@ the directories a user's memories name. The statements are
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from typing import Any
 
@@ -65,7 +66,9 @@ async def lessons_for_symbol(
     `paths` holds at the read namespace's indexed head (by its identity, or one it had
     before a move: a branch may not have the moves), and `code_state`
     compares that definition's fingerprint with the one the memory was written
-    against. A link trunk lost still counts here: this branch may have the code."""
+    against. A link trunk lost still counts here: this branch may have the code. Where
+    the files cannot be read (a read replica has no git mirror), trunk's own state is
+    served."""
     from server.code.app import memory_links as code
     from server.memory.app.code_link_reads import current_links
 
@@ -81,32 +84,11 @@ async def lessons_for_symbol(
     if not links:
         return []
     head = await code.indexed_head(org, code_namespace)
-    here: dict[tuple[str, str], Definition] = {}
-    for p in dict.fromkeys(paths):
-        f = await code.parsed(org, code_namespace, head, p, named=bare_name(qualified_name))
-        for d in _named(qualified_name, f.defs if f else []):
-            here.setdefault((d.path, d.qualified_name), d)
-    matched: list[tuple[dict[str, Any], str, str]] = []
-    for a in links:
-        # where trunk has it now, where it was before a move (latest first), or where the
-        # memory was anchored: a branch may have any of trunk's renames, or none
-        current = here.get((str(a["path"]), str(a["qualified_name"])))
-        anchored = here.get((str(a.get("anchored_path") or ""), str(a.get("anchored_name") or "")))
-        was = None if current else _former_here(a, here)
-        now = current or (was[0] if was else None) or anchored
-        if now is None:
-            continue  # another symbol of the file, or code this branch does not have
-        state = _lesson_state(
-            a,
-            now,
-            at_current=now is current,
-            at_anchor=now is anchored,
-            on_trunk=code_namespace == trunk,
-            baseline=was[1] if was else "",
-        )
-        # a correction only for the definition it was judged against
-        judged = state == "changed" and a.get("judged_hash") == now.body_hash
-        matched.append((a, state, str(a.get("suggestion") or "") if judged else ""))
+    here = await _definitions_at(org, code_namespace, head, paths, qualified_name)
+    if here is None:
+        matched = _as_trunk_has_it(links, qualified_name)
+    else:
+        matched = _matched(links, here, on_trunk=code_namespace == trunk)
     served = await reads.served_excerpts(org, [str(a["memory_id"]) for a, _, _ in matched])
     rows = {str(r["mid"]): r for r in served}
     out: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {}
@@ -127,6 +109,80 @@ async def lessons_for_symbol(
             },
         )
     return [lesson for _, lesson in sorted(out.values(), key=lambda x: x[0])][:limit]
+
+
+async def _definitions_at(
+    org: str, code_namespace: str, head: str, paths: Sequence[str], qualified_name: str
+) -> dict[tuple[str, str], Definition] | None:
+    """The definitions `qualified_name` names in `paths` at `head`, by identity; None
+    where the files cannot be read here: no git mirror (a read replica), or one that
+    fails."""
+    from server.code.app import memory_links as code
+    from server.code.app.index import gitrepo
+    from server.settings import settings
+
+    if settings.read_replica:
+        return None
+    named = bare_name(qualified_name)
+    try:
+        files = await asyncio.gather(
+            *(code.parsed(org, code_namespace, head, p, named=named) for p in dict.fromkeys(paths))
+        )
+    except (gitrepo.GitError, code.ParseFailed):
+        return None
+    here: dict[tuple[str, str], Definition] = {}
+    for f in files:
+        for d in _named(qualified_name, f.defs if f else []):
+            here.setdefault((d.path, d.qualified_name), d)
+    return here
+
+
+def _matched(
+    links: list[dict[str, Any]], here: dict[tuple[str, str], Definition], *, on_trunk: bool
+) -> list[tuple[dict[str, Any], str, str]]:
+    """(link, code state, suggestion) of each link whose definition the branch has."""
+    out = []
+    for a in links:
+        # where trunk has it now, where it was before a move (latest first), or where the
+        # memory was anchored: a branch may have any of trunk's renames, or none
+        current = here.get((str(a["path"]), str(a["qualified_name"])))
+        anchored = here.get((str(a.get("anchored_path") or ""), str(a.get("anchored_name") or "")))
+        was = None if current else _former_here(a, here)
+        now = current or (was[0] if was else None) or anchored
+        if now is None:
+            continue  # another symbol of the file, or code this branch does not have
+        state = _lesson_state(
+            a,
+            now,
+            at_current=now is current,
+            at_anchor=now is anchored,
+            on_trunk=on_trunk,
+            baseline=was[1] if was else "",
+        )
+        # a correction only for the definition it was judged against
+        judged = state == "changed" and a.get("judged_hash") == now.body_hash
+        out.append((a, state, str(a.get("suggestion") or "") if judged else ""))
+    return out
+
+
+def _as_trunk_has_it(
+    links: list[dict[str, Any]], qualified_name: str
+) -> list[tuple[dict[str, Any], str, str]]:
+    """(link, code state, suggestion) of each link to the symbol, as trunk's last check
+    left it: what is served where the branch's own files cannot be read. A link trunk
+    lost is left out, since nothing here shows the code exists."""
+    live = [a for a in links if a["state"] in ("fresh", "moved", "changed")]
+    defs = [
+        Definition(str(a["path"]), str(a["qualified_name"]), bare_name(str(a["qualified_name"])))
+        for a in live
+    ]
+    named = {(d.path, d.qualified_name) for d in _named(qualified_name, defs)}
+    out = []
+    for a in live:
+        if (str(a["path"]), str(a["qualified_name"])) in named:
+            judged = a["state"] == "changed" and a.get("judged_hash") == a.get("checked_hash")
+            out.append((a, str(a["state"]), str(a.get("suggestion") or "") if judged else ""))
+    return out
 
 
 def _former_here(

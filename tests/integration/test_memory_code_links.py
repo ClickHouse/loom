@@ -2949,6 +2949,25 @@ async def test_a_method_of_a_class_renamed_alone_is_moved(env) -> None:
     assert (link["symbol"].rsplit("::", 2)[-2:], link["state"]) == (["RowReader", "size"], "moved")
 
 
+async def test_a_read_replica_serves_lessons_as_trunk_last_checked_them(env, monkeypatch) -> None:
+    from server.code.app import memory_links as code
+    from server.settings import settings
+
+    c1 = env.commit({"src/r.py": "def fetch_rows():\n    return 1\n"})
+    await _index(TRUNK, env, c1, ["src/r.py"])
+    await _remember(MEM, "rows", "`fetch_rows` returns one")
+    await _pass()
+    await _relink_once(env, "src/r.py", "def fetch_rows():\n    return 2\n")
+
+    async def no_git(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("a read replica has no git mirror")
+
+    monkeypatch.setattr(settings, "read_replica", True)
+    monkeypatch.setattr(code, "parsed", no_git)
+    lessons = await _lessons(TRUNK, "fetch_rows")
+    assert [(x["memory_key"], x["code_state"]) for x in lessons] == [("rows", "changed")]
+
+
 async def test_a_method_its_renamed_class_carried_is_never_judged(env, monkeypatch) -> None:
     from server.memory.app import code_link_judge
 
