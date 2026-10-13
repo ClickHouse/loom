@@ -1,6 +1,6 @@
 """The host-shared override stores (budgets, rate limits): concurrent writers in
-separate processes never drop each other's update, and an update that would
-bind only the worker that took it is refused and rolled back."""
+separate processes never drop each other's update, and an update that cannot be
+shared is refused while every worker keeps its overrides."""
 
 from __future__ import annotations
 
@@ -25,8 +25,7 @@ WRITERS, UPDATES = 4, 10
 _BUDGET_WRITER = """
 import sys
 from server.observability.budgets import BudgetOverrides
-o = BudgetOverrides()
-o.path = sys.argv[1]
+o = BudgetOverrides(sys.argv[1])
 for i in range(int(sys.argv[3])):
     o.set(f"op.{sys.argv[2]}.{i}", i)
 """
@@ -84,9 +83,7 @@ def _deny_reads_of(monkeypatch: pytest.MonkeyPatch, path: str) -> None:
 
 def _budgets(tmp_path: Path) -> tuple[BudgetOverrides, BudgetOverrides, Path]:
     path = tmp_path / "budgets.json"
-    a, b = BudgetOverrides(), BudgetOverrides()
-    a.path = b.path = str(path)
-    return a, b, path
+    return BudgetOverrides(str(path)), BudgetOverrides(str(path)), path
 
 
 @pytest.fixture
@@ -96,7 +93,7 @@ def limiters(settings_override, tmp_path: Path) -> tuple[Limiter, Limiter, Path]
     return Limiter(), Limiter(), Path(f"{table}.overrides.json")
 
 
-def test_an_unpublished_budget_update_is_refused_and_rolled_back(
+def test_an_unpublished_budget_update_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     a, b, _ = _budgets(tmp_path)
@@ -110,7 +107,7 @@ def test_an_unpublished_budget_update_is_refused_and_rolled_back(
     assert b.effective("memory.set", 99) == 30
 
 
-def test_an_unpublished_rate_limit_update_is_refused_and_rolled_back(
+def test_an_unpublished_rate_limit_update_is_refused(
     limiters: tuple[Limiter, Limiter, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     a, _, _ = limiters
@@ -164,40 +161,37 @@ def test_an_update_repairs_a_corrupt_override_file(
     b.reset_all()
 
 
-@pytest.mark.parametrize(
-    "shared",
-    [
-        {"ratelimit_shared": "on", "ratelimit_shared_path": "/proc/loom-test.buckets"},
-        {"ratelimit_shared": "off", "web_workers": 3},
-    ],
-    ids=["table-did-not-open", "sharing-off"],
-)
-def test_an_override_that_would_bind_one_worker_is_refused(settings_override, shared) -> None:
-    settings_override(**shared)
-    lim = Limiter()
-    assert not lim.shared_active
-    with pytest.raises(BackendUnavailableError, match="this worker only"):
-        lim.set_namespace_limit("ns1", "memory", Limit(capacity=3, rate=0.0))
-    assert ("ns1", "memory") not in lim._ns_overrides
+def test_overrides_bind_every_worker_with_bucket_sharing_off(settings_override) -> None:
+    """The overrides have their own host file: sharing the buckets is a separate choice."""
+    settings_override(ratelimit_shared="off", web_workers=3)
+    a, b = Limiter(clock=lambda: 0.0), Limiter(clock=lambda: 0.0)  # no refill
+    assert not a.shared_active
+    assert b.check("ns1", "memory.set", org="o").allowed  # b's bucket predates the override
+    # Per-process buckets divide a cap by the workers: one token each.
+    a.set_namespace_limit("ns1", "memory", Limit(capacity=3, rate=0.0))
+    assert b.check("ns1", "memory.set", org="o").allowed
+    assert not b.check("ns1", "memory.set", org="o").allowed
+    a.reset_all()
+    b.reset_all()
 
 
-def test_one_worker_without_the_shared_table_keeps_its_overrides(settings_override) -> None:
+def test_one_worker_keeps_its_overrides_in_memory(settings_override) -> None:
     settings_override(ratelimit_shared="auto", web_workers=1)
     lim = Limiter()
+    assert lim._overrides_document() is None
     lim.set_namespace_limit("ns1", "memory", Limit(capacity=3, rate=0.0))
     assert lim._ns_overrides[("ns1", "memory")] == Limit(capacity=3, rate=0.0)
-    lim.reset_all()
 
 
 @pytest.mark.asyncio
-async def test_admin_ratelimit_set_cannot_acknowledge_a_worker_local_change(
+async def test_admin_ratelimit_set_cannot_acknowledge_a_change_it_could_not_share(
     settings_override, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from server.core import ratelimit
     from server.insights.app.admin_models import RatelimitSetInput
     from server.insights.app.admin_routes import admin_ratelimit_set
 
-    settings_override(ratelimit_shared="off", web_workers=3)
+    settings_override(ratelimit_shared="on", ratelimit_shared_path="/proc/loom-test.buckets")
     lim = Limiter()
     monkeypatch.setattr(ratelimit, "get_limiter", lambda: lim)
     with pytest.raises(BackendUnavailableError) as refused:

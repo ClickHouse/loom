@@ -21,11 +21,12 @@ import json
 import logging
 import os
 import time
-from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from server.core.errors import BackendUnavailableError
+from server.core.runtime_files import server_file
 from server.core.shared_document import SharedDocument
 from server.settings import settings
 
@@ -276,17 +277,36 @@ def effective_divisor(*, shared: bool) -> int:
     return effective_replicas()
 
 
-_Overrides = tuple[
-    dict[tuple[str, str], Limit], dict[tuple[str, str], Limit], dict[tuple[str, str, str], Limit]
-]
+@dataclass(frozen=True)
+class _Overrides:
+    """Admin overrides per (namespace, op class), (org, op class) and
+    (namespace, actor, op class)."""
+
+    ns: dict[tuple[str, str], Limit]
+    org: dict[tuple[str, str], Limit]
+    actor: dict[tuple[str, str, str], Limit]
 
 
 def _decode_overrides(data: Any) -> _Overrides:
-    """The (namespace, org, actor) override maps of `Limiter._encode_overrides`."""
-    ns = {(str(a), str(b)): Limit(float(c), float(r)) for a, b, c, r in data["ns"]}
-    org = {(str(a), str(b)): Limit(float(c), float(r)) for a, b, c, r in data["org"]}
-    actor = {(str(a), str(b), str(o)): Limit(float(c), float(r)) for a, b, o, c, r in data["actor"]}
-    return ns, org, actor
+    return _Overrides(
+        ns={(str(a), str(b)): Limit(float(c), float(r)) for a, b, c, r in data["ns"]},
+        org={(str(a), str(b)): Limit(float(c), float(r)) for a, b, c, r in data["org"]},
+        actor={
+            (str(a), str(b), str(o)): Limit(float(c), float(r)) for a, b, o, c, r in data["actor"]
+        },
+    )
+
+
+def _encode_overrides(o: _Overrides) -> dict[str, list[list[object]]]:
+    return {
+        "ns": [[a, b, v.capacity, v.rate] for (a, b), v in o.ns.items()],
+        "org": [[a, b, v.capacity, v.rate] for (a, b), v in o.org.items()],
+        "actor": [[a, b, n, v.capacity, v.rate] for (a, b, n), v in o.actor.items()],
+    }
+
+
+def _without[K, V](mapping: dict[K, V], key: K) -> dict[K, V]:
+    return {k: v for k, v in mapping.items() if k != key}
 
 
 class Limiter:
@@ -330,11 +350,8 @@ class Limiter:
         self._shared_key: tuple[object, ...] | None = None
         self._shared_reason: str = "not resolved yet"
         self._shared_active: bool = False
-        # Several workers (or "on") need the shared table for overrides to bind them all.
-        self._shared_needed: bool = False
-        # With the shared table the overrides live beside it
-        # (`<table>.overrides.json`), so an admin override set through one web
-        # worker binds every worker on the host.
+        # With several web workers the admin overrides live in a host file, so
+        # one set through any worker binds them all.
         self._overrides_doc: SharedDocument[_Overrides] | None = None
 
     # -- backend selection ---------------------------------
@@ -355,7 +372,6 @@ class Limiter:
             self._shared = None
         self._shared_key = key
         want = mode == "on" or (mode == "auto" and workers > 1)
-        self._shared_needed = mode == "on" or workers > 1
         if not want:
             self._shared_reason = (
                 "off by LOOM_RATELIMIT_SHARED" if mode == "off" else "single web worker"
@@ -382,58 +398,52 @@ class Limiter:
     # -- overrides shared through the table's directory --------------------
 
     def _overrides_document(self) -> SharedDocument[_Overrides] | None:
-        store = self._store()
-        if store is None:
+        """Beside an explicit shared table (two servers sharing a cap share their
+        overrides too), else one per server once there are several workers."""
+        explicit = str(settings.ratelimit_shared_path)
+        if explicit:
+            path = f"{explicit}.overrides.json"
+        elif int(settings.web_workers) > 1:
+            path = server_file("ratelimit-overrides") + ".json"
+        else:
             return None
-        path = f"{store.path}.overrides.json"
         if self._overrides_doc is None or self._overrides_doc.path != path:
             self._overrides_doc = SharedDocument(path, _decode_overrides)
         return self._overrides_doc
 
     def _sync_overrides(self) -> None:
-        """Adopt the host's overrides when another worker changed them."""
+        """Adopt the host's overrides when another worker changed them. This
+        process's buckets were sized from the old ones, so they start afresh."""
         doc = self._overrides_document()
         latest = doc.poll() if doc is not None else None
         if latest is not None:
-            self._ns_overrides, self._org_overrides, self._actor_overrides = latest
+            self._adopt(latest)
+            self._ns_buckets.clear()
+            self._org_buckets.clear()
+            self._actor_buckets.clear()
 
-    @contextlib.contextmanager
-    def _overrides_update(self) -> Iterator[None]:
-        """Change the overrides of every worker on the host (`SharedDocument.edit`).
-        A change that would bind only this worker is rolled back and refused."""
+    def _overrides(self) -> _Overrides:
+        return _Overrides(self._ns_overrides, self._org_overrides, self._actor_overrides)
+
+    def _adopt(self, overrides: _Overrides) -> None:
+        self._ns_overrides, self._org_overrides = overrides.ns, overrides.org
+        self._actor_overrides = overrides.actor
+
+    def _change_overrides(self, change: Callable[[_Overrides], _Overrides]) -> None:
+        """Apply `change` to the overrides of every worker on the host; a change
+        that cannot be shared is refused and this worker keeps its own."""
         doc = self._overrides_document()
+        mine = self._overrides()
         if doc is None:
-            if self._shared_needed:
-                raise BackendUnavailableError(
-                    f"rate-limit override not applied: {self._shared_reason}; "
-                    "it would bind this worker only"
-                )
-            yield
+            self._adopt(change(mine))
             return
-        before: _Overrides | None = None
         try:
-            with doc.edit(self._encode_overrides) as latest:
-                if latest is not None:
-                    self._ns_overrides, self._org_overrides, self._actor_overrides = latest
-                before = (
-                    dict(self._ns_overrides),
-                    dict(self._org_overrides),
-                    dict(self._actor_overrides),
-                )
-                yield
+            shared = doc.update(
+                lambda latest: change(mine if latest is None else latest), _encode_overrides
+            )
         except OSError as e:
-            if before is not None:
-                self._ns_overrides, self._org_overrides, self._actor_overrides = before
             raise BackendUnavailableError(f"rate-limit override not applied: {e}") from e
-
-    def _encode_overrides(self) -> dict[str, list[list[object]]]:
-        return {
-            "ns": [[a, b, v.capacity, v.rate] for (a, b), v in self._ns_overrides.items()],
-            "org": [[a, b, v.capacity, v.rate] for (a, b), v in self._org_overrides.items()],
-            "actor": [
-                [a, b, o, v.capacity, v.rate] for (a, b, o), v in self._actor_overrides.items()
-            ],
-        }
+        self._adopt(shared)
 
     @property
     def shared_active(self) -> bool:
@@ -583,9 +593,9 @@ class Limiter:
         """
         op_class = op_class_for(op_name)
         cls = bucket_class(traffic_class)
+        self._sync_overrides()
         store = self._store()
         if store is not None:
-            self._sync_overrides()
             return self._check_shared(
                 store, namespace, op_class, org=org, actor=actor, traffic_class=cls
             )
@@ -665,32 +675,30 @@ class Limiter:
 
     def set_namespace_limit(self, namespace: str, op_class: str, limit: Limit) -> None:
         """Install a per-namespace override for one op_class."""
-        with self._overrides_update():
-            self._ns_overrides[(namespace, op_class)] = limit
+        key = (namespace, op_class)
+        self._change_overrides(lambda o: replace(o, ns={**o.ns, key: limit}))
         # The namespace's buckets in every org (key element 0 is the org).
-        self._apply_override(self._ns_buckets, (namespace, op_class), limit, skip=1)
+        self._apply_override(self._ns_buckets, key, limit, skip=1)
 
     def clear_namespace_limit(self, namespace: str, op_class: str) -> None:
-        with self._overrides_update():
-            self._ns_overrides.pop((namespace, op_class), None)
+        self._change_overrides(lambda o: replace(o, ns=_without(o.ns, (namespace, op_class))))
 
     def set_org_limit(self, org: str, op_class: str, limit: Limit) -> None:
         """Install a per-org override for one op_class. Bounds the total
         fan-out across all of the org's namespaces for this op class."""
-        with self._overrides_update():
-            self._org_overrides[(org, op_class)] = limit
-        self._apply_override(self._org_buckets, (org, op_class), limit)
+        key = (org, op_class)
+        self._change_overrides(lambda o: replace(o, org={**o.org, key: limit}))
+        self._apply_override(self._org_buckets, key, limit)
 
     def clear_org_limit(self, org: str, op_class: str) -> None:
-        with self._overrides_update():
-            self._org_overrides.pop((org, op_class), None)
+        self._change_overrides(lambda o: replace(o, org=_without(o.org, (org, op_class))))
 
     def set_actor_limit(self, namespace: str, actor: str, op_class: str, limit: Limit) -> None:
         """Install a per-(namespace, actor) override for one op_class. Creates
         the actor bucket even when the deployment fraction is 1.0."""
-        with self._overrides_update():
-            self._actor_overrides[(namespace, actor, op_class)] = limit
-        self._apply_override(self._actor_buckets, (namespace, actor, op_class), limit, skip=1)
+        key = (namespace, actor, op_class)
+        self._change_overrides(lambda o: replace(o, actor={**o.actor, key: limit}))
+        self._apply_override(self._actor_buckets, key, limit, skip=1)
 
     @staticmethod
     def _apply_override(

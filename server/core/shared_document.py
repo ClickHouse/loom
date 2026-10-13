@@ -2,8 +2,8 @@
 
 Runtime overrides set through one worker must bind its siblings. Each keeps its
 own copy and `poll`s the file, which costs one `lstat` when nothing changed;
-`edit` re-reads the latest version under an exclusive lock and replaces the
-file atomically, so concurrent edits never drop each other's change.
+`update` re-reads the latest version under an exclusive lock and replaces the
+file atomically, so concurrent updates never drop each other's change.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import logging
 import os
 import stat
 import tempfile
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ class SharedDocument[T]:
         self._warned = ""
 
     def poll(self) -> T | None:
-        """The document if it changed since the last poll or edit, else None.
+        """The document if it changed since the last poll or update, else None.
         A version that cannot be read is skipped with a warning."""
         try:
             return self._read_changed()
@@ -69,17 +69,17 @@ class SharedDocument[T]:
                 log.warning("%s unreadable (%s); keeping the current state", self.path, e)
             return None
 
-    @contextlib.contextmanager
-    def edit(self, encode: Callable[[], object]) -> Iterator[T | None]:
-        """Yield the latest document (None when there is none yet, or it is corrupt
-        and this edit replaces it), then publish `encode()`. Raises OSError when
-        the document cannot be read or written, before anything is published."""
+    def update(self, change: Callable[[T | None], T], encode: Callable[[T], object]) -> T:
+        """Under the lock, publish and return `change(latest)`. `latest` is None when
+        there is no document yet, or it is corrupt and this replaces it. Raises
+        OSError, before anything is published, when it cannot be read or written."""
         lock = open_private(self.path + ".lock", os.O_RDWR | os.O_CREAT)
         try:
             fcntl.flock(lock, fcntl.LOCK_EX)
             self._seen = None
-            yield self._read_changed()
-            self._seen = _publish(self.path, encode())
+            new = change(self._read_changed())
+            self._seen = _publish(self.path, encode(new))
+            return new
         finally:
             os.close(lock)
 

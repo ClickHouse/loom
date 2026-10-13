@@ -35,15 +35,15 @@ replicas; the settings map is the fleet-wide half.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from typing import Any
 
 from server.core.errors import BackendUnavailableError
-from server.core.ratelimit_shared import server_file
+from server.core.runtime_files import server_file
 from server.core.shared_document import SharedDocument
 
 log = logging.getLogger(__name__)
@@ -80,21 +80,38 @@ def _apply(value: int | float, default_ms: int) -> int:
     return int(value)
 
 
-_Budgets = tuple[dict[str, int], dict[tuple[str, str], int | float]]
+@dataclass(frozen=True)
+class _Budgets:
+    ops: dict[str, int]
+    by_consumer: dict[tuple[str, str], int | float]
 
 
 def _decode(data: Any) -> _Budgets:
-    """The per-op and per-consumer maps of `BudgetOverrides._encode`."""
-    ops = {str(k): int(v) for k, v in data["ops"].items()}
-    by_consumer = {(str(c), str(o)): v for c, o, v in data["consumer"]}
-    return ops, by_consumer
+    return _Budgets(
+        ops={str(k): int(v) for k, v in data["ops"].items()},
+        by_consumer={(str(c), str(o)): v for c, o, v in data["consumer"]},
+    )
+
+
+def _encode(budgets: _Budgets) -> dict[str, Any]:
+    return {
+        "ops": budgets.ops,
+        "consumer": [[c, o, v] for (c, o), v in budgets.by_consumer.items()],
+    }
+
+
+def _without[K, V](mapping: dict[K, V], key: K) -> dict[K, V]:
+    return {k: v for k, v in mapping.items() if k != key}
 
 
 class BudgetOverrides:
     """Singleton overrides registry: op_name → budget_ms, plus
     (consumer, op_name | "*") → budget_ms or multiplier."""
 
-    def __init__(self) -> None:
+    def __init__(self, path: str | None = None) -> None:
+        """`path` names the shared file; None = one per server once there are
+        several web workers."""
+        self._path = path
         self._overrides: dict[str, int] = {}
         self._by_consumer: dict[tuple[str, str], int | float] = {}
         self._lock = threading.Lock()
@@ -103,23 +120,18 @@ class BudgetOverrides:
         self._settings_map: dict[str, dict[str, int | float]] = {}
         # Shared with the server's other web processes (`_document`).
         self._doc: SharedDocument[_Budgets] | None = None
-        # Tests point this at a file; None = derive from settings.
-        self.path: str | None = None
 
     # -- the host file the web processes share -----------------------------
 
     def _document(self) -> SharedDocument[_Budgets] | None:
         """This server's runtime overrides file; None with one web process."""
-        if self.path is not None:
-            if self._doc is None or self._doc.path != self.path:
-                self._doc = SharedDocument(self.path, _decode)
-            return self._doc
-        from server.settings import settings
-
-        if int(settings.web_workers) <= 1:
-            return None
         if self._doc is None:
-            self._doc = SharedDocument(server_file("budgets") + ".json", _decode)
+            from server.settings import settings
+
+            if self._path is not None:
+                self._doc = SharedDocument(self._path, _decode)
+            elif int(settings.web_workers) > 1:
+                self._doc = SharedDocument(server_file("budgets") + ".json", _decode)
         return self._doc
 
     def _poll(self) -> None:
@@ -127,42 +139,31 @@ class BudgetOverrides:
         doc = self._document()
         latest = doc.poll() if doc is not None else None
         if latest is not None:
-            self._overrides, self._by_consumer = latest
+            self._overrides, self._by_consumer = latest.ops, latest.by_consumer
 
-    @contextlib.contextmanager
-    def _update(self) -> Iterator[None]:
-        """Change the overrides of every web process (`SharedDocument.edit`);
-        a change that cannot be shared is rolled back and refused."""
+    def _change(self, change: Callable[[_Budgets], _Budgets]) -> None:
+        """Apply `change` to the overrides of every web process; a change that
+        cannot be shared is refused and this process keeps its own."""
         with self._lock:
             doc = self._document()
+            mine = _Budgets(self._overrides, self._by_consumer)
             if doc is None:
-                yield
-                return
-            before: _Budgets | None = None
-            try:
-                with doc.edit(self._encode) as latest:
-                    if latest is not None:
-                        self._overrides, self._by_consumer = latest
-                    before = dict(self._overrides), dict(self._by_consumer)
-                    yield
-            except OSError as e:
-                if before is not None:
-                    self._overrides, self._by_consumer = before
-                raise BackendUnavailableError(f"budget override not applied: {e}") from e
-
-    def _encode(self) -> dict[str, Any]:
-        return {
-            "ops": self._overrides,
-            "consumer": [[c, o, v] for (c, o), v in self._by_consumer.items()],
-        }
+                new = change(mine)
+            else:
+                try:
+                    new = doc.update(
+                        lambda latest: change(mine if latest is None else latest), _encode
+                    )
+                except OSError as e:
+                    raise BackendUnavailableError(f"budget override not applied: {e}") from e
+            self._overrides, self._by_consumer = new.ops, new.by_consumer
 
     # -- per op (unchanged API) -------------------------------------------
 
     def set(self, op_name: str, budget_ms: int) -> None:
         if budget_ms < 0:
             raise ValueError("budget_ms must be >= 0")
-        with self._update():
-            self._overrides[op_name] = budget_ms
+        self._change(lambda b: replace(b, ops={**b.ops, op_name: budget_ms}))
 
     def get(self, op_name: str) -> int | None:
         with self._lock:
@@ -170,8 +171,7 @@ class BudgetOverrides:
             return self._overrides.get(op_name)
 
     def clear(self, op_name: str) -> None:
-        with self._update():
-            self._overrides.pop(op_name, None)
+        self._change(lambda b: replace(b, ops=_without(b.ops, op_name)))
 
     def snapshot(self) -> dict[str, int]:
         with self._lock:
@@ -188,8 +188,8 @@ class BudgetOverrides:
         parsed = _parse_value(value)
         if parsed is None:
             raise ValueError("budget must be a non-negative integer (ms) or '<n>x'")
-        with self._update():
-            self._by_consumer[(consumer, op_name or ANY_OP)] = parsed
+        key = (consumer, op_name or ANY_OP)
+        self._change(lambda b: replace(b, by_consumer={**b.by_consumer, key: parsed}))
 
     def get_for_consumer(self, consumer: str, op_name: str) -> int | float | None:
         with self._lock:
@@ -200,8 +200,8 @@ class BudgetOverrides:
             return hit
 
     def clear_for_consumer(self, consumer: str, op_name: str = ANY_OP) -> None:
-        with self._update():
-            self._by_consumer.pop((consumer, op_name or ANY_OP), None)
+        key = (consumer, op_name or ANY_OP)
+        self._change(lambda b: replace(b, by_consumer=_without(b.by_consumer, key)))
 
     def snapshot_by_consumer(self) -> dict[str, dict[str, int | float]]:
         with self._lock:

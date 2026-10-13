@@ -8,9 +8,8 @@ from server.observability.budgets import BudgetOverrides
 
 
 def _pair(tmp_path: Path) -> tuple[BudgetOverrides, BudgetOverrides]:
-    a, b = BudgetOverrides(), BudgetOverrides()
-    a.path = b.path = str(tmp_path / "budgets.json")
-    return a, b
+    path = str(tmp_path / "budgets.json")
+    return BudgetOverrides(path), BudgetOverrides(path)
 
 
 def test_a_set_through_one_process_binds_the_other(tmp_path: Path) -> None:
@@ -30,8 +29,7 @@ def test_updates_from_two_processes_both_survive(tmp_path: Path) -> None:
     b.get("x")
     a.set("memory.set", 5)
     b.set("memory.search", 7)
-    c = BudgetOverrides()
-    c.path = a.path
+    c = BudgetOverrides(str(tmp_path / "budgets.json"))
     assert c.snapshot() == {"memory.set": 5, "memory.search": 7}
 
 
