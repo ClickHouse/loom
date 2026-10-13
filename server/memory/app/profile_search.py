@@ -62,6 +62,8 @@ PREWHERE org = {org:String}
   AND (namespace, agent, user_id, session_id, memory_key)
       IN {keys:Array(Tuple(String, String, String, String, String))}
 WHERE memory_type = 'profile' AND tombstoned_at IS NULL
+  -- a 'high' section is never embedded or ranked: no stub, no vector, no hit
+  AND sensitivity != 'high'
 """
 
 # Step 4: similarity against the stored vectors, and the hash of the text each

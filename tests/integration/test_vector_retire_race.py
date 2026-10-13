@@ -1533,3 +1533,45 @@ async def test_copies_that_read_the_head_before_the_high_write_retire_themselves
                 f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
                 params={"o": ORG, "n": ns},
             )
+
+
+async def test_a_high_profile_section_never_gets_a_vector(ch: Any) -> None:
+    """profile.set with a credential is labelled 'high': no re-embed stub, nothing for
+    the embed worker to fill, and the profile leg returns no hit."""
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory.api.models_profile import ProfileSetInput
+    from server.memory.app import profile
+    from server.memory.app.profile_search import search_profile
+    from server.memory.workers.embedding import EmbeddingWorkerConfig, run_pass
+
+    ns = f"itest-{uuid.uuid4().hex[:12]}"
+    secret = "sk-proj-" + uuid.uuid4().hex + uuid.uuid4().hex[:8]
+    try:
+        await profile.handle_profile_set(
+            ProfileSetInput(
+                org=ORG, namespace=ns, agent=AGENT, label="persona", value=f"my key is {secret}"
+            )
+        )
+        await run_pass(EmbeddingWorkerConfig(org_filter=ORG, namespace_filter=ns))
+        head = await ch.query_one(
+            "SELECT sensitivity FROM loom.memory FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND memory_type = 'profile'",
+            params={"o": ORG, "n": ns},
+        )
+        assert head is not None and head["sensitivity"] == "high"
+        live = await ch.query_one(
+            "SELECT count() AS n FROM loom.memory_embeddings FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND tombstoned_at IS NULL AND embedding_dim > 0",
+            params={"o": ORG, "n": ns},
+        )
+        assert int(live["n"]) == 0
+        hits = await search_profile(
+            ORG, [ns], "my key", top_k=5, lexical=lambda *_a: True, scope=WHOLE_NAMESPACE, ch=ch
+        )
+        assert secret not in json.dumps(hits, default=str)
+    finally:
+        for table in ("memory", "memory_embeddings", "entity_vectors", "memory_chunks"):
+            await ch.execute(
+                f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
+                params={"o": ORG, "n": ns},
+            )

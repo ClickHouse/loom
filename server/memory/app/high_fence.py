@@ -27,6 +27,17 @@ async def fence_high(items: list[tuple[Any, int]], *, ch: Any = None) -> None:
         return
     await memory_repo.fence_vectors(items, model=get_embedder().model_name, ch=ch)
     await tombstone_chunks_of([key for key, _version in items], ch=ch)
+    await recheck_live_vectors([key for key, _version in items], ch=ch)
+
+
+async def recheck_live_vectors(keys: list[Any], *, ch: Any = None) -> None:
+    """A vector written above the fence by a pass that drew its version before its
+    scan but after this write drew its own (dedup, reconcile-status) would stay: the
+    keys' live vectors go through the same head re-check a copy runs."""
+    import server.memory.store as memory_repo
+
+    live = await memory_repo.live_rows_for_keys(keys, ch=ch)
+    await memory_repo.retire_copies_under_unembedded_heads(live, ch=ch)
 
 
 async def tombstone_chunks_of(keys: list[Any], *, ch: Any = None) -> None:

@@ -252,26 +252,33 @@ def _no_repo_job_sandbox() -> Iterator[None]:
 def _no_copy_head_check(request: pytest.FixtureRequest) -> Iterator[None]:
     """A vector copy re-reads its keys' heads after its insert
     (`retire_copies_under_unembedded_heads`); unit fakes answer statements by
-    count and shape, so that read is off unless a test is marked `copy_head_check`."""
+    count and shape, so that read (and `fence_high`'s re-check of the keys' live
+    vectors) is off unless a test is marked `copy_head_check`."""
     if request.node.get_closest_marker("copy_head_check"):
         yield
         return
+    import server.memory.store as memory_repo
+    from server.memory.app import high_fence
     from server.memory.store import embeddings, entities
 
     async def _skip(*_a: object, **_k: object) -> int:
         return 0
 
-    before = (
-        embeddings.retire_copies_under_unembedded_heads,
-        entities.retire_copies_under_unembedded_heads,
-    )
-    embeddings.retire_copies_under_unembedded_heads = _skip  # type: ignore[assignment]
-    entities.retire_copies_under_unembedded_heads = _skip  # type: ignore[assignment]
+    async def _skip_recheck(*_a: object, **_k: object) -> None:
+        return None
+
+    targets = [
+        (embeddings, "retire_copies_under_unembedded_heads", _skip),
+        (entities, "retire_copies_under_unembedded_heads", _skip),
+        (memory_repo, "retire_copies_under_unembedded_heads", _skip),
+        (high_fence, "recheck_live_vectors", _skip_recheck),
+    ]
+    before = [(mod, name, getattr(mod, name)) for mod, name, _ in targets]
+    for mod, name, stub in targets:
+        setattr(mod, name, stub)
     yield
-    (
-        embeddings.retire_copies_under_unembedded_heads,
-        entities.retire_copies_under_unembedded_heads,
-    ) = before
+    for mod, name, original in before:
+        setattr(mod, name, original)
 
 
 @pytest.fixture(autouse=True)

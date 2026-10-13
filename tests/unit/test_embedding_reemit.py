@@ -814,3 +814,15 @@ async def test_every_vector_copy_site_rechecks_its_head(site: str, monkeypatch) 
         read = {**row, "memory_version": 5, "content_excerpt": "same", "memory_type": "semantic"}
         await ops._recheck_reindexed_heads([read], [row], ch=object(), model="fake")
     assert checked and checked[0][0]["memory_key"] == row["memory_key"]
+
+
+def test_the_embed_workers_fill_rechecks_its_heads() -> None:
+    """The worker's filled stubs are vector rows like any copy: a stub drawn before a
+    'high' write landed can sit above its fence, so the fill runs the re-check."""
+    import inspect
+
+    from server.memory.workers import embedding
+
+    assert "retire_copies_under_unembedded_heads(replacements)" in inspect.getsource(
+        embedding.run_pass
+    )

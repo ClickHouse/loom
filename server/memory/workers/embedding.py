@@ -444,6 +444,9 @@ async def run_pass(
             # minutes (embed round-trips) to milliseconds.
             await _refresh_entities(replacements + retries)
             await memory_repo.insert_embedding_rows(replacements)
+            # A stub drawn from a read before a 'high' write landed can sit above
+            # its fence: the fill re-checks its heads like every vector copy.
+            await memory_repo.retire_copies_under_unembedded_heads(replacements)
             await memory_repo.insert_embedding_rows(retries)
 
         rec.outcome = _outcome(

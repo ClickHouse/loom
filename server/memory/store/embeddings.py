@@ -331,6 +331,13 @@ async def reemit_embedding_rows_for_keys(
     return written
 
 
+async def live_rows_for_keys(
+    keys: list[EmbeddingKey], *, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """Every live memory_embeddings row of the given identity keys."""
+    return await _live_rows_for_keys(ch or _default_client(), keys)
+
+
 async def _live_rows_for_keys(ch: _CHClient, keys: list[EmbeddingKey]) -> list[dict[str, Any]]:
     """Every live memory_embeddings row of the given identity keys, in one
     keyed FINAL read (the key tuple in PREWHERE, see `_EMB_KEY_PREWHERE`)."""
