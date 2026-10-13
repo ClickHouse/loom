@@ -282,5 +282,5 @@ def _leg_error(e: Exception) -> str:
     """A failed leg's error as the payload shows it: a Loom error leads with
     its code (`EMBED_TIMEOUT: ...`), so an agent can tell what to do."""
     if isinstance(e, LoomServerError):
-        return f"{e.code}: {e.message}"
+        return f"{e.code}: {e.message}" if e.message else e.code
     return str(e)

@@ -368,7 +368,8 @@ def test_the_back_off_map_stays_bounded_and_forgets_ended_streaks(monkeypatch):
     clock = [1000.0]
     monkeypatch.setattr(app.time, "monotonic", lambda: clock[0])
     _lookup_returns(monkeypatch, TimeoutError())
-    for i in range(app._FAILED_SIZE + 100):
+    monkeypatch.setattr(app, "_FAILED_SIZE", 16)
+    for i in range(app._FAILED_SIZE + 4):
         asyncio.run(_spellings(_input().model_copy(update={"namespace": f"ns{i}"})))
     assert len(app._failed) == app._FAILED_SIZE
     assert ("o", "ns0") not in app._failed  # the oldest went first

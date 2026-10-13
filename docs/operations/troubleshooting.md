@@ -106,6 +106,18 @@ each field means is in [monitoring](./monitoring.md#health-checks).
 
 ## Providers and search quality
 
+### Searches fail with 503 EMBED_TIMEOUT
+
+- **Cause:** the embedding provider did not answer the query embedding within
+  `LOOM_MEMORY_SEARCH_EMBED_BOUND_S` (2.5 s) on any of its attempts
+  (`LOOM_MEMORY_SEARCH_EMBED_BOUND_RETRIES`, 1). A query whose vector is in the embedding
+  cache still answers.
+- **Check:** `curl -s localhost:7777/v1/health | jq '.problems[].code'` shows
+  `provider_failing:<name>` while the provider is down; the provider's own status page.
+- **Fix:** retry once. If it repeats, the provider is slow or down: wait it out, or raise
+  the bound for a provider that is slow but answering. Each failed search holds the
+  server for up to one bound per attempt.
+
 ### Search returns arbitrary results, or extraction writes nothing
 
 - **Symptom:** `set_from_messages` writes no facts, `memory.ask` returns empty answers,

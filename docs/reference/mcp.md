@@ -259,10 +259,10 @@ arguments."` followed by each field error, every unknown key with the field
   request `-32600` (with the HTTP 401), method not found `-32601`, unsupported
   protocol version `-32022`, and a server fault `-32000 "tool execution
 failed"`. A fault Loom names (`OVERLOADED`, `BACKEND_TIMEOUT`,
-  `SCHEMA_PENDING`, `EMBED_TIMEOUT`) states its code and message in that error, and `error.data`
-  is the HTTP `detail` plus `status`, `tool` and `request_id` (with
-  `retry_after_s` for `OVERLOADED`);
-  any other fault says only `internal error` and the request id.
+  `SCHEMA_PENDING`, `EMBED_TIMEOUT`) states its code and message in that error, and
+  `error.data` is the HTTP `detail` plus `status`, `tool` and `request_id` (with
+  `retry_after_s` for `OVERLOADED`); any other fault says only `internal error` and the
+  request id.
 
 Every code, with its cause and fix, is in the [errors reference](./errors.md).
 

@@ -61,8 +61,8 @@ def refusal_body(e: BaseException) -> dict[str, Any] | None:
 def server_failure(e: BaseException) -> dict[str, Any] | None:
     """A LoomServerError the server raised as a 5xx (OVERLOADED, BACKEND_TIMEOUT,
     SCHEMA_PENDING, EMBED_TIMEOUT): its wire detail plus `status`, the body
-    HTTP answers with. None for anything else. It stays a JSON-RPC error, but one that names its
-    code and hint instead of reading as an internal error."""
+    HTTP answers with. None for anything else. It stays a JSON-RPC error, but
+    one that names its code and hint instead of reading as an internal error."""
     from server.core.errors import LoomServerError
 
     if not isinstance(e, LoomServerError) or int(e.status_code) < 500:
