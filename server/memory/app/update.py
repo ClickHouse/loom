@@ -677,7 +677,7 @@ async def _write_revision(
         *(
             [
                 memory_repo.fence_vectors(
-                    [(_identity(existing), new_version)],
+                    [(memory_repo.embedding_key(existing), new_version)],
                     model=get_embedder().model_name,
                     ch=ch,
                 )
@@ -706,7 +706,3 @@ async def _write_revision(
         conflict_peers=len(conflict_result.peers) if conflict_result is not None else 0,
         duplicate_of=duplicate_of_id,
     )
-
-
-def _identity(row: Any) -> tuple[str, str, str, str, str, str]:
-    return (row.org, row.namespace, row.agent, row.user_id, row.session_id, row.memory_key)

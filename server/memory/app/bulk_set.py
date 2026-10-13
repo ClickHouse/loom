@@ -322,12 +322,11 @@ def _winners(state: _BulkWriteState) -> dict[str, dict[str, Any]]:
 def _high_winners(state: _BulkWriteState) -> list[tuple[Any, int]]:
     """(identity key, version) of each key whose winning row is 'high': the fence an
     older write's late vector lands under."""
+    import server.memory.store as memory_repo
+
     return [
-        (
-            (r["org"], r["namespace"], r["agent"], r["user_id"], r["session_id"], key),
-            int(r["version"]),
-        )
-        for key, r in _winners(state).items()
+        (memory_repo.embedding_key(r), int(r["version"]))
+        for r in _winners(state).values()
         if str(r.get("sensitivity") or "") == "high"
     ]
 

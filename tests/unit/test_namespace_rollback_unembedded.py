@@ -53,7 +53,13 @@ def _action(key: str, action: str, version_to: int) -> RollbackAction:
 
 @pytest.fixture
 def calls(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
-    seen: dict[str, list[Any]] = {"stubs": [], "retired": [], "memory": [], "retire_calls": []}
+    seen: dict[str, list[Any]] = {
+        "stubs": [],
+        "retired": [],
+        "memory": [],
+        "retire_calls": [],
+        "fenced": [],
+    }
     historical = [
         _row("plain", 10),
         _row("secret", 11, value="token sk-proj-abc", sensitivity="high"),
@@ -81,7 +87,13 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
     monkeypatch.setattr(store, "fetch_version_rows", _fetch)
     monkeypatch.setattr(store, "get_by_key", _get)
     monkeypatch.setattr(store, "insert_embedding_rows", _stubs)
+
+    async def _fence(items: list[tuple[Any, int]], *, model: str, **_: Any) -> int:
+        seen["fenced"].extend(items)
+        return len(items)
+
     monkeypatch.setattr(store, "retire_vectors_for_keys", _retire)
+    monkeypatch.setattr(store, "fence_vectors", _fence)
     monkeypatch.setattr(rb, "insert_memory_versions", _memory)
     return seen
 
@@ -123,3 +135,20 @@ async def test_vectors_are_retired_in_one_call_at_each_rows_own_version(
     assert all(
         ident[:5] == ("test", "personal", "cursor", "-", "-") for ident, _ in calls["retired"]
     )
+    # the high keys are fenced at the same versions: a plain write still embedding
+    # lands below them
+    assert {ident[5]: v for ident, v in calls["fenced"]} == {
+        k: written[k] for k in ("secret", "gone_high")
+    }
+
+
+async def test_a_reinstated_stub_carries_its_memory_rows_version(
+    calls: dict[str, list[Any]],
+) -> None:
+    """A stub drawn after the memory row's version would sit above a concurrent high
+    write's fence; it takes the memory row's own version instead."""
+    plan = RollbackPlan(reinstate=[_action("plain", "reinstate", 10)], remove=[])
+    await rb.apply_rollback("test", "personal", plan, applied_at=_NOW, ch=object())
+    [stub] = calls["stubs"]
+    [mem] = calls["memory"]
+    assert stub["version"] == mem["version"]

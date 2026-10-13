@@ -372,6 +372,14 @@ async def test_a_metadata_reemit_paused_across_a_retire_does_not_restore_the_vec
                 )
 
 
+async def _memory_only_row(ch: Any, ns: str, key: str, value: str) -> None:
+    """A live memory row with no vector of the served model."""
+    from server.memory import store as M
+
+    row = _memory_row(ns, M.next_version(), value, "")
+    await M.insert_memory_versions([{**row, "memory_key": key}], ch=ch)
+
+
 class _PausedEmbedder:
     """The served embedder, with the first call whose text holds `marker` held at
     `gate` until released: an older write paused inside its embedding work."""
@@ -399,11 +407,19 @@ class _PausedEmbedder:
 
 
 @pytest.mark.parametrize(
-    ("older", "prior_vector"),
-    [("memory.set", False), ("memory.set", True), ("memory.update", True), ("bulk_set", False)],
+    ("older", "prior_vector", "newer"),
+    [
+        ("memory.set", False, "write"),
+        ("memory.set", True, "write"),
+        ("memory.update", True, "write"),
+        ("bulk_set", False, "write"),
+        # the key has a memory row but no vector on the served model (written
+        # before a model change, say): only the sweep's fence covers it
+        ("memory.update", False, "sensitivity_sweep"),
+    ],
 )
 async def test_an_older_writes_late_vector_stays_under_a_newer_high_write(
-    ch: Any, control_plane_url: str, monkeypatch: Any, older: str, prior_vector: bool
+    ch: Any, control_plane_url: str, monkeypatch: Any, older: str, prior_vector: bool, newer: str
 ) -> None:
     """An older plain write draws its version, then pauses in its embed call; a newer
     write labelled 'high' commits; the older one resumes. Its vector carries its own
@@ -447,7 +463,23 @@ async def test_an_older_writes_late_vector_stays_under_a_newer_high_write(
             MemoryBulkSetInput(**ident, entries=[_BulkSetEntry(memory_key=key, value=plain)])
         )
 
+    async def sweep_relabels_high() -> None:
+        from server.memory.app import sensitivity_sweep
+
+        row = await ch.query_one(
+            "SELECT toString(memory_id) AS id FROM loom.memory FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND memory_key = {k:String}",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        cand = sensitivity_sweep.SweepCandidate(
+            row["id"], ORG, ns, AGENT, "-", "-", key, "high", ("credential",)
+        )
+        res = await sensitivity_sweep.apply([cand], ch=ch)
+        assert res.errors == [] and res.high == 1
+
     def newer_high_write() -> Any:
+        if newer == "sensitivity_sweep":
+            return sweep_relabels_high()
         if older == "bulk_set":
             entry = _BulkSetEntry(memory_key=key, value=f"token {secret}")
             return bulk_set.handle_memory_bulk_set(MemoryBulkSetInput(**ident, entries=[entry]))
@@ -461,10 +493,12 @@ async def test_an_older_writes_late_vector_stays_under_a_newer_high_write(
     headers = {"Authorization": f"Bearer {token}"}
     async with httpx.AsyncClient(base_url=control_plane_url, headers=headers, timeout=30) as http:
         try:
+            first = f"the {key} vault was rotated by hand on mondays"
             if prior_vector:
-                first = f"the {key} vault was rotated by hand on mondays"
                 await write.handle_memory_set(MemorySetInput(**ident, memory_key=key, value=first))
                 assert await live_vectors() == 1
+            elif older == "memory.update":
+                await _memory_only_row(ch, ns, key, first)
 
             task = asyncio.create_task(older_write())
             await asyncio.wait_for(paused.entered.wait(), 30)
@@ -499,3 +533,74 @@ async def test_an_older_writes_late_vector_stays_under_a_newer_high_write(
                     f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
                     params={"o": ORG, "n": ns},
                 )
+
+
+async def test_a_rollback_off_a_high_version_is_embedded_again(ch: Any) -> None:
+    """set plain, set high (its fence), roll back to the plain version: the reinstated
+    stub sits above the fence and the embed worker drains it, so the key is searchable
+    again (the stub queue tests IS NULL inside argMax, which skips NULLs)."""
+    from server.identity.api.models import NamespaceRollbackInput
+    from server.identity.app.namespace_rollback import handle_namespace_rollback
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import write
+    from server.memory.workers.embedding import EmbeddingWorkerConfig, run_pass
+
+    ns = f"itest-{uuid.uuid4().hex[:12]}"
+    key = f"rollback_drain_{uuid.uuid4().hex[:6]}"
+    ident = {"org": ORG, "namespace": ns, "agent": AGENT}
+    secret = "sk-proj-" + uuid.uuid4().hex + uuid.uuid4().hex[:8]
+
+    async def live_vectors() -> int:
+        row = await ch.query_one(
+            "SELECT count() AS n FROM loom.memory_embeddings FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND memory_key = {k:String}"
+            " AND tombstoned_at IS NULL AND embedding_dim > 0",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        return int(row["n"])
+
+    try:
+        plain = f"the {key} vault is audited each quarter by the security office"
+        await write.handle_memory_set(MemorySetInput(**ident, memory_key=key, value=plain))
+        await asyncio.sleep(1.1)
+        as_of = datetime.now(UTC)
+        await asyncio.sleep(1.1)
+        await write.handle_memory_set(
+            MemorySetInput(**ident, memory_key=key, value=f"root token {secret}")
+        )
+        assert await live_vectors() == 0
+        from server.auth.context import set_current_auth
+        from server.auth.jwt import AuthInfo
+        from server.operations.base import Role
+
+        set_current_auth(  # the rollback names its caller in the audit row
+            AuthInfo(
+                subject="rollback-drain",
+                org=ORG,
+                namespaces=(ns,),
+                roles=(Role.ADMIN,),
+                is_service_account=False,
+            )
+        )
+        try:
+            await handle_namespace_rollback(
+                NamespaceRollbackInput(
+                    org=ORG, namespace=ns, as_of=as_of, dry_run=False, memory_keys=[key]
+                )
+            )
+        finally:
+            set_current_auth(None)
+        await run_pass(EmbeddingWorkerConfig(org_filter=ORG, namespace_filter=ns))
+        assert await live_vectors() == 1
+        row = await ch.query_one(
+            "SELECT sensitivity FROM loom.memory FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND memory_key = {k:String}",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        assert row["sensitivity"] != "high"
+    finally:
+        for table in ("memory", "memory_embeddings", "entity_vectors"):
+            await ch.execute(
+                f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
+                params={"o": ORG, "n": ns},
+            )

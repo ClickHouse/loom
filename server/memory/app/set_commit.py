@@ -246,7 +246,7 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
     await memory_repo.tombstone_vectors_of(w.existing, version=memory_row["version"], ch=ch)
     if memory_row.get("sensitivity") == "high":
         await memory_repo.fence_vectors(
-            [(_identity_key(memory_row), int(memory_row["version"]))],
+            [(memory_repo.embedding_key(memory_row), int(memory_row["version"]))],
             model=get_embedder().model_name,
             ch=ch,
         )
@@ -782,14 +782,3 @@ def _merged_into_key(existing: Any, input: Any) -> str:
     the caller's own key (or unknown)."""
     key = str(getattr(existing, "memory_key", "") or "")
     return key if key and key != input.memory_key else ""
-
-
-def _identity_key(row: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
-    return (
-        str(row["org"]),
-        str(row["namespace"]),
-        str(row["agent"]),
-        str(row["user_id"]),
-        str(row["session_id"]),
-        str(row["memory_key"]),
-    )

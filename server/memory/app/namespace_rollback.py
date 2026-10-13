@@ -63,12 +63,17 @@ async def apply_rollback(
     embedding_rows: list[dict[str, Any]] = []
     # (identity key, the new memory row's version) of each row that is not embedded.
     retire: list[tuple[store.EmbeddingKey, int]] = []
+    # The 'high' ones among them, fenced too: a plain write still embedding lands below.
+    fence: list[tuple[store.EmbeddingKey, int]] = []
 
     def _retire(row: store.MemoryRow, version: int) -> None:
-        ident = (row.org, row.namespace, row.agent, row.user_id, row.session_id, row.memory_key)
-        retire.append((ident, version))
+        retire.append((store.embedding_key(row), version))
+        if row.sensitivity == "high":
+            fence.append((store.embedding_key(row), version))
 
-    def _stub(row: store.MemoryRow, *, tombstoned_at: datetime | None) -> dict[str, Any]:
+    def _stub(
+        row: store.MemoryRow, *, version: int, tombstoned_at: datetime | None
+    ) -> dict[str, Any]:
         serialized = row.value if isinstance(row.value, str) else json.dumps(row.value, default=str)
         return store.build_embedding_row(
             org=row.org,
@@ -86,6 +91,8 @@ async def apply_rollback(
             embedding=stub_vector,
             tombstoned_at=tombstoned_at,
             created_at=applied_at,
+            # The new memory row's version, so a concurrent high write's fence outranks it.
+            version=version,
             tags=list(row.tags or []),
             entities=list(row.entities or []),
             status=str(row.status or "active"),
@@ -128,7 +135,7 @@ async def apply_rollback(
                 store.build_memory_version_row(h, version=new_version, updated_at=applied_at)
             )
             if is_embedded(h.memory_type, h.sensitivity):
-                embedding_rows.append(_stub(h, tombstoned_at=h.tombstoned_at))
+                embedding_rows.append(_stub(h, version=new_version, tombstoned_at=h.tombstoned_at))
             else:
                 _retire(h, new_version)
 
@@ -158,7 +165,7 @@ async def apply_rollback(
             )
         )
         if is_embedded(head.memory_type, head.sensitivity):
-            embedding_rows.append(_stub(head, tombstoned_at=applied_at))
+            embedding_rows.append(_stub(head, version=new_version, tombstoned_at=applied_at))
         else:
             _retire(head, new_version)
 
@@ -170,6 +177,7 @@ async def apply_rollback(
     # outlive the row that retires it. Each key's own version keeps a concurrent
     # newer embedded write's vectors.
     await store.retire_vectors_for_keys(retire, ch=ch)
+    await store.fence_vectors(fence, model=embedder.model_name, ch=ch)
     log.info(
         "namespace.rollback applied org=%s ns=%s reinstate=%d remove=%d",
         org,

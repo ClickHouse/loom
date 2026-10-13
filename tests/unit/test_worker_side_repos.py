@@ -174,6 +174,10 @@ async def test_find_embedding_stubs_prunes_the_final_read_to_candidate_keys() ->
     assert len(ch.query_all_calls) == 3
     sql1b, params1b = ch.query_all_calls[1]
     assert "FINAL" not in sql1b and "argMax(embedding_dim, version) = 0" in sql1b
+    # argMax skips NULLs, so liveness is tested inside it: an older tombstoned row (a
+    # high write's fence) must not hide the newer live stub above it
+    assert "argMax(tombstoned_at IS NULL, version) = 1" in sql1b
+    assert "argMax(embed_failed_at IS NULL, version) = 1" in sql1b
     assert params1b["keys"] == [("o", "n", "a", "-", "s", "private", "m", "k1")]
     sql, params = ch.query_all_calls[2]
     assert "FINAL" in sql and "IN {keys:Array(Tuple(" in sql

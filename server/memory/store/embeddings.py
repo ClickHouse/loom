@@ -121,7 +121,7 @@ async def mirror_status_to_embeddings(
             _log.warning("status mirror: embeddings read failed for %d keys: %s", len(chunk), e)
             continue
         for r in rows:
-            want = wanted.get(_embedding_key(r))
+            want = wanted.get(embedding_key(r))
             if want is None or (
                 str(r.get("status") or "") == str(want["status"]) and "tombstoned_at" not in want
             ):
@@ -318,7 +318,7 @@ async def reemit_embedding_rows_for_keys(
         rows = await _live_rows_for_keys(ch, keys[start : start + max(1, int(batch))])
         out = []
         for r in rows:
-            overrides = by_key.get(_embedding_key(r))
+            overrides = by_key.get(embedding_key(r))
             row = _copy_row(r, overrides) if overrides is not None else None
             if row is not None:
                 out.append(row)
@@ -353,15 +353,12 @@ async def _live_rows_for_keys(ch: _CHClient, keys: list[EmbeddingKey]) -> list[d
     )
 
 
-def _embedding_key(r: dict[str, Any]) -> EmbeddingKey:
-    return (
-        str(r["org"]),
-        str(r["namespace"]),
-        str(r["agent"]),
-        str(r["user_id"]),
-        str(r["session_id"]),
-        str(r["memory_key"]),
-    )
+def embedding_key(r: Any) -> EmbeddingKey:
+    """The identity a memory or embedding row (a dict or a MemoryRow) is keyed by."""
+    cols = ("org", "namespace", "agent", "user_id", "session_id", "memory_key")
+    if isinstance(r, dict):
+        return tuple(str(r[c]) for c in cols)  # type: ignore[return-value]
+    return tuple(str(getattr(r, c)) for c in cols)  # type: ignore[return-value]
 
 
 def _copy_row(r: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any] | None:

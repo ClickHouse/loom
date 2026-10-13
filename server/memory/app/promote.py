@@ -70,6 +70,22 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
             },
         )
 
+    # A 'high' row is kept out of every search leg by having no vector; loom.shared has
+    # no sensitivity column, so a promoted copy would be embedded and served to the
+    # whole namespace. Refuse.
+    if (getattr(src, "sensitivity", "") or "") == "high":
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "HIGH_SENSITIVITY_PROMOTION_REFUSED",
+                "message": (
+                    "memory.promote refuses rows labelled sensitivity='high': "
+                    "shared memory carries no sensitivity label and is searchable "
+                    "namespace-wide."
+                ),
+            },
+        )
+
     target_key = input.target_key or input.memory_key
     promotion_event = str(uuid.uuid4())
     now_naive = naive_utc_now()

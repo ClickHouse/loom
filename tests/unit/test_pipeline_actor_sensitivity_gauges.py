@@ -216,6 +216,13 @@ async def test_apply_relabels_tombstones_high_and_tags_medium(monkeypatch) -> No
     monkeypatch.setattr(memory_repo, "retire_vectors_for_keys", _retire)
     monkeypatch.setattr(memory_repo, "live_embedding_rows_for_key", _live)
     monkeypatch.setattr(memory_repo, "insert_embedding_rows", _ins)
+    fenced: list[tuple[str, int]] = []
+
+    async def _fence(items, *, model, ch=None):
+        fenced.extend((key[5], version) for key, version in items)
+        return len(items)
+
+    monkeypatch.setattr(memory_repo, "fence_vectors", _fence)
     ch.rows = [
         {
             "org": "clickhouse",
@@ -249,6 +256,8 @@ async def test_apply_relabels_tombstones_high_and_tags_medium(monkeypatch) -> No
     # One retire of both vector tables at the relabelled memory row's version, so a
     # late metadata copy loses and a newer write's entity vectors stay.
     assert tombstoned == [("khigh", written[0][1]["version"])]
+    # and fences the key there: a plain write still embedding lands below it
+    assert fenced == [("khigh", written[0][1]["version"])]
     assert inserted[0][0]["tags"] == ["t", "sensitivity:medium"] and inserted[0][0]["version"]
 
 
@@ -306,6 +315,8 @@ async def test_the_missing_embedding_reconcile_skips_high_rows() -> None:
     assert len(ch.calls) == 2
     for sql, _ in ch.calls:
         assert "m.sensitivity != 'high'" in sql and "m.tombstoned_at IS NULL" in sql
+    # the stub takes the memory row's version, so a high write after this read fences it
+    assert "m.version AS version" in ch.calls[1][0]
 
 
 # ------------------------------------------------------------- (c) gauges

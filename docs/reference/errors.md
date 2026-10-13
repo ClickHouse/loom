@@ -375,6 +375,10 @@ HTTP 409, raised as `server.core.errors.GrantWouldDowngradeError`. 409 — `gran
 
 Raised in `server/transport/http.py`.
 
+#### `HIGH_SENSITIVITY_PROMOTION_REFUSED`
+
+Raised in `server/memory/app/promote.py`.
+
 #### `HOST_REFUSED`
 
 Raised in `server/tracker/app/sources.py`.
