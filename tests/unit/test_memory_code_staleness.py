@@ -12,14 +12,13 @@ from server.memory.app import code_grounding as ma
 from server.memory.store import code_links
 
 
-def _mem(key: str, memory_type: str = "semantic", user: str = "") -> SimpleNamespace:
+def _mem(key: str, memory_type: str = "semantic", user: str = "-") -> SimpleNamespace:
     return SimpleNamespace(
         memory_key=key,
         memory_type=memory_type,
         namespace="",
-        user_id=user,
-        session_id="",
         content_excerpt="",
+        _row_identity=("a", user, "-"),
     )
 
 
@@ -48,23 +47,22 @@ def _link(key: str, state: str, **kw: Any) -> dict[str, Any]:
 
 
 def _links(monkeypatch, heads: list[dict[str, Any]], rows: list[dict[str, Any]]) -> None:
+    cols = ("namespace", "agent", "user_id", "session_id", "memory_key")
+    who = {h["mid"]: {c: h[c] for c in cols} for h in heads}
+
+    async def live_links(org, idents):
+        found = [who[r["memory_id"]] | r for r in rows if r["memory_id"] in who]
+        return [r for r in found if tuple(r[c] for c in cols) in set(idents)]
+
     async def served_heads(org, keys):
         return [h for h in heads if (h["namespace"], h["memory_key"]) in set(keys)]
-
-    async def for_memories(org, ids):
-        return [r for r in rows if r["memory_id"] in ids]
 
     async def readable(org, nss):
         return {n for n in nss if n != "code-secret"}
 
-    async def linked_keys(org, keys):
-        linked = {r["memory_id"] for r in rows}
-        return {(h["namespace"], h["memory_key"]) for h in heads if h["mid"] in linked} & set(keys)
-
+    monkeypatch.setattr(code_links, "live_links", live_links)
     monkeypatch.setattr(code_links, "served_heads", served_heads)
-    monkeypatch.setattr(code_links, "linked_keys", linked_keys)
     monkeypatch.setattr("server.code.app.memory_links.code_namespaces", lambda: ["code-a"])
-    monkeypatch.setattr(code_links, "for_memories", for_memories)
     monkeypatch.setattr("server.memory.app.code_link_reads.readable_code", readable)
     monkeypatch.setattr("server.memory.app.code_link_reads.current", lambda org, m, links: links)
 
@@ -146,8 +144,8 @@ async def test_another_users_memory_under_the_same_key_lends_it_no_state(monkeyp
 
 @pytest.mark.asyncio
 async def test_an_unreadable_link_table_gives_no_note(monkeypatch) -> None:
-    async def broken(org, keys):
+    async def broken(org, idents):
         raise RuntimeError("down")
 
-    monkeypatch.setattr(code_links, "served_heads", broken)
+    monkeypatch.setattr(code_links, "live_links", broken)
     assert await ma._annotate_stale_code_memories([_mem("m1")], _IN) is None

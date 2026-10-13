@@ -592,6 +592,7 @@ def _hit(key: str, **kw: Any) -> Any:
     hit = _MemorySearchHit(
         memory_key=key, memory_type="semantic", content_excerpt="x", distance=0.0, similarity=1.0
     )
+    hit._row_identity = kw.pop("who", ("a", "-", "-"))
     for k, v in kw.items():
         setattr(hit, k, v)
     return hit
@@ -608,14 +609,18 @@ def served(monkeypatch):
     heads: list[dict[str, Any]] = []
     links: dict[str, list[dict[str, Any]]] = {}
     policy: dict[str, str] = {}
-    vectors: dict[tuple[str, str, int], tuple[str, str, str]] = {}
+
+    async def live_links(org, idents):
+        made = {h["mid"]: _inputs(h) for h in heads}
+        return [
+            _full({"inputs_hash": made[h["mid"]], **a, **{c: h[c] for c in IDENT}})
+            for h in heads
+            if tuple(h[c] for c in IDENT) in set(idents)
+            for a in links.get(h["mid"], [])
+        ]
 
     async def served_heads(org, keys):
         return [h for h in heads if (h["namespace"], h["memory_key"]) in set(keys)]
-
-    async def for_memories(org, ids):
-        made = {h["mid"]: _inputs(h) for h in heads}
-        return [_full({"inputs_hash": made.get(m, ""), **a}) for m in ids for a in links.get(m, [])]
 
     async def policies(org, nss):
         return {ns: policy[ns] for ns in nss if ns in policy}
@@ -623,21 +628,16 @@ def served(monkeypatch):
     async def readable(org, nss):
         return set(nss)
 
-    async def linked_keys(org, keys):
-        return {(h["namespace"], h["memory_key"]) for h in heads if links.get(h["mid"])} & set(keys)
-
-    async def embedding_identities(org, rows):
-        return {r: {vectors[r]} for r in rows if r in vectors}
-
+    monkeypatch.setattr(code_links.store, "live_links", live_links)
     monkeypatch.setattr(code_links.store, "served_heads", served_heads)
-    monkeypatch.setattr(code_links.store, "linked_keys", linked_keys)
-    monkeypatch.setattr(code_links.store, "embedding_identities", embedding_identities)
     monkeypatch.setattr(code_links.code, "code_namespaces", lambda: ["code-a"])
-    monkeypatch.setattr(code_links.store, "for_memories", for_memories)
     monkeypatch.setattr(code_links.store, "code_change_policies", policies)
     monkeypatch.setattr(code_link_reads, "readable_code", readable)
     monkeypatch.setattr(code_link_reads, "code_namespace_for", lambda org, ns, tags: "code-a")
-    return SimpleNamespace(heads=heads, links=links, policy=policy, vectors=vectors)
+    return SimpleNamespace(heads=heads, links=links, policy=policy)
+
+
+IDENT = ("namespace", "agent", "user_id", "session_id", "memory_key")
 
 
 def _link(mid: str, state: str, complete: int = 1) -> dict[str, Any]:
@@ -645,51 +645,58 @@ def _link(mid: str, state: str, complete: int = 1) -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-async def test_a_hit_is_the_one_stored_memory_its_identity_allows(served) -> None:
+async def test_a_hit_is_the_stored_memory_its_leg_read(served) -> None:
     served.heads += [
         _row("mine", memory_key="k", user_id="ann", session_id="s1"),
         _row("theirs", memory_key="k", user_id="bob", session_id="s2"),
     ]
     served.links.update(mine=[_link("mine", "changed")], theirs=[_link("theirs", "fresh")])
-    own = [_hit("k")]
-    await code_link_reads.annotate_hits(_search(user_id="ann"), own)
-    assert own[0].code_state == "changed"
-    said = [_hit("k", user_id="bob")]
-    await code_link_reads.annotate_hits(_search(), said)
-    assert said[0].code_state == "fresh"
-    either = [_hit("k")]
-    await code_link_reads.annotate_hits(_search(), either)  # two memories fit: no annotation
-    assert either[0].code_state == ""
+    hits = [_hit("k", who=("a", "ann", "s1")), _hit("k", who=("a", "bob", "s2"))]
+    await code_link_reads.annotate_hits(_search(), hits)
+    assert [h.code_state for h in hits] == ["changed", "fresh"]
+    unknown = [_hit("k", who=None), _hit("k", who=("a", "cy", "s3"))]
+    await code_link_reads.annotate_hits(_search(), unknown)
+    assert [h.code_state for h in unknown] == ["", ""]
 
 
 @pytest.mark.asyncio
-async def test_a_key_several_agents_share_is_the_memory_its_vector_row_names(served) -> None:
+async def test_a_key_several_agents_share_is_the_memory_its_row_names(served) -> None:
     served.heads += [_row("a1", memory_key="k", agent="a1"), _row("a2", memory_key="k", agent="a2")]
     served.links.update(a1=[_link("a1", "fresh")], a2=[_link("a2", "missing")])
-    served.vectors[("agent-a", "k", 7)] = ("a1", "-", "-")
-    served.vectors[("agent-a", "k", 9)] = ("a2", "-", "-")
-    hits = [_hit("k", version=7), _hit("k", version=9), _hit("k", version=8)]
+    hits = [_hit("k", who=("a1", "-", "-")), _hit("k", who=("a2", "-", "-"))]
     await code_link_reads.annotate_hits(_search(), hits)
-    # a2's code is all gone: its hit goes; a version no vector row has stays unannotated
-    assert [(h.version, h.code_state) for h in hits] == [(7, "fresh"), (8, "")]
+    # a2's code is all gone: its hit goes
+    assert [(h._row_identity[0], h.code_state) for h in hits] == [("a1", "fresh")]
 
 
 @pytest.mark.asyncio
-async def test_an_agent_filtered_read_takes_only_that_agents_links(served) -> None:
-    served.heads += [_row("a1", memory_key="k", agent="a1"), _row("a2", memory_key="k", agent="a2")]
-    served.links.update(a1=[_link("a1", "missing")], a2=[_link("a2", "fresh")])
+async def test_the_heads_policies_and_readability_are_read_at_once(served, monkeypatch) -> None:
+    import asyncio
+
+    started: list[str] = []
+    gate = asyncio.Event()
+
+    def waits(name, read):
+        async def run(*a, **k):
+            started.append(name)
+            if len(started) == 3:
+                gate.set()
+            await asyncio.wait_for(gate.wait(), 1)
+            return await read(*a, **k)
+
+        return run
+
+    for name in ("served_heads", "code_change_policies"):
+        monkeypatch.setattr(code_links.store, name, waits(name, getattr(code_links.store, name)))
+    monkeypatch.setattr(
+        code_link_reads, "readable_code", waits("readable", code_link_reads.readable_code)
+    )
+    served.heads.append(_row("m", memory_key="k"))
+    served.links["m"] = [_link("m", "changed")]
     hits = [_hit("k")]
-    await code_link_reads.annotate_hits(_search(agent="a2"), hits)
-    assert [h.code_state for h in hits] == ["fresh"]
-
-
-@pytest.mark.asyncio
-async def test_the_no_agent_sentinel_reads_every_agents_links(served) -> None:
-    served.heads += [_row("m", memory_key="k", agent="a1"), _row("g", memory_key="g")]
-    served.links.update(m=[_link("m", "changed")], g=[_link("g", "missing")])
-    hits = [_hit("k"), _hit("g")]
-    await code_link_reads.annotate_hits(_search(agent="-"), hits)
-    assert [(h.memory_key, h.code_state) for h in hits] == [("k", "changed")]
+    await code_link_reads.annotate_hits(_search(), hits)
+    assert sorted(started) == ["code_change_policies", "readable", "served_heads"]
+    assert hits[0].code_state == "changed"
 
 
 @pytest.mark.asyncio
@@ -1575,21 +1582,53 @@ async def test_code_not_found_keeps_the_commit_it_was_last_read_at(monkeypatch) 
 
 @pytest.mark.asyncio
 async def test_a_search_with_no_linked_hits_reads_no_memory_heads(monkeypatch) -> None:
-    async def linked_keys(org, keys):
-        return set()
+    asked: list[Any] = []
 
-    async def served_heads(org, keys):
-        raise AssertionError("no memory head is read for hits without links")
+    async def live_links(org, idents):
+        asked.append(idents)
+        return []
 
-    monkeypatch.setattr(code_links.store, "linked_keys", linked_keys)
-    monkeypatch.setattr(code_links.store, "served_heads", served_heads)
+    async def no_read(*a, **k):
+        raise AssertionError("nothing more is read for hits without links")
+
+    monkeypatch.setattr(code_links.store, "live_links", live_links)
+    for name in ("served_heads", "code_change_policies"):
+        monkeypatch.setattr(code_links.store, name, no_read)
+    monkeypatch.setattr(code_link_reads, "readable_code", no_read)
     monkeypatch.setattr(code_links.code, "code_namespaces", lambda: ["code-a"])
-    hits = [_hit("k1"), _hit("k2")]
+    hits = [_hit("k1"), _hit("k2", who=None)]  # the second hit's leg read no identity
     assert await code_link_reads.hit_memories(_search(), hits) == [None, None]
-    # no repository configured, or links off: nothing is read at all
+    assert asked == [[("agent-a", "a", "-", "-", "k1")]]
+    await code_link_reads.annotate_hits(_search(), hits)
+    assert [h.code_state for h in hits] == ["", ""] and len(asked) == 2
+    # no repository configured: nothing is read at all
     monkeypatch.setattr(code_links.code, "code_namespaces", lambda: [])
-    monkeypatch.setattr(code_links.store, "linked_keys", served_heads)
     assert await code_link_reads.hit_memories(_search(), hits) == [None, None]
+    assert len(asked) == 2
+
+
+@pytest.mark.asyncio
+async def test_live_links_are_read_by_identity_through_the_key_index() -> None:
+    import uuid
+
+    from server.memory.store import code_links as store
+
+    class _Rec:
+        def __init__(self) -> None:
+            self.sql: list[tuple[str, Any]] = []
+
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            self.sql.append((sql, params))
+            return [{"memory_id": uuid.UUID(int=1), "memory_key": "k"}]
+
+    ch = _Rec()
+    assert await store.live_links("o", [], ch=ch) == [] and not ch.sql
+    ident = ("n", "a", "-", "-", "k")
+    (row,) = await store.live_links("o", [ident, ident], ch=ch)
+    assert row["memory_id"] == str(uuid.UUID(int=1))
+    ((sql, params),) = ch.sql
+    assert params["ids"] == [ident] and params["mks"] == ["k"]  # the memory_key index narrows
+    assert "FINAL WHERE tombstoned_at IS NULL" in sql
 
 
 @pytest.mark.asyncio

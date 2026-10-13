@@ -4,15 +4,15 @@ lists. The worker that makes and follows the links is `server.memory.app.code_li
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from collections import defaultdict
-from collections.abc import Sequence
-from typing import Any
+from collections.abc import Mapping, Sequence
+from typing import Any, cast
 
 from server.code.app import memory_links as code
 from server.memory.domain import code_change
-from server.memory.domain.search_sql import agent_filter
 from server.memory.store import code_links as store
 from server.memory.store.code_links import LinkRow
 from server.settings import settings
@@ -98,7 +98,9 @@ async def readable_code(org: str, namespaces: set[str]) -> set[str]:
     from server.auth.authz import row_in_scope
     from server.operations.base import Role
 
-    return {ns for ns in namespaces if await row_in_scope(org, ns, Role.VIEWER)}
+    names = sorted(namespaces)
+    allowed = await asyncio.gather(*(row_in_scope(org, ns, Role.VIEWER) for ns in names))
+    return {ns for ns, ok in zip(names, allowed, strict=True) if ok}
 
 
 # ---- reads ----------------------------------------------------------------------------
@@ -149,74 +151,80 @@ async def links_of(org: str, memory: dict[str, Any]) -> list[dict[str, str]]:
     ]
 
 
-def _bound(input: Any) -> dict[str, Any]:
-    """The identity a private search read is bound to, as its fact leg applies it."""
-    return {
-        "agent": agent_filter(input.agent) or None,
-        "user_id": getattr(input, "user_id", None),
-        "session_id": getattr(input, "session_id", None),
-        "session_ids": set(getattr(input, "session_ids", None) or []),
-    }
+_IDENT = ("namespace", "agent", "user_id", "session_id", "memory_key")
+Ident = tuple[str, str, str, str, str]
 
 
-def _may_be(head: dict[str, Any], hit: Any, bound: dict[str, Any]) -> bool:
-    """`head` is a memory the hit may have been served from: it agrees with everything
-    the hit says about its row and with the read's identity bound."""
-    said = {
-        "agent": getattr(hit, "_row_agent", None) or bound["agent"],
-        "user_id": getattr(hit, "user_id", "") or bound["user_id"],
-        "session_id": getattr(hit, "session_id", "") or bound["session_id"],
-    }
-    if any(v and str(head[c]) != v for c, v in said.items()):
-        return False
-    return not bound["session_ids"] or str(head["session_id"]) in bound["session_ids"]
+def _ident_of(row: Mapping[str, Any]) -> Ident:
+    return cast(Ident, tuple(str(row[c]) for c in _IDENT))
+
+
+def _identity(input: Any, hit: Any) -> Ident | None:
+    """(namespace, agent, user_id, session_id, memory_key) of the memory the hit was read
+    from; None when its leg did not read who wrote it."""
+    who = getattr(hit, "_row_identity", None)
+    if who is None:
+        return None
+    return (str(getattr(hit, "namespace", "") or input.namespace), *who, str(hit.memory_key))
+
+
+async def _hit_links(
+    input: Any, hits: list[Any]
+) -> tuple[list[Ident | None], dict[Ident, list[LinkRow]]]:
+    """Each hit's memory identity, and the live links of those memories."""
+    if not code.code_namespaces() or getattr(input, "scope", "private") != "private" or not hits:
+        return [None] * len(hits), {}
+    idents = [_identity(input, h) for h in hits]
+    links: dict[Ident, list[LinkRow]] = defaultdict(list)
+    for a in await store.live_links(input.org, sorted({i for i in idents if i})):
+        links[_ident_of(a)].append(a)
+    return idents, links
+
+
+def _heads_of(
+    org: str,
+    idents: list[Ident | None],
+    links: dict[Ident, list[LinkRow]],
+    heads: list[dict[str, Any]],
+) -> list[dict[str, Any] | None]:
+    """Each hit's served memory head with its current links as `links`; None for a hit
+    whose memory holds no link."""
+    out: dict[Ident, dict[str, Any]] = {}
+    for h in heads:
+        ident = _ident_of(h)
+        mine = [a for a in links.get(ident, []) if a["memory_id"] == str(h["mid"])]
+        if mine:
+            out[ident] = {**h, "links": current(org, h, mine)}
+    return [out.get(i) if i else None for i in idents]
+
+
+def _linked_keys(links: dict[Ident, list[LinkRow]]) -> list[tuple[str, str]]:
+    return sorted({(i[0], i[4]) for i in links})
 
 
 async def hit_memories(input: Any, hits: list[Any]) -> list[dict[str, Any] | None]:
-    """Each search hit's stored memory head, with its live links as `links`: the one
-    served memory under its key the hit was read from; None when that is not known, or
-    when its key holds no links (no memory head is read for those)."""
-    if not code.code_namespaces() or getattr(input, "scope", "private") != "private" or not hits:
-        return [None] * len(hits)
-    keys = [(str(getattr(h, "namespace", "") or input.namespace), str(h.memory_key)) for h in hits]
-    linked = await store.linked_keys(input.org, keys)
-    if not linked:
-        return [None] * len(hits)
-    by_key: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
-    for r in await store.served_heads(input.org, sorted(linked)):
-        by_key[(str(r["namespace"]), str(r["memory_key"]))].append(r)
-    bound = _bound(input)
-    fits = [
-        [r for r in by_key.get(key, []) if _may_be(r, h, bound)]
-        for h, key in zip(hits, keys, strict=True)
-    ]
-    out = await _read_from(input.org, hits, keys, fits)
-    links: dict[str, list[LinkRow]] = defaultdict(list)
-    for a in await store.for_memories(input.org, [m["mid"] for m in out if m]):
-        links[a["memory_id"]].append(a)
-    return [
-        {**m, "links": current(input.org, m, links.get(m["mid"], []))} if m else None for m in out
-    ]
+    """Each search hit's stored memory head, with its live links as `links`: the memory
+    the hit was read from; None when that is not known, or when it holds no links (no
+    memory head is read for those)."""
+    idents, links = await _hit_links(input, hits)
+    heads = await store.served_heads(input.org, _linked_keys(links)) if links else []
+    return _heads_of(input.org, idents, links, heads)
 
 
-async def _read_from(
-    org: str, hits: list[Any], keys: list[tuple[str, str]], fits: list[list[dict[str, Any]]]
-) -> list[dict[str, Any] | None]:
-    """The one head each hit was read from: where several fit (a key several agents
-    share), the one whose identity the hit's vector row carries."""
-    read = [
-        (ns, key, int(getattr(h, "version", 0) or 0))
-        for h, (ns, key) in zip(hits, keys, strict=True)
-    ]
-    shared = [r for r, f in zip(read, fits, strict=True) if len(f) > 1 and r[2]]
-    owners = await store.embedding_identities(org, shared)
-    out: list[dict[str, Any] | None] = []
-    for r, f in zip(read, fits, strict=True):
-        if len(f) > 1:
-            who = owners.get(r, set())
-            f = [m for m in f if (str(m["agent"]), str(m["user_id"]), str(m["session_id"])) in who]
-        out.append(f[0] if len(f) == 1 else None)
-    return out
+async def _annotation_reads(
+    input: Any, hits: list[Any]
+) -> tuple[list[dict[str, Any] | None], set[str], dict[str, str]]:
+    """`hit_memories`, the code namespaces the caller may read and the code-change
+    policies: the last two read beside the memory heads, and only once a hit holds a link."""
+    idents, links = await _hit_links(input, hits)
+    if not links:
+        return [None] * len(hits), set(), {}
+    heads, seen, policies = await asyncio.gather(
+        store.served_heads(input.org, _linked_keys(links)),
+        readable_code(input.org, {a["code_namespace"] for v in links.values() for a in v}),
+        store.code_change_policies(input.org, sorted({i[0] for i in links})),
+    )
+    return _heads_of(input.org, idents, links, heads), seen, policies
 
 
 async def annotate_hits(input: Any, hits: list[Any]) -> None:
@@ -224,11 +232,7 @@ async def annotate_hits(input: Any, hits: list[Any]) -> None:
     may read (the links themselves on `_code_links`), and drop, in place, the hits
     about code that is gone (`code_change.hidden`)."""
     try:
-        memories = await hit_memories(input, hits)
-        cns = {a["code_namespace"] for m in memories if m for a in m["links"]}
-        seen = await readable_code(input.org, cns)
-        nss = {str(m["namespace"]) for m in memories if m and m["links"]}
-        policies = await store.code_change_policies(input.org, sorted(nss))
+        memories, seen, policies = await _annotation_reads(input, hits)
     except Exception as e:  # noqa: BLE001 — the links are additive to the read
         log.debug("code links unavailable: %s", e)
         return
