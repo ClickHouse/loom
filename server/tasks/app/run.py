@@ -13,6 +13,7 @@ planes it summarises. The statements live in `server.tasks.store.runs`.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import uuid
@@ -157,8 +158,9 @@ def _owned_by(row: RunLedgerRow, user: str) -> bool:
 async def _target_run(
     ch: Any, input: RunBeginInput, run_id: str, claim: runs_store.RunClaim | runs_store.NoClaim
 ) -> tuple[str, RunLedgerRow | None]:
-    """`run_id` and its row when the caller may (re)open it, else a fresh id.
-    `claim` is this begin's claim on `run_id`, made before this is called."""
+    """`run_id` and its row when the caller may (re)open it, else the caller's own id
+    for it (`_own_run_id`). `claim` is this begin's claim on `run_id`, made before
+    this is called."""
     # Sequential: it must see the synchronous insert of a begin that has
     # already dropped its claim.
     with sequential_reads():
@@ -171,15 +173,37 @@ async def _target_run(
         ):
             # Another user's claim, or one we cannot read, and no run of the caller's
             # under this id: a retry of the caller's own run keeps it (that holder
-            # will read this row and go to a fresh id).
-            return uuid.uuid4().hex, None
+            # will read this row and go to its own id).
+            return await _own_run(ch, input, run_id)
     if existing is not None and not _owned_by(existing, _user_of(input)):
-        # Another user's run: start a new run instead of taking that one over.
-        return uuid.uuid4().hex, None
+        # Another user's run: start the caller's own run instead of taking that one over.
+        return await _own_run(ch, input, run_id)
     if existing is None and claim is runs_store.NoClaim.UNAVAILABLE and request_narrowed():
         # Nothing atomic keeps another user's concurrent first begin off this id,
-        # so a narrowed caller opens a new id only under a server-made id.
-        return uuid.uuid4().hex, None
+        # so a narrowed caller opens a new id only under its own server-made id.
+        return await _own_run(ch, input, run_id)
+    return run_id, existing
+
+
+def _own_run_id(input: RunBeginInput, requested: str) -> str:
+    """The server-made id a caller gets for `requested` when it cannot have that id:
+    derived from (org, namespace, user, session, requested), so a retry of a begin
+    whose answer was lost lands on the same run, and no other user or session can."""
+    seed = "\x1f".join(
+        (input.org, input.namespace, _user_of(input), input.session_id or "-", requested)
+    )
+    return "r" + hashlib.sha256(seed.encode()).hexdigest()[:31]
+
+
+async def _own_run(
+    ch: Any, input: RunBeginInput, requested: str
+) -> tuple[str, RunLedgerRow | None]:
+    """The caller's own id for `requested`, with its row when a begin already opened it."""
+    run_id = _own_run_id(input, requested)
+    with sequential_reads():
+        existing = await runs_store.fetch_run(ch, input.org, input.namespace, run_id)
+    if existing is not None and not _owned_by(existing, _user_of(input)):
+        return uuid.uuid4().hex, None  # not reachable short of a hash collision
     return run_id, existing
 
 

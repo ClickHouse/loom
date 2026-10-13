@@ -33,7 +33,8 @@ function runHook(event, payload, { tmp, url }) {
 }
 
 // A fake server: run.begin answers `beginRunId` after `delayMs`; every request is recorded.
-async function withServer({ beginRunId, delayMs = 0, beginStatus = 200 }, fn) {
+async function withServer({ beginRunId, delayMs = 0, beginStatus = 200, firstBeginDelayMs = 0 }, fn) {
+  let begins = 0;
   const seen = [];
   const server = http.createServer((req, res) => {
     let raw = "";
@@ -43,11 +44,15 @@ async function withServer({ beginRunId, delayMs = 0, beginStatus = 200 }, fn) {
     req.on("end", () => {
       seen.push({ url: req.url, body: raw ? JSON.parse(raw) : {} });
       const answer = req.url.endsWith("/run.begin") ? { run_id: beginRunId } : {};
-      setTimeout(() => {
-        if (req.url.endsWith("/run.begin")) res.statusCode = beginStatus;
-        res.setHeader("content-type", "application/json");
-        res.end(JSON.stringify(answer));
-      }, delayMs);
+      const first = req.url.endsWith("/run.begin") && begins++ === 0;
+      setTimeout(
+        () => {
+          if (req.url.endsWith("/run.begin")) res.statusCode = beginStatus;
+          res.setHeader("content-type", "application/json");
+          res.end(JSON.stringify(answer));
+        },
+        delayMs + (first ? firstBeginDelayMs : 0),
+      );
     });
   });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
@@ -128,16 +133,37 @@ test("a run.begin refused with a 4xx is not asked again", async () => {
   });
 });
 
-test("a run.begin that never answered is closed at SessionEnd under the derived id", async () => {
+test("a run.begin that never answered is asked again at SessionEnd, and the run it answers is closed", async () => {
   const tmp = freshTmp();
   await withServer({ beginRunId: "late", delayMs: 2500 }, async (url) => {
     await runHook("UserPromptSubmit", { session_id: "s4", cwd: tmp, prompt: "p" }, { tmp, url });
   });
-  await withServer({ beginRunId: "unused" }, async (url, seen) => {
+  await withServer({ beginRunId: "r0wn0f54" }, async (url, seen) => {
     await runHook("SessionEnd", { session_id: "s4", cwd: tmp, reason: "exit" }, { tmp, url });
-    const complete = seen.find((r) => r.url.endsWith("/run.complete"));
-    assert.ok(complete, "a begin that may have opened the run is closed");
-    assert.equal(complete.body.run_id, "cc-s4");
+    const begin = seen.find((r) => r.url.endsWith("/run.begin"));
+    assert.equal(begin.body.run_id, "cc-s4", "asked again with the same derived id");
+    assert.equal(begin.body.goal, "p", "and the same goal");
+    assert.equal(seen.find((r) => r.url.endsWith("/run.complete")).body.run_id, "r0wn0f54");
+  });
+});
+
+test("a begin whose answer was lost is recovered, not duplicated, on the next prompt", async () => {
+  // One server: the first begin commits but its answer arrives after the hook's
+  // timeout; the retry gets the same id (the server's begin is idempotent).
+  const tmp = freshTmp();
+  await withServer({ beginRunId: "r5ame1d0", firstBeginDelayMs: 2500 }, async (url, seen) => {
+    const payload = { session_id: "s7", cwd: tmp, prompt: "p" };
+    await runHook("UserPromptSubmit", payload, { tmp, url });
+    await runHook("UserPromptSubmit", { ...payload, prompt: "q" }, { tmp, url });
+    await runHook("SessionEnd", { ...payload, reason: "exit" }, { tmp, url });
+    const begins = seen.filter((r) => r.url.endsWith("/run.begin"));
+    assert.equal(begins.length, 2);
+    assert.deepEqual(
+      begins.map((r) => r.body.run_id),
+      ["cc-s7", "cc-s7"],
+      "the retry carries the same derived id",
+    );
+    assert.equal(seen.find((r) => r.url.endsWith("/run.complete")).body.run_id, "r5ame1d0");
   });
 });
 
@@ -155,7 +181,7 @@ test("a 429 is a busy moment: the next prompt asks again", async () => {
   });
 });
 
-test("a refusal after an unanswered begin still closes the run that begin may have opened", async () => {
+test("a refusal after an unanswered begin is asked once more at SessionEnd", async () => {
   const tmp = freshTmp();
   await withServer({ beginRunId: "late", delayMs: 2500 }, async (url) => {
     await runHook("UserPromptSubmit", { session_id: "s6", cwd: tmp, prompt: "p" }, { tmp, url });
@@ -164,7 +190,10 @@ test("a refusal after an unanswered begin still closes the run that begin may ha
     const payload = { session_id: "s6", cwd: tmp, prompt: "q" };
     await runHook("UserPromptSubmit", payload, { tmp, url });
     await runHook("SessionEnd", { ...payload, reason: "exit" }, { tmp, url });
-    assert.equal(seen.find((r) => r.url.endsWith("/run.complete")).body.run_id, "cc-s6");
+    // The earlier attempt is kept through the refusal, so SessionEnd asks again; a
+    // token refused run.begin is refused run.complete too, so nothing is closed.
+    assert.equal(seen.filter((r) => r.url.endsWith("/run.begin")).length, 2);
+    assert.equal(seen.filter((r) => r.url.endsWith("/run.complete")).length, 0);
   });
 });
 

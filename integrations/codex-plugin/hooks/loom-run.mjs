@@ -79,9 +79,10 @@ async function main() {
     // Keeper, narrowed token), and every later hook must use that one. Begun only
     // with an answered id. A refusal (4xx) is final for the session. A timeout, a
     // network error or a 5xx is asked again on the next prompt with the same
-    // derived id; SessionEnd closes that id if no answer ever came. (Without a
-    // Keeper a narrowed token's retry gets a fresh server id, and a run the lost
-    // answer opened stays open.)
+    // derived id; SessionEnd asks once more if no answer ever came, and closes the
+    // run it answers. A repeated begin is idempotent: the server re-opens the run
+    // the lost answer opened (under the derived id, or the caller's own server-made
+    // id for it), it never opens a second one.
     const res = await postBoundedResult("run.begin", beginBody(scope, payload, prompt), opts);
     const runId = res.status >= 200 && res.status < 300 && res.body ? res.body.run_id : "";
     // 408 and 429 are a busy moment, not a refusal. An earlier unanswered attempt is
@@ -90,16 +91,23 @@ async function main() {
     const transient =
       res.status === 0 || res.status === 408 || res.status === 429 || res.status >= 500 || res.status < 300;
     if (typeof runId === "string" && runId) writeRunBegun(sessionId, runId);
-    else if (transient) writeJsonFile(sp, { attempted: true, at: Date.now() });
+    else if (transient) writeJsonFile(sp, { attempted: true, prompt: prompt.slice(0, 8000), at: Date.now() });
     else writeJsonFile(sp, { refused: true, attempted: Boolean(prior.attempted), at: Date.now() });
     scheduleExit(0);
     return;
   }
 
   if (event === "SessionEnd") {
-    const state = readRunState(sessionId);
-    // Begun, or asked with no answer (it may have opened under the derived id).
-    if (!state.begun && !state.attempted) {
+    let state = readRunState(sessionId);
+    if (!state.begun && state.attempted) {
+      // Asked with no answer: the begin may have opened a run. Asked again, it answers
+      // that run's id (or opens one, which this hook then closes).
+      const res = await postBoundedResult("run.begin", beginBody(scope, payload, state.prompt || ""), opts);
+      const runId = res.status >= 200 && res.status < 300 && res.body ? res.body.run_id : "";
+      if (typeof runId === "string" && runId) writeRunBegun(sessionId, runId);
+      state = readRunState(sessionId);
+    }
+    if (!state.begun) {
       scheduleExit(0);
       return;
     } // no run to close

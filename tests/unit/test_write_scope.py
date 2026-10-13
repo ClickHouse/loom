@@ -864,3 +864,34 @@ def test_request_narrowed_follows_the_bound_scope() -> None:
 
     assert _run_as(None, narrowed) is False
     assert _run_as(_pinned("U"), narrowed) is True
+
+
+def test_a_re_sent_begin_without_a_keeper_lands_on_the_same_run(monkeypatch) -> None:
+    """No atomic claim: a narrowed caller's new id becomes its own server-made id. A
+    re-sent begin (the first's answer was lost) gets that same id and re-opens the
+    run, so the ledger holds one run, not two; another user asking for the same id
+    gets a different one."""
+    from server.tasks.app import run as run_app
+
+    final: dict[str, dict[str, Any]] = {}
+
+    async def fetch_run(ch, org, ns, run_id):
+        return final.get(run_id)
+
+    async def insert_runs(ch, rows):
+        final.update({r["run_id"]: dict(r) for r in rows})
+
+    async def no_claim(*_a, **_k):
+        return run_app.runs_store.NoClaim.UNAVAILABLE
+
+    monkeypatch.setattr(run_app, "get_client", lambda: None)
+    monkeypatch.setattr(run_app.runs_store, "fetch_run", fetch_run)
+    monkeypatch.setattr(run_app.runs_store, "insert_runs", insert_runs)
+    monkeypatch.setattr(run_app.runs_store, "claim_run", no_claim)
+
+    first = asyncio.run(_begin_as(_pinned("U"), "U", "g"))
+    again = asyncio.run(_begin_as(_pinned("U"), "U", "g"))
+    other = asyncio.run(_begin_as(_pinned("V"), "V", "g"))
+    assert first == again != "shared"
+    assert other not in (first, "shared")
+    assert sorted(final) == sorted({first, other})
