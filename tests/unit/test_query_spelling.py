@@ -260,3 +260,126 @@ async def test_a_slow_reconnect_does_not_hold_back_the_embed(monkeypatch):
     vec, spellings, took = await _embed_beside(monkeypatch, client)
     assert (vec, spellings) == ([1.0], None)
     assert took < app._LOOKUP_BOUND_S + 0.2
+
+
+async def test_a_failed_rewrite_embed_serves_the_query_as_typed(monkeypatch):
+    _lookup_returns(monkeypatch, {"DataLakeCatalog": 9})
+
+    async def embed(text: str) -> list[float]:
+        if text == "DataLakeCatalog":
+            raise TimeoutError("provider slow")
+        return [1.0]
+
+    assert await app.embed_query(embed, "datalakecatalog", _input(), "m") == ([1.0], None)
+
+
+async def test_lookups_failing_together_count_and_warn_once(monkeypatch, caplog):
+    async def spelling_rows(_ch, _q, _tokens):
+        await asyncio.sleep(0.05)
+        raise TimeoutError()
+
+    monkeypatch.setattr(app, "spelling_rows", spelling_rows)
+    monkeypatch.setattr(app, "get_client", lambda: None)
+    queries = [f"datalakecatalog word{i:04d}" for i in range(20)]
+    with caplog.at_level(logging.DEBUG, logger=app.log.name):
+        got = await asyncio.gather(*(app.corpus_spellings(_input(q), "m") for q in queries))
+    assert got == [None] * 20
+    assert app._failed[("o", "ns")][0] == 1
+    assert len(caplog.records) == 1
+
+
+class _FakeEmbedder:
+    model_name = "m"
+
+    async def embed(self, text: str) -> list[float]:
+        return [1.0]
+
+
+@pytest.mark.parametrize(
+    ("spellings", "work"),
+    [
+        (
+            {"datalakecatalog": "DataLakeCatalog"},
+            {"embedding_calls": 2, "query_spellings": {"datalakecatalog": "DataLakeCatalog"}},
+        ),
+        ({}, {"embedding_calls": 1}),
+        (None, {"embedding_calls": 1, "query_spellings_skipped": True}),
+    ],
+)
+async def test_memory_search_reports_the_spelling_in_retrieval_work(monkeypatch, spellings, work):
+    from server.memory.app.search.embed import _embed_search_query
+
+    async def corpus_spellings(_input, _model):
+        return spellings
+
+    monkeypatch.setattr(app, "corpus_spellings", corpus_spellings)
+    actual_work: dict[str, Any] = {"embedding_calls": 0}
+    clock = SimpleNamespace(mark=lambda _stage: None)
+    no_hyde = _input().model_copy(update={"hyde": False})
+    vec = await _embed_search_query(
+        no_hyde, _FakeEmbedder(), "datalakecatalog", "", None, actual_work, clock
+    )
+    assert vec == [1.0]
+    assert actual_work == work
+
+
+@pytest.mark.parametrize(
+    ("spellings", "reported", "skipped"),
+    [
+        ({"datalakecatalog": "DataLakeCatalog"}, {"datalakecatalog": "DataLakeCatalog"}, False),
+        ({}, {}, False),
+        (None, {}, True),
+    ],
+)
+async def test_memory_search_trace_reports_the_spelling(monkeypatch, spellings, reported, skipped):
+    import server.memory.app.retrieval as retrieval
+    from server.memory.api.models_search import MemorySearchTraceInput
+    from server.memory.app.search import trace
+
+    async def corpus_spellings(_input, _model):
+        return spellings
+
+    async def no_hits(_q):
+        return []
+
+    monkeypatch.setattr(app, "corpus_spellings", corpus_spellings)
+    monkeypatch.setattr(trace, "get_embedder", lambda: _FakeEmbedder())
+    monkeypatch.setattr(retrieval, "vector_search_trace", no_hits)
+    out = await trace.handle_memory_search_trace(
+        MemorySearchTraceInput(org="o", namespace="ns", agent="*", query="datalakecatalog")
+    )
+    assert (out.query_spellings, out.query_spellings_skipped) == (reported, skipped)
+
+
+def test_the_back_off_map_stays_bounded_and_forgets_ended_streaks(monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(app.time, "monotonic", lambda: clock[0])
+    _lookup_returns(monkeypatch, TimeoutError())
+    for i in range(app._FAILED_SIZE + 100):
+        asyncio.run(app.corpus_spellings(_input().model_copy(update={"namespace": f"ns{i}"}), "m"))
+    assert len(app._failed) == app._FAILED_SIZE
+    assert ("o", "ns0") not in app._failed  # the oldest went first
+    # An hour after their back-offs end, the next failure clears them all.
+    clock[0] += app._CACHE_TTL_S + app._MAX_BACKOFF_S + 1
+    asyncio.run(app.corpus_spellings(_input().model_copy(update={"namespace": "late"}), "m"))
+    assert list(app._failed) == [("o", "late")]
+
+
+async def test_an_embed_that_raises_before_awaiting_leaves_no_task_running(monkeypatch):
+    started = asyncio.Event()
+
+    async def spelling_rows(_ch, _q, _tokens):
+        started.set()
+        await asyncio.sleep(5)
+        return {}
+
+    monkeypatch.setattr(app, "spelling_rows", spelling_rows)
+    monkeypatch.setattr(app, "get_client", lambda: None)
+
+    def embed(_text: str) -> Any:
+        raise RuntimeError("no embedder")
+
+    before = asyncio.all_tasks()
+    with pytest.raises(RuntimeError, match="no embedder"):
+        await app.embed_query(embed, "datalakecatalog", _input(), "m")
+    assert asyncio.all_tasks() == before

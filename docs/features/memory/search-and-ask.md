@@ -132,8 +132,12 @@ all-lowercase word of four or more letters in the spelling the caller's rows in 
 addressed namespace use. The rule: at least two rows, and twice as many as write the
 word in lowercase. Lexical matching is case-insensitive already and is unchanged. A
 rewrite costs a second embed and shows in `retrieval_work.query_spellings`
-(`memory.search_trace`: `query_spellings`). When the lookup does not answer within
-0.25 s the query embeds as typed and `retrieval_work.query_spellings_skipped` is set.
+(`memory.search_trace`: `query_spellings`). The query embeds as typed, with
+`retrieval_work.query_spellings_skipped` set (`memory.search_trace`:
+`query_spellings_skipped`), when the lookup fails or runs past 0.25 s, when the
+namespace is backing off after such a failure (a minute, doubling with each failure in a
+row up to an hour), or when the rewritten text's embed fails. Answers are reused for a
+minute.
 `loom.search_trace_log` keeps the query as typed, so a logged query can score
 differently from a fresh embed of the same text.
 

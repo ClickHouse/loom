@@ -35,7 +35,7 @@ import { MentorPanel } from "../components/MentorPanel";
 import { Tip } from "../components/ui";
 import { READ_ONLY_TIP, canWrite, useNamespaceRole } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
-import { KEYWORD_PAGE, keywordThenRanked } from "../lib/searchOrder";
+import { KEYWORD_PAGE, keywordThenRanked, parseSearchQuery } from "../lib/memoriesSearch";
 
 // Server caps memory.list at 1000 rows/call (MemoryListInput.limit le=1000).
 // The browse feed pages up to this; past it, search covers the whole namespace.
@@ -195,18 +195,8 @@ export function Recent() {
   // tag/agent filters apply client-side over the semantic-search result
   // set OR the raw entries list, and intersect with the chip selections.
   const { rawQuery, queryTags, queryAgent } = useMemo(() => {
-    const tokens = query.trim().split(/\s+/).filter(Boolean);
-    const tags: string[] = [];
-    let agent: string | null = null;
-    const rest: string[] = [];
-    for (const tok of tokens) {
-      const mTag = /^tag:(.+)$/.exec(tok);
-      const mAgent = /^agent:(.+)$/.exec(tok);
-      if (mTag) tags.push(mTag[1].toLowerCase());
-      else if (mAgent) agent = mAgent[1].toLowerCase();
-      else rest.push(tok);
-    }
-    return { rawQuery: rest.join(" "), queryTags: tags, queryAgent: agent };
+    const parsed = parseSearchQuery(query);
+    return { rawQuery: parsed.text, queryTags: parsed.tags, queryAgent: parsed.agent };
   }, [query]);
 
   useEffect(() => {

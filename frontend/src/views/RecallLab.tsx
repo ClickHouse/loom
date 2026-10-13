@@ -7,7 +7,7 @@ import { MemoryTabs } from "../components/MemoryTabs";
 import { EmptyState } from "../components/EmptyState";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { humanizeError, relativeTime, displayAgent, previewValue } from "../lib/format";
-import { KEYWORD_PAGE, keywordThenRanked } from "../lib/searchOrder";
+import { KEYWORD_PAGE, keywordThenRanked, parseSearchQuery } from "../lib/memoriesSearch";
 import { signed, whyTerms } from "../lib/whyNote";
 
 // One recorded search, expanded in place. A person reading "my agent answered badly an
@@ -303,7 +303,8 @@ export function RecallLab() {
   const [showWeak, setShowWeak] = useState(false);
 
   useEffect(() => {
-    const q = query.trim();
+    // The text the Memories list would send; its tag: / agent: filters are not applied here.
+    const q = parseSearchQuery(query).text;
     // The Memories list waits for two characters; so does this.
     if (q.length < 2) {
       setRows(null);

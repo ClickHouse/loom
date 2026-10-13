@@ -1,10 +1,10 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MemoryListEntry, SearchHit, WhoAmI } from "../api";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
-import { searchMemory } from "../api";
+import { listMemories, searchMemory } from "../api";
 import { RecallLab } from "./RecallLab";
 import { Recent } from "./Recent";
 
@@ -126,5 +126,19 @@ describe("Recall Lab and the Memories list", () => {
     await userEvent.type(screen.getByLabelText("Recall query"), "Azure");
     await waitFor(() => expect(shownKeys()).toEqual(["newer_azure", "older_azure"]), { timeout: 3000 });
     expect(screen.queryByText("search down")).toBeNull();
+  });
+
+  it("send the text the Memories list sends: whitespace collapsed, tag: and agent: left out", async () => {
+    useStore.setState({ view: "recall" });
+    render(<RecallLab />);
+    fireEvent.change(screen.getByLabelText("Recall query"), {
+      target: { value: "  tag:prod  Azure\tblob  agent:ci " },
+    });
+    await waitFor(() => expect(searchMemory).toHaveBeenCalled(), { timeout: 3000 });
+    expect(vi.mocked(searchMemory).mock.calls.at(-1)?.[1]).toBe("Azure blob");
+    const contains = vi
+      .mocked(listMemories)
+      .mock.calls.map((c) => (c[2] as { contains?: string } | undefined)?.contains);
+    expect(contains).toContain("Azure blob");
   });
 });
