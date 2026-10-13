@@ -155,6 +155,12 @@ def bind_request_read_filters(auth: Any, result: ReadFilters | Exception) -> Non
     _request_scope.set((auth, result))
 
 
+def clear_request_read_filters() -> None:
+    """Drop the binding: an MCP batch runs its calls in one context, and a call
+    refused before its scope is resolved must not inherit the previous call's."""
+    _request_scope.set(None)
+
+
 @contextmanager
 def read_filters_bound(auth: Any, scope: ReadFilters) -> Iterator[None]:
     """Bind `scope` for `auth` inside the block only: a worker replaying a request

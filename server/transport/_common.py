@@ -5,6 +5,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from server.auth.context import current_auth
+from server.core.errors import AuthInsufficientError, IdentityIncompleteError
+from server.identity.domain.read_scope import ReadFilters, request_read_filters
+
 if TYPE_CHECKING:
     from server.core.request_work import RequestWork
 
@@ -30,25 +34,23 @@ def request_identity(args: dict[str, Any]) -> dict[str, str]:
 
 
 def ledger_identity(args: dict[str, Any]) -> dict[str, str]:
-    """`request_identity` with the user (and session) a narrowed read scope pins:
-    a pinned token's calls are logged as the user it acts as, which is what a
-    history rule keyed on that user counts, whatever its body names."""
-    from server.auth.context import current_auth
-    from server.core.errors import AuthInsufficientError, IdentityIncompleteError
-    from server.identity.domain.read_scope import request_read_filters
-
+    """`request_identity` with the identity a narrowed token acts as: the user (and
+    session) its read scope pins, and always its `read_user_id` pin, so a refused
+    call naming another user is logged as the caller, never as that user. A history
+    rule keyed on the user counts the caller's own calls, whatever its body names."""
     out = request_identity(args)
     auth = current_auth()
     if auth is None:
         return out
     try:
-        scope = request_read_filters(auth)
+        scope: ReadFilters | None = request_read_filters(auth)
     except (AuthInsufficientError, IdentityIncompleteError):
-        return out
-    if scope.narrowed and scope.user_id:
-        out["user_id"] = scope.user_id
-    if scope.narrowed and scope.session_id:
-        out["session_id"] = scope.session_id
+        scope = None
+    if scope is not None and scope.narrowed:
+        out["user_id"] = scope.user_id or out["user_id"]
+        out["session_id"] = scope.session_id or out["session_id"]
+    if auth.read_user_id:
+        out["user_id"] = auth.read_user_id
     return out
 
 

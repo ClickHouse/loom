@@ -417,8 +417,10 @@ async def _bind_caller_identity(
     # current_auth()-reading handlers (list_mine, browse/join/leave, …) see
     # the caller. HTTP does this in _make_endpoint; without it those reject.
     from server.auth.context import set_current_auth
+    from server.identity.domain.read_scope import clear_request_read_filters
 
     set_current_auth(auth)
+    clear_request_read_filters()
     # The consumer column — the call's own `consumer`, else
     # the token's subject class — published for the event, audit and budget
     # writers of this call.
