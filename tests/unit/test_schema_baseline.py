@@ -82,6 +82,7 @@ def test_the_journal_files() -> None:
         "023_provider_participants.sql",
         "024_deployment_config.sql",
         "025_agent_run_claims.sql",
+        "026_agent_events_run_id_index.sql",
     ]
 
 
