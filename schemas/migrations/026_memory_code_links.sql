@@ -82,6 +82,9 @@ ENGINE = MergeTree
 ORDER BY queued_at
 TTL toDateTime(queued_at) + INTERVAL 7 DAY;
 
+-- Every write is queued, touches and pins included: one that drops a memory's `repo:`
+-- tag must reach the worker to drop its links. A queued row is its identity alone; the
+-- worker skips a memory whose links already match it after one read of its head.
 CREATE MATERIALIZED VIEW IF NOT EXISTS loom.memory_code_link_queue_mv TO loom.memory_code_link_queue
 AS SELECT org, namespace, agent, user_id, session_id, memory_key, version
 FROM loom.memory;
