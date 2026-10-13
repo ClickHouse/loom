@@ -42,12 +42,12 @@ def test_only_the_error_codes_file_is_read_and_other_paths_yield_nothing() -> No
 
 
 def test_the_cpp_parse_hook_appends_the_error_codes_to_the_files_symbols() -> None:
-    pf, err = ingest_parse._parse_for_ingest("src/Common/ErrorCodes.cpp", _SAMPLE)
+    pf, err = ingest_parse.parse_for_ingest("src/Common/ErrorCodes.cpp", _SAMPLE)
     assert err == "" and pf is not None and pf.lang == "cpp"
     names = {s.qualified_name for s in pf.symbols}
     assert "DB::ErrorCodes::LOGICAL_ERROR" in names and "DB::ErrorCodes::OK" in names
     # any other C++ file gains nothing from the hook
-    pf2, _ = ingest_parse._parse_for_ingest(
+    pf2, _ = ingest_parse.parse_for_ingest(
         "src/Common/Exception.cpp", b"namespace DB { void f() {} }\n"
     )
     assert pf2 is not None and not any(s.kind == "constant" for s in pf2.symbols)

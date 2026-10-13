@@ -45,9 +45,9 @@ def test_reference_paths_are_the_queries_tree_fixtures_only() -> None:
 
 
 def test_parse_for_ingest_yields_a_chunk_only_reference_file_and_skips_over_a_megabyte() -> None:
-    pf, err = ingest_parse._parse_for_ingest(REF, SMALL)
+    pf, err = ingest_parse.parse_for_ingest(REF, SMALL)
     assert pf is not None and pf.lang == "reference" and pf.symbols == [] and err == ""
-    big, err = ingest_parse._parse_for_ingest(REF, b"x" * (lr.REFERENCE_MAX_BYTES + 1))
+    big, err = ingest_parse.parse_for_ingest(REF, b"x" * (lr.REFERENCE_MAX_BYTES + 1))
     assert big is None and err == ""
     # the language table itself is untouched: no stamp move for the parsers
     from server.code.domain.extract.treesitter import lang_for_path
@@ -56,7 +56,7 @@ def test_parse_for_ingest_yields_a_chunk_only_reference_file_and_skips_over_a_me
 
 
 def test_lang_for_path_of_source_files_is_unchanged() -> None:
-    pf, _ = ingest_parse._parse_for_ingest(f"{ST}05138_x.sql", b"SELECT 1;\n")
+    pf, _ = ingest_parse.parse_for_ingest(f"{ST}05138_x.sql", b"SELECT 1;\n")
     assert pf is not None and pf.lang == "sql"
 
 

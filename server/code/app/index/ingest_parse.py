@@ -28,10 +28,10 @@ def parse_file(path: str, source: bytes) -> ParsedFile | None:
     symbols. sql/config/doc are chunk-only BY DESIGN (no symbol semantics
     worth graphing), not for lack of a grammar.
     """
-    return _parse_for_ingest(path, source)[0]
+    return parse_for_ingest(path, source)[0]
 
 
-def _parse_for_ingest(path: str, source: bytes) -> tuple[ParsedFile | None, str]:
+def parse_for_ingest(path: str, source: bytes) -> tuple[ParsedFile | None, str]:
     """`parse_file` plus the reason it degraded, when it did.
 
     The reason is returned rather than only logged so `FileIngestStats.error` and
@@ -121,9 +121,6 @@ def _parse_for_ingest(path: str, source: bytes) -> tuple[ParsedFile | None, str]
     return ParsedFile(path=path, lang=lang, source=source), ""
 
 
-parse_for_ingest = _parse_for_ingest
-
-
 def parse_for_round(
     path: str, source: bytes, denylist: Denylist | None = None
 ) -> tuple[ParsedFile | None, str] | None:
@@ -138,7 +135,7 @@ def parse_for_round(
     cap = int(_settings.code_ingest_max_file_bytes)
     if cap and len(source) > cap:
         return None
-    return _parse_for_ingest(path, source)
+    return parse_for_ingest(path, source)
 
 
 def _parse_python(path: str, source: bytes) -> ParsedFile:
