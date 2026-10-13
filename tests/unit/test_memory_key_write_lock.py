@@ -228,3 +228,15 @@ async def test_a_lease_is_renewed_and_a_lost_one_stops_the_body() -> None:
             ch.rows["job"] = {"holder": "other", "stale": False}  # taken over meanwhile
             await asyncio.sleep(1)
             pytest.fail("the body ran on without its lease")
+
+
+async def test_a_lease_keeper_cannot_confirm_is_busy_and_one_without_keeper_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ran: list[str] = []
+    with pytest.raises(kl.LeaseBusy):
+        async with _locks(FakeKeeper(fail=True), monkeypatch).lease("job"):
+            ran.append("keeper failing")
+    async with _locks(FakeKeeper(engine=""), monkeypatch).lease("job"):
+        ran.append("no keeper")
+    assert ran == ["no keeper"]

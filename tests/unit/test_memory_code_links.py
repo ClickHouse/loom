@@ -40,6 +40,12 @@ def _no_remembered_anchors():
 
 
 @pytest.fixture(autouse=True)
+def _no_keeper(monkeypatch):
+    # no ClickHouse here: leases are held in this process, as on a server without Keeper
+    monkeypatch.setattr(code_link_pass.repository_locks, "_keeper", False)
+
+
+@pytest.fixture(autouse=True)
 def _mirror_holds_every_commit(monkeypatch):
     async def has(self, commit):
         return True

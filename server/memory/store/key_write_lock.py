@@ -98,16 +98,20 @@ class KeyWriteLocks:
     @asynccontextmanager
     async def lease(self, name: str) -> AsyncIterator[None]:
         """Hold `name` across hosts while the body runs, renewed every third of the TTL.
-        LeaseBusy when another holder keeps it; LeaseLost, from the body, when another
-        holder takes it meanwhile."""
+        LeaseBusy when another holder keeps it or Keeper fails; LeaseLost, from the body,
+        when another holder takes it meanwhile. Without Keeper it is held in this process."""
         me, lost = default_holder(), asyncio.Event()
         body = asyncio.current_task()
         async with AsyncExitStack() as stack:
             try:
                 await stack.enter_async_context(self._process_lock(name))
-                held = await self._keeper_acquire(name, me)
+                held = await self._acquire(name, me)
             except PreconditionFailedError:
                 raise LeaseBusy(name) from None
+            except Exception as e:  # a lease Keeper cannot confirm is not held
+                degradations.note("memory_key_lock", "lease_unconfirmed", e)
+                await self._keeper_release(name, me)  # an insert that landed before the error
+                raise LeaseBusy(name) from e
             if held and body is not None:
                 stack.push_async_callback(self._keeper_release, name, me)
                 renewing = asyncio.create_task(self._renew(name, me, body, lost))
@@ -162,22 +166,27 @@ class KeyWriteLocks:
 
     async def _keeper_acquire(self, name: str, me: str) -> bool:
         """True once held; False without a usable Keeper."""
-        deadline = time.monotonic() + self._wait_s
-        poll = self._poll_s
         try:
-            if not await self._has_keeper():
-                return False
-            while not await self._attempt(name, me):
-                if time.monotonic() >= deadline:
-                    raise _busy()
-                await asyncio.sleep(poll)
-                poll = min(poll * 1.5, 0.5)
-            return True
+            return await self._acquire(name, me)
         except PreconditionFailedError:
             raise
         except Exception as e:  # noqa: BLE001 — Keeper trouble must not fail the write
             degradations.note("memory_key_lock", "process_lock_only", e)
             return False
+
+    async def _acquire(self, name: str, me: str) -> bool:
+        """True once held; False when the server has no Keeper. Raises
+        PreconditionFailedError once the wait is over, and what a Keeper read raises."""
+        deadline = time.monotonic() + self._wait_s
+        poll = self._poll_s
+        if not await self._has_keeper():
+            return False
+        while not await self._attempt(name, me):
+            if time.monotonic() >= deadline:
+                raise _busy()
+            await asyncio.sleep(poll)
+            poll = min(poll * 1.5, 0.5)
+        return True
 
     async def _keeper_release(self, name: str, me: str) -> None:
         try:
