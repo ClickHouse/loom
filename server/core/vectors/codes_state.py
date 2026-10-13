@@ -33,6 +33,7 @@ import time
 from typing import Any
 
 from server.core.schema.vector_codec_ddl import codec_width
+from server.core.vectors.code_tables import vector_dim_for_table, written_by_served_model
 
 log = logging.getLogger(__name__)
 
@@ -91,31 +92,19 @@ def _table(column: str) -> str:
     return column.rsplit(".", 1)[0]
 
 
-def _written_by_served_model(column: str) -> bool:
-    """One of Loom's own coded tables that no LOOM_CODE_VECTOR_TABLES label
-    routes elsewhere: a model change rebuilds it at the new width."""
-    from server.core.schema.vector_codec_ddl import CODED_TABLES
-    from server.core.vectors.code_tables import vector_dim_for_table
-
-    table = _table(column)
-    return table.split(".", 1)[1] in CODED_TABLES and not vector_dim_for_table(table)
-
-
 def primary_widths() -> dict[str, int]:
     """The coded columns the served model writes."""
-    return {c: w for c, w in _widths.items() if _written_by_served_model(c)}
+    return {c: w for c, w in _widths.items() if written_by_served_model(_table(c))}
 
 
 def width_mismatches(served: int) -> dict[str, tuple[int, int]]:
     """Serving columns whose width differs from what their writes carry, as
     column -> (stored, written): a routed label's width, or the served model's.
     Other tables (rebuild staging, backups) take no writes."""
-    from server.core.vectors.code_tables import vector_dim_for_table
-
     out: dict[str, tuple[int, int]] = {}
     for column, stored in _widths.items():
         written = vector_dim_for_table(_table(column)) or (
-            served if _written_by_served_model(column) else 0
+            served if written_by_served_model(_table(column)) else 0
         )
         if written and stored != written:
             out[column] = (stored, written)

@@ -158,7 +158,7 @@ def test_new_coded_tables_take_the_width_the_install_stores(
     class _CH:
         def query(self, sql: str, parameters: dict | None = None) -> SimpleNamespace:
             assert "memory_embeddings" in parameters["tables"]
-            return SimpleNamespace(result_rows=[(c,) for c in codecs])
+            return SimpleNamespace(result_rows=[("memory_embeddings", c) for c in codecs])
 
     assert mig._codec_width(_CH()) == width  # type: ignore[arg-type]
 

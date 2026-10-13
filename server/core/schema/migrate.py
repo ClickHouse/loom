@@ -434,14 +434,19 @@ def _codec_width(ch: Client) -> int:
     (a model chosen in the dashboard leaves LOOM_EMBEDDING_DIM behind), else
     LOOM_EMBEDDING_DIM on a fresh install."""
     from server.core.schema.vector_codec_ddl import CODED_TABLES, codec_width
+    from server.core.vectors.code_tables import written_by_served_model
     from server.settings import settings
 
     rows = ch.query(
-        "SELECT compression_codec FROM system.columns WHERE database = 'loom' "
+        "SELECT table, compression_codec FROM system.columns WHERE database = 'loom' "
         "AND table IN {tables:Array(String)} AND compression_codec LIKE '%Quantized(%'",
         parameters={"tables": sorted(CODED_TABLES)},
     ).result_rows
-    widths = Counter(w for (codec,) in rows if (w := codec_width(str(codec))) is not None)
+    widths = Counter(
+        w
+        for table, codec in rows
+        if written_by_served_model(str(table)) and (w := codec_width(str(codec))) is not None
+    )
     return widths.most_common(1)[0][0] if widths else int(settings.embedding_dim)
 
 

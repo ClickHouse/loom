@@ -103,5 +103,5 @@ def test_affinity_not_omp_threads(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
 def test_cpus_default_to_this_platforms_count(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(web_workers, "_affinity_cpus", lambda: 3)
+    monkeypatch.setattr(web_workers, "available_cpus", lambda: 3)
     assert default_workers(proc_cgroup="", meminfo=BIG_MEM, root=tmp_path) == 3

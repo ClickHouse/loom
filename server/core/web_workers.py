@@ -102,7 +102,7 @@ def _mem_total(meminfo: str) -> float:
     return math.inf
 
 
-def _affinity_cpus() -> int:
+def available_cpus() -> int:
     """CPUs this process may run on (Linux affinity; elsewhere the CPU count)."""
     if sys.platform == "linux":
         return len(os.sched_getaffinity(0))
@@ -117,7 +117,7 @@ def default_workers(
     root: Path = Path("/sys/fs/cgroup"),
 ) -> int:
     if cpus is None:
-        cpus = _affinity_cpus()
+        cpus = available_cpus()
     if proc_cgroup is None:
         proc_cgroup = _read(Path("/proc/self/cgroup")) or ""
     if meminfo is None:

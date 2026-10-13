@@ -66,6 +66,14 @@ def _resolve_model(spec: str) -> tuple[str, int]:
     return _MODEL_ALIAS_TO_HF[alias]
 
 
+def onnx_threads() -> int:
+    """This process's share of the CPUs: every web worker runs its own session."""
+    from server.core.web_workers import available_cpus
+    from server.settings import settings
+
+    return max(1, available_cpus() // max(1, int(settings.web_workers)))
+
+
 class LocalEmbedder:
     """Synchronous ONNX inference, run in `asyncio.to_thread`: one hop per
     query and one per batch."""
@@ -102,7 +110,9 @@ class LocalEmbedder:
                     self.hf_model_id,
                     self.dim,
                 )
-                embedder: _TextEmbedding = TextEmbedding(model_name=self.hf_model_id)
+                embedder: _TextEmbedding = TextEmbedding(
+                    model_name=self.hf_model_id, threads=onnx_threads()
+                )
                 return embedder
 
             self._embedder = await asyncio.to_thread(_load)

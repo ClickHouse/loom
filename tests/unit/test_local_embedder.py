@@ -212,9 +212,9 @@ class _StubTextEmbedding:
     instantiated_with: list[str] = []
     calls: list[list[str]] = []
 
-    def __init__(self, model_name: str) -> None:
+    def __init__(self, model_name: str, threads: int | None = None) -> None:
         type(self).instantiated_with.append(model_name)
-        self.model_name = model_name
+        self.model_name, self.threads = model_name, threads
 
     def embed(self, texts):
         import array
@@ -354,3 +354,16 @@ def test_the_served_fake_model_has_one_width_on_every_path(monkeypatch: pytest.M
     assert emb.get_secondary_embedder("fake-ngram-1024").dim == 3072
     assert emb.get_secondary_embedder("fake-ngram-64").dim == 64
     emb.reset()
+
+
+def test_each_web_worker_gets_its_share_of_the_cpus_for_onnx(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.core import web_workers
+    from server.embedding import local
+
+    monkeypatch.setattr(web_workers, "available_cpus", lambda: 8)
+    monkeypatch.setattr(emb.settings, "web_workers", 4)
+    assert local.onnx_threads() == 2
+    monkeypatch.setattr(emb.settings, "web_workers", 16)
+    assert local.onnx_threads() == 1
