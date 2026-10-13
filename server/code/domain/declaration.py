@@ -428,9 +428,8 @@ class Declarations:
         return _prefixed(node, self.grammar)
 
     def _sole_on(self, line: int, name: str, node: Any) -> Any:
-        """The one declaration on `line` naming `name` (`node` when it is that one), or
-        None for none or several; one nested in another counts once
-        (`const A = memo(function A() {…})`)."""
+        """The one declaration on `line` naming `name`, one nested in another counted once;
+        None for none or several."""
         first = self._declared(node, name)
         by_token = {_key(t): d for d, t in self._named_on(line - 1).get(name, [])}
         if first is not None:
@@ -737,9 +736,8 @@ class _Tokens(NamedTuple):
 
 
 def _hashed(tokens: _Tokens) -> str:
-    """What a declaration's fingerprint covers: its tokens as the parser nests them, less
-    comments and what formatters change (quotes, trailing commas, a JS `;`, parentheses).
-    Parentheses count in C++, Go, Rust and Java; an f-string's `{x = }` spaces never do."""
+    """Its tokens as the parser nests them, less comments and what formatters change.
+    Ignored: the spaces of an f-string's `{x = }`; kept: parentheses in C++, Go, Rust, Java."""
     _, marks, texts, _ = tokens
     return "\n".join([*(f"{m} {t}" for m, t in zip(marks, texts, strict=False)), marks[-1]])
 
@@ -881,8 +879,7 @@ def _spelled(named: Any) -> str:
 
 def _comments_within(first: Any, node: Any) -> list[Any]:
     """The comments from `first` up to the declaration's own first token, past its
-    decorators, annotations, attributes and template head: a comment above a definition
-    is no part of it, wherever the grammar puts it (`@Override // c public int f`)."""
+    decorators, attributes and template head."""
     out = []
     # (node, inside a head, among `first`'s siblings): children are read only as reached
     stack = [(first, False, True)]
@@ -1120,9 +1117,8 @@ def _formatting(node: Any, grammar: str) -> bool:
 
 
 def _trailing_comma(comma: Any, parent: Any, grammar: str) -> bool:
-    """`comma` follows an element and closes a bracket: neither one more element (`[a,,]`)
-    nor a tuple's only comma, nor a C / C++ macro's empty argument or a Rust macro's
-    token."""
+    """`comma` follows an element and closes a bracket, and is no tuple's only comma nor
+    a macro's argument."""
     after, before = comma.next_sibling, comma.prev_sibling
     while after is not None and after.type in _COMMENTS:
         after = after.next_sibling

@@ -215,11 +215,8 @@ def _layout(side: Side) -> tuple[dict[str, set[str]], set[str]]:
 
 
 def _renamed_scope(scope: str, before: Side, now: Side) -> tuple[str, bool]:
-    """(the scope `scope` became in `now`, whether that is uncertain): the one new class
-    keeping most of its members; `scope` itself when none does, unsure when a class too
-    small to share `_MIN_SHARED` members was renamed alone, its members unchanged. A scope
-    this file does not show to be a class (its methods defined out of line, its class in
-    a header) is never followed: unsure."""
+    """(what `scope` became in `now`, whether that is unsure): the one new class keeping
+    most of its members, else `scope`; a scope not shown to be a class is never followed."""
     was, was_classes = _layout(before)
     members, classes = _layout(now)
     old = was[scope]
@@ -280,9 +277,8 @@ def _similar(a: str, was: Definition, b: str, d: Definition) -> float | None:
 
 
 def _kin(was: Definition, d: Definition) -> bool:
-    """The new name grows or shrinks the old one (`fetch` -> `fetch_all`), bumps its
-    `v` version (`parse_v1` -> `parse_v2`), or keeps a word of it past the words both begin
-    with (`fetch_rows` -> `load_rows`, `total_rows` -> `rows_total`, not -> `fetch_users`)."""
+    """The new name grows the old one, bumps its `v` version or keeps a word of it past
+    the words both begin with (`fetch_rows` -> `load_rows`, not -> `fetch_users`)."""
     a, b = _words(was.name), _words(d.name)
     if not a or not b:
         return False
