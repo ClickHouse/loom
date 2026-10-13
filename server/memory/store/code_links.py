@@ -648,3 +648,24 @@ async def embedding_identities(
         key = (str(r["namespace"]), str(r["memory_key"]), int(r["version"]))
         out[key].add((str(r["agent"]), str(r["user_id"]), str(r["session_id"])))
     return dict(out)
+
+
+async def for_code_at(
+    org: str,
+    code_namespaces: Sequence[str],
+    paths: Sequence[str],
+    namespaces: Sequence[str],
+    *,
+    ch: _CHClient | None = None,
+) -> list[LinkRow]:
+    """`for_code(..., or_former_paths=True)` with its three reads run at once."""
+    import asyncio
+
+    ch = ch or _default_client()
+    reads = await asyncio.gather(
+        *(
+            _for_code(ch, org, code_namespaces, {column: paths, "namespace": namespaces})
+            for column in ("path", "former_paths", "anchored_path")
+        )
+    )
+    return list({_key(r): r for rows in reads for r in rows}.values())

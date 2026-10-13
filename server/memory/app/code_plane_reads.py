@@ -15,6 +15,10 @@ from server.memory.store import code_links as links_store
 from server.memory.store import code_plane_reads as reads
 from server.memory.store.code_links import LinkRow
 
+# The branch's own read and parse, a share of the code plane's enrichment bound: past
+# it the lesson is served as trunk last checked it.
+_PARSE_TIMEOUT_S = 0.2
+
 
 async def lesson_namespaces(org: str, code_namespace: str, extra: Sequence[str]) -> list[str]:
     """Whose linked memories a code read shows: the namespaces the call names (over MCP
@@ -69,8 +73,9 @@ async def lessons_for_symbol(
     from server.memory.app.code_link_reads import current_links
 
     trunk = code.trunk_namespace(org, code_namespace) or code_namespace
-    stored = await links_store.for_code(
-        org, [trunk], paths=list(paths), namespaces=list(namespaces), or_former_paths=True
+    stored, head = await asyncio.gather(
+        links_store.for_code_at(org, [trunk], list(paths), list(namespaces)),
+        code.indexed_head(org, code_namespace),
     )
     links = [
         a
@@ -79,7 +84,6 @@ async def lessons_for_symbol(
     ]
     if not links:
         return []
-    head = await code.indexed_head(org, code_namespace)
     here = await _definitions_at(org, code_namespace, head, paths, qualified_name)
     if here is None:
         matched = _as_trunk_has_it(links, qualified_name)
@@ -111,8 +115,8 @@ async def _definitions_at(
     org: str, code_namespace: str, head: str, paths: Sequence[str], qualified_name: str
 ) -> dict[tuple[str, str], Definition] | None:
     """The definitions `qualified_name` names in `paths` at `head`, by identity; None
-    where the files cannot be read here: no git mirror (a read replica), or one that
-    fails."""
+    where the files cannot be read here: no git mirror (a read replica), one that
+    fails, or a read and parse slower than `_PARSE_TIMEOUT_S`."""
     from server.code.app import memory_links as code
     from server.code.app.index import gitrepo
     from server.settings import settings
@@ -120,11 +124,12 @@ async def _definitions_at(
     if settings.read_replica:
         return None
     named = bare_name(qualified_name)
+    parse = asyncio.gather(
+        *(code.parsed(org, code_namespace, head, p, named=named) for p in dict.fromkeys(paths))
+    )
     try:
-        files = await asyncio.gather(
-            *(code.parsed(org, code_namespace, head, p, named=named) for p in dict.fromkeys(paths))
-        )
-    except (gitrepo.GitError, code.ParseFailed):
+        files = await asyncio.wait_for(parse, _PARSE_TIMEOUT_S)
+    except (gitrepo.GitError, code.ParseFailed, TimeoutError):
         return None
     here: dict[tuple[str, str], Definition] = {}
     for f in files:

@@ -5,6 +5,7 @@ with the state of its code on the branch read."""
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -192,14 +193,15 @@ async def _lessons(
     ns: str = "code-a",
     qn: str = "src.a::Reader::read",
     path: str = "src/a.py",
+    parse_s: float = 0.0,
 ) -> list:
     from server.code.app import memory_links
     from server.code.domain.anchor import Definition
     from server.memory.store import code_links
     from server.memory.store import code_plane_reads as store
 
-    async def for_code(org, cns, **kw):
-        assert cns == ["code-a"] and kw["or_former_paths"] is True
+    async def for_code_at(org, cns, paths, namespaces):
+        assert cns == ["code-a"] and paths == [path]
         return links
 
     async def head(org, cns):
@@ -208,6 +210,7 @@ async def _lessons(
     async def parsed(org, cns, commit, p, *, named=""):
         # the read namespace's own file at its own head
         assert (cns, commit) == (ns, f"head-of-{ns}")
+        await asyncio.sleep(parse_s)
         here = [Definition(dp, q, q.split("::")[-1], body_hash=h) for dp, q, h in defs if dp == p]
         return memory_links.FileAt([], here)
 
@@ -217,7 +220,7 @@ async def _lessons(
     async def current(org, rows):
         return rows
 
-    monkeypatch.setattr(code_links, "for_code", for_code)
+    monkeypatch.setattr(code_links, "for_code_at", for_code_at)
     monkeypatch.setattr(memory_links, "indexed_head", head)
     monkeypatch.setattr(memory_links, "parsed", parsed)
     monkeypatch.setattr(memory_links, "trunk_namespace", lambda org, n: "code-a")
@@ -254,6 +257,17 @@ async def test_a_lesson_reads_changed_where_the_definition_differs_from_the_link
     branch = [("src/a.py", "src.a::Reader::read", "h0")]
     out = await _lessons(monkeypatch, links, excerpts, branch, ns="code-a-26-8")
     assert {o["memory_key"]: o["code_state"] for o in out} == {"k1": "changed", "k2": "fresh"}
+
+
+@pytest.mark.asyncio
+async def test_a_slow_branch_parse_serves_the_lesson_as_trunk_has_it(monkeypatch) -> None:
+    links = [_link("m1", body="h0", state="changed", since="c2") | {"suggestion": "s"}]
+    branch = [("src/a.py", "src.a::Reader::read", "h0")]
+    slow = code_plane_reads._PARSE_TIMEOUT_S * 2
+    (lesson,) = await _lessons(
+        monkeypatch, links, [_excerpt("m1", "k1")], branch, ns="code-a-26-8", parse_s=slow
+    )
+    assert (lesson["code_state"], lesson["suggestion"]) == ("changed", "s")
 
 
 @pytest.mark.asyncio
