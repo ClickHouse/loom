@@ -162,10 +162,12 @@ async def test_only_revise_judges_and_every_other_policy_just_clears_the_mark(wo
     world.policy["agent-f"] = code_change.FLAG
     await _apply()
     assert world.judged == []  # Loom writes no memory: the default only marks links
-    assert _cleared(world) == ["deleted", "edited", "flagged", "gone"]
-    # `older`'s links were made for an earlier value: dropped, not left due forever
-    older = [r for r in world.cleared if r["memory_id"] == "older"]
-    assert older and all(r["tombstoned_at"] is not None for r in older)
+    assert _cleared(world) == ["edited", "flagged", "gone"]
+    # `older`'s links were made for an earlier value, and `deleted`'s memory is gone:
+    # dropped, not left due forever
+    for mid in ("older", "deleted"):
+        dropped = [r for r in world.cleared if r["memory_id"] == mid]
+        assert dropped and all(r["tombstoned_at"] is not None for r in dropped)
 
 
 @pytest.mark.asyncio
@@ -3226,3 +3228,15 @@ async def test_a_memory_that_links_nothing_is_linked_once(monkeypatch) -> None:
         monkeypatch.setattr(module, "code_namespace_for", lambda org, ns, tags: "code-r")
     await code_links._link_org("o", [head], code_links.PassResult())
     assert calls == ["links", "head", "insert", "heads"]  # one read back, nothing relinked
+
+
+@pytest.mark.asyncio
+async def test_the_policy_drops_the_links_of_a_memory_that_is_gone(world) -> None:
+    world.rows["deleted"] = _row("deleted", tombstoned_at="2026-01-01")
+    world.states.update(erased=["changed"], deleted=["changed"])  # "erased" has no head
+    world.stale.add("erased")
+    await _apply()
+    assert {(r["memory_id"], r["tombstoned_at"] is not None) for r in world.cleared} == {
+        ("erased", True),
+        ("deleted", True),
+    }

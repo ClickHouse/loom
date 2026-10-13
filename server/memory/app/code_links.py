@@ -1337,14 +1337,16 @@ async def _apply_policies(
     for mid in due:
         try:
             row = heads.get(mid)
-            mine = links[mid]
-            if row is not None:
-                want = inputs_now(org, row)
-                rows += store.tombstones([a for a in mine if a["inputs_hash"] != want])
-                mine = [a for a in mine if a["inputs_hash"] == want]
-            mine = [a for a in mine if a["code_namespace"] == cns]
+            if row is None or row.get("tombstoned_at") is not None:
+                rows += store.tombstones(links[mid])  # the memory is gone: so are its links
+                continue
+            want = inputs_now(org, row)
+            rows += store.tombstones([a for a in links[mid] if a["inputs_hash"] != want])
+            mine = [
+                a for a in links[mid] if a["inputs_hash"] == want and a["code_namespace"] == cns
+            ]
             out: _Revised | None = {}, set()
-            if row is not None and mine:
+            if mine:
                 policy = code_change.policy_of(policies.get(str(row["namespace"]), ""))
                 out = await _revise(org, row, mine, policy, head, files, budget, result)
             if out is None:
