@@ -224,6 +224,11 @@ def _user_of(input: RunBeginInput) -> str:
 # ------------------------------------------------------------------- handlers
 
 
+# Ids of the MCP transport's implicit session runs (`mcp_runs.run_id_for`); an
+# explicit run.begin naming one gets an id of its own instead.
+SESSION_RUN_PREFIX = "mcp-"
+
+
 async def begin_session_run(input: RunBeginInput, *, started_at: datetime) -> bool:
     """Open (or re-open) an MCP session's implicit run under the id the transport
     made for it, which binds the session's caller (`mcp_runs.run_id_for`): no other
@@ -235,6 +240,9 @@ async def begin_session_run(input: RunBeginInput, *, started_at: datetime) -> bo
         existing = await runs_store.fetch_run(ch, input.org, input.namespace, input.run_id)
     if existing is not None and not _owned_by(existing, _user_of(input)):
         return False
+    if existing is not None:
+        # Re-opened (the session went on after a close): the first call's goal stays.
+        input = input.model_copy(update={"goal": str(existing.get("goal") or input.goal)})
     await _open_run(ch, input, input.run_id, existing, started_at=started_at)
     return True
 
@@ -246,15 +254,17 @@ async def active_session_run(org: str, run_id: str) -> RunLedgerRow | None:
         return await runs_store.active_run_by_id(get_client(), org, run_id)
 
 
-async def session_run_calls(org: str, run_id: str) -> tuple[str, int, datetime | None] | None:
-    """An active implicit session run's namespace, how many requests the ledger
-    labels with it (in any org or namespace a call named), and when the last one
-    was; None when the run is not active."""
+async def session_run_calls(
+    org: str, run_id: str, subject: str
+) -> tuple[str, int, datetime | None] | None:
+    """An active implicit session run's namespace, how many requests the token
+    `subject` made under it (in any org or namespace a call named), and when the
+    last one was; None when the run is not active."""
     existing = await active_session_run(org, run_id)
     if existing is None:
         return None
     calls, last = await runs_store.ledgered_calls(
-        get_client(), run_id, since=existing["started_at"]
+        get_client(), run_id, subject, since=existing["started_at"]
     )
     return str(existing["namespace"]), calls, None if last is None else last.replace(tzinfo=None)
 
@@ -274,6 +284,10 @@ async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:
     if not supplied:
         # A server-made id cannot collide: nothing to claim or check.
         return await _open_run(ch, input, uuid.uuid4().hex, None)
+    if supplied.startswith(SESSION_RUN_PREFIX):
+        # The MCP transport's session runs open only through begin_session_run.
+        run_id, existing = await _own_run(ch, input, supplied)
+        return await _open_run(ch, input, run_id, existing)
     claim = await runs_store.claim_run(
         ch, input.org, input.namespace, supplied, _user_of(input), input.session_id or "-"
     )

@@ -293,6 +293,24 @@ async def _claimed_home_default(auth_info: Any, org: str, claimed: list[str], ch
         return ""
 
 
+def caller_org(auth: Any) -> str | None:
+    """The org a caller acts in by default: its token's (the self-signup org for
+    a `*` token), or the single-user org with no auth; None when no caller can
+    be identified."""
+    from server.settings import settings
+
+    if auth is not None:
+        auth_info = cast("AuthInfo", auth)
+        if not auth_info.subject:
+            return None
+        if auth_info.org and auth_info.org != "*":
+            return auth_info.org
+        return settings.self_signup_org
+    if settings.effective_identity_provider() == "single-user":
+        return settings.self_signup_org
+    return None
+
+
 async def _caller_defaults(
     auth: Any,
     client_name: str | None = None,
@@ -306,26 +324,18 @@ async def _caller_defaults(
     """
     from server.settings import settings
 
+    org = caller_org(auth)
+    if org is None:
+        return None
     if auth is not None:
         auth_info = cast("AuthInfo", auth)
         subject = auth_info.subject
-        if subject:
-            org = (
-                auth_info.org
-                if auth_info.org and auth_info.org != "*"
-                else settings.self_signup_org
-            )
-            claimed_namespaces = [
-                n for n in (getattr(auth_info, "namespaces", None) or ()) if n and n != "*"
-            ]
-        else:
-            return None
-    elif settings.effective_identity_provider() == "single-user":
-        subject = "you"
-        org = settings.self_signup_org
-        claimed_namespaces = []
+        claimed_namespaces = [
+            n for n in (getattr(auth_info, "namespaces", None) or ()) if n and n != "*"
+        ]
     else:
-        return None
+        subject = "you"
+        claimed_namespaces = []
 
     # Single-user mode serves exactly ONE namespace (LOOM_DEFAULT_NAMESPACE):
     # the SPA pins its identity to it and the boot-time bootstrap provisions

@@ -86,7 +86,7 @@ async def test_a_session_runs_calls_are_read_org_wide(monkeypatch, active):
             await super().query_one(sql, params)
             assert "namespace =" not in sql
             if "agent_events" in sql:
-                assert params["since"] == started
+                assert params["since"] == started and params["subject"] == "sa:t"
                 return {"n": 4, "last": last}
             if not active:
                 return None
@@ -94,6 +94,17 @@ async def test_a_session_runs_calls_are_read_org_wide(monkeypatch, active):
 
     client = _Ledger()
     monkeypatch.setattr(run_handlers, "get_client", lambda: client)
-    got = await run_handlers.session_run_calls("o", "mcp-s")
+    got = await run_handlers.session_run_calls("o", "mcp-s", "sa:t")
     assert got == (("ns-first", 4, last) if active else None)
     assert client.sequential_reads[0] is True
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_begin_never_takes_a_session_runs_id(monkeypatch):
+    """The MCP transport's session runs open only through begin_session_run."""
+    client = _Client()
+    monkeypatch.setattr(run_handlers, "get_client", lambda: client)
+    out = await run_handlers.handle_run_begin(
+        RunBeginInput(org="o", namespace="n", agent="a", goal="g", run_id="mcp-abc", user_id="eve")
+    )
+    assert out.run_id != "mcp-abc" and not out.run_id.startswith("mcp-")

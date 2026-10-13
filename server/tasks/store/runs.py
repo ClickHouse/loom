@@ -325,12 +325,13 @@ async def observation_count(ch: Any, org: str, ns: str, run_id: str, *, scope: R
 
 
 async def active_run_by_id(ch: Any, org: str, run_id: str) -> RunLedgerRow | None:
-    """The active run under `run_id` in any namespace of `org`."""
+    """The active MCP session run under `run_id` in any namespace of `org`."""
     row: RunLedgerRow | None = await ch.query_one(
         f"""
         SELECT {_RUN_SELECT}
         FROM loom.agent_runs FINAL
         WHERE org = {{org:String}} AND run_id = {{rid:String}} AND status = 'active'
+          AND environment = 'mcp'
         LIMIT 1
         """,
         params={"org": org, "rid": run_id},
@@ -338,16 +339,19 @@ async def active_run_by_id(ch: Any, org: str, run_id: str) -> RunLedgerRow | Non
     return row
 
 
-async def ledgered_calls(ch: Any, run_id: str, since: datetime) -> tuple[int, datetime | None]:
-    """How many requests the ledger labels with `run_id` since `since`, and the
-    time of the last one. The run id binds one caller's session, so a call that
-    named another org or namespace still counts."""
+async def ledgered_calls(
+    ch: Any, run_id: str, subject: str, since: datetime
+) -> tuple[int, datetime | None]:
+    """How many requests the verified token `subject` made under `run_id` since
+    `since`, in any org or namespace, and the time of the last one. A request
+    labels itself with a run id; only its subject is the server's."""
     row = await ch.query_one(
         """
         SELECT count() AS n, maxOrNull(ts) AS last FROM loom.agent_events
         WHERE ts >= {since:DateTime64(3)} AND run_id = {rid:String}
+          AND subject = {subject:String}
         """,
-        params={"rid": run_id, "since": since},
+        params={"rid": run_id, "subject": subject, "since": since},
     )
     return int((row or {}).get("n") or 0), (row or {}).get("last")
 

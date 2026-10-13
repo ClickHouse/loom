@@ -34,7 +34,7 @@ async def ch() -> Any:
     await c.disconnect()
 
 
-async def _ledger_call(ch: Any, namespace: str, run_id: str) -> None:
+async def _ledger_call(ch: Any, namespace: str, run_id: str, subject: str = "") -> None:
     await ch.insert(
         "loom.agent_events",
         [
@@ -45,6 +45,7 @@ async def _ledger_call(ch: Any, namespace: str, run_id: str) -> None:
                 "user_id": "-",
                 "session_id": "s",
                 "run_id": run_id,
+                "subject": subject,
                 "operation": "memory.search",
                 "request_id": uuid.uuid4().hex,
                 "latency_ms": 1,
@@ -58,28 +59,39 @@ async def _ledger_call(ch: Any, namespace: str, run_id: str) -> None:
 @pytest.mark.asyncio
 async def test_the_ledger_decides_when_a_session_run_ends(ch: Any) -> None:
     from server.tasks.api.models_run import RunBeginInput
-    from server.tasks.app.run import active_session_run, handle_run_begin, session_run_calls
+    from server.tasks.app.run import active_session_run, begin_session_run, session_run_calls
 
     first, other = (f"itest-{uuid.uuid4().hex[:12]}" for _ in range(2))
     run_id = f"mcp-{uuid.uuid4().hex[:12]}"
     try:
         assert await active_session_run(ORG, run_id) is None
-        await handle_run_begin(
+        began = await begin_session_run(
             RunBeginInput(
-                org=ORG, namespace=first, agent=AGENT, run_id=run_id, session_id="s", goal="g"
-            )
+                org=ORG,
+                namespace=first,
+                agent=AGENT,
+                run_id=run_id,
+                session_id="s",
+                goal="g",
+                environment="mcp",
+            ),
+            started_at=naive_utc_now(),
         )
+        assert began
         run = await active_session_run(ORG, run_id)
         assert run is not None and run["namespace"] == first
 
         # Nothing ledgered yet.
-        assert await session_run_calls(ORG, run_id) == (first, 0, None)
+        assert await session_run_calls(ORG, run_id, "") == (first, 0, None)
         # A call the session made in another namespace counts.
         await _ledger_call(ch, other, run_id)
-        namespace, calls, last = await session_run_calls(ORG, run_id) or ("", 0, None)
+        namespace, calls, last = await session_run_calls(ORG, run_id, "") or ("", 0, None)
         assert (namespace, calls) == (first, 1)
         assert last is not None and (naive_utc_now() - last).total_seconds() < 120
-        assert await session_run_calls(ORG, "mcp-never-begun") is None
+        assert await session_run_calls(ORG, "mcp-never-begun", "") is None
+        # Another token labelling a request with the run's id is not the session.
+        await _ledger_call(ch, other, run_id, subject="sa:eve")
+        assert (await session_run_calls(ORG, run_id, "") or ("", 0, None))[1] == 1
     finally:
         for table in ("agent_runs", "agent_events"):
             await ch.execute(
@@ -188,7 +200,7 @@ async def test_a_session_run_counts_a_call_that_lands_before_its_begin(ch: Any) 
         assert run is not None
         await _ledger_call(ch, namespace, run.run_id)  # before the begin lands
         await mcp_runs.drain_ledger_writes()
-        found = await session_run_calls(ORG, run.run_id)
+        found = await session_run_calls(ORG, run.run_id, "")
         assert found is not None and found[:2] == (namespace, 1)
     finally:
         mcp_runs.reset()
@@ -219,7 +231,10 @@ async def test_the_transports_begin_refuses_an_id_holding_another_users_run(ch: 
         assert await begin_session_run(begin("u2"), started_at=started) is False
         row = await fetch_run(ch, ORG, namespace, run_id)
         assert row is not None and (row["user_id"], row["goal"]) == ("u1", "u1")
-        assert await begin_session_run(begin("u1"), started_at=started) is True
+        later = begin("u1").model_copy(update={"goal": "a later call's query"})
+        assert await begin_session_run(later, started_at=started) is True
+        row = await fetch_run(ch, ORG, namespace, run_id)
+        assert row is not None and row["goal"] == "u1"  # re-opened, first goal kept
     finally:
         await ch.execute(
             "DELETE FROM loom.agent_runs WHERE org = {org:String} AND namespace = {ns:String}",

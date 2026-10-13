@@ -56,7 +56,7 @@ class _Ledger:
     async def active_run(self, org: str, run_id: str) -> dict[str, Any] | None:
         return {"namespace": self.active[run_id]} if run_id in self.active else None
 
-    async def calls(self, org: str, run_id: str) -> Any:
+    async def calls(self, org: str, run_id: str, subject: str) -> Any:
         if run_id not in self.active:
             return None
         from server.core.datetimes import naive_utc_now
@@ -601,5 +601,28 @@ def test_a_delete_closes_a_run_whose_calls_named_another_org(
             mcp_runs.reset()  # the DELETE lands on a process that never served it
         assert await mcp_runs.close_session("s", "clickhouse", "-") is True
         assert [(c.org, c.run_id) for c in ledger.completes] == [("clickhouse", rid("s"))]
+
+    asyncio.run(_run())
+
+
+def test_a_delete_the_ledger_did_not_answer_is_retried_by_the_sweep(
+    ledger: _Ledger, monkeypatch
+) -> None:
+    import server.tasks.app.run as h
+
+    async def _run() -> None:
+        await mcp_runs.ensure("s", DEFAULTS, CALLER, goal="g", now=0.0)
+        await mcp_runs.drain_ledger_writes()
+
+        async def _down(org: str, run_id: str, subject: str) -> Any:
+            raise ConnectionError("ledger down")
+
+        monkeypatch.setattr(h, "session_run_calls", _down)
+        assert await mcp_runs.close_session("s", "clickhouse", "-") is False
+        assert mcp_runs.sweep_due(now=1000.0)
+        monkeypatch.setattr(h, "session_run_calls", ledger.calls)
+        assert await mcp_runs.sweep_idle(now=1000.0, force=True) == 1
+        assert [c.metadata["closed_by"] for c in ledger.completes] == ["mcp_session_end"]
+        assert await mcp_runs.sweep_idle(now=2000.0, force=True) == 0  # retried once
 
     asyncio.run(_run())

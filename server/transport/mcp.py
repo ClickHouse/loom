@@ -65,10 +65,10 @@ from server.transport.mcp_config import (
 )
 from server.transport.mcp_identity import (
     _MCP_AGENT_BY_SESSION,
-    _caller_defaults,
     _client_name_to_agent,
     _remember_client_for_session,
     _resolve_client_name,
+    caller_org,
     new_session_id,
 )
 from server.transport.mcp_op import route as route_loom_op
@@ -420,9 +420,8 @@ def attach(app: FastAPI) -> None:
         if mode != "open" and auth is None:
             return _reject_unauthenticated(request, response, None, message="missing bearer token")
         session_id = request.headers.get("mcp-session-id") or request.headers.get("Mcp-Session-Id")
-        defaults = await _caller_defaults(auth, None) if session_id else None
         closed = await _mcp_runs.close_session(
-            session_id, str((defaults or {}).get("org") or ""), _mcp_runs.subject_of(auth)
+            session_id, caller_org(auth) or "", _mcp_runs.subject_of(auth)
         )
         if session_id:
             _MCP_AGENT_BY_SESSION.pop(session_id, None)
