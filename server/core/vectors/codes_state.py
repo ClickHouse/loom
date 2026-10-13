@@ -101,6 +101,11 @@ def stored_widths(table: str) -> set[int]:
     return {w for column, w in _widths.items() if column.startswith(prefix)}
 
 
+def stored_width(table: str, column: str) -> int | None:
+    """The width `table.column` was coded at; None when plain or never probed."""
+    return _widths.get(f"{_qualify(table)}.{column}")
+
+
 def served_model_writes_coded() -> bool:
     """Whether a coded column takes the served model's writes, so a model change
     must pick a width the codec can encode."""
@@ -263,6 +268,7 @@ __all__ = [
     "codes_apply",
     "coded_columns",
     "served_model_writes_coded",
+    "stored_width",
     "stored_widths",
     "width_mismatches",
     "written_by_served_model",

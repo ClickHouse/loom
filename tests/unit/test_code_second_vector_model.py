@@ -294,6 +294,22 @@ def test_placeholder_pads_a_mapped_table_to_its_own_width(mapped, monkeypatch) -
         assert vp.pad_rows("loom.unrelated", [{"embedding": []}]) == 0
 
 
+def test_a_placeholder_takes_its_coded_columns_width(monkeypatch) -> None:
+    """Never scored, so it matches the column, not the served model: a write
+    without a vector is never refused for its width."""
+    from server.core.vectors import codes_state
+    from server.core.vectors import placeholders as vp
+    from server.settings import settings
+
+    monkeypatch.setattr(codes_state, "_widths", {"loom.memory_embeddings.embedding": 3072})
+    with patch.object(settings, "embedding_dim", 1024):
+        rows = [{"embedding": [], "memory_key_embedding": []}]
+        assert vp.pad_rows("memory_embeddings", rows) == 2
+    assert len(rows[0]["embedding"]) == 3072
+    assert len(rows[0]["memory_key_embedding"]) == 1024  # plain here: the setting
+    codes_state.refuse_other_widths("memory_embeddings", rows)
+
+
 def test_memo_key_separates_the_arms() -> None:
     from server.code.api.models_search import CodeSearchInput
     from server.code.app import search_memo as memo

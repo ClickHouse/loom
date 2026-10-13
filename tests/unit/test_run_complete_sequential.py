@@ -71,14 +71,41 @@ async def test_begin_with_a_client_run_id_labels_that_id(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_a_begin_that_keeps_an_active_run_reads_it_sequentially(monkeypatch):
-    client = _Client()
+@pytest.mark.parametrize(("status", "kept"), [("active", True), ("completed", False)])
+async def test_a_begin_that_keeps_an_active_run_writes_nothing(monkeypatch, status, kept):
+    """A sibling web process began the session's run: its goal and start stay."""
+    from datetime import datetime
+
+    started = datetime(2026, 1, 2, 3, 4, 5)
+
+    class _Ledger(_Client):
+        inserts: list[str] = []
+
+        async def query_one(self, sql: str, params=None):
+            await super().query_one(sql, params)
+            if "agent_runs" in sql and params.get("rid") == "mcp-s":
+                return {"run_id": "mcp-s", "status": status, "started_at": started}
+            return None
+
+        async def insert(self, table, *a, **k):
+            self.inserts.append(table)
+
+    client = _Ledger()
     monkeypatch.setattr(run_handlers, "get_client", lambda: client)
-    await run_handlers.handle_run_begin(
+
+    async def _no_keeper(*_a, **_k):
+        from server.tasks.store.runs import NoClaim
+
+        return NoClaim.UNAVAILABLE
+
+    monkeypatch.setattr(run_handlers.runs_store, "claim_run", _no_keeper)
+    out = await run_handlers.handle_run_begin(
         RunBeginInput(org="o", namespace="n", agent="a", goal="g", run_id="mcp-s"),
         keep_active=True,
     )
-    assert client.sequential_reads == [True]
+    assert out.run_id == "mcp-s"
+    assert (client.inserts == []) is kept
+    assert all(client.sequential_reads)
 
 
 @pytest.mark.asyncio

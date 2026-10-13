@@ -8,8 +8,9 @@ column carries exactly the declared dimension (else code 190), and
 writer emitting an empty vector would fail its INSERT.
 
 Every insert into
-`loom.memory_embeddings` replaces an empty vector with a zero vector of
-`settings.embedding_dim` elements. The `*_dim` columns stay what the writer
+`loom.memory_embeddings` replaces an empty vector with a zero vector of the
+width its coded column was created at (`settings.embedding_dim` before the
+columns are probed). The `*_dim` columns stay what the writer
 set (0 for a stub), and they are what reads trust: every leg filters
 `embedding_dim > 0`, and the key axis takes the key vector
 only when `memory_key_embedding_dim` matches the query. A zero vector is
@@ -72,12 +73,17 @@ def pad_rows(table: str, rows: list[dict[str, Any]]) -> int:
             return 0
         cols = PLACEHOLDER_COLUMNS["loom.code_chunks"]
         dim = vector_dim_for_table(full) or dim
-    if dim <= 0:
-        return 0
+    from server.core.vectors.codes_state import stored_width
+
     n = 0
-    for r in rows:
-        for c in cols:
+    for c in cols:
+        # A placeholder is never scored: it takes the width its coded column was
+        # created at, so a write without a vector is never refused for its width.
+        width = stored_width(full, c) or dim
+        if width <= 0:
+            continue
+        for r in rows:
             if c in r and not r[c]:
-                r[c] = placeholder(dim)
+                r[c] = placeholder(width)
                 n += 1
     return n

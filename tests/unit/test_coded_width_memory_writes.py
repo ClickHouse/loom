@@ -61,4 +61,5 @@ async def test_a_set_refuses_only_a_write_that_carries_a_vector(
             **IDENTITY, memory_key="rv/key/db", value="hunter2", sensitivity="high", classify=False
         )
     )
-    assert [r["memory_key"] for r in store.versions] == ["rv/key/db"] and store.embeddings == []
+    assert [r["memory_key"] for r in store.versions] == ["rv/key/db"]
+    assert all(not r.get("embedding") for r in store.embeddings)  # a fence row at most
