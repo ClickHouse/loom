@@ -3692,3 +3692,54 @@ async def test_the_recent_tier_carries_code_state_and_leaves_out_gone_code(env) 
     await _pass()
     served = await _search(MEM, "zebra crossings at noon", recent_first=5)
     assert "gone" not in served and served.get("kept") == "fresh"
+
+
+async def test_a_file_that_fails_to_fingerprint_wedges_no_other(env, monkeypatch) -> None:
+    from server.code.app import memory_links
+
+    files = {
+        "a.py": "def tally_rows():\n    return 1\n",
+        "b.py": "def count_rows():\n    return 1\n",
+    }
+    c1 = env.commit(files)
+    await _index(TRUNK, env, c1, list(files))
+    tally = await _remember(MEM, "tally", "`tally_rows` returns one", files=["a.py"])
+    count = await _remember(MEM, "count", "`count_rows` returns one", files=["b.py"])
+    await _pass()
+    real = memory_links.definitions
+
+    def broken(path: str, *args, **kwargs):
+        if path == "a.py":
+            raise TypeError("a fingerprint rule failed")
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(memory_links, "definitions", broken)
+    c2 = env.commit({p: src.replace("1", "2") for p, src in files.items()})
+    await _index(TRUNK, env, c2, list(files))
+    with pytest.raises(AssertionError, match="did not parse: a.py"):
+        await _pass()
+    assert [link["state"] for link in await _links(tally)] == ["fresh"]
+    assert [link["state"] for link in await _links(count)] == ["changed"]
+
+
+@pytest.mark.parametrize(
+    ("path", "before", "after"),
+    [
+        (
+            "rows.go",
+            "package rows\n\ntype tally_rows struct{ n int }\n",
+            "package rows\n\ntype tally_rows struct {\n\tn int // count\n}\n",
+        ),
+        ("rows.py", "tally_rows = dict(a=1,b=2)\n", "tally_rows = dict(a=1, b=2)  # two\n"),
+    ],
+)
+async def test_a_reformatted_type_or_constant_stays_fresh(env, path, before, after) -> None:
+    c1 = env.commit({path: before})
+    await _index(TRUNK, env, c1, [path])
+    mid = await _remember(MEM, "fmt", "`tally_rows` holds the counts", files=[path])
+    await _pass()
+    assert [link["state"] for link in await _links(mid)] == ["fresh"]
+    c2 = env.commit({path: after})
+    await _index(TRUNK, env, c2, [path])
+    await _pass()
+    assert [link["state"] for link in await _links(mid)] == ["fresh"]
