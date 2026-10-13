@@ -532,6 +532,18 @@ def test_a_reformat_outside_python_keeps_the_fingerprint(reformatted: str) -> No
 
 
 @pytest.mark.parametrize(
+    "commented",
+    [
+        "fn value(a: i32) -> i32 { /* c */ a + 1 }\n",
+        "fn value(a: i32) -> i32 {\n    // c\n    a + 1\n}\n",
+        "fn value(a: i32) -> i32 { /* outer /* nested */ */ a + 1 }\n",
+    ],
+)
+def test_a_rust_comment_keeps_the_fingerprint(commented: str) -> None:
+    assert _value("a.rs", commented) == _value("a.rs", "fn value(a: i32) -> i32 { a + 1 }\n")
+
+
+@pytest.mark.parametrize(
     ("path", "before", "after"),
     [
         (

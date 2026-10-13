@@ -526,17 +526,10 @@ class Declarations:
         found = self._declared(at[1], name)
         if self.grammar == "python" or found is None:
             return own
-        skip = {_key(n) for n in [*_sibling_nodes(found[0]), *_comments_within(*at)]}
+        skip = {_key(n) for n in [*_sibling_nodes(found[0]), *_comments_in(*at)]}
         leaves, marks = _leaves(*at, _Fields(), skip)
-        out, opened = [], ""
-        for leaf, mark in zip(leaves, marks, strict=False):
-            if leaf.type in _COMMENTS:
-                opened += mark.removesuffix(leaf.type)  # the nodes it opened still nest
-                continue
-            text = self.source[leaf.start_byte : leaf.end_byte].decode("utf-8", "replace")
-            out.append(f"{opened}{mark} {text}")
-            opened = ""
-        return "\n".join([*out, opened + marks[-1]])
+        texts = [self.source[x.start_byte : x.end_byte].decode("utf-8", "replace") for x in leaves]
+        return "\n".join([*(f"{m} {t}" for m, t in zip(marks, texts, strict=False)), marks[-1]])
 
     def _own_text(self, at: tuple[Any, Any], name: str) -> str:
         found = self._declared(at[1], name)
@@ -848,6 +841,24 @@ def _sibling_nodes(decl: Any) -> list[Any]:
                 out.append(c)
         else:
             segment.append(c)
+    return out
+
+
+def _comments_in(first: Any, last: Any) -> list[Any]:
+    """Every comment from `first` to `last`, each a whole node (a Rust block comment has
+    its delimiters as children)."""
+    out, stack, n = [], [], first
+    while n is not None:
+        stack.append(n)
+        if n == last:
+            break
+        n = n.next_sibling
+    while stack:
+        n = stack.pop()
+        if n.type in _COMMENTS:
+            out.append(n)
+        else:
+            stack.extend(n.children)
     return out
 
 
