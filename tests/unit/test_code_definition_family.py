@@ -858,3 +858,46 @@ def test_a_class_templates_head_on_its_own_line_is_part_of_it() -> None:
     assert d.start_line == 1 and d.shown.startswith("template <class T = int>\n")
     assert _value("a.cpp", _CLASS_TEMPLATE.replace("int", "long")) != d.body_hash
     assert _value("a.cpp", _CLASS_TEMPLATE.replace(">\nclass", "> class")) == d.body_hash
+
+
+_GO = "package a\n\n"
+
+
+@pytest.mark.parametrize(
+    ("path", "original", "reformatted", "edited"),
+    [
+        (
+            "a.go",
+            _GO + "type value struct{ n int }\n",
+            _GO + "type value struct {\n\tn int // count\n}\n",
+            _GO + "type value struct{ n string }\n",
+        ),
+        (
+            "a.go",
+            _GO + "var value = f(1,2)\n",
+            _GO + "var value = f(1, 2) // two\n",
+            _GO + "var value = f(1, 3)\n",
+        ),
+        (
+            "a.go",
+            _GO + "type value interface{ M() }\n",
+            _GO + "type value interface {\n\tM()\n}\n",
+            _GO + "type value interface{ N() }\n",
+        ),
+        ("a.py", "value = f(1,2)\n", "value = f(1, 2)  # c\n", "value = f(1, 3)\n"),
+        (
+            "a.py",
+            "class C:\n    value: int = f(1,2)\n",
+            "class C:\n    value: int = f(\n        1, 2\n    )\n",
+            "class C:\n    value: str = f(1,2)\n",
+        ),
+    ],
+    ids=["go-struct", "go-var", "go-interface", "py-constant", "py-class-constant"],
+)
+def test_a_type_or_constant_reformatted_keeps_its_fingerprint(
+    path: str, original: str, reformatted: str, edited: str
+) -> None:
+    (was,) = [d for d in file_definitions(path, original.encode()) if d.name == "value"]
+    assert was.shape.exact
+    assert _value(path, reformatted) == was.body_hash
+    assert _value(path, edited) != was.body_hash

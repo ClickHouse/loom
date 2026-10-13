@@ -46,6 +46,7 @@ _COMMENTS = {"comment", "line_comment", "block_comment"}  # Rust's are the last 
 _LAYOUT = _COMMENTS | {"line_continuation"}
 # `const NAME = () => …`: a function bound to a variable, as the index declares it
 _VARIABLES = {"lexical_declaration", "variable_declaration"}
+_GO_GROUPS = {"type_declaration", "var_declaration", "const_declaration"}
 # the nodes that declare the name they carry (a call or a qualified reference has a
 # `name` field too, and declares nothing)
 _DECLARATIONS = {
@@ -444,6 +445,8 @@ class Declarations:
         decl = _inner(node)
         if decl.type in _VARIABLES:
             return self._bound(decl, name)
+        if (assigned := _assigned(decl)) is not None:
+            return (*assigned, None) if self._text(assigned[1]) == name else None
         named = _name_node(decl)
         if named is None or self._text(named) != name:
             return None
@@ -682,6 +685,8 @@ class Declarations:
                 names = [d.child_by_field_name("name") for d in decl.named_children]
             elif decl.type in _DECLARATIONS:
                 names = [_name_node(decl)]
+            elif (assigned := _assigned(decl)) is not None:
+                names = [assigned[1]]
             else:
                 continue
             for n in names:
@@ -767,8 +772,15 @@ def _tokens(node: Any) -> Iterator[Any]:
 
 
 def _inner(node: Any) -> Any:
-    """The declaration a decorator, template or export holder wraps."""
-    while node.type in _HOLDERS:
+    """The declaration a decorator, template or export holder wraps, or the one spec of a
+    Go `type`, `var` or `const` declaration."""
+    while node.type in _HOLDERS or node.type in _GO_GROUPS:
+        if node.type in _GO_GROUPS:
+            specs = [c for c in node.named_children if c.type not in _COMMENTS]
+            if len(specs) != 1 or specs[0].type not in _DECLARATIONS:
+                break
+            node = specs[0]
+            continue
         inner = (
             node.child_by_field_name("definition")
             or node.child_by_field_name("declaration")
@@ -778,6 +790,16 @@ def _inner(node: Any) -> Any:
             break
         node = inner
     return node
+
+
+def _assigned(node: Any) -> tuple[Any, Any] | None:
+    """(assignment, name) of a Python `NAME = …` statement, a module's or a class's
+    constant; None for any other node."""
+    if node.type != "expression_statement" or node.named_child_count != 1:
+        return None
+    assignment = node.named_children[0]
+    left = assignment.child_by_field_name("left") if assignment.type == "assignment" else None
+    return (assignment, left) if left is not None and left.type == "identifier" else None
 
 
 def _name_node(decl: Any) -> Any:
