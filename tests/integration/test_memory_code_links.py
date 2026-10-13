@@ -1143,6 +1143,23 @@ async def test_a_host_that_does_not_know_the_repository_keeps_its_links(env) -> 
     assert [x["state"] for x in await _links(mid)] == ["changed"]
 
 
+async def test_a_name_two_files_define_never_links_to_the_one_left(env) -> None:
+    from server.memory.app import code_links
+    from server.memory.store import code_links as store
+
+    reader = "class Reader:\n    def close(self):\n        return {}\n"
+    paths = ["src/a/reader.py", "src/b/reader.py"]
+    c1 = env.commit({paths[0]: reader.format(1), paths[1]: reader.format(2)})
+    await _index(TRUNK, env, c1, paths)
+    mid = await _remember(MEM, "close", "`Reader.close` must flush the b buffer")
+    await _pass()
+    assert await store.for_memories(ORG, [mid]) == []  # neither linked nor waiting
+    c2 = env.commit({paths[1]: None})
+    await _index(TRUNK, env, c2, paths[1:])
+    await code_links.recheck_all(code_links.PassResult())  # the commit, no new write
+    assert await store.for_memories(ORG, [mid]) == []
+
+
 async def test_a_late_link_of_an_older_value_is_relinked_to_the_newest(env) -> None:
     from server.memory.api.models_crud import MemoryGetInput
     from server.memory.app import code_links

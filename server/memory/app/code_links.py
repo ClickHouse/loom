@@ -37,6 +37,7 @@ from server.code.domain.anchor import (
     local_name,
     locate,
     mentions,
+    names_symbol,
     recheck,
     resolve,
 )
@@ -433,8 +434,10 @@ def _plan(
         d = resolve(m.name, same, files, in_prose=m.in_prose)
         if d is not None:
             found.setdefault((d.path, d.qualified_name), d)
-        elif "::" in m.name or "." in m.name:
-            waiting.append(m.name)
+        elif ("::" in m.name or "." in m.name) and not any(
+            names_symbol(m.name, x.qualified_name) for x in same
+        ):
+            waiting.append(m.name)  # not defined yet; a name defined twice is never linked
     # A file link only where no symbol link is finer: a removed function must not be
     # kept alive by the file it lived in.
     held = {p for p, _ in found}
