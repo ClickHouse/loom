@@ -4,7 +4,7 @@
 `.expect` client scripts beside them) hold what a stateless test PRINTS.
 An agent writing a test needs the convention of the closest existing one,
 and a coverage check that looks for a test by number wants to know the
-expectation file is there. Without a language here `_parse_for_ingest` would
+expectation file is there. Without a language here `parse_for_ingest` would
 skip every one, `code.files` / `code.test_home` could not name them and
 `code.outline` / `code.grep` could not read them.
 

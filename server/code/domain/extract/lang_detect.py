@@ -1,6 +1,6 @@
 """Which files are shell, for any repository.
 
-`treesitter.lang_for_path` knows `.sh` and `.bash`; `ingest._parse_for_ingest` adds a
+`treesitter.lang_for_path` knows `.sh` and `.bash`; `ingest_parse.parse_for_ingest` adds a
 shebang rule. Real repositories keep their shell elsewhere: bats-core has 228 `.bats`
 files with 481 `@test` blocks, nvm's 326 tests are extensionless files without a shebang
 (urchin runs them), bash-it ships `.plugin.bash` and rc files, and every project has
