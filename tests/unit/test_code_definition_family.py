@@ -432,7 +432,7 @@ _PINNED = [
     (
         "a.py",
         "try:\n    import fast\nexcept ValueError as e:\n    def value():\n        return 3\n",
-        "4ef2623536cb8a95",
+        "a9a9f013483a2132",
         "e4551c91d7a3eeeb",
     ),
     (
@@ -445,7 +445,7 @@ _PINNED = [
     (
         "c.py",
         "if A:\n    pass\nelif B:\n    def value():\n        return 3\n",
-        "94100921fc29fbd3",
+        "a1c613ad96b74bdc",
         "89f7584a55ea9293",
     ),
     (
@@ -488,7 +488,7 @@ def test_a_fingerprint_changes_only_with_its_rules(
     from server.code.domain.declaration import fingerprint_version
 
     (d,) = [d for d in file_definitions(path, src.encode()) if d.name == "value"]
-    pinned = ("6", body, shape)
+    pinned = ("1", body, shape)
     assert (fingerprint_version().split("-")[0], d.body_hash[:16], d.shape.exact[:16]) == pinned, (
         "fingerprints changed: bump _RULES (a grammar upgrade alone needs none) and re-pin"
     )
@@ -559,6 +559,24 @@ def test_a_rust_comment_keeps_the_fingerprint(commented: str) -> None:
     assert _value("a.rs", commented) == _value("a.rs", "fn value(a: i32) -> i32 { a + 1 }\n")
 
 
+_PY = "def value(a, b):\n    x = g(a,b)  # one\n    if a:\n        return x\n    return y\n"
+
+
+@pytest.mark.parametrize(
+    "reformatted",
+    [
+        _PY.replace("# one", "# another"),
+        _PY.replace("g(a,b)", "g(a, b)"),
+        _PY.replace("    ", "  "),
+        _PY.replace("g(a,b)", "g(\n        a, b\n    )").replace("    if", "\n    if"),
+        _PY.replace("g(a,b)", "g(a, \\\n          b)"),
+    ],
+    ids=["comment", "spaces", "indent", "wrapped", "continuation"],
+)
+def test_a_python_reformat_or_comment_keeps_the_fingerprint(reformatted: str) -> None:
+    assert _value("a.py", reformatted) == _value("a.py", _PY)
+
+
 @pytest.mark.parametrize(
     ("path", "before", "after"),
     [
@@ -567,14 +585,22 @@ def test_a_rust_comment_keeps_the_fingerprint(commented: str) -> None:
             'const char* value() { return "a b"; }\n',
             'const char* value() { return "a  b"; }\n',
         ),
+        ("a.py", 'def value():\n    return "a b"\n', 'def value():\n    return "a  b"\n'),
+        ("a.py", _PY, _PY.replace("    return y", "        return y")),
         (
             "a.py",
-            "def value():\n    if a:\n        b()\n    c()\n",
-            "def value():\n    if a:\n        b()\n        c()\n",
+            "def value(xs):\n    for x in xs:\n        a(x)\n        b(x)\n",
+            "def value(xs):\n    for x in xs:\n        a(x)\n    b(x)\n",
+        ),
+        (
+            "a.py",
+            'def value():\n    return """\n    x"""\n',
+            'def value():\n    return """\n      x"""\n',
         ),
     ],
+    ids=["cpp-literal", "py-literal", "into-if", "out-of-for", "multiline-string"],
 )
-def test_a_literal_or_python_indentation_still_changes_it(
+def test_a_literal_or_a_python_block_change_still_changes_it(
     path: str, before: str, after: str
 ) -> None:
     assert _value(path, before) != _value(path, after)

@@ -276,7 +276,7 @@ class Prints(NamedTuple):
 
 # Bump when fingerprints or shapes change for the same code: links hashed under another
 # `fingerprint_version` are re-hashed.
-_RULES = 6
+_RULES = 1
 
 
 # the words that open a scope, its name after them (`class DLL_EXPORT Foo`, a template
@@ -520,13 +520,15 @@ class Declarations:
         )
 
     def _hashed(self, at: tuple[Any, Any], name: str, own: str) -> str:
-        """What a declaration's fingerprint covers: its own text in Python, where layout
-        is behaviour; elsewhere its tokens as the parser nests them, so a reformat or a
-        comment changes nothing while a literal's bytes still do."""
+        """What a declaration's fingerprint covers: its tokens as the parser nests them,
+        so a reformat or a comment changes nothing while a literal's bytes still do; its
+        own text when its name cannot be found. A Python block is a node, so a statement
+        moved into or out of one changes it; the spaces in an f-string's `{x = }`, which
+        it prints, are no token and change nothing."""
         found = self._declared(at[1], name)
-        if self.grammar == "python" or found is None:
+        if found is None:
             return own
-        skip = {_key(n) for n in [*_sibling_nodes(found[0]), *_comments_in(*at)]}
+        skip = {_key(n) for n in [*_sibling_nodes(found[0]), *_layout_in(*at)]}
         leaves, marks = _leaves(*at, _Fields(), skip)
         texts = [self.source[x.start_byte : x.end_byte].decode("utf-8", "replace") for x in leaves]
         return "\n".join([*(f"{m} {t}" for m, t in zip(marks, texts, strict=False)), marks[-1]])
@@ -835,9 +837,9 @@ def _sibling_nodes(decl: Any) -> list[Any]:
     return out
 
 
-def _comments_in(first: Any, last: Any) -> list[Any]:
-    """Every comment from `first` to `last`, each a whole node (a Rust block comment has
-    its delimiters as children)."""
+def _layout_in(first: Any, last: Any) -> list[Any]:
+    """Every comment and Python `\\` line continuation from `first` to `last`, each a
+    whole node (a Rust block comment has its delimiters as children)."""
     out, stack, n = [], [], first
     while n is not None:
         stack.append(n)
@@ -846,7 +848,7 @@ def _comments_in(first: Any, last: Any) -> list[Any]:
         n = n.next_sibling
     while stack:
         n = stack.pop()
-        if n.type in _COMMENTS:
+        if n.type in _COMMENTS or n.type == "line_continuation":
             out.append(n)
         else:
             stack.extend(n.children)
