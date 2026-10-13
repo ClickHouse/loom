@@ -74,6 +74,7 @@ async def judge(
         "anchored_path": d.path,
         "anchored_hash": d.body_hash,
         "anchored_name": d.qualified_name,
+        "baseline_commit": "",
         "judged_hash": "",
         "start_line": d.start_line,
         "end_line": d.end_line,

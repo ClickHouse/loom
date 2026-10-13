@@ -298,12 +298,12 @@ keeping a word past the ones both begin with (`fetch_rows` -> `load_rows`, not
 back, here or in another file, never by a definition added later.
 
 Each link records the fingerprint rules and grammar versions its hashes were computed
-with; after an upgrade the worker re-hashes it from the commits it was hashed at. Its
-baseline is the checked text when that matched the baseline and still does under the new
-rules (the same text, or the same shape for a rename), else the anchored text; where
-neither can be read, the old hash stays and matches nothing new, so the link reads
-`changed`. Each former identity's baseline is re-read the same way, from the commit it was
-checked at there, or from the anchored text when it was carried from before. A link reads
+with; after an upgrade the worker re-hashes it from the commits it was hashed at. A link
+records where its baseline's text is: the anchor, or the renamed text a pure rename moved
+the baseline onto, kept through later edits. The re-hash reads the baseline there while the
+new rules still see that rename as one, else the anchored text; where neither can be read,
+the old hash stays and matches nothing new, so the link reads `changed`. Each former
+identity keeps where its baseline's text was and is re-read from there. A link reads
 `changed` only where the new rules see the checked code differ from the code the memory was
 written against, and a `changed` link whose checked code the new rules see as its baseline
 reads `fresh` (or `moved`) again. An upgrade also drops every link's judgement: under

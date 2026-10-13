@@ -1784,6 +1784,33 @@ async def test_a_branch_at_an_intermediate_rename_stays_fresh_through_new_rules(
     ]
 
 
+async def test_a_baseline_a_rename_moved_survives_an_edit_and_new_rules(env, ch_client) -> None:
+    repo = env
+    src = "def fetch_rows(n):\n    return fetch_rows(n - 1) if n else 0\n"
+    c1 = repo.commit({"src/n.py": src})
+    await _index(TRUNK, repo, c1, ["src/n.py"])
+    await _remember(MEM, "rows", "`fetch_rows` counts down to zero")
+    await _pass()
+    loaded = src.replace("fetch_rows", "load_rows")
+    c2 = await _relink_once(repo, "src/n.py", loaded)
+    await _index(BRANCH, repo, c2, ["src/n.py"])  # the release branch keeps load_rows
+    edited = loaded.replace("else 0", "else -1")
+    await _relink_once(repo, "src/n.py", edited)
+    await _relink_once(repo, "src/n.py", edited.replace("load_rows", "get_rows"))
+    cut = [(x["memory_key"], x["code_state"]) for x in await _lessons(BRANCH, "load_rows")]
+    assert cut == [("rows", "fresh")]
+    _as_old_rules(ch_client, body_hash="old", checked_hash="old", anchored_hash="old")
+    ch_client.command(
+        "ALTER TABLE loom.memory_code_links UPDATE former_hashes = "
+        "arrayMap(x -> concat('old-', x), former_hashes) "
+        "WHERE org = {o:String} AND namespace = {n:String} SETTINGS mutations_sync = 2",
+        parameters={"o": ORG, "n": MEM},
+    )
+    await _pass()
+    assert [(x["memory_key"], x["code_state"]) for x in await _lessons(BRANCH, "load_rows")] == cut
+    assert [x["code_state"] for x in await _lessons(TRUNK, "get_rows")] == ["changed"]
+
+
 async def test_validate_reports_an_unreadable_staleness_check_as_skipped(env, monkeypatch) -> None:
     from server.auth.context import set_current_auth
     from server.auth.jwt import AuthInfo

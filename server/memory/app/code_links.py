@@ -24,7 +24,6 @@ import json
 import logging
 import time
 from collections import OrderedDict, defaultdict
-from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from typing import Any
@@ -625,17 +624,24 @@ async def _rehashed(a: dict[str, Any], files: Files) -> dict[str, Any]:
     link = _link_of(a)
     anchored = await read_at(str(a["anchored_commit"]), link.anchored_path, link.anchored_name)
     checked = await read_at(str(a["checked_commit"]), link.read_path, link.qualified_name)
-    if link.matched_baseline() and checked is not None and _agree(anchored, checked):
-        baseline = checked[0] or (anchored[0] if anchored else "")
-    else:
-        baseline = (anchored[0] if anchored else "") or str(a["body_hash"])
     out: dict[str, Any] = {
         "anchored_hash": anchored[0] if anchored else "",
         "checked_hash": checked[0] if checked else "",
-        "body_hash": baseline,
         "judged_hash": "",
-        "former_hashes": await _former_rehashed(a, read_at, anchored),
+        "former_hashes": [
+            found[0] if (found := await read_at(*source)) else "" for source in _former_baselines(a)
+        ],
     }
+    # a check that matched the baseline read its text; else the text the baseline was
+    # taken from, while these rules still see the rename that moved it as one
+    rebased = await read_at(*_baseline_source(a)) if a.get("baseline_commit") else None
+    if link.matched_baseline() and checked is not None and _agree(anchored, checked):
+        out["body_hash"] = checked[0] or out["anchored_hash"]
+    elif rebased is not None and rebased[0] and _agree(anchored, rebased):
+        out["body_hash"] = rebased[0]
+    else:
+        out |= {"body_hash": out["anchored_hash"] or str(a["body_hash"]), "baseline_commit": ""}
+    baseline = out["body_hash"]
     if a["state"] in ("fresh", "moved") and out["checked_hash"] not in ("", baseline):
         # these rules see a change the old ones did not
         out |= {"state": "changed", "changed_since": str(a["checked_commit"])}
@@ -646,23 +652,24 @@ async def _rehashed(a: dict[str, Any], files: Files) -> dict[str, Any]:
     return out
 
 
-async def _former_rehashed(
-    a: dict[str, Any],
-    read_at: Callable[[str, str, str], Awaitable[tuple[str, str] | None]],
-    anchored: tuple[str, str] | None,
-) -> list[str]:
-    """Each former baseline under the current rules: the text at its commit, the anchored
-    text when it was carried from before; '' (no baseline) when that cannot be read."""
-    out = []
-    for path, name, commit in zip(
-        a.get("former_paths") or [],
-        a.get("former_names") or [],
-        a.get("former_commits") or [],
-        strict=True,
-    ):
-        found = await read_at(commit, path, name) if commit else anchored
-        out.append(found[0] if found else "")
-    return out
+def _baseline_source(a: dict[str, Any]) -> tuple[str, str, str]:
+    """(commit, path, qualified name) of the text `a`'s baseline hashes: the anchor,
+    unless a rename moved the baseline onto the renamed text."""
+    if a.get("baseline_commit"):
+        return str(a["baseline_commit"]), str(a["baseline_path"]), str(a["baseline_name"])
+    return str(a["anchored_commit"]), str(a["anchored_path"]), str(a["anchored_name"])
+
+
+def _former_baselines(a: dict[str, Any]) -> list[tuple[str, str, str]]:
+    """The source of each former identity's baseline, oldest first."""
+    return list(
+        zip(
+            a.get("former_baseline_commits") or [],
+            a.get("former_baseline_paths") or [],
+            a.get("former_baseline_names") or [],
+            strict=True,
+        )
+    )
 
 
 def _owes(a: dict[str, Any], fields: dict[str, Any]) -> bool:
@@ -981,6 +988,7 @@ async def _resolve_pending(
             continue
         anchored: dict[str, Any] = {"anchored_commit": head, "anchored_path": here.path}
         anchored |= {"anchored_hash": here.body_hash, "anchored_name": here.qualified_name}
+        anchored["baseline_commit"] = ""  # the baseline is the new anchor
         link = Link(
             path=here.path,
             qualified_name=here.qualified_name,
@@ -1040,21 +1048,41 @@ async def _current_moves(org: str, moves: list[Move]) -> list[Move]:
 _FORMER = 16
 
 
-_FORMER_COLUMNS = ("former_paths", "former_names", "former_hashes", "former_commits")
+_FORMER_COLUMNS = (
+    "former_paths",
+    "former_names",
+    "former_hashes",
+    "former_baseline_commits",
+    "former_baseline_paths",
+    "former_baseline_names",
+)
 
 
 def _former(a: dict[str, Any], moved_from: bool) -> dict[str, list[str]]:
     """The identities `a` had before, oldest first, each with the baseline it had there
-    and the commit whose text that baseline is ('' when carried from before), with the
-    one it leaves when it moves."""
+    and where that baseline's text is, with the one it leaves when it moves."""
     out = {c: list(a.get(c) or []) for c in _FORMER_COLUMNS}
     if moved_from:
-        out["former_paths"].append(str(a["path"]))
-        out["former_names"].append(str(a["qualified_name"]))
-        out["former_hashes"].append(str(a.get("body_hash") or ""))
-        matched = _link_of(a).matched_baseline()
-        out["former_commits"].append(str(a.get("checked_commit") or "") if matched else "")
+        source = _baseline_source(a)
+        for column, value in zip(
+            _FORMER_COLUMNS,
+            (a["path"], a["qualified_name"], a.get("body_hash") or "", *source),
+            strict=True,
+        ):
+            out[column].append(str(value))
     return {c: v[-_FORMER:] for c, v in out.items()}
+
+
+def _baseline_moved(a: dict[str, Any], link: Link, head: str) -> dict[str, str]:
+    """Where the moved link's baseline text is now: the renamed text at `head` when the
+    move rebased the baseline onto it, else where it was."""
+    if link.body_hash == str(a.get("body_hash") or "") or link.body_hash != link.checked_hash:
+        return {}
+    return {
+        "baseline_commit": head,
+        "baseline_path": link.path,
+        "baseline_name": link.qualified_name,
+    }
 
 
 async def _write_moves(moves: list[Move], head: str) -> None:
@@ -1095,6 +1123,7 @@ async def _write_moves(moves: list[Move], head: str) -> None:
                 checked_path=link.checked_path,
                 checked_at=naive_utc_now(),
                 **_former(a, moved_from),
+                **_baseline_moved(a, link, head),
                 suggestion=a.get("suggestion", "") if corrected else "",
                 judged_hash=a.get("judged_hash", "") if corrected else "",
                 policy_due=int(
