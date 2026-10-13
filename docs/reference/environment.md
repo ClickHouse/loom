@@ -33,14 +33,15 @@ Provider selection itself (`LOOM_EMBEDDING_MODEL`, `LOOM_LLM_PROVIDER`,
 
 ## Container image and uvicorn
 
-Read by the `Dockerfile`'s `CMD` (the image runs uvicorn directly):
+Read by `scripts/serve.sh`, the image's command, which starts uvicorn:
 
-| Variable                   | Default | Meaning                                                                                 |
-| -------------------------- | ------- | --------------------------------------------------------------------------------------- |
-| `PORT`                     | `7777`  | The port uvicorn binds inside the container.                                            |
-| `LOOM_WEB_WORKERS`         | `1`     | `uvicorn --workers` (also a settings field, which the rate limiter divides budgets by). |
-| `LOOM_UVICORN_LOOP`        | `auto`  | `uvicorn --loop`: `auto`, `asyncio` or `uvloop`.                                        |
-| `LOOM_GRACEFUL_SHUTDOWN_S` | `10`    | `uvicorn --timeout-graceful-shutdown`: how long a stopping process drains requests.     |
+| Variable                   | Default              | Meaning                                                                                                                                                                                                            |
+| -------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `PORT`                     | `7777`               | The port uvicorn binds inside the container.                                                                                                                                                                       |
+| `LOOM_WEB_WORKERS`         | one per CPU, up to 8 | `uvicorn --workers`. Unset, one per CPU the container may use (its cpuset, lowered by a CPU quota), at most one per GiB of memory and at most 8. Also a settings field, which the rate limiter divides budgets by. |
+| `LOOM_UVICORN_LOOP`        | `auto`               | `uvicorn --loop`: `auto`, `asyncio` or `uvloop`.                                                                                                                                                                   |
+| `LOOM_TRUSTED_PROXIES`     | `127.0.0.1`          | `uvicorn --forwarded-allow-ips`: the peers whose `X-Forwarded-For`/`-Proto` are applied.                                                                                                                           |
+| `LOOM_GRACEFUL_SHUTDOWN_S` | `10`                 | `uvicorn --timeout-graceful-shutdown`: how long a stopping process drains requests.                                                                                                                                |
 
 Build arguments: `LOOM_EMBEDDING_MODEL` (a value starting with `local` adds the
 local CPU embedder's dependencies to the image; switching between a local and a

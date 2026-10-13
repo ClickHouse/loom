@@ -26,9 +26,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
-from server.core.errors import OverrideNotSharedError
 from server.core.runtime_files import server_file
-from server.core.shared_document import SharedDocument
+from server.core.shared_document import SharedDocument, share_override
 from server.settings import settings
 
 if TYPE_CHECKING:
@@ -461,15 +460,8 @@ class Limiter:
     def _change_overrides(self, change: Callable[[_Overrides], _Overrides]) -> None:
         """Apply `change` to the overrides of every worker on the host; a change
         that cannot be shared is refused and this worker keeps its own."""
-        doc = self._overrides_document()
         mine = self._overrides()
-        try:
-            new = change(mine) if doc is None else doc.update(change, mine)
-        except OSError as e:
-            log.warning("rate-limit override not shared: %s", e)
-            raise OverrideNotSharedError(
-                "rate-limit override not applied: the server's web processes could not share it"
-            ) from e
+        new = share_override(self._overrides_document(), change, mine, what="rate-limit override")
         self._rebase_buckets(mine, new)
         self._adopt(new)
 

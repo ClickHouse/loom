@@ -36,7 +36,7 @@ def test_ensure_returns_before_run_begin_lands_and_close_waits_for_it(monkeypatc
     gate = asyncio.Event()
     order: list[str] = []
 
-    async def slow_begin(inp: Any, *, keep_active: bool = False) -> Any:
+    async def slow_begin(inp: Any) -> Any:
         await gate.wait()
         order.append(f"begin:{inp.run_id}")
         from server.tasks.api.models_run import RunBeginOutput
@@ -51,7 +51,8 @@ def test_ensure_returns_before_run_begin_lands_and_close_waits_for_it(monkeypatc
 
     monkeypatch.setattr(h, "handle_run_begin", slow_begin)
     monkeypatch.setattr(h, "handle_run_complete", complete)
-    monkeypatch.setattr(h, "idle_session_run", AsyncMock(return_value=1))
+    monkeypatch.setattr(h, "active_session_run", AsyncMock(return_value=None))
+    monkeypatch.setattr(h, "idle_session_run", AsyncMock(return_value=("ns-a", 1)))
 
     async def _run() -> None:
         run = await asyncio.wait_for(mcp_runs.ensure("sess-9", DEFAULTS, goal="g", now=1.0), 0.5)

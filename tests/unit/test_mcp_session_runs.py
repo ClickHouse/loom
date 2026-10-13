@@ -40,34 +40,34 @@ class _Ledger:
         self.begins: list[Any] = []
         self.completes: list[Any] = []
         self.fail_begin = False
-        self.active: set[str] = set()
+        # run_id -> the namespace its row was begun in.
+        self.active: dict[str, str] = {}
         # Runs a sibling web process called within the idle window.
         self.served_elsewhere: set[str] = set()
 
-    async def idle(
-        self, org: str, namespace: str, agent: str, run_id: str, *, idle_s: float | None
-    ) -> int | None:
+    async def active_run(self, org: str, run_id: str) -> dict[str, Any] | None:
+        return {"namespace": self.active[run_id]} if run_id in self.active else None
+
+    async def idle(self, org: str, run_id: str, *, idle_s: float | None) -> Any:
         if run_id not in self.active:
             return None
         if idle_s is not None and run_id in self.served_elsewhere:
             return None
-        return 7  # the ledger's count, whichever process closes the run
+        return self.active[run_id], 7  # the run's namespace and the ledger's count
 
-    async def begin(self, inp: Any, *, keep_active: bool = False) -> Any:
+    async def begin(self, inp: Any) -> Any:
         if self.fail_begin:
             raise RuntimeError("ledger down")
         from server.tasks.api.models_run import RunBeginOutput
 
-        if keep_active and inp.run_id in self.active:
-            return RunBeginOutput(run_id=inp.run_id, started_at="t0")
         self.begins.append(inp)
-        self.active.add(inp.run_id)
+        self.active[inp.run_id] = inp.namespace
 
         return RunBeginOutput(run_id=f"run-{len(self.begins)}", started_at="t0")
 
     async def complete(self, inp: Any) -> Any:
         self.completes.append(inp)
-        self.active.discard(inp.run_id)
+        self.active.pop(inp.run_id, None)
         from server.tasks.api.models_run import RunCompleteOutput
 
         return RunCompleteOutput(run_id=inp.run_id, status=inp.status, duration_ms=inp.duration_ms)
@@ -81,6 +81,7 @@ def ledger(monkeypatch) -> _Ledger:
     monkeypatch.setattr(h, "handle_run_begin", led.begin)
     monkeypatch.setattr(h, "handle_run_complete", led.complete)
     monkeypatch.setattr(h, "idle_session_run", led.idle)
+    monkeypatch.setattr(h, "active_session_run", led.active_run)
     return led
 
 
@@ -244,7 +245,7 @@ def test_a_run_a_sibling_still_serves_or_closed_is_not_completed(ledger: _Ledger
         await mcp_runs.ensure("done", DEFAULTS, goal="g", now=0.0)
         await mcp_runs.drain_begins()
         ledger.served_elsewhere.add("mcp-busy")
-        ledger.active.discard("mcp-done")  # a sibling's DELETE /mcp closed it
+        ledger.active.pop("mcp-done")  # a sibling's DELETE /mcp closed it
         assert await mcp_runs.sweep_idle(now=mcp_runs.idle_seconds() + 1.0, force=True) == 0
         assert ledger.completes == [] and mcp_runs.live_count() == 0
         # the client's own DELETE does not wait for the idle window

@@ -71,56 +71,19 @@ async def test_begin_with_a_client_run_id_labels_that_id(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("status", "kept"), [("active", True), ("completed", False)])
-async def test_a_begin_that_keeps_an_active_run_writes_nothing(monkeypatch, status, kept):
-    """A sibling web process began the session's run: its goal and start stay."""
-    from datetime import datetime
-
-    started = datetime(2026, 1, 2, 3, 4, 5)
-
-    class _Ledger(_Client):
-        inserts: list[str] = []
-
-        async def query_one(self, sql: str, params=None):
-            await super().query_one(sql, params)
-            if "agent_runs" in sql and params.get("rid") == "mcp-s":
-                return {"run_id": "mcp-s", "status": status, "started_at": started}
-            return None
-
-        async def insert(self, table, *a, **k):
-            self.inserts.append(table)
-
-    client = _Ledger()
-    monkeypatch.setattr(run_handlers, "get_client", lambda: client)
-
-    async def _no_keeper(*_a, **_k):
-        from server.tasks.store.runs import NoClaim
-
-        return NoClaim.UNAVAILABLE
-
-    monkeypatch.setattr(run_handlers.runs_store, "claim_run", _no_keeper)
-    out = await run_handlers.handle_run_begin(
-        RunBeginInput(org="o", namespace="n", agent="a", goal="g", run_id="mcp-s"),
-        keep_active=True,
-    )
-    assert out.run_id == "mcp-s"
-    assert (client.inserts == []) is kept
-    assert all(client.sequential_reads)
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("status", "last_call_s_ago", "idle_s", "expected"),
+    ("active", "last_call_s_ago", "idle_s", "expected"),
     [
-        ("active", 600.0, 300.0, 4),  # nobody called within the window
-        ("active", 10.0, 300.0, None),  # a sibling web process still serves it
-        ("active", 10.0, None, 4),  # the client ended the session: no wait
-        ("completed", 600.0, 300.0, None),  # a sibling already closed it
+        (True, 600.0, 300.0, ("ns-first", 4)),  # nobody called within the window
+        (True, 10.0, 300.0, None),  # a sibling web process still serves it
+        (True, 10.0, None, ("ns-first", 4)),  # the client ended the session: no wait
+        (False, 600.0, 300.0, None),  # a sibling already closed it
     ],
 )
 async def test_an_implicit_run_closes_on_what_the_ledger_says(
-    monkeypatch, status, last_call_s_ago, idle_s, expected
+    monkeypatch, active, last_call_s_ago, idle_s, expected
 ):
+    """Read org-wide: a session's calls may name other namespaces than its run's."""
     from datetime import timedelta
 
     from server.core.datetimes import naive_utc_now
@@ -130,14 +93,21 @@ async def test_an_implicit_run_closes_on_what_the_ledger_says(
     class _Ledger(_Client):
         async def query_one(self, sql: str, params=None):
             await super().query_one(sql, params)
+            assert "namespace =" not in sql
             if "agent_events" in sql:
                 assert params["since"] == now - timedelta(hours=1)
                 return {"n": 4, "last": now - timedelta(seconds=last_call_s_ago)}
-            return {"status": status, "started_at": now - timedelta(hours=1)}
+            if not active:
+                return None
+            return {
+                "namespace": "ns-first",
+                "status": "active",
+                "started_at": now - timedelta(hours=1),
+            }
 
     client = _Ledger()
     monkeypatch.setattr(run_handlers, "get_client", lambda: client)
     monkeypatch.setattr(run_handlers, "_now", lambda: now)
-    got = await run_handlers.idle_session_run("o", "n", "a", "mcp-s", idle_s=idle_s)
+    got = await run_handlers.idle_session_run("o", "mcp-s", idle_s=idle_s)
     assert got == expected
     assert client.sequential_reads[0] is True

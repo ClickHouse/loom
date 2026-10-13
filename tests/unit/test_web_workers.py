@@ -31,9 +31,12 @@ def test_a_large_host_is_capped(tmp_path: Path) -> None:
     assert got == MAX_WORKERS
 
 
-def test_cpu_quota_rounds_up(tmp_path: Path) -> None:
+def test_cpu_quota_rounds_down_to_at_least_one(tmp_path: Path) -> None:
+    """A worker past the quota is throttled, not served."""
     _w(tmp_path, "/", "cpu.max", "250000 100000")
-    assert default_workers(cpus=32, proc_cgroup="0::/\n", meminfo=BIG_MEM, root=tmp_path) == 3
+    assert default_workers(cpus=32, proc_cgroup="0::/\n", meminfo=BIG_MEM, root=tmp_path) == 2
+    _w(tmp_path, "/", "cpu.max", "50000 100000")
+    assert default_workers(cpus=32, proc_cgroup="0::/\n", meminfo=BIG_MEM, root=tmp_path) == 1
 
 
 def test_memory_limit_bounds_the_count(tmp_path: Path) -> None:
@@ -108,6 +111,6 @@ def test_cpus_default_to_this_platforms_count(
 
 
 def test_cpu_limit_is_the_affinity_lowered_by_the_quota(tmp_path: Path) -> None:
-    _w(tmp_path, "/", "cpu.max", "150000 100000")
+    _w(tmp_path, "/", "cpu.max", "250000 100000")
     assert web_workers.cpu_limit(cpus=32, proc_cgroup="0::/\n", root=tmp_path) == 2
     assert web_workers.cpu_limit(cpus=1, proc_cgroup="0::/\n", root=tmp_path) == 1

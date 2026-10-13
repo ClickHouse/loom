@@ -138,11 +138,10 @@ services:
       LOOM_INSTANCE_LABEL: "deploy:workers"
       # No published port.
       LOOM_BIND_HOST: "127.0.0.1"
-      # The shared rate table is keyed by the uvicorn parent pid
-      # and shared by the web workers of ONE server. This process serves no
-      # client traffic (no published port) and runs one web worker, so it
-      # takes the per-process fallback (`single web worker` in /v1/health)
-      # and needs no table; the web tier's four workers keep theirs.
+      # The shared rate table is one per server (server/core/runtime_files.py).
+      # This process serves no client traffic (no published port) and runs one
+      # web worker, so it takes the per-process fallback (`single web worker`
+      # in /v1/health) and needs no table.
     healthcheck:
       test:
         [

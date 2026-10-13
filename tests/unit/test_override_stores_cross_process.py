@@ -316,6 +316,7 @@ def test_a_worker_that_starts_after_the_runtime_dir_turns_read_only_still_shares
     "corrupt",
     [
         {"ops": {}, "consumer": [["c1", "*", "abc"]]},
+        {"ops": {}, "consumer": [["c1", "*", float("inf")]]},
         {"ops": {"memory.get": "5"}, "consumer": []},
         {"ops": {"memory.get": 2.7}, "consumer": []},
         {"ops": {"memory.get": True}, "consumer": []},
@@ -347,3 +348,11 @@ def test_a_rate_limit_that_is_not_one_makes_the_file_corrupt(
     assert b._ns_overrides == {("ns1", "memory"): Limit(capacity=1, rate=0.0)}  # not adopted
     a.reset_all()
     b.reset_all()
+
+
+@pytest.mark.parametrize("value", ["infx", "nanx", "inf", "-1x", float("inf")])
+def test_a_budget_that_is_not_finite_is_refused(tmp_path: Path, value: object) -> None:
+    a, _, path = _budgets(tmp_path)
+    with pytest.raises(ValueError):
+        a.set_for_consumer("c1", "*", value)  # type: ignore[arg-type]
+    assert not path.exists()

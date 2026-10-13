@@ -323,18 +323,29 @@ async def observation_count(ch: Any, org: str, ns: str, run_id: str, *, scope: R
     return int((row or {}).get("n") or 0)
 
 
-async def ledgered_calls(
-    ch: Any, org: str, ns: str, agent: str, run_id: str, since: Any
-) -> tuple[int, Any]:
-    """How many requests the ledger labels with `run_id` since `since`, and the
-    time of the last one (None when there is none)."""
+async def active_run_by_id(ch: Any, org: str, run_id: str) -> RunLedgerRow | None:
+    """The active run under `run_id` in any namespace of `org`."""
+    row: RunLedgerRow | None = await ch.query_one(
+        f"""
+        SELECT {_RUN_SELECT}
+        FROM loom.agent_runs FINAL
+        WHERE org = {{org:String}} AND run_id = {{rid:String}} AND status = 'active'
+        LIMIT 1
+        """,
+        params={"org": org, "rid": run_id},
+    )
+    return row
+
+
+async def ledgered_calls(ch: Any, org: str, run_id: str, since: Any) -> tuple[int, Any]:
+    """How many requests the ledger labels with `run_id` since `since`, in any
+    namespace of `org`, and the time of the last one (None when there is none)."""
     row = await ch.query_one(
         """
         SELECT count() AS n, if(n = 0, NULL, max(ts)) AS last FROM loom.agent_events
-        WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agent:String}
-          AND ts >= {since:DateTime64(3)} AND run_id = {rid:String}
+        WHERE org = {org:String} AND ts >= {since:DateTime64(3)} AND run_id = {rid:String}
         """,
-        params={"org": org, "ns": ns, "agent": agent, "rid": run_id, "since": since},
+        params={"org": org, "rid": run_id, "since": since},
     )
     return int((row or {}).get("n") or 0), (row or {}).get("last")
 

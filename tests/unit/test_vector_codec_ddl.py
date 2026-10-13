@@ -201,3 +201,19 @@ def test_an_install_with_plain_vector_tables_creates_new_ones_plain(
 def test_codec_width_reads_the_quantized_argument() -> None:
     assert vcd.codec_width("CODEC(Quantized(\\'rabitq\\', 1024, 0), LZ4)") == 1024
     assert vcd.codec_width("CODEC(ZSTD(1))") is None
+
+
+def test_coded_tables_of_several_widths_are_named(settings_override, capsys) -> None:
+    from types import SimpleNamespace
+
+    from server.core.schema import migrate as mig
+
+    settings_override(embedding_dim=3072, embedding_model="fake-ngram-3072")
+    rows = [
+        ("memory_embeddings", "embedding", "CODEC(Quantized('rabitq', 16, 0))"),
+        ("chunks", "embedding", "CODEC(Quantized('rabitq', 16, 0))"),
+        ("categories", "embedding", "CODEC(Quantized('rabitq', 8, 0))"),
+    ]
+    ch = SimpleNamespace(query=lambda sql, parameters=None: SimpleNamespace(result_rows=rows))
+    assert mig._codec_width(ch) == 16  # type: ignore[arg-type]
+    assert "several widths [8, 16]" in capsys.readouterr().out

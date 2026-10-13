@@ -454,9 +454,30 @@ def _codec_width(ch: Client) -> int | None:
             plain = True
         else:
             widths[width] += 1
+    if len(widths) > 1:
+        print(f"  ! coded vector tables hold several widths {sorted(widths)}: a rebuild stopped")
     if widths:
         return widths.most_common(1)[0][0]
     return None if plain else int(settings.embedding_dim)
+
+
+def _coded_width(ch: Client) -> int | None:
+    """The width new vector tables are coded at, or None to create them plain
+    (and say why)."""
+    from server.core.schema.vector_codec_ddl import codable
+
+    if not _codec_supported(ch):
+        return None
+    width = _codec_width(ch)
+    if width is None:
+        print("  · vector tables created plain, as the install's existing ones are")
+    elif not codable(width):
+        print(
+            f"  · vector tables created plain: width {width} is not a multiple of 8, "
+            "which the Quantized codec needs"
+        )
+        return None
+    return width
 
 
 DIMENSIONS_SETTING = "allow_dimensions_outside_sorting_key"
@@ -681,23 +702,11 @@ def _apply_pending(
 ) -> int:
     """Apply `to_apply` in order, recording each; 1 on the first failure. A
     file in `baselined` is recorded without running."""
-    from server.core.schema.vector_codec_ddl import codable
-
     # Probe NLP support once: it decides whether the NLP experimental flag is
     # sent at all (ClickHouse Cloud forbids it).
     nlp_ok = _nlp_available(ch)
-    coded = _codec_supported(ch)
-    width = _codec_width(ch) if coded else 0
-    if coded and width is None:
-        coded = False
-        print("  · vector tables created plain, as the install's existing ones are")
-    elif coded and not codable(width or 0):
-        coded = False
-        print(
-            f"  · vector tables created plain: width {width} is not a multiple of 8, "
-            "which the Quantized codec needs"
-        )
-    codec_dim = width or 0
+    width = _coded_width(ch)
+    coded, codec_dim = width is not None, width or 0
     dims = _dimensions_setting_known(ch)
     sync = NO_SYNC if dry else sync_policy(ch)
     if sync.accepted:

@@ -17,6 +17,7 @@ import tempfile
 from collections.abc import Callable
 from typing import Any
 
+from server.core.errors import OverrideNotSharedError
 from server.core.runtime_files import open_private
 
 log = logging.getLogger(__name__)
@@ -94,6 +95,23 @@ class SharedDocument[T]:
         # Seen once read or found corrupt; a read that failed is tried again.
         self._seen = version
         return state
+
+
+def share_override[T](
+    doc: SharedDocument[T] | None, change: Callable[[T], T], current: T, *, what: str
+) -> T:
+    """`change(current)`, published to the server's other web processes through
+    `doc` (None: this process is the only one). Raises OverrideNotSharedError,
+    having changed nothing, when it cannot be shared; the log says why."""
+    if doc is None:
+        return change(current)
+    try:
+        return doc.update(change, current)
+    except OSError as e:
+        log.warning("%s not shared: %s", what, e)
+        raise OverrideNotSharedError(
+            f"{what} not applied: the server's web processes could not share it"
+        ) from e
 
 
 def _publish(path: str, data: object) -> _Version:

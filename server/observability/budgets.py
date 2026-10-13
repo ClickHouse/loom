@@ -37,14 +37,14 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
-from server.core.errors import OverrideNotSharedError
 from server.core.runtime_files import server_file
-from server.core.shared_document import SharedDocument
+from server.core.shared_document import SharedDocument, share_override
 
 log = logging.getLogger(__name__)
 
@@ -53,23 +53,20 @@ ANY_OP = "*"
 
 def _parse_value(raw: Any) -> int | float | None:
     """An override entry: int/float milliseconds, or "<n>x" multiplier
-    returned as a float factor. None when unusable."""
+    returned as a float factor. None when unusable (negative, not finite)."""
     if isinstance(raw, bool):
         return None
     if isinstance(raw, int | float):
-        return int(raw) if raw >= 0 else None
+        return int(raw) if math.isfinite(raw) and raw >= 0 else None
     if isinstance(raw, str):
         text = raw.strip().lower()
-        if text.endswith("x"):
-            try:
-                factor = float(text[:-1])
-            except ValueError:
-                return None
-            return factor if factor >= 0 else None
         try:
-            return int(float(text)) if float(text) >= 0 else None
+            number = float(text.removesuffix("x"))
         except ValueError:
             return None
+        if not math.isfinite(number) or number < 0:
+            return None
+        return number if text.endswith("x") else int(number)
     return None
 
 
@@ -95,7 +92,8 @@ def _stored_ms(raw: Any) -> int:
 
 def _stored_budget(raw: Any) -> int | float:
     """A consumer budget as `set_for_consumer` stores it: ms, or a float multiplier."""
-    return raw if isinstance(raw, float) and raw >= 0 else _stored_ms(raw)
+    finite = isinstance(raw, float) and math.isfinite(raw) and raw >= 0
+    return raw if finite else _stored_ms(raw)
 
 
 def _decode(data: Any) -> _Budgets:
@@ -155,15 +153,8 @@ class BudgetOverrides:
         """Apply `change` to the overrides of every web process; a change that
         cannot be shared is refused and this process keeps its own."""
         with self._lock:
-            doc = self._document()
             mine = _Budgets(self._overrides, self._by_consumer)
-            try:
-                new = change(mine) if doc is None else doc.update(change, mine)
-            except OSError as e:
-                log.warning("budget override not shared: %s", e)
-                raise OverrideNotSharedError(
-                    "budget override not applied: the server's web processes could not share it"
-                ) from e
+            new = share_override(self._document(), change, mine, what="budget override")
             self._overrides, self._by_consumer = new.ops, new.by_consumer
 
     # -- per op (unchanged API) -------------------------------------------

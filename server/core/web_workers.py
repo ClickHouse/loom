@@ -113,7 +113,8 @@ def available_cpus() -> int:
 def cpu_limit(
     *, cpus: int | None = None, proc_cgroup: str | None = None, root: Path = CGROUP_ROOT
 ) -> int:
-    """CPUs this process may keep busy: the affinity, lowered by the CPU quota."""
+    """CPUs this process may keep busy: the affinity, lowered by the CPU quota
+    (rounded down, at least one)."""
     if cpus is None:
         cpus = available_cpus()
     if proc_cgroup is None:
@@ -122,7 +123,7 @@ def cpu_limit(
         _min_limit(_cgroup_dirs(proc_cgroup, root, ""), _v2_cpu),
         _min_limit(_cgroup_dirs(proc_cgroup, root, "cpu"), _v1_cpu),
     )
-    return max(1, cpus if quota == math.inf else min(cpus, math.ceil(quota)))
+    return max(1, cpus if quota == math.inf else min(cpus, math.floor(quota)))
 
 
 def default_workers(

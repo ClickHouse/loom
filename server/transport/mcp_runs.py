@@ -192,13 +192,18 @@ def run_id_for(session_id: str) -> str:
 
 
 async def _begin(run: SessionRun, *, goal: str, now: float) -> None:
-    """`run.begin` for a registered run. A run already active is kept: another
-    web process of this server began it for the same session. On failure the run
-    is forgotten and the session waits out the idle window before the next attempt."""
+    """`run.begin` for a registered run, unless another web process of this server
+    began it already (in whichever namespace the session's first call named, which
+    the close must name too). On failure the run is forgotten and the session waits
+    out the idle window before the next attempt."""
     try:
         from server.tasks.api.models_run import RunBeginInput
-        from server.tasks.app.run import handle_run_begin
+        from server.tasks.app.run import active_session_run, handle_run_begin
 
+        active = await active_session_run(run.org, run.run_id)
+        if active is not None:
+            run.namespace = str(active["namespace"])
+            return
         await handle_run_begin(
             RunBeginInput(
                 org=run.org,
@@ -210,8 +215,7 @@ async def _begin(run: SessionRun, *, goal: str, now: float) -> None:
                 environment="mcp",
                 consumer=run.agent[:64],
                 metadata={"implicit": True, "transport": "mcp"},
-            ),
-            keep_active=True,
+            )
         )
     except Exception as e:  # noqa: BLE001 — the ledger never fails a tool call
         if _RUNS.get(run.session_id) is run:
@@ -238,19 +242,18 @@ async def _close(run: SessionRun, *, reason: str) -> bool:
 
         # The ledger, not this process, says whether the session is over: a
         # sibling web process may still serve it, or have closed it already.
-        calls = await idle_session_run(
-            run.org,
-            run.namespace,
-            run.agent,
-            run.run_id,
-            idle_s=idle_seconds() if reason == "idle" else None,
+        # A client's DELETE ends the session at once; an idle or evicted run closes
+        # only when no process served it within the idle window.
+        found = await idle_session_run(
+            run.org, run.run_id, idle_s=None if reason == "session_end" else idle_seconds()
         )
-        if calls is None:
+        if found is None:
             return False
+        namespace, calls = found
         await handle_run_complete(
             RunCompleteInput(
                 org=run.org,
-                namespace=run.namespace,
+                namespace=namespace,
                 run_id=run.run_id,
                 status="completed",
                 # The transport saw the session end; it cannot say how the
