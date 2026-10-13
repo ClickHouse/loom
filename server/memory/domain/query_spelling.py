@@ -34,19 +34,27 @@ def spelling_candidates(query: str, *, max_words: int) -> list[str]:
 
 
 def pick_spellings(tokens: Iterable[str], rows: Mapping[str, int]) -> dict[str, str]:
-    """token -> the spelling most rows use, when that is not the lowercase
-    spelling and it clearly leads: at least `MIN_ROWS` rows, and `LEAD` times
-    the rows that write the word in lowercase. A closer split keeps the word
-    as typed. `rows` maps each spelling to the rows that use it."""
+    """token -> the identifier spelling most rows use (a capital past the
+    first letter: `DataLakeCatalog`, `PREWHERE`), when it clearly leads: at
+    least `MIN_ROWS` rows, and `LEAD` times the rows that write the word
+    plainly, in lowercase or with a leading capital. A word capitalised
+    only because it opens a sentence ("What") is never a rewrite, and a
+    closer split keeps the word as typed. `rows` maps each spelling to the
+    rows that use it."""
     out: dict[str, str] = {}
     for tok in tokens:
-        seen = {s: n for s, n in rows.items() if s.lower() == tok}
-        if not seen:
+        plain = rows.get(tok, 0) + rows.get(tok.capitalize(), 0)
+        cased = {s: n for s, n in rows.items() if s.lower() == tok and _is_identifier_case(s)}
+        if not cased:
             continue
-        best, n = max(seen.items(), key=lambda kv: (kv[1], kv[0]))
-        if best != tok and n >= MIN_ROWS and n >= LEAD * seen.get(tok, 0):
+        best, n = max(cased.items(), key=lambda kv: (kv[1], kv[0]))
+        if n >= MIN_ROWS and n >= LEAD * plain:
             out[tok] = best
     return out
+
+
+def _is_identifier_case(spelling: str) -> bool:
+    return any(c.isupper() for c in spelling[1:])
 
 
 def apply_spellings(text: str, spellings: Mapping[str, str]) -> str:

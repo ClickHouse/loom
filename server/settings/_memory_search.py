@@ -156,8 +156,9 @@ class MemorySearchSettings(BaseModel):
     # Retries after a timed-out first attempt, each with the bound above.
     memory_search_embed_bound_retries: int = 1
     # A query of at most this many words embeds each all-lowercase word of 4+
-    # letters in the spelling the caller's rows in the addressed namespace use
-    # most ("datalakecatalog" -> "DataLakeCatalog"). One read of the namespace
+    # letters in the identifier spelling the caller's rows in the addressed
+    # namespace use most ("datalakecatalog" -> "DataLakeCatalog"; never
+    # "what" -> "What"). One read of the namespace
     # beside the embed (40-180 ms on the largest), reused for a minute;
     # fail-open. 0 = off.
     memory_search_query_spelling_max_words: int = Field(default=6, ge=0)

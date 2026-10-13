@@ -128,16 +128,18 @@ user-derived term off for one request.
 
 An embedder reads `datalakecatalog` and `DataLakeCatalog` as different strings. So a query
 of at most `LOOM_MEMORY_SEARCH_QUERY_SPELLING_MAX_WORDS` words (default 6) embeds each
-all-lowercase word of four or more letters in the spelling the caller's rows in the
-addressed namespace use. The rule: at least two rows, and twice as many as write the
-word in lowercase. Lexical matching is case-insensitive already and is unchanged. A
+all-lowercase word of four or more letters in the identifier spelling the caller's rows
+in the addressed namespace use: one with a capital past the first letter
+(`DataLakeCatalog`, `PREWHERE`), used by at least two rows and by twice as many as write
+the word plainly (lowercase, or capitalised as at the start of a sentence). So `what`
+never becomes `What`. Answers are cached for a minute, and a cached answer costs one
+embed. Lexical matching is case-insensitive already and is unchanged. A
 rewrite costs a second embed and shows in `retrieval_work.query_spellings`
 (`memory.search_trace`: `query_spellings`). The query embeds as typed, with
 `retrieval_work.query_spellings_skipped` set (`memory.search_trace`:
 `query_spellings_skipped`), when the lookup fails or runs past 0.25 s, when the
 namespace is backing off after such a failure (a minute, doubling with each failure in a
-row up to an hour), or when the rewritten text's embed fails. Answers are reused for a
-minute. `retrieval_cost_estimate` is made before the lookup answers, so it counts one
+row up to an hour), or when the rewritten text's embed fails. `retrieval_cost_estimate` is made before the lookup answers, so it counts one
 embed even when the rewrite adds a second.
 `loom.search_trace_log` keeps the query as typed, so a logged query can score
 differently from a fresh embed of the same text.

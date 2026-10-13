@@ -61,8 +61,15 @@ def test_a_long_question_or_off_looks_nothing_up():
         ({"User": 116, "user": 114}, None),
         ({"GOAL": 1, "goal": 1}, None),
         ({"Deploy": 3, "deploy": 9}, None),
-        # Two other spellings tie: the choice is stable.
-        ({"Iceberg": 2, "ICEBERG": 2}, "Iceberg"),
+        # A capital that only opens a sentence or a name is not an identifier.
+        ({"What": 349, "what": 153, "WHAT": 109}, None),
+        ({"However": 29, "however": 3}, None),
+        ({"Kafka": 42, "kafka": 6}, None),
+        # Counted against the plain spellings together.
+        ({"FINAL": 146, "final": 53}, "FINAL"),
+        ({"ROOT": 400, "Root": 446, "root": 251}, None),
+        # Two identifier spellings tie: the choice is stable.
+        ({"IceBerg": 2, "ICEBERG": 2}, "IceBerg"),
     ],
 )
 def test_a_spelling_replaces_the_word_only_when_it_clearly_leads(rows, expected):
@@ -466,3 +473,30 @@ async def test_an_embed_that_fails_before_the_lookup_answers_is_not_retried_resp
     with pytest.raises(RuntimeError, match="401"):
         await app.embed_query(embed, "datalakecatalog", _input(), "m")
     assert texts == ["datalakecatalog"]
+
+
+@pytest.mark.parametrize(
+    ("rows", "embedded"),
+    [({"DataLakeCatalog": 9}, ["DataLakeCatalog"]), ({}, ["datalakecatalog"])],
+)
+async def test_a_cached_answer_costs_one_embed(monkeypatch, rows, embedded):
+    _lookup_returns(monkeypatch, rows)
+    await app.corpus_spellings(_input(), "m")  # warms the cache
+    embed = _Embedder()
+    await app.embed_query(embed, "datalakecatalog", _input(), "m")
+    assert embed.texts == embedded
+
+
+async def test_a_cached_rewrite_whose_embed_fails_embeds_as_typed(monkeypatch):
+    _lookup_returns(monkeypatch, {"DataLakeCatalog": 9})
+    await app.corpus_spellings(_input(), "m")
+    texts: list[str] = []
+
+    async def embed(text: str) -> list[float]:
+        texts.append(text)
+        if text == "DataLakeCatalog":
+            raise RuntimeError("provider error")
+        return [1.0]
+
+    assert await app.embed_query(embed, "datalakecatalog", _input(), "m") == ([1.0], None)
+    assert texts == ["DataLakeCatalog", "datalakecatalog"]

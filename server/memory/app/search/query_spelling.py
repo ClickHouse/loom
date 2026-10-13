@@ -9,7 +9,7 @@ import asyncio
 import logging
 import time
 from collections import OrderedDict
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from typing import Any
 
 from server.core.ch import get_client, statement_timeout
@@ -39,19 +39,18 @@ _FAILED_SIZE = 4096
 _failed: OrderedDict[tuple[str, str], tuple[int, float]] = OrderedDict()
 
 
-async def corpus_spellings(input: MemorySearchInput, embedding_model: str) -> dict[str, str] | None:
-    """lowercase word of `input.query` -> the spelling the rows `input` may
-    read in the addressed namespace use instead. {} when off
-    (`memory_search_query_spelling_max_words`) or nothing differs; None when
-    the lookup did not answer (it failed or ran past its deadline, now or
-    recently enough that the namespace is backing off)."""
+def _lookup_key(
+    input: MemorySearchInput, embedding_model: str
+) -> tuple[SearchQuery, list[str], tuple[str, tuple[str, ...]]] | None:
+    """The read bounds, the candidate words and the cache key of a lookup;
+    None when the query has no word to respell (or the feature is off)."""
     from server.settings import settings
 
     tokens = spelling_candidates(
         input.query, max_words=settings.memory_search_query_spelling_max_words
     )
     if not tokens:
-        return {}
+        return None
     q = SearchQuery(
         org=input.org,
         namespace=input.namespace,
@@ -60,12 +59,31 @@ async def corpus_spellings(input: MemorySearchInput, embedding_model: str) -> di
         query_vec=[],
         top_k=0,
     )
-    now = time.monotonic()
-    key = (repr(q), tuple(tokens))
+    return q, tokens, (repr(q), tuple(tokens))
+
+
+def _cached(key: tuple[str, tuple[str, ...]]) -> dict[str, str] | None:
     hit = _cache.get(key)
-    if hit is not None and hit[0] > now:
-        _cache.move_to_end(key)
-        return hit[1]
+    if hit is None or hit[0] <= time.monotonic():
+        return None
+    _cache.move_to_end(key)
+    return hit[1]
+
+
+async def corpus_spellings(input: MemorySearchInput, embedding_model: str) -> dict[str, str] | None:
+    """lowercase word of `input.query` -> the spelling the rows `input` may
+    read in the addressed namespace use instead. {} when off
+    (`memory_search_query_spelling_max_words`) or nothing differs; None when
+    the lookup did not answer (it failed or ran past its deadline, now or
+    recently enough that the namespace is backing off)."""
+    found = _lookup_key(input, embedding_model)
+    if found is None:
+        return {}
+    q, tokens, key = found
+    cached = _cached(key)
+    if cached is not None:
+        return cached
+    now = time.monotonic()
     where = (q.org, q.namespace)
     if _failed.get(where, (0, 0.0))[1] > now:
         return None
@@ -121,8 +139,15 @@ async def embed_query(
     """The vector for `text` with the corpus spellings of `input.query`'s
     words applied, and those spellings; None when `text` was embedded as
     typed because the lookup did not answer or the rewrite's embed failed.
-    The lookup runs beside the embed of `text` as typed, so only a rewrite
-    costs a second embed."""
+    An answer already cached costs one embed; otherwise the lookup runs
+    beside the embed of `text` as typed, so only a rewrite costs a second."""
+    found = _lookup_key(input, embedding_model)
+    known = {} if found is None else _cached(found[2])
+    if known is not None:
+        if not known:
+            return await embed(text), known
+        return await _embed_respelled(embed, text, known, lambda: embed(text))
+
     lookup = asyncio.create_task(corpus_spellings(input, embedding_model))
     tasks: list[asyncio.Task[Any]] = [lookup]
     try:
@@ -135,13 +160,24 @@ async def embed_query(
         spellings = await lookup
         if not spellings:
             return await as_typed, spellings
-        try:
-            return await embed(apply_spellings(text, spellings)), spellings
-        except Exception as e:  # noqa: BLE001 — the rewrite is a recall aid; the vector as typed serves
-            vec = await as_typed
-            log.warning("embedding the respelled query failed, using it as typed: %r", e)
-            return vec, None
+        return await _embed_respelled(embed, text, spellings, lambda: as_typed)
     finally:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def _embed_respelled(
+    embed: Callable[[str], Coroutine[Any, Any, list[float]]],
+    text: str,
+    spellings: dict[str, str],
+    as_typed: Callable[[], Awaitable[list[float]]],
+) -> tuple[list[float], dict[str, str] | None]:
+    """The vector for `text` respelled; when that embed fails, the vector as
+    typed (from `as_typed`) and None for the spellings."""
+    try:
+        return await embed(apply_spellings(text, spellings)), spellings
+    except Exception as e:  # noqa: BLE001 — the rewrite is a recall aid; the vector as typed serves
+        vec = await as_typed()
+        log.warning("embedding the respelled query failed, using it as typed: %r", e)
+        return vec, None
