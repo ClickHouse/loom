@@ -164,6 +164,8 @@ async def test_the_queue_is_read_after_the_cursor_up_to_the_cutoff() -> None:
     # only the heads of memories that may name code: a repo: tag, a code namespace, a link
     read, params = ch.sql[2]
     assert "startsWith(t, 'repo:')" in read and params["cns"] == ["code-a"]
+    # a link is looked for only under the page's identities, not the org's every link
+    assert read.count("memory_key) IN {ident:") == 2
 
 
 @pytest.mark.asyncio
@@ -180,7 +182,10 @@ async def test_a_backfill_page_reads_after_its_last_identity() -> None:
     idents, heads = await store.backfill_page(("o", "n", "a", "-", "-", "j"), 50, ["code-a"], ch=ch)
     assert idents == [("o", "n", "a", "-", "-", "k")] and heads == [key]
     sql, params = ch.sql[0]
-    assert "> {after:" in sql and (params["cns"], params["lim"]) == (["code-a"], 50)
+    assert (params["cns"], params["lim"]) == (["code-a"], 50)
+    # the cursor bound column by column, which loom.memory's primary index can use
+    assert "org >= {a0:String} AND (org > {a0:String} OR (namespace >= {a1:String}" in sql
+    assert "memory_key > {a5:String}" in sql and params["a5"] == "j"
     ch = _CH(
         {"namespace, code_change_policy": [[{"namespace": "n", "code_change_policy": "flag"}]]}
     )
@@ -188,7 +193,9 @@ async def test_a_backfill_page_reads_after_its_last_identity() -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_sweep_pages_through_every_linked_memory_and_drops_the_gone() -> None:
+async def test_the_sweep_pages_through_every_linked_memory_and_drops_the_gone(
+    monkeypatch,
+) -> None:
     def row(mid: str) -> dict[str, str]:
         return {
             "org": "o",
@@ -199,14 +206,15 @@ async def test_the_sweep_pages_through_every_linked_memory_and_drops_the_gone() 
             "memory_id": mid,
         }
 
-    page = [row("erased"), row("live")]
+    monkeypatch.setattr(store, "SWEEP_ROWS_PER_WRITE", 2)
+    page = [row("erased"), row("live"), row("erased"), row("live")]
     ch = _CH(
         {"ORDER BY org, code_namespace": [page], "FROM loom.memory FINAL": [[{"mid": "live"}]]}
     )
     nxt, dropped = await store.sweep_page(None, 2, ch=ch)
     assert (nxt, dropped) == (("o", "c", "p", "q", "n", "live"), 1)  # a full page: more may follow
     (read, params) = ch.sql[0]
-    assert "> {after:" not in read and params["lim"] == 2
+    assert "{a0:" not in read and params["lim"] == 4
     (delete, params) = next((sql, p) for sql, p in ch.sql if sql.startswith("DELETE"))
     assert delete.startswith("DELETE FROM loom.memory_code_links") and params["ids"] == ["erased"]
     ch = _CH(
@@ -216,7 +224,8 @@ async def test_the_sweep_pages_through_every_linked_memory_and_drops_the_gone() 
         }
     )
     assert await store.sweep_page(("o", "c", "p", "q", "n", "a"), 2, ch=ch) == (None, 0)  # the end
-    assert "> {after:" in ch.sql[0][0]
+    read, params = ch.sql[0]
+    assert "memory_id > {a5:UUID}" in read and params["a0"] == "o"
 
 
 @pytest.mark.asyncio

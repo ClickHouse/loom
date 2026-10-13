@@ -489,6 +489,16 @@ async def _stale_links(ch: RecordingCH, c: dict[str, Any]) -> None:
     )
 
 
+async def _link_pages(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.memory.store import code_links
+
+    after = (ORG, NS, AGENT, "-", "-", "k") if c["after"] else None
+    await code_links.backfill_page(after, 5, ["code-a"], ch=ch)
+    key = (ORG, "code-a", "p.py", "f", NS, "00000000-0000-0000-0000-000000000001")
+    await code_links.sweep_page(key if c["after"] else None, 5, ch=ch)
+    await code_links._heads(ch, [(ORG, NS, AGENT, "-", "-", "k")], ["code-a"])
+
+
 def cases() -> list[Case]:
     return [
         Case(
@@ -582,5 +592,11 @@ def cases() -> list[Case]:
             "server.memory.store.code_links",
             _stale_links,
             {"keys": (False, True)},
+        ),
+        Case(
+            "code_links.pages",
+            "server.memory.store.code_links",
+            _link_pages,
+            {"after": (False, True)},
         ),
     ]

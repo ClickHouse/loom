@@ -144,36 +144,48 @@ _KEY = "org, code_namespace, path, qualified_name, namespace, memory_id"
 _KEY_COLUMNS = _KEY.split(", ")
 
 
+def _past(columns: Sequence[str], types: Sequence[str]) -> str:
+    """SQL: `columns` sort after the cursor bound as {a0}, {a1}, …; written column by
+    column, so the primary index reads it as a range (a tuple `>` it cannot)."""
+    last = len(columns) - 1
+    sql = f"{columns[last]} > {{a{last}:{types[last]}}}"
+    for i in range(last - 1, -1, -1):
+        bound = f"{{a{i}:{types[i]}}}"
+        sql = f"{columns[i]} >= {bound} AND ({columns[i]} > {bound} OR ({sql}))"
+    return sql
+
+
+def _past_params(after: Sequence[Any]) -> dict[str, Any]:
+    return {f"a{i}": v for i, v in enumerate(after)}
+
+
+# link rows a sweep page reads per memory write a pass links: a key-only read
+SWEEP_ROWS_PER_WRITE = 10
+_KEY_TYPES = ("String",) * 5 + ("UUID",)
+
+
 async def sweep_page(
     after: tuple[str, ...] | None, limit: int, *, ch: _CHClient | None = None
 ) -> tuple[tuple[str, ...] | None, int]:
-    """Drop gone memories' links and old tombstones among the next `limit` link rows after
-    `after`; returns the next page's start (None at the table's end) and the memories."""
+    """Drop gone memories' links and old tombstones among the next `limit` ×
+    `SWEEP_ROWS_PER_WRITE` link rows after `after`; returns the next page's start (None
+    at the table's end) and the memories."""
     ch = ch or _default_client()
-    # the tuple alone is no key condition: bounds on the key's first columns let the read
-    # skip the rows before the cursor
-    since = ""
-    params: dict[str, Any] = {"lim": int(limit)}
-    if after:
-        since = (
-            "WHERE org >= {org:String} AND (org > {org:String} OR (code_namespace >= "
-            "{cns:String} AND (code_namespace > {cns:String} OR path >= {path:String}))) "
-            f"AND ({_KEY}) > {{after:Tuple(String, String, String, String, String, UUID)}}"
-        )
-        org, cns, path = after[:3]
-        params |= {"after": tuple(after), "org": org, "cns": cns, "path": path}
+    rows_per_page = int(limit) * SWEEP_ROWS_PER_WRITE
+    since = f"WHERE {_past(_KEY_COLUMNS, _KEY_TYPES)}" if after else ""
     rows = await ch.query_all(
         # memory_id as stored: an alias of that name would be what WHERE and ORDER BY
         # read, a String against the cursor's UUID
         f"SELECT {_KEY} FROM {TABLE} {since} ORDER BY {_KEY} LIMIT {{lim:UInt32}}",
-        params=params,
+        params={"lim": rows_per_page, **_past_params(after or ())},
     )
     by_org: dict[str, set[str]] = defaultdict(set)
     for r in rows:
         by_org[str(r["org"])].add(str(r["memory_id"]))
     dropped = await _drop_gone(ch, by_org)
     await _purge_tombstones(ch, [tuple(r[c] for c in _KEY_COLUMNS) for r in rows])
-    last = tuple(str(rows[-1][c]) for c in _KEY_COLUMNS) if len(rows) == limit else None
+    full = len(rows) == rows_per_page
+    last = tuple(str(rows[-1][c]) for c in _KEY_COLUMNS) if full else None
     return last, dropped
 
 
@@ -422,9 +434,11 @@ async def policy_due(
 
 
 async def code_namespaces(*, ch: _CHClient | None = None) -> list[tuple[str, str]]:
-    """Every (org, code namespace) holding a live link."""
+    """Every (org, code namespace) holding a live link, and maybe one whose links were
+    all tombstoned since: read without FINAL."""
     rows = await (ch or _default_client()).query_all(
-        f"SELECT DISTINCT org, code_namespace {_LIVE} ORDER BY org, code_namespace"
+        f"SELECT DISTINCT org, code_namespace FROM {TABLE} WHERE tombstoned_at IS NULL "
+        "ORDER BY org, code_namespace"
     )
     return [(str(r["org"]), str(r["code_namespace"])) for r in rows]
 
@@ -537,22 +551,10 @@ async def backfill_page(
     of what the queue did not deliver. Returns the page's identities and the head rows
     of those still stored."""
     ch = ch or _default_client()
-    params: dict[str, Any] = {"cns": list(code_namespaces), "lim": int(limit)}
-    # in each leg, beside the tuple (no key condition): bounds on the key's first columns,
-    # loom.memory's identity and the links' org, so a page skips what came before; and
-    # each leg's own order and limit, so it reads no further than one page
-    memory_after = links_after = ""
-    if after:
-        params |= {"after": tuple(after), "org": after[0], "ns": after[1], "agent": after[2]}
-        tail = (
-            " AND (org, namespace, agent, user_id, session_id, memory_key) > "
-            "{after:Tuple(String, String, String, String, String, String)}"
-        )
-        memory_after = (
-            " AND org >= {org:String} AND (org > {org:String} OR (namespace >= {ns:String} "
-            "AND (namespace > {ns:String} OR agent >= {agent:String})))" + tail
-        )
-        links_after = " AND org >= {org:String}" + tail
+    params = {"cns": list(code_namespaces), "lim": int(limit), **_past_params(after or ())}
+    # the bound is loom.memory's sort key, so a page starts at the cursor; each leg's own
+    # order and limit stop it one page on
+    since = f" AND {_past(IDENTITY, ('String',) * 6)}" if after else ""
     keys = await ch.query_all(
         f"""
         SELECT org, namespace, agent, user_id, session_id, memory_key
@@ -561,12 +563,12 @@ async def backfill_page(
             FROM loom.memory
             WHERE tombstoned_at IS NULL
               AND (arrayExists(t -> startsWith(t, 'repo:'), tags)
-                   OR namespace IN {{cns:Array(String)}}){memory_after}
+                   OR namespace IN {{cns:Array(String)}}){since}
             ORDER BY org, namespace, agent, user_id, session_id, memory_key
             LIMIT {{lim:UInt32}}
             UNION DISTINCT
             SELECT DISTINCT org, namespace, agent, user_id, session_id, memory_key
-            {_LIVE}{links_after}
+            {_LIVE}{since}
             ORDER BY org, namespace, agent, user_id, session_id, memory_key
             LIMIT {{lim:UInt32}}
         )
@@ -595,6 +597,9 @@ async def for_identities(
     return _links(rows)
 
 
+_IDENTS = "Array(Tuple(String, String, String, String, String, String))"
+
+
 async def _heads(
     ch: _CHClient, idents: list[tuple[str, ...]], code_namespaces: Sequence[str] | None = None
 ) -> list[dict[str, Any]]:
@@ -608,13 +613,13 @@ async def _heads(
         may_name_code = (
             " AND (arrayExists(t -> startsWith(t, 'repo:'), tags) "
             "OR namespace IN {cns:Array(String)} "
-            f"OR memory_id IN (SELECT memory_id FROM {TABLE} WHERE org IN {{orgs:Array(String)}}))"
+            f"OR memory_id IN (SELECT memory_id FROM {TABLE} WHERE org IN {{orgs:Array(String)}} "
+            f"AND ({', '.join(IDENTITY)}) IN {{ident:{_IDENTS}}}))"
         )
         params |= {"cns": list(code_namespaces), "orgs": sorted({i[0] for i in idents})}
     return await query_all_sliced(
         ch,
-        _HEADS + "WHERE (org, namespace, agent, user_id, session_id, memory_key) "
-        "IN {ident:Array(Tuple(String, String, String, String, String, String))}" + may_name_code,
+        _HEADS + f"WHERE ({', '.join(IDENTITY)}) IN {{ident:{_IDENTS}}}" + may_name_code,
         params,
         "ident",
     )

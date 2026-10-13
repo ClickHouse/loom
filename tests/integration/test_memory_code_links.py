@@ -3459,9 +3459,10 @@ async def test_a_change_survives_a_stop_in_unresolved(env) -> None:
     assert (link["symbol"], link["state"]) == ("src.m::load_rows", "changed")
 
 
-async def test_the_sweep_reads_page_after_page(env) -> None:
+async def test_the_sweep_reads_page_after_page(env, monkeypatch) -> None:
     from server.memory.store import code_links as store
 
+    monkeypatch.setattr(store, "SWEEP_ROWS_PER_WRITE", 1)
     repo = env
     c1 = repo.commit({"src/widgets/reader.py": _READER})
     await _index(TRUNK, repo, c1, ["src/widgets/reader.py"])
