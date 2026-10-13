@@ -204,7 +204,7 @@ async def search_sections(
     (`org`, `namespace`). `fanout_namespaces` are the caller's memory-kind
     namespaces a `namespace_scope="all_mine"` search reads (the profile leg
     reads them too); the caller has already authorized `namespace`."""
-    from server.auth.context import with_addressed
+    from server.auth.fanout import with_addressed
     from server.knowledge.api.models_conversations import ConversationSearchInput
     from server.knowledge.api.models_knowledge import KnowledgeSearchInput
     from server.memory.app.search import handle_memory_search

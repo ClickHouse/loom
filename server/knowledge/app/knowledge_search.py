@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 
 async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearchOutput:
-    from server.auth.context import namespaces_to_search
+    from server.auth.fanout import namespaces_to_search
     from server.observability.otel import traced
 
     embedder = get_embedder()
@@ -129,18 +129,18 @@ async def _search_private_first(
         except Exception:  # noqa: BLE001 — visibility read failure disables private-first only
             do_private_first = False
 
-    if do_private_first:
-        private_ns = [n for n in namespaces if ns_visibility.get(n, "private") == "private"]
-        public_ns = [n for n in namespaces if ns_visibility.get(n, "private") != "private"]
+    private = {n for n in namespaces if ns_visibility.get(n, "private") == "private"}
+    if do_private_first and private:
+        # The addressed namespace joins the first pass whatever its visibility.
+        private_ns = [n for n in namespaces if n in private or n == input.namespace]
+        public_ns = [n for n in namespaces if n not in private_ns]
         with traced(
             "ch.query.chunks",
             op="vector_search.private",
             top_k=input.top_k,
             namespaces=len(private_ns),
         ):
-            results_per_ns = (
-                await asyncio.gather(*[search_one(ns) for ns in private_ns]) if private_ns else []
-            )
+            results_per_ns = await asyncio.gather(*[search_one(ns) for ns in private_ns])
         best_private_similarity = 0.0
         for _ns, hits in results_per_ns:
             for h in hits:

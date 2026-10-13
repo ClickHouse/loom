@@ -16,7 +16,7 @@ from server.memory.api.models_search import MemorySearchInput
 from server.memory.app.search.query_plan import _enrichment_parser_gate_active
 
 if TYPE_CHECKING:
-    from server.auth.context import Fanout
+    from server.auth.fanout import Fanout
 
 log = logging.getLogger(__package__)
 
@@ -42,7 +42,7 @@ class _SearchRun:
     rerank_override: str
     rerank_cfg_task: asyncio.Task[Any] | None
     calibration_task: asyncio.Task[Any]
-    my_namespaces_task: asyncio.Task[Fanout] | None
+    fanout_task: asyncio.Task[Fanout] | None
     order_authoritative: bool
     # Scope, filled before the embed (parser-gate prelaunch) or after it.
     namespaces: list[str] = field(default_factory=list)
@@ -69,7 +69,7 @@ class _SearchRun:
         for task in (
             self.rerank_cfg_task,
             self.calibration_task,
-            self.my_namespaces_task,
+            self.fanout_task,
             self.canonical_task,
             *self.side_tasks,
         ):
@@ -95,7 +95,7 @@ def _launch_scope_reads(input: MemorySearchInput) -> _SearchRun:
         _rerank_cfg_task.add_done_callback(_retain_task_result)
     _calibration_task = create_deferred_task(resolve_calibration(input.org, input.namespace))
     _calibration_task.add_done_callback(_retain_task_result)
-    _my_namespaces_task: asyncio.Task[Fanout] | None = None
+    _fanout_task: asyncio.Task[Fanout] | None = None
     # Scoped token (carries `ns_roles`): its `namespaces` claim is an ordered
     # priority list, so the search fans out in that order as strict tiers.
     from server.auth.context import current_auth as _current_auth
@@ -103,15 +103,15 @@ def _launch_scope_reads(input: MemorySearchInput) -> _SearchRun:
     _auth = _current_auth()
     _order_authoritative = bool(_auth is not None and _auth.has_ns_roles())
     if input.namespace_scope == "all_mine":
-        from server.auth.context import resolve_fanout
+        from server.auth.fanout import resolve_fanout
 
-        _my_namespaces_task = create_deferred_task(resolve_fanout(input.org))
-        _my_namespaces_task.add_done_callback(_retain_task_result)
+        _fanout_task = create_deferred_task(resolve_fanout(input.org))
+        _fanout_task.add_done_callback(_retain_task_result)
     return _SearchRun(
         rerank_override=request_rerank_override,
         rerank_cfg_task=_rerank_cfg_task,
         calibration_task=_calibration_task,
-        my_namespaces_task=_my_namespaces_task,
+        fanout_task=_fanout_task,
         order_authoritative=_order_authoritative,
     )
 
@@ -121,22 +121,22 @@ async def _scope_inputs(
     run: _SearchRun,
     llm_query_entities: list[str],
     actual_work: dict[str, Any],
-) -> tuple[list[str], list[str]]:
-    """(entity filter, namespaces searched), before canonicalisation. The caller's explicit
-    `entity_filter` wins over the entities the intent parser found. "all_mine" fans out across
-    every namespace the caller belongs to, but the addressed `input.namespace` is ALWAYS in the
-    set: membership may only widen the search, never redirect it."""
-    from server.auth.context import with_addressed
+) -> tuple[list[str], list[str], list[str]]:
+    """(entity filter, namespaces searched, namespaces the fan-out cap left out), before
+    canonicalisation. The caller's explicit `entity_filter` wins over the entities the intent
+    parser found. "all_mine" reads the caller's fan-out (`server.auth.fanout`: its kinds, its
+    cap) led by the addressed `input.namespace`: membership may only widen the search, never
+    redirect it."""
+    from server.auth.fanout import with_addressed
 
     entity_filter = list(input.entity_filter or []) or list(llm_query_entities)
-    if run.my_namespaces_task is not None:
-        fanout = await run.my_namespaces_task
-        namespaces = with_addressed(input.namespace, fanout.namespaces)
-        run.namespaces_skipped = [ns for ns in fanout.skipped if ns not in namespaces]
-    else:
-        namespaces = [input.namespace]
+    if run.fanout_task is None:
+        actual_work["namespace_count"] = 1
+        return entity_filter, [input.namespace], []
+    fanout = await run.fanout_task
+    namespaces = with_addressed(input.namespace, fanout.namespaces)
     actual_work["namespace_count"] = len(namespaces)
-    return entity_filter, namespaces
+    return entity_filter, namespaces, [ns for ns in fanout.skipped if ns not in namespaces]
 
 
 async def _prelaunch_canonical_lookup(
@@ -158,7 +158,7 @@ async def _prelaunch_canonical_lookup(
     namespaces: list[str] = []
     _canonical_prelaunched = False
     if _enrichment_parser_gate_active(input):
-        effective_entity_filter, namespaces = await _scope_inputs(
+        effective_entity_filter, namespaces, run.namespaces_skipped = await _scope_inputs(
             input, run, llm_query_entities, actual_work
         )
         if effective_entity_filter:
@@ -200,7 +200,7 @@ async def _resolve_entity_scope(
     if not _canonical_prelaunched:
         # Default (serial) path: entity-filter build, namespace resolution,
         # and canonical lookup all run here, after the embed.
-        effective_entity_filter, namespaces = await _scope_inputs(
+        effective_entity_filter, namespaces, run.namespaces_skipped = await _scope_inputs(
             input, run, llm_query_entities, actual_work
         )
         if effective_entity_filter:

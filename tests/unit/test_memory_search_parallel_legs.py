@@ -351,3 +351,26 @@ async def test_the_output_names_the_namespaces_the_cap_left_out(
     out = await _run(namespace="ns_b", namespace_scope="all_mine")
     assert out.namespaces_searched == ["ns_b", "ns_a"]
     assert out.namespaces_skipped == ["ns_c"]
+
+
+async def test_private_first_reads_an_addressed_public_namespace_in_the_first_pass(
+    env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A confident private hit skips the public pass, but never the namespace
+    the caller addressed: it joins the private pass whatever its visibility."""
+    import server.auth.context as auth_ctx
+    import server.identity.app.namespace_visibility as nv
+
+    async def mine(org: str, subject: str | None = None) -> list[str]:
+        return ["home", "team", "wiki"]
+
+    async def visibility(org: str, namespaces: list[str]) -> dict[str, str]:
+        return {"home": "private", "team": "public", "wiki": "public"}
+
+    monkeypatch.setattr(auth_ctx, "resolve_my_namespaces", mine)
+    monkeypatch.setattr(nv, "visibility_map", visibility)
+    env.hits_by_ns["home"] = [_svc_hit("h1", sim=0.80)]
+    env.hits_by_ns["team"] = [_svc_hit("t1", sim=0.45)]
+    out = await _run(namespace="team", namespace_scope="all_mine")
+    assert {q.namespace for q in env.search_queries} == {"team", "home"}
+    assert ("team", "t1") in {(r.namespace, r.memory_key) for r in out.results}

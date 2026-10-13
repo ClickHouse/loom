@@ -8,7 +8,6 @@ fall back to an explicit `subject` in the input body.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -17,6 +16,7 @@ from server.auth.directory import ClassificationUnavailable, directory
 from server.core.ch import set_quota_key
 
 if TYPE_CHECKING:
+    from server.auth.fanout import Fanout
     from server.auth.jwt import AuthInfo
     from server.operations.base import Role
 
@@ -47,25 +47,16 @@ def quota_key_for(auth: AuthInfo | None) -> str:
 
 def set_current_auth(auth: AuthInfo | None) -> None:
     current_auth_var.set(auth)
-    _fanout_memo.set(None)
+    fanout_memo.set(None)
     creator_grant_memo.set({} if getattr(auth, "creator", "") else None)
     # every ClickHouse query of this request draws the caller's own quota bucket
     set_quota_key(quota_key_for(auth))
 
 
-@dataclass(frozen=True)
-class Fanout:
-    """What an all_mine search reads in `org`, and what its cap left out."""
-
-    org: str
-    namespaces: tuple[str, ...]
-    skipped: tuple[str, ...]
-
-
-# The fan-out the current principal resolved in `org`, kept for the rest of
-# its request: MCP resolves it to address an unaddressed search, and the
-# search handler reads it again. Binding a principal clears it.
-_fanout_memo: ContextVar[Fanout | None] = ContextVar("loom_fanout", default=None)
+# The fan-out the current principal resolved (`server.auth.fanout`), kept for
+# the rest of its request: MCP resolves it to address an unaddressed search,
+# and the search handler reads it again. Binding a principal clears it.
+fanout_memo: ContextVar[Fanout | None] = ContextVar("loom_fanout", default=None)
 
 # A delegated token's creator grants, (org, namespace, creator) -> role, read
 # once per request by `authz._check_delegated`. Binding a principal resets it.
@@ -172,60 +163,6 @@ async def _delegated_namespaces(auth: AuthInfo, org: str) -> list[str]:
     if "*" in auth.namespaces and not auth.has_ns_roles():
         return sorted(granted)
     return [ns for ns in auth.namespaces if ns in granted]
-
-
-def with_addressed(namespace: str, fanout: Sequence[str]) -> list[str]:
-    """The namespaces an all_mine leg reads: `fanout`, led by the addressed
-    `namespace` when the fan-out lacks it (cut at the cap, or of another
-    kind). The transport authorized that namespace, and a fan-out only widens
-    a search, never moves it."""
-    out = [ns for ns in fanout if ns]
-    return out if not namespace or namespace in out else [namespace, *out]
-
-
-async def namespaces_to_search(org: str, namespace: str, namespace_scope: str | None) -> list[str]:
-    """The namespaces one search leg reads: the addressed `namespace`, and
-    under `all_mine` the caller's fan-out besides."""
-    if namespace_scope != "all_mine":
-        return [namespace]
-    return with_addressed(namespace, (await resolve_fanout(org)).namespaces)
-
-
-async def resolve_fanout(org: str) -> Fanout:
-    """The namespaces a `namespace_scope=all_mine` search spans:
-    `resolve_my_namespaces` narrowed to the kinds in
-    `memory_search_fanout_kinds`, then cut at
-    `memory_search_fanout_max_namespaces`. A code or QA index is a namespace
-    the caller can read, not one a personal-fact search should sweep; it is
-    addressed by name or by its own tools. Order (= read priority) is kept.
-    Unknown kinds stay: the directory can only narrow, never widen. Resolved
-    once per bound principal and org."""
-    from server.auth.default_namespace import auth_off_subject
-    from server.settings import settings
-
-    memo = _fanout_memo.get()
-    if memo is not None and memo.org == org:
-        return memo
-    # With auth off there is no token, but the single user's grants still say
-    # which namespaces are theirs. With auth on, no token means no namespaces.
-    auth = current_auth()
-    subject = auth_off_subject() if auth is None else None
-    mine = await directory().fanout_namespaces(org, await resolve_my_namespaces(org, subject))
-    cap = settings.memory_search_fanout_max_namespaces
-    ranked = mine
-    if len(mine) > cap and not (auth is not None and auth.has_ns_roles()):
-        # Only a scoped token's order is a priority. For anyone else the cut
-        # keeps the private namespaces, the ones the search reads first.
-        public = await directory().public_namespaces(org, mine)
-        ranked = sorted(mine, key=lambda ns: ns in public)
-    keep = set(ranked[:cap])
-    memo = Fanout(
-        org=org,
-        namespaces=tuple(ns for ns in mine if ns in keep),
-        skipped=tuple(ns for ns in mine if ns not in keep),
-    )
-    _fanout_memo.set(memo)
-    return memo
 
 
 async def _without_unreadable_restricted(org: str, namespaces: list[str]) -> list[str]:

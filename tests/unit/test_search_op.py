@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import server.transport.mcp_call as mcp_call
-from server.auth.context import Fanout
+from server.auth.fanout import Fanout
 from server.operations.registry import OPERATIONS_BY_NAME
 from server.settings import settings
 
@@ -46,7 +46,7 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
         return {"org": "o", "namespace": "n", "agent": "a"}
 
     monkeypatch.setattr(handler_mod, "search_sections", _sections)
-    monkeypatch.setattr("server.auth.context.resolve_fanout", _fanout)
+    monkeypatch.setattr("server.auth.fanout.resolve_fanout", _fanout)
     monkeypatch.setattr(mcp_call, "_caller_defaults", _defaults)
     for mod in (mcp_call, mcp_outcome):
         monkeypatch.setattr(mod, "_emit_mcp_event", lambda *a, **k: None)
@@ -167,13 +167,13 @@ def test_unresolvable_consent_or_fan_out_never_widens_capture(
 
     # The fan-out cannot be resolved: the search narrows to the home namespace
     # and never raises the level the transport set.
-    monkeypatch.setattr("server.auth.context.resolve_fanout", _no_fanout)
+    monkeypatch.setattr("server.auth.fanout.resolve_fanout", _no_fanout)
     asyncio.run(_run("query"))
 
     # A fanned-out namespace whose consent lookup fails captures nothing.
     async def _unknown(org: str) -> Fanout:
         return Fanout(org=org, namespaces=("n", "unknown"), skipped=())
 
-    monkeypatch.setattr("server.auth.context.resolve_fanout", _unknown)
+    monkeypatch.setattr("server.auth.fanout.resolve_fanout", _unknown)
     asyncio.run(_run("all"))
     assert seen == ["query", "off"]

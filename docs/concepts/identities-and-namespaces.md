@@ -197,7 +197,8 @@ Then the list is narrowed:
 The addressed namespace is always searched, and goes first when the list lacks it: the
 fan-out only widens a search. Memory search reads in tiers. A scoped token's namespaces
 are read in its order, stopping at the first with a confident match; anyone else's private
-namespaces are read first, and the public ones only when the private ones come up short.
+namespaces are read first, together with the addressed one, and the public ones only when
+that first pass comes up short.
 
 Some namespaces a caller can read are not its own and are never swept: those reached
 through a `*` claim or an org or platform role, public namespaces it has not joined, and

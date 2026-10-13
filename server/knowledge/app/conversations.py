@@ -490,7 +490,7 @@ async def handle_conversation_search(
     if query_vec is None:
         return await _search_substring_fallback(input)
 
-    from server.auth.context import namespaces_to_search
+    from server.auth.fanout import namespaces_to_search
 
     namespaces = await namespaces_to_search(input.org, input.namespace, input.namespace_scope)
 

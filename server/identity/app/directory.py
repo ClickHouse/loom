@@ -41,4 +41,4 @@ class IdentityDirectory:
 
     async def public_namespaces(self, org: str, namespaces: list[str]) -> set[str]:
         visibility = await namespace_visibility.visibility_map(org, namespaces)
-        return {ns for ns, vis in visibility.items() if vis != "private"}
+        return {ns for ns, vis in visibility.items() if vis == "public"}

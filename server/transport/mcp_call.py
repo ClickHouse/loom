@@ -135,7 +135,7 @@ async def _address_home(arguments: dict[str, Any], auth: Any) -> None:
     never rewritten (the gate refuses it if it must)."""
     if arguments.get("namespace_scope") != "all_mine":
         return
-    from server.auth.context import resolve_fanout
+    from server.auth.fanout import resolve_fanout
 
     try:
         fanout = await resolve_fanout(str(arguments.get("org") or ""))

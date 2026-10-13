@@ -294,18 +294,18 @@ worker otherwise runs weekly).
 
 ## Settings
 
-| Setting                                       | Default    | Effect                                                                        |
-| --------------------------------------------- | ---------- | ----------------------------------------------------------------------------- |
-| `LOOM_MEMORY_SEARCH_DEFAULT_MODE`             | `semantic` | Mode for a request that sets neither mode nor recipe.                         |
-| `LOOM_MEMORY_SEARCH_DEFAULT_NAMESPACE_SCOPE`  | `this`     | `all_mine` searches every namespace the caller belongs to.                    |
-| `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES`    | 32         | Most of the caller's namespaces an `all_mine` search reads.                   |
-| `LOOM_ADAPTIVE_THRESHOLDS`                    | true       | Derive similarity gates from the live embedder.                               |
-| `LOOM_MEMORY_SEARCH_MIN_SIMILARITY`           | 0.22       | Scalar floor when adaptivity is off or the embedder is fake.                  |
-| `LOOM_MEMORY_SEARCH_ABSTAIN_THRESHOLD`        | 0.30       | Scalar abstain gate under the same conditions.                                |
-| `LOOM_MEMORY_SEARCH_REINFORCEMENT_WEIGHT`     | 0.15       | Weight of the decayed-use term. 0 disables.                                   |
-| `LOOM_MEMORY_SEARCH_TRUST_WEIGHT`             | 0          | Provenance term. 0 disables.                                                  |
-| `LOOM_SEARCH_TRACE_LOG_ENABLED`               | false      | Record each search in `loom.search_trace_log`.                                |
-| `LOOM_MEMORY_SEARCH_QUERY_SPELLING_MAX_WORDS` | 6          | Longest query whose lowercase words embed in the corpus spelling. 0 disables. |
+| Setting                                       | Default    | Effect                                                                              |
+| --------------------------------------------- | ---------- | ----------------------------------------------------------------------------------- |
+| `LOOM_MEMORY_SEARCH_DEFAULT_MODE`             | `semantic` | Mode for a request that sets neither mode nor recipe.                               |
+| `LOOM_MEMORY_SEARCH_DEFAULT_NAMESPACE_SCOPE`  | `this`     | `all_mine` searches every namespace the caller belongs to.                          |
+| `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES`    | 32         | Cap on the caller's namespaces an `all_mine` search reads (plus the addressed one). |
+| `LOOM_ADAPTIVE_THRESHOLDS`                    | true       | Derive similarity gates from the live embedder.                                     |
+| `LOOM_MEMORY_SEARCH_MIN_SIMILARITY`           | 0.22       | Scalar floor when adaptivity is off or the embedder is fake.                        |
+| `LOOM_MEMORY_SEARCH_ABSTAIN_THRESHOLD`        | 0.30       | Scalar abstain gate under the same conditions.                                      |
+| `LOOM_MEMORY_SEARCH_REINFORCEMENT_WEIGHT`     | 0.15       | Weight of the decayed-use term. 0 disables.                                         |
+| `LOOM_MEMORY_SEARCH_TRUST_WEIGHT`             | 0          | Provenance term. 0 disables.                                                        |
+| `LOOM_SEARCH_TRACE_LOG_ENABLED`               | false      | Record each search in `loom.search_trace_log`.                                      |
+| `LOOM_MEMORY_SEARCH_QUERY_SPELLING_MAX_WORDS` | 6          | Longest query whose lowercase words embed in the corpus spelling. 0 disables.       |
 
 Per namespace, `namespace.register` sets `retrieval_defaults` (`search_mode`, `top_k`,
 `bodies`, `min_similarity`, `floor_mode`, `chunk_max_share`, `recency_pool_weight`,

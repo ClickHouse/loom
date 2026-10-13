@@ -203,17 +203,18 @@ async def _run_vector_legs(
         private_ns: list[str] = []
         public_ns: list[str] = []
         if do_private_first:
-            private_ns = [
+            private = {
                 n for n in ctx.namespaces if ns_visibility_early.get(n, "private") == "private"
-            ]
-            public_ns = [
-                n for n in ctx.namespaces if ns_visibility_early.get(n, "private") != "private"
-            ]
+            }
+            # The addressed namespace joins the first pass whatever its visibility, so a
+            # confident private hit cannot hide the namespace the caller asked for.
+            private_ns = [n for n in ctx.namespaces if n in private or n == input.namespace]
+            public_ns = [n for n in ctx.namespaces if n not in private_ns]
             # No private namespace means the private pass would search nothing and the public pass
             # would search everything — i.e. exactly the flat fan-out, but spending two spans and an
             # empty gather to get there. Common in practice (well over a third of searches in one
             # measured namespace).
-            if not private_ns:
+            if not private:
                 do_private_first = False
 
         if do_private_first:
@@ -224,7 +225,7 @@ async def _run_vector_legs(
                 namespaces=len(private_ns),
             ):
                 # private_ns is non-empty here — the guard above routed the
-                # empty case to the flat fan-out.
+                # no-private case to the flat fan-out.
                 results_per_ns = list(
                     await asyncio.gather(*[_search_one(ctx, ns) for ns in private_ns])
                 )

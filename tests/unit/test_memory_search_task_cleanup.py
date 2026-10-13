@@ -25,13 +25,13 @@ async def _forever(*_a: Any, **_k: Any) -> Any:
 @pytest.fixture
 def launched(monkeypatch: pytest.MonkeyPatch) -> list[scope._SearchRun]:
     """Scope reads that never finish, and the `_SearchRun` each pass launched."""
-    import server.auth.context as auth_context
+    import server.auth.fanout as auth_fanout
     import server.memory.app.embedder_calibration as calibration
     import server.memory.app.rerank as rerank
 
     monkeypatch.setattr(calibration, "resolve_calibration", _forever)
     monkeypatch.setattr(rerank, "get_namespace_rerank_config", _forever)
-    monkeypatch.setattr(auth_context, "resolve_fanout", _forever)
+    monkeypatch.setattr(auth_fanout, "resolve_fanout", _forever)
 
     async def _resolve(inp: MemorySearchInput) -> Any:
         return inp, False, 0, None
@@ -58,7 +58,7 @@ def launched(monkeypatch: pytest.MonkeyPatch) -> list[scope._SearchRun]:
 
 
 def _tasks(run: scope._SearchRun) -> list[asyncio.Task[Any]]:
-    return [t for t in (run.rerank_cfg_task, run.calibration_task, run.my_namespaces_task) if t]
+    return [t for t in (run.rerank_cfg_task, run.calibration_task, run.fanout_task) if t]
 
 
 async def test_a_failing_stage_cancels_the_scope_reads(
@@ -99,7 +99,7 @@ async def test_cancel_pending_leaves_finished_tasks_alone() -> None:
         rerank_override="",
         rerank_cfg_task=None,
         calibration_task=done,
-        my_namespaces_task=None,
+        fanout_task=None,
         order_authoritative=False,
         side_tasks=[None, pending],
     )
