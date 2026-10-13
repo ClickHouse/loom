@@ -305,9 +305,10 @@ Loom never writes the memory. The namespace's `code_change_policy`
 
 `revise` judges a changed link once per edit, within a per-pass budget
 (`memory_code_links_revise_per_pass`). A memory labelled `high` sensitivity is never sent
-to the model. A memory a person pinned, locked or verified, and one naming more code
-than the link cap, is only flagged. Links made for an earlier value of a memory (its
-text, files, repository or user) are ignored by every read until it is relinked.
+to the model. A memory a person pinned, locked (until the lock lapses) or verified, and
+one naming more code than the link cap, is only flagged. Links made for an earlier value
+of a memory (its text, files, repository or user) are ignored by every read until it is
+relinked.
 
 Links are kept against the trunk. On another branch, a lesson compares the branch's own
 definition, under any of the link's last 16 names, with the text the memory was written
