@@ -61,14 +61,9 @@ async def lessons_for_symbol(
     namespaces: Sequence[str],
     limit: int = 3,
 ) -> list[dict[str, Any]]:
-    """Served memories of `namespaces` linked to this symbol, current ones first. The
-    links live on the repository's trunk; each is matched to the definition the file at
-    `paths` holds at the read namespace's indexed head (by its identity, or one it had
-    before a move: a branch may not have the moves), and `code_state`
-    compares that definition's fingerprint with the one the memory was written
-    against. A link trunk lost still counts here: this branch may have the code. Where
-    the files cannot be read (a read replica has no git mirror), trunk's own state is
-    served."""
+    """The served memories of `namespaces` linked to this symbol, current ones first,
+    each with the state of the symbol's code on the branch read (trunk's state where
+    the branch's files cannot be read here)."""
     from server.code.app import memory_links as code
     from server.memory.app.code_link_reads import current_links
 

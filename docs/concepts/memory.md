@@ -301,18 +301,11 @@ keeping a word past the ones both begin with (`fetch_rows` -> `load_rows`, not
 `fetch_users`). A link already `missing` is found again only when its own name comes
 back, here or in another file, never by a definition added later.
 
-Each link records the fingerprint rules and grammar versions its hashes were computed
-with; after an upgrade the worker re-hashes it from the commits it was hashed at. A link
-records where its baseline's text is: the anchor, or the renamed text a pure rename moved
-the baseline onto, kept through later edits. The re-hash reads the baseline there while the
-new rules still see that rename as one, else the anchored text; where neither can be read,
-the old hash stays and matches nothing new, so the link reads `changed`. Each former
-identity keeps where its baseline's text was and is re-read from there. A link reads
-`changed` only where the new rules see the checked code differ from the code the memory was
-written against, and a `changed` link whose checked code the new rules see as its baseline
-reads `fresh` (or `moved`) again. An upgrade also drops every link's judgement: under
-`revise` a changed link is judged again; until then, and under any other policy, its
-correction is not served.
+Each link records the fingerprint rules its hashes were computed with. After an upgrade
+the worker re-hashes every link from the commits its hashes were taken at, including the
+baselines of its former names, and never compares a hash across rules. A link the new
+rules see as changed reads `changed`; one they see as unchanged reads `fresh` (or
+`moved`). An upgrade drops every judgement: under `revise` a changed link is judged again.
 
 The worker follows a repository from the commit it last checked to its indexed head,
 path by path, recording where it got to: a pass cut by its deadline resumes there. It

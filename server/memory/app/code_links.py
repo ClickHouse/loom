@@ -716,10 +716,8 @@ def _owes(a: dict[str, Any], fields: dict[str, Any]) -> bool:
 
 
 def _agree(anchored: tuple[str, str] | None, checked: tuple[str, str]) -> bool:
-    """The checked text still matches the anchored one under the current rules, which may
-    see what older ones did not: the same hash, or the same shape (a rename). A checked
-    definition that is not there agrees (nothing to disagree with), and so does one whose
-    anchored commit the mirror lost: the old match is all there is."""
+    """Whether the checked text is still the anchored one under the current rules: the
+    same hash or the same rename shape. True when either side cannot be read."""
     if not checked[0] or anchored is None:
         return True
     return anchored[0] == checked[0] or anchored[1] == checked[1] != ""
@@ -914,12 +912,9 @@ async def _namesakes(
     changed: _Range | None,
     head: str,
 ) -> list[Definition] | None:
-    """The definitions at `head` of `candidates` (the index's namesakes of a lost link in
-    other files) that were not there when the link's code was last in its file (after
-    the range starts; after its check, once lost or without a range), so the answer
-    depends on the history alone. A file untouched since held the same then, so only
-    touched files are read. None when that cannot be told, or past `_MAX_ELSEWHERE`
-    touched files."""
+    """The namesakes in `candidates` (other files') that appeared after the lost link's
+    code was last in its own file; None when that cannot be told, or when more than
+    `_MAX_ELSEWHERE` files were touched since."""
     live = changed is not None and before.state not in _LOST_STATES
     start = changed.base if changed is not None and live else str(a["checked_commit"])
     local = local_name(before.qualified_name, before.read_path)
@@ -947,11 +942,9 @@ async def _namesakes(
 async def _last_in_place(
     files: Files, before: Link, start: str, head: str, local: str
 ) -> str | None:
-    """The last commit after `start` where the link's file still defined `local`: the
-    parent of the first commit that left it without, following the file through its
-    renames; `head` when it still does. Only the commits changing a line with its name,
-    or declaring a scope of it, are read. A commit found is the history's, so it is
-    remembered across passes."""
+    """The last commit after `start` whose version of the link's file (followed through
+    renames) still defines `local`: `head` when it still does; None when the history
+    cannot tell."""
     key = (files.org, files.cns, start, before.read_path, local)
     if (known := _anchors.used(key)) is not None and await files.descends(known[0], head):
         return known[1]  # the commit that removed it is still in this history

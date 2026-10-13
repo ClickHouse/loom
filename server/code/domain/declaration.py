@@ -265,10 +265,8 @@ class _Member(NamedTuple):
     shown: str
 
 
-# Bump when what a definition's text or shape covers changes, or the indexer adds or drops
-# the symbols a family starts from. With the installed grammars it is
-# `fingerprint_version`: links fingerprinted under another one are re-fingerprinted from
-# the commits they were hashed at.
+# Bump when fingerprints or shapes change for the same code: links hashed under another
+# `fingerprint_version` are re-hashed.
 _RULES = 6
 
 
@@ -374,11 +372,9 @@ class Declarations:
             return None
 
     def _at(self, line: int, name: str | None = None) -> tuple[Any, Any] | None:
-        """(first node, declaration node) of the definition starting at `line` (1-based):
-        the declaration with the decorators, attributes and template head before it. With
-        `name`, the one on that line that declares `name` (`int a() {…} int b() {…}`),
-        or None when none or several do: overloads or namesakes in two scopes on one
-        line cannot be told apart by a line and a name."""
+        """(first node, declaration node) of the definition starting at `line`, with its
+        decorators, attributes and template head; with `name`, the one there declaring
+        it. None when none or several do."""
         if not 0 < line <= len(self.lines):
             return None
         text = self.lines[line - 1]
@@ -626,14 +622,9 @@ class Declarations:
     def fingerprints(
         self, lines: Sequence[int], name: str, *, shapes: bool = True
     ) -> Prints | None:
-        """The fingerprints (text and rename shapes) over every declaration spelled as those
-        at `lines` in their scopes, each scope once, in source order: overload signatures,
-        a declaration and its implementation, a name declared twice, one per `#if` branch,
-        each with the conditions that select it.
-        The index folds or numbers these; together they are what callers see, and its
-        numbered declarations of one name share them (a shape '' when any member has
-        none), and those declarations as the judge reads them, a blank line apart. None
-        when any of them cannot be singled out."""
+        """The fingerprint, rename shape and judge's text over every declaration of the
+        name at `lines` in its scope (overloads, a declaration and its implementation,
+        `#if` branches), in source order; None when one cannot be singled out."""
         keys = self._family_keys(lines, name, shapes)
         if keys is None:
             return None
@@ -915,11 +906,9 @@ def _sibling_spans(decl: Any) -> list[tuple[int, int]]:
 def _leaves(
     first: Any, last: Any, fields: _Fields, skip: set[tuple[int, int, str]] | None = None
 ) -> tuple[list[Any], list[str]]:
-    """The tokens from `first` to `last`, and before each and after the last the nodes
-    opened and closed there: the same tokens nested another way (a line indented out of
-    a block, a `return` its value moved off) are another program. Each node's parent and
-    previous sibling are kept in `fields`, since tree-sitter finds a node's parent by
-    walking down from the root."""
+    """The tokens from `first` to `last`, each with the nodes opened and closed before it
+    (so the same tokens nested differently differ); records each node's parent and
+    previous sibling in `fields`."""
     out: list[Any] = []
     marks: list[str] = []
     pending: list[str] = []
@@ -972,12 +961,9 @@ def _is_method(decl: Any) -> bool:
 
 
 def _use(leaf: Any, grammar: str, decl: Any, body: Any, fields: _Fields) -> str | None:
-    """How an occurrence of the declared name is used: 'call' (a bare call), 'read' (a
-    bare read in the body), 'call?' / 'read?' (one inside a nested class, whose members
-    or bases may be what the name means), 'other' (anything else: a binding, a
-    parameter, a default, an assignment target, a form not known to be a read), or None
-    when it is not a name of that namespace (a member, a label, a module, a Rust macro, a
-    Java variable)."""
+    """How an occurrence of the declared name is used: 'call', 'read', 'call?'/'read?'
+    (inside a nested class, where it may mean a member), 'other' (a binding, a parameter,
+    anything not known to be a call or read), or None when it names something else."""
     if decl.type in _CLASSES and body is not None and _within(leaf, body):
         prev = fields.prev(leaf)
         if prev is None or prev.type not in _ACCESS:

@@ -199,11 +199,9 @@ async def has_commit(org: str, namespace: str, sha: str) -> bool:
 async def parsed(
     org: str, namespace: str, commit: str, path: str, *, named: str = ""
 ) -> FileAt | None:
-    """`path` at `commit` from the bare mirror, with the tree-sitter definitions in it
-    (with `named`, only those of that bare name, fingerprinted but without rename shapes:
-    what a read needs); None when the commit has no such file. A mirror that cannot be
-    read, or a file that does not parse, raises: code that cannot be read is not code
-    that is gone."""
+    """`path` at `commit` from the bare mirror with its definitions (with `named`, only
+    those of that bare name, without rename shapes); None when the commit has no such
+    file. A mirror that cannot be read or a file that does not parse raises."""
     data = await _file_at(org, namespace, commit, path)
     if data is None:
         return None

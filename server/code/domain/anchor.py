@@ -252,12 +252,10 @@ def locate(
     renamed: Definition | None = None,
     elsewhere: Sequence[Definition] = (),
 ) -> Definition | None:
-    """Where a symbol link's definition is now: the same qualified name at `path_now`;
-    after a file move, the one definition there with the same name inside its module;
-    `renamed` (found there by its shape); or `elsewhere` (a move git did not pair) the one
-    same qualified name, else the one same name inside its module with the same text.
-    Nothing else counts: a namesake in another scope is not it, nor a C or C++ one in
-    another file with other text (their names carry no path)."""
+    """Where a symbol link's definition is now, in order: its qualified name at
+    `path_now`; its name inside the module after a file move; `renamed`; or the one
+    same name in `elsewhere`. None when none of these; a namesake in another scope never
+    counts."""
     same = [d for d in here if d.qualified_name == link.qualified_name]
     if same:
         return same[0]
@@ -293,14 +291,10 @@ def recheck(
     carried: bool = False,
     head: str,
 ) -> Link:
-    """The link after the code moved to `head`.
-
-    `path_now` is the link's file at `head` ('' when deleted) and `here` its definitions;
-    `renamed` and `elsewhere` are candidates, as `locate` takes them. A rename that is
-    not exact, and a method `carried` by its renamed class, read `changed`. Code that is
-    not found reads `unresolved` when `uncertain` (a new definition may be it), else
-    `missing`; either way the link keeps its name, and follows its file while the file
-    is there, so a revert finds it again."""
+    """The link once its code is read at `head`, where its file is `path_now` ('' when
+    deleted) defining `here`: found (`locate`), or `unresolved` when `uncertain`, else
+    `missing`. A link not found keeps its name and follows its file, so a revert finds
+    it again."""
     if not link.qualified_name:
         if not path_now:
             return _in_state(link, "missing", head)
