@@ -23,7 +23,7 @@ CALLER = mcp_runs.Caller()
 
 def rid(session_id: str) -> str:
     """The implicit run id of `session_id` under DEFAULTS' org, for an unpinned caller."""
-    return mcp_runs.run_id_for("clickhouse", CALLER, session_id)
+    return mcp_runs.run_id_for("clickhouse", CALLER.subject, session_id)
 
 
 @pytest.fixture(autouse=True)
@@ -66,7 +66,7 @@ def test_ensure_returns_before_run_begin_lands_and_close_waits_for_it(monkeypatc
         )
         assert run is not None and run.run_id == rid("sess-9"), "the call has its id at once"
         assert order == [], "run.begin has not landed and the call did not wait for it"
-        closer = asyncio.create_task(mcp_runs.close_session("sess-9", "clickhouse", CALLER))
+        closer = asyncio.create_task(mcp_runs.close_session("sess-9", "clickhouse", "-"))
         await asyncio.sleep(0)
         assert order == [], "close waits for the begin"
         gate.set()

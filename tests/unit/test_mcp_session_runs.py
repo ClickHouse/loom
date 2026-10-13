@@ -26,7 +26,7 @@ CALLER = mcp_runs.Caller()
 
 def rid(session_id: str) -> str:
     """The implicit run id of `session_id` under DEFAULTS' org, for an unpinned caller."""
-    return mcp_runs.run_id_for("clickhouse", CALLER, session_id)
+    return mcp_runs.run_id_for("clickhouse", CALLER.subject, session_id)
 
 
 @pytest.fixture(autouse=True)
@@ -167,7 +167,7 @@ def test_a_sibling_worker_does_not_begin_the_sessions_run_again(ledger: _Ledger)
         await mcp_runs.ensure("sess-1", DEFAULTS, CALLER, goal="third call", now=101.0)
         await mcp_runs.drain_ledger_writes()
         assert [b.goal for b in ledger.begins] == ["first call"]
-        await mcp_runs.close_session("sess-1", "clickhouse", CALLER)
+        await mcp_runs.close_session("sess-1", "clickhouse", "-")
         await mcp_runs.ensure("sess-1", DEFAULTS, CALLER, goal="after close", now=103.0)
         await mcp_runs.drain_ledger_writes()
         assert [b.goal for b in ledger.begins] == ["first call", "after close"]
@@ -236,9 +236,9 @@ def test_failed_begins_are_forgotten_while_no_run_is_live(ledger: _Ledger) -> No
 def test_close_session_completes_with_outcome_none(ledger: _Ledger) -> None:
     async def _run() -> None:
         await mcp_runs.ensure("s", DEFAULTS, CALLER, goal="g", now=100.0)
-        assert await mcp_runs.close_session("s", "clickhouse", CALLER) is True
-        assert await mcp_runs.close_session("s", "clickhouse", CALLER) is False  # already gone
-        assert await mcp_runs.close_session("never-seen", "clickhouse", CALLER) is False
+        assert await mcp_runs.close_session("s", "clickhouse", "-") is True
+        assert await mcp_runs.close_session("s", "clickhouse", "-") is False  # already gone
+        assert await mcp_runs.close_session("never-seen", "clickhouse", "-") is False
         c = ledger.completes[0]
         assert (c.org, c.namespace, c.run_id) == ("clickhouse", "ns-a", rid("s"))
         assert c.status == "completed" and c.outcome == "none" and c.memories_used == []
@@ -368,7 +368,7 @@ def test_delete_route_and_sweep_are_wired() -> None:
 
     src = inspect.getsource(mcp.attach)
     assert '@router.delete("/mcp"' in src
-    assert "_mcp_runs.close_session(" in src and "_mcp_runs.Caller.current()" in src
+    assert "_mcp_runs.close_session(" in src and "_mcp_runs.subject_of(auth)" in src
     assert "_mcp_runs.sweep_due()" in src and "_mcp_runs.sweep_idle()" in src
 
 
@@ -408,8 +408,8 @@ def test_a_delete_reaching_a_sibling_closes_the_run_by_id(ledger: _Ledger) -> No
         await mcp_runs.ensure("s", DEFAULTS, CALLER, goal="g", now=0.0)
         await mcp_runs.drain_ledger_writes()
         mcp_runs.reset()  # the DELETE lands on a web process that never served it
-        assert await mcp_runs.close_session("s", "", CALLER) is False  # no org, no lookup
-        assert await mcp_runs.close_session("s", "clickhouse", CALLER) is True
+        assert await mcp_runs.close_session("s", "", "-") is False  # no org, no lookup
+        assert await mcp_runs.close_session("s", "clickhouse", "-") is True
         assert [(c.run_id, c.namespace) for c in ledger.completes] == [(rid("s"), "ns-a")]
 
     asyncio.run(_run())
@@ -491,7 +491,7 @@ def test_two_callers_sending_one_session_id_hold_two_runs(ledger: _Ledger) -> No
         await mcp_runs.drain_ledger_writes()
         assert a is not None and b is not None and a.run_id != b.run_id
         assert [x.namespace for x in ledger.begins] == ["ns-a", "ns-b"]
-        assert await mcp_runs.close_session("shared", "clickhouse", bob) is True
+        assert await mcp_runs.close_session("shared", "clickhouse", "bob") is True
         assert [c.run_id for c in ledger.completes] == [b.run_id]
         assert mcp_runs.current(a.run_id) is a
 
@@ -534,7 +534,7 @@ def test_a_delete_after_this_processs_begin_failed_still_asks_the_ledger(
         await mcp_runs.drain_ledger_writes()
         ledger.fail_begin = False
         ledger.active[rid("s")] = "ns-a"  # the sibling's begin
-        assert await mcp_runs.close_session("s", "clickhouse", CALLER) is True
+        assert await mcp_runs.close_session("s", "clickhouse", "-") is True
         assert [c.run_id for c in ledger.completes] == [rid("s")]
 
     asyncio.run(_run())
@@ -548,5 +548,58 @@ def test_a_run_reopened_after_a_siblings_close_keeps_the_first_goal(ledger: _Led
         await mcp_runs.ensure("s", DEFAULTS, CALLER, goal="a later call's query", now=160.0)
         await mcp_runs.drain_ledger_writes()
         assert [b.goal for b in ledger.begins] == ["first goal", "first goal"]
+
+    asyncio.run(_run())
+
+
+@pytest.mark.parametrize(
+    ("claims", "arguments", "expected"),
+    [
+        ({}, {"user_id": "u"}, ("sa:t", "-", "-")),  # namespace-wide: no owner
+        ({"read_user_id": "u"}, {}, ("sa:t", "u", "-")),  # a pinned user
+        (
+            {"read_scope": "own_session", "read_user_id": "u"},
+            {"session_id": "app-1"},
+            ("sa:t", "u", "app-1"),  # the session the call names, not the MCP one
+        ),
+        ({"read_scope": "own_session", "read_user_id": "u"}, {}, None),  # refused at the gate
+    ],
+)
+def test_the_caller_is_the_one_the_calls_read_scope_resolves(
+    claims: dict[str, str], arguments: dict[str, str], expected: Any
+) -> None:
+    from server.auth.jwt import AuthInfo
+
+    auth = AuthInfo(
+        subject="sa:t",
+        org="o",
+        namespaces=("n",),
+        roles=("writer",),
+        is_service_account=True,
+        **claims,
+    )
+    caller = mcp_runs.Caller.of_call(auth, arguments)
+    got = None if caller is None else (caller.subject, caller.user_id, caller.session_id)
+    assert got == expected
+
+
+@pytest.mark.parametrize("warm", [True, False])
+def test_a_delete_closes_a_run_whose_calls_named_another_org(
+    ledger: _Ledger, monkeypatch, warm: bool
+) -> None:
+    """The run sits in the caller's org, which the DELETE names too, whatever org
+    the calls named; the ledger counts those calls by run id."""
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import mcp_call
+
+    async def _run() -> None:
+        arguments = {"org": "other", "namespace": "ns-b", "memory_key": "k", "value": "v"}
+        await mcp_call._bind_session_run(OPERATIONS_BY_NAME["memory.set"], arguments, DEFAULTS, "s")
+        await mcp_runs.drain_ledger_writes()
+        assert arguments["run_id"] == rid("s")
+        if not warm:
+            mcp_runs.reset()  # the DELETE lands on a process that never served it
+        assert await mcp_runs.close_session("s", "clickhouse", "-") is True
+        assert [(c.org, c.run_id) for c in ledger.completes] == [("clickhouse", rid("s"))]
 
     asyncio.run(_run())

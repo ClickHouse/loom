@@ -114,16 +114,19 @@ async def test_a_scoped_callers_session_run_is_its_own(ch: Any) -> None:
         )
     )
     try:
-        caller = mcp_runs.Caller.current()
+        from server.auth.context import current_auth
+
+        caller = mcp_runs.Caller.of_call(current_auth(), {})
+        assert caller is not None
         assert (caller.subject, caller.user_id) == ("sa:bot", "review-user")
         defaults = {"org": ORG, "namespace": namespace, "agent": AGENT}
         run = await mcp_runs.ensure(session, defaults, caller, goal="first call")
         await mcp_runs.drain_ledger_writes()
-        assert run is not None and run.run_id == mcp_runs.run_id_for(ORG, caller, session)
+        assert run is not None and run.run_id == mcp_runs.run_id_for(ORG, caller.subject, session)
         got = await handle_run_get(RunGetInput(org=ORG, namespace=namespace, run_id=run.run_id))
         assert got.found and got.run is not None and got.run.user_id == "review-user"
         mcp_runs.reset()  # the DELETE reaches a web process that never served it
-        assert await mcp_runs.close_session(session, ORG, caller) is True
+        assert await mcp_runs.close_session(session, ORG, caller.subject) is True
         got = await handle_run_get(RunGetInput(org=ORG, namespace=namespace, run_id=run.run_id))
         assert got.run is not None and got.run.status == "completed"
     finally:
@@ -156,7 +159,7 @@ async def test_two_callers_sending_one_session_id_keep_their_own_runs(ch: Any) -
         assert runs["alice"] is not None and runs["bob"] is not None
         assert runs["alice"].run_id != runs["bob"].run_id
         mcp_runs.reset()
-        assert await mcp_runs.close_session(session, ORG, mcp_runs.Caller(subject="bob")) is True
+        assert await mcp_runs.close_session(session, ORG, "bob") is True
         assert await active_session_run(ORG, runs["bob"].run_id) is None
         alice = await active_session_run(ORG, runs["alice"].run_id)
         assert alice is not None and alice["namespace"] == first

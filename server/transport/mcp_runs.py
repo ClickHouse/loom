@@ -61,22 +61,42 @@ _LABELLED_READS = frozenset({"search.query"})
 
 @dataclass(frozen=True)
 class Caller:
-    """Whose session it is: the token's subject, and the user and session it acts
-    as (`ledger_identity`); "-" for each with no auth."""
+    """Whose session it is: the token's subject, which binds the run id, and the
+    user and session the call acts as, which the run row is filed under; "-"
+    for each with no auth."""
 
     subject: str = "-"
     user_id: str = "-"
     session_id: str = "-"
 
     @classmethod
-    def current(cls) -> Caller:
-        """The caller of the request being served."""
-        from server.auth.context import current_auth
-        from server.transport._common import ledger_identity
+    def of_call(cls, auth: Any, arguments: dict[str, Any]) -> Caller | None:
+        """The caller as the call's read scope resolves it: the scope the admission
+        gate binds next, from the same arguments, so the run row stays inside it.
+        None when it does not resolve (the gate refuses the call, or admits it
+        acting as no one)."""
+        from server.core.errors import AuthInsufficientError, IdentityIncompleteError
+        from server.identity.domain.read_scope import resolve_read_filters
 
-        who = ledger_identity({})
-        subject = getattr(current_auth(), "subject", "") or "-"
-        return cls(subject=subject, user_id=who["user_id"], session_id=who["session_id"])
+        try:
+            scope = resolve_read_filters(
+                requested=arguments.get("read_scope"),
+                user_id=arguments.get("user_id"),
+                session_id=arguments.get("session_id"),
+                auth=auth,
+            )
+        except (AuthInsufficientError, IdentityIncompleteError):
+            return None
+        return cls(
+            subject=subject_of(auth),
+            user_id=(scope.user_id if scope.narrowed else None) or "-",
+            session_id=(scope.session_id if scope.scope == "own_session" else None) or "-",
+        )
+
+
+def subject_of(auth: Any) -> str:
+    """The token's subject; "-" with no auth."""
+    return str(getattr(auth, "subject", "") or "-")
 
 
 @dataclass
@@ -187,7 +207,7 @@ async def ensure(
     agent = str(defaults.get("agent") or "")
     if any(v in ("", "-") for v in (org, namespace, agent)):
         return None
-    run_id = run_id_for(org, caller, session_id)
+    run_id = run_id_for(org, caller.subject, session_id)
     run = _RUNS.get(run_id)
     if run is not None:
         run.last_seen = now
@@ -197,7 +217,7 @@ async def ensure(
             # re-open it if so.
             run.checked_at = now
             run.begin_task = _PENDING.spawn(
-                _begin(run, now=now, first=False), name=f"mcp-run-check:{run_id}"
+                _begin(run, now=now, first=False), name=f"mcp-run-check:{run_id}", detached=True
             )
         return run
     failed_at = _BEGIN_FAILED_AT.get(run_id)
@@ -232,16 +252,19 @@ async def ensure(
     )
     _RUNS[run_id] = run
     _BEGIN_FAILED_AT.pop(run_id, None)
+    # Detached, like every close: the transport's own bookkeeping on an id bound
+    # to the token, which runs before the call's read scope is bound.
     run.begin_task = _PENDING.spawn(
-        _begin(run, now=now, first=True), name=f"mcp-run-begin:{run_id}"
+        _begin(run, now=now, first=True), name=f"mcp-run-begin:{run_id}", detached=True
     )
     return run
 
 
-def run_id_for(org: str, caller: Caller, session_id: str) -> str:
+def run_id_for(org: str, subject: str, session_id: str) -> str:
     """The implicit run's id: the same for every call and web process of the
-    session, and one no other caller can make by sending the same session id."""
-    seed = json.dumps([org, caller.subject, caller.user_id, session_id])
+    session (and for its DELETE, which carries no body), and one no other token
+    can make by sending the same session id."""
+    seed = json.dumps([org, subject, session_id])
     return "mcp-" + hashlib.sha256(seed.encode()).hexdigest()[:40]
 
 
@@ -336,13 +359,15 @@ async def _close(run: SessionRun, *, reason: str) -> _Closed:
         return "later"
 
 
-async def close_session(session_id: str | None, org: str, caller: Caller) -> bool:
+async def close_session(session_id: str | None, org: str, subject: str) -> bool:
     """`DELETE /mcp`: the client ended the session; close its run, the one its id
-    names for this caller in its org (`run_id_for`), whichever web process
-    served it."""
+    names for this token in its org (`run_id_for`), whichever web process served
+    it. The close is detached, as an idle sweep's is: the id already proves the
+    run is this token's, and a DELETE has no body for a session-scoped token's
+    read scope to resolve from."""
     if not session_id or not org:
         return False
-    run_id = run_id_for(org, caller, session_id)
+    run_id = run_id_for(org, subject, session_id)
     run = _RUNS.pop(run_id, None)
     if run is None:
         now = time.monotonic()
@@ -351,14 +376,17 @@ async def close_session(session_id: str | None, org: str, caller: Caller) -> boo
             org=org,
             namespace="",
             agent="",
-            caller=caller,
+            caller=Caller(subject=subject),
             row_session_id="",
             goal="",
             started_at=datetime.min,
             last_seen=now,
             checked_at=now,
         )
-    return await _close(run, reason="session_end") == "closed"
+    from server.core.background import detached_task
+
+    task = detached_task(_close(run, reason="session_end"), name=f"mcp-run-end:{run_id}")
+    return await task == "closed"
 
 
 async def sweep_idle(*, now: float | None = None, force: bool = False) -> int:
@@ -396,6 +424,7 @@ __all__ = [
     "SWEEP_MIN_INTERVAL_S",
     "Caller",
     "SessionRun",
+    "subject_of",
     "close_session",
     "current",
     "ensure",
