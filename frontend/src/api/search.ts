@@ -13,7 +13,7 @@ export interface SearchHit {
   distance: number;
   /** The hit's similarity as the search scored it; on some planes (records, the key
    *  axis) it is not 1 − distance. */
-  similarity?: number;
+  similarity: number;
   rank_score: number;
   confidence: number;
   namespace?: string;
@@ -126,8 +126,8 @@ export interface SearchTraceLogRow {
 
 /** Searches that already happened, newest first (`memory.search_trace_log`).
  *
- *  Distinct from `memorySearchTrace`, which re-runs a query against memory as
- *  it is *now*. Only this can answer "my agent gave a bad answer earlier — what
+ *  Distinct from `searchMemory`, which runs a query against memory as it is
+ *  *now*. Only this can answer "my agent gave a bad answer earlier — what
  *  did it actually retrieve at the time", because the memory may have changed
  *  since. VIEWER role, and the server scopes rows to namespaces the caller can
  *  reach, so this is safe to show a non-operator their own history. */

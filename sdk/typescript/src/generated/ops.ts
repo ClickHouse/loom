@@ -5496,6 +5496,7 @@ export interface MemorySearchTraceOutput {
   embedding_model: string;
   entity_filter: string[];
   query_spellings?: Record<string, string>;
+  query_spellings_skipped?: boolean;
 }
 
 export interface MemorySearchTraceLogInput {

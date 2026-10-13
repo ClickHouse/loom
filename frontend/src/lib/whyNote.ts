@@ -47,8 +47,3 @@ export function whyTerms(components: Record<string, unknown> | null | undefined)
 export function signed(v: number): string {
   return `${v >= 0 ? "+" : "-"}${Math.abs(v).toFixed(2)}`;
 }
-
-/** A search hit's similarity: the server's own figure, else 1 − distance. */
-export function hitSimilarity(hit: { similarity?: number; distance: number }): number {
-  return typeof hit.similarity === "number" && Number.isFinite(hit.similarity) ? hit.similarity : 1 - hit.distance;
-}

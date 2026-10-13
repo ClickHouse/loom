@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from types import SimpleNamespace
 from typing import Any
@@ -23,7 +24,7 @@ def _input(query: str = "datalakecatalog") -> MemorySearchInput:
 @pytest.fixture(autouse=True)
 def _empty_caches():
     app._cache.clear()
-    app._slow_until.clear()
+    app._failed.clear()
 
 
 def _lookup_returns(monkeypatch, rows):
@@ -110,23 +111,41 @@ def test_the_deadline_reaches_clickhouse(monkeypatch):
     assert asyncio.run(app.corpus_spellings(_input(), "m")) == {}
 
 
-def test_a_failed_lookup_embeds_as_typed_and_backs_off(monkeypatch):
+def test_a_failing_namespace_backs_off_longer_each_time_and_warns_once(monkeypatch, caplog):
     calls = []
+    clock = [1000.0]
 
     async def spelling_rows(_ch, _q, _tokens):
-        calls.append(1)
+        calls.append(clock[0])
         raise TimeoutError()
 
     monkeypatch.setattr(app, "spelling_rows", spelling_rows)
     monkeypatch.setattr(app, "get_client", lambda: None)
-    assert asyncio.run(app.corpus_spellings(_input(), "m")) is None
-    # The namespace is not read again for a minute, whatever the query.
-    assert asyncio.run(app.corpus_spellings(_input("iceberg"), "m")) is None
-    assert len(calls) == 1
-    clock = time.monotonic() + app._CACHE_TTL_S + 1
-    monkeypatch.setattr(app.time, "monotonic", lambda: clock)
+    monkeypatch.setattr(app.time, "monotonic", lambda: clock[0])
+    with caplog.at_level(logging.DEBUG, logger=app.log.name):
+        for _ in range(4):
+            assert asyncio.run(app.corpus_spellings(_input(), "m")) is None
+            # Another query in the namespace waits out the same back-off.
+            assert asyncio.run(app.corpus_spellings(_input("iceberg"), "m")) is None
+            clock[0] = app._failed[("o", "ns")][1] + 1  # wait out the back-off
+    assert [round(b - a) for a, b in zip(calls, calls[1:], strict=False)] == [61, 121, 241]
+    assert [r.levelno for r in caplog.records] == [
+        logging.WARNING,
+        logging.DEBUG,
+        logging.DEBUG,
+        logging.DEBUG,
+    ]
+
+
+def test_a_success_ends_the_back_off(monkeypatch):
+    _lookup_returns(monkeypatch, TimeoutError())
     asyncio.run(app.corpus_spellings(_input(), "m"))
-    assert len(calls) == 2
+    app._failed[("o", "ns")] = (3, 0.0)  # its back-off has run out
+    _lookup_returns(monkeypatch, {"DataLakeCatalog": 7})
+    assert asyncio.run(app.corpus_spellings(_input(), "m")) == {
+        "datalakecatalog": "DataLakeCatalog"
+    }
+    assert ("o", "ns") not in app._failed
 
 
 def test_a_failed_lookup_is_not_a_provider_outage(monkeypatch):

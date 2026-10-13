@@ -29,6 +29,7 @@ const hit = (memory_key: string, rank_score: number): SearchHit => ({
   memory_type: "semantic",
   content_excerpt: `value of ${memory_key}`,
   distance: 0.4,
+  similarity: 0.6,
   rank_score,
   confidence: 1,
   score_components: { semantic: 0.6 },

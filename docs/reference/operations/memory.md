@@ -1860,6 +1860,7 @@ Same shape as memory.search; returns the per-candidate scoring breakdown instead
 | `embedding_model` | `str` | The embedding model the query was embedded with. |
 | `entity_filter` | `list[str]` | The request's `entity_filter`, lowercased as it was matched. |
 | `query_spellings` | `dict[str, str]` | Query words embedded in the corpus's spelling instead of as typed (`memory_search_query_spelling_max_words`); {} when none was. |
+| `query_spellings_skipped` | `bool` | True when the spelling lookup did not answer (failed, timed out, or the namespace is backing off) and the query was embedded as typed. |
 
 ## `memory.search_trace_log`
 

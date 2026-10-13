@@ -8,7 +8,7 @@ import { EmptyState } from "../components/EmptyState";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { humanizeError, relativeTime, displayAgent, previewValue } from "../lib/format";
 import { KEYWORD_PAGE, keywordThenRanked } from "../lib/searchOrder";
-import { hitSimilarity, signed, whyTerms } from "../lib/whyNote";
+import { signed, whyTerms } from "../lib/whyNote";
 
 // One recorded search, expanded in place. A person reading "my agent answered badly an
 // hour ago" needs more than the top score and the first eight keys — they need every key
@@ -259,7 +259,7 @@ function RecallHistory() {
 function RankedTerms({ hit }: { hit: SearchHit }) {
   return (
     <>
-      <span title="similarity the search reports for the hit">sim {hitSimilarity(hit).toFixed(3)}</span>
+      <span title="similarity the search reports for the hit">sim {hit.similarity.toFixed(3)}</span>
       <span title="final score the ranked hits are ordered by">score {hit.rank_score.toFixed(3)}</span>
       {whyTerms(hit.score_components).map((t) => (
         <span key={t.label} className={t.value < 0 ? "text-[var(--color-warn)]" : "text-[var(--color-accent)]"}>
@@ -381,9 +381,10 @@ export function RecallLab() {
         </h2>
         {tab === "score" && (
           <p className="mt-1 text-sm text-[var(--color-text-muted)] max-w-2xl">
-            Why did a memory land where it did on the Memories list? These are the rows it shows for a query, in its
-            order: memories whose text holds the query come first, newest first; then the ranked search, each hit with
-            its similarity, final score and the terms that moved it (key match, entity, recency, …).
+            Why did a memory land where it did on the Memories list? These are the rows it shows for a query with no
+            filters set, in its order: memories whose text holds the query come first, newest first; then the ranked
+            search, each hit with its similarity, final score and the terms that moved it (key match, entity, recency,
+            …).
           </p>
         )}
       </div>

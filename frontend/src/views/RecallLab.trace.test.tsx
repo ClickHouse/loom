@@ -32,6 +32,7 @@ const hit = (key: string, extra: Partial<SearchHit> = {}): SearchHit => ({
   memory_type: "semantic",
   content_excerpt: `excerpt of ${key}`,
   distance: 0.1,
+  similarity: 0.9,
   rank_score: 0.9,
   confidence: 1,
   source: "fact",
@@ -110,7 +111,9 @@ describe("Recall Lab: score a query", () => {
 
   it("ranks like the Memories list and names the term that moved a hit", async () => {
     searchMemory.mockResolvedValueOnce({
-      results: [hit("finding_1", { distance: 0.67, rank_score: 1.2, score_components: { key_match: 0.85 } })],
+      results: [
+        hit("finding_1", { distance: 0.67, similarity: 0.33, rank_score: 1.2, score_components: { key_match: 0.85 } }),
+      ],
       embedding_model: "m",
     });
     render(<RecallLab />);

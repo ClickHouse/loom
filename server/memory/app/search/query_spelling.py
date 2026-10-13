@@ -9,7 +9,8 @@ import asyncio
 import logging
 import time
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 from server.core.ch import get_client, statement_timeout
 from server.memory.api.models_search import MemorySearchInput
@@ -29,8 +30,10 @@ _CACHE_TTL_S = 60.0
 _CACHE_SIZE = 4096
 _cache: OrderedDict[tuple[str, tuple[str, ...]], tuple[float, dict[str, str]]] = OrderedDict()
 # A namespace whose lookup failed or ran past the deadline is not read again
-# for a minute.
-_slow_until: dict[tuple[str, str], float] = {}
+# for a while: a minute, doubling with each failure in a row up to an hour.
+# (org, namespace) -> (failures in a row, monotonic time to try again).
+_MAX_BACKOFF_S = 3600.0
+_failed: dict[tuple[str, str], tuple[int, float]] = {}
 
 
 async def corpus_spellings(input: MemorySearchInput, embedding_model: str) -> dict[str, str] | None:
@@ -38,7 +41,7 @@ async def corpus_spellings(input: MemorySearchInput, embedding_model: str) -> di
     read in the addressed namespace use instead. {} when off
     (`memory_search_query_spelling_max_words`) or nothing differs; None when
     the lookup did not answer (it failed or ran past its deadline, now or
-    within the last minute)."""
+    recently enough that the namespace is backing off)."""
     from server.settings import settings
 
     tokens = spelling_candidates(
@@ -59,7 +62,8 @@ async def corpus_spellings(input: MemorySearchInput, embedding_model: str) -> di
     hit = _cache.get(key)
     if hit is not None and hit[0] > now:
         return hit[1]
-    if _slow_until.get((q.org, q.namespace), 0.0) > now:
+    failures, retry_at = _failed.get((q.org, q.namespace), (0, 0.0))
+    if retry_at > now:
         return None
     try:
         # The outer bound also covers the wait for a pool slot and a
@@ -68,9 +72,19 @@ async def corpus_spellings(input: MemorySearchInput, embedding_model: str) -> di
             with statement_timeout(_LOOKUP_BOUND_S):
                 rows = await spelling_rows(get_client(), q, tokens)
     except Exception as e:  # noqa: BLE001 — the spelling is a recall aid; the query embeds as typed
-        _slow_until[(q.org, q.namespace)] = now + _CACHE_TTL_S
-        log.warning("query spelling lookup in %s skipped: %r", q.namespace, e)
+        backoff = min(_CACHE_TTL_S * 2**failures, _MAX_BACKOFF_S)
+        _failed[(q.org, q.namespace)] = (failures + 1, now + backoff)
+        # One warning per streak; the retries after it log at debug.
+        level = logging.WARNING if failures == 0 else logging.DEBUG
+        log.log(
+            level,
+            "query spelling lookup in %s failed, retrying in %.0f s: %r",
+            q.namespace,
+            backoff,
+            e,
+        )
         return None
+    _failed.pop((q.org, q.namespace), None)
     spellings = pick_spellings(tokens, rows)
     _cache[key] = (now + _CACHE_TTL_S, spellings)
     _cache.move_to_end(key)
@@ -80,7 +94,7 @@ async def corpus_spellings(input: MemorySearchInput, embedding_model: str) -> di
 
 
 async def embed_query(
-    embed: Callable[[str], Awaitable[list[float]]],
+    embed: Callable[[str], Coroutine[Any, Any, list[float]]],
     text: str,
     input: MemorySearchInput,
     embedding_model: str,
