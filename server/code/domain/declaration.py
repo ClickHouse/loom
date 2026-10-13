@@ -234,6 +234,10 @@ _TEXTS = {"string_content", "format_specifier"}
 # where a trailing comma's one element is a tuple (`(a,)`, Rust's `(T,)` type, Python's
 # `x[a,]` index): it stays there unless another comma is in the node
 _TUPLES = {"tuple", "tuple_type", "tuple_expression", "tuple_pattern", "subscript"}
+# where a formatter adds and removes parentheses (`_unparenthesized`): elsewhere they are
+# kept, as C++'s `decltype((x))` is not `decltype(x)`
+_UNPARENTHESIZED = _ECMA | {"python"}
+_CHAINS = {"member_expression", "call_expression", "subscript_expression"}
 # a JS / TS `;` there separates members
 _MEMBER_LISTS = {"class_body", "interface_body", "object_type"}
 _FORS = {"for_statement", "for_in_statement"}
@@ -733,10 +737,8 @@ class _Tokens(NamedTuple):
 
 def _hashed(tokens: _Tokens) -> str:
     """What a declaration's fingerprint covers: its tokens as the parser nests them, less
-    what formatters change (`_formatting`, `_quote`), so a reformat or a comment changes
-    nothing while a literal's bytes still do. A Python block is a node, so a statement
-    moved into or out of one changes it; the spaces in an f-string's `{x = }`, which
-    it prints, are no token and change nothing."""
+    comments and what formatters change (quotes, trailing commas, a JS `;`, parentheses).
+    Parentheses count in C++, Go, Rust and Java; an f-string's `{x = }` spaces never do."""
     _, marks, texts, _ = tokens
     return "\n".join([*(f"{m} {t}" for m, t in zip(marks, texts, strict=False)), marks[-1]])
 
@@ -1030,12 +1032,42 @@ def _leaves(
                 for i, c in enumerate(children):
                     fields.around[_key(c)] = (n, children[i - 1] if i else None)
                 within = _gaps(n, source) if cut is None else cut
-                stack.extend((c, False) for c in reversed(within))
+                stack.extend((_unparenthesized(c, grammar), False) for c in reversed(within))
         if node == last:
             break
         node = node.next_sibling
     marks.append("".join(pending))
     return out, marks
+
+
+def _unparenthesized(node: Any, grammar: str) -> Any:
+    """`node` without the parentheses a formatter adds or removes: around one Python, JS
+    or TS expression (not one that ends an optional chain, `(a?.b).c`), around an arrow's
+    one untyped parameter."""
+    while True:
+        inner = None
+        if node.type == "parenthesized_expression" and grammar in _UNPARENTHESIZED:
+            inner = _sole_child(node)
+            parent = node.parent
+            chained = parent is not None and parent.type in _CHAINS
+            if chained and inner is not None and b"?." in inner.text:
+                inner = None
+        elif node.type == "formal_parameters" and grammar in _ECMA:
+            arrow = node.parent is not None and node.parent.type == "arrow_function"
+            inner = _sole_child(node) if arrow else None
+            if inner is not None and inner.type == "required_parameter":
+                inner = _sole_child(inner)
+            if inner is not None and inner.type != "identifier":
+                inner = None
+        if inner is None:
+            return node
+        node = inner
+
+
+def _sole_child(node: Any) -> Any:
+    """`node`'s one named child, comments aside; None for none or several."""
+    named = [c for c in node.named_children if c.type not in _COMMENTS]
+    return named[0] if len(named) == 1 else None
 
 
 def _formatting(node: Any, grammar: str) -> bool:

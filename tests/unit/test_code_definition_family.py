@@ -901,3 +901,77 @@ def test_a_type_or_constant_reformatted_keeps_its_fingerprint(
     assert was.shape.exact
     assert _value(path, reformatted) == was.body_hash
     assert _value(path, edited) != was.body_hash
+
+
+@pytest.mark.parametrize(
+    ("path", "original", "formatted"),
+    [
+        ("a.js", "const value = a => a + 1;\n", "const value = (a) => a + 1;\n"),
+        ("a.ts", "const value = a => a + 1;\n", "const value = (a) => a + 1;\n"),
+        (
+            "a.js",
+            "function value(a, b, c) { return a && b || c; }\n",
+            "function value(a, b, c) {\n  return (a && b) || c;\n}\n",
+        ),
+        (
+            "a.py",
+            "def value(a, b):\n    return a and b\n",
+            "def value(a, b):\n    return (\n        a and b\n    )\n",
+        ),
+        (
+            "a.jsx",
+            "function value() { return <div>x</div> }\n",
+            "function value() {\n  return (\n    <div>x</div>\n  );\n}\n",
+        ),
+    ],
+    ids=["js-arrow-param", "ts-arrow-param", "js-mixed-logic", "py-wrapped-return", "jsx"],
+)
+def test_parentheses_a_formatter_adds_keep_the_fingerprint(
+    path: str, original: str, formatted: str
+) -> None:
+    assert _value(path, formatted) == _value(path, original)
+
+
+@pytest.mark.parametrize(
+    ("path", "before", "after"),
+    [
+        (
+            "a.js",
+            "function value(a) { return (a?.b).c }\n",
+            "function value(a) { return a?.b.c }\n",
+        ),
+        (
+            "a.js",
+            "function value(a, b, c) { return a && (b || c) }\n",
+            "function value(a, b, c) { return a && b || c }\n",
+        ),
+        (
+            "a.py",
+            "def value(a, b):\n    return (a + b) * 2\n",
+            "def value(a, b):\n    return a + b * 2\n",
+        ),
+        (
+            "a.js",
+            "function value(a, b) { return f((a, b)) }\n",
+            "function value(a, b) { return f(a, b) }\n",
+        ),
+        ("a.ts", "const value = (a: number) => a;\n", "const value = (a) => a;\n"),
+        ("a.js", "const value = () => ({});\n", "const value = () => {};\n"),
+        (
+            "a.cpp",
+            "auto value(int x) -> decltype((x)) { return x; }\n",
+            "auto value(int x) -> decltype(x) { return x; }\n",
+        ),
+    ],
+    ids=[
+        "optional-chain",
+        "precedence",
+        "py-precedence",
+        "comma-operator",
+        "typed-param",
+        "object-body",
+        "decltype",
+    ],
+)
+def test_parentheses_that_mean_something_change_it(path: str, before: str, after: str) -> None:
+    assert _value(path, before) != _value(path, after)
