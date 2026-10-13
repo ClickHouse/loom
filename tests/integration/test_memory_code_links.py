@@ -3554,3 +3554,38 @@ async def test_an_edit_to_a_notebook_cell_reads_changed(env) -> None:
     await _index(TRUNK, repo, c2, ["nb/rows.ipynb"])
     await _pass()
     assert [link["state"] for link in await _links(mid)] == ["changed"]
+
+
+async def test_a_candidate_elsewhere_that_does_not_parse_leaves_only_its_link_unsure(
+    env, monkeypatch
+) -> None:
+    from server.code.app.index import ingest_parse
+    from server.memory.app import code_link_pass, code_link_recheck
+
+    repo = env
+    c1 = repo.commit({"src/a.py": "def alpha():\n    return 1\n\n\ndef gamma():\n    return 1\n"})
+    await _index(TRUNK, repo, c1, ["src/a.py"])
+    alpha = await _remember(MEM, "alpha", "`alpha` returns one")
+    gamma = await _remember(MEM, "gamma", "`gamma` returns one")
+    await _pass()
+    # alpha edited in place; gamma moved to a file the worker cannot parse
+    moved = {
+        "src/a.py": "def alpha():\n    return 2\n",
+        "src/broken.py": "def gamma():\n    return 1\n",
+    }
+    c2 = repo.commit(moved)
+    await _index(TRUNK, repo, c2, list(moved))
+    parse = ingest_parse._PARSERS["python"]
+
+    def broken(path: str, source: bytes) -> Any:
+        if path.endswith("broken.py"):
+            raise RecursionError("boom")
+        return parse(path, source)
+
+    monkeypatch.setitem(ingest_parse._PARSERS, "python", broken)
+    for _ in range(2):
+        result = code_link_pass.PassResult()
+        await code_link_recheck.recheck_all(result)
+        assert not result.errors, result.errors  # its own file parses: nothing to retry
+    assert [link["state"] for link in await _links(alpha)] == ["changed"]
+    assert [link["state"] for link in await _links(gamma)] == ["unresolved"]

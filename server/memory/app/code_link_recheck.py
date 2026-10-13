@@ -198,20 +198,21 @@ async def _follow(
             by_path[a["path"]].append(a)
     after = str(done.get("after", "")) if done.get("head") == head else ""
     paths = [p for p in sorted(by_path) if p > after]
-    unparsed = await _unparsed(org, cns)
-    before = set(unparsed)
+    unparsed, failed = await _unparsed(org, cns), set[str]()
     for i in range(0, len(paths), _PATHS_PER_WRITE):
         part = paths[i : i + _PATHS_PER_WRITE]
         known = len(unparsed)
-        moves = await _recheck_paths(org, cns, by_path, part, changed, head, files, unparsed)
+        moves = await _recheck_paths(
+            org, cns, by_path, part, changed, head, files, unparsed, failed
+        )
         await _write_moves(await _current_moves(org, moves), head)
         result.rechecked += len(moves)
         if len(unparsed) > known:  # owed before the cursor moves past them
             await _set_unparsed(org, cns, unparsed)
         await progress.write({"head": head, "after": part[-1]})
     await progress.clear()
-    if new := sorted(unparsed - before):
-        result.errors.append(f"recheck {org}/{cns}: did not parse: {', '.join(new)}")
+    if failed:
+        result.errors.append(f"recheck {org}/{cns}: did not parse: {', '.join(sorted(failed))}")
 
 
 async def _recheck_paths(
@@ -223,9 +224,10 @@ async def _recheck_paths(
     head: str,
     files: link_pass.Files,
     unparsed: set[str],
+    failed: set[str],
 ) -> list[Move]:
-    """The moves of the links on `paths`. A path whose recheck reads a file that does
-    not parse keeps its links as they were and joins `unparsed`, to be retried."""
+    """The moves of the links on `paths`. A path whose own file does not parse keeps its
+    links as they were and joins `unparsed`, to be retried; the file read joins `failed`."""
     rows = [a for p in paths for a in by_path[p]]
     try:
         return await _recheck(org, cns, rows, changed, head, files)
@@ -235,8 +237,9 @@ async def _recheck_paths(
     for p in paths:
         try:
             moves += await _recheck(org, cns, by_path[p], changed, head, files)
-        except code.ParseFailed:
+        except code.ParseFailed as e:
             unparsed.add(p)
+            failed.add(e.path)
     return moves
 
 
@@ -251,18 +254,20 @@ async def _retry_unparsed(
     by_commit: dict[str, list[LinkRow]] = defaultdict(list)
     for a in await store.for_paths(org, [cns], sorted(paths)):
         by_commit[a["checked_commit"]].append(a)
-    still: set[str] = set()
+    still, failed = set[str](), set[str]()
     for commit, rows in by_commit.items():
         changed = await files.range(commit, head) if commit else None
         by_path: dict[str, list[LinkRow]] = defaultdict(list)
         for a in rows:
             by_path[a["path"]].append(a)
         paths_now = sorted(by_path)
-        moves = await _recheck_paths(org, cns, by_path, paths_now, changed, head, files, still)
+        moves = await _recheck_paths(
+            org, cns, by_path, paths_now, changed, head, files, still, failed
+        )
         await _write_moves(await _current_moves(org, moves), head)
         result.rechecked += len(moves)
-    if still:
-        result.errors.append(f"recheck {org}/{cns}: did not parse: {', '.join(sorted(still))}")
+    if failed:
+        result.errors.append(f"recheck {org}/{cns}: did not parse: {', '.join(sorted(failed))}")
     await _set_unparsed(org, cns, still)
 
 
@@ -367,8 +372,22 @@ async def _namesakes(
     head: str,
 ) -> list[Definition] | None:
     """The namesakes in `candidates` (other files') that appeared after the lost link's
-    code was last in its own file; None when that cannot be told, or when more than
-    `_MAX_ELSEWHERE` files were touched since."""
+    code was last in its own file; None when that cannot be told (a file read does not
+    parse), or when more than `_MAX_ELSEWHERE` files were touched since."""
+    try:
+        return await _new_namesakes(files, before, a, candidates, changed, head)
+    except code.ParseFailed:
+        return None
+
+
+async def _new_namesakes(
+    files: link_pass.Files,
+    before: Link,
+    a: LinkRow,
+    candidates: list[Definition],
+    changed: link_pass.Range | None,
+    head: str,
+) -> list[Definition] | None:
     live = changed is not None and before.state not in _LOST_STATES
     start = changed.base if changed is not None and live else a["checked_commit"]
     local = local_name(before.qualified_name, before.read_path)
@@ -447,7 +466,10 @@ async def _moved_and_edited(
     key = ("elsewhere", checked, before.read_path, before.qualified_name, head, d.path)
     if (known := files.successors.get(key)) is not None:
         return known
-    old, here = await files.at(checked, before.read_path), await files.at(head, d.path)
+    try:
+        old, here = await files.at(checked, before.read_path), await files.at(head, d.path)
+    except code.ParseFailed:
+        return Successor(None, uncertain=True)
     was = [x for x in old.defs if x.qualified_name == before.qualified_name] if old else []
     if old is None or here is None or not was:
         return Successor(None, uncertain=True)
