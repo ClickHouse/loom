@@ -1,7 +1,7 @@
 """An MCP session's implicit run, as the ledger decides it, on live ClickHouse:
 `active_session_run` finds the run a sibling web process began, in whichever
-namespace, and `idle_session_run` closes it only once no call labelled with it,
-in any namespace, is recent.
+namespace, and `session_run_calls` counts the calls labelled with it in every
+namespace.
 
 Skips cleanly when LOOM_CH_HOST is unset.
 """
@@ -55,8 +55,9 @@ async def _ledger_call(ch: Any, namespace: str, run_id: str) -> None:
 
 @pytest.mark.asyncio
 async def test_the_ledger_decides_when_a_session_run_ends(ch: Any) -> None:
+    from server.core.datetimes import naive_utc_now
     from server.tasks.api.models_run import RunBeginInput
-    from server.tasks.app.run import active_session_run, handle_run_begin, idle_session_run
+    from server.tasks.app.run import active_session_run, handle_run_begin, session_run_calls
 
     first, other = (f"itest-{uuid.uuid4().hex[:12]}" for _ in range(2))
     run_id = f"mcp-{uuid.uuid4().hex[:12]}"
@@ -70,14 +71,14 @@ async def test_the_ledger_decides_when_a_session_run_ends(ch: Any) -> None:
         run = await active_session_run(ORG, run_id)
         assert run is not None and run["namespace"] == first
 
-        # Nothing ledgered yet: idle at once, with no calls.
-        assert await idle_session_run(ORG, run_id, idle_s=1800) == (first, 0)
-        # A call the session made in another namespace keeps the run open.
+        # Nothing ledgered yet.
+        assert await session_run_calls(ORG, run_id) == (first, 0, None)
+        # A call the session made in another namespace counts.
         await _ledger_call(ch, other, run_id)
-        assert await idle_session_run(ORG, run_id, idle_s=1800) is None
-        assert await idle_session_run(ORG, run_id, idle_s=0) == (first, 1)
-        assert await idle_session_run(ORG, run_id, idle_s=None) == (first, 1)
-        assert await idle_session_run(ORG, "mcp-never-begun", idle_s=None) is None
+        namespace, calls, last = await session_run_calls(ORG, run_id) or ("", 0, None)
+        assert (namespace, calls) == (first, 1)
+        assert last is not None and (naive_utc_now() - last).total_seconds() < 120
+        assert await session_run_calls(ORG, "mcp-never-begun") is None
     finally:
         for table in ("agent_runs", "agent_events"):
             await ch.execute(

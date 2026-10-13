@@ -68,7 +68,7 @@ class SessionRun:
 
 _RUNS: dict[str, SessionRun] = {}
 _BEGIN_FAILED_AT: dict[str, float] = {}
-_PENDING_BEGINS = TaskSet()  # in-flight run.begin
+_PENDING = TaskSet()  # in-flight run.begin, and evicted runs' closes
 _last_sweep: float = 0.0
 
 
@@ -157,8 +157,9 @@ async def ensure(
         return None
     if len(_RUNS) >= SESSION_RUN_CAP:
         idlest = min(_RUNS.values(), key=lambda r: r.last_seen)
-        await _close(idlest, reason="evicted")
         _RUNS.pop(idlest.session_id, None)
+        # Off the call's path: the close reads the ledger first.
+        _PENDING.spawn(_close(idlest, reason="evicted"), name=f"mcp-run-evict:{idlest.session_id}")
     org = str(defaults.get("org") or "")
     namespace = str(defaults.get("namespace") or "")
     agent = str(defaults.get("agent") or "")
@@ -179,7 +180,7 @@ async def ensure(
     )
     _RUNS[session_id] = run
     _BEGIN_FAILED_AT.pop(session_id, None)
-    run.extra["begin_task"] = _PENDING_BEGINS.spawn(
+    run.extra["begin_task"] = _PENDING.spawn(
         _begin(run, goal=goal, now=now), name=f"mcp-run-begin:{session_id}"
     )
     return run
@@ -224,10 +225,10 @@ async def _begin(run: SessionRun, *, goal: str, now: float) -> None:
         log.warning("mcp session run: run.begin failed for %s (non-fatal): %s", run.session_id, e)
 
 
-async def drain_begins() -> None:
-    """Await every in-flight `run.begin` (a test's sync point)."""
-    if len(_PENDING_BEGINS):
-        await asyncio.gather(*_PENDING_BEGINS, return_exceptions=True)
+async def drain_ledger_writes() -> None:
+    """Await every in-flight `run.begin` and evicted run's close (a test's sync point)."""
+    if len(_PENDING):
+        await asyncio.gather(*_PENDING, return_exceptions=True)
 
 
 async def _close(run: SessionRun, *, reason: str) -> bool:
@@ -237,19 +238,20 @@ async def _close(run: SessionRun, *, reason: str) -> bool:
     if _BEGIN_FAILED_AT.get(run.session_id) is not None and _RUNS.get(run.session_id) is not run:
         return False  # begin never landed; there is no run to complete
     try:
+        from server.core.datetimes import naive_utc_now
         from server.tasks.api.models_run import RunCompleteInput
-        from server.tasks.app.run import handle_run_complete, idle_session_run
+        from server.tasks.app.run import handle_run_complete, session_run_calls
 
-        # The ledger, not this process, says whether the session is over: a
-        # sibling web process may still serve it, or have closed it already.
-        # A client's DELETE ends the session at once; an idle or evicted run closes
-        # only when no process served it within the idle window.
-        found = await idle_session_run(
-            run.org, run.run_id, idle_s=None if reason == "session_end" else idle_seconds()
-        )
+        # The ledger, not this process, says whether the session is over.
+        found = await session_run_calls(run.org, run.run_id)
         if found is None:
-            return False
-        namespace, calls = found
+            return False  # a sibling web process closed it
+        namespace, calls, last_call = found
+        if reason != "session_end" and last_call is not None:
+            # An idle or evicted run closes only when no process served it lately;
+            # a client's DELETE ends the session at once.
+            if (naive_utc_now() - last_call).total_seconds() < idle_seconds():
+                return False
         await handle_run_complete(
             RunCompleteInput(
                 org=run.org,

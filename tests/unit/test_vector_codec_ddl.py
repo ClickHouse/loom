@@ -127,7 +127,7 @@ def test_a_fresh_install_codes_its_vectors_only_at_a_codable_width(
     seen: list[bool] = []
     monkeypatch.setattr(mig, "_nlp_available", lambda ch: True)
     monkeypatch.setattr(mig, "_codec_supported", lambda ch: True)
-    monkeypatch.setattr(mig, "_codec_width", lambda ch: dim)
+    monkeypatch.setattr(mig, "_install_vector_width", lambda ch: dim)
     monkeypatch.setattr(mig, "_dimensions_setting_known", lambda ch: False)
     monkeypatch.setattr(mig, "_sync_settings_accepted", lambda ch: frozenset())
     monkeypatch.setattr(mig, "_run_file", lambda ch, f, **kw: seen.append(kw["coded"]))
@@ -170,7 +170,7 @@ def test_new_coded_tables_take_the_width_the_install_stores(
             assert "memory_embeddings" in parameters["tables"]
             return SimpleNamespace(result_rows=columns)
 
-    assert mig._codec_width(_CH()) == width  # type: ignore[arg-type]
+    assert mig._install_vector_width(_CH()) == width  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(("width", "coded"), [(None, False), (384, True)])
@@ -186,7 +186,7 @@ def test_an_install_with_plain_vector_tables_creates_new_ones_plain(
     seen: list[tuple[bool, int]] = []
     monkeypatch.setattr(mig, "_nlp_available", lambda ch: True)
     monkeypatch.setattr(mig, "_codec_supported", lambda ch: True)
-    monkeypatch.setattr(mig, "_codec_width", lambda ch: width)
+    monkeypatch.setattr(mig, "_install_vector_width", lambda ch: width)
     monkeypatch.setattr(mig, "_dimensions_setting_known", lambda ch: False)
     monkeypatch.setattr(mig, "_sync_settings_accepted", lambda ch: frozenset())
     monkeypatch.setattr(
@@ -215,5 +215,5 @@ def test_coded_tables_of_several_widths_are_named(settings_override, capsys) -> 
         ("categories", "embedding", "CODEC(Quantized('rabitq', 8, 0))"),
     ]
     ch = SimpleNamespace(query=lambda sql, parameters=None: SimpleNamespace(result_rows=rows))
-    assert mig._codec_width(ch) == 16  # type: ignore[arg-type]
+    assert mig._install_vector_width(ch) == 16  # type: ignore[arg-type]
     assert "several widths [8, 16]" in capsys.readouterr().out

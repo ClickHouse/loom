@@ -429,7 +429,7 @@ def _codec_supported(ch: Client) -> bool:
         return False
 
 
-def _codec_width(ch: Client) -> int | None:
+def _install_vector_width(ch: Client) -> int | None:
     """The width a new coded table takes, or None to create it plain: the width
     the install's coded tables hold (a model chosen in the dashboard leaves
     LOOM_EMBEDDING_DIM behind); None when its vector tables are plain, so one
@@ -461,14 +461,14 @@ def _codec_width(ch: Client) -> int | None:
     return None if plain else int(settings.embedding_dim)
 
 
-def _coded_width(ch: Client) -> int | None:
+def _new_table_codec_width(ch: Client) -> int | None:
     """The width new vector tables are coded at, or None to create them plain
     (and say why)."""
     from server.core.schema.vector_codec_ddl import codable
 
     if not _codec_supported(ch):
         return None
-    width = _codec_width(ch)
+    width = _install_vector_width(ch)
     if width is None:
         print("  · vector tables created plain, as the install's existing ones are")
     elif not codable(width):
@@ -705,7 +705,7 @@ def _apply_pending(
     # Probe NLP support once: it decides whether the NLP experimental flag is
     # sent at all (ClickHouse Cloud forbids it).
     nlp_ok = _nlp_available(ch)
-    width = _coded_width(ch)
+    width = _new_table_codec_width(ch)
     coded, codec_dim = width is not None, width or 0
     dims = _dimensions_setting_known(ch)
     sync = NO_SYNC if dry else sync_policy(ch)

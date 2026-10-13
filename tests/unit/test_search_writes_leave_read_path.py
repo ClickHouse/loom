@@ -52,7 +52,7 @@ def test_ensure_returns_before_run_begin_lands_and_close_waits_for_it(monkeypatc
     monkeypatch.setattr(h, "handle_run_begin", slow_begin)
     monkeypatch.setattr(h, "handle_run_complete", complete)
     monkeypatch.setattr(h, "active_session_run", AsyncMock(return_value=None))
-    monkeypatch.setattr(h, "idle_session_run", AsyncMock(return_value=("ns-a", 1)))
+    monkeypatch.setattr(h, "session_run_calls", AsyncMock(return_value=("ns-a", 1, None)))
 
     async def _run() -> None:
         run = await asyncio.wait_for(mcp_runs.ensure("sess-9", DEFAULTS, goal="g", now=1.0), 0.5)
@@ -70,7 +70,7 @@ def test_ensure_returns_before_run_begin_lands_and_close_waits_for_it(monkeypatc
 
 def test_ensure_never_awaits_run_begin_inline() -> None:
     src = inspect.getsource(mcp_runs.ensure)
-    assert "await handle_run_begin" not in src and "_PENDING_BEGINS.spawn(" in src
+    assert "await handle_run_begin" not in src and "_PENDING.spawn(" in src
 
 
 def test_page_park_is_fire_and_forget_and_names_the_flush_window() -> None:

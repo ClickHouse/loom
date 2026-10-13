@@ -231,22 +231,17 @@ async def active_session_run(org: str, run_id: str) -> RunLedgerRow | None:
         return await runs_store.active_run_by_id(get_client(), org, run_id)
 
 
-async def idle_session_run(
-    org: str, run_id: str, *, idle_s: float | None
-) -> tuple[str, int] | None:
-    """(namespace, the ledger's call count) of a session's implicit run; None when
-    the run is no longer active or, with `idle_s`, when a call labelled with it,
-    in any namespace, reached the ledger within the last `idle_s` seconds."""
+async def session_run_calls(org: str, run_id: str) -> tuple[str, int, datetime | None] | None:
+    """An active implicit session run's namespace, how many requests the ledger
+    labels with it in any namespace, and when the last one was; None when the
+    run is not active."""
     existing = await active_session_run(org, run_id)
     if existing is None:
         return None
     calls, last = await runs_store.ledgered_calls(
         get_client(), org, run_id, since=existing["started_at"]
     )
-    if idle_s is not None and last is not None:
-        if (_now() - last.replace(tzinfo=None)).total_seconds() < idle_s:
-            return None
-    return str(existing["namespace"]), calls
+    return str(existing["namespace"]), calls, None if last is None else last.replace(tzinfo=None)
 
 
 async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:

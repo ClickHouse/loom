@@ -86,8 +86,8 @@ def _prune(base: str, namespace: str) -> None:
     with contextlib.suppress(OSError):
         for entry in os.scandir(base):
             owned = _OWNED.match(entry.name)
-            if owned is None or owned.group(1) != namespace:
-                continue
+            if owned is None or owned.group(1) != namespace or "0" in owned.group(2, 3):
+                continue  # another namespace's, or named without a pid and start to check
             started = _started(int(owned.group(2)))
             if started is None or started == owned.group(3):
                 continue  # running, or unknown: keep it

@@ -71,43 +71,29 @@ async def test_begin_with_a_client_run_id_labels_that_id(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("active", "last_call_s_ago", "idle_s", "expected"),
-    [
-        (True, 600.0, 300.0, ("ns-first", 4)),  # nobody called within the window
-        (True, 10.0, 300.0, None),  # a sibling web process still serves it
-        (True, 10.0, None, ("ns-first", 4)),  # the client ended the session: no wait
-        (False, 600.0, 300.0, None),  # a sibling already closed it
-    ],
-)
-async def test_an_implicit_run_closes_on_what_the_ledger_says(
-    monkeypatch, active, last_call_s_ago, idle_s, expected
-):
-    """Read org-wide: a session's calls may name other namespaces than its run's."""
+@pytest.mark.parametrize("active", [True, False])
+async def test_a_session_runs_calls_are_read_org_wide(monkeypatch, active):
+    """A session's calls may name other namespaces than its run's."""
     from datetime import timedelta
 
     from server.core.datetimes import naive_utc_now
 
     now = naive_utc_now()
+    started, last = now - timedelta(hours=1), now - timedelta(seconds=10)
 
     class _Ledger(_Client):
         async def query_one(self, sql: str, params=None):
             await super().query_one(sql, params)
             assert "namespace =" not in sql
             if "agent_events" in sql:
-                assert params["since"] == now - timedelta(hours=1)
-                return {"n": 4, "last": now - timedelta(seconds=last_call_s_ago)}
+                assert params["since"] == started
+                return {"n": 4, "last": last}
             if not active:
                 return None
-            return {
-                "namespace": "ns-first",
-                "status": "active",
-                "started_at": now - timedelta(hours=1),
-            }
+            return {"namespace": "ns-first", "status": "active", "started_at": started}
 
     client = _Ledger()
     monkeypatch.setattr(run_handlers, "get_client", lambda: client)
-    monkeypatch.setattr(run_handlers, "_now", lambda: now)
-    got = await run_handlers.idle_session_run("o", "mcp-s", idle_s=idle_s)
-    assert got == expected
+    got = await run_handlers.session_run_calls("o", "mcp-s")
+    assert got == (("ns-first", 4, last) if active else None)
     assert client.sequential_reads[0] is True

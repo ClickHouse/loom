@@ -19,6 +19,8 @@ from typing import Any
 
 import pytest
 
+from server.settings import settings
+
 pytestmark = pytest.mark.skipif(
     not os.environ.get("LOOM_CH_HOST"),
     reason="LOOM_CH_HOST not set — integration tests require a live CH",
@@ -64,12 +66,12 @@ def _memory_row(ns: str, version: int, value: str, sensitivity: str) -> dict[str
     )
 
 
-def _wide(head: list[float]) -> list[float]:
-    """`head` zero-padded to the configured width: a coded vector column takes
-    vectors of exactly that length."""
-    from server.settings import settings
+# The configured width: a coded vector column takes vectors of exactly it.
+_DIM = settings.embedding_dim
 
-    return head + [0.0] * (settings.embedding_dim - len(head))
+
+def _wide(head: list[float]) -> list[float]:
+    return head + [0.0] * (_DIM - len(head))
 
 
 async def _embedded_write(ch: Any, ns: str, value: str, entity: str) -> None:
@@ -89,7 +91,7 @@ async def _embedded_write(ch: Any, ns: str, value: str, entity: str) -> None:
         scope="private",
         content_excerpt=value,
         embedding_model="fake",
-        embedding_dim=len(_wide([])),
+        embedding_dim=_DIM,
         embedding=_wide([0.1, 0.2, 0.3]),
         created_at=datetime.now(UTC).replace(tzinfo=None),
     )
@@ -105,7 +107,7 @@ async def _embedded_write(ch: Any, ns: str, value: str, entity: str) -> None:
                 "entity_text": entity,
                 "entity_embedding": _wide([0.1, 0.2, 0.3]),
                 "embedding_model": "fake",
-                "embedding_dim": len(_wide([])),
+                "embedding_dim": _DIM,
                 "memory_key": KEY,
                 "tombstoned_at": None,
                 "created_at": datetime.now(UTC).replace(tzinfo=None),

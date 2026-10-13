@@ -108,3 +108,20 @@ def test_a_live_owner_whose_proc_entry_cannot_be_read_keeps_its_files(
 
 def test_a_missing_proc_entry_means_the_owner_is_gone() -> None:
     assert runtime_files._started(2**22 + 12345) == ""  # beyond pid_max: no such process
+
+
+def test_a_file_named_without_its_owners_pid_or_start_is_kept(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A server that is pid 1 of its container has parent pid 0, and a start
+    time /proc did not give is 0: neither can be proved gone."""
+    server_file("budgets")
+    kept = [
+        run_dir / f"loom-ratelimit-{NS}-0-0.buckets",
+        run_dir / f"loom-budgets-{NS}-{os.getpid()}-0.json",
+    ]
+    for path in kept:
+        path.write_text("")
+    _prune_again(monkeypatch)
+    server_file("budgets")
+    assert all(path.exists() for path in kept)

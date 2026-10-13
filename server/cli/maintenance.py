@@ -243,8 +243,9 @@ def _cmd_reembed(args: argparse.Namespace) -> int:
     """Re-embed off-model vectors to the configured embedder (run after a
     LOOM_EMBEDDING_MODEL change — Loom does not auto-re-embed)."""
 
+    from server.core.errors import CodedWidthMismatchError
     from server.embedding import get_embedder
-    from server.memory.app.reembed import CodedWidthError, reembed_all
+    from server.memory.app.reembed import reembed_all
 
     async def _go(ch: Any) -> int:
         embedder = get_embedder()
@@ -263,8 +264,12 @@ def _cmd_reembed(args: argparse.Namespace) -> int:
                 key_only=bool(getattr(args, "key_only", False)),
                 resume=(args.resume or None),
             )
-        except CodedWidthError as e:
-            print(f"loom reembed: {e}", file=sys.stderr)
+        except CodedWidthMismatchError as e:
+            print(
+                f"loom reembed: {e}. A coded table takes one width: change the model in "
+                "Settings → Models & keys, which rebuilds the tables at the new width.",
+                file=sys.stderr,
+            )
             return 2
         print(f"re-embedded: {written}")
         return 0

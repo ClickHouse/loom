@@ -79,7 +79,8 @@ CREATE TABLE IF NOT EXISTS loom.agent_events
     `consumer` LowCardinality(String) DEFAULT '',
     `response_tokens` UInt32 DEFAULT 0,
     `traffic_class` LowCardinality(String) DEFAULT '',
-    `subject` LowCardinality(String) DEFAULT ''
+    `subject` LowCardinality(String) DEFAULT '',
+    INDEX run_id_bloom_idx run_id TYPE bloom_filter(0.01) GRANULARITY 1
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(ts)
