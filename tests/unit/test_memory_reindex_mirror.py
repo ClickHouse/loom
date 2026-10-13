@@ -259,7 +259,8 @@ def test_the_heads_are_rechecked_after_the_insert(monkeypatch: Any) -> None:
         for k in keys
     ]
     asyncio.run(ops._recheck_reindexed_heads(rows, reindexed, ch=object(), model="fake-model"))
-    assert sorted((k[5], v) for k, v in retired) == [("k1", 7), ("k3", 7)]
+    # two above the newest version read: the head (5) or the reindexed row (6)
+    assert sorted((k[5], v) for k, v in retired) == [("k1", 8), ("k3", 8)]
     by_key = {r["memory_key"]: r for r in written}
     assert set(by_key) == {"k4", "k5"}
     stub, kept = by_key["k4"], by_key["k5"]

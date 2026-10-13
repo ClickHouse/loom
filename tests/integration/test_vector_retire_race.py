@@ -1266,3 +1266,79 @@ async def test_a_touch_during_the_reindex_keeps_the_reindexed_vectors(
                 f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
                 params={"o": ORG, "n": ns},
             )
+
+
+class _ProxyBeforeReindexHeadRead:
+    """The client, running `before_max` before reindex's max(version) read and
+    `before_head` before its post-insert head read."""
+
+    def __init__(self, inner: Any, before_max: Any, before_head: Any) -> None:
+        self._inner, self._before_max, self._before_head = inner, before_max, before_head
+        self.fired: list[str] = []
+
+    async def query_all(self, sql: str, *a: Any, **kw: Any) -> Any:
+        if "max(version) AS ev" in sql and "max" not in self.fired:
+            self.fired.append("max")
+            await self._before_max()
+        elif (
+            "max" in self.fired
+            and "head" not in self.fired
+            and "PREWHERE (org, namespace, agent, user_id, session_id, memory_key)" in sql
+            and "FROM loom.memory FINAL" in sql
+        ):
+            self.fired.append("head")
+            await self._before_head()
+        return await self._inner.query_all(sql, *a, **kw)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+async def test_a_touch_copy_of_a_reindexed_row_under_a_high_head_is_retired(
+    ch: Any, monkeypatch: Any
+) -> None:
+    """A high write lands between the reindex reads (the reindexed row sits above its
+    fence), then memory.touch copies that row at its version + 1 before the re-check:
+    the re-check's retire sits above the copy, so nothing is live under the high head."""
+    import server.core.ch as ch_mod
+    from server.memory.api.models_admin import MemoryReindexInput
+    from server.memory.api.models_crud import MemorySetInput, MemoryTouchInput
+    from server.memory.app import handlers, ops, write
+
+    ns = f"itest-{uuid.uuid4().hex[:12]}"
+    key = f"reindex_touch_high_{uuid.uuid4().hex[:6]}"
+    ident = {"org": ORG, "namespace": ns, "agent": AGENT, "memory_key": key}
+    secret = "sk-proj-" + uuid.uuid4().hex + uuid.uuid4().hex[:8]
+    await _memory_only_row(ch, ns, key, "OLDVALUE the deploy uses blue")
+
+    async def high() -> None:
+        await write.handle_memory_set(MemorySetInput(**ident, value=f"root token {secret}"))
+
+    async def touch() -> None:
+        await handlers.handle_memory_touch(MemoryTouchInput(**ident, ttl_seconds=3600))
+
+    try:
+        proxy = _ProxyBeforeReindexHeadRead(ch, high, touch)
+        monkeypatch.setattr(ch_mod, "get_client", lambda: proxy)
+        await ops.handle_memory_reindex(MemoryReindexInput(org=ORG, namespace=ns))
+        monkeypatch.setattr(ch_mod, "get_client", lambda: ch)
+        assert proxy.fired == ["max", "head"]
+        head = await ch.query_one(
+            "SELECT sensitivity FROM loom.memory FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND memory_key = {k:String}",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        live = await ch.query_one(
+            "SELECT count() AS n FROM loom.memory_embeddings FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND memory_key = {k:String}"
+            " AND tombstoned_at IS NULL AND embedding_dim > 0",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        assert head["sensitivity"] == "high"
+        assert int(live["n"]) == 0
+    finally:
+        for table in ("memory", "memory_embeddings", "entity_vectors", "memory_chunks"):
+            await ch.execute(
+                f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
+                params={"o": ORG, "n": ns},
+            )

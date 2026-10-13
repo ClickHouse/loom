@@ -266,9 +266,9 @@ async def _recheck_reindexed_heads(
     a 'high' write that lands later still fences above it.
 
     - A head no longer embedded ('high', unsearchable, gone): the key's vectors are
-      retired one above the reindexed row.
-    - A head whose version changed with the same value (a touch, a verify, a tag): the
-      reindexed vectors are re-emitted on the current head's columns.
+      retired two above the newest version read (the reindexed row, the head).
+    - A head whose version changed with the same value and type (a touch, a verify, a
+      tag): the reindexed vectors are re-emitted on the current head's columns.
     - A head whose value changed (a newer write landed between the reads, its vector
       may sit under the reindexed one): a dim-0 stub of the current head for the embed
       worker, which fills it at + 1 from the head's value."""
@@ -284,7 +284,10 @@ async def _recheck_reindexed_heads(
     for key, (r, w) in read.items():
         head = heads.get(key)
         if head is None or not is_embedded(head.memory_type, head.sensitivity):
-            gone.append((key, int(w["version"]) + 1))
+            # Two above the newest version read: a read + 1 copy of the reindexed row
+            # (touch, verify, the entity tagger) inserted after this retire stays below.
+            newest = max(int(w["version"]), int(head.version) if head is not None else 0)
+            gone.append((key, newest + 2))
         elif int(head.version) != int(r["memory_version"]):
             changed.append(key)
     if gone:
@@ -297,7 +300,11 @@ async def _recheck_reindexed_heads(
         r, w = read[memory_repo.embedding_key(m)]
         cols = {k: v for k, v in m.items() if k not in ("created_at", "version")}
         version = max(int(m["version"]), int(w["version"])) + 1
-        if m["content_excerpt"] == r["content_excerpt"]:  # same value: keep the vectors
+        same_text = (m["content_excerpt"], m["memory_type"]) == (
+            r["content_excerpt"],
+            r["memory_type"],
+        )  # the embed text depends on both
+        if same_text:  # keep the vectors
             vectors = {
                 c: w[c]
                 for c in (
