@@ -12,6 +12,8 @@ from server.memory.store.code_links import LinkRow
 # A claim or code longer than the judge reads is never judged.
 _JUDGE_CLAIM_CHARS = 2000
 _JUDGE_CODE_CHARS = 6000
+# room for a revised claim as long as the longest judged, inside the verdict's JSON
+_JUDGE_ANSWER_TOKENS = _JUDGE_CLAIM_CHARS // 2
 
 _JUDGE = (
     "You check a stored claim about code against a change to that code. Reply with JSON "
@@ -33,7 +35,7 @@ async def judge_claim(claim: str, before: str, after: str) -> tuple[str, str]:
         res = await get_llm_client_for_model(settings.code_link_revise_model).complete(
             _JUDGE,
             f"CLAIM:\n{claim}\n\nCODE BEFORE:\n{before}\n\nCODE NOW:\n{after}",
-            max_tokens=500,
+            max_tokens=_JUDGE_ANSWER_TOKENS,
             response_format={"type": "json_object"},
         )
     try:

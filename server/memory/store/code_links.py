@@ -126,10 +126,11 @@ async def insert(rows: list[LinkRow], *, ch: _CHClient | None = None) -> None:
 
 
 async def _erasing(ch: _CHClient, orgs: list[str]) -> set[str]:
-    """The orgs among `orgs` with an erasure not completed, or completed in the last day."""
+    """The orgs among `orgs` with an erasure not finished, or finished in the last day; a
+    failed one that is never retried stops counting a day after it ended."""
     rows = await ch.query_all(
         "SELECT DISTINCT org FROM loom.erasure_requests FINAL WHERE org IN {orgs:Array(String)} "
-        "AND (status != 'completed' OR completed_at > now() - INTERVAL 1 DAY)",
+        "AND (completed_at IS NULL OR completed_at > now() - INTERVAL 1 DAY)",
         params={"orgs": orgs},
     )
     return {str(r["org"]) for r in rows}
@@ -178,25 +179,40 @@ async def sweep_page(
 # days a link's tombstone is kept before every version of its key is deleted
 TOMBSTONE_DAYS = 7
 _KEY_TUPLES = "Array(Tuple(String, String, String, String, String, UUID))"
+_ROW_TUPLES = "Array(Tuple(String, String, String, String, String, UUID, UInt64))"
+_FINAL = f"FROM {TABLE} FINAL"
 
 
 async def _purge_tombstones(ch: _CHClient, keys: list[tuple[Any, ...]]) -> None:
     """Delete every version of those of `keys` whose newest row is a tombstone older
-    than `TOMBSTONE_DAYS`: the tombstone alone would bring the versions under it back."""
+    than `TOMBSTONE_DAYS`, up to that tombstone: the tombstone alone would bring the
+    versions under it back, and a row written since the read stays."""
     if not keys:
         return
     old = await query_all_sliced(
         ch,
-        f"SELECT {_KEY} FROM {TABLE} FINAL WHERE ({_KEY}) IN {{keys:{_KEY_TUPLES}}} "
+        f"SELECT {_KEY}, version {_FINAL} WHERE ({_KEY}) IN {{keys:{_KEY_TUPLES}}} "
         "AND tombstoned_at < now() - INTERVAL {days:UInt32} DAY",
         {"keys": keys, "days": TOMBSTONE_DAYS},
         "keys",
     )
-    for part in param_slices([tuple(r[c] for c in _KEY_COLUMNS) for r in old]):
+    last = {tuple(r[c] for c in _KEY_COLUMNS): r["version"] for r in old}
+    rows = await query_all_sliced(
+        ch,
+        f"SELECT {_KEY}, version FROM {TABLE} WHERE ({_KEY}) IN {{keys:{_KEY_TUPLES}}}",
+        {"keys": list(last)},
+        "keys",
+    )
+    under = [
+        (*key, r["version"])
+        for r in rows
+        if r["version"] <= last[key := tuple(r[c] for c in _KEY_COLUMNS)]
+    ]
+    for part in param_slices(under):
         await ch.execute(
-            f"DELETE FROM {TABLE} WHERE ({_KEY}) IN {{keys:{_KEY_TUPLES}}} "
+            f"DELETE FROM {TABLE} WHERE ({_KEY}, version) IN {{rows:{_ROW_TUPLES}}} "
             "SETTINGS lightweight_deletes_sync = 2",
-            params={"keys": part},
+            params={"rows": part},
         )
 
 

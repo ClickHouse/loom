@@ -299,14 +299,16 @@ def test_the_queue_ttl_is_the_tables() -> None:
 async def test_the_sweep_deletes_every_version_of_a_key_long_tombstoned() -> None:
     key = {"org": "o", "code_namespace": "c", "path": "p", "qualified_name": "q", "namespace": "n"}
     page = [key | {"memory_id": "old"}, key | {"memory_id": "kept"}]
+    versions = [key | {"memory_id": "old", "version": v} for v in (5, 9, 12)]
     ch = _CH(
         {
             "ORDER BY org, code_namespace": [page],
             "FROM loom.memory FINAL": [[{"mid": "old"}, {"mid": "kept"}]],
-            "FROM loom.memory_code_links FINAL WHERE": [[page[0]]],
+            "FROM loom.memory_code_links FINAL WHERE": [[page[0] | {"version": 9}]],
+            "version FROM loom.memory_code_links WHERE": [versions],
         }
     )
     await store.sweep_page(None, 10, ch=ch)
     ((purge, params),) = [(sql, p) for sql, p in ch.sql if sql.startswith("DELETE")]
-    assert "version" not in purge  # every version of the key: the tombstone alone would not do
-    assert params["keys"] == [("o", "c", "p", "q", "n", "old")]
+    # every version under the tombstone (9), and not the row written after the read (12)
+    assert params["rows"] == [("o", "c", "p", "q", "n", "old", v) for v in (5, 9)]
