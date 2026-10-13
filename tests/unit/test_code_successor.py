@@ -535,3 +535,40 @@ def test_a_class_naming_its_own_type_renamed_alone_moves_its_methods(program: st
         "moved",
         ["RowReader", "size"],
     )
+
+
+@pytest.mark.parametrize(
+    ("path", "program"),
+    [
+        (
+            "r.rs",
+            "pub struct {0} {{ n: u32 }}\n\nimpl {0} {{\n    pub fn read(&self) -> u32 {{ self.n + {1} }}\n"
+            "    pub fn size(&self) -> u32 {{ 1 }}\n    pub fn close(&self) {{}}\n}}\n",
+        ),
+        (
+            "r.cpp",
+            "struct {0} {{ int n; int read(); int size(); void close(); }};\n"
+            "int {0}::read() {{ return n + {1}; }}\nint {0}::size() {{ return 1; }}\n"
+            "void {0}::close() {{}}\n",
+        ),
+    ],
+)
+def test_a_method_edited_outside_its_renamed_class_reads_changed(path: str, program: str) -> None:
+    link = _after(
+        (path, program.format("Reader", 1)), (path, program.format("Writer", 2)), name="read"
+    )
+    assert (link.state, link.qualified_name.rsplit("::", 2)[-2:]) == ("changed", ["Writer", "read"])
+
+
+@pytest.mark.parametrize(
+    ("path", "program"),
+    [
+        ("r.py", "class {0}:\n    def read(self):\n        return 1\n"),
+        ("r.rs", "pub struct {0};\n\nimpl {0} {{\n    pub fn read(&self) -> u32 {{ 1 }}\n}}\n"),
+        ("r.ts", "export class {0} {{\n  read(): number {{ return 1; }}\n}}\n"),
+    ],
+)
+def test_a_class_of_one_method_renamed_alone_leaves_it_unsure(path: str, program: str) -> None:
+    # one member is too little to follow the class by: the link is served, never hidden
+    link = _after((path, program.format("Reader")), (path, program.format("Writer")), name="read")
+    assert link.state == "unresolved"

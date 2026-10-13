@@ -94,7 +94,9 @@ def successor(was: Definition, before: Side, now: Side) -> Successor:
     if target != scope:
         namesake, rivals, in_scope = _across_renamed_class(was, rivals, in_scope)
         if namesake is not None:
-            return Successor(namesake, exact=not carried, carried=carried)
+            # moved with its class only when its own text is the same too
+            same = bool(was.shape.exact) and namesake.shape.exact == was.shape.exact
+            return Successor(namesake, exact=same and not carried, carried=carried)
     taken = {r.shape.exact for r in rivals if r.shape.exact and r.shape.exact != was.shape.exact}
     pool = [d for d in in_scope if d.shape.exact not in taken]
     for found, exact in (
@@ -214,9 +216,10 @@ def _layout(side: Side) -> tuple[dict[str, set[str]], set[str]]:
 
 def _renamed_scope(scope: str, before: Side, now: Side) -> tuple[str, bool]:
     """(the scope `scope` became in `now`, whether that is uncertain): the one new
-    class keeping most of its members; `scope` itself when none does. A scope this file
-    does not show to be a class (its methods defined out of line, its class in a header)
-    may have been renamed too, but is never followed: unsure."""
+    class keeping most of its members; `scope` itself when none does, unsure when a
+    class too small to share `_MIN_SHARED` members has one with them all unchanged. A
+    scope this file does not show to be a class (its methods defined out of line, its
+    class in a header) is never followed: unsure."""
     was, was_classes = _layout(before)
     members, classes = _layout(now)
     old = was[scope]
@@ -228,7 +231,21 @@ def _renamed_scope(scope: str, before: Side, now: Side) -> tuple[str, bool]:
             kept.append(s)
     if len(kept) == 1 and scope in was_classes:
         return kept[0], False
+    if not kept and len(old) < _MIN_SHARED:
+        # too small to share members: a class with the same members, unchanged, may be it
+        texts = _member_shapes(before, scope)
+        return scope, any(texts == _member_shapes(now, s) for s in news & set(members) if texts)
     return scope, bool(kept)
+
+
+def _member_shapes(side: Side, scope: str) -> dict[str, str]:
+    """The rename shapes of `scope`'s members by bare name; empty when any has none."""
+    shapes = {
+        bare_name(d.qualified_name): d.shape.exact
+        for d in side.defs
+        if scope_of(d) == scope and d.kind != "impl"
+    }
+    return shapes if all(shapes.values()) else {}
 
 
 def _loose(was: Definition, d: Definition) -> bool:
