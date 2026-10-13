@@ -56,8 +56,10 @@ async def _link_writes(batch: int, result: PassResult) -> None:
     if queue is None:
         # first pass: the queue starts at its tail; everything before it is backfilled
         queue, backfill = list(await store.queue_tail() or []), {}
-    if queue and int(queue[0]) < await store.queue_horizon() and backfill.get("done"):
-        backfill = {}  # stopped longer than the queue's TTL: writes may have aged out
+    if queue and int(queue[0]) < await store.queue_horizon() and not backfill.get("stall"):
+        # stopped longer than the queue's TTL: writes may have aged out, before or after
+        # where a scan in progress is; a fresh scan, once while the queue catches up
+        backfill = {"stall": True}
     configured = code.configured_code_namespaces()
     if {tuple(r) for r in configured} - {tuple(r) for r in await repos_cursor.read()}:
         backfill = {}  # a repository configured since: memories read before it now resolve
@@ -75,7 +77,8 @@ async def _link_writes(batch: int, result: PassResult) -> None:
             break
     if not backfill.get("done"):
         nxt = await code_links.backfill(tuple(backfill.get("after") or ()) or None, batch, result)
-        backfill = {"done": True} if nxt is None else {"after": list(nxt)}
+        stall = {"stall": True} if backfill.get("stall") else {}
+        backfill = {"done": True} if nxt is None else {"after": list(nxt), **stall}
     await backfill_cursor.write(backfill)
     swept = await code_links.sweep_erased(await sweep_cursor.read(), batch, result)
     await sweep_cursor.write(swept)

@@ -916,6 +916,38 @@ async def test_a_pass_behind_the_queue_ttl_that_fails_still_owes_its_backfill(
     assert [link["symbol"].rsplit("::", 1)[-1] for link in await _links(mid)] == ["q_two"]
 
 
+async def test_a_backfill_in_progress_behind_the_queue_ttl_starts_over(env, ch_client) -> None:
+    import json
+
+    from server.code.app import memory_links
+    from server.memory.store import code_links as store
+    from server.memory.workers.code_links import run_pass
+
+    c1 = env.commit({"src/q.py": "def q_one():\n    return 1\n\n\ndef q_two():\n    return 2\n"})
+    await _index(TRUNK, env, c1, ["src/q.py"])
+    mid = await _remember(MEM, "q", "`q_one` is one")
+    await _pass()
+    (ident,) = ch_client.query(
+        "SELECT org, namespace, agent, user_id, session_id, memory_key FROM loom.memory FINAL "
+        "WHERE memory_id = {m:UUID}",
+        parameters={"m": mid},
+    ).result_rows
+    await _remember(MEM, "q", "`q_two` is two")  # written while the worker was stopped
+    ch_client.command("TRUNCATE TABLE loom.memory_code_link_queue")  # aged out
+    horizon = await store.queue_horizon()
+    await memory_links.set_link_cursor("queue", json.dumps([horizon - 10**6, 0, *[""] * 6]))
+    # a scan in progress, already past this memory
+    past = {"after": [*ident[:5], ident[5] + "~"]}
+    await memory_links.set_link_cursor("backfill", json.dumps(past))
+    configured = memory_links.configured_code_namespaces()
+    await memory_links.set_link_cursor("repos", json.dumps(configured))
+    for _ in range(50):
+        await run_pass()
+        if await memory_links.link_cursor("backfill") == _BACKFILL_DONE:
+            break
+    assert [x["symbol"].rsplit("::", 1)[-1] for x in await _links(mid)] == ["q_two"]
+
+
 async def test_the_backfill_drops_links_of_a_memory_that_no_longer_names_a_repository(
     env, ch_client
 ) -> None:
