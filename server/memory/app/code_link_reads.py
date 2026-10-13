@@ -158,8 +158,8 @@ def _may_be(head: dict[str, Any], hit: Any, bound: dict[str, Any]) -> bool:
 
 async def hit_memories(input: Any, hits: list[Any]) -> list[dict[str, Any] | None]:
     """Each search hit's stored memory head, with its live links as `links`: the one
-    served memory under its key the hit may be; None when none or several are, or when
-    its key holds no links (no memory head is read for those)."""
+    served memory under its key the hit was read from; None when that is not known, or
+    when its key holds no links (no memory head is read for those)."""
     if not code.code_namespaces() or getattr(input, "scope", "private") != "private" or not hits:
         return [None] * len(hits)
     keys = [(str(getattr(h, "namespace", "") or input.namespace), str(h.memory_key)) for h in hits]
@@ -170,16 +170,37 @@ async def hit_memories(input: Any, hits: list[Any]) -> list[dict[str, Any] | Non
     for r in await store.served_heads(input.org, sorted(linked)):
         by_key[(str(r["namespace"]), str(r["memory_key"]))].append(r)
     bound = _bound(input)
-    out: list[dict[str, Any] | None] = []
-    for h, key in zip(hits, keys, strict=True):
-        fits = [r for r in by_key.get(key, []) if _may_be(r, h, bound)]
-        out.append(fits[0] if len(fits) == 1 else None)
+    fits = [
+        [r for r in by_key.get(key, []) if _may_be(r, h, bound)]
+        for h, key in zip(hits, keys, strict=True)
+    ]
+    out = await _read_from(input.org, hits, keys, fits)
     links: dict[str, list[LinkRow]] = defaultdict(list)
     for a in await store.for_memories(input.org, [m["mid"] for m in out if m]):
         links[a["memory_id"]].append(a)
     return [
         {**m, "links": current(input.org, m, links.get(m["mid"], []))} if m else None for m in out
     ]
+
+
+async def _read_from(
+    org: str, hits: list[Any], keys: list[tuple[str, str]], fits: list[list[dict[str, Any]]]
+) -> list[dict[str, Any] | None]:
+    """The one head each hit was read from: where several fit (a key several agents
+    share), the one whose identity the hit's vector row carries."""
+    read = [
+        (ns, key, int(getattr(h, "version", 0) or 0))
+        for h, (ns, key) in zip(hits, keys, strict=True)
+    ]
+    shared = [r for r, f in zip(read, fits, strict=True) if len(f) > 1 and r[2]]
+    owners = await store.embedding_identities(org, shared)
+    out: list[dict[str, Any] | None] = []
+    for r, f in zip(read, fits, strict=True):
+        if len(f) > 1:
+            who = owners.get(r, set())
+            f = [m for m in f if (str(m["agent"]), str(m["user_id"]), str(m["session_id"])) in who]
+        out.append(f[0] if len(f) == 1 else None)
+    return out
 
 
 async def annotate_hits(input: Any, hits: list[Any]) -> None:

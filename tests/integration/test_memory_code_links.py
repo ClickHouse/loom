@@ -160,7 +160,7 @@ async def _remember(namespace: str, key: str, value: str, **kw: Any) -> str:
         MemorySetInput(
             org=ORG,
             namespace=namespace,
-            agent="claude-code",
+            agent=kw.pop("agent", "claude-code"),
             memory_key=key,
             value=value,
             tags=[repo_tag(REMOTE), *kw.pop("tags", [])],
@@ -720,6 +720,31 @@ async def test_a_hit_carries_the_code_state_of_its_own_memory_only(env) -> None:
     assert (await _search(MEM, "fetch_lunch_rows", user_id="bob")).get("lunch") == "changed"
     own = await _search(MEM, "fetch_lunch_rows", user_id="bob", read_scope="own_user")
     assert own.get("lunch") == "changed"
+
+
+async def test_a_key_two_agents_share_carries_each_ones_own_code_state(env) -> None:
+    from server.memory.api.models_search import MemorySearchInput
+    from server.memory.app.search.handler import handle_memory_search
+
+    repo = env
+    src = "def fetch_dinner_rows():\n    return 1\n"
+    c1 = repo.commit({"src/d.py": src})
+    await _index(TRUNK, repo, c1, ["src/d.py"])
+    await _remember(MEM, "dinner", "alice likes ramen for dinner", agent="other")
+    await _remember(MEM, "dinner", "`fetch_dinner_rows` returns one")
+    await _pass()
+    c2 = repo.commit({"src/d.py": src.replace("return 1", "return 2")})
+    await _index(TRUNK, repo, c2, ["src/d.py"])
+    await _pass()
+    found = await handle_memory_search(
+        MemorySearchInput(org=ORG, namespace=MEM, agent="*", query="fetch_dinner_rows")
+    )
+    states = {
+        "ramen" in h.content_excerpt: h.code_state
+        for h in found.results
+        if h.memory_key == "dinner"
+    }
+    assert states == {False: "changed", True: ""}
 
 
 async def test_existing_memories_are_backfilled_on_the_first_pass(env, ch_client) -> None:

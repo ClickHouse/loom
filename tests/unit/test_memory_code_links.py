@@ -582,6 +582,7 @@ def served(monkeypatch):
     heads: list[dict[str, Any]] = []
     links: dict[str, list[dict[str, Any]]] = {}
     policy: dict[str, str] = {}
+    vectors: dict[tuple[str, str, int], tuple[str, str, str]] = {}
 
     async def served_heads(org, keys):
         return [h for h in heads if (h["namespace"], h["memory_key"]) in set(keys)]
@@ -599,14 +600,18 @@ def served(monkeypatch):
     async def linked_keys(org, keys):
         return {(h["namespace"], h["memory_key"]) for h in heads if links.get(h["mid"])} & set(keys)
 
+    async def embedding_identities(org, rows):
+        return {r: {vectors[r]} for r in rows if r in vectors}
+
     monkeypatch.setattr(code_links.store, "served_heads", served_heads)
     monkeypatch.setattr(code_links.store, "linked_keys", linked_keys)
+    monkeypatch.setattr(code_links.store, "embedding_identities", embedding_identities)
     monkeypatch.setattr(code_links.code, "code_namespaces", lambda: ["code-a"])
     monkeypatch.setattr(code_links.store, "for_memories", for_memories)
     monkeypatch.setattr(code_links.store, "code_change_policies", policies)
     monkeypatch.setattr(code_link_reads, "readable_code", readable)
     monkeypatch.setattr(code_link_reads, "code_namespace_for", lambda org, ns, tags: "code-a")
-    return SimpleNamespace(heads=heads, links=links, policy=policy)
+    return SimpleNamespace(heads=heads, links=links, policy=policy, vectors=vectors)
 
 
 def _link(mid: str, state: str, complete: int = 1) -> dict[str, Any]:
@@ -629,6 +634,18 @@ async def test_a_hit_is_the_one_stored_memory_its_identity_allows(served) -> Non
     either = [_hit("k")]
     await code_link_reads.annotate_hits(_search(), either)  # two memories fit: no annotation
     assert either[0].code_state == ""
+
+
+@pytest.mark.asyncio
+async def test_a_key_several_agents_share_is_the_memory_its_vector_row_names(served) -> None:
+    served.heads += [_row("a1", memory_key="k", agent="a1"), _row("a2", memory_key="k", agent="a2")]
+    served.links.update(a1=[_link("a1", "fresh")], a2=[_link("a2", "missing")])
+    served.vectors[("agent-a", "k", 7)] = ("a1", "-", "-")
+    served.vectors[("agent-a", "k", 9)] = ("a2", "-", "-")
+    hits = [_hit("k", version=7), _hit("k", version=9), _hit("k", version=8)]
+    await code_link_reads.annotate_hits(_search(), hits)
+    # a2's code is all gone: its hit goes; a version no vector row has stays unannotated
+    assert [(h.version, h.code_state) for h in hits] == [(7, "fresh"), (8, "")]
 
 
 @pytest.mark.asyncio

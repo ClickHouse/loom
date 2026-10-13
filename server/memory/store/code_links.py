@@ -620,3 +620,31 @@ async def code_change_policies(
         params={"org": org, "nss": sorted(set(namespaces))},
     )
     return {str(r["namespace"]): str(r["code_change_policy"] or "") for r in rows}
+
+
+async def embedding_identities(
+    org: str, rows: Sequence[tuple[str, str, int]], *, ch: _CHClient | None = None
+) -> dict[tuple[str, str, int], set[tuple[str, str, str]]]:
+    """(namespace, memory_key, version) -> the (agent, user_id, session_id) of the
+    memory_embeddings rows at that version: whose memory a search hit was read from."""
+    if not rows:
+        return {}
+    found = await (ch or _default_client()).query_all(
+        "SELECT DISTINCT namespace, memory_key, version, agent, user_id, session_id "
+        "FROM loom.memory_embeddings WHERE org = {org:String} "
+        "AND namespace IN {nss:Array(String)} AND memory_key IN {mks:Array(String)} "
+        "AND version IN {vs:Array(UInt64)} "
+        "AND (namespace, memory_key, version) IN {keys:Array(Tuple(String, String, UInt64))}",
+        params={
+            "org": org,
+            "nss": sorted({r[0] for r in rows}),
+            "mks": sorted({r[1] for r in rows}),
+            "vs": sorted({r[2] for r in rows}),
+            "keys": sorted(set(rows)),
+        },
+    )
+    out: dict[tuple[str, str, int], set[tuple[str, str, str]]] = defaultdict(set)
+    for r in found:
+        key = (str(r["namespace"]), str(r["memory_key"]), int(r["version"]))
+        out[key].add((str(r["agent"]), str(r["user_id"]), str(r["session_id"])))
+    return dict(out)
