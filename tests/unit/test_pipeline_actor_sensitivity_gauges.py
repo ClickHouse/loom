@@ -496,3 +496,41 @@ async def test_a_failed_high_retire_leaves_the_row_unlabelled_for_the_next_pass(
     res = await sweep.apply([cand], ch=_CH())
     assert written == [] and res.relabelled == 0
     assert len(res.errors) == 1 and "insert timed out" in res.errors[0]
+
+
+@pytest.mark.asyncio
+async def test_a_high_relabel_retires_the_keys_chunks_again_after_the_label(
+    monkeypatch,
+) -> None:
+    """A chunk writer re-checks the head after its insert: chunks that landed between
+    the fence and the relabel saw an unlabelled head, so the sweep retires the key's
+    chunks once more after the relabel is in."""
+    from server.memory import store as memory_repo
+    from server.memory.app import high_fence
+
+    order: list[str] = []
+
+    async def _write(org, ids, update, *, ch=None):
+        order.append("relabel")
+        return 1
+
+    async def _retire(items, *, ch=None):
+        order.append("retire")
+        return 1
+
+    async def _fence(items, *, model, ch=None):
+        order.append("fence")
+        return 1
+
+    async def _chunks(**_k):
+        order.append("chunks")
+        return 0
+
+    monkeypatch.setattr(memory_repo, "write_versions_by_ids", _write)
+    monkeypatch.setattr(memory_repo, "retire_vectors_for_keys", _retire)
+    monkeypatch.setattr(memory_repo, "fence_vectors", _fence)
+    monkeypatch.setattr(high_fence, "tombstone_set_chunks", _chunks)
+    cand = sweep.SweepCandidate("1", "o", "n", "a", "-", "-", "k", "high", ("credential",))
+    res = await sweep.apply([cand], ch=_CH())
+    assert not res.errors
+    assert order == ["retire", "fence", "chunks", "relabel", "chunks"]

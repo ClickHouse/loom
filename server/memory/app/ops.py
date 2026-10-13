@@ -257,6 +257,26 @@ def _reindex_texts(r: dict[str, Any]) -> tuple[str, str, str]:
     )
 
 
+async def _retire_reindexed_rows_no_longer_served(rows: list[dict[str, Any]], *, ch: Any) -> None:
+    """A write that made a key 'high' (or unsearchable, or deleted it) between the
+    reindex's reads can leave the reindexed vector above its fence. The heads are
+    re-read strongly after the insert, and such a key's vectors are retired at a
+    version drawn now, above the reindexed row."""
+    import server.memory.store as memory_repo
+    from server.memory.domain.memory_types import is_embedded
+
+    keys = [memory_repo.embedding_key(r) for r in rows]
+    heads = await memory_repo.memory_rows_by_identity_keys(keys, ch=ch, sequential=True)
+    stale = [
+        k
+        for k in keys
+        if (head := heads.get(k)) is None or not is_embedded(head.memory_type, head.sensitivity)
+    ]
+    if stale:
+        version = memory_repo.next_version()
+        await memory_repo.retire_vectors_for_keys([(k, version) for k in stale], ch=ch)
+
+
 async def handle_memory_reindex(input: MemoryReindexInput) -> MemoryReindexOutput:
     """Re-embed a namespace's memories whose vectors were made by another embedding model (or all of
     them with `force`)."""
@@ -317,6 +337,7 @@ async def handle_memory_reindex(input: MemoryReindexInput) -> MemoryReindexOutpu
             )
         )
     await memory_repo.insert_embedding_rows(embedding_rows, ch=ch)
+    await _retire_reindexed_rows_no_longer_served(embedding_rows, ch=ch)
 
     return MemoryReindexOutput(
         processed=len(embedding_rows),

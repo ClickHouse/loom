@@ -701,3 +701,39 @@ async def test_chunks_that_land_after_the_key_turned_high_are_tombstoned(
     assert await sc.write_set_chunks(inp, ch=_CH(), embedder=_Embedder()) == 0
     # once for the previous value's chunks, once for what this write just inserted
     assert retired == ["k", "k"]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_head_read_retires_the_chunks_it_just_wrote(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The re-check is a security check: when it cannot read the head, the chunks
+    this call inserted are retired (and only those), then the error propagates."""
+    calls: list[dict[str, Any]] = []
+
+    async def _boom(*_a: Any, **_k: Any) -> bool:
+        raise RuntimeError("replica down")
+
+    async def _tombstone(**kw: Any) -> int:
+        calls.append(kw)
+        return 1
+
+    class _CH:
+        async def insert(self, *_a: Any, **_k: Any) -> None:
+            return None
+
+    class _Embedder:
+        model_name = "fake"
+
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            return [[0.1, 0.2] for _ in texts]
+
+    monkeypatch.setattr(sc, "_head_still_embedded", _boom)
+    monkeypatch.setattr(sc, "tombstone_set_chunks", _tombstone)
+    inp = MemorySetInput(
+        org="o", namespace="n", agent="a", memory_key="k", value="word " * (EXCERPT_LIMIT // 2)
+    )
+    with pytest.raises(RuntimeError):
+        await sc.write_set_chunks(inp, ch=_CH(), embedder=_Embedder())
+    retire = calls[-1]
+    assert retire["only"] and retire["strong"] is True

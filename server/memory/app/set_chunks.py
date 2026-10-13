@@ -105,7 +105,7 @@ def _sha_text(value: Any) -> str:
 
 
 async def _live_chunks(
-    ch: Any, *, org: str, namespace: str, memory_key: str, user_id: str
+    ch: Any, *, org: str, namespace: str, memory_key: str, user_id: str, strong: bool = False
 ) -> list[dict[str, Any]]:
     """The key's live memory.set chunks that belong to `user_id`: a primary-key
     read under FINAL so a chunk already tombstoned by an earlier write is not
@@ -124,6 +124,7 @@ async def _live_chunks(
           AND user_id IN ('-', {{uid:String}})
           AND tombstoned_at IS NULL
         ORDER BY chunk_index ASC
+        {_sequential() if strong else ""}
         """,
         params={
             "org": org,
@@ -144,24 +145,27 @@ async def tombstone_set_chunks(
     user_id: str,
     ch: Any = None,
     keep: set[tuple[int, str]] | frozenset[tuple[int, str]] = frozenset(),
+    only: set[tuple[int, str]] | frozenset[tuple[int, str]] | None = None,
     now: datetime | None = None,
+    strong: bool = False,
 ) -> int:
     """Tombstone `user_id`'s live memory.set chunks of the key (and the legacy
     '-' ones) except those in `keep` (`(chunk_index, content_sha256)` pairs the
-    caller is about to re-insert live). Each tombstone is a replacing row
+    caller is about to re-insert live), or only those in `only` when given. `strong`
+    reads them with sequential consistency. Each tombstone is a replacing row
     (`_tombstone_row`). Returns the number of tombstones written."""
     if ch is None:
         from server.core.ch import get_client
 
         ch = get_client()
     rows = await _live_chunks(
-        ch, org=org, namespace=namespace, memory_key=memory_key, user_id=user_id
+        ch, org=org, namespace=namespace, memory_key=memory_key, user_id=user_id, strong=strong
     )
     stamp = (now or datetime.now(UTC)).replace(tzinfo=None)
     tombstones: list[dict[str, Any]] = []
     for r in rows:
-        sha = _sha_text(r.get("content_sha256"))
-        if (int(r.get("chunk_index") or 0), sha) in keep:
+        ident = (int(r.get("chunk_index") or 0), _sha_text(r.get("content_sha256")))
+        if ident in keep or (only is not None and ident not in only):
             continue
         tombstones.append(_tombstone_row(r, org=org, namespace=namespace, stamp=stamp))
     if tombstones:
@@ -411,19 +415,32 @@ async def write_set_chunks(
         rows,
         settings={"async_insert": 0, "wait_for_async_insert": 1},
     )
-    if not await _head_still_embedded(input, ch=ch):
-        # A newer write made the key 'high' (or unsearchable) or deleted it while these
-        # chunks were embedding. It inserted its row before tombstoning the key's chunks,
-        # so either its tombstone saw these or this strong read sees its row.
-        await tombstone_set_chunks(
-            org=input.org,
-            namespace=input.namespace,
-            memory_key=input.memory_key,
-            user_id=str(getattr(input, "user_id", "") or "-"),
-            ch=ch,
-        )
-        return 0
-    return len(rows)
+    # A newer write may have made the key 'high' (or unsearchable) or deleted it while
+    # these chunks were embedding. It inserts its row before tombstoning the key's
+    # chunks, so either its tombstone saw these or this strong read sees its row. A
+    # failed read is treated as "not served": the chunks are retired either way.
+    served = False
+    try:
+        served = await _head_still_embedded(input, ch=ch)
+    finally:
+        if not served:
+            await tombstone_set_chunks(  # only what this call wrote: a newer value's stay
+                org=input.org,
+                namespace=input.namespace,
+                memory_key=input.memory_key,
+                user_id=str(getattr(input, "user_id", "") or "-"),
+                ch=ch,
+                only=keep,
+                now=now,
+                strong=True,
+            )
+    return len(rows) if served else 0
+
+
+def _sequential() -> str:
+    from server.memory.store import _SEQUENTIAL, read_your_writes_enabled
+
+    return _SEQUENTIAL if read_your_writes_enabled() else ""
 
 
 async def _head_still_embedded(input: Any, *, ch: Any) -> bool:

@@ -125,7 +125,10 @@ async def test_fence_high_fences_vectors_and_tombstones_each_keys_chunks(
         fenced.extend(items)
         return len(items)
 
-    async def _chunks(*, org: str, namespace: str, memory_key: str, user_id: str, ch: Any) -> int:
+    async def _chunks(
+        *, org: str, namespace: str, memory_key: str, user_id: str, ch: Any, strong: bool
+    ) -> int:
+        assert strong  # sequentially consistent: a chunk insert on another replica is seen
         chunks.append((org, namespace, memory_key, user_id))
         return 1
 

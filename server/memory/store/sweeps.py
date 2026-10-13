@@ -303,9 +303,12 @@ async def find_memories_to_reindex(
     # Each row is written one above the newest of its memory row and its key's rows of
     # this model (an embedding-only re-emit or a stub tombstone can sit above the
     # memory row), not at a version drawn after the embed call: a 'high' write that
-    # lands meanwhile fences above it. One keyed read for the batch.
-    keys = [
-        tuple(str(r[c]) for c in ("agent", "user_id", "session_id", "memory_key")) for r in rows
+    # lands meanwhile fences above it. One keyed read for the batch. That read can
+    # also see a high write's fence landing after the row read; the reindex re-reads
+    # the heads after its insert for that (`memory.reindex`).
+    keys: list[tuple[str, str, str, str]] = [
+        (str(r["agent"]), str(r["user_id"]), str(r["session_id"]), str(r["memory_key"]))
+        for r in rows
     ]
     newest = await ch.query_all(
         """

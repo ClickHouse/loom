@@ -18,13 +18,21 @@ from server.memory.app.set_chunks import tombstone_set_chunks
 
 
 async def fence_high(items: list[tuple[Any, int]], *, ch: Any = None) -> None:
-    """`items` are (identity key, version of the high memory row)."""
+    """`items` are (identity key, version of the high memory row). Call it after the
+    high row is in: a chunk writer still embedding re-reads the head after its insert,
+    and only a head already labelled high makes it retire its own chunks."""
     import server.memory.store as memory_repo
 
     if not items:
         return
     await memory_repo.fence_vectors(items, model=get_embedder().model_name, ch=ch)
-    for key, _version in items:
+    await tombstone_chunks_of([key for key, _version in items], ch=ch)
+
+
+async def tombstone_chunks_of(keys: list[Any], *, ch: Any = None) -> None:
+    """Tombstone each key's live memory.set chunks, read with sequential consistency
+    so a chunk insert another replica took is seen."""
+    for key in keys:
         await tombstone_set_chunks(
-            org=key[0], namespace=key[1], memory_key=key[5], user_id=key[3], ch=ch
+            org=key[0], namespace=key[1], memory_key=key[5], user_id=key[3], ch=ch, strong=True
         )

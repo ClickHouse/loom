@@ -891,3 +891,148 @@ async def test_a_deleted_memory_restores_searchable(ch: Any) -> None:
                 f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
                 params={"o": ORG, "n": ns},
             )
+
+
+class _ProxyBeforeMaxRead:
+    """The client, running `hook` once just before reindex's max(version) read."""
+
+    def __init__(self, inner: Any, hook: Any) -> None:
+        self._inner, self._hook, self.fired = inner, hook, False
+
+    async def query_all(self, sql: str, *a: Any, **kw: Any) -> Any:
+        if "max(version) AS ev" in sql and not self.fired:
+            self.fired = True
+            await self._hook()
+        return await self._inner.query_all(sql, *a, **kw)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+async def test_a_high_relabel_between_the_reindex_reads_leaves_no_vector(
+    ch: Any, monkeypatch: Any
+) -> None:
+    """The sweep relabels the key high between reindex's row read and its max(version)
+    read: the max sees the fence, so the reindexed row lands above it; the
+    post-insert head re-check retires it."""
+    import server.core.ch as ch_mod
+    from server.memory.api.models_admin import MemoryReindexInput
+    from server.memory.app import ops, sensitivity_sweep
+
+    ns = f"itest-{uuid.uuid4().hex[:12]}"
+    key = f"r36_{uuid.uuid4().hex[:6]}"
+    value = f"the {key} vault password is hunter2"
+
+    async def relabel() -> None:
+        row = await ch.query_one(
+            "SELECT toString(memory_id) AS id FROM loom.memory FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND memory_key = {k:String}",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        cand = sensitivity_sweep.SweepCandidate(
+            row["id"], ORG, ns, AGENT, "-", "-", key, "high", ("credential",)
+        )
+        res = await sensitivity_sweep.apply([cand], ch=ch)
+        assert res.errors == [] and res.high == 1
+
+    try:
+        await _memory_only_row(ch, ns, key, value)
+        proxy = _ProxyBeforeMaxRead(ch, relabel)
+        monkeypatch.setattr(ch_mod, "get_client", lambda: proxy)
+        out = await ops.handle_memory_reindex(MemoryReindexInput(org=ORG, namespace=ns))
+        assert proxy.fired
+        live = await ch.query_one(
+            "SELECT count() AS n FROM loom.memory_embeddings FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND memory_key = {k:String}"
+            " AND tombstoned_at IS NULL AND embedding_dim > 0",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        head = await ch.query_one(
+            "SELECT sensitivity FROM loom.memory FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND memory_key = {k:String}",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        assert out.processed == 1
+        assert head["sensitivity"] == "high"
+        assert int(live["n"]) == 0, "live vector under a high head"
+    finally:
+        for table in ("memory", "memory_embeddings"):
+            await ch.execute(
+                f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
+                params={"o": ORG, "n": ns},
+            )
+
+
+async def test_chunks_landing_between_the_sweeps_fence_and_its_relabel_are_retired(
+    ch: Any, monkeypatch: Any
+) -> None:
+    """The sweep fences (and retires chunks) before it relabels; a long set's chunks
+    land in between and see an unlabelled head. The sweep retires the key's chunks
+    again once the label is in."""
+    import server.memory.store as memory_repo
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import sensitivity_sweep, set_chunks, write
+    from server.memory.domain.excerpt import EXCERPT_LIMIT
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_sensitivity_autodetect", False)
+    ns = f"itest-{uuid.uuid4().hex[:12]}"
+    key = f"r36c_{uuid.uuid4().hex[:6]}"
+    ident = {"org": ORG, "namespace": ns, "agent": AGENT}
+    secret = "sk-proj-" + uuid.uuid4().hex + uuid.uuid4().hex[:8]
+    sentence = f"The {key} root token is {secret} keep it safe. "
+    long_val = sentence * (EXCERPT_LIMIT // len(sentence) + 4)
+
+    c_entered, c_gate = asyncio.Event(), asyncio.Event()
+    s_entered, s_gate = asyncio.Event(), asyncio.Event()
+    real_embed_chunks = set_chunks._embed_chunks
+    real_wv = memory_repo.write_versions_by_ids
+
+    async def paused_embed_chunks(embedder: Any, chunks: list[str]) -> list[list[float]]:
+        c_entered.set()
+        await c_gate.wait()
+        return await real_embed_chunks(embedder, chunks)
+
+    async def paused_wv(*a: Any, **kw: Any) -> int:
+        s_entered.set()
+        await s_gate.wait()
+        return await real_wv(*a, **kw)
+
+    monkeypatch.setattr(set_chunks, "_embed_chunks", paused_embed_chunks)
+    monkeypatch.setattr(memory_repo, "write_versions_by_ids", paused_wv)
+    try:
+        task = asyncio.create_task(
+            write.handle_memory_set(MemorySetInput(**ident, memory_key=key, value=long_val))
+        )
+        await asyncio.wait_for(c_entered.wait(), 30)
+        row = await ch.query_one(
+            "SELECT toString(memory_id) AS id, sensitivity FROM loom.memory FINAL"
+            " WHERE org = {o:String} AND namespace = {n:String} AND memory_key = {k:String}",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        assert row["sensitivity"] == ""
+        cand = sensitivity_sweep.SweepCandidate(
+            row["id"], ORG, ns, AGENT, "-", "-", key, "high", ("credential",)
+        )
+        sweep = asyncio.create_task(sensitivity_sweep.apply([cand], ch=ch))
+        await asyncio.wait_for(s_entered.wait(), 30)  # fenced, not yet relabelled
+        c_gate.set()
+        await asyncio.wait_for(task, 30)
+        s_gate.set()
+        res = await asyncio.wait_for(sweep, 30)
+        assert res.errors == [] and res.high == 1
+        live = await ch.query_one(
+            "SELECT count() AS n FROM loom.memory_chunks FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND parent_memory_key = {k:String}"
+            " AND tombstoned_at IS NULL",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        assert int(live["n"]) == 0
+    finally:
+        c_gate.set()
+        s_gate.set()
+        for table in ("memory", "memory_embeddings", "entity_vectors", "memory_chunks"):
+            await ch.execute(
+                f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
+                params={"o": ORG, "n": ns},
+            )

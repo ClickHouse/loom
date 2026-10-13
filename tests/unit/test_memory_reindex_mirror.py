@@ -26,6 +26,8 @@ class _CH:
     async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
         self.sql.append(sql)
         self.params.append(params or {})
+        if "max(version) AS ev" in sql:
+            return []  # no embedding row of the key yet
         return self.rows
 
     async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
@@ -71,6 +73,7 @@ def _memory_mirror_row() -> dict[str, Any]:
         "invalid_at": t,
         "verified": 1,
         "created_at": t,
+        "version": 5,
     }
 
 
@@ -86,6 +89,13 @@ def _run_with(monkeypatch: Any, ch: _CH, embedder: Any, **inp: Any) -> Any:
 
     monkeypatch.setattr(server.core.ch, "get_client", lambda: ch)
     monkeypatch.setattr(server.embedding, "get_embedder", lambda: embedder)
+
+    async def _heads_unchanged(*_a: Any, **_k: Any) -> None:
+        return None  # the post-insert head check has its own test
+
+    monkeypatch.setattr(
+        "server.memory.app.ops._retire_reindexed_rows_no_longer_served", _heads_unchanged
+    )
     return asyncio.run(handle_memory_reindex(MemoryReindexInput(org="o", namespace="n", **inp)))
 
 
@@ -97,8 +107,10 @@ def test_a_reindexed_row_carries_its_memory_rows_columns(monkeypatch: Any) -> No
     ((table, (row,)),) = ch.inserted
     assert table == "loom.memory_embeddings"
     assert set(row) == set(mr.EMBEDDING_PERSISTED_COLS)
-    for col in src.keys() - {"content_excerpt"}:
+    for col in src.keys() - {"content_excerpt", "version"}:
         assert row[col] == src[col], col
+    # one above its memory row's version (no embedding row of the key yet)
+    assert row["version"] == src["version"] + 1
     # memory.set's own texts: its excerpt, and a key-axis vector beside the value's
     from server.memory.domain.embed_text import embedding_texts
 
@@ -108,7 +120,7 @@ def test_a_reindexed_row_carries_its_memory_rows_columns(monkeypatch: Any) -> No
     if key_text:
         assert row["memory_key_embedding"] == [0.1, 0.2, 0.3]
         assert row["memory_key_embedding_dim"] == 3
-    assert row["embedding_model"] == "fake-model" and row["version"] > 0
+    assert row["embedding_model"] == "fake-model"
 
 
 def test_the_read_skips_high_sensitivity_rows_and_current_keys_unless_forced(
@@ -183,3 +195,30 @@ def test_a_procedural_row_is_reindexed_from_its_procedure_text() -> None:
     )
     assert got == embedding_texts("procedural", proc, json.dumps(proc), "p")
     assert "cold cache" in got[1] and "{" not in got[1]
+
+
+def test_a_key_made_high_during_the_reindex_has_its_vectors_retired(monkeypatch: Any) -> None:
+    """The heads are re-read after the insert: a key whose head is now 'high' (or
+    gone) is retired at a version drawn then, above the reindexed row."""
+    from types import SimpleNamespace
+
+    from server.memory.app import ops
+
+    retired: list[tuple[Any, int]] = []
+
+    async def _heads(keys: Any, **_k: Any) -> dict[Any, Any]:
+        return {
+            keys[0]: SimpleNamespace(memory_type="semantic", sensitivity="high"),
+            keys[1]: SimpleNamespace(memory_type="semantic", sensitivity=""),
+        }  # keys[2] is gone
+
+    async def _retire(items: Any, **_k: Any) -> int:
+        retired.extend(items)
+        return len(items)
+
+    monkeypatch.setattr(mr, "memory_rows_by_identity_keys", _heads)
+    monkeypatch.setattr(mr, "retire_vectors_for_keys", _retire)
+    rows = [{**_memory_mirror_row(), "memory_key": k, "version": 6} for k in ("k1", "k2", "k3")]
+    asyncio.run(ops._retire_reindexed_rows_no_longer_served(rows, ch=object()))
+    assert [k[5] for k, _ in retired] == ["k1", "k3"]
+    assert all(v > 6 for _, v in retired)
