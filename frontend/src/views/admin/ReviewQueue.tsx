@@ -18,7 +18,7 @@ import {
   type LearningEntry,
   type LearningStatus,
 } from "../../api";
-import { useIdentity } from "../../lib/state";
+import { useIdentity, useStore } from "../../lib/state";
 import { Skeleton } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
 import { ScopeBadge } from "../../components/ScopeBadge";
@@ -26,7 +26,8 @@ import { toast } from "../../components/Toast";
 import { confirmAction } from "../../components/ConfirmDialog";
 import { relativeTime, formatValue, truncate, humanizeError } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
-import { canWrite, useNamespaceRole } from "../../lib/namespaceRole";
+import { useNamespaceRole } from "../../lib/namespaceRole";
+import { canCall } from "../../lib/canCall";
 import { PageContainer } from "../../layout/PageContainer";
 
 /**
@@ -57,8 +58,12 @@ export function ReviewQueue() {
   const [probedExceptions, setProbedExceptions] = useState<AllowlistRow[] | null>(null);
   const hasLearnings = (probedLearnings?.length ?? 0) > 0;
   const hasExceptions = (probedExceptions?.length ?? 0) > 0;
-  const [probedAuto, setProbedAuto] = useState<AutoResolvedRow[] | null>(null);
-  const hasAuto = (probedAuto?.length ?? 0) > 0;
+  const [probedAuto, setProbedAuto] = useState<AutoResolvedPage | null>(null);
+  const hasAuto = (probedAuto?.rows.length ?? 0) > 0;
+  // audit.list is asked only by a role known to reach it.
+  const whoami = useStore((s) => s.whoami);
+  const role = useNamespaceRole(identity.namespace);
+  const auditReadable = canCall("audit.list", role, whoami);
   // A namespace switch starts from Conflicts: the previous namespace's probes (and a tab
   // they revealed) must not outlive it, or a namespace with neither sub-tab strands the
   // viewer on a hidden panel.
@@ -79,13 +84,20 @@ export function ReviewQueue() {
           if (live()) setProbedExceptions(r.rows || []);
         })
         .catch(() => {});
+    },
+    [identity.org, identity.namespace],
+  );
+  useAbortableEffect(
+    (signal, live) => {
+      setProbedAuto(null);
+      if (!auditReadable) return;
       listAutoResolved({ org: identity.org, namespace: identity.namespace }, { signal })
         .then((r) => {
-          if (live()) setProbedAuto(r.rows || []);
+          if (live()) setProbedAuto({ rows: r.rows || [], next_cursor: r.next_cursor });
         })
         .catch(() => {});
     },
-    [identity.org, identity.namespace],
+    [identity.org, identity.namespace, auditReadable],
   );
 
   return (
@@ -133,7 +145,7 @@ export function ReviewQueue() {
         )}
         {hasAuto && probedAuto && (
           <Tabs.Content value="auto" className="outline-none">
-            <AutoResolvedPanel rows={probedAuto} />
+            <AutoResolvedPanel initial={probedAuto} />
           </Tabs.Content>
         )}
         {hasExceptions && (
@@ -433,66 +445,134 @@ function autoResolveReason(reason: string, label?: string): string {
     case "newest_wins_contradiction":
     case "same_key_newest_wins":
       return "Newer write wins (namespace policy)";
-    case "dedup_sweep":
-      return "Duplicate of another memory";
     default:
       return "Retired automatically";
   }
 }
 
-function AutoResolvedPanel({ rows }: { rows: AutoResolvedRow[] }) {
+interface AutoResolvedPage {
+  rows: AutoResolvedRow[];
+  next_cursor: string | null;
+}
+
+/** What became of a row after the Undo: restored, or `memory.restore` found nothing
+ *  superseded under its key (restored by someone else, rewritten since). */
+type UndoOutcome = "restored" | "gone";
+
+function AutoResolvedPanel({ initial }: { initial: AutoResolvedPage }) {
   const identity = useIdentity();
+  const whoami = useStore((s) => s.whoami);
   const role = useNamespaceRole(identity.namespace);
-  // memory_id -> when it was last restored from superseded.
-  const [undone, setUndone] = useState<Map<string, string>>(new Map());
-  const [restored, setRestored] = useState<Set<string>>(new Set());
-  const [busy, setBusy] = useState<string | null>(null);
+  const canRestore = canCall("memory.restore", role, whoami);
+  const [rows, setRows] = useState<AutoResolvedRow[]>(initial.rows);
+  const [cursor, setCursor] = useState<string | null>(initial.next_cursor);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // memory_id -> when it was last restored from superseded; null until loaded.
+  const [undone, setUndone] = useState<Map<string, string> | null>(null);
+  const [outcome, setOutcome] = useState<Map<string, UndoOutcome>>(new Map());
+  const [busy, setBusy] = useState<Set<string>>(new Set());
+  // Restores since the oldest retirement on show; re-read when "Load more" reaches back.
+  const oldest = rows.reduce((m, r) => (m === "" || r.ts < m ? r.ts : m), "");
 
   useAbortableEffect(
     (signal, live) => {
-      setRestored(new Set());
-      listUnsuperseded({ org: identity.org, namespace: identity.namespace }, { signal })
+      if (!oldest) return;
+      setUndone(null);
+      listUnsuperseded({ org: identity.org, namespace: identity.namespace }, { since: oldest, signal })
         .then((m) => {
           if (live()) setUndone(m);
         })
-        .catch(() => {});
+        .catch(() => {
+          // Unknown: offer Undo; restoring a live row answers restored=false.
+          if (live()) setUndone(new Map());
+        });
     },
-    [identity.org, identity.namespace],
+    [identity.org, identity.namespace, oldest],
   );
 
   // A row retired again after an undo is retired, so the undo must be the later event.
-  const isRestored = (r: AutoResolvedRow) => {
-    if (restored.has(r.memory_id)) return true;
-    const at = undone.get(r.memory_id);
+  const undoneBefore = (r: AutoResolvedRow) => {
+    const at = undone?.get(r.memory_id);
     return at != null && at >= r.ts;
   };
 
+  const loadMore = async () => {
+    if (!cursor) return;
+    setLoadingMore(true);
+    try {
+      const page = await listAutoResolved({ org: identity.org, namespace: identity.namespace }, { cursor });
+      setRows((rs) => [...rs, ...page.rows]);
+      setCursor(page.next_cursor);
+    } catch (e) {
+      toast(`Failed: ${humanizeError(e)}`, "error");
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  const setBusyFor = (id: string, on: boolean) =>
+    setBusy((s) => {
+      const next = new Set(s);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+
   const undo = async (r: AutoResolvedRow) => {
-    setBusy(r.memory_id);
+    if (busy.has(r.memory_id)) return;
+    setBusyFor(r.memory_id, true);
     try {
       const out = await restoreMemory(
         { org: identity.org, namespace: identity.namespace, agent: r.agent || "-" },
         r.memory_key,
         { user_id: r.user_id, session_id: r.session_id },
       );
-      if (out.restored) {
-        setRestored((s) => new Set(s).add(r.memory_id));
-        toast("Restored", "ok");
-      } else {
-        toast("Nothing to restore — the row is live or has changed since", "info");
-      }
+      setOutcome((m) => new Map(m).set(r.memory_id, out.restored ? "restored" : "gone"));
+      if (out.restored) toast("Restored", "ok");
     } catch (e) {
       toast(`Failed: ${humanizeError(e)}`, "error");
     } finally {
-      setBusy(null);
+      setBusyFor(r.memory_id, false);
     }
+  };
+
+  const status = (r: AutoResolvedRow) => {
+    const o = outcome.get(r.memory_id);
+    if (o === "gone") {
+      return <span className="text-sm text-[var(--color-text-muted)] px-2 py-1.5">No longer retired</span>;
+    }
+    if (o === "restored" || undoneBefore(r)) {
+      return (
+        <span className="inline-flex items-center gap-1 text-sm text-[var(--color-success)] px-2 py-1.5">
+          <Check size={13} /> Restored
+        </span>
+      );
+    }
+    if (!canRestore) return null;
+    if (undone === null) {
+      return (
+        <span className="text-sm text-[var(--color-text-muted)] px-2 py-1.5" aria-busy="true">
+          …
+        </span>
+      );
+    }
+    return (
+      <button
+        onClick={() => undo(r)}
+        disabled={busy.has(r.memory_id)}
+        aria-label={`Undo retirement of ${r.memory_key}`}
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border border-[var(--color-border-strong)] rounded-md hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+      >
+        <Undo2 size={13} /> Undo
+      </button>
+    );
   };
 
   return (
     <div>
       <p className="text-sm text-[var(--color-text-muted)] mb-3 max-w-2xl">
-        Memories Loom retired on its own. They no longer come back in recall, but history keeps them. Undo brings one
-        back.
+        Memories Loom retired on its own in the last 30 days. They no longer come back in recall, but history keeps
+        them. Undo brings one back.
       </p>
       <div className="space-y-1.5">
         {rows.map((r) => (
@@ -508,25 +588,19 @@ function AutoResolvedPanel({ rows }: { rows: AutoResolvedRow[] }) {
                 {relativeTime(r.ts)}
               </div>
             </div>
-            {isRestored(r) ? (
-              <span className="inline-flex items-center gap-1 text-sm text-[var(--color-success)] px-2 py-1.5">
-                <Check size={13} /> Restored
-              </span>
-            ) : (
-              canWrite(role) && (
-                <button
-                  onClick={() => undo(r)}
-                  disabled={busy === r.memory_id}
-                  aria-label={`Undo retirement of ${r.memory_key}`}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border border-[var(--color-border-strong)] rounded-md hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-                >
-                  <Undo2 size={13} /> Undo
-                </button>
-              )
-            )}
+            {status(r)}
           </div>
         ))}
       </div>
+      {cursor && (
+        <button
+          onClick={loadMore}
+          disabled={loadingMore}
+          className="mt-3 px-3 py-1.5 text-sm font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] rounded-md disabled:opacity-50"
+        >
+          {loadingMore ? "Loading…" : "Load more"}
+        </button>
+      )}
     </div>
   );
 }

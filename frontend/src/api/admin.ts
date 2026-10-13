@@ -697,8 +697,8 @@ export interface AuditEntry {
 
 export async function listAuditLog(
   id: Pick<Identity, "org"> & { namespace?: string },
-  opts: { limit?: number; event_type?: string; since?: string; fields?: string[] } & RequestOpts = {},
-): Promise<{ rows: AuditEntry[] }> {
+  opts: { limit?: number; event_type?: string; since?: string; fields?: string[]; cursor?: string } & RequestOpts = {},
+): Promise<{ rows: AuditEntry[]; next_cursor?: string | null }> {
   const body: Record<string, unknown> = {
     org: id.org,
     limit: opts.limit ?? 100,
@@ -712,6 +712,8 @@ export async function listAuditLog(
   // all, regular users to their accessible namespaces).
   if (id.namespace) body["namespace"] = id.namespace;
   if (opts.event_type) body["event_type"] = opts.event_type;
+  // The previous page's `next_cursor`: the next, older page.
+  if (opts.cursor) body["cursor"] = opts.cursor;
   return post("/v1/audit.list", body, opts.signal);
 }
 
@@ -723,8 +725,7 @@ export type AutoResolveReason =
   | "same_key_newest_wins"
   | "refines"
   | "newest_wins_contradiction"
-  | "value_update"
-  | "dedup_sweep";
+  | "value_update";
 
 /** One retired row of a `memory.auto_supersede` audit row: ids, keys and identity, no value. */
 export interface AutoResolvedRow {
@@ -742,6 +743,9 @@ export interface AutoResolvedRow {
   ts: string;
 }
 
+/** How far back the Auto-resolved tab looks by default. */
+export const AUTO_RESOLVED_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
 function parseSubject(raw: string): Record<string, unknown> {
   try {
     const v: unknown = JSON.parse(raw);
@@ -753,25 +757,28 @@ function parseSubject(raw: string): Record<string, unknown> {
 
 const str = (v: unknown): string => (v == null ? "" : String(v));
 
-/** The memories Loom retired on its own in a namespace, newest first: one row per retired
- *  memory, flattened out of the `memory.auto_supersede` audit rows. */
+/** One page of the memories Loom retired on its own in a namespace, newest first: one row
+ *  per retired memory, flattened out of the `memory.auto_supersede` audit rows. `since`
+ *  defaults to 30 days back; pass the returned `next_cursor` as `cursor` for the next,
+ *  older page. */
 export async function listAutoResolved(
   id: Pick<Identity, "org" | "namespace">,
-  opts: { limit?: number; since?: string } & RequestOpts = {},
-): Promise<{ rows: AutoResolvedRow[] }> {
-  const { rows } = await listAuditLog(id, {
+  opts: { limit?: number; since?: string; cursor?: string } & RequestOpts = {},
+): Promise<{ rows: AutoResolvedRow[]; next_cursor: string | null }> {
+  const page = await listAuditLog(id, {
     event_type: "memory.auto_supersede",
-    limit: opts.limit ?? 100,
-    since: opts.since,
+    limit: opts.limit ?? 20,
+    since: opts.since ?? new Date(Date.now() - AUTO_RESOLVED_WINDOW_MS).toISOString(),
+    cursor: opts.cursor,
     fields: ["ts", "subject"],
     signal: opts.signal,
   });
   const out: AutoResolvedRow[] = [];
-  for (const r of rows || []) {
+  for (const r of page.rows || []) {
     const subject = parseSubject(r.subject);
     const retired = Array.isArray(subject["retired"]) ? (subject["retired"] as unknown[]) : [];
     for (const e of retired) {
-      if (!e || typeof e !== "object") continue;
+      if (!e || typeof e !== "object" || Array.isArray(e)) continue;
       const m = e as Record<string, unknown>;
       if (!m["memory_id"] || !m["memory_key"]) continue;
       out.push({
@@ -788,14 +795,15 @@ export async function listAutoResolved(
       });
     }
   }
-  return { rows: out };
+  return { rows: out, next_cursor: page.next_cursor ?? null };
 }
 
 /** memory_id -> when it was last restored from `superseded` (`memory.unsupersede` audit
- *  rows), so a retirement already undone reads as such. */
+ *  rows since `since`, the oldest retirement on show), so a retirement already undone
+ *  reads as such. */
 export async function listUnsuperseded(
   id: Pick<Identity, "org" | "namespace">,
-  opts: { limit?: number; since?: string } & RequestOpts = {},
+  opts: { since: string; limit?: number } & RequestOpts,
 ): Promise<Map<string, string>> {
   const { rows } = await listAuditLog(id, {
     event_type: "memory.unsupersede",

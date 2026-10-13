@@ -236,7 +236,7 @@ async def test_apply_refines_supersedes_unpinned_peers_and_links(monkeypatch) ->
     captured: dict[str, Any] = {}
 
     async def fake_supersede(
-        org: str, victims: list[dict[str, Any]], *, ch: Any = None, skip: Any = None
+        org: str, victims: list[dict[str, Any]], *, ch: Any = None, skip: Any = None, **_kw: Any
     ) -> int:
         captured["victims"] = victims
         return len(victims)
@@ -365,7 +365,7 @@ async def test_apply_refines_writes_the_supersedes_relation(monkeypatch) -> None
     from server.memory.app.conflicts import apply_refines
 
     async def fake_supersede(
-        org: str, victims: list[dict[str, Any]], *, ch: Any = None, skip: Any = None
+        org: str, victims: list[dict[str, Any]], *, ch: Any = None, skip: Any = None, **_kw: Any
     ) -> int:
         return len(victims)
 

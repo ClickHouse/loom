@@ -219,14 +219,11 @@ def decide_links(
 
 
 def _supersession_update(
-    newer_id: str, invalid_at: datetime | None, seen: list[Any] | None = None
+    newer_id: str, invalid_at: datetime | None
 ) -> Callable[[Any], dict[str, Any]]:
-    """Column overrides that retire the older side of a value-update pair. `seen`
-    collects the rows the write re-emits (their identity, for the audit record)."""
+    """Column overrides that retire the older side of a value-update pair."""
 
     def _update(_row: Any) -> dict[str, Any]:
-        if seen is not None:
-            seen.append(_row)
         out: dict[str, Any] = {"status": "superseded", "superseded_by": newer_id}
         if invalid_at is not None:
             out["invalid_at"] = invalid_at
@@ -471,15 +468,22 @@ async def link_value_updates(
         try:
             for older_id, ln in by_older.items():
                 inv = _as_dt(newer_at.get(ln.newer_id))
-                seen: list[Any] = []
+
+                # Only a row whose superseded version reached loom.memory: a vanished
+                # one retired nothing, and a failed mirror after the insert still did.
+                def _written(rows: list[Any], ln: UpdateLink = ln) -> None:
+                    retired.extend(
+                        retired_entry(r, superseded_by=ln.newer_id, superseded_by_key=ln.newer_key)
+                        for r in rows
+                    )
+
                 await memory_repo.write_versions_by_ids(
-                    org, [older_id], _supersession_update(ln.newer_id, inv, seen), ch=ch
+                    org,
+                    [older_id],
+                    _supersession_update(ln.newer_id, inv),
+                    ch=ch,
+                    on_written=_written,
                 )
-                # Only a row the write read and re-emitted: a vanished one retired nothing.
-                retired += [
-                    retired_entry(row, superseded_by=ln.newer_id, superseded_by_key=ln.newer_key)
-                    for row in seen
-                ]
             report.links = list(by_older.values())
         except Exception as e:  # noqa: BLE001 — fails open: counted in report.errors
             log.warning("value_updates: supersession write failed (open): %s", e)

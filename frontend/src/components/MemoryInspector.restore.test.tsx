@@ -106,6 +106,25 @@ describe("MemoryInspector restore of a superseded row", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "Restore" })).toBeNull());
   });
 
+  it("sends one restore for a double click", async () => {
+    seed("writer");
+    await open();
+    let finish: (v: { restored: boolean }) => void = () => {};
+    vi.mocked(restoreMemory).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const button = await screen.findByRole("button", { name: "Restore" });
+    await userEvent.click(button);
+    expect(button).toBeDisabled();
+    await userEvent.click(button);
+    expect(restoreMemory).toHaveBeenCalledTimes(1);
+    finish({ restored: false });
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Nothing to restore", "info"));
+  });
+
   it("offers no Restore to a viewer", async () => {
     seed("viewer");
     await open();

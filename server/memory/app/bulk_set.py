@@ -590,14 +590,21 @@ async def _record_intra_batch_retirements(
     )
 
     by_id = {str(r.get("memory_id") or ""): r for r in state.memory_rows}
+    # A key sent twice is two versions of one row, and FINAL keeps the higher: an
+    # earlier row that is not its key's kept version retired nothing.
+    kept: dict[str, dict[str, Any]] = {}
+    for r in state.memory_rows:
+        key = str(r.get("memory_key") or "")
+        if key not in kept or int(r.get("version") or 0) >= int(kept[key].get("version") or 0):
+            kept[key] = r
     retired = [
         {
             **by_id[older],
             "superseded_by": newer,
             "superseded_by_key": by_id.get(newer, {}).get("memory_key"),
         }
-        for older, newer in pairs
-        if older in by_id
+        for older, newer in dict(pairs).items()
+        if older in by_id and kept.get(str(by_id[older].get("memory_key") or "")) is by_id[older]
     ]
     await record_auto_supersessions(
         org=input.org,
@@ -622,8 +629,11 @@ async def _bulk_settle_verdicts(
             except Exception as e:  # noqa: BLE001 — the rows are in; the link is best-effort
                 log.warning("bulk_set: mark_peers_conflicted failed for %s: %s", new_id, e)
     if plan.refines:
+        from server.memory.app.auto_resolution import record_auto_supersessions
         from server.memory.app.conflicts import apply_refines
 
+        # One record per reason for the whole write, not one per verdict.
+        refined_out: dict[str, list[dict[str, Any]]] = {}
         for new_id, new_key, refined, relation, new_value in plan.refines:
             try:
                 await apply_refines(
@@ -635,9 +645,14 @@ async def _bulk_settle_verdicts(
                     ch=ch,
                     relation=relation,
                     new_value=new_value,
+                    record_into=refined_out,
                 )
             except Exception as e:  # noqa: BLE001 — the write stands
                 log.warning("bulk_set: apply_refines failed for %s: %s", new_id, e)
+        for reason, retired in refined_out.items():
+            await record_auto_supersessions(
+                org=input.org, namespace=input.namespace, retired=retired, reason=reason
+            )
     from server.memory.store.usage import record_usage_event as _record_usage_event
 
     for existing_id in plan.reinforce_ids:

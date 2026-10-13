@@ -124,7 +124,9 @@ async def test_link_value_updates_uses_one_statement_per_batch(monkeypatch) -> N
     monkeypatch.setattr(settings, "memory_write_candidate_batch", 6)
     writes: list[list[str]] = []
 
-    async def fake_write(org: str, ids: list[str], update: Any, *, ch: Any = None) -> int:
+    async def fake_write(
+        org: str, ids: list[str], update: Any, *, ch: Any = None, **_kw: Any
+    ) -> int:
         writes.append(ids)
         return len(ids)
 

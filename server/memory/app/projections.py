@@ -760,14 +760,20 @@ async def _retire_memories_behind_repairs(
     )
     from server.memory.domain.lock import refuses_retirement
 
+    # The tracker also refuses a row retired since the read (it is not re-pointed).
     tracker = RetirementTracker(refuses_retirement)
-    n = await supersede_duplicates(input.org, victims, ch=ch, skip=tracker.skip)
-    await record_auto_supersessions(
-        org=input.org,
-        namespace=input.namespace,
-        retired=tracker.retired(victims),
-        reason=NEWEST_WINS_CONTRADICTION,
-    )
+    try:
+        n = await supersede_duplicates(
+            input.org, victims, ch=ch, skip=tracker.skip, on_written=tracker.written
+        )
+    finally:
+        # What reached loom.memory, even when the embeddings mirror then failed.
+        await record_auto_supersessions(
+            org=input.org,
+            namespace=input.namespace,
+            retired=tracker.retired(victims),
+            reason=NEWEST_WINS_CONTRADICTION,
+        )
     log.info("newest_wins retired %d memories behind %d repaired triples", n, len(repairs))
     return n
 

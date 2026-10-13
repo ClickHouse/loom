@@ -540,8 +540,10 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
   };
 
   // A superseded row (Loom retired it, or a later write replaced it) comes back live.
+  const [restoring, setRestoring] = useState(false);
   const onRestore = async () => {
-    if (!detail) return;
+    if (!detail || restoring) return;
+    setRestoring(true);
     try {
       const r = await restoreMemory({ ...identity, agent: detail.agent || identity.agent }, memoryKey, {
         user_id: detail.user_id || undefined,
@@ -556,6 +558,8 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
       onChanged();
     } catch (e) {
       toast(`Restore failed: ${humanizeError(e)}`, "error");
+    } finally {
+      setRestoring(false);
     }
   };
 
@@ -721,7 +725,8 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                           {statusLabel(detail.status)}
                           <button
                             onClick={onRestore}
-                            className="px-2 py-0.5 text-xs font-medium border border-[var(--color-border-strong)] rounded-md hover:bg-[var(--color-surface-2)]"
+                            disabled={restoring}
+                            className="px-2 py-0.5 text-xs font-medium border border-[var(--color-border-strong)] rounded-md hover:bg-[var(--color-surface-2)] disabled:opacity-50"
                           >
                             Restore
                           </button>

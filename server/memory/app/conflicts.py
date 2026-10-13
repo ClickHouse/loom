@@ -829,6 +829,7 @@ async def apply_refines(
     run_id: str = "-",
     relation: str = "refines",
     new_value: str = "",
+    record_into: dict[str, list[dict[str, Any]]] | None = None,
 ) -> int:
     """The `refines` verdict, after the new row is in: every
     non-pinned refined peer is superseded (status, superseded_by = the new
@@ -840,7 +841,11 @@ async def apply_refines(
     price, a date, a month) keeps its row — the new statement elaborates a facet but
     truncates the record, and the question that needs the measure ("how long did it
     take") would read "not recorded". The edge is still written. `new_value` is the new
-    row's text; when the caller has none it is read from the store."""
+    row's text; when the caller has none it is read from the store.
+
+    The peers that did retire are recorded as `memory.auto_supersede`
+    (`auto_resolution`): into `record_into` (reason -> entries) when the caller
+    writes one record for many verdicts (a bulk write), else beside the response."""
     from server.memory.store import get_by_id, supersede_duplicates
 
     # A proposal (a fact on trial) retires nothing — whichever
@@ -871,24 +876,30 @@ async def apply_refines(
             NEWEST_WINS_CONTRADICTION,
             REFINES,
             RetirementTracker,
-            record_auto_supersessions,
+            schedule_auto_supersessions,
         )
+        from server.memory.domain.lock import refuses_retirement
 
-        tracker = RetirementTracker()
+        tracker = RetirementTracker(refuses_retirement)
         try:
-            from server.memory.domain.lock import refuses_retirement
-
-            tracker = RetirementTracker(refuses_retirement)
-            n = await supersede_duplicates(org, victims, ch=ch or get_client(), skip=tracker.skip)
+            n = await supersede_duplicates(
+                org,
+                victims,
+                ch=ch or get_client(),
+                skip=tracker.skip,
+                on_written=tracker.written,
+            )
         except Exception as e:  # noqa: BLE001 — the row is in; retirement is best effort
             logging.getLogger(__name__).warning("refines: supersede failed (non-fatal): %s", e)
-            tracker.written.clear()
-        await record_auto_supersessions(
-            org=org,
-            namespace=namespace,
-            retired=[{**v, "superseded_by_key": new_memory_key} for v in tracker.retired(victims)],
-            reason=REFINES if relation == "refines" else NEWEST_WINS_CONTRADICTION,
-        )
+        # What reached loom.memory, even when the embeddings mirror then failed.
+        retired = [{**v, "superseded_by_key": new_memory_key} for v in tracker.retired(victims)]
+        reason = REFINES if relation == "refines" else NEWEST_WINS_CONTRADICTION
+        if record_into is not None:
+            record_into.setdefault(reason, []).extend(retired)
+        else:
+            schedule_auto_supersessions(
+                org=org, namespace=namespace, retired=retired, reason=reason
+            )
     for p in refined_peers:
         if p.memory_key == new_memory_key:
             continue

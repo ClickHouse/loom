@@ -149,7 +149,7 @@ async def test_retire_behind_repairs_honours_the_policy_and_writes_through_super
     # newest_wins: links → memories → supersede
     captured: list[Any] = []
 
-    async def fake_supersede(org, victims, *, ch=None, skip=None):
+    async def fake_supersede(org, victims, *, ch=None, skip=None, **_kw):
         captured.append((org, victims))
         return len(victims)
 

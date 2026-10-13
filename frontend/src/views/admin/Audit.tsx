@@ -48,7 +48,6 @@ const AUTO_SUPERSEDE_WHY: Record<string, string> = {
   newest_wins_contradiction: "a newer write won under the namespace policy",
   refines: "a newer memory restated them with more detail",
   value_update: "replaced by an updated value",
-  dedup_sweep: "duplicates of another memory",
 };
 
 function summarize(event_type: string, subject: Record<string, unknown>): string {

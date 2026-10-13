@@ -123,7 +123,9 @@ async def test_link_value_updates_writes_supersession_on_the_older_row(
 
     writes: list[tuple[list[str], dict[str, Any]]] = []
 
-    async def fake_write(org: str, ids: list[str], update: Any, *, ch: Any = None) -> int:
+    async def fake_write(
+        org: str, ids: list[str], update: Any, *, ch: Any = None, **_kw: Any
+    ) -> int:
         from types import SimpleNamespace
 
         writes.append((ids, update(SimpleNamespace(conflict_with=[]))))

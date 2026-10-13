@@ -129,12 +129,25 @@ applies `conflicts.resolve`. Three more tabs appear when they have content: **Le
 
 ### Automatic retirements
 
-When Loom retires memories on its own (the same-key judge, `newest_wins`, a `refines`
-verdict, a value update), it writes one `memory.auto_supersede` audit row per write. The
-row names each retired memory, the row it retired behind and the reason; it holds ids,
-keys and identity, never value text. The Review queue's **Auto-resolved** tab lists them,
-and its Undo calls `memory.restore`, which brings a superseded row back `active` and
-records `memory.unsupersede`.
+When Loom retires memories on its own, each path that retired rows records them as
+`memory.auto_supersede` audit rows (`reason` in brackets):
+
+- the same-key judge on a bulk write (`same_key_judge`);
+- `newest_wins` on a key written again (`same_key_newest_wins`);
+- a `refines` verdict (`refines`), or a judged contradiction under `newest_wins`
+  (`newest_wins_contradiction`);
+- `newest_wins` inside one bulk batch, or behind a repaired single-valued triple
+  (`newest_wins_contradiction`);
+- a value update (`value_update`).
+
+A write that retires rows through several paths leaves one record per path, and a path
+that retires more than 200 rows splits them across several records. A record names each
+retired memory, the row it retired behind and the reason; it holds ids, keys and
+identity, never value text. Only rows that did retire are listed: a locked row or one
+already retired is left as it is. A point write (`memory.set`, `memory.update_by_id`, the
+deferred judge) writes its record beside the response. The Review queue's
+**Auto-resolved** tab lists the last 30 days, and its Undo calls `memory.restore`, which
+brings a superseded row back `active` and records `memory.unsupersede`.
 
 ## Duplicates
 

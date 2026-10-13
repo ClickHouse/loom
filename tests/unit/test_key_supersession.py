@@ -827,7 +827,7 @@ async def test_newest_wins_still_retires_every_older_same_key_row_unjudged(monke
     seen = _wire_judged(monkeypatch, {})
     victims: list = []
 
-    async def supersede(org, v, *, ch=None, skip=None):
+    async def supersede(org, v, *, ch=None, skip=None, **_kw):
         victims.extend(v)
         return len(v)
 

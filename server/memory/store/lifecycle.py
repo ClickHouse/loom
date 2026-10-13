@@ -38,6 +38,7 @@ async def write_versions_by_ids(
     ch: _CHClient | None = None,
     skip: Callable[[MemoryRow], bool] | None = None,
     strong: bool = False,
+    on_written: Callable[[list[MemoryRow]], None] | None = None,
 ) -> int:
     """Write new RMT versions for live rows addressed by memory_id.
 
@@ -48,12 +49,16 @@ async def write_versions_by_ids(
     in-place status flips on `loom.memory`. A row `skip(existing)` answers
     True for is left as it is. `strong` reads each row read-your-writes (the
     caller decided on a version it read earlier and must not rebuild a stale one).
+    `on_written` is called with the rows (as read) whose new versions reached
+    `loom.memory`, right after that insert and before the embeddings mirror, so a
+    caller can tell what changed even when the mirror then raises.
     """
 
     if not memory_ids:
         return 0
     ch = ch or _default_client()
     rows: list[dict[str, Any]] = []
+    read: list[MemoryRow] = []
     seen: set[str] = set()
     for memory_id in memory_ids:
         mid = str(memory_id)
@@ -66,9 +71,12 @@ async def write_versions_by_ids(
         overrides = dict(update(existing))
         overrides.setdefault("version", next_version())
         rows.append(build_memory_version_row(existing, **overrides))
+        read.append(existing)
 
     if rows:
         await insert_memory_versions(rows, ch=ch)
+        if on_written is not None:
+            on_written(read)
         # A status change on loom.memory is mirrored onto the row
         # memory.search actually reads: the pool filters and penalises on
         # memory_embeddings.status, so without the mirror it would keep
@@ -86,6 +94,7 @@ async def supersede_duplicates(
     ch: _CHClient | None = None,
     skip: Callable[[MemoryRow], bool] | None = None,
     strong: bool = False,
+    on_written: Callable[[list[MemoryRow]], None] | None = None,
 ) -> int:
     """Mark near-duplicate memories status='superseded' in BOTH loom.memory
     and loom.memory_embeddings via version re-emit (never an in-place ALTER,
@@ -102,7 +111,8 @@ async def supersede_duplicates(
     (the kept row's memory_id). Empty short-circuits. A victim whose head
     row `skip` answers True for (the caller's policy, e.g. a lock) is left
     live in both tables and not counted. `strong` reads the rows read-your-writes
-    (`write_versions_by_ids`). Returns how many were retired."""
+    (`write_versions_by_ids`). `on_written` hears which rows' superseded versions
+    reached `loom.memory` (`write_versions_by_ids`). Returns how many were retired."""
     if not victims:
         return 0
     ch = ch or _default_client()
@@ -119,6 +129,8 @@ async def supersede_duplicates(
             return True
         return False
 
+    # Passed only when given: a caller (or test double) of the older signature still fits.
+    extra: dict[str, Any] = {"on_written": on_written} if on_written is not None else {}
     await write_versions_by_ids(
         org,
         list(by_id),
@@ -133,6 +145,7 @@ async def supersede_duplicates(
         ch=ch,
         skip=_skip,
         strong=strong,
+        **extra,
     )
     victims = [v for v in victims if str(v["memory_id"]) not in skipped]
     # 2) loom.memory_embeddings — the write recall actually reads.

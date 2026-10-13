@@ -526,19 +526,28 @@ async def supersede_same_key_rows(
         from server.memory.app.auto_resolution import (
             SAME_KEY_NEWEST_WINS,
             RetirementTracker,
-            record_auto_supersessions,
+            schedule_auto_supersessions,
         )
         from server.memory.domain.lock import refuses_retirement
         from server.memory.store import supersede_duplicates
 
+        # The tracker also refuses a row retired since the read (it is not re-pointed).
         tracker = RetirementTracker(refuses_retirement)
-        n = await supersede_duplicates(org, victims, ch=ch, skip=tracker.skip)
-        await record_auto_supersessions(
-            org=org,
-            namespace=namespace,
-            retired=[{**v, "superseded_by_key": v["memory_key"]} for v in tracker.retired(victims)],
-            reason=SAME_KEY_NEWEST_WINS,
-        )
+        try:
+            n = await supersede_duplicates(
+                org, victims, ch=ch, skip=tracker.skip, on_written=tracker.written
+            )
+        finally:
+            # Beside the response: a point write does not wait on the record. What
+            # reached loom.memory is recorded even when the embeddings mirror failed.
+            schedule_auto_supersessions(
+                org=org,
+                namespace=namespace,
+                retired=[
+                    {**v, "superseded_by_key": v["memory_key"]} for v in tracker.retired(victims)
+                ],
+                reason=SAME_KEY_NEWEST_WINS,
+            )
         log.info(
             "same-key supersession (%s): %d older rows retired behind %d keys in %s/%s",
             policy,

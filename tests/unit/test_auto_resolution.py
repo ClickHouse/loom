@@ -72,16 +72,32 @@ async def test_the_event_names_rows_and_reason_never_value_text(emitted) -> None
     assert "secret" not in repr(ev)
 
 
-async def test_the_list_is_capped_and_the_count_is_not(emitted) -> None:
-    rows = [_retired(f"m{i}") for i in range(250)]
+async def test_more_than_the_cap_splits_into_several_rows_listing_every_one(emitted) -> None:
+    rows = [_retired(f"m{i}") for i in range(450)]
     await ar.record_auto_supersessions(org="o", namespace="ns", retired=rows, reason="refines")
-    (ev,) = emitted
-    assert ev["subject"]["count"] == 250
-    assert len(ev["subject"]["retired"]) == ar.MAX_ENTRIES
+    assert [ev["subject"]["count"] for ev in emitted] == [200, 200, 50]
+    assert [len(ev["subject"]["retired"]) for ev in emitted] == [200, 200, 50]
+    assert [m for ev in emitted for m in _ids(ev)] == [f"m{i}" for i in range(450)]
+    assert {ev["subject"]["reason"] for ev in emitted} == {"refines"}
+
+
+async def test_the_record_carries_the_request_id(emitted) -> None:
+    from server.core.logging_config import request_id_var
+
+    token = request_id_var.set("req-42")
+    try:
+        await ar.record_auto_supersessions(
+            org="o", namespace="ns", retired=[_retired("m1")], reason="refines"
+        )
+    finally:
+        request_id_var.reset(token)
+    assert emitted[0]["request_id"] == "req-42"
 
 
 async def test_nothing_retired_writes_nothing(emitted) -> None:
     await ar.record_auto_supersessions(org="o", namespace="ns", retired=[], reason="refines")
+    ar.schedule_auto_supersessions(org="o", namespace="ns", retired=[], reason="refines")
+    await _drain()
     assert emitted == []
 
 
@@ -96,34 +112,70 @@ async def test_a_failing_audit_write_never_raises(monkeypatch) -> None:
         )
         is None
     )
+    ar.schedule_auto_supersessions(org="o", namespace="ns", retired=[_retired("m1")], reason="x")
+    await _drain()
 
 
-def test_the_tracker_names_only_rows_it_was_asked_about_and_passed() -> None:
+async def test_a_scheduled_record_lands_beside_the_caller(emitted) -> None:
+    ar.schedule_auto_supersessions(
+        org="o", namespace="ns", retired=[_retired("m1")], reason="refines"
+    )
+    assert emitted == []  # not awaited by the caller
+    await _drain()
+    assert _ids(emitted[0]) == ["m1"]
+
+
+def test_the_tracker_records_only_rows_it_passed_that_were_written() -> None:
     t = ar.RetirementTracker(lambda row: row.memory_id == "locked")
-    assert t.skip(SimpleNamespace(memory_id="ok")) is False
-    assert t.skip(SimpleNamespace(memory_id="locked")) is True
-    victims = [{"memory_id": m} for m in ("ok", "locked", "never_read")]
+    assert t.skip(SimpleNamespace(memory_id="ok", status="active")) is False
+    assert t.skip(SimpleNamespace(memory_id="dup", status="duplicate")) is False
+    assert t.skip(SimpleNamespace(memory_id="locked", status="active")) is True
+    # Retired already (or tombstoned, proposed): not re-pointed, not recorded.
+    for status in ("superseded", "tombstoned", "proposed"):
+        assert t.skip(SimpleNamespace(memory_id="x", status=status)) is True
+    t.written([SimpleNamespace(memory_id="ok")])
+    victims = [{"memory_id": m} for m in ("ok", "dup", "locked", "never_read")]
+    # `dup` passed the skip but its version never reached loom.memory.
     assert [v["memory_id"] for v in t.retired(victims)] == ["ok"]
+
+
+async def _drain() -> None:
+    from server.memory.app import after_write
+
+    await after_write.drain()
 
 
 # --- the call sites -------------------------------------------------------------
 
 
-def _fake_supersede(monkeypatch, readable: set[str]) -> None:
+def _fake_supersede(monkeypatch, stored: dict[str, str] | set[str], *, fail: str = "") -> list[str]:
     """`supersede_duplicates` as the store runs it: `skip` is asked only about a row
-    it could read."""
+    it could read (`stored`: id -> status), `on_written` hears the rows it inserted,
+    and `fail="insert"` / `"mirror"` raises before / after that insert. Returns the
+    ids it wrote."""
     from server.memory import store
 
-    async def supersede(org, victims, *, ch=None, skip=None, strong=False):
-        n = 0
-        for v in victims:
-            if v["memory_id"] in readable and not (
-                skip and skip(SimpleNamespace(memory_id=v["memory_id"]))
-            ):
-                n += 1
-        return n
+    statuses = stored if isinstance(stored, dict) else dict.fromkeys(stored, "active")
+    wrote: list[str] = []
+
+    async def supersede(org, victims, *, ch=None, skip=None, strong=False, on_written=None):
+        rows = [
+            SimpleNamespace(memory_id=v["memory_id"], status=statuses[v["memory_id"]])
+            for v in victims
+            if v["memory_id"] in statuses
+        ]
+        rows = [r for r in rows if not (skip and skip(r))]
+        if fail == "insert":
+            raise RuntimeError("insert failed")
+        wrote.extend(r.memory_id for r in rows)
+        if on_written is not None:
+            on_written(rows)
+        if fail == "mirror":
+            raise RuntimeError("mirror failed")
+        return len(rows)
 
     monkeypatch.setattr(store, "supersede_duplicates", supersede)
+    return wrote
 
 
 def _lock(monkeypatch, *locked: str) -> None:
@@ -156,19 +208,23 @@ def _live(mid: str, key: str = "user_city") -> dict:
     }
 
 
-async def test_newest_wins_same_key_records_the_retired_not_the_locked(
+async def test_newest_wins_same_key_records_the_retired_not_the_locked_or_retired(
     monkeypatch, emitted
 ) -> None:
     from server.memory.app.key_supersession import supersede_same_key_rows
 
-    _fake_supersede(monkeypatch, {"o1", "locked"})
+    wrote = _fake_supersede(
+        monkeypatch, {"o1": "active", "locked": "active", "retired": "superseded"}
+    )
     _lock(monkeypatch, "locked")
     new = [_live("n1")]
-    ch = _CH(all_=[[new[0], _live("o1"), _live("locked"), _live("gone")]])
+    live = [new[0], _live("o1"), _live("locked"), _live("retired"), _live("gone")]
     n = await supersede_same_key_rows(
-        org="o", namespace="ns", new_rows=new, ch=ch, policy="newest_wins"
+        org="o", namespace="ns", new_rows=new, ch=_CH(all_=[live]), policy="newest_wins"
     )
-    assert n == 1
+    assert n == 1 and wrote == ["o1"]  # the retired row is not re-pointed
+    assert emitted == []  # beside the response, not awaited by the write
+    await _drain()
     (ev,) = emitted
     assert ev["subject"]["reason"] == "same_key_newest_wins" and _ids(ev) == ["o1"]
     assert ev["subject"]["retired"][0]["superseded_by"] == "n1"
@@ -188,7 +244,90 @@ async def test_newest_wins_with_nothing_retired_records_nothing(monkeypatch, emi
         ch=_CH(all_=[[new[0], _live("locked")]]),
         policy="newest_wins",
     )
+    await _drain()
     assert emitted == []
+
+
+@pytest.mark.parametrize(("fail", "recorded"), [("mirror", ["o1"]), ("insert", [])])
+async def test_newest_wins_records_what_reached_the_table_when_the_write_fails(
+    monkeypatch, emitted, fail, recorded
+) -> None:
+    from server.memory.app.key_supersession import supersede_same_key_rows
+
+    _fake_supersede(monkeypatch, {"o1"}, fail=fail)
+    _lock(monkeypatch)
+    new = [_live("n1")]
+    await supersede_same_key_rows(
+        org="o",
+        namespace="ns",
+        new_rows=new,
+        ch=_CH(all_=[[new[0], _live("o1")]]),
+        policy="newest_wins",
+    )
+    await _drain()
+    assert [m for ev in emitted for m in _ids(ev)] == recorded
+
+
+async def test_the_real_store_reports_what_its_insert_wrote_before_the_mirror_fails(
+    monkeypatch,
+) -> None:
+    from server.memory.store import lifecycle
+
+    rows = {
+        "ok": SimpleNamespace(memory_id="ok", status="active"),
+        "locked": SimpleNamespace(memory_id="locked", status="active"),
+        "retired": SimpleNamespace(memory_id="retired", status="superseded"),
+    }
+    inserted: list = []
+
+    async def get_by_id(mid, **kw):
+        return rows.get(mid)
+
+    async def insert(batch, *, ch=None):
+        inserted.extend(batch)
+
+    async def mirror(*a, **k):
+        raise RuntimeError("mirror down")
+
+    monkeypatch.setattr(lifecycle, "get_by_id", get_by_id)
+    monkeypatch.setattr(lifecycle, "build_memory_version_row", lambda row, **o: {**o, "id": row})
+    monkeypatch.setattr(lifecycle, "insert_memory_versions", insert)
+    monkeypatch.setattr(lifecycle, "mirror_status_to_embeddings", mirror)
+    tracker = ar.RetirementTracker(lambda row: row.memory_id == "locked")
+    victims = [{"memory_id": m, "superseded_by": "n1"} for m in ("ok", "locked", "retired", "gone")]
+    with pytest.raises(RuntimeError, match="mirror down"):
+        await lifecycle.supersede_duplicates(
+            "o", victims, ch=object(), skip=tracker.skip, on_written=tracker.written
+        )
+    assert len(inserted) == 1
+    assert [v["memory_id"] for v in tracker.retired(victims)] == ["ok"]
+
+
+async def test_the_real_store_reports_nothing_when_its_insert_fails(monkeypatch) -> None:
+    from server.memory.store import lifecycle
+
+    async def get_by_id(mid, **kw):
+        return SimpleNamespace(memory_id=mid, status="active")
+
+    async def insert(batch, *, ch=None):
+        raise RuntimeError("insert down")
+
+    monkeypatch.setattr(lifecycle, "get_by_id", get_by_id)
+    monkeypatch.setattr(lifecycle, "build_memory_version_row", lambda row, **o: dict(o))
+    monkeypatch.setattr(lifecycle, "insert_memory_versions", insert)
+    tracker = ar.RetirementTracker()
+    victims = [{"memory_id": "ok", "superseded_by": "n1"}]
+    with pytest.raises(RuntimeError, match="insert down"):
+        await lifecycle.write_versions_by_ids(
+            "o",
+            ["ok"],
+            lambda row: {"status": "superseded"},
+            ch=object(),
+            skip=tracker.skip,
+            on_written=tracker.written,
+        )
+    # The skip passed the row, but its version never landed.
+    assert tracker.retired(victims) == []
 
 
 async def test_same_key_judge_records_new_rows_and_peers_that_retired(monkeypatch, emitted) -> None:
@@ -245,6 +384,10 @@ async def test_the_judge_labels_each_retirement() -> None:
     assert out.new_rows == [("n1", "p1")] and out.new_row_labels == {"n1": "contradiction"}
 
 
+class _Input:
+    org, namespace, agent = "o", "ns", "a"
+
+
 async def test_intra_batch_newest_wins_records_the_earlier_row(emitted) -> None:
     from server.memory.app import bulk_set
     from server.memory.app.bulk_rows import _BulkWriteState
@@ -252,15 +395,52 @@ async def test_intra_batch_newest_wins_records_the_earlier_row(emitted) -> None:
     state = _BulkWriteState()
     state.memory_rows = [_live("old", "capital_a"), _live("new", "capital_b")]
 
-    class Input:
-        org, namespace = "o", "ns"
-
-    await bulk_set._record_intra_batch_retirements(Input(), state, [("old", "new")])
+    await bulk_set._record_intra_batch_retirements(_Input(), state, [("old", "new")])
     (ev,) = emitted
     assert ev["subject"]["reason"] == "newest_wins_contradiction" and _ids(ev) == ["old"]
     assert ev["subject"]["retired"][0]["superseded_by_key"] == "capital_b"
-    await bulk_set._record_intra_batch_retirements(Input(), state, [])
+    await bulk_set._record_intra_batch_retirements(_Input(), state, [])
     assert len(emitted) == 1
+
+
+async def test_intra_batch_records_only_the_kept_version_of_a_key_sent_twice(emitted) -> None:
+    from server.memory.app import bulk_set
+    from server.memory.app.bulk_rows import _BulkWriteState
+
+    # capital_a twice: two ids, one identity, and FINAL keeps the higher version (a2).
+    state = _BulkWriteState()
+    state.memory_rows = [
+        {**_live("a1", "capital_a"), "version": 1},
+        {**_live("b", "capital_b"), "version": 2},
+        {**_live("a2", "capital_a"), "version": 3},
+    ]
+    # a1 lost to b, but a2 (the version FINAL keeps) is live: nothing retired.
+    await bulk_set._record_intra_batch_retirements(_Input(), state, [("a1", "b")])
+    assert emitted == []
+    # a2 lost to b, once though the pair is listed twice.
+    await bulk_set._record_intra_batch_retirements(_Input(), state, [("a2", "b"), ("a2", "b")])
+    (ev,) = emitted
+    assert _ids(ev) == ["a2"]
+
+
+async def test_a_bulk_writes_one_record_for_all_its_refines_verdicts(monkeypatch, emitted) -> None:
+    from server.memory.app import bulk_set, conflicts
+    from server.memory.app.bulk_rows import _BulkWriteState
+    from server.memory.app.bulk_verdicts import BulkVerdictPlan
+
+    async def refines(**kw):
+        assert kw["record_into"] is not None
+        kw["record_into"].setdefault("refines", []).append(
+            {**_live(f"old-{kw['new_memory_id']}"), "superseded_by": kw["new_memory_id"]}
+        )
+        return 1
+
+    monkeypatch.setattr(conflicts, "apply_refines", refines)
+    plan = BulkVerdictPlan()
+    plan.refines = [(f"n{i}", f"k{i}", [], "refines", "v") for i in range(3)]
+    await bulk_set._bulk_settle_verdicts(None, _Input(), _BulkWriteState(), plan)
+    (ev,) = emitted
+    assert _ids(ev) == ["old-n0", "old-n1", "old-n2"]
 
 
 def _peer(mid: str, key: str = "user_city") -> Any:
@@ -279,7 +459,7 @@ def _peer(mid: str, key: str = "user_city") -> Any:
     )
 
 
-async def _refines(monkeypatch, relation: str) -> None:
+async def _refines(monkeypatch, relation: str, **kw: Any) -> None:
     from server.memory import store
     from server.memory.app.conflicts import apply_refines
 
@@ -293,11 +473,15 @@ async def _refines(monkeypatch, relation: str) -> None:
         new_memory_id="n1",
         # The peers share the key, so no refines edge is written.
         new_memory_key="user_city",
-        refined_peers=[_peer("o1"), _peer("locked")],
+        refined_peers=[_peer("o1"), _peer("locked"), _peer("retired")],
         ch=object(),
         relation=relation,
         new_value="lives in a city by the sea",
+        **kw,
     )
+
+
+_PEERS = {"o1": "active", "locked": "active", "retired": "superseded"}
 
 
 @pytest.mark.parametrize(
@@ -307,24 +491,35 @@ async def _refines(monkeypatch, relation: str) -> None:
 async def test_refines_records_the_victims_it_superseded(
     monkeypatch, emitted, relation, reason
 ) -> None:
-    _fake_supersede(monkeypatch, {"o1", "locked"})
+    wrote = _fake_supersede(monkeypatch, _PEERS)
     _lock(monkeypatch, "locked")
     await _refines(monkeypatch, relation)
+    assert wrote == ["o1"]  # an already-retired peer is not re-pointed
+    await _drain()
     (ev,) = emitted
     assert ev["subject"]["reason"] == reason and _ids(ev) == ["o1"]
     assert ev["subject"]["retired"][0]["superseded_by_key"] == "user_city"
 
 
-async def test_a_failed_refines_write_records_nothing(monkeypatch, emitted) -> None:
-    from server.memory import store
-
-    async def boom(*a, **k):
-        raise RuntimeError("down")
-
-    monkeypatch.setattr(store, "supersede_duplicates", boom)
-    _lock(monkeypatch)
-    await _refines(monkeypatch, "refines")
+async def test_refines_into_a_callers_record_emits_nothing_itself(monkeypatch, emitted) -> None:
+    _fake_supersede(monkeypatch, _PEERS)
+    _lock(monkeypatch, "locked")
+    into: dict[str, list[dict]] = {}
+    await _refines(monkeypatch, "refines", record_into=into)
+    await _drain()
     assert emitted == []
+    assert [e["memory_id"] for e in into["refines"]] == ["o1"]
+
+
+@pytest.mark.parametrize(("fail", "recorded"), [("mirror", ["o1"]), ("insert", [])])
+async def test_a_failed_refines_write_records_what_reached_the_table(
+    monkeypatch, emitted, fail, recorded
+) -> None:
+    _fake_supersede(monkeypatch, _PEERS, fail=fail)
+    _lock(monkeypatch, "locked")
+    await _refines(monkeypatch, "refines")
+    await _drain()
+    assert [m for ev in emitted for m in _ids(ev)] == recorded
 
 
 async def test_value_update_records_the_older_rows_it_re_emitted(monkeypatch, emitted) -> None:
@@ -341,10 +536,16 @@ async def test_value_update_records_the_older_rows_it_re_emitted(monkeypatch, em
         old = "gone" if new_key == "k2" else "o1"
         return [vu.UpdateLink(old, new_id, f"old_{new_key}", new_key, 0.9)]
 
-    async def write(org, ids, update, *, ch=None):
-        for mid in ids:
-            if mid != "gone":
-                update(SimpleNamespace(**{**_live(mid, "old_k1"), "superseded_by": ""}))
+    async def write(org, ids, update, *, ch=None, on_written=None):
+        found = [
+            SimpleNamespace(**{**_live(mid, "old_k1"), "superseded_by": ""})
+            for mid in ids
+            if mid != "gone"
+        ]
+        for row in found:
+            update(row)
+        if found and on_written is not None:
+            on_written(found)
 
     monkeypatch.setattr(vu, "_peers", peers)
     monkeypatch.setattr(vu, "decide_links", links)
@@ -376,17 +577,19 @@ async def test_newest_wins_triple_repair_records_the_retired_carrier(monkeypatch
         return "newest_wins"
 
     monkeypatch.setattr(proj._conflicts, "namespace_conflict_policy", policy)
-    _fake_supersede(monkeypatch, {"m-old", "m-locked"})
+    wrote = _fake_supersede(
+        monkeypatch, {"m-old": "active", "m-locked": "active", "m-gone": "superseded"}
+    )
     _lock(monkeypatch, "m-locked")
     links = [
-        {"subject": "g", "relation": "r", "object": "old", "memory_key": "k_old"},
-        {"subject": "g", "relation": "r", "object": "old", "memory_key": "k_locked"},
-        {"subject": "g", "relation": "r", "object": "new", "memory_key": "k_new"},
-    ]
+        {"subject": "g", "relation": "r", "object": "old", "memory_key": k}
+        for k in ("k_old", "k_locked", "k_gone")
+    ] + [{"subject": "g", "relation": "r", "object": "new", "memory_key": "k_new"}]
     mems = [
-        {**_live("m-old", "k_old")},
-        {**_live("m-locked", "k_locked")},
-        {**_live("m-new", "k_new")},
+        _live("m-old", "k_old"),
+        _live("m-locked", "k_locked"),
+        _live("m-gone", "k_gone"),
+        _live("m-new", "k_new"),
     ]
     repair = IntervalRepair(
         subject="g",
@@ -400,7 +603,7 @@ async def test_newest_wins_triple_repair_records_the_retired_carrier(monkeypatch
     n = await proj._retire_memories_behind_repairs(
         SimpleNamespace(org="o", namespace="ns"), [repair], tm, ch=_CH(all_=[links, mems])
     )
-    assert n == 1
+    assert n == 1 and wrote == ["m-old"]
     (ev,) = emitted
     assert ev["subject"]["reason"] == "newest_wins_contradiction" and _ids(ev) == ["m-old"]
     assert ev["subject"]["retired"][0]["superseded_by_key"] == "k_new"
