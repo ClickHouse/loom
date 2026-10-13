@@ -1322,6 +1322,17 @@ async def test_a_memory_get_reads_no_links_where_no_repository_is_configured(mon
 
 
 @pytest.mark.asyncio
+async def test_a_memory_get_reads_no_links_of_a_memory_naming_no_repository(monkeypatch) -> None:
+    async def for_memories(org, ids):
+        raise AssertionError("no link is read")
+
+    monkeypatch.setattr(code_links.store, "for_memories", for_memories)
+    monkeypatch.setattr(code_links.code, "code_namespaces", lambda: ["code-a"])
+    monkeypatch.setattr(code_link_reads, "code_namespace_for", lambda org, ns, tags: "")
+    assert await code_link_reads.links_of("o", _row("m")) == []
+
+
+@pytest.mark.asyncio
 async def test_a_change_only_new_rules_see_reads_changed(monkeypatch) -> None:
     from server.code.domain.anchor import Definition
 
