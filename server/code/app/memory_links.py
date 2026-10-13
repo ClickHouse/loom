@@ -9,12 +9,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Any
 
 from server.code.app.index import gitrepo
 from server.code.domain.anchor import Definition
 from server.code.domain.declaration import edit_pattern
 from server.code.domain.definitions import definitions
+from server.code.domain.extract.treesitter import ParsedFile
 from server.code.domain.index.remote import repo_tag
 from server.code.domain.index.repos import configured_repos, docs_namespaces, repo_for_namespace
 from server.code.store.index import CodeRepo
@@ -174,19 +174,21 @@ class ParseFailed(Exception):
         self.path = path
 
 
-def _parse(path: str, source: bytes) -> tuple[list[Any], Any]:
-    """The parser's symbols of `path` and its tree-sitter tree (None without one); a
-    parse that failed raises `ParseFailed`."""
+def _parse(path: str, source: bytes) -> ParsedFile | None:
+    """The index's parse of `path`; None for a file it does not index. A parse that
+    failed raises `ParseFailed`."""
     from server.code.app.index.ingest_parse import parse_for_ingest
 
     pf, error = parse_for_ingest(path, source)
     if error:
         raise ParseFailed(path, error)
-    return (pf.symbols, pf.tree) if pf is not None else ([], None)
+    return pf
 
 
 @dataclass(frozen=True)
 class FileAt:
+    """A file at a commit as the index reads it: its lines and its definitions."""
+
     lines: list[str]
     defs: list[Definition]
 
@@ -212,8 +214,7 @@ async def parsed(
     if data is None:
         return None
     # parsing and fingerprinting is CPU work: off the event loop
-    defs = await asyncio.to_thread(file_definitions, path, data, named)
-    return FileAt(data.decode("utf-8", "replace").split("\n"), defs)
+    return await asyncio.to_thread(file_at, path, data, named)
 
 
 async def _file_at(org: str, namespace: str, commit: str, path: str) -> bytes | None:
@@ -234,15 +235,25 @@ async def names_at(org: str, namespace: str, commit: str, path: str) -> set[str]
     data = await _file_at(org, namespace, commit, path)
     if data is None:
         return None
-    symbols, _ = await asyncio.to_thread(_parse, path, data)
-    return {s.qualified_name for s in symbols}
+    pf = await asyncio.to_thread(_parse, path, data)
+    return {s.qualified_name for s in pf.symbols} if pf is not None else set()
+
+
+def file_at(path: str, source: bytes, named: str = "") -> FileAt:
+    """`source` as the index reads it (a notebook's code cells) with its definitions,
+    fingerprinted (`definitions`); with `named`, only those of that bare name, without
+    rename shapes. A parse that failed raises `ParseFailed`."""
+    pf = _parse(path, source)
+    if pf is None:
+        return FileAt(source.decode("utf-8", "replace").split("\n"), [])
+    text = pf.source or source
+    defs = definitions(path, text, pf.symbols, pf.tree, named=named)
+    return FileAt(text.decode("utf-8", "replace").split("\n"), defs)
 
 
 def file_definitions(path: str, source: bytes, named: str = "") -> list[Definition]:
-    """`source`'s definitions, fingerprinted (`definitions`); with `named`, only those of
-    that bare name, without rename shapes. A parse that failed raises `ParseFailed`."""
-    symbols, tree = _parse(path, source)
-    return definitions(path, source, symbols, tree, named=named)
+    """`file_at`'s definitions."""
+    return file_at(path, source, named).defs
 
 
 async def live_paths(org: str, namespace: str, refs: list[str]) -> dict[str, str]:

@@ -5,6 +5,7 @@ declared twice; and nothing of a namesake in another scope."""
 from __future__ import annotations
 
 import itertools
+import json
 
 import pytest
 
@@ -735,3 +736,23 @@ def test_a_quote_change_that_changes_the_escapes_changes_it() -> None:
     before = "def value():\n    return 'a\"b'\n"
     after = 'def value():\n    return "a\\"b"\n'
     assert _value("a.py", before) != _value("a.py", after)
+
+
+def _notebook(body: str) -> bytes:
+    cells = [
+        {"cell_type": "markdown", "source": ["# Rows"]},
+        {"cell_type": "code", "source": ["import os\n"]},
+        {"cell_type": "code", "source": body.splitlines(keepends=True)},
+    ]
+    return json.dumps({"cells": cells, "nbformat": 4}).encode()
+
+
+def test_a_notebook_definition_is_fingerprinted_from_its_code_cell() -> None:
+    from server.code.app.memory_links import file_at
+
+    before = file_at("a.ipynb", _notebook("def value(a):\n    return a + 1\n"))
+    after = file_at("a.ipynb", _notebook("def value(a):\n    return a + 2\n"))
+    (was,), (now,) = ([d for d in f.defs if d.name == "value"] for f in (before, after))
+    assert was.body_hash and was.body_hash != now.body_hash
+    assert was.shape.exact and was.shown == "def value(a):\n    return a + 1"
+    assert before.span(was.start_line, was.end_line) == was.shown

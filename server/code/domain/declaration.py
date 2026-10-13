@@ -30,6 +30,8 @@ from server.code.domain.extract.lang_typescript_nodes import (
 _GRAMMARS = {
     ".py": "python",
     ".pyi": "python",
+    ".pyw": "python",
+    ".ipynb": "python",  # the code cells the index reads it as
     **dict.fromkeys(CPP_EXTENSIONS, "cpp"),
     ".ts": "typescript",
     ".mts": "typescript",

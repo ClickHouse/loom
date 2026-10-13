@@ -3529,3 +3529,26 @@ async def test_redaction_blanks_suggestions_not_made_from_the_live_value(env, ch
         parameters={"o": ORG, "n": MEM},
     ).result_rows
     assert rows == [("a.py", ""), ("b.py", "about the live text")]
+
+
+def _notebook(body: str) -> str:
+    import json
+
+    cells = [
+        {"cell_type": "markdown", "source": ["# Rows"]},
+        {"cell_type": "code", "source": body.splitlines(keepends=True)},
+    ]
+    return json.dumps({"cells": cells, "nbformat": 4}, indent=1)
+
+
+async def test_an_edit_to_a_notebook_cell_reads_changed(env) -> None:
+    repo = env
+    c1 = repo.commit({"nb/rows.ipynb": _notebook("def tally_rows(xs):\n    return len(xs)\n")})
+    await _index(TRUNK, repo, c1, ["nb/rows.ipynb"])
+    mid = await _remember(MEM, "tally", "`tally_rows` counts the rows")
+    await _pass()
+    assert [link["state"] for link in await _links(mid)] == ["fresh"]
+    c2 = repo.commit({"nb/rows.ipynb": _notebook("def tally_rows(xs):\n    return len(xs) + 1\n")})
+    await _index(TRUNK, repo, c2, ["nb/rows.ipynb"])
+    await _pass()
+    assert [link["state"] for link in await _links(mid)] == ["changed"]
