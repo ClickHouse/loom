@@ -11,6 +11,9 @@ export interface SearchHit {
   memory_type: string;
   content_excerpt: string;
   distance: number;
+  /** The hit's similarity as the search scored it; on some planes (records, the key
+   *  axis) it is not 1 − distance. */
+  similarity?: number;
   rank_score: number;
   confidence: number;
   namespace?: string;

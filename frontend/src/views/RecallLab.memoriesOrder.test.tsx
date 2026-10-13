@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MemoryListEntry, SearchHit, WhoAmI } from "../api";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
+import { searchMemory } from "../api";
 import { RecallLab } from "./RecallLab";
 import { Recent } from "./Recent";
 
@@ -115,5 +116,14 @@ describe("Recall Lab and the Memories list", () => {
     // The keyword rows say why they lead; the ranked one says what ranked it.
     expect(screen.getAllByText("keyword match")).toHaveLength(2);
     expect(screen.getAllByText("semantic +0.60")).toHaveLength(2);
+  });
+
+  it("keep the keyword rows when the ranked search fails", async () => {
+    vi.mocked(searchMemory).mockRejectedValueOnce(new Error("search down"));
+    useStore.setState({ view: "recall" });
+    render(<RecallLab />);
+    await userEvent.type(screen.getByLabelText("Recall query"), "Azure");
+    await waitFor(() => expect(shownKeys()).toEqual(["newer_azure", "older_azure"]), { timeout: 3000 });
+    expect(screen.queryByText("search down")).toBeNull();
   });
 });

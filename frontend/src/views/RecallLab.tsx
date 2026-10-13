@@ -8,7 +8,7 @@ import { EmptyState } from "../components/EmptyState";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { humanizeError, relativeTime, displayAgent, previewValue } from "../lib/format";
 import { KEYWORD_PAGE, keywordThenRanked } from "../lib/searchOrder";
-import { signed, whyTerms } from "../lib/whyNote";
+import { hitSimilarity, signed, whyTerms } from "../lib/whyNote";
 
 // One recorded search, expanded in place. A person reading "my agent answered badly an
 // hour ago" needs more than the top score and the first eight keys — they need every key
@@ -259,7 +259,7 @@ function RecallHistory() {
 function RankedTerms({ hit }: { hit: SearchHit }) {
   return (
     <>
-      <span title="cosine similarity (1 − distance)">sim {(1 - hit.distance).toFixed(3)}</span>
+      <span title="similarity the search reports for the hit">sim {hitSimilarity(hit).toFixed(3)}</span>
       <span title="final score the ranked hits are ordered by">score {hit.rank_score.toFixed(3)}</span>
       {whyTerms(hit.score_components).map((t) => (
         <span key={t.label} className={t.value < 0 ? "text-[var(--color-warn)]" : "text-[var(--color-accent)]"}>
@@ -321,17 +321,19 @@ export function RecallLab() {
       setError(null);
       try {
         // The two reads the Memories list makes for a search, with the same arguments.
-        const [kw, r] = await Promise.all([
-          listMemories(identity, KEYWORD_PAGE, {
-            contains: q,
-            fields: ["memory_key", "memory_type", "value"],
-            signal: ac.signal,
-          }).catch(() => null),
-          searchMemory(identity, q, { top_k: 50, explain: true, legs: ["memory"], signal: ac.signal }),
-        ]);
+        const search = searchMemory(identity, q, { top_k: 50, explain: true, legs: ["memory"], signal: ac.signal });
+        search.catch(() => {}); // awaited below; a rejection before then is not unhandled
+        const kw = await listMemories(identity, KEYWORD_PAGE, {
+          contains: q,
+          fields: ["memory_key", "memory_type", "value"],
+          previewChars: 200,
+          signal: ac.signal,
+        }).catch(() => null);
+        // As on the Memories list, a failed ranked search keeps the keyword rows.
+        const r = await (kw?.entries.length ? search.catch(() => null) : search);
         if (ac.signal.aborted) return;
         const keyword = new Map((kw?.entries ?? []).map((e) => [e.memory_key, e] as const));
-        const ranked = new Map((r.results || []).map((h) => [h.memory_key, h] as const));
+        const ranked = new Map((r?.results ?? []).map((h) => [h.memory_key, h] as const));
         const order = keywordThenRanked([...keyword.keys()], [...ranked.keys()]);
         setRows(
           order.map((key) => {
@@ -347,8 +349,8 @@ export function RecallLab() {
           }),
         );
         // Keyword matches are real matches: the list hedges only when there are none.
-        setAbstain(Boolean(r.abstain) && keyword.size === 0);
-        setModel(r.embedding_model || "");
+        setAbstain(Boolean(r?.abstain) && keyword.size === 0);
+        setModel(r?.embedding_model ?? "");
       } catch (e) {
         if (ac.signal.aborted) return;
         setError(humanizeError(e));

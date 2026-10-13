@@ -12,7 +12,7 @@ import pytest
 from server.memory.domain.search_types import SearchQuery
 from server.memory.store.query_spellings import spelling_rows
 
-MODEL = "fake-casing-test"
+MODEL = "fake-spelling-test"
 # The stored vector column is quantized at Loom's standard width.
 VEC = [0.1] * 3072
 
@@ -29,7 +29,7 @@ class _Async:
 
 @pytest.fixture
 def ns(ch_client: Any) -> Any:
-    name = f"test-casing-{uuid.uuid4().hex[:10]}"
+    name = f"test-spelling-{uuid.uuid4().hex[:10]}"
     yield name
     ch_client.command(
         "DELETE FROM loom.memory_embeddings WHERE org = 'test' AND namespace = {ns:String}",

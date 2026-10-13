@@ -10,14 +10,20 @@ from typing import Any
 import pytest
 
 from server.memory.api.models_search import MemorySearchInput
-from server.memory.app.search import query_casing as app
-from server.memory.domain.query_casing import apply_spellings, casing_candidates, pick_spellings
+from server.memory.app.search import query_spelling as app
+from server.memory.domain.query_spelling import apply_spellings, pick_spellings, spelling_candidates
 
 
 def _input(query: str = "datalakecatalog") -> MemorySearchInput:
     return MemorySearchInput(
         org="o", namespace="ns", agent="*", query=query, user_id="u1", session_id="s1"
     )
+
+
+@pytest.fixture(autouse=True)
+def _empty_caches():
+    app._cache.clear()
+    app._slow_until.clear()
 
 
 def _lookup_returns(monkeypatch, rows):
@@ -31,17 +37,17 @@ def _lookup_returns(monkeypatch, rows):
 
 
 def test_candidates_are_the_short_querys_lowercase_words():
-    assert casing_candidates("datalakecatalog", max_words=6) == ["datalakecatalog"]
+    assert spelling_candidates("datalakecatalog", max_words=6) == ["datalakecatalog"]
     # A capital, digit or underscore is the caller's spelling; short words carry nothing.
     query = "DataLakeCatalog nessie s3 iceberg2 data_lake"
-    assert casing_candidates(query, max_words=6) == ["nessie"]
-    assert casing_candidates("kafka kafka", max_words=6) == ["kafka"]
+    assert spelling_candidates(query, max_words=6) == ["nessie"]
+    assert spelling_candidates("kafka kafka", max_words=6) == ["kafka"]
 
 
 def test_a_long_question_or_off_looks_nothing_up():
     q = "what did we decide about the datalakecatalog credentials last week"
-    assert casing_candidates(q, max_words=6) == []
-    assert casing_candidates("datalakecatalog", max_words=0) == []
+    assert spelling_candidates(q, max_words=6) == []
+    assert spelling_candidates("datalakecatalog", max_words=0) == []
 
 
 @pytest.mark.parametrize(
@@ -104,19 +110,54 @@ def test_the_deadline_reaches_clickhouse(monkeypatch):
     assert asyncio.run(app.corpus_spellings(_input(), "m")) == {}
 
 
-def test_a_failed_lookup_embeds_as_typed_and_says_so(monkeypatch):
-    noted = []
-    monkeypatch.setattr(app.degradations, "note", lambda *a: noted.append(a[:2]))
+def test_a_failed_lookup_embeds_as_typed_and_backs_off(monkeypatch):
+    calls = []
+
+    async def spelling_rows(_ch, _q, _tokens):
+        calls.append(1)
+        raise TimeoutError()
+
+    monkeypatch.setattr(app, "spelling_rows", spelling_rows)
+    monkeypatch.setattr(app, "get_client", lambda: None)
+    assert asyncio.run(app.corpus_spellings(_input(), "m")) is None
+    # The namespace is not read again for a minute, whatever the query.
+    assert asyncio.run(app.corpus_spellings(_input("iceberg"), "m")) is None
+    assert len(calls) == 1
+    clock = time.monotonic() + app._CACHE_TTL_S + 1
+    monkeypatch.setattr(app.time, "monotonic", lambda: clock)
+    asyncio.run(app.corpus_spellings(_input(), "m"))
+    assert len(calls) == 2
+
+
+def test_a_failed_lookup_is_not_a_provider_outage(monkeypatch):
+    from server.observability import provider_health
+
     _lookup_returns(monkeypatch, TimeoutError())
-    assert asyncio.run(app.corpus_spellings(_input(), "m")) == {}
-    assert noted == [("query_spelling", "embedded_as_typed")]
+    asyncio.run(app.corpus_spellings(_input(), "m"))
+    assert "query_spelling" not in provider_health.status()["providers"]
 
 
-def test_memory_search_corpus_casing_max_words_zero_reads_nothing(monkeypatch):
+def test_an_answer_is_reused_for_the_same_bounds_and_words(monkeypatch):
+    calls = []
+
+    async def spelling_rows(_ch, q, _tokens):
+        calls.append(q.user_id)
+        return {"DataLakeCatalog": 7}
+
+    monkeypatch.setattr(app, "spelling_rows", spelling_rows)
+    monkeypatch.setattr(app, "get_client", lambda: None)
+    for _ in range(3):
+        asyncio.run(app.corpus_spellings(_input(), "m"))
+    other_user = _input().model_copy(update={"user_id": "u2"})
+    asyncio.run(app.corpus_spellings(other_user, "m"))
+    assert calls == ["u1", "u2"]
+
+
+def test_memory_search_query_spelling_max_words_zero_reads_nothing(monkeypatch):
     from server.settings import settings
 
     _lookup_returns(monkeypatch, AssertionError("no lookup when off"))
-    monkeypatch.setattr(settings, "memory_search_corpus_casing_max_words", 0)
+    monkeypatch.setattr(settings, "memory_search_query_spelling_max_words", 0)
     assert asyncio.run(app.corpus_spellings(_input(), "m")) == {}
 
 
@@ -183,7 +224,7 @@ async def test_a_busy_pool_does_not_hold_back_the_embed(monkeypatch):
     client._slots = asyncio.Semaphore(1)
     await client._slots.acquire()  # every connection is busy
     vec, spellings, took = await _embed_beside(monkeypatch, client)
-    assert (vec, spellings) == ([1.0], {})
+    assert (vec, spellings) == ([1.0], None)
     assert took < app._LOOKUP_BOUND_S + 0.2
 
 
@@ -198,5 +239,5 @@ async def test_a_slow_reconnect_does_not_hold_back_the_embed(monkeypatch):
 
     client.connect = slow_connect
     vec, spellings, took = await _embed_beside(monkeypatch, client)
-    assert (vec, spellings) == ([1.0], {})
+    assert (vec, spellings) == ([1.0], None)
     assert took < app._LOOKUP_BOUND_S + 0.2

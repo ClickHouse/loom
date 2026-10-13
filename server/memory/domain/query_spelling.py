@@ -18,7 +18,7 @@ MIN_ROWS = 2
 LEAD = 2
 
 
-def casing_candidates(query: str, *, max_words: int) -> list[str]:
+def spelling_candidates(query: str, *, max_words: int) -> list[str]:
     """The query's words of `MIN_WORD_LEN`+ lowercase letters and nothing
     else, in order and deduplicated, when the query has at most `max_words`
     words; [] otherwise. A word with a capital, a digit or an underscore is

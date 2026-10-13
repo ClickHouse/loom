@@ -156,10 +156,11 @@ class MemorySearchSettings(BaseModel):
     # Retries after a timed-out first attempt, each with the bound above.
     memory_search_embed_bound_retries: int = 1
     # A query of at most this many words embeds each all-lowercase word of 4+
-    # letters in the spelling the rows it may read use most
-    # ("datalakecatalog" -> "DataLakeCatalog"); one bounded read, fail-open.
-    # 0 = off.
-    memory_search_corpus_casing_max_words: int = Field(default=6, ge=0)
+    # letters in the spelling the caller's rows in the addressed namespace use
+    # most ("datalakecatalog" -> "DataLakeCatalog"). One read of the namespace
+    # beside the embed (40-180 ms on the largest), reused for a minute;
+    # fail-open. 0 = off.
+    memory_search_query_spelling_max_words: int = Field(default=6, ge=0)
     # Body length (chars) for bodies="excerpt" (the MCP search default).
     memory_search_excerpt_chars: int = Field(default=200, ge=1)
     # Above this top_k a search that pinned no `bodies` serves excerpts, and

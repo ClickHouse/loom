@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app.search.budget import SearchBudget
-from server.memory.app.search.query_casing import embed_query
+from server.memory.app.search.query_spelling import embed_query
 from server.memory.domain.search_prompts import _HYDE_PROMPT
 from server.observability.genai import llm_stage
 
@@ -150,4 +150,6 @@ async def _embed_search_query(
     actual_work["embedding_calls"] = int(actual_work["embedding_calls"]) + (2 if spellings else 1)
     if spellings:
         actual_work["query_spellings"] = spellings
+    elif spellings is None:
+        actual_work["query_spellings_skipped"] = True
     return query_vec

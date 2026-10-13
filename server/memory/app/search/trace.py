@@ -17,7 +17,7 @@ from server.memory.api.models_search import (
 )
 from server.memory.app.search.embed import _bounded_query_embed
 from server.memory.app.search.filters import read_filters
-from server.memory.app.search.query_casing import embed_query
+from server.memory.app.search.query_spelling import embed_query
 from server.memory.app.search.vector_legs import _plane_fields
 
 
@@ -75,7 +75,7 @@ async def handle_memory_search_trace(input: MemorySearchTraceInput) -> Any:
         results=results,
         embedding_model=embedder.model_name,
         entity_filter=entity_filter_lower,
-        query_spellings=spellings,
+        query_spellings=spellings or {},
     )
 
 

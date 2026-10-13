@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from server.memory.domain.query_casing import WORD_PATTERN
+from server.memory.domain.query_spelling import WORD_PATTERN
 from server.memory.domain.search_sql import _build_where
 from server.memory.domain.search_types import SearchQuery
 

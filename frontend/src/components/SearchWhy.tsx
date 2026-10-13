@@ -1,5 +1,5 @@
 import type { SearchHit } from "../api";
-import { signed, whyTerms } from "../lib/whyNote";
+import { hitSimilarity, signed, whyTerms } from "../lib/whyNote";
 
 // Under each ranked hit in the Memories list, one quiet line that says why it is there —
 // rank, similarity, and the ranking terms that moved it (key match, date proximity,
@@ -15,7 +15,7 @@ interface SearchWhyProps {
 
 export function SearchWhy({ hit, rank }: SearchWhyProps) {
   const terms = whyTerms(hit.score_components);
-  const similarity = typeof hit.distance === "number" && Number.isFinite(hit.distance) ? 1 - hit.distance : null;
+  const similarity = typeof hit.distance === "number" && Number.isFinite(hit.distance) ? hitSimilarity(hit) : null;
   const explanation = String(hit.explanation ?? "")
     .replace(/\n/g, " ")
     .trim();
