@@ -51,7 +51,7 @@ async def apply_policies(
     for a in await store.for_memories(org, due):
         if a["state"] != "pending":
             links[a["memory_id"]].append(a)
-    heads = {str(h["mid"]): h for h in await store.memory_heads(org, due)}
+    heads = {h["mid"]: h for h in await store.memory_heads(org, due)}
     policies = await store.code_change_policies(
         org, sorted({h["namespace"] for h in heads.values()})
     )

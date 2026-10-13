@@ -508,7 +508,7 @@ async def _resolve_pending(
     defs = await code.candidates(org, cns, names=wanted)
     # the files each memory names pick between namesakes, as when it was first linked
     heads = await store.memory_heads(org, sorted({r["memory_id"] for r in names}))
-    named = {str(h["mid"]): [str(f) for f in h.get("files") or []] for h in heads}
+    named = {h["mid"]: [str(f) for f in h.get("files") or []] for h in heads}
     moves = []
     for r in names:
         m = r["qualified_name"]
@@ -562,7 +562,7 @@ async def _relink(
     rows, gone, unparsed = (
         await links.link_each(org, cns, served, existing, files) if served else ([], [], [])
     )
-    waiting = {str(m["mid"]) for m in unparsed}  # their markers stay
+    waiting = {m["mid"] for m in unparsed}  # their markers stay
     read = {m["memory_id"]: m["version"] for m in markers}
     for r in rows:
         r["version"] = read[r["memory_id"]] + 1
@@ -578,8 +578,7 @@ async def _current_moves(org: str, moves: list[Move]) -> list[Move]:
     if not moves:
         return []
     heads = {
-        str(h["mid"]): h
-        for h in await store.memory_heads(org, [m.before["memory_id"] for m in moves])
+        h["mid"]: h for h in await store.memory_heads(org, [m.before["memory_id"] for m in moves])
     }
     out = []
     for m in moves:

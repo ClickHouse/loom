@@ -96,16 +96,16 @@ async def _link_org(
     write after the one that linked its newer value; so each writer re-reads the heads it
     linked and relinks those rewritten since it read them, `rereads` times at most."""
     existing: dict[str, list[LinkRow]] = defaultdict(list)
-    for a in await store.for_memories(org, [str(r["mid"]) for r in rows]):
+    for a in await store.for_memories(org, [r["mid"] for r in rows]):
         existing[a["memory_id"]].append(a)
     todo: dict[str, list[dict[str, Any]]] = defaultdict(list)
     stale: list[LinkRow] = []
     deleted: set[str] = set()
     for r in rows:
-        links = existing.get(str(r["mid"]), [])
+        links = existing.get(r["mid"], [])
         if r.get("tombstoned_at") is not None:
             if links:
-                deleted.add(str(r["mid"]))  # its links go outright, not as tombstones
+                deleted.add(r["mid"])  # its links go outright, not as tombstones
             continue
         tags = [str(t) for t in r.get("tags") or []]
         cns = code_namespace_for(org, str(r["namespace"]), tags)
@@ -136,15 +136,15 @@ async def _link_org(
         if unparsed:
             result.errors.append(f"link {org}/{cns}: a file did not parse")
             out += [_awaiting(r, cns) for r in unparsed]
-            waiting = {str(r["mid"]) for r in unparsed}
-            memories = [r for r in memories if str(r["mid"]) not in waiting]
+            waiting = {r["mid"] for r in unparsed}
+            memories = [r for r in memories if r["mid"] not in waiting]
         out += rows_out + store.tombstones(gone)
         result.linked += len(rows_out)
         result.unlinked += len(gone)
-        linked += [str(r["mid"]) for r in memories]
+        linked += [r["mid"] for r in memories]
     await store.insert(out)
     if linked and rereads:
-        read = {str(r["mid"]): r["inputs"] for memories in todo.values() for r in memories}
+        read = {r["mid"]: r["inputs"] for memories in todo.values() for r in memories}
         await _relink_rewritten(org, linked, read, result, rereads - 1)
 
 
@@ -154,7 +154,7 @@ async def _relink_rewritten(
     """Relink those of `linked` rewritten since they were read with inputs `read`: a
     writer of the newer value may have linked it before this one replaced its links."""
     heads = await store.memory_heads(org, linked)
-    newer = [h for h in heads if inputs_now(org, h) != read.get(str(h["mid"]))]
+    newer = [h for h in heads if inputs_now(org, h) != read.get(h["mid"])]
     if newer:
         await _link_org(org, newer, result, rereads=rereads)
 
@@ -314,7 +314,7 @@ def _link_row(
         path=path,
         qualified_name=qualified_name,
         namespace=str(memory["namespace"]),
-        memory_id=str(memory["mid"]),
+        memory_id=memory["mid"],
         memory_key=str(memory["memory_key"]),
         agent=str(memory["agent"]),
         user_id=str(memory["user_id"]),
