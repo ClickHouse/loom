@@ -111,7 +111,6 @@ _PREPROC_IFS = {"preproc_if", "preproc_ifdef"}
 _PREPROC_BRANCHES = {"preproc_elif", "preproc_elifdef", "preproc_else"}
 # what selects a branch: an `#if` or `if` condition; a later branch negates those before it
 _CONDITIONALS = _PREPROC_IFS | {"preproc_elif", "preproc_elifdef", "if_statement", "elif_clause"}
-_ALTERNATIVES = _PREPROC_BRANCHES | {"elif_clause", "else_clause"}
 _HANDLERS = {"except_clause", "except_group_clause"}
 # what may stand before a declaration's own first token
 _HEADS = _PREFIXES | {
@@ -246,13 +245,13 @@ _FORS = {"for_statement", "for_in_statement"}
 _STATEMENT_LISTS = {"program", "statement_block", "class_body", "switch_case", "switch_default"}
 
 
-def bound_function(value: Any) -> Any:
+def _bound_function(value: Any) -> Any:
     """The function a variable's value is, as the index reads one: through `(…)`, `as`,
     `satisfies`, `!` and wrapper calls; None when it is not one."""
     return _unwrap(value) if _is_function_like(value) else _wrapped_function(value)
 
 
-def joined(shapes: Sequence[Shape]) -> Shape:
+def _joined(shapes: Sequence[Shape]) -> Shape:
     """One shape over several declarations of a name, each part '' when any of theirs is;
     `NO_SHAPE` over none."""
     if not shapes:
@@ -281,7 +280,7 @@ class Prints(NamedTuple):
         """The fingerprints and judge's text of `members` together, in order."""
         return cls(
             fingerprint([m.hashed for m in members]),
-            joined([m.shape for m in members]),
+            _joined([m.shape for m in members]),
             "\n\n".join(m.shown for m in members),
         )
 
@@ -496,7 +495,7 @@ class Declarations:
                 n, v = d.child_by_field_name("name"), d.child_by_field_name("value")
                 if d.type != "variable_declarator" or n is None:
                     continue
-                fn = None if v is None else bound_function(v)
+                fn = None if v is None else _bound_function(v)
                 if fn is None:
                     values.setdefault(self._text(n), (d, n, None))
                 else:

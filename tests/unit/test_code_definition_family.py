@@ -829,13 +829,14 @@ def _notebook(body: str) -> bytes:
 
 def test_a_notebook_definition_is_fingerprinted_from_its_code_cell() -> None:
     from server.code.app.memory_links import file_at
+    from server.code.domain.successor import Side
 
     before = file_at("a.ipynb", _notebook("def value(a):\n    return a + 1\n"))
     after = file_at("a.ipynb", _notebook("def value(a):\n    return a + 2\n"))
     (was,), (now,) = ([d for d in f.defs if d.name == "value"] for f in (before, after))
     assert was.body_hash and was.body_hash != now.body_hash
     assert was.shape.exact and was.shown == "def value(a):\n    return a + 1"
-    assert before.span(was.start_line, was.end_line) == was.shown
+    assert Side("a.ipynb", before.defs, before.lines).text(was) == was.shown
 
 
 _SPLIT_HEAD = (

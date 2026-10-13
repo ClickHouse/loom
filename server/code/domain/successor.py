@@ -63,7 +63,7 @@ class Side:
         return "\n".join(self.lines[max(0, d.start_line - 1) : d.end_line])
 
 
-def scope_of(d: Definition) -> str:
+def _scope_of(d: Definition) -> str:
     """The class or namespace a definition is declared in, without its module."""
     return local_name(d.qualified_name, d.path).rpartition(".")[0]
 
@@ -77,18 +77,18 @@ def successor(was: Definition, before: Side, now: Side) -> Successor:
         if (name := _unnumbered(d)) not in seen:
             seen.add(name)
             fresh.append(d)
-    scope = scope_of(was)
+    scope = _scope_of(was)
     target, scope_unsure = scope, False
-    if scope and scope not in {scope_of(d) for d in now.defs} | _names(now):
+    if scope and scope not in {_scope_of(d) for d in now.defs} | _names(now):
         target, scope_unsure = _renamed_scope(scope, before, now)
     # the other definitions gone from its scope: one new definition is the successor of
     # one of them at most, and a rename alone of another is that one's
     rivals = [
         d
         for d in _removed(before, now)
-        if _unnumbered(d) != _unnumbered(was) and scope_of(d) == scope
+        if _unnumbered(d) != _unnumbered(was) and _scope_of(d) == scope
     ]
-    in_scope = [d for d in fresh if scope_of(d) == target]
+    in_scope = [d for d in fresh if _scope_of(d) == target]
     # a method keeps what surrounds it only when the class changed nothing but its name
     carried = target != scope and not _renamed_alone(scope, target, before, now)
     if target != scope:
@@ -202,7 +202,7 @@ def _layout(side: Side) -> tuple[dict[str, set[str]], set[str]]:
     members: dict[str, set[str]] = defaultdict(set)
     classes = set()
     for d in side.defs:
-        scope, name = scope_of(d), bare_name(d.qualified_name)
+        scope, name = _scope_of(d), bare_name(d.qualified_name)
         if d.kind == "impl":
             classes.add(scope)
         else:
@@ -223,7 +223,7 @@ def _renamed_scope(scope: str, before: Side, now: Side) -> tuple[str, bool]:
     was, was_classes = _layout(before)
     members, classes = _layout(now)
     old = was[scope]
-    news = (classes if scope in was_classes else set(members)) - {scope_of(d) for d in before.defs}
+    news = (classes if scope in was_classes else set(members)) - {_scope_of(d) for d in before.defs}
     kept = []
     for s in news & set(members):
         shared = len(old & members[s])
@@ -247,7 +247,7 @@ def _member_shapes(side: Side, scope: str) -> dict[str, str]:
     shapes = {
         bare_name(d.qualified_name): d.shape.exact
         for d in side.defs
-        if scope_of(d) == scope and d.kind != "impl"
+        if _scope_of(d) == scope and d.kind != "impl"
     }
     return shapes if all(shapes.values()) else {}
 

@@ -192,9 +192,6 @@ class FileAt:
     lines: list[str]
     defs: list[Definition]
 
-    def span(self, start: int, end: int) -> str:
-        return "\n".join(self.lines[max(0, start - 1) : end])
-
 
 async def has_commit(org: str, namespace: str, sha: str) -> bool:
     """Whether the repository's mirror holds commit `sha`; one it cannot read raises."""
