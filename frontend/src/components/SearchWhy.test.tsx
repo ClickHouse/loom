@@ -11,6 +11,7 @@ const hit = (over: Partial<SearchHit> = {}): SearchHit => ({
   memory_type: "semantic",
   content_excerpt: "the user prefers oat milk",
   distance: 0.38,
+  similarity: 0.62,
   rank_score: 0.71,
   confidence: 0.9,
   ...over,

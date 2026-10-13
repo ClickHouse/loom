@@ -12279,6 +12279,8 @@ class MemorySearchTraceOutput(TypedDict, total=False):
     results: Required[list["SearchTraceHit"]]
     embedding_model: Required[str]
     entity_filter: Required[list[str]]
+    query_spellings: NotRequired[dict[str, str]]
+    query_spellings_skipped: NotRequired[bool]
 
 
 class SearchTraceHit(TypedDict, total=False):

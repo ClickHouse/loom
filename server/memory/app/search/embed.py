@@ -6,8 +6,10 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
+from server.core.errors import EmbedTimeoutError
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app.search.budget import SearchBudget
+from server.memory.app.search.query_spelling import embed_query
 from server.memory.domain.search_prompts import _HYDE_PROMPT
 from server.observability.genai import llm_stage
 
@@ -43,17 +45,9 @@ async def _bounded_query_embed(
             if actual_work is not None:
                 actual_work["embed_timeouts"] = int(actual_work.get("embed_timeouts", 0) or 0) + 1
             log.warning("query embed exceeded %.1fs (attempt %d/%d)", bound, attempt, attempts)
-    from fastapi import HTTPException
-
-    raise HTTPException(
-        status_code=503,
-        detail={
-            "code": "EMBED_TIMEOUT",
-            "message": (
-                f"the embedding provider did not answer within {bound:.1f}s on "
-                f"{attempts} attempt(s); retry the search"
-            ),
-        },
+    raise EmbedTimeoutError(
+        f"the embedding provider did not answer within {bound:.1f}s on "
+        f"{attempts} attempt(s); the search wrote nothing"
     )
 
 
@@ -137,9 +131,16 @@ async def _embed_search_query(
         except Exception as e:  # noqa: BLE001 — HyDE is optional; the plain query embed still runs
             log.warning("HyDE generation failed (non-fatal): %s", e)
 
-    with traced("embed.compute.query", model=embedder.model_name):
+    async def embed(text: str) -> list[float]:
         actual_work["embedding_calls"] = int(actual_work["embedding_calls"]) + 1
+        return await _bounded_query_embed(embedder, text, actual_work)
+
+    with traced("embed.compute.query", model=embedder.model_name):
         _clock.mark("plan")
-        query_vec = await _bounded_query_embed(embedder, hyde_query, actual_work)
+        query_vec, spellings = await embed_query(embed, hyde_query, input, embedder.model_name)
         _clock.mark("embed")
+    if spellings:
+        actual_work["query_spellings"] = spellings
+    elif spellings is None:
+        actual_work["query_spellings_skipped"] = True
     return query_vec

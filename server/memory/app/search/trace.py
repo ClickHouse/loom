@@ -16,8 +16,9 @@ from server.memory.api.models_search import (
     _SearchTraceLogRow,
 )
 from server.memory.app.search.embed import _bounded_query_embed
+from server.memory.app.search.filters import read_filters
+from server.memory.app.search.query_spelling import embed_query
 from server.memory.app.search.vector_legs import _plane_fields
-from server.memory.app.served_superseded import served_flags as _served
 
 
 async def handle_memory_search_trace(input: MemorySearchTraceInput) -> Any:
@@ -33,7 +34,12 @@ async def handle_memory_search_trace(input: MemorySearchTraceInput) -> Any:
     input, _ = pin_read_filters(input, current_auth())
     embedder = get_embedder()
     with traced("embed.compute.query", model=embedder.model_name):
-        query_vec = await _bounded_query_embed(embedder, input.query)
+        query_vec, spellings = await embed_query(
+            lambda text: _bounded_query_embed(embedder, text),
+            input.query,
+            input,
+            embedder.model_name,
+        )
 
     entity_filter_lower = [t.lower() for t in (input.entity_filter or [])]
 
@@ -42,20 +48,11 @@ async def handle_memory_search_trace(input: MemorySearchTraceInput) -> Any:
             SearchQuery(
                 org=input.org,
                 namespace=input.namespace,
-                scope=input.scope,
-                agent=input.agent,
-                **_served(input),
+                **read_filters(input),
                 embedding_model=embedder.model_name,
                 query_vec=query_vec,
                 top_k=input.top_k,
-                memory_type=input.memory_type or None,
-                user_id=input.user_id,
-                session_ids=list(getattr(input, "session_ids", []) or []),
-                session_id=getattr(input, "session_id", None),
-                run_id=input.run_id,
                 entity_filter=list(input.entity_filter or []),
-                as_of=input.as_of,
-                as_of_basis=getattr(input, "as_of_basis", "valid_time"),
             )
         )
 
@@ -78,6 +75,8 @@ async def handle_memory_search_trace(input: MemorySearchTraceInput) -> Any:
         results=results,
         embedding_model=embedder.model_name,
         entity_filter=entity_filter_lower,
+        query_spellings=spellings or {},
+        query_spellings_skipped=spellings is None,
     )
 
 
