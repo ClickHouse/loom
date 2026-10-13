@@ -644,7 +644,7 @@ async def test_the_sweep_removes_every_version_of_an_old_tombstone(env, ch_clien
             parameters={"m": mid},
         ).result_rows[0][0]
 
-    assert versions() >= 2  # the live row it had and its tombstone
+    assert versions() >= 1  # its tombstone, over the live row unless a merge folded them
     ch_client.command(
         "ALTER TABLE loom.memory_code_links UPDATE tombstoned_at = now() - INTERVAL 8 DAY "
         "WHERE memory_id = {m:UUID} AND tombstoned_at IS NOT NULL SETTINGS mutations_sync = 2",
