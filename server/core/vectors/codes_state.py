@@ -50,8 +50,9 @@ PATCH_PARTS_SQL = (
 
 # "loom.table.column" of every coded vector column; None = never read.
 _coded: frozenset[str] | None = None
-# The vector widths those codecs fix; a write of any other length fails.
-_widths: frozenset[int] = frozenset()
+# "loom.table.column" -> the vector width its codec fixes; a write of any other
+# length fails.
+_widths: dict[str, int] = {}
 # monotonic time of the last completed probe; None = never probed
 _probed_at: float | None = None
 _ch: Any = None
@@ -66,7 +67,7 @@ def reset() -> None:
     """Test seam."""
     global _coded, _widths, _probed_at, _ch, _refresh
     _coded = None
-    _widths = frozenset()
+    _widths = {}
     _probed_at = None
     _ch = None
     _refresh = None
@@ -82,9 +83,27 @@ def coded_columns() -> frozenset[str] | None:
     return _coded
 
 
-def coded_widths() -> frozenset[int]:
-    """The vector lengths the coded columns accept (empty: none coded, or never probed)."""
-    return _widths
+def coded_widths() -> dict[str, int]:
+    """Each coded column's vector width (empty: none coded, or never probed)."""
+    return dict(_widths)
+
+
+def width_mismatches(served: int) -> dict[str, tuple[int, int]]:
+    """Serving columns whose width differs from what their writes carry, as
+    column -> (stored, written). A table LOOM_CODE_VECTOR_TABLES routes a label to
+    takes that label's width, Loom's own coded tables the served model's; other
+    tables (rebuild staging, backups) take no writes."""
+    from server.core.schema.vector_codec_ddl import CODED_TABLES
+    from server.core.vectors.code_tables import vector_dim_for_table
+
+    out: dict[str, tuple[int, int]] = {}
+    for column, stored in _widths.items():
+        table = column.rsplit(".", 1)[0]
+        own = table.split(".", 1)[1] in CODED_TABLES
+        written = vector_dim_for_table(table) or (served if own else 0)
+        if written and stored != written:
+            out[column] = (stored, written)
+    return out
 
 
 def is_coded(table: str, column: str) -> bool | None:
@@ -116,8 +135,11 @@ async def probe(ch: Any) -> None:
     try:
         rows = await ch.query_all(CODED_COLUMNS_SQL, {"db": "loom"})
         set_coded({f"loom.{r['table']}.{r['name']}" for r in rows})
-        found = (_WIDTH.search(str(r.get("compression_codec") or "")) for r in rows)
-        _widths = frozenset(int(m.group(1)) for m in found if m)
+        _widths = {
+            f"loom.{r['table']}.{r['name']}": int(m.group(1))
+            for r in rows
+            if (m := _WIDTH.search(str(r.get("compression_codec") or "")))
+        }
     except Exception as e:  # noqa: BLE001 — advisory; the previous reading stands
         log.info("coded-column probe failed: %s", str(e)[:160])
     tables = sorted({c.rsplit(".", 1)[0].split(".", 1)[1] for c in (_coded or ())})
@@ -190,6 +212,7 @@ __all__ = [
     "codes_apply",
     "coded_columns",
     "coded_widths",
+    "width_mismatches",
     "ensure_probed",
     "is_coded",
     "probe",

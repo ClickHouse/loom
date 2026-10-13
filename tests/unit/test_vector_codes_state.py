@@ -126,7 +126,10 @@ async def test_probe_reads_codecs_then_patch_parts_of_coded_tables_only() -> Non
     # an uncoded table is not asked about
     assert patch_parts.last_reading("loom.code_summaries") is None
     assert len(ch.calls) == 2
-    assert vector_codes_state.coded_widths() == {1024}
+    assert vector_codes_state.coded_widths() == {
+        "loom.chunks.embedding": 1024,
+        "loom.memory_chunks.embedding": 1024,
+    }
 
 
 @pytest.mark.asyncio
@@ -262,3 +265,22 @@ def test_rebuild_gate_reads_the_served_multiplier_and_skips_placeholders() -> No
     src = (ROOT / "scripts/ops/vector_codec_rebuild.py").read_text()
     assert "twin_read(vcol, lit, self.a.gate_fetch_multiplier)" in src
     assert "{vcol}[1] != 0" in src
+
+
+def test_each_serving_column_is_held_to_the_width_its_writes_carry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.core.vectors import code_tables
+
+    monkeypatch.setattr(
+        vector_codes_state,
+        "_widths",
+        {
+            "loom.memory_embeddings.embedding": 1024,  # the served model's table
+            "loom.code_chunks_small.embedding": 8,  # routed to an 8-dim label
+            "loom.code_chunks.embedding": 3072,  # the served model's code table, stale
+            "loom._provider_rebuild_x_memory_embeddings_target.embedding": 16,  # staging
+        },
+    )
+    monkeypatch.setattr(code_tables, "_mapping", lambda: {"small": ("loom.code_chunks_small", 8)})
+    assert vector_codes_state.width_mismatches(1024) == {"loom.code_chunks.embedding": (3072, 1024)}

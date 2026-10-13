@@ -66,7 +66,7 @@ def _health_provider_fields(
     fake_llm = llm_provider == "fake" or provider_key_missing(llm_provider)
     provider_status = provider_health.status()
     probed_dim = effective_embedding_dim()
-    coded_widths = codes_state.coded_widths()
+    width_mismatches = codes_state.width_mismatches(probed_dim)
     lease = _leader.current()
     main = _main_state()
     reachable = main.get("reachable")
@@ -74,7 +74,7 @@ def _health_provider_fields(
         settings,
         HealthState(
             probed_dim=probed_dim,
-            coded_widths=coded_widths,
+            width_mismatches=width_mismatches,
             provider_status=provider_status,
             pending_migrations=boot.SKIPPED_PENDING_MIGRATIONS,
             worker_lease_held=bool(lease.held) if lease else None,
@@ -95,8 +95,7 @@ def _health_provider_fields(
         "embedding_model": embedding_model,
         "embedding_dim_configured": settings.embedding_dim,
         "embedding_dim_probed": probed_dim,
-        "embedding_dim_mismatch": probed_dim != settings.embedding_dim
-        or any(w != probed_dim for w in coded_widths),
+        "embedding_dim_mismatch": probed_dim != settings.embedding_dim or bool(width_mismatches),
         "llm_provider": llm_provider,
         "llm_model": settings.llm_model,
         "providers_degraded": fake_embedding or fake_llm or provider_status["degraded"],

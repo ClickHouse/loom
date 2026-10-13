@@ -53,8 +53,8 @@ class HealthState:
     server (post-boot) share one collector."""
 
     probed_dim: int | None = None
-    # Vector widths the Quantized-coded columns fix (`codes_state.coded_widths`).
-    coded_widths: frozenset[int] = frozenset()
+    # Coded columns whose width their writes do not carry (`codes_state.width_mismatches`).
+    width_mismatches: Mapping[str, tuple[int, int]] = field(default_factory=dict)
     provider_status: Mapping[str, Any] | None = None  # provider_health.status()
     pending_migrations: tuple[str, ...] | None = None
     worker_lease_held: bool | None = None
@@ -177,18 +177,20 @@ def _embedder_problems(settings: Any, state: HealthState) -> list[Problem]:
                 source="runtime",
             )
         )
-    width = state.probed_dim or int(settings.embedding_dim)
-    stored = sorted(w for w in state.coded_widths if w != width)
-    if stored:
+    if state.width_mismatches:
+        columns = "; ".join(
+            f"{column} stores {stored}-dim vectors, its writes carry {written}"
+            for column, (stored, written) in sorted(state.width_mismatches.items())
+        )
         out.append(
             Problem(
                 "coded_width_mismatch",
                 "error",
-                f"Vector tables are coded for {' and '.join(map(str, stored))}-dim vectors "
-                f"(a Quantized codec is fixed when its table is created) but {model} emits "
-                f"{width}: every write of those vectors fails.",
-                f"Set LOOM_EMBEDDING_DIM={stored[0]} again, or change the model in Settings → "
-                "Models & keys, which rebuilds the vector tables at the new width.",
+                f"A Quantized codec fixes its column's width when the table is created, so "
+                f"these writes fail: {columns}.",
+                "Set LOOM_EMBEDDING_DIM (or the label's dim in LOOM_CODE_VECTOR_TABLES) to the "
+                "width the table was created at, or change the model in Settings → Models & "
+                "keys, which rebuilds the vector tables at the new width.",
                 source="runtime",
             )
         )

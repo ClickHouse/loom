@@ -28,9 +28,9 @@ consumer without listing them. The transport then applies the deployment's
 `latency_budget_multiplier` to whatever this resolves.
 
 The runtime table binds every web process of one server: with more than one
-(`LOOM_WEB_WORKERS`) it lives in a host file beside the shared rate-limit
-table, re-read on change and updated under a lock. It is not shared across
-replicas; the settings map is the fleet-wide half.
+(`LOOM_WEB_WORKERS`) it lives in a per-server file in the runtime directory
+(`server/core/runtime_files.py`), re-read on change and updated under a lock.
+It is not shared across replicas; the settings map is the fleet-wide half.
 """
 
 from __future__ import annotations

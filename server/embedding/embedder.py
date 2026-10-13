@@ -138,8 +138,12 @@ def _served(name: str) -> Embedder:
         )
         from server.embedding.fake import FakeNGramEmbedder
 
-        # The configured width, as for an explicit fake model: the schema is
-        # sized from it.
+        # The configured width, like the explicit-fake branch: the
+        # schema and HNSW index are sized from it.
+        return FakeNGramEmbedder(dim=settings.embedding_dim)
+    if provider == "fake":
+        from server.embedding.fake import FakeNGramEmbedder
+
         return FakeNGramEmbedder(dim=settings.embedding_dim)
     if provider == "local" and not (name == "local" or name.startswith("local:")):
         # LOOM_EMBEDDING_PROVIDER=local over a non-local model name.
@@ -177,6 +181,9 @@ def get_secondary_embedder(spec: str) -> Embedder:
             f"vector_model {spec!r} is not enabled on this deployment "
             f"(LOOM_CODE_SEARCH_VECTOR_MODELS lists {allowed_vector_models() or 'nothing'})"
         )
+    if spec == settings.embedding_model:
+        # The served model: the same embedder, at the same width.
+        return get_embedder()
     inst = _secondary.get(spec)
     if inst is None:
         # Inferred from the spec: LOOM_EMBEDDING_PROVIDER names the served
@@ -212,10 +219,6 @@ def _build(spec: str, provider: str) -> Embedder:
     if provider == "fake":
         from server.embedding.fake import FakeNGramEmbedder
 
-        if spec == settings.embedding_model:
-            # The served model, at the width get_embedder() gives it: a coded
-            # vector column takes vectors of one length only.
-            return FakeNGramEmbedder(dim=settings.embedding_dim)
         suffix = spec.rsplit("-", 1)[-1]
         return FakeNGramEmbedder(dim=int(suffix) if suffix.isdigit() else 1024)
     if provider == "local":
