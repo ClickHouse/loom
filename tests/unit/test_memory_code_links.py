@@ -641,6 +641,15 @@ async def test_an_agent_filtered_read_takes_only_that_agents_links(served) -> No
 
 
 @pytest.mark.asyncio
+async def test_the_no_agent_sentinel_reads_every_agents_links(served) -> None:
+    served.heads += [_row("m", memory_key="k", agent="a1"), _row("g", memory_key="g")]
+    served.links.update(m=[_link("m", "changed")], g=[_link("g", "missing")])
+    hits = [_hit("k"), _hit("g")]
+    await code_link_reads.annotate_hits(_search(agent="-"), hits)
+    assert [(h.memory_key, h.code_state) for h in hits] == [("k", "changed")]
+
+
+@pytest.mark.asyncio
 async def test_search_drops_a_hit_whose_code_is_all_gone_unless_kept(served) -> None:
     served.heads += [
         _row("gone", memory_key="gone"),

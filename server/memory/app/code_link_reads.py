@@ -12,6 +12,7 @@ from typing import Any
 
 from server.code.app import memory_links as code
 from server.memory.domain import code_change
+from server.memory.domain.search_sql import agent_filter
 from server.memory.store import code_links as store
 from server.memory.store.code_links import LinkRow
 from server.settings import settings
@@ -133,10 +134,9 @@ async def links_of(org: str, memory_ids: list[str]) -> dict[str, list[dict[str, 
 
 
 def _bound(input: Any) -> dict[str, Any]:
-    """The identity a search read is bound to, as its fact leg applies it."""
-    private = getattr(input, "scope", "private") == "private"
+    """The identity a private search read is bound to, as its fact leg applies it."""
     return {
-        "agent": input.agent if private and input.agent != "*" else None,
+        "agent": agent_filter(input.agent) or None,
         "user_id": getattr(input, "user_id", None),
         "session_id": getattr(input, "session_id", None),
         "session_ids": set(getattr(input, "session_ids", None) or []),
