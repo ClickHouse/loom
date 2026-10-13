@@ -728,3 +728,53 @@ async def test_a_reindex_paused_across_a_high_relabel_leaves_no_vector(
                 f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
                 params={"o": ORG, "n": ns},
             )
+
+
+async def test_a_reindex_lands_above_a_newer_row_of_its_model(ch: Any) -> None:
+    """A same-model row above the memory row's version (the embed worker's stub
+    tombstone on a model change, an embedding-only re-emit) must not outrank the
+    reindexed vector."""
+    from server.embedding import get_embedder
+    from server.memory import store as M
+    from server.memory.api.models_admin import MemoryReindexInput
+    from server.memory.app import ops
+
+    ns = f"itest-{uuid.uuid4().hex[:12]}"
+    key = f"reindex_above_{uuid.uuid4().hex[:6]}"
+    try:
+        await _memory_only_row(ch, ns, key, f"the {key} vault is rotated every friday")
+        mem = await ch.query_one(
+            "SELECT max(version) AS v FROM loom.memory WHERE org = {o:String}"
+            " AND namespace = {n:String} AND memory_key = {k:String}",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        stale = M.build_embedding_row(
+            org=ORG,
+            namespace=ns,
+            agent=AGENT,
+            user_id=USER,
+            session_id=SESSION,
+            memory_key=key,
+            scope="private",
+            embedding_model=get_embedder().model_name,
+            embedding_dim=0,
+            tombstoned_at=datetime.now(UTC).replace(tzinfo=None),
+            created_at=datetime.now(UTC).replace(tzinfo=None),
+            version=int(mem["v"]) + 5,
+        )
+        await M.insert_embedding_rows([stale], ch=ch)
+        out = await ops.handle_memory_reindex(MemoryReindexInput(org=ORG, namespace=ns))
+        assert out.processed == 1
+        row = await ch.query_one(
+            "SELECT count() AS n FROM loom.memory_embeddings FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND memory_key = {k:String}"
+            " AND tombstoned_at IS NULL AND embedding_dim > 0",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        assert int(row["n"]) == 1
+    finally:
+        for table in ("memory", "memory_embeddings"):
+            await ch.execute(
+                f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
+                params={"o": ORG, "n": ns},
+            )

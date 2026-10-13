@@ -667,18 +667,21 @@ async def _write_revision(
         if embedder is not None
         else []
     )
-    await asyncio.gather(
-        insert_memory_versions([memory_row], ch=ch),
-        *([memory_repo.insert_embedding_rows(emb_rows, ch=ch)] if emb_rows else []),
-        *(
-            []
-            if searchable
-            else [memory_repo.tombstone_vectors_of(existing, version=new_version, ch=ch)]
-        ),
-    )
-    if sensitivity == "high":
-        # After the retire: at the same version, the later insert wins the tie.
-        await fence_high([(memory_repo.embedding_key(existing), new_version)], ch=ch)
+    try:
+        await asyncio.gather(
+            insert_memory_versions([memory_row], ch=ch),
+            *([memory_repo.insert_embedding_rows(emb_rows, ch=ch)] if emb_rows else []),
+            *(
+                []
+                if searchable
+                else [memory_repo.tombstone_vectors_of(existing, version=new_version, ch=ch)]
+            ),
+        )
+    finally:
+        if sensitivity == "high":
+            # After the retire (at the same version, the later insert wins the tie),
+            # and even when the gather failed: the version row may be in.
+            await fence_high([(memory_repo.embedding_key(existing), new_version)], ch=ch)
     cfg = await cfg_task
     _cd.schedule_settle(
         _settle_identity(input.org, existing, revision_run_id),

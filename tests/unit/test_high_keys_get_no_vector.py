@@ -83,7 +83,7 @@ async def test_reindex_stamps_its_rows_with_the_memory_rows_version() -> None:
     await memory_repo.find_memories_to_reindex(
         "o", "n", embedding_model="m", force=False, limit=5, ch=_CH()
     )
-    assert "m.version + 1 AS version" in seen[0]
+    assert "greatest(m.version, e.ev) + 1 AS version" in seen[0]
 
 
 @pytest.mark.asyncio
@@ -128,3 +128,12 @@ async def test_fence_high_fences_vectors_and_tombstones_each_keys_chunks(
     await high_fence.fence_high([(key, 7)], ch=object())
     assert fenced == [(key, 7)]
     assert chunks == [("o", "n", "k", "u1")]
+
+
+def test_restoring_a_high_row_fences_the_key() -> None:
+    import inspect
+
+    from server.memory.app import restore
+
+    src = inspect.getsource(restore.handle_memory_restore)
+    assert 'existing.sensitivity == "high"' in src and "fence_high" in src

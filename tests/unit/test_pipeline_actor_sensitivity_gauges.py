@@ -471,3 +471,28 @@ async def test_sensitivity_sweep_cli_gates_on_the_high_sensitivity_invariant(mon
     )  # dry run, candidates, invariant red
     args.dry_run = False
     assert await cli_ops._sensitivity_sweep_run(object(), args) == 0  # applied, invariant 0
+
+
+@pytest.mark.asyncio
+async def test_a_failed_high_retire_leaves_the_row_unlabelled_for_the_next_pass(
+    monkeypatch,
+) -> None:
+    """The vectors and chunks go before the label: the scan reads only unlabelled
+    rows, so a relabel written ahead of a failed retire would never be retried."""
+    from server.memory import store as memory_repo
+
+    written: list[str] = []
+
+    async def _write(org, ids, update, *, ch=None):
+        written.extend(ids)
+        return 1
+
+    async def _retire(items, *, ch=None):
+        raise RuntimeError("insert timed out")
+
+    monkeypatch.setattr(memory_repo, "write_versions_by_ids", _write)
+    monkeypatch.setattr(memory_repo, "retire_vectors_for_keys", _retire)
+    cand = sweep.SweepCandidate("1", "o", "n", "a", "-", "-", "k", "high", ("credential",))
+    res = await sweep.apply([cand], ch=_CH())
+    assert written == [] and res.relabelled == 0
+    assert len(res.errors) == 1 and "insert timed out" in res.errors[0]

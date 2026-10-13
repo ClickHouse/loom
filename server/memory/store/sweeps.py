@@ -279,13 +279,25 @@ async def find_memories_to_reindex(
                 AND tombstoned_at IS NULL
           )"""
     )
-    # The memory row's version + 1, not one drawn after the embed call: a 'high'
-    # write that lands meanwhile fences above it (+ 1 replaces the row the
-    # memory write stamped at that version).
+    # One above the newest of the memory row and the key's rows of this model (an
+    # embedding-only re-emit or a stub tombstone can sit above the memory row), not
+    # a version drawn after the embed call: a 'high' write that lands meanwhile
+    # fences above it.
     return await ch.query_all(
         f"""
-        SELECT {_EMBEDDING_MIRROR_COLUMNS}, m.version + 1 AS version
+        SELECT {_EMBEDDING_MIRROR_COLUMNS}, greatest(m.version, e.ev) + 1 AS version
         FROM loom.memory AS m FINAL
+        LEFT JOIN (
+            SELECT org, namespace, agent, user_id, session_id, memory_key,
+                   max(version) AS ev
+            FROM loom.memory_embeddings
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND embedding_model = {{model:String}}
+            GROUP BY org, namespace, agent, user_id, session_id, memory_key
+        ) AS e
+          ON m.org = e.org AND m.namespace = e.namespace AND m.agent = e.agent
+         AND m.user_id = e.user_id AND m.session_id = e.session_id
+         AND m.memory_key = e.memory_key
         WHERE m.org = {{org:String}} AND m.namespace = {{ns:String}}
           AND m.tombstoned_at IS NULL
           AND m.sensitivity != 'high'

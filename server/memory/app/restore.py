@@ -115,7 +115,7 @@ async def _restore_embedding_mirror(
     reviving either would serve it."""
     import server.memory.store as memory_repo
 
-    if getattr(existing, "sensitivity", "") == "high":
+    if existing.sensitivity == "high":
         return
 
     # Vectors live only on the embeddings table (re-read here);
@@ -302,6 +302,11 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
         expires_at=None,
     )
     await insert_memory_versions([restore_row], ch=ch)
+    if existing.sensitivity == "high":
+        # The key is high again: a plain write still embedding lands below the fence.
+        from server.memory.app.high_fence import fence_high
+
+        await fence_high([(memory_repo.embedding_key(existing), new_version)], ch=ch)
 
     # Propagate restore to memory_embeddings — mirror delete's logic, for every memory type.
     try:

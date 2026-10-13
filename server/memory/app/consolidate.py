@@ -341,6 +341,8 @@ WHERE m.org = {org:String}
   -- a live vector only: a retired copy or a high write's fence is not a candidate
   AND e.tombstoned_at IS NULL
   AND e.embedding_dim > 0
+  -- the served model's vectors only: one row per memory, comparable cosines
+  AND e.embedding_model = {model:String}
   AND length(e.embedding) > 0
   AND m.sensitivity != 'high'
 ORDER BY m.created_at DESC
@@ -537,6 +539,7 @@ async def _retire_merged(
     omitted column would be zeroed under FINAL (memory_id/tags/entities/created_at/
     pinned/content_sha256) and leave memory.restore nothing to restore."""
     import server.memory.store as memory_repo
+    from server.memory.app.set_chunks import tombstone_set_chunks_fail_open
 
     tombstone_ids = [
         str(r["memory_id"])
@@ -581,6 +584,15 @@ async def _retire_merged(
                 r["memory_key"],
                 e,
             )
+        # and its verbatim chunks, as memory.delete does: the chunk leg reads them with
+        # no join back to loom.memory
+        await tombstone_set_chunks_fail_open(
+            org=input.org,
+            namespace=input.namespace,
+            memory_key=str(r["memory_key"]),
+            user_id=input.user_id,
+            ch=ch,
+        )
 
 
 @staged("consolidate_merge")
@@ -616,6 +628,7 @@ async def handle_memory_consolidate(
             "uid": input.user_id,
             "age_cutoff": age_cutoff.replace(tzinfo=None),
             "limit": int(input.limit),
+            "model": embedder.model_name,
         },
     )
 

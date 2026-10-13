@@ -177,6 +177,13 @@ def test_the_registered_claims_are_enforced(claims: dict[str, Any]) -> None:
         _claims(roles=["superuser"]),
         _claims(ns_roles=[["shop", "admin"]]),
         _claims(org=["acme"]),
+        # read as namespace-wide, unpinned or a service account, each would widen
+        _claims(read_scope="OWN_USER"),
+        _claims(read_scope=["own_user"]),
+        _claims(read_user_id=0),
+        _claims(read_user_id=False),
+        _claims(sa="false"),
+        _claims(iss=["loom"]),
     ],
     ids=[
         "ns-str",
@@ -186,6 +193,12 @@ def test_the_registered_claims_are_enforced(claims: dict[str, Any]) -> None:
         "roles-unknown",
         "ns_roles-list",
         "org-list",
+        "read_scope-case",
+        "read_scope-list",
+        "read_user_id-int",
+        "read_user_id-bool",
+        "sa-str",
+        "iss-list",
     ],
 )
 def test_a_malformed_loom_claim_is_refused(claims: dict[str, Any]) -> None:
@@ -204,3 +217,8 @@ def test_a_numeric_expiry_bounds_what_the_token_delegates() -> None:
     assert verify_token(_hs(_claims(exp=exp))).expires_at == exp
     assert verify_token(_hs(_claims(exp=exp + 0.5))).expires_at == exp
     assert verify_token(_hs(_claims())).expires_at is None
+
+
+def test_a_well_formed_scope_claim_still_verifies() -> None:
+    info = verify_token(_hs(_claims(read_scope="own_user", read_user_id="u1", sa=True)))
+    assert (info.read_scope, info.read_user_id, info.is_service_account) == ("own_user", "u1", True)

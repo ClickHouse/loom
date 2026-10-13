@@ -257,18 +257,20 @@ async def apply(candidates: list[SweepCandidate], *, ch: _CHClient | None = None
                     "version": _v,
                 }
 
+            if c.level == HIGH:
+                # Vectors and chunks go first, at the relabel's version: if they fail,
+                # the row keeps its empty label and the next pass retries it (the
+                # scan only reads unlabelled rows).
+                key = (c.org, c.namespace, c.agent, c.user_id, c.session_id, c.memory_key)
+                retired = await memory_repo.retire_vectors_for_keys([(key, version)], ch=ch)
+                await fence_high([(key, version)], ch=ch)
             n = await memory_repo.write_versions_by_ids(c.org, [c.memory_id], _relabel, ch=ch)
             if not n:
                 continue  # gone between scan and apply
             result.relabelled += n
             if c.level == HIGH:
                 result.high += 1
-                key = (c.org, c.namespace, c.agent, c.user_id, c.session_id, c.memory_key)
-                result.embeddings_tombstoned += await memory_repo.retire_vectors_for_keys(
-                    [(key, version)], ch=ch
-                )
-                # and fences the key: a plain write still embedding lands below it
-                await fence_high([(key, version)], ch=ch)
+                result.embeddings_tombstoned += retired
             else:
                 result.medium += 1
                 result.embeddings_tagged += await _tag_embeddings(c, ch=ch)

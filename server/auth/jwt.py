@@ -369,6 +369,8 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
         value = decoded.get(claim)
         if value is not None and (isinstance(value, bool) or not isinstance(value, int | float)):
             raise TokenError(f"claim {claim!r} must be a number")
+    if not isinstance(decoded.get("iss"), str):
+        raise TokenError("claim 'iss' must be a string")
     if decoded.get("iss") not in trusted_issuers:
         # The trusted list is deployment config: logged, not told to the caller.
         logging.getLogger(__name__).warning(
@@ -400,9 +402,9 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
         write_namespaces=tuple(_str_list(decoded, "ns_write")),
         ns_roles=tuple((str(k), str(v)) for k, v in ns_roles_claim.items()),
         roles=tuple(roles),
-        is_service_account=bool(decoded.get("sa", False)),
-        read_scope=str(decoded.get("read_scope") or ""),
-        read_user_id=str(decoded.get("read_user_id") or ""),
+        is_service_account=_bool_claim(decoded, "sa"),
+        read_scope=_read_scope_claim(decoded),
+        read_user_id=_optional_str_claim(decoded, "read_user_id"),
         token_id=token_id_of(token, decoded.get("jti")),
         traffic_class=_traffic_class_claim(decoded.get("traffic_class")),
         consumer=_consumer_claim(decoded.get("consumer")),
@@ -447,6 +449,31 @@ def _check_not_revoked(decoded: dict[str, Any]) -> None:
     chain = zip(_str_list(decoded, "parent_subjects"), parent_iats, strict=True)
     if any(is_revoked(sub, issued_at=iat) for sub, iat in chain):
         raise TokenError("a parent of this token is revoked")
+
+
+def _bool_claim(decoded: dict[str, Any], claim: str) -> bool:
+    value = decoded.get(claim, False)
+    if not isinstance(value, bool):
+        raise TokenError(f"claim {claim!r} must be a boolean")  # "false" is truthy
+    return value
+
+
+def _optional_str_claim(decoded: dict[str, Any], claim: str) -> str:
+    value = decoded.get(claim)
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise TokenError(f"claim {claim!r} must be a string")  # 0 / false read as unset
+    return value
+
+
+def _read_scope_claim(decoded: dict[str, Any]) -> str:
+    """'' (namespace-wide) when absent; otherwise exactly one of READ_SCOPES. Any
+    other value is refused: read as '' it would widen the token to the namespace."""
+    value = _optional_str_claim(decoded, "read_scope")
+    if value and value not in READ_SCOPES:
+        raise TokenError(f"claim 'read_scope' must be one of {', '.join(READ_SCOPES)}")
+    return value
 
 
 def _creator_claim(decoded: dict[str, Any]) -> str:
@@ -509,13 +536,10 @@ def new_jti() -> str:
 
 
 def _iat_of(decoded: dict[str, Any]) -> int | None:
-    """The token's `iat` as unix seconds, None when it is not a number (the
-    `require` list above already refused a token without one)."""
+    """The token's `iat` as unix seconds (verify_token requires it and refuses a
+    non-number); None only for a claims dict that carries none."""
     raw = decoded.get("iat")
-    try:
-        return int(raw) if raw is not None else None
-    except (TypeError, ValueError):
-        return None
+    return int(raw) if raw is not None else None
 
 
 def _consumer_claim(raw: Any) -> str:

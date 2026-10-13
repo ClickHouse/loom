@@ -23,10 +23,12 @@ router = APIRouter()
 
 
 def json_int(value: object) -> int:
-    """`int(value)` for a JSON body value; TypeError for a list, object or null,
-    as `int()` itself raises."""
-    if not isinstance(value, (int, float, str)):
-        raise TypeError(f"not a number: {type(value).__name__}")
+    """A JSON body value that is an integer (`7`, or `7.0`); TypeError for
+    anything else: a bool, a string, a fraction, an infinity, a list or null."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"not an integer: {type(value).__name__}")
+    if isinstance(value, float) and not value.is_integer():  # also inf and nan
+        raise TypeError(f"not an integer: {value!r}")
     return int(value)
 
 
