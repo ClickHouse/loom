@@ -220,6 +220,8 @@ _ALIASED = {"aliased_import": "alias", "import_specifier": "alias", "use_as_clau
 _PATHS = {"scoped_identifier", "qualified_identifier", "scoped_type_identifier", "dotted_name"}
 _ECMA = {"typescript", "tsx", "javascript"}
 _CLOSERS = {")", "]", "}"}
+# a string's text, whose bytes beside its escapes and interpolations are hashed as written
+_TEXTS = {"string_content", "format_specifier"}
 # where a trailing comma's one element is a tuple (`(a,)`, Rust's `(T,)` type, Python's
 # `x[a,]` index): it stays there unless another comma is in the node
 _TUPLES = {"tuple", "tuple_type", "tuple_expression", "tuple_pattern", "subscript"}
@@ -524,7 +526,7 @@ class Declarations:
         found = self._declared(at[1], name)
         if found is None:
             return own
-        leaves, marks = _leaves(*at, _Fields(), _skipped(at, found[0]), self.grammar)
+        leaves, marks = _leaves(*at, _Fields(), self.source, _skipped(at, found[0]), self.grammar)
         texts = self._spellings(leaves)
         return "\n".join([*(f"{m} {t}" for m, t in zip(marks, texts, strict=False)), marks[-1]])
 
@@ -679,7 +681,7 @@ class Declarations:
         decl, named, body = found
         guard = self._guard(at[1])
         fields = _Fields()
-        leaves, marks = _leaves(*at, fields, _skipped(at, decl), self.grammar)
+        leaves, marks = _leaves(*at, fields, self.source, _skipped(at, decl), self.grammar)
         texts = self._spellings(leaves)
         uses = {
             i: _use(x, self.grammar, decl, body, fields)
@@ -907,17 +909,51 @@ def _sibling_spans(decl: Any) -> list[tuple[int, int]]:
     return out
 
 
+class _Gap(NamedTuple):
+    """Text inside a node that none of its children covers: a Python string's text beside
+    an escape, an f-string's format spec."""
+
+    start_byte: int
+    end_byte: int
+    type: str = "gap"
+    child_count: int = 0
+    parent: Any = None
+    prev_sibling: Any = None
+
+
+def _gaps(node: Any, source: bytes) -> list[Any]:
+    """`node`'s children in order with the text between them that none covers: as written
+    in a string's text, else trimmed and only when not blank."""
+    verbatim = node.type in _TEXTS
+    out: list[Any] = []
+    pos = node.start_byte
+    for c in [*node.children, None]:
+        end = node.end_byte if c is None else c.start_byte
+        if end > pos:
+            gap = source[pos:end]
+            if verbatim:
+                out.append(_Gap(pos, end))
+            elif gap.strip():
+                lead = len(gap) - len(gap.lstrip())
+                out.append(_Gap(pos + lead, pos + len(gap.rstrip())))
+        if c is not None:
+            out.append(c)
+            pos = c.end_byte
+    return out
+
+
 def _leaves(
     first: Any,
     last: Any,
     fields: _Fields,
+    source: bytes,
     skip: set[tuple[int, int, str]] | None = None,
     grammar: str = "",
 ) -> tuple[list[Any], list[str]]:
     """The tokens from `first` to `last` but those a formatter adds or removes
-    (`_formatting`), each with the nodes opened and closed before it (so the same tokens
-    nested differently differ); records each node's parent and previous sibling in
-    `fields`."""
+    (`_formatting`), with the text no token covers (`_gaps`), each with the nodes opened
+    and closed before it (so the same tokens nested differently differ); records each
+    node's parent and previous sibling in `fields`."""
     out: list[Any] = []
     marks: list[str] = []
     pending: list[str] = []
@@ -940,7 +976,7 @@ def _leaves(
                 children = n.children
                 for i, c in enumerate(children):
                     fields.around[_key(c)] = (n, children[i - 1] if i else None)
-                stack.extend((c, False) for c in reversed(children))
+                stack.extend((c, False) for c in reversed(_gaps(n, source)))
         if node == last:
             break
         node = node.next_sibling

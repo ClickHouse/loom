@@ -709,6 +709,33 @@ def test_a_formatters_quotes_commas_and_semicolons_keep_the_fingerprint(
             "function value() { if (x); f() }\n",
             "function value() { if (x) f() }\n",
         ),
+        (
+            "a.py",
+            "def value():\n    return 'SELECT 1\\n'\n",
+            "def value():\n    return 'DROP TABLE x\\n'\n",
+        ),
+        ("a.py", "def value():\n    return ' \\n'\n", "def value():\n    return '  \\n'\n"),
+        (
+            "a.py",
+            'def value():\n    """Return rows.\\n"""\n    return 1\n',
+            'def value():\n    """Delete rows.\\n"""\n    return 1\n',
+        ),
+        (
+            "a.py",
+            "def value(x):\n    return f'{x:.2f}'\n",
+            "def value(x):\n    return f'{x:.3f}'\n",
+        ),
+        ("a.py", "def value(x):\n    return f'{x: >4}'\n", "def value(x):\n    return f'{x:>4}'\n"),
+        (
+            "a.py",
+            "def value(x):\n    return f'rows: {x}\\n'\n",
+            "def value(x):\n    return f'cols: {x}\\n'\n",
+        ),
+        (
+            "a.py",
+            "def value():\n    return b'\\x00abc'\n",
+            "def value():\n    return b'\\x00xyz'\n",
+        ),
     ],
     ids=[
         "py-literal",
@@ -724,6 +751,13 @@ def test_a_formatters_quotes_commas_and_semicolons_keep_the_fingerprint(
         "js-hole",
         "js-asi",
         "js-empty-body",
+        "py-text-beside-escape",
+        "py-spaces-beside-escape",
+        "py-docstring-beside-escape",
+        "py-format-spec",
+        "py-format-fill",
+        "py-fstring-beside-escape",
+        "py-bytes-beside-escape",
     ],
 )
 def test_a_comma_quote_or_semicolon_that_means_something_changes_it(
