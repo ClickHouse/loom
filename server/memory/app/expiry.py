@@ -239,7 +239,7 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
             )
             return res
         try:
-            await _mirror_embeddings_batch(mirrors, now=now, cfg=cfg)
+            await _mirror_embeddings_batch(mirrors, cfg=cfg)
         except Exception as e:  # noqa: BLE001 — the memory rows are authoritative
             # The memory-table rows are authoritative and their read filter
             # already hid them; a stray embedding is the known, tolerated
@@ -259,9 +259,7 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
     return res
 
 
-def _mirror_overrides(
-    action: str, row: Any, version: int, *, now: datetime, cfg: ExpiryConfig
-) -> dict[str, Any]:
+def _demote_overrides(row: Any, cfg: ExpiryConfig) -> dict[str, Any]:
     """What demote changes on the key's embedding rows: a metadata copy (read + 1).
     Tombstone and anonymize retire through `retire_vectors_for_keys` instead."""
     conf = max(cfg.demote_floor, min(1.0, float(row.confidence or 0.0) * cfg.demote_factor))
@@ -269,7 +267,7 @@ def _mirror_overrides(
 
 
 async def _mirror_embeddings_batch(
-    mirrors: list[tuple[str, Any, int]], *, now: datetime, cfg: ExpiryConfig
+    mirrors: list[tuple[str, Any, int]], *, cfg: ExpiryConfig
 ) -> int:
     """Search reads loom.memory_embeddings, so the post-action lands there too:
     tombstone and anonymize retire the keys' vectors (memory_embeddings and
@@ -288,9 +286,9 @@ async def _mirror_embeddings_batch(
     copies = [
         (
             (row.org, row.namespace, row.agent, row.user_id, row.session_id, row.memory_key),
-            _mirror_overrides(action, row, version, now=now, cfg=cfg),
+            _demote_overrides(row, cfg),
         )
-        for action, row, version in mirrors
+        for action, row, _version in mirrors
         if action not in ("tombstone", "anonymize")
     ]
     n = await memory_repo.retire_vectors_for_keys(retires) if retires else 0

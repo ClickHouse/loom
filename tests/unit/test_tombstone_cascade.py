@@ -45,6 +45,8 @@ def _row(mid: str, key: str, ns: str = "ns") -> memory_repo.MemoryRow:
 
 @pytest.fixture
 def cascade_spy(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """Runs the real `write_versions_by_ids`; records the memory versions it
+    inserts and the rows it hands the embeddings status mirror."""
     rows = {"m1": _row("m1", "k1"), "m2": _row("m2", "k2", ns="other")}
     spy: dict[str, Any] = {"versions": [], "mirrored": [], "overrides": [], "mirror_versions": []}
 
@@ -53,31 +55,33 @@ def cascade_spy(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     ):
         return rows.get(mid)
 
-    async def fake_write_versions(org: str, ids: list[str], update: Any, *, ch: Any = None) -> int:
-        for mid in ids:
-            spy["versions"].append(mid)
-            spy["overrides"].append(update(rows[mid]))
-        return len(ids)
+    async def fake_insert(built: list[dict[str, Any]], *, ch: Any = None) -> None:
+        for r in built:
+            spy["versions"].append(str(r["memory_id"]))
+            spy["overrides"].append(r)
 
-    async def fake_mirror(
-        org: str,
-        ns: str,
-        agent: str,
-        user_id: str,
-        session_id: str,
-        key: str,
-        *,
-        ts: datetime,
-        version: int,
-        ch: Any = None,
-    ) -> int:
-        spy["mirrored"].append((org, ns, agent, user_id, session_id, key, ts))
-        spy["mirror_versions"].append(version)
-        return 2
+    async def fake_mirror(built: list[dict[str, Any]], *, ch: Any = None) -> int:
+        for r in built:
+            spy["mirrored"].append(
+                tuple(
+                    r[c]
+                    for c in (
+                        "org",
+                        "namespace",
+                        "agent",
+                        "user_id",
+                        "session_id",
+                        "memory_key",
+                        "tombstoned_at",
+                    )
+                )
+            )
+            spy["mirror_versions"].append(r["version"])
+        return 2 * len(built)
 
     monkeypatch.setattr(lifecycle, "get_by_id", fake_get_by_id)
-    monkeypatch.setattr(lifecycle, "write_versions_by_ids", fake_write_versions)
-    monkeypatch.setattr(lifecycle, "tombstone_embeddings_for_key", fake_mirror)
+    monkeypatch.setattr(lifecycle, "insert_memory_versions", fake_insert)
+    monkeypatch.setattr(lifecycle, "mirror_status_to_embeddings", fake_mirror)
     return spy
 
 
@@ -126,12 +130,16 @@ async def test_cascade_update_hook_adds_overrides_without_dropping_the_tombstone
 async def test_mirror_failure_is_logged_not_raised(
     cascade_spy: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def boom(*a: Any, **kw: Any) -> int:
-        raise RuntimeError("ch down")
+    class _Down:
+        async def query_all(self, *a: Any, **kw: Any) -> list[dict[str, Any]]:
+            raise RuntimeError("ch down")
 
-    monkeypatch.setattr(lifecycle, "tombstone_embeddings_for_key", boom)
+    # the real mirror: its embeddings read fails and is logged
+    monkeypatch.setattr(
+        lifecycle, "mirror_status_to_embeddings", memory_repo.mirror_status_to_embeddings
+    )
     n = await memory_repo.tombstone_cascade_by_ids(
-        "o", ["m1"], when=datetime(2026, 9, 12), ch=object()
+        "o", ["m1"], when=datetime(2026, 9, 12), ch=_Down()
     )
     assert n == 1  # the memory tombstone is durable; the reconcile worker heals the mirror
 
@@ -219,6 +227,8 @@ class _FakeCH:
             {
                 "org": params["org"],
                 "namespace": params["ns"],
+                "agent": "a",
+                "user_id": "-",
                 "entity_text": f"ent-{k}",
                 "memory_key": k,
                 "created_at": datetime(2026, 8, 1),
@@ -274,6 +284,44 @@ async def test_reconcile_pass_heals_every_identity_in_one_batch(
         assert table == "loom.entity_vectors"
         for row in rows:
             assert row["created_at"] == datetime(2026, 8, 1) and row["tombstoned_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_reconcile_pass_keeps_entity_vectors_a_newer_write_created(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pass retires with the cutoff every retire uses: an entity_vectors row
+    created after the second its version was drawn in is a newer write's."""
+    from server.memory.workers import orphan_vector_reconcile as w
+
+    async def fake_reemit(items, *, ch=None, batch=500):
+        return len(items)
+
+    monkeypatch.setattr(memory_repo, "reemit_embedding_rows_for_keys", fake_reemit)
+    monkeypatch.setattr(memory_repo, "next_version", lambda: 1_785_542_400 * 1_000_000_000)
+    ident = {"org": "o", "agent": "a", "user_id": "-", "session_id": "s"}
+    ch = _FakeCH([{**ident, "namespace": "n1", "memory_key": "k1"}])
+    later = datetime(2026, 8, 1, 0, 0, 1)
+
+    async def read(sql, params=None):
+        if "LEFT ANTI JOIN" in sql:
+            return ch.rows
+        base = {"org": "o", "namespace": "n1", "agent": "a", "user_id": "-", "memory_key": "k1"}
+        return [
+            {
+                **base,
+                "entity_text": "old",
+                "created_at": datetime(2026, 8, 1),
+                "tombstoned_at": None,
+            },
+            {**base, "entity_text": "new", "created_at": later, "tombstoned_at": None},
+        ]
+
+    ch.query_all = read  # type: ignore[method-assign]
+    res = await w.run_pass(ch=ch)
+    assert not res.errors and res.entity_vectors_healed == 1
+    ((table, rows),) = ch.inserted
+    assert table == "loom.entity_vectors" and [r["entity_text"] for r in rows] == ["old"]
 
 
 @pytest.mark.asyncio

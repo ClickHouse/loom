@@ -110,14 +110,7 @@ async def test_tombstone_ids_writes_rmt_versions(
             source_trace="old",
         )
 
-    mirrored: list[str] = []
-
-    async def fake_mirror(org, ns, agent, user_id, session_id, key, *, ts, version, ch=None):
-        mirrored.append(key)
-        return 1
-
     monkeypatch.setattr(lifecycle, "get_by_id", fake_get_by_id)
-    monkeypatch.setattr(lifecycle, "tombstone_embeddings_for_key", fake_mirror)
 
     async def fake_write_versions_by_ids(org, memory_ids, update, *, ch=None):
         row = memory_repo.MemoryRow(

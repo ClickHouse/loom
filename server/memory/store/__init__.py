@@ -61,6 +61,7 @@ from server.memory.store.embeddings import (
     tombstone_entity_vectors_for_keys,
     tombstone_vectors_of,
     unsupersede_embeddings,
+    version_second,
 )
 from server.memory.store.entities import (
     ENTITY_MIRROR_RETRY_DELAY_S,
@@ -257,6 +258,7 @@ __all__ = [
     "tombstone_cascade_by_ids",
     "tombstone_embeddings_for_key",
     "tombstone_entity_vectors_for_keys",
+    "version_second",
     "tombstone_vectors_of",
     "unsupersede_embeddings",
     "uuid_or_none",

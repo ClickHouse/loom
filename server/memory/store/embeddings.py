@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
+from server.memory.domain.temporal_sql import SERVED_STATUSES
 from server.memory.store.inserts import insert_embedding_rows
 from server.memory.store.rows import (
     EMBEDDING_PERSISTED_COLS,
@@ -245,8 +246,16 @@ async def reconcile_embedding_status(
     if not rows:
         counts["mirrored"] = 0
         return counts
+    # Only a copy that hides the row is a retire, stamped with the pre-scan version so
+    # a late metadata copy can't bring it back. One that serves the row again takes
+    # read + 1, so a memory.delete racing the pass keeps its (later) retire.
     counts["mirrored"] = await mirror_status_to_embeddings(
-        [dict(r) | {"version": version} for r in rows], ch=ch, dry_run=dry_run
+        [
+            dict(r) | ({} if str(r["status"]) in SERVED_STATUSES else {"version": version})
+            for r in rows
+        ],
+        ch=ch,
+        dry_run=dry_run,
     )
     return counts
 
@@ -486,12 +495,12 @@ async def retire_vectors_for_keys(
         [(key, {"tombstoned_at": now, "version": int(v)}) for key, v in items], ch=ch
     )
     # entity_vectors has no version, only a created_at in whole seconds (see the residual above).
-    cutoffs = {key: _version_second(v) for key, v in items}
+    cutoffs = {key: version_second(v) for key, v in items}
     await tombstone_entity_vectors_for_keys(list(cutoffs), ts=now, ch=ch, created_by=cutoffs)
     return n
 
 
-def _version_second(version: int) -> datetime:
+def version_second(version: int) -> datetime:
     """The naive-UTC second a next_version() stamp (epoch ns) was drawn in."""
     return datetime.fromtimestamp(int(version) // 1_000_000_000, UTC).replace(tzinfo=None)
 

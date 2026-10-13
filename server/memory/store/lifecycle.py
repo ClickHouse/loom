@@ -17,7 +17,6 @@ from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.store.embeddings import (
     mirror_status_to_embeddings,
     reemit_embedding_rows_for_keys,
-    tombstone_embeddings_for_key,
 )
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.reads import get_by_id
@@ -131,12 +130,8 @@ async def supersede_duplicates(
         skip=_skip,
     )
     victims = [v for v in victims if str(v["memory_id"]) not in skipped]
-
-    # 2) loom.memory_embeddings — re-emit with status='superseded' at the
-    #    supersede's version. This is the write recall actually reads.
-    await _reemit_embedding_rows(
-        org, victims, {"status": "superseded", "invalid_at": retired_at, "version": version}, ch=ch
-    )
+    # 2) loom.memory_embeddings — the write recall actually reads.
+    #    `write_versions_by_ids` mirrored the flip there at the supersede's version.
     return len(victims)
 
 
@@ -349,11 +344,11 @@ async def tombstone_cascade_by_ids(
          set and expires_at cleared (every persisted column carried by
          build_memory_version_row; never an ALTER UPDATE, which mutates
          every version in place and skips the version discipline);
-      2. `tombstone_embeddings_for_key` for the row's identity, so the
-         embeddings table collapses onto a tombstoned version too.
+      2. the status mirror `write_versions_by_ids` runs, at that version, so
+         the embeddings table collapses onto a tombstoned version too.
 
     `update(existing)` may add overrides (an audit note on source_trace).
-    The embeddings mirror is best-effort per row: the memory tombstone is
+    The embeddings mirror is best-effort: the memory tombstone is
     durable and the orphan_vector_reconcile worker heals a missed mirror.
     Returns the number of memory rows tombstoned."""
     ch = ch or _default_client()
@@ -383,33 +378,13 @@ async def tombstone_cascade_by_ids(
             overrides.update(update(existing))
         return overrides
 
-    written = await write_versions_by_ids(
+    # `write_versions_by_ids` mirrors the tombstone onto memory_embeddings at its version.
+    return await write_versions_by_ids(
         org,
         [r.memory_id for r in rows],
         _tombstone,
         ch=ch,
     )
-    for r in rows:
-        try:
-            await tombstone_embeddings_for_key(
-                r.org,
-                r.namespace,
-                r.agent,
-                r.user_id,
-                r.session_id,
-                r.memory_key,
-                ts=when,
-                version=version,
-                ch=ch,
-            )
-        except Exception as e:  # noqa: BLE001 — memory tombstone is durable
-            _log.warning(
-                "tombstone_cascade: embeddings mirror failed for %s/%s: %s",
-                r.namespace,
-                r.memory_key,
-                e,
-            )
-    return written
 
 
 async def tombstone_by_id(
