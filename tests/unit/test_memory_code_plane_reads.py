@@ -212,7 +212,8 @@ async def _lessons(
         here = [Definition(dp, q, q.split("::")[-1], body_hash=h) for dp, q, h in defs if dp == p]
         return memory_links.FileAt([], here)
 
-    async def served(org, ids):
+    async def served(org, nss, ids):
+        assert nss == ["agent-a", "code-a"]  # the lesson scope bounds the read
         return [e for e in excerpts if e["mid"] in ids]
 
     async def current(org, rows):

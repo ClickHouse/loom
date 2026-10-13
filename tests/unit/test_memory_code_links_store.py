@@ -312,3 +312,16 @@ async def test_the_sweep_deletes_every_version_of_a_key_long_tombstoned() -> Non
     ((purge, params),) = [(sql, p) for sql, p in ch.sql if sql.startswith("DELETE")]
     # every version under the tombstone (9), and not the row written after the read (12)
     assert params["rows"] == [("o", "c", "p", "q", "n", "old", v) for v in (5, 9)]
+
+
+@pytest.mark.asyncio
+async def test_lesson_excerpts_are_read_only_from_the_lesson_namespaces() -> None:
+    from server.memory.store import code_plane_reads
+
+    ch = _CH()
+    mid = str(uuid.uuid4())
+    await code_plane_reads.served_excerpts("o", ["team", "me"], [mid], ch=ch)
+    ((sql, params),) = ch.sql
+    assert "namespace IN {nss:Array(String)}" in sql and params["nss"] == ["me", "team"]
+    assert await code_plane_reads.served_excerpts("o", [], [mid], ch=ch) == []
+    assert len(ch.sql) == 1

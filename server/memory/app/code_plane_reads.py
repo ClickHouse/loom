@@ -91,7 +91,7 @@ async def lessons_for_symbol(
         matched = _as_trunk_has_it(links, qualified_name)
     else:
         matched = _matched(links, here, on_trunk=code_namespace == trunk)
-    served = await reads.served_excerpts(org, [a["memory_id"] for a, _, _ in matched])
+    served = await reads.served_excerpts(org, namespaces, [a["memory_id"] for a, _, _ in matched])
     rows = {str(r["mid"]): r for r in served}
     out: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {}
     for a, state, suggestion in matched:
