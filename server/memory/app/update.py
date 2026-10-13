@@ -605,6 +605,9 @@ async def _write_revision(
     sensitivity, new_tags = _update_sensitivity(existing, serialized_value, new_tags)
     searchable = is_embedded(existing.memory_type, sensitivity)
     embedder = get_embedder() if searchable else None
+    if embedder is not None:
+        # Before the version row lands beside an embedding the coded table refuses.
+        codes_state.refuse_width("memory_embeddings", embedder.dim)
     # The namespace's write config in one round trip beside the embedding call, as memory.set
     # does — not six reads in a row.
     cfg_task = _cf_start_write_config(input.org, existing, embedder is not None)
@@ -612,8 +615,6 @@ async def _write_revision(
     key_embedding: list[float] = []
     key_text = ""
     if embedder is not None:
-        # Before the version row lands beside an embedding the coded table refuses.
-        codes_state.refuse_width("memory_embeddings", embedder.dim)
         # Same embed text as memory.set (topic-keying aside). Recompute the
         # key embedding too (its vector lives only on the embeddings table)
         # and mirror the prior ranking signals forward, else FINAL surfaces

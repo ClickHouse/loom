@@ -61,7 +61,7 @@ async def _ledger_call(
 
 @pytest.mark.asyncio
 async def test_the_idle_sweep_closes_a_run_its_own_calls_did_not_keep_busy(ch: Any) -> None:
-    """More busy runs than one pass closes do not hide a quiet one behind them, and
+    """More busy runs than a page holds do not hide a quiet one behind them, and
     a run an earlier server opened under `mcp-<session id>` closes too."""
     from server.tasks.api.models_run import RunBeginInput
     from server.tasks.app.run import active_session_runs, begin_session_run, close_idle_session_runs
@@ -94,8 +94,7 @@ async def test_the_idle_sweep_closes_a_run_its_own_calls_did_not_keep_busy(ch: A
         for run_id in busy:  # calls in another namespace
             await _ledger_call(ch, elsewhere, run_id, subject="sa:a", org=org)
         await _ledger_call(ch, namespace, borrowed, subject="sa:eve", org=org)  # another token
-        assert await close_idle_session_runs(1, limit=2, org=org) == 2
-        assert await close_idle_session_runs(1, limit=2, org=org) == 1
+        assert await close_idle_session_runs(1, page=2, org=org) == 3  # two pages
         assert all([await active_session_runs(org, run_id) for run_id in busy])
         assert await active_session_runs(org, quiet) == []
         assert await active_session_runs(org, borrowed) == []

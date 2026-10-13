@@ -345,30 +345,41 @@ async def idle_session_runs(
     """Active implicit MCP session runs that no request of their token reached
     within `idle_seconds`, in `org` ("" = every org), oldest first.
 
-    `version` is the time of the row's last write (a begin or a re-open) on
-    ClickHouse's clock, and the begin records the token's subject. The plain read
-    picks the candidates so the FINAL read touches only their rows."""
-    rows: list[RunLedgerRow] = await ch.query_all(
+    A plain read picks the candidates, so the FINAL read touches only their
+    rows. `version` is the time of the row's last write (a begin or a re-open),
+    and the begin records the token's subject."""
+    rows = await ch.query_all(
         """
-        WITH candidates AS (
-            SELECT DISTINCT run_id FROM loom.agent_runs
-            WHERE status = 'active' AND environment = 'mcp' AND startsWith(run_id, 'mcp-')
-              AND ({org:String} = '' OR org = {org:String})
-        )
+        SELECT DISTINCT run_id FROM loom.agent_runs
+        WHERE status = 'active' AND environment = 'mcp' AND startsWith(run_id, 'mcp-')
+          AND ({org:String} = '' OR org = {org:String})
+        """,
+        params={"org": org},
+    )
+    if not rows:
+        return []
+    stale: list[RunLedgerRow] = await ch.query_all(
+        """
         SELECT org, namespace, run_id FROM loom.agent_runs FINAL
-        WHERE run_id IN candidates AND status = 'active'
-          AND JSONExtractBool(metadata, 'implicit')
+        WHERE run_id IN {ids:Array(String)} AND ({org:String} = '' OR org = {org:String})
+          AND status = 'active' AND JSONExtractBool(metadata, 'implicit')
           AND version < toUInt64(toUnixTimestamp64Nano(now64(9) - INTERVAL {idle:UInt32} SECOND))
           AND (run_id, JSONExtractString(metadata, 'subject')) NOT IN (
               SELECT run_id, subject FROM loom.agent_events
-              WHERE ts >= now64(3) - INTERVAL {idle:UInt32} SECOND AND run_id IN candidates
+              WHERE ts >= now64(3) - INTERVAL {idle:UInt32} SECOND
+                AND run_id IN {ids:Array(String)}
           )
         ORDER BY started_at
         LIMIT {lim:UInt32}
         """,
-        params={"org": org, "idle": idle_seconds, "lim": limit},
+        params={
+            "ids": [str(r["run_id"]) for r in rows],
+            "org": org,
+            "idle": idle_seconds,
+            "lim": limit,
+        },
     )
-    return rows
+    return stale
 
 
 async def traced_recall_keys(ch: Any, org: str, ns: str, run_id: str) -> list[str]:

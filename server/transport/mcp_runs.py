@@ -123,7 +123,6 @@ class SessionRun:
     # When this process last asked the ledger whether the run is still open.
     checked_at: float
     begin_task: asyncio.Task[None] | None = None
-    begin_failed: bool = False
 
 
 # Keyed by run id (two callers sending one session id hold two runs), least
@@ -209,6 +208,7 @@ async def ensure(
         if now - run.checked_at >= CHECK_INTERVAL_S:
             # The idle sweep or a DELETE on another web process may have closed
             # it since: ask the ledger, off the call's path, and re-open it if so.
+            # A check that races such a DELETE re-opens the run; the sweep closes it.
             run.checked_at = now
             run.begin_task = _PENDING.spawn(
                 _begin(run, now=now, first=False), name=f"mcp-run-check:{run_id}", detached=True
@@ -251,6 +251,9 @@ async def _begin(run: SessionRun, *, now: float, first: bool) -> None:
     `first` begin that fails forgets the run and the session waits out the idle
     window before the next attempt; a failed check of a run already begun keeps
     it, and the next check tries again."""
+    from server.core.ch import set_query_tag
+
+    set_query_tag("mcp.session_run")  # detached: no request's tag to inherit
     try:
         from server.tasks.api.models_run import RunBeginInput
         from server.tasks.app.run import active_session_runs, begin_session_run
@@ -280,7 +283,6 @@ async def _begin(run: SessionRun, *, now: float, first: bool) -> None:
     except Exception as e:  # noqa: BLE001 — the ledger never fails a tool call
         log.warning("mcp session run: run.begin failed for %s (non-fatal): %s", run.run_id, e)
         if first:
-            run.begin_failed = True
             if _RUNS.get(run.run_id) is run:
                 _RUNS.pop(run.run_id, None)
             if len(_BEGIN_FAILED_AT) >= SESSION_RUN_CAP:
@@ -309,6 +311,9 @@ async def close_session(session_id: str | None, org: str, subject: str) -> bool:
 
 
 async def _close(org: str, run_id: str, begin: asyncio.Task[None] | None) -> bool:
+    from server.core.ch import set_query_tag
+
+    set_query_tag("mcp.session_run")  # detached: no request's tag to inherit
     if begin is not None and not begin.done():
         await asyncio.gather(begin, return_exceptions=True)  # complete after begin
     try:
@@ -320,10 +325,6 @@ async def _close(org: str, run_id: str, begin: asyncio.Task[None] | None) -> boo
         return False
 
 
-def cached_count() -> int:
-    return len(_RUNS)
-
-
 __all__ = [
     "CHECK_INTERVAL_S",
     "GOAL_MAX_CHARS",
@@ -331,7 +332,6 @@ __all__ = [
     "Caller",
     "SessionRun",
     "close_session",
-    "cached_count",
     "current",
     "drain_ledger_writes",
     "ensure",

@@ -18,6 +18,10 @@ This module holds both facts per table, read from `system.columns` and
 `vector_codes_state_probe_seconds`. `codes_apply(table, column)` is what
 `search_settings.vector_search_settings(table=...)` asks.
 
+The same read records the width each coded column was created at, which the
+write guards check (`refuse_width`, `refuse_other_widths`): ClickHouse refuses
+a whole insert that carries a vector of another width.
+
 An unknown state (never probed, or the last probe failed) answers "apply":
 the flag is right on every coded, patch-free table, and the cost of sending it
 to a patched one (a few percent) is far below the cost of withholding it from a
@@ -92,13 +96,6 @@ def written_by_served_model(table: str) -> bool:
     model writes it, and a model change rebuilds it at the new width."""
     table = _qualify(table)
     return table.split(".", 1)[1] in CODED_TABLES and not vector_dim_for_table(table)
-
-
-def stored_widths(table: str) -> set[int]:
-    """The widths `table`'s coded vector columns were created at (empty: none
-    coded, or never probed)."""
-    prefix = f"{_qualify(table)}."
-    return {w for column, w in _widths.items() if column.startswith(prefix)}
 
 
 def stored_width(table: str, column: str) -> int | None:
@@ -269,7 +266,6 @@ __all__ = [
     "coded_columns",
     "served_model_writes_coded",
     "stored_width",
-    "stored_widths",
     "width_mismatches",
     "written_by_served_model",
     "ensure_probed",

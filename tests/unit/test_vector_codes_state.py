@@ -126,9 +126,9 @@ async def test_probe_reads_codecs_then_patch_parts_of_coded_tables_only() -> Non
     # an uncoded table is not asked about
     assert patch_parts.last_reading("loom.code_summaries") is None
     assert len(ch.calls) == 2
-    assert vector_codes_state.stored_widths("chunks") == {1024}
-    assert vector_codes_state.stored_widths("loom.memory_chunks") == {1024}
-    assert vector_codes_state.stored_widths("code_summaries") == set()
+    assert vector_codes_state.stored_width("chunks", "embedding") == 1024
+    assert vector_codes_state.stored_width("loom.memory_chunks", "embedding") == 1024
+    assert vector_codes_state.stored_width("code_summaries", "embedding") is None
 
 
 @pytest.mark.asyncio
@@ -350,3 +350,22 @@ async def test_a_document_write_at_another_width_writes_nothing(
         await call()  # any store call would fail here: no ClickHouse in the unit suite
     vector_codes_state.refuse_width("chunks", 3072)
     vector_codes_state.refuse_width("memory_embeddings", 1024)  # not coded: nothing to refuse
+
+
+def test_the_boot_probe_reads_the_tables_the_boot_migrations_created(monkeypatch) -> None:
+    """`connect()` probes before a fresh install's tables exist; the capability
+    probe after the migrations must still learn their widths."""
+    from server import boot
+    from server.core.vectors import vector_floor
+
+    async def _nothing(ch: Any) -> None:
+        return None
+
+    monkeypatch.setattr(patch_parts, "probe_patch_parts", _nothing)
+    monkeypatch.setattr(vector_floor, "warn_below_vector_floor", _nothing)
+    vector_codes_state.reset()
+    ch = _FakeCH([], {})
+    asyncio.run(vector_codes_state.probe(ch))  # connect(), before the migrations
+    ch.coded = [("memory_embeddings", "embedding")]
+    asyncio.run(boot.probe_vector_capabilities(ch))
+    assert vector_codes_state.stored_width("loom.memory_embeddings", "embedding") == 1024

@@ -90,15 +90,18 @@ def test_default_path_prefers_the_runtime_dir_and_falls_back_to_tmp(
     assert stat.S_IMODE((tmp_path / "run-user" / "loom").stat().st_mode) == 0o700
     assert default_path() == server_file("ratelimit") + ".buckets"
     assert os.path.dirname(default_path()) == str(tmp_path / "run-user" / "loom")
-    # no XDG dir and no writable /run/loom: the /tmp fallback
+    # no XDG dir and no writable /run/loom: this user's private /tmp directory
     monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
     monkeypatch.setattr(rs, "RUN_DIR", str(tmp_path / "no-perm" / "loom"))
+    monkeypatch.setattr(rs, "_TMP_DIR", str(tmp_path / "tmp"))
+    (tmp_path / "tmp").mkdir()
     (tmp_path / "no-perm").mkdir(mode=0o500)
     try:
         if os.geteuid() == 0:  # root can always write; the branch is not testable as root
             pytest.skip("running as root")
-        assert runtime_dir() == "/tmp"
-        assert os.path.dirname(default_path()) == "/tmp"
+        private = str(tmp_path / "tmp" / f"loom-{os.geteuid()}")
+        assert runtime_dir() == private and os.path.dirname(default_path()) == private
+        assert stat.S_IMODE(os.stat(private).st_mode) == 0o700
     finally:
         os.chmod(tmp_path / "no-perm", 0o700)
     # a creatable /run/loom stand-in is taken when XDG is unset
@@ -153,3 +156,21 @@ def test_the_limiter_uses_the_hardened_open(tmp_path: Path, settings_override) -
     lim = ratelimit.Limiter()
     assert lim.shared_active is True
     assert _mode(p) == 0o600
+
+
+def test_a_fifo_where_a_shared_file_goes_is_refused_without_waiting(tmp_path: Path) -> None:
+    from server.core.runtime_files import open_private
+
+    fifo = tmp_path / "loom-overrides.json"
+    os.mkfifo(fifo)
+    with pytest.raises(OSError, match="not a regular file"):
+        open_private(str(fifo), os.O_RDONLY)
+
+
+def test_a_tmp_directory_another_account_made_is_refused(tmp_path: Path, monkeypatch) -> None:
+    from server.core import runtime_files as rs
+
+    monkeypatch.setattr(rs, "_TMP_DIR", str(tmp_path))
+    (tmp_path / f"loom-{os.geteuid()}").symlink_to(tmp_path)  # not a directory of its own
+    with pytest.raises(OSError, match="not a directory of this user's"):
+        rs._private_tmp_dir()

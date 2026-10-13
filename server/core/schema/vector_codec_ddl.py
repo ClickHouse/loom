@@ -41,13 +41,13 @@ _CREATE_RE = re.compile(r"CREATE TABLE(?: IF NOT EXISTS)?\s+(?:loom\.)?`?(\w+)`?
 _ALTER_RE = re.compile(r"ALTER TABLE\s+(?:loom\.)?`?(\w+)`?", re.I)
 
 
-_WIDTH = re.compile(r"Quantized\(([^,]*),\s*(\d+)")
+_WIDTH = re.compile(r"Quantized\([^,]*,\s*(\d+)")
 
 
 def codec_width(codec: str) -> int | None:
     """The vector width a column's `compression_codec` fixes; None when not coded."""
     found = _WIDTH.search(codec)
-    return int(found.group(2)) if found else None
+    return int(found.group(1)) if found else None
 
 
 def codable(dim: int) -> bool:

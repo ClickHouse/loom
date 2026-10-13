@@ -38,16 +38,31 @@ def runtime_dir() -> str:
 
 def choose_runtime_dir() -> str:
     """`$XDG_RUNTIME_DIR/loom` when the variable names a writable directory,
-    else `/run/loom` when it is one or can be created, else `/tmp`. The first
-    two are per-user or per-service tmpfs paths another local account cannot
-    list; `/tmp` is the fallback for a container without one."""
+    else `/run/loom` when it is one or can be created, else `/tmp/loom-<uid>`.
+    The first two are per-user or per-service tmpfs paths another local account
+    cannot list; the last is the fallback for a host or container without one."""
     xdg = str(os.environ.get("XDG_RUNTIME_DIR") or "").strip()
     for base in ([os.path.join(xdg, "loom")] if xdg else []) + [RUN_DIR]:
         with contextlib.suppress(OSError):
             os.makedirs(base, mode=0o700, exist_ok=True)
         if os.path.isdir(base) and os.access(base, os.W_OK | os.X_OK):
             return base
-    return _TMP_DIR
+    return _private_tmp_dir()
+
+
+def _private_tmp_dir() -> str:
+    """`/tmp/loom-<uid>`, a directory only this user can enter, so no other
+    account can plant a file where the server's names point. Raises OSError
+    when another account made it first."""
+    path = os.path.join(_TMP_DIR, f"loom-{os.geteuid()}")
+    with contextlib.suppress(FileExistsError):
+        os.mkdir(path, 0o700)
+    st = os.lstat(path)
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.geteuid():
+        raise OSError(f"{path} is not a directory of this user's")
+    if stat.S_IMODE(st.st_mode) & 0o077:
+        os.chmod(path, 0o700)
+    return path
 
 
 def _started(pid: int) -> str | None:
@@ -107,14 +122,17 @@ def _prune(base: str, namespace: str) -> None:
 
 def open_private(path: str, flags: int) -> int:
     """Open `path` never through a symlink, as a regular file owned by this
-    process, created (with O_CREAT) or tightened to 0600. Raises OSError."""
-    fd = os.open(path, flags | os.O_NOFOLLOW, FILE_MODE)
+    process, created (with O_CREAT) or tightened to 0600. Raises OSError.
+    O_NONBLOCK until it is known to be a file: opening a FIFO would wait for
+    a writer."""
+    fd = os.open(path, flags | os.O_NOFOLLOW | os.O_NONBLOCK, FILE_MODE)
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
             raise OSError(f"{path}: not a regular file")
         if st.st_uid != os.geteuid():
             raise OSError(f"{path}: owned by uid {st.st_uid}, this process is {os.geteuid()}")
+        os.set_blocking(fd, True)
         if stat.S_IMODE(st.st_mode) & 0o077:
             os.fchmod(fd, FILE_MODE)
     except BaseException:

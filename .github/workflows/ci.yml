@@ -407,7 +407,7 @@ jobs:
       # bind every process (rate limits, budgets, schema caches) is tested.
       - name: Boot control plane
         run: |
-          LOOM_LISTEN_HOST=127.0.0.1 LOOM_WEB_WORKERS=3 nohup sh scripts/serve.sh > server.log 2>&1 &
+          LOOM_WEB_WORKERS=3 nohup sh scripts/serve.sh > server.log 2>&1 &
           for _ in $(seq 1 60); do
             curl -fsS http://localhost:7777/v1/health && exit 0
             sleep 1
@@ -429,7 +429,7 @@ jobs:
         # Several web processes, as the image runs: a session's MCP calls and its
         # DELETE land on different ones.
         run: |
-          LOOM_LISTEN_HOST=127.0.0.1 LOOM_WEB_WORKERS=3 PORT=7778 nohup sh scripts/serve.sh > server-auth.log 2>&1 &
+          LOOM_WEB_WORKERS=3 PORT=7778 nohup sh scripts/serve.sh > server-auth.log 2>&1 &
           for _ in $(seq 1 60); do
             curl -fsS http://localhost:7778/v1/health && exit 0
             sleep 1

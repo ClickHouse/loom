@@ -170,14 +170,15 @@ RUN groupadd -r -g 999 loom && useradd -r -u 999 -g loom -d /app loom \
 USER loom
 
 # LOOM_BIND_HOST is the address the port is published on, which the startup
-# checks read: the container itself always listens on all its interfaces.
-# 0.0.0.0 = reachable by others, so it needs LOOM_PUBLIC_BASE_URL, auth and a
-# real signing secret. A compose stack that publishes on loopback passes its
-# LOOM_BIND_HOST through.
+# checks read; LOOM_LISTEN_HOST is the one the container listens on, all its
+# interfaces. 0.0.0.0 = reachable by others, so it needs LOOM_PUBLIC_BASE_URL,
+# auth and a real signing secret. A compose stack that publishes on loopback
+# passes its LOOM_BIND_HOST through.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PORT=7777 \
-    LOOM_BIND_HOST=0.0.0.0
+    LOOM_BIND_HOST=0.0.0.0 \
+    LOOM_LISTEN_HOST=0.0.0.0
 
 EXPOSE 7777
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

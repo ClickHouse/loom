@@ -89,15 +89,22 @@ namespace owner set `proposal_policy.mode` to `auto`; otherwise a person decides
 
 `run.list(grade="ungraded")` lists the closed runs still owed a verdict.
 
+An MCP session gets an implicit run without asking: its first run-scoped tool
+call begins one, and `DELETE /mcp` or the `mcp_session_run_sweep` worker closes
+it (see [MCP](../reference/mcp.md)). The sweep closes any active run whose id
+starts with `mcp-` and whose `metadata.implicit` is true once no call of its
+token reached it within `LOOM_MCP_SESSION_RUN_IDLE_SECONDS`, so a run begun by
+hand should not claim to be implicit.
+
 ## Operations
 
-| Operation      | Role   | Does                                                                                                                                                                                                     |
-| -------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `run.begin`    | writer | Open a run: `goal` (required), `user_request`, `expected_outcome`, `run_id` (else minted), `session_id`, `role`, `model`, `metadata`. Re-sending the same `run_id` replaces the row.                     |
-| `run.complete` | writer | Close it once: `status`, `memories_used`, `recalled_keys`, `outcome`, `reflection`, `retain`. Not idempotent: completing twice appends usage events twice.                                               |
-| `run.get`      | viewer | One run with its live derivations.                                                                                                                                                                       |
-| `run.list`     | viewer | Newest first, filtered by `agent`, `session_id`, `status`, `grade`, and `memory_activity` (`with` keeps runs that relied on or wrote a memory, `without` the hollow ones; filters apply before `limit`). |
-| `run.grade`    | writer | Grade a closed run or a session's runs `pass` / `fail`.                                                                                                                                                  |
+| Operation      | Role   | Does                                                                                                                                                                                                                                                                      |
+| -------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `run.begin`    | writer | Open a run: `goal` (required), `user_request`, `expected_outcome`, `run_id` (else minted), `session_id`, `role`, `model`, `metadata`. Re-sending the same `run_id` replaces the row; an id of the MCP transport's shape (`mcp-` and 40 hex digits) gets an id of its own. |
+| `run.complete` | writer | Close it once: `status`, `memories_used`, `recalled_keys`, `outcome`, `reflection`, `retain`. Not idempotent: completing twice appends usage events twice.                                                                                                                |
+| `run.get`      | viewer | One run with its live derivations.                                                                                                                                                                                                                                        |
+| `run.list`     | viewer | Newest first, filtered by `agent`, `session_id`, `status`, `grade`, and `memory_activity` (`with` keeps runs that relied on or wrote a memory, `without` the hollow ones; filters apply before `limit`).                                                                  |
+| `run.grade`    | writer | Grade a closed run or a session's runs `pass` / `fail`.                                                                                                                                                                                                                   |
 
 The full field lists are in the [operations reference](../reference/operations.md#run).
 `memory.outcome_run` records one helped / hurt outcome for every memory recalled under a

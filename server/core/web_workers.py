@@ -1,6 +1,7 @@
-"""Default uvicorn worker count for the image (`scripts/serve.sh` prints it when
-LOOM_WEB_WORKERS is unset): one per CPU this process may run on, bounded by the
-memory it may use, and never more than `MAX_WORKERS`.
+"""Default uvicorn worker count for the image (run as a module it prints the
+count, which `scripts/serve.sh` uses when LOOM_WEB_WORKERS is unset): one per
+CPU this process may run on, bounded by the memory it may use, and never more
+than `MAX_WORKERS`.
 
 CPUs: the scheduler affinity (a cpuset; `nproc` would read OMP_NUM_THREADS),
 lowered by the tightest CPU quota on this process's own cgroup path, v2

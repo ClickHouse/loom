@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -261,22 +262,30 @@ async def close_session_run(org: str, run_id: str, *, reason: str) -> bool:
     return bool(active)
 
 
-async def close_idle_session_runs(idle_seconds: int, *, limit: int = 50, org: str = "") -> int:
+async def close_idle_session_runs(
+    idle_seconds: int, *, page: int = 50, budget_s: float = 120.0, org: str = ""
+) -> int:
     """Complete the implicit session runs no call of their token reached within
     the idle window, from the ledger alone, so a run closes whichever web
-    process served it and after any restart. At most `limit` per call, sized to
-    a worker pass; returns how many closed."""
-    stale = await runs_store.idle_session_runs(
-        get_client(), idle_seconds=idle_seconds, limit=limit, org=org
-    )
+    process served it and after any restart. Pages of `page` runs until one
+    comes back short, closes none, or `budget_s` is spent; returns how many
+    closed. `org` keeps a test inside its own rows."""
+    deadline = time.monotonic() + budget_s
     closed = 0
-    for row in stale:
-        try:
-            await _complete_session_run(row, reason="idle")
-            closed += 1
-        except Exception as e:  # noqa: BLE001 — one run's close must not hold up the rest
-            log.warning("session run %s: idle close failed: %s", row["run_id"], e)
-    return closed
+    while True:
+        stale = await runs_store.idle_session_runs(
+            get_client(), idle_seconds=idle_seconds, limit=page, org=org
+        )
+        closed_now = 0
+        for row in stale:
+            try:
+                await _complete_session_run(row, reason="idle")
+                closed_now += 1
+            except Exception as e:  # noqa: BLE001 — one run's close must not hold up the rest
+                log.warning("session run %s: idle close failed: %s", row["run_id"], e)
+        closed += closed_now
+        if len(stale) < page or not closed_now or time.monotonic() >= deadline:
+            return closed
 
 
 async def _complete_session_run(row: RunLedgerRow, *, reason: str) -> None:

@@ -542,6 +542,12 @@ processes (unset: one per CPU the container may use, at most one per GiB of memo
 that script. `LOOM_BUILD_COMMIT`, stamped at build time, is what `/v1/health`
 reports as `build_commit`.
 
+The web processes share small files (rate-limit table, runtime overrides, graph marks) in
+`/run/loom`, which the compose files mount as a tmpfs. A plain `docker run` without
+`--tmpfs /run/loom` keeps them in the container's writable layer, and a restarted
+container does not remove an earlier one's; mount the tmpfs, or remove the container
+(`docker run --rm`) rather than restarting it.
+
 Every release publishes a multi-arch image (linux/amd64 and linux/arm64) to
 `ghcr.io/clickhouse/loom`, tagged `X.Y.Z`, `X.Y` and, for a stable release, `latest`.
 Images include build provenance and an SBOM. The one-line installer pins `X.Y.Z` in its

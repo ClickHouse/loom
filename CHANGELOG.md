@@ -18,7 +18,8 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 - `LOOM_RUNTIME_DIR`: the directory one server's web processes share files in.
   `scripts/serve.sh` chooses it once and exports it; set it for another launcher that starts
   several workers.
-- `LOOM_LISTEN_HOST`: the address `scripts/serve.sh` binds, every interface by default.
+- `LOOM_LISTEN_HOST`: the address `scripts/serve.sh` binds; loopback by default, every
+  interface in the image.
 - Migration `026` adds `run_id` skip indexes to `agent_events` and `agent_runs`.
 
 ### Changed

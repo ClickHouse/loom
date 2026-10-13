@@ -345,13 +345,16 @@ async def provider_report() -> None:
 async def probe_vector_capabilities(ch: Any) -> None:
     """What this ClickHouse supports for vector reads and inserts, probed once
     before the first search: the two-stage codec setting (whether reads carry
-    `vector_search_use_quantized_codes`, which columns are coded and which
-    tables carry patch parts; `connect()` normally probed already), the fact
-    leg's patch-part reading (seeded so the first search does not wait on it
-    and the gauge has a value), and the vector-read version floor."""
+    `vector_search_use_quantized_codes`, which columns are coded and at which
+    width, and which tables carry patch parts), the fact leg's patch-part
+    reading (seeded so the first search does not wait on it and the gauge has
+    a value), and the vector-read version floor. The codec state is read again:
+    `connect()` probed it before the boot migrations created a fresh install's
+    tables, and the write guards need their widths from the first request."""
     from server.core.vectors import codes_state, patch_parts, vector_floor
 
     await codes_state.ensure_probed(ch)
+    await codes_state.probe(ch)
     await patch_parts.probe_patch_parts(ch)
     await vector_floor.warn_below_vector_floor(ch)
 
