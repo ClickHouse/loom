@@ -342,44 +342,34 @@ async def active_runs_by_id(ch: Any, org: str, run_id: str) -> list[RunLedgerRow
 async def idle_session_runs(
     ch: Any, *, idle_seconds: int, limit: int, org: str = ""
 ) -> list[RunLedgerRow]:
-    """Active implicit MCP session runs that no request of their token reached
-    within `idle_seconds`, in `org` ("" = every org), oldest first.
+    """Up to `limit` active implicit MCP session runs that no request of their
+    token reached within `idle_seconds`, in random order, so runs that keep
+    failing to close cannot hold the front of the queue. `org` narrows it to
+    one org (a test's seam; "" = every org).
 
-    A plain read picks the candidates, so the FINAL read touches only their
-    rows. `version` is the time of the row's last write (a begin or a re-open),
-    and the begin records the token's subject."""
-    rows = await ch.query_all(
+    The plain read of `candidates` keeps the FINAL read to their rows.
+    `version` is the time of the row's last write (a begin or a re-open), and
+    the begin records the token's subject."""
+    rows: list[RunLedgerRow] = await ch.query_all(
         """
-        SELECT DISTINCT run_id FROM loom.agent_runs
-        WHERE status = 'active' AND environment = 'mcp' AND startsWith(run_id, 'mcp-')
-          AND ({org:String} = '' OR org = {org:String})
-        """,
-        params={"org": org},
-    )
-    if not rows:
-        return []
-    stale: list[RunLedgerRow] = await ch.query_all(
-        """
+        WITH candidates AS (
+            SELECT run_id FROM loom.agent_runs
+            WHERE status = 'active' AND environment = 'mcp' AND startsWith(run_id, 'mcp-')
+        )
         SELECT org, namespace, run_id FROM loom.agent_runs FINAL
-        WHERE run_id IN {ids:Array(String)} AND ({org:String} = '' OR org = {org:String})
+        WHERE run_id IN candidates AND ({org:String} = '' OR org = {org:String})
           AND status = 'active' AND JSONExtractBool(metadata, 'implicit')
           AND version < toUInt64(toUnixTimestamp64Nano(now64(9) - INTERVAL {idle:UInt32} SECOND))
           AND (run_id, JSONExtractString(metadata, 'subject')) NOT IN (
               SELECT run_id, subject FROM loom.agent_events
-              WHERE ts >= now64(3) - INTERVAL {idle:UInt32} SECOND
-                AND run_id IN {ids:Array(String)}
+              WHERE ts >= now64(3) - INTERVAL {idle:UInt32} SECOND AND run_id IN candidates
           )
-        ORDER BY started_at
+        ORDER BY rand()
         LIMIT {lim:UInt32}
         """,
-        params={
-            "ids": [str(r["run_id"]) for r in rows],
-            "org": org,
-            "idle": idle_seconds,
-            "lim": limit,
-        },
+        params={"org": org, "idle": idle_seconds, "lim": limit},
     )
-    return stale
+    return rows
 
 
 async def traced_recall_keys(ch: Any, org: str, ns: str, run_id: str) -> list[str]:

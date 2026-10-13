@@ -93,6 +93,11 @@ SDK has no class for raises the class its HTTP status maps to (a 409
 | `INTERNAL_ERROR`       | 500    | An idempotent op, once. Report the `request_id` if it repeats.                                                                                                                                                                                                 |
 | 4xx other than 429     | 4xx    | No. The same request gets the same answer; fix the request, the token or the data first.                                                                                                                                                                       |
 
+`SCHEMA_PENDING`, `OVERRIDE_NOT_SHARED` and `CODED_WIDTH_MISMATCH` are 503s because
+the server cannot serve the request in its current state, not because the request is
+wrong; they send no `Retry-After` since only an operator's fix ends them, and the SDKs
+never retry the last two.
+
 The SDKs' default policy: three attempts with exponential backoff; 408 and 5xx
 retried for ops the registry marks idempotent (any other op only on a 408 or a
 503 `AUTH_UNAVAILABLE`, which the server answers before running it); a read

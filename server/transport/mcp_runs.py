@@ -41,6 +41,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.background import TaskSet
+from server.core.ch import quota_key_var, set_query_tag, set_quota_key
 from server.tasks.domain.session_runs import ledger_subject, session_run_id
 
 log = logging.getLogger(__name__)
@@ -122,6 +123,8 @@ class SessionRun:
     started_at: datetime
     # When this process last asked the ledger whether the run is still open.
     checked_at: float
+    # The caller's ClickHouse quota key, which the detached begins and checks carry.
+    quota_key: str = ""
     begin_task: asyncio.Task[None] | None = None
 
 
@@ -236,6 +239,7 @@ async def ensure(
         goal=goal,
         started_at=naive_utc_now(),
         checked_at=now,
+        quota_key=quota_key_var.get(),
     )
     _RUNS[run_id] = run
     _BEGIN_FAILED_AT.pop(run_id, None)
@@ -251,9 +255,7 @@ async def _begin(run: SessionRun, *, now: float, first: bool) -> None:
     `first` begin that fails forgets the run and the session waits out the idle
     window before the next attempt; a failed check of a run already begun keeps
     it, and the next check tries again."""
-    from server.core.ch import set_query_tag
-
-    set_query_tag("mcp.session_run")  # detached: no request's tag to inherit
+    _attribute(run.quota_key)
     try:
         from server.tasks.api.models_run import RunBeginInput
         from server.tasks.app.run import active_session_runs, begin_session_run
@@ -307,13 +309,19 @@ async def close_session(session_id: str | None, org: str, subject: str) -> bool:
     run_id = session_run_id(org, subject, session_id)
     run = _RUNS.pop(run_id, None)
     begin = run.begin_task if run is not None else None
-    return await detached_task(_close(org, run_id, begin), name=f"mcp-run-end:{run_id}")
+    closing = _close(org, run_id, begin, quota_key_var.get())
+    return await detached_task(closing, name=f"mcp-run-end:{run_id}")
 
 
-async def _close(org: str, run_id: str, begin: asyncio.Task[None] | None) -> bool:
-    from server.core.ch import set_query_tag
+def _attribute(quota_key: str) -> None:
+    """A detached task starts with no request context: name its statements and
+    count them against the caller's quota, as the request's would be."""
+    set_query_tag("mcp.session_run")
+    set_quota_key(quota_key)
 
-    set_query_tag("mcp.session_run")  # detached: no request's tag to inherit
+
+async def _close(org: str, run_id: str, begin: asyncio.Task[None] | None, quota_key: str) -> bool:
+    _attribute(quota_key)
     if begin is not None and not begin.done():
         await asyncio.gather(begin, return_exceptions=True)  # complete after begin
     try:

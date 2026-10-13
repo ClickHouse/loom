@@ -167,10 +167,19 @@ def test_a_fifo_where_a_shared_file_goes_is_refused_without_waiting(tmp_path: Pa
         open_private(str(fifo), os.O_RDONLY)
 
 
-def test_a_tmp_directory_another_account_made_is_refused(tmp_path: Path, monkeypatch) -> None:
+def test_a_runtime_directory_that_is_not_private_is_passed_over(
+    tmp_path: Path, monkeypatch
+) -> None:
     from server.core import runtime_files as rs
 
-    monkeypatch.setattr(rs, "_TMP_DIR", str(tmp_path))
-    (tmp_path / f"loom-{os.geteuid()}").symlink_to(tmp_path)  # not a directory of its own
-    with pytest.raises(OSError, match="not a directory of this user's"):
-        rs._private_tmp_dir()
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    (tmp_path / "planted").mkdir()
+    monkeypatch.setattr(rs, "RUN_DIR", str(tmp_path / "run-loom"))
+    (tmp_path / "run-loom").symlink_to(tmp_path / "planted")  # a link, not a directory
+    monkeypatch.setattr(rs, "_TMP_DIR", str(tmp_path / "tmp"))
+    (tmp_path / "tmp").mkdir()
+    assert rs.choose_runtime_dir() == str(tmp_path / "tmp" / f"loom-{os.geteuid()}")
+    (tmp_path / "tmp" / f"loom-{os.geteuid()}").rmdir()
+    (tmp_path / "tmp" / f"loom-{os.geteuid()}").symlink_to(tmp_path / "planted")
+    with pytest.raises(OSError, match="only this user can enter"):
+        rs.choose_runtime_dir()

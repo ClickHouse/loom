@@ -353,8 +353,7 @@ async def probe_vector_capabilities(ch: Any) -> None:
     tables, and the write guards need their widths from the first request."""
     from server.core.vectors import codes_state, patch_parts, vector_floor
 
-    await codes_state.ensure_probed(ch)
-    await codes_state.probe(ch)
+    await codes_state.ensure_probed(ch, reread=True)
     await patch_parts.probe_patch_parts(ch)
     await vector_floor.warn_below_vector_floor(ch)
 

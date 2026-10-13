@@ -559,3 +559,23 @@ def test_the_run_names_the_subject_the_idle_sweep_counts(ledger: _Ledger) -> Non
         assert [b.metadata["subject"] for b in ledger.begins] == ["sa:t", ""]
 
     asyncio.run(_run())
+
+
+def test_the_detached_begin_counts_against_the_callers_quota(ledger: _Ledger, monkeypatch) -> None:
+    import server.tasks.app.run as h
+    from server.core.ch import current_query_tag, quota_key_var, set_quota_key
+
+    seen: list[tuple[str, str]] = []
+
+    async def begin(inp: Any, *, started_at: Any) -> None:
+        seen.append((quota_key_var.get(), current_query_tag()))
+
+    monkeypatch.setattr(h, "begin_session_run", begin)
+
+    async def _run() -> None:
+        set_quota_key("tenant-a")
+        await mcp_runs.ensure("s", DEFAULTS, CALLER, goal="g", now=0.0)
+        await mcp_runs.drain_ledger_writes()
+
+    asyncio.run(_run())
+    assert seen == [("tenant-a", "mcp.session_run")]

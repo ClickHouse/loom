@@ -16,6 +16,7 @@ import os
 import re
 import shutil
 import stat
+import sys
 from pathlib import Path
 
 FILE_MODE = 0o600
@@ -37,32 +38,33 @@ def runtime_dir() -> str:
 
 
 def choose_runtime_dir() -> str:
-    """`$XDG_RUNTIME_DIR/loom` when the variable names a writable directory,
-    else `/run/loom` when it is one or can be created, else `/tmp/loom-<uid>`.
-    The first two are per-user or per-service tmpfs paths another local account
-    cannot list; the last is the fallback for a host or container without one."""
+    """`$XDG_RUNTIME_DIR/loom` when the variable is set, else `/run/loom`, else
+    `/tmp/loom-<uid>`: the first that is, or can be made, a directory only this
+    user can enter, so no other account can plant a file where the server's
+    names point. Raises OSError when none is."""
     xdg = str(os.environ.get("XDG_RUNTIME_DIR") or "").strip()
-    for base in ([os.path.join(xdg, "loom")] if xdg else []) + [RUN_DIR]:
-        with contextlib.suppress(OSError):
-            os.makedirs(base, mode=0o700, exist_ok=True)
-        if os.path.isdir(base) and os.access(base, os.W_OK | os.X_OK):
+    candidates = [os.path.join(xdg, "loom")] if xdg else []
+    candidates += [RUN_DIR, os.path.join(_TMP_DIR, f"loom-{os.geteuid()}")]
+    for base in candidates:
+        if _private_dir(base):
             return base
-    return _private_tmp_dir()
+    raise OSError(f"none of {', '.join(candidates)} is a directory only this user can enter")
 
 
-def _private_tmp_dir() -> str:
-    """`/tmp/loom-<uid>`, a directory only this user can enter, so no other
-    account can plant a file where the server's names point. Raises OSError
-    when another account made it first."""
-    path = os.path.join(_TMP_DIR, f"loom-{os.geteuid()}")
-    with contextlib.suppress(FileExistsError):
-        os.mkdir(path, 0o700)
-    st = os.lstat(path)
-    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.geteuid():
-        raise OSError(f"{path} is not a directory of this user's")
-    if stat.S_IMODE(st.st_mode) & 0o077:
-        os.chmod(path, 0o700)
-    return path
+def _private_dir(path: str) -> bool:
+    """Whether `path` is, or is now, a writable directory of this user's that no
+    other account can enter (a looser mode of its own is tightened)."""
+    with contextlib.suppress(OSError):
+        os.makedirs(path, mode=0o700, exist_ok=True)
+    try:
+        st = os.lstat(path)
+        if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.geteuid():
+            return False
+        if stat.S_IMODE(st.st_mode) & 0o077:
+            os.chmod(path, 0o700)
+    except OSError:
+        return False
+    return os.access(path, os.W_OK | os.X_OK)
 
 
 def _started(pid: int) -> str | None:
@@ -142,4 +144,8 @@ def open_private(path: str, flags: int) -> int:
 
 
 if __name__ == "__main__":
-    print(choose_runtime_dir())
+    try:
+        print(choose_runtime_dir())
+    except OSError as e:
+        print(f"loom: {e}", file=sys.stderr)
+        raise SystemExit(2) from None

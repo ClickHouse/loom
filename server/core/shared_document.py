@@ -8,15 +8,17 @@ file atomically, so concurrent updates never drop each other's change.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import errno
 import fcntl
+import functools
 import json
 import logging
 import os
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from server.core.errors import OverloadedError, OverrideNotSharedError
@@ -25,8 +27,8 @@ from server.core.runtime_files import open_private
 log = logging.getLogger(__name__)
 
 _Version = tuple[int, int, int]  # inode, mtime_ns, size
-# How long an update waits for a sibling's lock; an update holds it for one
-# read and one atomic replace.
+# How long `waits_out_siblings` retries an update a sibling's lock refused; an
+# update holds the lock for one read and one atomic replace.
 LOCK_WAIT_S = 1.0
 
 
@@ -66,7 +68,7 @@ class SharedDocument[T]:
         written."""
         lock = open_private(self.path + ".lock", os.O_RDWR | os.O_CREAT)
         try:
-            _lock_within(lock, self.path, LOCK_WAIT_S)
+            _try_lock(lock, self.path)
             self._seen = None
             try:
                 latest = self._read_changed()
@@ -122,23 +124,38 @@ def share_override[T](
         ) from e
 
 
+def waits_out_siblings[**P, R](
+    handler: Callable[P, Awaitable[R]],
+) -> Callable[P, Awaitable[R]]:
+    """Retry an override route for up to LOCK_WAIT_S while a sibling's update
+    holds the lock, awaiting between tries so the event loop serves the other
+    requests. The routes set values, so a retry repeats nothing."""
+
+    @functools.wraps(handler)
+    async def retried(*args: P.args, **kwargs: P.kwargs) -> R:
+        deadline = time.monotonic() + LOCK_WAIT_S
+        while True:
+            try:
+                return await handler(*args, **kwargs)
+            except OverloadedError:
+                if time.monotonic() >= deadline:
+                    raise
+                await asyncio.sleep(0.005)
+
+    return retried
+
+
 class LockBusy(OSError):
     """A sibling web process held the document's lock past the wait."""
 
 
-def _lock_within(fd: int, path: str, wait_s: float) -> None:
-    """Take the exclusive lock, or raise OSError after `wait_s`. An update runs on
-    the event loop, so a sibling stuck holding the lock stalls it for `wait_s` at
-    most; a sibling's own update holds it for one read and one replace."""
-    deadline = time.monotonic() + wait_s
-    while True:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return
-        except BlockingIOError:
-            if time.monotonic() >= deadline:
-                raise LockBusy(errno.EWOULDBLOCK, f"{path}.lock held past {wait_s:g} s") from None
-            time.sleep(0.002)
+def _try_lock(fd: int, path: str) -> None:
+    """Take the exclusive lock, or raise LockBusy at once: an update runs on the
+    event loop, so it never sleeps there (`waits_out_siblings` retries it)."""
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        raise LockBusy(errno.EWOULDBLOCK, f"{path}.lock is held by another process") from None
 
 
 def _publish(path: str, data: object) -> _Version:

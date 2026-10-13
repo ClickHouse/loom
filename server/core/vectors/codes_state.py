@@ -208,9 +208,10 @@ async def probe(ch: Any) -> None:
     _probed_at = time.monotonic()
 
 
-async def ensure_probed(ch: Any) -> None:
+async def ensure_probed(ch: Any, *, reread: bool = False) -> None:
     """Probe what this process has not probed yet: the replica check (does
-    every replica know the setting name) and this module's two facts.
+    every replica know the setting name) and this module's two facts, those
+    again with `reread`.
     `CHClient.connect()` calls it, so every process that talks to ClickHouse —
     server, workers, a CLI, a bench importing the services — builds the same
     vector reads; a process that skipped the probe would send every chunk read
@@ -220,7 +221,7 @@ async def ensure_probed(ch: Any) -> None:
     try:
         if quantized_setting.quantized_codes_state() is None:
             await quantized_setting.probe_vector_search_settings(ch)
-        if _probed_at is None:
+        if reread or _probed_at is None:
             await probe(ch)
     except Exception as e:  # noqa: BLE001 — a probe must never fail a connect
         log.info("vector read-state probe failed: %s", str(e)[:160])

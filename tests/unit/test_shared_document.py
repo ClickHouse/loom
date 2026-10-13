@@ -207,10 +207,9 @@ def test_an_update_gives_up_on_a_lock_a_sibling_holds(tmp_path, monkeypatch) -> 
     path = str(tmp_path / "doc.json")
     holder = os.open(path + ".lock", os.O_RDWR | os.O_CREAT, 0o600)
     fcntl.flock(holder, fcntl.LOCK_EX)
-    monkeypatch.setattr(shared_document, "LOCK_WAIT_S", 0.05)
     doc = shared_document.SharedDocument(path, lambda d: d, lambda d: d)
     try:
-        with pytest.raises(OSError, match="held past"):
+        with pytest.raises(OSError, match="held by another process"):
             doc.update(lambda d: {**d, "a": 1}, {})
     finally:
         os.close(holder)
@@ -230,7 +229,6 @@ def test_a_busy_lock_is_a_retry_and_an_unwritable_document_is_not(tmp_path, monk
     doc = shared_document.SharedDocument(path, lambda d: d, lambda d: d)
     holder = os.open(path + ".lock", os.O_RDWR | os.O_CREAT, 0o600)
     fcntl.flock(holder, fcntl.LOCK_EX)
-    monkeypatch.setattr(shared_document, "LOCK_WAIT_S", 0.05)
     try:
         with pytest.raises(OverloadedError):
             shared_document.share_override(doc, lambda d: d, {}, what="budget override")
@@ -243,3 +241,41 @@ def test_a_busy_lock_is_a_retry_and_an_unwritable_document_is_not(tmp_path, monk
 
 def _refuse_publish(path: str, data: object) -> object:
     raise OSError(28, "No space left on device")
+
+
+def test_an_override_route_waits_out_a_siblings_lock_without_blocking(monkeypatch) -> None:
+    import asyncio
+
+    import pytest
+
+    from server.core import shared_document
+    from server.core.errors import OverloadedError
+
+    tries: list[int] = []
+
+    @shared_document.waits_out_siblings
+    async def route(busy_for: int) -> str:
+        tries.append(1)
+        if len(tries) <= busy_for:
+            raise OverloadedError("a sibling holds the lock")
+        return "set"
+
+    async def _run() -> None:
+        ticks = 0
+
+        async def other_requests() -> None:
+            nonlocal ticks
+            while True:
+                ticks += 1
+                await asyncio.sleep(0)
+
+        served = asyncio.create_task(other_requests())
+        assert await route(3) == "set" and len(tries) == 4
+        served.cancel()
+        assert ticks > 0  # the loop served others while the route waited
+        monkeypatch.setattr(shared_document, "LOCK_WAIT_S", 0.02)
+        tries.clear()
+        with pytest.raises(OverloadedError):
+            await route(10**6)
+
+    asyncio.run(_run())

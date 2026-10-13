@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from server.core.paths import MIGRATIONS_DIR
+from server.core.shared_document import waits_out_siblings
 from server.insights.app.admin_models import (
     AuditSummaryInput,
     AuditSummaryOutput,
@@ -421,6 +422,7 @@ async def admin_consumers(input: ConsumersInput) -> ConsumersOutput:
 
 
 @admin_router.post("/v1/admin/budget.set")
+@waits_out_siblings
 async def admin_budget_set(input: BudgetSetInput) -> BudgetSetOutput:
     """Install or clear a per-operation latency-budget override.
 
@@ -480,6 +482,7 @@ async def admin_budget_set(input: BudgetSetInput) -> BudgetSetOutput:
 
 
 @admin_router.post("/v1/admin/ratelimit.set")
+@waits_out_siblings
 async def admin_ratelimit_set(input: RatelimitSetInput) -> RatelimitSetOutput:
     """Install a per-(namespace|org) rate-limit override.
 
