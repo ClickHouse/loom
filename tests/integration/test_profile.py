@@ -267,6 +267,7 @@ async def test_memory_search_excludes_profile_by_default(agent) -> None:
     embedding; force-insert one and confirm it's filtered."""
     import uuid as _uuid
 
+    from server.settings import settings
     from tests.integration._resources import ch_client_from_env
 
     label = f"persona-srch-{_uuid.uuid4().hex[:8]}"
@@ -287,8 +288,8 @@ async def test_memory_search_excludes_profile_by_default(agent) -> None:
                 "private",
                 "Distinctive persona text for search test",
                 "fake-ngram-1024",
-                1024,
-                [0.1] * 1024,
+                settings.embedding_dim,
+                [0.1] * settings.embedding_dim,
                 1.0,
                 None,
                 __import__("datetime")

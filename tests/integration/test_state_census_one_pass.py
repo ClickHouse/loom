@@ -27,6 +27,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from server.settings import settings  # noqa: E402
+
 TABLES = (
     "memory",
     "memory_embeddings",
@@ -106,6 +108,7 @@ def _seed(ch: Any, prefix: str, rnd: random.Random) -> None:
     now = dt.datetime.now().replace(microsecond=0)
     months = [now - dt.timedelta(days=40), now - dt.timedelta(days=5), now]
     ents = ["alpha", "beta", "gamma", "delta"]
+    width = settings.embedding_dim  # a coded column takes this length only
     mem: list[list[Any]] = []
     emb: list[list[Any]] = []
     ev: list[list[Any]] = []
@@ -146,8 +149,8 @@ def _seed(ch: Any, prefix: str, rnd: random.Random) -> None:
                                 if rnd.random() < 0.12:
                                     continue
                                 for v in range(rnd.randint(1, 2)):
-                                    dim = 0 if rnd.random() < 0.2 else 4
-                                    vec = [0.5] * 4 if dim or rnd.random() < 0.4 else []
+                                    dim = 0 if rnd.random() < 0.2 else width
+                                    vec = [0.5 if dim or rnd.random() < 0.4 else 0.0] * width
                                     r = rnd.random()
                                     e = (
                                         rnd.sample(ents, 2)

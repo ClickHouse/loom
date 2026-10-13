@@ -96,6 +96,7 @@ def test_the_table_is_on_the_coded_layout_with_a_placeholder_rule() -> None:
         "    `embedding_dim` UInt16 DEFAULT 0\n)",
         3072,
     )
-    assert "`embedding` Array(BFloat16) DEFAULT [] CODEC(Quantized('rabitq', 3072, 0))" in (
-        ddl or ""
+    assert (
+        "`embedding` Array(BFloat16) DEFAULT CAST(arrayWithConstant(3072, 0), 'Array(BFloat16)') CODEC(Quantized('rabitq', 3072, 0))"
+        in (ddl or "")
     )

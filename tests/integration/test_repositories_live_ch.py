@@ -21,6 +21,14 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def _wide(head: list[float]) -> list[float]:
+    """`head` zero-padded to the configured width (cosines unchanged): a
+    coded vector column takes vectors of exactly that length."""
+    from server.settings import settings
+
+    return head + [0.0] * (settings.embedding_dim - len(head))
+
+
 @pytest.fixture(scope="module")
 async def ch() -> Any:
     from server.core.ch import get_client
@@ -254,7 +262,7 @@ async def test_documents_and_chunks_roundtrip(
                 "doc_superseded_at": None,
                 "embedding_model": "itest-model",
                 "embedding_dim": 4,
-                "embedding": [0.1, 0.2, 0.3, 0.4],
+                "embedding": _wide([0.1, 0.2, 0.3, 0.4]),
                 "created_at": now,
             }
             for i in range(2)
@@ -717,7 +725,6 @@ async def test_embedding_worker_reconciles_shared_stub(
                 "content_excerpt": "this is the content the worker will embed",
                 "embedding_model": embedder_model,
                 "embedding_dim": 0,
-                "embedding": [],
                 "tombstoned_at": None,
                 "created_at": now,
             }
@@ -777,8 +784,8 @@ async def test_conflicts_check_against_shared_finds_close_peer(
 
     org = "itest-org"
     ns = isolated_id
-    base_vec = [0.1, 0.2, 0.3, 0.4]
-    close_vec = [0.11, 0.21, 0.29, 0.39]  # cosine distance ≈ 0.0001
+    base_vec = _wide([0.1, 0.2, 0.3, 0.4])
+    close_vec = _wide([0.11, 0.21, 0.29, 0.39])  # cosine distance ≈ 0.0001
 
     seeded_key = "existing-pref"
     promotion_event = str(uuid.uuid4())
@@ -858,7 +865,7 @@ async def test_conflicts_check_against_shared_far_vec_clears(
 
     org = "itest-org"
     ns = isolated_id
-    far_vec = [0.99, -0.99, 0.99, -0.99]  # opposite signs → cosine ≈ 1
+    far_vec = _wide([0.99, -0.99, 0.99, -0.99])  # opposite signs → cosine ≈ 1
 
     peers = await conflicts.check_against_shared(
         org=org,

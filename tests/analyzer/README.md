@@ -84,7 +84,7 @@ docker run -d --name corpus-ch -p 127.0.0.1:18160:8123 -e CLICKHOUSE_DB=loom \
   -v $PWD/deploy/clickhouse-config/nlp_user_settings.xml:/etc/clickhouse-server/users.d/nlp_user_settings.xml:ro \
   -v $PWD/deploy/clickhouse-config/merge_tree_settings.xml:/etc/clickhouse-server/config.d/merge_tree_settings.xml:ro \
   -v $PWD/deploy/clickhouse-config/keeper.xml:/etc/clickhouse-server/config.d/keeper.xml:ro \
-  clickhouse/clickhouse-server:26.7.28.6
+  clickhouse/clickhouse-server:26.9.17.8
 export LOOM_CH_HOST=127.0.0.1 LOOM_CH_PORT=18160 LOOM_CH_USER=loom LOOM_CH_PASSWORD=loomdev \
        LOOM_CH_DATABASE=loom LOOM_CH_SECURE=false
 python -m server.core.schema.migrate

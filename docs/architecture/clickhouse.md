@@ -314,7 +314,7 @@ queue.
   `(org, namespace)`, so ClickHouse pre-filters and almost never opens the index, while
   every insert and merge would pay to build it.
   Read latency therefore grows with namespace size, not corpus size.
-- **Quantized codes.** On ClickHouse 26.7+, a fresh install creates the vector columns of
+- **Quantized codes.** On ClickHouse 26.8+, a fresh install creates the vector columns of
   `CODED_TABLES` (`server/core/schema/vector_codec_ddl.py`) with `CODEC(Quantized('rabitq', <dim>, 0))`
   whenever the server supports it. The runner rewrites the `CREATE` at apply time. An
   existing table moves with `scripts/ops/vector_codec_rebuild.py`.
@@ -538,7 +538,7 @@ carries it (`server/core/schema/migrate.py`, `_stmt_experimental_settings`):
 | `allow_experimental_nlp_functions`                  | Statements calling `stem(` or `lemmatize(`, and any `ALTER` on `memory_embeddings`. Dropped where read-only, as on ClickHouse Cloud, which runs `stem()` without it. |
 | `allow_experimental_vector_similarity_index`        | Statements naming a `vector_similarity` / HNSW index.                                                                                                                |
 | `allow_experimental_statistics`                     | Statements with `STATISTICS`.                                                                                                                                        |
-| `enable_quantized_codec`, `allow_suspicious_codecs` | A coded `CREATE` on 26.7+; `allow_suspicious_codecs` only when a codec is chained after `Quantized`.                                                                 |
+| `enable_quantized_codec`, `allow_suspicious_codecs` | A coded `CREATE` on 26.8+; `allow_suspicious_codecs` only when a codec is chained after `Quantized`.                                                                 |
 
 Applying `schemas/schema.sql` by hand with `clickhouse-client --multiquery` needs the same
 flags; the file's header lists them.
@@ -554,7 +554,7 @@ Supported server versions are in
 | Read-your-writes                   | A committed insert is visible to the next read.                                           | Replicas may lag; see [Read-your-writes](#read-your-writes).                                                                        |
 | Rolling upgrades                   | One version.                                                                              | Replicas can differ for a while; setting support is probed per replica, and a rejected setting is dropped and the read retried.     |
 | NLP functions                      | `stem()` available.                                                                       | `allow_experimental_nlp_functions` is read-only; migrations run without it. The lemma column is filled by the application on both.  |
-| Codecs                             | `Quantized` needs 26.7+.                                                                  | `allow_suspicious_codecs` is read-only, so it is sent only for the `entity_vectors` LZ4 chain.                                      |
+| Codecs                             | `Quantized` needs 26.8+.                                                                  | `allow_suspicious_codecs` is read-only, so it is sent only for the `entity_vectors` LZ4 chain.                                      |
 | `MODIFY SETTING index_granularity` | Rejected by OSS `ReplacingMergeTree` (code 472); tolerated.                               | Accepted.                                                                                                                           |
 | Lightweight updates                | Supported on recent versions; `ALTER UPDATE` fallback otherwise.                          | Each `UPDATE` is a patch part plus a Keeper entry; statements are batched and back off while mutations are pending.                 |
 | `OPTIMIZE … FINAL`                 | Returns after the merge.                                                                  | Returns before the merge completes; code compaction polls `system.merges` on every replica.                                         |

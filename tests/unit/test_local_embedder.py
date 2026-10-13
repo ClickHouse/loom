@@ -342,3 +342,15 @@ def test_secondary_embedder_is_allow_listed(monkeypatch: pytest.MonkeyPatch) -> 
     assert emb.get_secondary_embedder("fake-ngram-64") is a  # cached per spec
     assert emb.allowed_vector_models() == ["fake-ngram-64", "fake-ngram-32"]
     emb.reset()
+
+
+def test_the_served_fake_model_has_one_width_on_every_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A coded vector column takes one length: the served model named as a
+    secondary spec is built at LOOM_EMBEDDING_DIM, like get_embedder()."""
+    emb.reset()
+    monkeypatch.setattr(emb.settings, "embedding_model", "fake-ngram-1024")
+    monkeypatch.setattr(emb.settings, "embedding_dim", 3072)
+    monkeypatch.setattr(emb.settings, "code_search_vector_models", "fake-ngram-1024, fake-ngram-64")
+    assert emb.get_secondary_embedder("fake-ngram-1024").dim == 3072
+    assert emb.get_secondary_embedder("fake-ngram-64").dim == 64
+    emb.reset()

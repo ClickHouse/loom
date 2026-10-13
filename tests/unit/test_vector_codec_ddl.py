@@ -19,9 +19,12 @@ ORDER BY (org, memory_key)"""
 
 def test_create_of_a_coded_table_gets_bf16_plus_codec_per_vector_column() -> None:
     out = vcd.rewrite_statement(BASELINE, 3072)
-    assert "`embedding` Array(BFloat16) CODEC(Quantized('rabitq', 3072, 0))," in out
     assert (
-        "`memory_key_embedding` Array(BFloat16) DEFAULT [] CODEC(Quantized('rabitq', 3072, 0))"
+        "`embedding` Array(BFloat16) DEFAULT CAST(arrayWithConstant(3072, 0), 'Array(BFloat16)') CODEC(Quantized('rabitq', 3072, 0)),"
+        in out
+    )
+    assert (
+        "`memory_key_embedding` Array(BFloat16) DEFAULT CAST(arrayWithConstant(3072, 0), 'Array(BFloat16)') CODEC(Quantized('rabitq', 3072, 0))"
         in out
     )
     assert "`embedding_dim` UInt16 DEFAULT 0" in out  # untouched neighbour
@@ -31,7 +34,7 @@ def test_create_of_a_coded_table_gets_bf16_plus_codec_per_vector_column() -> Non
 def test_entity_vectors_chains_lz4_and_other_tables_are_untouched() -> None:
     ev = "CREATE TABLE IF NOT EXISTS loom.entity_vectors (`entity_text` String, `entity_embedding` Array(Float32), `x` UInt8) ENGINE = MergeTree ORDER BY entity_text"
     assert (
-        "`entity_embedding` Array(BFloat16) CODEC(Quantized('rabitq', 1024, 0), LZ4)"
+        "`entity_embedding` Array(BFloat16) DEFAULT CAST(arrayWithConstant(1024, 0), 'Array(BFloat16)') CODEC(Quantized('rabitq', 1024, 0), LZ4)"
         in vcd.rewrite_statement(ev, 1024)
     )
     other = "CREATE TABLE IF NOT EXISTS loom.code_chunks_prefix (`embedding` Array(BFloat16) CODEC(NONE)) ENGINE = MergeTree ORDER BY tuple()"
@@ -41,8 +44,8 @@ def test_entity_vectors_chains_lz4_and_other_tables_are_untouched() -> None:
     # the file cards fill code_summaries, so a fresh install codes it
     cards = "CREATE TABLE IF NOT EXISTS loom.code_summaries (`embedding` Array(BFloat16) DEFAULT [] CODEC(NONE), `embedding_dim` UInt16 DEFAULT 0) ENGINE = MergeTree ORDER BY tuple()"
     assert (
-        "`embedding` Array(BFloat16) DEFAULT [] CODEC(Quantized('rabitq', 3072, 0)),"
-        in vcd.rewrite_statement(cards, 3072)
+        "`embedding` Array(BFloat16) DEFAULT CAST(arrayWithConstant(3072, 0), 'Array(BFloat16)') "
+        "CODEC(Quantized('rabitq', 3072, 0))," in vcd.rewrite_statement(cards, 3072)
     )
     assert (
         vcd.rewrite_statement("INSERT INTO loom.memory_embeddings VALUES", 3072)
@@ -105,3 +108,12 @@ def test_every_coded_table_except_entity_vectors_has_a_placeholder_rule() -> Non
 
     for table, (cols, _chain) in vcd.CODED_TABLES.items():
         assert PLACEHOLDER_COLUMNS[f"loom.{table}"] == cols, table
+
+
+def test_a_declared_non_empty_default_is_kept() -> None:
+    stmt = (
+        "CREATE TABLE IF NOT EXISTS loom.chunks (`embedding` Array(Float32) DEFAULT [1.0], "
+        "`x` UInt8) ENGINE = MergeTree ORDER BY x"
+    )
+    out = vcd.rewrite_statement(stmt, 3072)
+    assert "DEFAULT [1.0] CODEC(Quantized('rabitq', 3072, 0))" in out

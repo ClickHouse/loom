@@ -84,10 +84,10 @@ async def test_stub_inserted_directly_gets_embedded(
         INSERT INTO loom.memory_embeddings
           (org, namespace, agent, user_id, session_id, memory_key,
            memory_type, scope, content_excerpt, embedding_model,
-           embedding_dim, embedding, tombstoned_at, created_at)
+           embedding_dim, tombstoned_at, created_at)
         VALUES ({org:String}, {ns:String}, 'w', '-', '-', 'pending_k',
                 'semantic', 'private', 'clickhouse columnar speed',
-                'fake-ngram-1024', 0, [], NULL, now() - INTERVAL 1 MINUTE)
+                'fake-ngram-1024', 0, NULL, now() - INTERVAL 1 MINUTE)
         """,
         parameters={"org": ORG, "ns": ns},
     )
@@ -171,10 +171,10 @@ async def test_stub_invisible_to_search_until_embedded(
         INSERT INTO loom.memory_embeddings
           (org, namespace, agent, user_id, session_id, memory_key,
            memory_type, scope, content_excerpt, embedding_model,
-           embedding_dim, embedding, tombstoned_at, created_at)
+           embedding_dim, tombstoned_at, created_at)
         VALUES ({org:String}, {ns:String}, 'w', '-', '-', 'pending',
                 'semantic', 'private', 'distinctive query content here',
-                'fake-ngram-1024', 0, [], NULL, now())
+                'fake-ngram-1024', 0, NULL, now())
         """,
         parameters={"org": ORG, "ns": ns},
     )
@@ -252,10 +252,10 @@ async def test_worker_replacement_never_outranks_a_later_write(
             INSERT INTO loom.memory_embeddings
               (org, namespace, agent, user_id, session_id, memory_key,
                memory_type, scope, content_excerpt, embedding_model,
-               embedding_dim, embedding, tombstoned_at, created_at, version)
+               embedding_dim, tombstoned_at, created_at, version)
             VALUES ({org:String}, {ns:String}, 'w', '-', '-', 'fenced_k',
                     'semantic', 'private', {text:String}, {model:String},
-                    0, [], NULL, now() - INTERVAL 1 MINUTE, {v:UInt64})
+                    0, NULL, now() - INTERVAL 1 MINUTE, {v:UInt64})
             """,
             parameters={"org": ORG, "ns": ns, "text": text, "model": model, "v": version},
         )

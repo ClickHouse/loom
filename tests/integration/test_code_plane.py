@@ -55,6 +55,7 @@ async def code_env(ch_client):
 async def _ingest(repo, org, ns, source=_SRC, sha="a" * 40):
     from server.code.app.index.ingest import ingest_file
     from server.embedding.fake import FakeNGramEmbedder
+    from server.settings import settings
 
     return await ingest_file(
         repo,
@@ -64,7 +65,7 @@ async def _ingest(repo, org, ns, source=_SRC, sha="a" * 40):
         source=source,
         commit_sha=sha,
         embedding_model="fake-ngram-1024",
-        embedder=FakeNGramEmbedder(dim=1024),
+        embedder=FakeNGramEmbedder(dim=settings.embedding_dim),
     )
 
 

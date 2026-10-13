@@ -3,8 +3,8 @@
 Existing tables move onto `Array(BFloat16) CODEC(Quantized('rabitq', dim, 0))`
 with `scripts/ops/vector_codec_rebuild.py`; a fresh install would otherwise
 create them as `CODEC(NONE)` (the schema declares `Array(Float32)` or
-bf16), because the codec cannot be added by ALTER and the CI
-floor (26.5) does not know it. The migration runner therefore rewrites, at
+bf16), because the codec cannot be added by ALTER and a server
+before 26.8 does not know it. The migration runner therefore rewrites, at
 apply time and only when the server supports the codec:
 
 - in a `CREATE TABLE` of a coded table, each vector column's declaration to
@@ -46,6 +46,15 @@ def codec_clause(dim: int, chain: str | None) -> str:
     return f"CODEC({inner})"
 
 
+def _default(declared: str, dim: int) -> str:
+    """A coded column takes only `dim`-long vectors, so an empty or absent
+    default becomes the zero placeholder (`server/core/vectors/placeholders.py`):
+    an INSERT that omits the column still writes a valid row."""
+    if declared.strip() in ("", "DEFAULT []"):
+        return f" DEFAULT CAST(arrayWithConstant({int(dim)}, 0), 'Array(BFloat16)')"
+    return declared
+
+
 def rewrite_statement(stmt: str, dim: int) -> str | None:
     """The statement to run instead of `stmt` — `stmt` itself when it does
     not touch a coded table's vector column, `None` when it must be skipped."""
@@ -57,8 +66,11 @@ def rewrite_statement(stmt: str, dim: int) -> str | None:
             pat = re.compile(
                 rf"`{re.escape(col)}`\s+Array\((?:Float32|BFloat16)\)((?:\s+DEFAULT\s+[^,\n]*?)?)(?:\s+CODEC\([^)]*\))?(?=\s*,|\s*\n|\s*\))"
             )
-            replacement = f"`{col}` Array(BFloat16)\\1 {codec_clause(dim, chain)}"
-            out = pat.sub(replacement, out, count=1)
+            found = pat.search(out)
+            if found:
+                default = _default(found.group(1), dim)
+                coded = f"`{col}` Array(BFloat16){default} {codec_clause(dim, chain)}"
+                out = out[: found.start()] + coded + out[found.end() :]
         return out
     m = _ALTER_RE.search(stmt)
     if m and m.group(1) in CODED_TABLES:
@@ -70,7 +82,7 @@ def rewrite_statement(stmt: str, dim: int) -> str | None:
 
 
 def statement_settings(stmt: str) -> dict[str, int]:
-    """Per-statement settings a coded CREATE needs on ClickHouse >= 26.7.
+    """Per-statement settings a coded CREATE needs on ClickHouse >= 26.8.
 
     `allow_suspicious_codecs` is READONLY on ClickHouse Cloud (the driver rejects
     the statement outright), and the server only asks for

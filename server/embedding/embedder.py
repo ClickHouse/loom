@@ -216,6 +216,10 @@ def _build(spec: str, provider: str) -> Embedder:
     if provider == "fake":
         from server.embedding.fake import FakeNGramEmbedder
 
+        if spec == settings.embedding_model:
+            # The served model, at the width get_embedder() gives it: a coded
+            # vector column takes vectors of one length only.
+            return FakeNGramEmbedder(dim=settings.embedding_dim)
         suffix = spec.rsplit("-", 1)[-1]
         return FakeNGramEmbedder(dim=int(suffix) if suffix.isdigit() else 1024)
     if provider == "local":

@@ -417,7 +417,7 @@ def _tolerated_errors(sql: str) -> set[int]:
 
 
 def _codec_supported(ch: Client) -> bool:
-    """Does this server know the Quantized codec (26.7+)? A fresh table is
+    """Does this server know the Quantized codec (26.8+)? A fresh table is
     created coded where it does, plain where it does not. Probed once per run."""
     try:
         rows = ch.query(
