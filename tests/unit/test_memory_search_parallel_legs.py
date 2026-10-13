@@ -327,8 +327,8 @@ async def test_tier_waterfall_reads_an_addressed_namespace_first_when_the_token_
     env,
 ) -> None:
     """A scoped token's own order is kept, but an addressed namespace its list
-    lacks (cut by the fan-out cap, or of another kind) leads the waterfall, so
-    a confident hit further down cannot keep it from being read."""
+    lacks (of a kind the fan-out does not sweep, or reached by name) leads the
+    waterfall, so a confident hit further down cannot keep it from being read."""
     auth = _scoped_auth("o", priv="admin", pub="viewer")
     env.hits_by_ns["mine"] = [_svc_hit("m1", sim=0.30)]
     env.hits_by_ns["priv"] = [_svc_hit("p1", sim=0.55)]

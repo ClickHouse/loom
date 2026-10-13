@@ -103,8 +103,8 @@ def _synthetic_tool_descriptors_core() -> list[dict[str, Any]]:
                 "list, a count), call again with "
                 "`page` = `memory.next_page` to read the next slice. Stop when "
                 "next_page is empty or the answer is complete.\n\n"
-                "Namespaces are selected server-side (the memory-kind "
-                "namespaces the caller can read; code/QA indexes have their "
+                "Namespaces are selected server-side (your own memory-kind "
+                "namespaces, up to a cap; code/QA indexes have their "
                 "own tools); no namespace argument. Do NOT call for general "
                 "knowledge, arithmetic, or code/syntax help."
             ),
