@@ -224,6 +224,20 @@ def _user_of(input: RunBeginInput) -> str:
 # ------------------------------------------------------------------- handlers
 
 
+async def begin_session_run(input: RunBeginInput) -> bool:
+    """Open (or re-open) an MCP session's implicit run under the id the transport
+    made for it, which binds the session's user (`mcp_runs.run_id_for`): no other
+    user can name it, so it takes no claim, and the id the session's calls carry
+    is the one stored. False, writing nothing, when the id holds another user's run."""
+    ch = get_client()
+    with sequential_reads():
+        existing = await runs_store.fetch_run(ch, input.org, input.namespace, input.run_id)
+    if existing is not None and not _owned_by(existing, _user_of(input)):
+        return False
+    await _open_run(ch, input, input.run_id, existing)
+    return True
+
+
 async def active_session_run(org: str, run_id: str) -> RunLedgerRow | None:
     """An MCP session's implicit run, when a web process of the server has begun
     it: in whichever namespace the session's first call named."""

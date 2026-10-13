@@ -24,7 +24,7 @@ from server.operations.registry import ALL_OPERATIONS
 from server.operations.toolsets import _MCP_HIDDEN_OPS
 from server.transport import gates
 from server.transport import mcp_runs as _mcp_runs
-from server.transport._common import bind_request, validation_note
+from server.transport._common import bind_request, ledger_identity, validation_note
 from server.transport._common import validation_errors as _validation_errors
 from server.transport.arg_feedback import feedback, refused_result, tool_error
 from server.transport.lean_results import lean_result
@@ -345,14 +345,18 @@ async def _bind_session_run(
         from server.observability.run_context import set_ledger_run
 
         if defaults and _mcp_runs.takes_run(op):
-            # The run row lives where the session's first call worked: its
-            # explicit org and namespace when it named them, else the caller's.
+            # The run row lives where the session's first call worked (its explicit
+            # org and namespace when it named them, else the caller's), filed under
+            # the user and session the caller's token acts as.
+            who = ledger_identity({})
             _run = await _mcp_runs.ensure(
                 mcp_session_id,
                 {
                     **defaults,
                     "org": str(arguments.get("org") or defaults["org"]),
                     "namespace": str(arguments.get("namespace") or defaults["namespace"]),
+                    "user_id": who["user_id"],
+                    "session_id": who["session_id"] if who["session_id"] != "-" else "",
                 },
                 goal=_mcp_runs.goal_of(arguments, f"mcp session ({defaults['agent']})"),
             )

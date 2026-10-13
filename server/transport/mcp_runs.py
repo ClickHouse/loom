@@ -23,6 +23,8 @@ and evicted. Ledger failures never fail a tool call.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -62,6 +64,11 @@ class SessionRun:
     agent: str
     session_id: str
     last_seen: float
+    # The run row's owner: the user (and session) the caller's token acts as.
+    user_id: str = "-"
+    row_session_id: str = ""
+    # When this process last asked the ledger whether the run is still open.
+    checked_at: float = 0.0
     goal: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -149,36 +156,51 @@ async def ensure(
         return None
     now = time.monotonic() if now is None else now
     run = _RUNS.get(session_id)
-    if run is not None and now - run.last_seen < idle_seconds():
+    if run is not None:
         run.last_seen = now
+        if now - run.checked_at >= SWEEP_MIN_INTERVAL_S:
+            # A sibling web process may have closed it since (its idle sweep, a
+            # DELETE, a cap eviction): ask the ledger, off the call's path, and
+            # re-open it if so.
+            run.checked_at = now
+            run.extra["begin_task"] = _PENDING.spawn(
+                _begin(run, goal=goal, now=now), name=f"mcp-run-check:{session_id}"
+            )
         return run
-    # Absent, or idle here for so long that a sibling web process may have closed
-    # it: run.begin again, which joins the run while it is active.
     failed_at = _BEGIN_FAILED_AT.get(session_id)
     if failed_at is not None and now - failed_at < idle_seconds():
         return None
-    if run is None and len(_RUNS) >= SESSION_RUN_CAP:
+    if len(_RUNS) >= SESSION_RUN_CAP:
         # A cap, not a sign the session ended: the close does not wait for the
-        # session to go idle, and a sibling still serving it reopens the run.
+        # session to go idle, and a sibling still serving it re-opens the run on
+        # its next check. Detached: no caller's scope applies to another's run.
         idlest = min(_RUNS.values(), key=lambda r: r.last_seen)
         _RUNS.pop(idlest.session_id, None)
-        _PENDING.spawn(_close(idlest, reason="evicted"), name=f"mcp-run-evict:{idlest.session_id}")
+        _PENDING.spawn(
+            _close(idlest, reason="evicted"),
+            name=f"mcp-run-evict:{idlest.session_id}",
+            detached=True,
+        )
     org = str(defaults.get("org") or "")
     namespace = str(defaults.get("namespace") or "")
     agent = str(defaults.get("agent") or "")
     if any(v in ("", "-") for v in (org, namespace, agent)):
         return None
-    # The run is registered now, under a deterministic id, and `run.begin`
-    # lands in the background: an awaited agent_runs insert would hold every
-    # session's first tool call for ~3 s on ClickHouse Cloud, and the id is all
-    # the call needs.
+    user_id = str(defaults.get("user_id") or "-")
+    # The run is registered now, under a deterministic id, and its begin lands
+    # in the background: an awaited agent_runs insert would hold every session's
+    # first tool call for ~3 s on ClickHouse Cloud, and the id is all the call
+    # needs.
     run = SessionRun(
-        run_id=run_id_for(session_id),
+        run_id=run_id_for(org, user_id, session_id),
         org=org,
         namespace=namespace,
         agent=agent,
         session_id=session_id,
         last_seen=now,
+        user_id=user_id,
+        row_session_id=str(defaults.get("session_id") or session_id),
+        checked_at=now,
         goal=goal,
     )
     _RUNS[session_id] = run
@@ -189,10 +211,11 @@ async def ensure(
     return run
 
 
-def run_id_for(session_id: str) -> str:
-    """The implicit run's id: `mcp-<session_id>`, so a retry after eviction
-    re-sends the same id and `run.begin` takes its replace path."""
-    return f"mcp-{session_id}"[:128]
+def run_id_for(org: str, user_id: str, session_id: str) -> str:
+    """The implicit run's id: the same for every call and web process of the
+    session, and one no other user's session can make."""
+    seed = json.dumps([org, user_id, session_id])
+    return "mcp-" + hashlib.sha256(seed.encode()).hexdigest()[:40]
 
 
 async def _begin(run: SessionRun, *, goal: str, now: float) -> None:
@@ -202,25 +225,28 @@ async def _begin(run: SessionRun, *, goal: str, now: float) -> None:
     out the idle window before the next attempt."""
     try:
         from server.tasks.api.models_run import RunBeginInput
-        from server.tasks.app.run import active_session_run, handle_run_begin
+        from server.tasks.app.run import active_session_run, begin_session_run
 
         active = await active_session_run(run.org, run.run_id)
         if active is not None:
             run.namespace = str(active["namespace"])
             return
-        await handle_run_begin(
+        began = await begin_session_run(
             RunBeginInput(
                 org=run.org,
                 namespace=run.namespace,
                 agent=run.agent,
                 run_id=run.run_id,
-                session_id=run.session_id,
+                user_id=run.user_id,
+                session_id=run.row_session_id,
                 goal=goal or "mcp session",
                 environment="mcp",
                 consumer=run.agent[:64],
                 metadata={"implicit": True, "transport": "mcp"},
             )
         )
+        if not began:
+            raise RuntimeError(f"{run.run_id} holds another user's run")
     except Exception as e:  # noqa: BLE001 — the ledger never fails a tool call
         if _RUNS.get(run.session_id) is run:
             _RUNS.pop(run.session_id, None)
@@ -279,9 +305,10 @@ async def _close(run: SessionRun, *, reason: str) -> _Closed:
         return "later"
 
 
-async def close_session(session_id: str | None, org: str = "") -> bool:
+async def close_session(session_id: str | None, org: str = "", user_id: str = "-") -> bool:
     """`DELETE /mcp`: the client ended the session; close its run. A web process
-    that never served the session closes it by id in `org` (the caller's)."""
+    that never served the session closes it by id, made from the caller's org
+    and user."""
     if not session_id:
         return False
     run = _RUNS.pop(session_id, None)
@@ -289,7 +316,7 @@ async def close_session(session_id: str | None, org: str = "") -> bool:
         if not org:
             return False
         run = SessionRun(
-            run_id=run_id_for(session_id),
+            run_id=run_id_for(org, user_id, session_id),
             org=org,
             namespace="",
             agent="",

@@ -86,3 +86,48 @@ async def test_the_ledger_decides_when_a_session_run_ends(ch: Any) -> None:
                 "AND namespace IN {ns:Array(String)}",
                 params={"org": ORG, "ns": [first, other]},
             )
+
+
+@pytest.mark.asyncio
+async def test_a_scoped_callers_session_run_is_its_own(ch: Any) -> None:
+    """A token pinned to one user: the run the transport begins is filed under
+    that user and the id its calls carry, so the caller reads and closes it
+    through the ownership checks run.get and run.complete apply."""
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.tasks.api.models_run import RunGetInput
+    from server.tasks.app.run import handle_run_get
+    from server.transport import mcp_runs
+
+    namespace = f"itest-{uuid.uuid4().hex[:12]}"
+    session = uuid.uuid4().hex
+    mcp_runs.reset()
+    set_current_auth(
+        AuthInfo(
+            subject="sa:bot",
+            org=ORG,
+            namespaces=(namespace,),
+            roles=("writer",),
+            is_service_account=True,
+            read_user_id="review-user",
+        )
+    )
+    try:
+        defaults = {"org": ORG, "namespace": namespace, "agent": AGENT, "user_id": "review-user"}
+        run = await mcp_runs.ensure(session, defaults, goal="first call")
+        await mcp_runs.drain_ledger_writes()
+        assert run is not None and run.run_id == mcp_runs.run_id_for(ORG, "review-user", session)
+        got = await handle_run_get(RunGetInput(org=ORG, namespace=namespace, run_id=run.run_id))
+        assert got.found and got.run is not None and got.run.user_id == "review-user"
+        mcp_runs.reset()  # the DELETE reaches a web process that never served it
+        assert await mcp_runs.close_session(session, ORG, "review-user") is True
+        got = await handle_run_get(RunGetInput(org=ORG, namespace=namespace, run_id=run.run_id))
+        assert got.run is not None and got.run.status == "completed"
+    finally:
+        set_current_auth(None)
+        mcp_runs.reset()
+        for table in ("agent_runs", "agent_events"):
+            await ch.execute(
+                f"DELETE FROM loom.{table} WHERE org = {{org:String}} AND namespace = {{ns:String}}",
+                params={"org": ORG, "ns": namespace},
+            )

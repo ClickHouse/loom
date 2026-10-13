@@ -34,7 +34,9 @@ from typing import Any
 
 from fastapi import APIRouter, FastAPI, Request, Response
 
+from server.auth.context import set_current_auth
 from server.transport import mcp_runs as _mcp_runs
+from server.transport._common import ledger_identity
 from server.transport.mcp_auth import (
     _echo_request_id,
     _effective_auth_mode,
@@ -420,8 +422,11 @@ def attach(app: FastAPI) -> None:
         if mode != "open" and auth is None:
             return _reject_unauthenticated(request, response, None, message="missing bearer token")
         session_id = request.headers.get("mcp-session-id") or request.headers.get("Mcp-Session-Id")
+        set_current_auth(auth)
         defaults = await _caller_defaults(auth, None) if session_id else None
-        closed = await _mcp_runs.close_session(session_id, str((defaults or {}).get("org") or ""))
+        closed = await _mcp_runs.close_session(
+            session_id, str((defaults or {}).get("org") or ""), ledger_identity({})["user_id"]
+        )
         if session_id:
             _MCP_AGENT_BY_SESSION.pop(session_id, None)
         return {"session_id": session_id or "", "run_closed": closed}
