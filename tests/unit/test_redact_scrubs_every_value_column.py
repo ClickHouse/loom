@@ -130,9 +130,19 @@ async def test_derived_rows_are_purged_except_the_live_heads(head_live: bool) ->
         "acme", "shop", "a", "-", "-", "customer", head_live=head_live, ch=ch
     )
     counts = await mr.run_scrubs(scrubs, apply=True, ch=ch)
-    assert counts == {"loom.memory_embeddings": 1, "loom.memory_chunks": 1}
+    assert counts == {
+        "loom.memory_embeddings": 1,
+        "loom.memory_chunks": 1,
+        "loom.memory_code_links": 1,
+    }
     emb_sql, emb_params = ch.statements[0]
     chunk_sql, chunk_params = ch.statements[1]
+    links_sql, _ = ch.statements[2]
+    # the suggestions deleted links kept; the live head's links are its own
+    assert links_sql.startswith("ALTER TABLE loom.memory_code_links UPDATE suggestion = ''")
+    # every row not made from the live head's value: superseded, deleted, not relinked yet
+    assert "inputs_hash != {live:String}" in links_sql and "memory_key = {k:String}" in links_sql
+    assert "tombstoned_at" not in links_sql
     # Deleted, never UPDATEd: an update of the vector table leaves patch parts.
     assert emb_sql.startswith("DELETE FROM loom.memory_embeddings")
     assert chunk_sql.startswith("DELETE FROM loom.memory_chunks")
@@ -158,5 +168,6 @@ async def test_nothing_is_rewritten_where_no_row_holds_text() -> None:
     assert await mr.run_scrubs(scrubs, apply=True, ch=ch) == {
         "loom.memory_embeddings": 0,
         "loom.memory_chunks": 0,
+        "loom.memory_code_links": 0,
     }
     assert ch.statements == []

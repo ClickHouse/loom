@@ -347,14 +347,11 @@ Source: `server/settings/_code.py`
 | `LOOM_CODE_INGEST_ROUND_MODEL_CONCURRENCY` | `int` | `16` | Model calls one round runs at once. |
 | `LOOM_CODE_INGEST_ROUND_WRITE_ROWS` | `int` | `2000` | A round writes one INSERT per table (flushed when a read could see the rows, at the row count below, or at round end). Buffered rows at which a round writes a table early. |
 
-### Lessons and bot authors
+### Bot authors
 
 | Variable | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `LOOM_CODE_LESSON_NAMESPACES` | `str` | `''` | CSV of public memory namespaces whose lessons enrich code.symbol results (read-only lexical+facet fusion); empty = off. |
 | `LOOM_CODE_BOT_AUTHORS` | `str` | `''` | Comma-separated GitHub logins of autonomous agents that author pull requests or issues in the indexed repositories, beyond the generic bots (dependabot, github-actions, …). They are never suggested as owners, their names are not tracker entities, and bisect ignores the lines they sign. |
-| `LOOM_CODE_LESSON_CORPUS_TTL_SECONDS` | `int` | `300` | Seconds the per-process lesson corpus (matched locally instead of a memory_embeddings FINAL scan per code.symbol call) is kept before it is reloaded. |
-| `LOOM_CODE_LESSON_CORPUS_MAX_ROWS` | `int` | `50000` | Max lesson rows loaded into that corpus, shortest excerpts first. |
 
 ### Search ranking, legs and caches (code.search)
 
@@ -725,6 +722,17 @@ Source: `server/settings/_memory.py`
 | `LOOM_SENSITIVITY_SWEEP_WINDOW_DAYS` | `int` | `2` | Days back the sweep re-labels rows created in. |
 | `LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS` | `int` | `500` | Rows one sweep pass re-labels (at least 1). |
 | `LOOM_SENSITIVITY_SWEEP_SHAPES` | `str` | `'credential,email'` | Shapes the sweep applies (comma-separated: credential, email, phone, other). `phone` (a ten-digit run) mostly matches ids, and a `medium` label demotes the row in ranking, so it is left to the operator's `--only-shape phone`. |
+
+### Code-linked memories
+
+| Variable | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `LOOM_MEMORY_CODE_LINKS_ENABLED` | `bool` | `True` | Link memories to the code they name (symbols and files of the repository their `repo:` tag or code namespace names) and keep the links current as the code changes; the namespace's `code_change_policy` decides how reads treat a memory whose code is removed or changed. Off stops linking and rechecks; reads still show the stored states but no longer hide a memory, as nothing keeps them current. |
+| `LOOM_MEMORY_CODE_LINKS_INTERVAL_SECONDS` | `int` | `60` | Seconds between link passes. |
+| `LOOM_MEMORY_CODE_LINKS_BATCH` | `int` | `500` | Memory writes one pass links (at least 1). |
+| `LOOM_MEMORY_CODE_LINKS_SETTLE_SECONDS` | `int` | `60` | Seconds the pass stays behind the newest queued memory write, so inserts running at the same moment are visible before the cursor passes them. |
+| `LOOM_MEMORY_CODE_LINKS_PENDING_DAYS` | `int` | `14` | Days a code-shaped name that names nothing on trunk yet (unmerged code) is retried before it is dropped. |
+| `LOOM_MEMORY_CODE_LINKS_REVISE_PER_PASS` | `int` | `20` | Changed claims one pass re-checks with the LLM under the `revise` policy. |
 | `LOOM_MEMORY_ATTRIBUTE_TAGGING` | `bool` | `True` | Tag rows mentioning a protected attribute or common proxy with `attribute:<class>` at write time (gender, religion, health, age, family, income, ethnicity, sexuality, politics). A label, never a gate; the profile fold leaves such rows out. |
 
 ### Memory chunks

@@ -133,6 +133,12 @@ class MemoryGetOutput(ProjectedRow):
     agent: str = ""
     # Lifecycle state from loom.memory.status.
     status: str | None = None
+    # The code this memory is linked to, each {code_namespace, path, symbol ('' for the
+    # file), state, changed_since, suggestion}. state is `fresh`, `moved` (followed to a
+    # new place), `changed` (its code changed since commit `changed_since`), `unresolved`
+    # (renamed or removed and not followed) or `missing` (the code is gone); suggestion is
+    # the `revise` policy's corrected claim, '' when none.
+    code: list[dict[str, str]] = Field(default_factory=list)
     # For a `status='superseded'` row, the memory_id of the row
     # that replaced it ('' otherwise) — the bundle turns it into a
     # `supersedes` edge on the newer row.

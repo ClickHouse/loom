@@ -175,6 +175,13 @@ class NamespaceRegisterInput(BaseModel):
     # ({"mode": "manual"}) clears it. Only an owner-set `auto` lets loom accept
     # or reject a proposal on its graded runs without a person.
     proposal_policy: ProposalPolicy | None = None
+    # How reads treat this namespace's code-linked memories when their code changes:
+    # `retire_removed` (the default: search leaves out a memory whose code is all gone,
+    # and serves it again when the code returns), `flag` (only the links are marked) or
+    # `revise` (as retire_removed, and a changed claim is re-checked against the new code;
+    # one that no longer holds gets a suggested correction, from the code's next edit on).
+    # Loom never writes the memory. None keeps the stored policy.
+    code_change_policy: Literal["retire_removed", "flag", "revise"] | None = None
 
 
 class NamespaceRegisterOutput(BaseModel):
@@ -272,6 +279,9 @@ class NamespaceGetOutput(BaseModel):
     default_conflict_policy: str | None = None
     # How proposals (`memory.set proposed=true`) are decided; the manual default when unset.
     proposal_policy: ProposalPolicy | None = None
+    # How reads treat the namespace's code-linked memories when their code changes:
+    # `retire_removed` (the default), `flag` or `revise`.
+    code_change_policy: str | None = None
     # Per-tag configuration rows (retention, dedup threshold, hot quota, conflict policy);
     # empty when none are registered.
     tag_registry: list[dict[str, Any]] | None = None

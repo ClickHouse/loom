@@ -256,6 +256,112 @@ Every arrow is a new version; the old one stays in `loom.memory_versions`.
 - `files` are repository paths the memory is about; `memory.for_file` serves them before
   an edit of those files.
 
+## Memories linked to code
+
+A memory about code is linked to the definitions and files it names, and the links
+follow the code. The `memory_code_links` worker reads every new or rewritten memory of a
+repository: one tagged `repo:<id>` (the coding plugins tag their sessions), or written
+in the repository's code namespace (the team's file rules). It links each backticked
+name, `A::b` and `a.b()` call that resolves to exactly one definition of the
+repository's trunk, preferring the memory's `files`, and each indexed file the memory
+names that holds none of those definitions. A bare camelCase or snake_case word of the
+prose (`GitHub`, `max_threads`) links only to a definition in the memory's `files`. A
+name that resolves to several definitions is not linked. A qualified name trunk does not
+define yet is retried for `memory_code_links_pending_days` (14), so a memory about
+unmerged code links once it merges.
+
+A link is a tree-sitter `(path, qualified_name)` and a fingerprint of the definition's
+text (all its overloads, verbatim: indentation and literals are behaviour) when the
+memory was written. What a file defines is read from the file itself at the repository's
+indexed head, in its bare git mirror; the code index only suggests where to look, so a
+commit still being ingested never decides a link. On every indexed commit the worker
+follows the commit's renames and edits:
+
+| Link state   | When                                                                                                               |
+| ------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `fresh`      | The definition is where it was, with the text the memory was written against.                                      |
+| `moved`      | Its file moved, or it was renamed with nothing else changed, or it moved to another file.                          |
+| `changed`    | Its text changed after the memory was written (`changed_since` names the commit), renamed or not.                  |
+| `unresolved` | Its name is gone and a new definition in its place may be it, but none certainly is. Served, with a review signal. |
+| `missing`    | The code is gone: nothing new took its place. The link keeps its place, so a revert finds it again.                |
+
+A definition follows to one with the same qualified name; to the same name inside its
+module after a file move; to the one new definition with its text under a new name; or,
+renamed and edited, to the one new definition in its scope close to its old text and in
+its place among the definitions that stayed (read `changed`). A method follows its
+class when the class was renamed and the new class keeps most of its members. A
+namesake in another class or namespace never inherits a link. A small definition
+renamed and edited is followed only when its new name is related to the old one: grown
+or shrunk (`fetch` -> `fetch_all`), a `v` version bumped (`parse_v1` -> `parse_v2`), or
+keeping a word past the ones both begin with (`fetch_rows` -> `load_rows`, not
+`fetch_users`). A link already `missing` is found again only when its own name comes
+back, here or in another file, never by a definition added later.
+
+Each link records the fingerprint rules and grammar versions its hashes were computed
+with; after an upgrade the worker re-hashes it from the commits it was hashed at. Its
+baseline is the checked text when that matched the baseline and still does under the new
+rules (the same text, or the same shape for a rename), else the anchored text; where
+neither can be read, the old hash stays and matches nothing new, so the link reads
+`changed`. Each former identity's baseline is re-read the same way, from the commit it was
+checked at there, or from the anchored text when it was carried from before. A link reads
+`changed` only where the new rules see the checked code differ from the code the memory was
+written against, and a `changed` link whose checked code the new rules see as its baseline
+reads `fresh` (or `moved`) again. An upgrade also drops every link's judgement: under
+`revise` a changed link is judged again; until then, and under any other policy, its
+correction is not served.
+
+The worker follows a repository from the commit it last checked to its indexed head,
+path by path, recording where it got to: a pass cut by its deadline resumes there. It
+rechecks the links on the paths that range changed, the links made since it started (at
+a head the index reached first), every `unresolved` link (a rival candidate may go
+anywhere) and the `missing` ones whose name came back in a changed file. Each write is
+one version above the row it read, so a link another writer moved meanwhile keeps its
+newer state. `revise` judges a link once per edit, within a per-pass budget shared out
+across repositories; what is left stays due for the next pass. A namespace switched to
+`revise` judges a link at its code's next edit, not the changes it already flagged. The
+judge reads every declaration the fingerprint covers, overload signatures included, and a
+change it could not see is not judged: a method its renamed class carried drops any
+correction it had and stays `changed` until the memory is rewritten. A
+lost link is weighed only against the files touched since its code was last in its file
+that define its name; past 32 such files a link that was in place reads `unresolved`,
+and one already `missing` stays `missing`.
+
+Loom never writes the memory. The namespace's `code_change_policy`
+(`namespace.register`) decides what reads make of a change:
+
+| Policy                     | Removed code                                                                                                                                                                                                                           | Changed code                                                                                                                                                          |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `retire_removed` (default) | When every link of a memory is `missing` (a pending or `unresolved` one counts as not), search (and `memory.ask`, `context.pack`) leaves it out before it picks its results; `memory.get` still shows it. It is back when the code is. | Flagged.                                                                                                                                                              |
+| `flag`                     | Flagged.                                                                                                                                                                                                                               | Flagged.                                                                                                                                                              |
+| `revise`                   | As `retire_removed`.                                                                                                                                                                                                                   | The claim is re-checked against the old and new code by the LLM: one that holds is re-anchored, a contradicted one gets a corrected claim as the link's `suggestion`. |
+
+A memory a person pinned, locked or verified, and one naming more code than the link
+cap, is only flagged. Links made for an earlier value of a memory (its text, files,
+repository or user) are ignored by every read until the memory is relinked.
+
+A trunk link that reads `missing` still serves a branch that has the definition: a
+lesson on a release branch compares that branch's own definition.
+
+The links are read where the code is:
+
+- `code.symbol` attaches the linked memories as `lessons`, each with its `code_state`.
+  They come from the repository's team namespace and the `lesson_namespaces` the call
+  names (over MCP the caller's memory home when it names none), never from every
+  namespace the caller can read.
+- `memory.for_file` serves memories linked to code in the file beside those whose
+  `files` name it.
+- `memory.get` returns the links as `code` (with any `suggestion`); `memory.search` hits
+  carry their worst link as `code_state`; `memory.ask` notes the memories whose code
+  moved, changed or went.
+- `namespace.validate` lists memories whose code changed, was not found again or is
+  gone, in the repositories the caller may read.
+
+Links are kept against the trunk. On another branch, a lesson compares the definition in
+the branch's own file at its indexed head with the text the memory was written against:
+a release branch that still has the old text reads `fresh` even after trunk changed it.
+A link keeps the last 16 names and paths trunk renamed or moved it from, so a branch cut
+between two renames still finds its lesson under the name it has.
+
 ## Time
 
 | Column            | Axis   | Meaning                                                                                 |

@@ -386,6 +386,12 @@ async def is_ancestor(
     return None
 
 
+async def has_commit(git_dir: str, sha: str) -> bool:
+    """Whether the mirror holds `sha` (an old commit is gone after a history rewrite and
+    a re-clone). A mirror git cannot read raises GitError: that is not a lost commit."""
+    return bool(_SHA40.fullmatch(sha.strip().lower())) and not await missing_commits(git_dir, [sha])
+
+
 async def release_containing(git_dir: str, sha: str, *, timeout_s: float = 3.0) -> str:
     """The first release line (`X.Y`) whose stable or LTS tags contain `sha`, or '' when
     no release tag does yet. ~21 ms on a mirror with 1,379 tags and a commit-graph."""
@@ -826,6 +832,106 @@ def parse_name_status_z(out: str) -> list[DiffEntry]:
     return entries
 
 
+async def diff_paths_renamed(git_dir: str, base_sha: str, head_sha: str) -> dict[str, str]:
+    """old path -> path at `head_sha` for every path the range changed: itself when
+    added or modified, the new path when renamed (`-M`), '' when deleted. No rename
+    limit (`-l0`): past one git drops renames with edits and only warns."""
+    out = await _git(
+        git_dir,
+        "diff",
+        "--name-status",
+        "-z",
+        "-M",
+        "-l0",
+        "--end-of-options",
+        _rev(base_sha),
+        _rev(head_sha),
+    )
+    fields = out.split("\0")
+    moved: dict[str, str] = {}
+    i = 0
+    while i < len(fields) and fields[i]:
+        status = fields[i][:1]
+        if status == "R":  # renamed: old path, new path
+            moved[fields[i + 1]] = fields[i + 2]
+            i += 3
+            continue
+        moved[fields[i + 1]] = "" if status == "D" else fields[i + 1]
+        i += 2
+    return moved
+
+
+async def edits_of(
+    git_dir: str, base_sha: str, head_sha: str, path: str, pattern: str | None
+) -> list[tuple[str, str]]:
+    """(commit, its first parent) of each first-parent commit of `base_sha..head_sha`
+    that changed a line of `path` matching `pattern` (`git log -G`; every commit that
+    touched `path` without one), oldest first."""
+    lines = ["-G", pattern] if pattern else []
+    out = await _git(
+        git_dir,
+        "--literal-pathspecs",
+        "log",
+        "--first-parent",
+        "--reverse",
+        "--format=%H %P",
+        *lines,
+        "--end-of-options",
+        f"{_rev(base_sha)}..{_rev(head_sha)}",
+        "--",
+        path,
+    )
+    return [(f[0], f[1]) for f in (line.split() for line in out.splitlines()) if len(f) > 1]
+
+
+async def renamed_from(
+    git_dir: str, base_sha: str, head_sha: str, paths: list[str]
+) -> dict[str, str]:
+    """path at `head_sha` -> its path at `base_sha` for those of `paths` the range
+    renamed. Only `paths` are weighed against the files the range deleted, so a long
+    range stays cheap and needs no rename limit."""
+    gone = await _git(
+        git_dir,
+        "diff",
+        "--name-only",
+        "-z",
+        "--no-renames",
+        "--diff-filter=D",
+        "--end-of-options",
+        _rev(base_sha),
+        _rev(head_sha),
+    )
+    try:
+        out = await _git(
+            git_dir,
+            "--literal-pathspecs",
+            "diff",
+            "--name-status",
+            "-z",
+            "-M",
+            "-l0",
+            "--end-of-options",
+            _rev(base_sha),
+            _rev(head_sha),
+            "--",
+            *paths,
+            *filter(None, gone.split("\0")),
+        )
+    except OSError as e:  # more deleted paths than an argv holds
+        raise GitError(f"git diff: {e}") from e
+    fields = out.split("\0")
+    wanted, old = set(paths), {}
+    i = 0
+    while i < len(fields) and fields[i]:
+        if fields[i][:1] == "R":
+            if fields[i + 2] in wanted:
+                old[fields[i + 2]] = fields[i + 1]
+            i += 3
+        else:
+            i += 2
+    return old
+
+
 async def commit_subject(git_dir: str, sha: str) -> str:
     return (await _git(git_dir, "log", "-1", "--format=%s", _rev(sha))).strip()
 
@@ -895,6 +1001,17 @@ async def show_file(git_dir: str, sha: str, path: str) -> bytes | None:
     if proc.returncode != 0:
         return None
     return out
+
+
+async def file_at(git_dir: str, sha: str, path: str) -> bytes | None:
+    """`path` at `sha`; None only when that commit has no such file. A mirror git cannot
+    read, or a commit it does not have, raises GitError."""
+    data = await show_file(git_dir, sha, path)
+    if data is not None:
+        return data
+    if (await _git(git_dir, "ls-tree", "--name-only", _rev(sha), "--", path)).strip():
+        raise GitError(f"git show {path} failed at {sha}")
+    return None
 
 
 def blob_sha(data: bytes) -> str:

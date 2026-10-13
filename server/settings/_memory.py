@@ -320,6 +320,26 @@ class MemorySettings(BaseModel):
     # demotes the row in ranking, so it is left to the operator's
     # `--only-shape phone`.
     sensitivity_sweep_shapes: str = "credential,email"
+    # ---- code-linked memories ----
+    # Link memories to the code they name (symbols and files of the repository
+    # their `repo:` tag or code namespace names) and keep the links current as the
+    # code changes; the namespace's `code_change_policy` decides how reads treat a
+    # memory whose code is removed or changed. Off stops linking and rechecks; reads
+    # still show the stored states but no longer hide a memory, as nothing keeps them
+    # current.
+    memory_code_links_enabled: bool = True
+    # Seconds between link passes.
+    memory_code_links_interval_seconds: int = 60
+    # Memory writes one pass links (at least 1).
+    memory_code_links_batch: int = Field(default=500, ge=1)
+    # Seconds the pass stays behind the newest queued memory write, so inserts running at
+    # the same moment are visible before the cursor passes them.
+    memory_code_links_settle_seconds: int = Field(default=60, ge=0)
+    # Days a code-shaped name that names nothing on trunk yet (unmerged code) is
+    # retried before it is dropped.
+    memory_code_links_pending_days: int = Field(default=14, ge=1)
+    # Changed claims one pass re-checks with the LLM under the `revise` policy.
+    memory_code_links_revise_per_pass: int = Field(default=20, ge=0)
     # Tag rows mentioning a protected attribute or common proxy with
     # `attribute:<class>` at write time (gender, religion, health, age, family,
     # income, ethnicity, sexuality, politics). A label, never a gate; the

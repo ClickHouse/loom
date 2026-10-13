@@ -126,6 +126,7 @@ Fetch one namespace's metadata + settings (owner, visibility, feature flags, ret
 | `classify_endpoint` | `str \| None` | URL `memory.set(classify=true)` calls to classify a write; empty when none. |
 | `default_conflict_policy` | `str \| None` | How close writes are settled: `auto_reinforce` (the default when unset), `manual_review`, `newest_wins` or `append_only`. |
 | `proposal_policy` | `ProposalPolicy \| None` | How proposals (`memory.set proposed=true`) are decided; the manual default when unset. |
+| `code_change_policy` | `str \| None` | How reads treat the namespace's code-linked memories when their code changes: `retire_removed` (the default), `flag` or `revise`. |
 | `tag_registry` | `list[dict[str, Any]] \| None` | Per-tag configuration rows (retention, dedup threshold, hot quota, conflict policy); empty when none are registered. |
 | `classification` | `Literal['standard', 'restricted'] \| None` | `standard` or `restricted` (loom.namespaces.classification). |
 | `created_at` | `datetime \| None` | When the namespace was first registered (UTC). |
@@ -290,6 +291,7 @@ Create a shared memory workspace within an org; caller becomes admin.
 | `tag_registry` | `list[NamespaceTypeConfig]` | *(computed)* | Per-tag TTL + dedup_threshold registry, matched on tags at memory.set time. |
 | `default_conflict_policy` | `Literal['auto_reinforce', 'manual_review', 'newest_wins', 'append_only'] \| None` | `None` | fresh: auto_reinforce |
 | `proposal_policy` | `ProposalPolicy \| None` | `None` | How proposals (facts written with memory.set proposed=true) are decided. |
+| `code_change_policy` | `Literal['retire_removed', 'flag', 'revise'] \| None` | `None` | How reads treat this namespace's code-linked memories when their code changes: `retire_removed` (the default: search leaves out a memory whose code is all gone, and serves it again when the code returns), `flag` (only the links are… |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

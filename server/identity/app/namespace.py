@@ -216,6 +216,9 @@ def registry_row(
             if input.proposal_policy is not None
             else str((existing or {}).get("proposal_policy") or "")
         ),
+        "code_change_policy": _set_or_stored(
+            input.code_change_policy, existing, "code_change_policy", ""
+        ),
         # Preserve auth fields written by self_signup, else a
         # settings-only update wipes the user's login silently.
         "contact_email": ((existing or {}).get("contact_email") or ""),
@@ -457,6 +460,7 @@ async def handle_namespace_get(input: NamespaceGetInput) -> NamespaceGetOutput:
                ifNull(classify_endpoint, '') AS classify_endpoint,
                ifNull(default_conflict_policy, '') AS default_conflict_policy,
                proposal_policy,
+               code_change_policy,
                toString(classification) AS classification,
                created_at, updated_at
         FROM loom.namespaces FINAL
@@ -513,6 +517,7 @@ async def handle_namespace_get(input: NamespaceGetInput) -> NamespaceGetOutput:
         classify_endpoint=row.get("classify_endpoint") or "",
         default_conflict_policy=row.get("default_conflict_policy") or "auto_reinforce",
         proposal_policy=_parse_proposal_policy(row.get("proposal_policy")),
+        code_change_policy=str(row.get("code_change_policy") or "") or "retire_removed",
         tag_registry=tag_registry,
         # Only on the found branch: the transport's restricted gate has already admitted the
         # caller to this row, so the word says nothing the caller could not read.

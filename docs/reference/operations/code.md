@@ -1521,7 +1521,8 @@ Exact symbol lookup: definition, signature, doc comment, and body of a function/
 | `include_body` | `bool` | `True` | Read each definition's body; a 200+ line class ships its skeleton plus member outline instead. |
 | `include_history` | `bool` | `True` | Attach `recent_prs` (merged PRs over the definitions' paths) to the first definition. |
 | `include_examples` | `bool` | `True` | Attach `examples` (call sites that use the symbol) to the first definition. |
-| `include_lessons` | `bool` | `True` | Attach `lessons` (memories naming the symbol or its paths, read from the `code_lesson_namespaces` setting) to the first definition; none when that setting is empty. |
+| `include_lessons` | `bool` | `True` | Attach `lessons` to the first definition: the memories linked to the symbol from `lesson_namespaces` (over MCP the caller's memory home by default) and the repository's team namespace, each with its `code_state` (`fresh`, `moved`, or… |
+| `lesson_namespaces` | `list[str]` | *(computed)* | The memory namespaces whose linked memories `lessons` reads besides the repository's team rules (over MCP the caller's memory home by default); one the caller cannot read is skipped. |
 | `token_budget` | `int` | `2500` | Estimated-token budget for the answer; definitions past it are served elided (signature, doc, pointer), and the `uses_brief` block is paid out of it first. |
 | `min_fan_in` | `int` | `0` | Definitions carry `fan_in` when the weekly stats are enabled; min_fan_in drops the rest, sort_by='fan_in' puts the most-called definition of an overloaded/ambiguous name first. |
 | `sort_by` | `Literal['score', 'fan_in']` | `'score'` | `score` keeps the resolver's order; `fan_in` puts the most-called definition first. |

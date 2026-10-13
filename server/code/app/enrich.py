@@ -1,11 +1,10 @@
 """Result enrichment: what a checkout can't contain.
 
 Attached to code.symbol (and optionally code.search top hits): the last merged PRs that
-touched the symbol's file, usage examples ranked by test coverage + recency, and lessons
-fused from the memory plane (public lesson namespaces, matched on the symbol name +
-files facet).
+touched the symbol's file, usage examples ranked by test coverage + recency, and the
+memories linked to the symbol (`server.memory.app.code_links`).
 
-Every enrichment is bounded (~150ms) and degrades to an empty block —
+Every enrichment is bounded (`_ENRICH_TIMEOUT_S`) and degrades to an empty block —
 enrichment must never fail or slow the core answer.
 """
 
@@ -13,11 +12,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from collections.abc import Awaitable
 from typing import Any
 
-from server.code.app.ttl_cache import TtlCache
 from server.code.store.index import CodeRepo
 
 logger = logging.getLogger(__name__)
@@ -88,133 +85,31 @@ async def usage_examples(
     return out
 
 
-# ---- the lesson corpus is read once per TTL, not per call ----
-# A `memory_embeddings FINAL` scan of the lesson namespaces per code.symbol call costs
-# ~166 ms on a 12k-row namespace, the longest leg of the call. The corpus is small and
-# changes slowly, so each process keeps it in memory with a token inverted index and
-# answers the lexical match locally; the scan remains the fallback when the corpus
-# cannot be loaded.
-_TOKEN_RE = re.compile(r"[0-9A-Za-z]+")
-_LESSON_CACHE: TtlCache[
-    tuple[str, tuple[str, ...]],
-    tuple[list[dict[str, Any]], dict[str, list[int]], dict[str, list[int]]],
-] = TtlCache(300.0, maxsize=64)
-
-
-def _lesson_tokens(text: str) -> list[str]:
-    """hasToken's tokenisation: maximal runs of ASCII alphanumerics, lowered."""
-    return [t.lower() for t in _TOKEN_RE.findall(text or "")]
-
-
-async def _lesson_corpus(
-    org: str,
-    nss: tuple[str, ...],
-) -> tuple[list[dict[str, Any]], dict[str, list[int]], dict[str, list[int]]]:
-    """(rows, token → row indexes, file → row indexes) for the lesson
-    namespaces, loaded at most once per `code_lesson_corpus_ttl_seconds`
-    per process; a failed load raises so the caller falls back to the scan."""
-    from server.settings import settings
-
-    key = (org, nss)
-    hit = _LESSON_CACHE.get(key)
-    if hit is not None:
-        return hit
-    from server.memory.app.code_plane_reads import lesson_corpus
-
-    rows = await lesson_corpus(org, nss, cap=int(settings.code_lesson_corpus_max_rows))
-    by_token: dict[str, list[int]] = {}
-    by_file: dict[str, list[int]] = {}
-    kept: list[dict[str, Any]] = []
-    for r in rows:
-        i = len(kept)
-        kept.append(
-            {
-                "memory_key": str(r["memory_key"]),
-                "namespace": str(r["namespace"]),
-                "content_excerpt": str(r.get("content_excerpt") or ""),
-            }
-        )
-        for t in set(_lesson_tokens(str(r.get("content_excerpt_lc") or ""))):
-            by_token.setdefault(t, []).append(i)
-        for f in r.get("files") or ():
-            by_file.setdefault(str(f), []).append(i)
-    _LESSON_CACHE.put(
-        key, (kept, by_token, by_file), ttl_s=float(settings.code_lesson_corpus_ttl_seconds)
-    )
-    return kept, by_token, by_file
-
-
-def match_lessons(
-    rows: list[dict[str, Any]],
-    by_token: dict[str, list[int]],
-    by_file: dict[str, list[int]],
-    *,
-    symbol_name: str,
-    paths: list[str],
-    limit: int,
-) -> list[dict[str, Any]]:
-    """The scan's predicate over the cached corpus: rows whose excerpt
-    carries every token of the symbol's bare name, or whose files facet
-    names one of `paths`; shortest excerpts first (the rows are loaded in
-    that order), `limit` of them. Pure."""
-    needle = _lesson_tokens(symbol_name.split("::")[-1])
-    idx: set[int] = set()
-    if needle:
-        sets = [set(by_token.get(t, ())) for t in needle]
-        idx |= set.intersection(*sets) if sets else set()
-    for p in paths[:20]:
-        idx.update(by_file.get(p, ()))
-    return [
-        {
-            "memory_key": rows[i]["memory_key"],
-            "namespace": rows[i]["namespace"],
-            "excerpt": rows[i]["content_excerpt"][:400],
-        }
-        for i in sorted(idx)[:limit]
-    ]
-
-
 async def lessons_for_symbol(
     org: str,
-    ns_lessons: list[str],
+    ns: str,
     *,
     symbol_name: str,
     paths: list[str],
+    extra_namespaces: list[str],
     limit: int = 3,
 ) -> list[dict[str, Any]]:
-    """Fuse lessons from the memory plane's public lesson namespaces: lexical match on the symbol
-    name, boosted by files-facet overlap. Served from the per-process lesson corpus; the
-    FINAL scan answers when the corpus cannot load. Any failure -> []."""
-    if ns_lessons:
-        corpus = await _bounded(_lesson_corpus(org, tuple(ns_lessons)), None)
-        if corpus is not None:
-            rows, by_token, by_file = corpus
-            return match_lessons(
-                rows, by_token, by_file, symbol_name=symbol_name, paths=paths, limit=limit
-            )
-        logger.debug("lesson corpus unavailable; scanning the lesson namespaces")
+    """The memories linked to the symbol, from the caller's lesson scope: the readable
+    `extra_namespaces` the call names (over MCP its memory home) and the repository's
+    team namespace.
+    Each carries `code_state`: `changed` when this branch's definition differs from the
+    one the memory was written against. Any failure -> []."""
+    from server.memory.app import code_plane_reads
 
-    async def _search() -> list[dict[str, Any]]:
-        from server.memory.app.code_plane_reads import lessons_matching
-
-        rows = await lessons_matching(
+    async def read() -> list[dict[str, Any]]:
+        nss = await code_plane_reads.lesson_namespaces(org, ns, extra_namespaces)
+        return await code_plane_reads.lessons_for_symbol(
             org,
-            ns_lessons,
-            token=symbol_name.split("::")[-1].lower(),
-            paths=paths[:20],
-            limit=limit * 2,
+            ns,
+            qualified_name=symbol_name,
+            paths=paths,
+            namespaces=nss,
+            limit=limit,
         )
-        out = []
-        for r in rows[:limit]:
-            out.append(
-                {
-                    "memory_key": str(r["memory_key"]),
-                    "namespace": str(r["namespace"]),
-                    "excerpt": str(r["content_excerpt"])[:400],
-                }
-            )
-        return out
 
-    if not ns_lessons:
-        return []
-    return await _bounded(_search(), [])
+    return await _bounded(read(), [])

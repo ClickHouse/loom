@@ -53,6 +53,7 @@ from server.memory.api.models_temporal import (
     _OutlineSession,
 )
 from server.memory.domain.temporal_sql import status_predicate
+from server.memory.store.rows import MemoryRow
 
 _CURATED_KEY_SLUG = re.compile(r"[^a-z0-9]+")
 
@@ -596,6 +597,7 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
         target.session_id,
         target.memory_key,
         head_live=head is not None,
+        live_link_inputs=await _live_link_inputs(input.org, head),
     )
     await memory_repo.run_scrubs(scrubs, apply=True)
     # A redacted value may already be quoted in a cached answer (7-day TTL) or a precedent
@@ -610,6 +612,16 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
         cache_rows_deleted=cache_rows,
         precedent_rows_deleted=precedent_rows,
     )
+
+
+async def _live_link_inputs(org: str, head: MemoryRow | None) -> str:
+    """The inputs hash a code link made from the live head carries ('' with none)."""
+    from server.memory.app.code_link_reads import inputs_now
+    from server.memory.store import code_links
+
+    # in the head shape the link worker hashes, so the two can only agree
+    rows = await code_links.memory_heads(org, [head.memory_id]) if head is not None else []
+    return inputs_now(org, rows[0]) if rows else ""
 
 
 async def handle_memory_import_curated(

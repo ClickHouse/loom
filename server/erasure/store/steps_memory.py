@@ -541,6 +541,53 @@ async def delete_memory_versions_by_user(
     )
 
 
+# A memory's links to code, and the queue of memory writes the link worker reads.
+_CODE_LINK_TABLES = ("loom.memory_code_links", "loom.memory_code_link_queue")
+
+
+async def delete_code_links_by_namespace(
+    org: str,
+    namespace: str | Sequence[str],
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """Hard-delete a namespace's memory-to-code links and queued writes: they carry the
+    memories' keys."""
+    n = 0
+    for table in _CODE_LINK_TABLES:
+        n += await count_then_mutate(
+            table,
+            count_where="org = {org:String} AND namespace = {ns:String}",
+            mutation="DELETE",
+            mutation_where="org = {org:String} AND namespace = {ns:String}",
+            params={"org": org, "ns": namespace},
+            final=False,
+            ch=ch,
+        )
+    return n
+
+
+async def delete_code_links_by_user(
+    org: str,
+    user_id: str,
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """Hard-delete a user's memory-to-code links and queued writes across namespaces."""
+    n = 0
+    for table in _CODE_LINK_TABLES:
+        n += await count_then_mutate(
+            table,
+            count_where="org = {org:String} AND user_id = {uid:String}",
+            mutation="DELETE",
+            mutation_where="org = {org:String} AND user_id = {uid:String}",
+            params={"org": org, "uid": user_id},
+            final=False,
+            ch=ch,
+        )
+    return n
+
+
 async def delete_derived_facts_by_user(
     org: str,
     user_id: str,

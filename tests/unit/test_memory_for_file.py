@@ -30,6 +30,7 @@ class _CH:
 
 def _row(key: str, value: str, **over: Any) -> dict[str, Any]:
     base: dict[str, Any] = {
+        "memory_id": f"id-{key}",
         "memory_key": key,
         "memory_type": "semantic",
         "value": value,
@@ -139,3 +140,46 @@ def test_registered_read_only_and_callable_by_name() -> None:
         "before editing" in mcp_descriptions.TOOL_DESCRIPTIONS["memory.for_file"].lower()
         or "before an edit" in mcp_descriptions.TOOL_DESCRIPTIONS["memory.for_file"].lower()
     )
+
+
+@pytest.mark.asyncio
+async def test_a_hot_files_links_are_bound_in_slices_and_the_best_of_all_are_kept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import uuid
+
+    linked = {str(uuid.UUID(int=i)): ["fresh"] for i in range(5000)}
+    bound: list[list[str]] = []
+
+    class _Sliced:
+        async def query_all(self, sql: str, params: dict[str, Any] | None = None):
+            part = (params or {})["linked"]
+            bound.append(part)
+            # each slice's own best, one stronger the later the slice
+            return [_row(f"k{len(bound)}", "v", memory_id=part[0], confidence=len(bound) / 10)]
+
+    monkeypatch.setattr(mff, "get_client", lambda: _Sliced())
+    request = MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp", top_k=2)
+    rows = await mff._rows_for(request, "ns", "src/a.cpp", "a.cpp", [], linked)
+    assert len(bound) > 1 and sorted(m for part in bound for m in part) == sorted(linked)
+    assert [r["memory_key"] for r in rows] == [f"k{len(bound)}", f"k{len(bound) - 1}"]
+
+
+@pytest.mark.asyncio
+async def test_a_link_read_that_fails_leaves_the_file_match_standing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.app import code_link_reads as app_reads
+    from server.memory.store import code_links as store_links
+
+    async def one_link(*a: Any, **k: Any) -> list[dict[str, Any]]:
+        return [{"memory_id": "m", "code_namespace": "code-a", "state": "fresh"}]
+
+    async def down(*a: Any, **k: Any) -> Any:
+        raise ConnectionError("clickhouse")
+
+    monkeypatch.setattr(store_links, "for_code", one_link)
+    monkeypatch.setattr(app_reads, "current_links", down)
+    monkeypatch.setattr("server.code.app.memory_links.trunk_namespace", lambda org, ns: "code-a")
+    request = MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp", extra_namespaces=["x"])
+    assert await mff._linked(request, "src/a.cpp", ["ns"]) == {}

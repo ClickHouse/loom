@@ -6361,6 +6361,7 @@ class CodeSymbolInput(TypedDict, total=False):
     include_history: NotRequired[bool]
     include_examples: NotRequired[bool]
     include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
     token_budget: NotRequired[int]
     min_fan_in: NotRequired[int]
     sort_by: NotRequired[Literal["score", "fan_in"]]
@@ -6387,6 +6388,7 @@ class CodeSymbolBody(TypedDict, total=False):
     include_history: NotRequired[bool]
     include_examples: NotRequired[bool]
     include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
     token_budget: NotRequired[int]
     min_fan_in: NotRequired[int]
     sort_by: NotRequired[Literal["score", "fan_in"]]
@@ -9501,6 +9503,7 @@ class MemorySearchHit(TypedDict, total=False):
     version: NotRequired[int]
     created_at: NotRequired[str]
     namespace: NotRequired[str]
+    code_state: NotRequired[str]
     body_truncated: NotRequired[bool]
     next: NotRequired[str]
     source_resource_id: NotRequired[str]
@@ -9702,6 +9705,7 @@ class MemoryGetOutput(TypedDict, total=False):
     source_class: NotRequired[str]
     agent: NotRequired[str]
     status: NotRequired[Optional[str]]
+    code: NotRequired[list[dict[str, str]]]
     superseded_by: NotRequired[str]
     duplicate_of: NotRequired[str]
     conflict_verdict: NotRequired[str]
@@ -10446,6 +10450,7 @@ class MemoryForFileHit(TypedDict, total=False):
     supersedes_key: NotRequired[str]
     supersedes: NotRequired[str]
     matched_files: NotRequired[list[str]]
+    code_state: NotRequired[str]
 
 
 class MemoryGetInput(TypedDict, total=False):
@@ -13137,6 +13142,7 @@ class NamespaceGetOutput(TypedDict, total=False):
     classify_endpoint: NotRequired[Optional[str]]
     default_conflict_policy: NotRequired[Optional[str]]
     proposal_policy: NotRequired[Optional["ProposalPolicy"]]
+    code_change_policy: NotRequired[Optional[str]]
     tag_registry: NotRequired[Optional[list[dict[str, Any]]]]
     classification: NotRequired[Optional[Literal["standard", "restricted"]]]
     created_at: NotRequired[Optional[str]]
@@ -13347,6 +13353,7 @@ class NamespaceRegisterInput(TypedDict, total=False):
         Optional[Literal["auto_reinforce", "manual_review", "newest_wins", "append_only"]]
     ]
     proposal_policy: NotRequired[Optional["ProposalPolicy"]]
+    code_change_policy: NotRequired[Optional[Literal["retire_removed", "flag", "revise"]]]
 
 
 class NamespaceRetrievalDefaults(TypedDict, total=False):
@@ -13419,6 +13426,7 @@ class NamespaceRegisterBody(TypedDict, total=False):
         Optional[Literal["auto_reinforce", "manual_review", "newest_wins", "append_only"]]
     ]
     proposal_policy: NotRequired[Optional["ProposalPolicy"]]
+    code_change_policy: NotRequired[Optional[Literal["retire_removed", "flag", "revise"]]]
 
 
 class NamespaceRegisterOutput(TypedDict, total=False):

@@ -147,6 +147,7 @@ USER_STEPS: tuple[UserStep, ...] = (
     ("memory.tombstone", memory_steps.tombstone_memory_by_user),
     ("memory_embeddings.tombstone", memory_steps.tombstone_embeddings_by_user),
     ("memory_versions.delete", memory_steps.delete_memory_versions_by_user),
+    ("code_links.delete", memory_steps.delete_code_links_by_user),
     ("working_memory.tombstone", memory_steps.tombstone_working_memory_by_user),
     ("shared.tombstone", memory_steps.tombstone_shared_by_user),
     ("shared_embeddings.tombstone", memory_steps.tombstone_shared_embeddings_by_user),
@@ -180,6 +181,7 @@ NAMESPACE_STEPS: tuple[NamespaceStep, ...] = (
     ("memory.tombstone", memory_steps.tombstone_memory_by_namespace),
     ("memory_embeddings.tombstone", memory_steps.tombstone_embeddings_by_namespace),
     ("memory_versions.delete", memory_steps.delete_memory_versions_by_namespace),
+    ("code_links.delete", memory_steps.delete_code_links_by_namespace),
     ("working_memory.tombstone", memory_steps.tombstone_working_memory_by_namespace),
     (
         "entity_canonical_map.tombstone",

@@ -41,6 +41,14 @@ class _CH:
         return {"n": self.code_rows}
 
 
+@pytest.fixture(autouse=True)
+def _no_code_links(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def stale_links(org: str, namespace: str) -> list[dict[str, Any]]:
+        return []
+
+    monkeypatch.setattr("server.memory.app.code_link_reads.stale_links", stale_links)
+
+
 def _inp(**kw: Any) -> NamespaceValidateInput:
     base = {"org": "o", "namespace": "ns"}
     base.update(kw)
@@ -57,7 +65,7 @@ async def test_clean_namespace_is_healthy_and_lists_every_check(
     assert out.healthy is True
     assert (out.errors, out.warnings, out.infos) == (0, 0, 0)
     names = [f.check for f in out.findings]
-    assert set(names) == set(nv._CHECKS) and "unresolved_evidence" in names
+    assert set(names) == {*nv._CHECKS, "code_links_stale"} and "unresolved_evidence" in names
     assert all(f.count == 0 and f.samples == [] for f in out.findings)
     assert out.skipped == []
     # the identity join is on the FULL tenancy tuple, never the coarse key
@@ -124,7 +132,7 @@ async def test_one_failing_check_is_skipped_not_raised(monkeypatch: pytest.Monke
     out = await nv.handle_namespace_validate(_inp())
     assert out.skipped == ["orphan_vectors: RuntimeError"]
     assert "orphan_vectors" not in [f.check for f in out.findings]
-    assert len(out.findings) == len(nv._CHECKS) - 1  # every other check
+    assert len(out.findings) == len(nv._CHECKS)  # every other check, and the code links
     assert out.healthy is True
 
 
@@ -250,3 +258,29 @@ def test_keys_are_bounded_to_two_hundred() -> None:
     _inp(keys=[f"k{i}" for i in range(200)])
     with pytest.raises(ValidationError):
         _inp(keys=[f"k{i}" for i in range(201)])
+
+
+@pytest.mark.asyncio
+async def test_stale_code_links_are_counted_from_the_links_newest_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import datetime
+
+    def link(key: str, day: int) -> dict[str, Any]:
+        return {
+            "memory_key": key,
+            "qualified_name": f"m::{key}",
+            "path": "src/m.py",
+            "state": "missing",
+            "changed_since": "c2",
+            "checked_at": datetime(2026, 1, day),
+        }
+
+    async def stale_links(org: str, namespace: str) -> list[dict[str, Any]]:
+        return [link("old", 1), link("new", 2), link("other", 3)]
+
+    monkeypatch.setattr("server.memory.app.code_link_reads.stale_links", stale_links)
+    monkeypatch.setattr(nv, "get_client", lambda: _CH({}))
+    out = await nv.handle_namespace_validate(_inp(keys=["old", "new"], sample_limit=1))
+    stale = next(f for f in out.findings if f.check == "code_links_stale")
+    assert stale.count == 2 and [s["memory_key"] for s in stale.samples] == ["new"]

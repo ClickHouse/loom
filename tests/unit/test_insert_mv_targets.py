@@ -20,6 +20,7 @@ INSERT_VIEWS = {
     "code_symbol_names_mv": "code_symbol_names",
     "code_term_freq_mv": "code_term_freq",
     "entity_degree_mv": "entity_degree",
+    "memory_code_link_queue_mv": "memory_code_link_queue",
     "memory_record_versions_mv": "memory_record_versions",
     "memory_usage_totals_mv": "memory_usage_totals",
     "memory_versions_mv": "memory_versions",

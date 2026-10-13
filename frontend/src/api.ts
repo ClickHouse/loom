@@ -360,6 +360,18 @@ export interface MemoryDetail {
   /** Only on a `follow: true` read — the key that was asked for when the canonical was
    *  served instead. */
   resolved_from?: string;
+  /** The code the memory is linked to; `symbol` is "" for a file link. */
+  code?: CodeLink[];
+}
+
+export interface CodeLink {
+  code_namespace: string;
+  path: string;
+  symbol: string;
+  state: "fresh" | "moved" | "changed" | "unresolved" | "missing";
+  changed_since: string;
+  /** The `revise` policy's corrected claim for the code as it is now; "" when none. */
+  suggestion?: string;
 }
 
 export async function getMemory(
