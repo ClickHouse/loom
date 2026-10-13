@@ -7,56 +7,12 @@ import time
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from datetime import datetime
-from typing import Any, TypedDict, cast
+from typing import Any, TypedDict, cast, get_origin, get_type_hints
 
 from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client, param_slices, query_all_sliced
 
 TABLE = "loom.memory_code_links"
-
-LINK_COLS: dict[str, Any] = {
-    "org": "",
-    "code_namespace": "",
-    "path": "",
-    "qualified_name": "",
-    "namespace": "",
-    "memory_id": "",
-    "memory_key": "",
-    "agent": "",
-    "user_id": "-",
-    "session_id": "-",
-    "inputs_hash": "",
-    "complete": 1,
-    "body_hash": "",
-    "checked_hash": "",
-    "start_line": 0,
-    "end_line": 0,
-    "state": "fresh",
-    "checked_commit": "",
-    "checked_path": "",
-    "anchored_commit": "",
-    "anchored_path": "",
-    "anchored_hash": "",
-    "anchored_name": "",
-    "baseline_commit": "",
-    "baseline_path": "",
-    "baseline_name": "",
-    "changed_since": "",
-    "former_paths": [],
-    "former_names": [],
-    "former_hashes": [],
-    "former_baseline_commits": [],
-    "former_baseline_paths": [],
-    "former_baseline_names": [],
-    "policy_due": 0,
-    "suggestion": "",
-    "judged_hash": "",
-    "carried": 0,
-    "fingerprint_version": "",
-    "checked_at": None,
-    "tombstoned_at": None,
-    "version": 0,
-}
 
 
 class LinkRow(TypedDict):
@@ -105,6 +61,19 @@ class LinkRow(TypedDict):
     version: int
 
 
+# the columns whose default is not their type's empty value
+_DEFAULTS: dict[str, Any] = {"user_id": "-", "session_id": "-", "complete": 1, "state": "fresh"}
+
+
+def _empty(hint: Any) -> Any:
+    return [] if get_origin(hint) is list else {str: "", int: 0}.get(hint)
+
+
+LINK_COLS: dict[str, Any] = {
+    name: _DEFAULTS.get(name, _empty(hint)) for name, hint in get_type_hints(LinkRow).items()
+}
+
+
 class PendingLink(LinkRow):
     expired: int  # older than the days `pending` was asked for
 
@@ -123,6 +92,8 @@ IDENTITY = ("org", "namespace", "agent", "user_id", "session_id", "memory_key")
 def link_row(base: LinkRow | None = None, *, follows: int | None = None, **fields: Any) -> LinkRow:
     """A full link row: `base` (a row read back) with `fields` over it, a fresh version;
     with `follows`, the version right after that one, so any write made since it wins."""
+    if unknown := fields.keys() - LINK_COLS.keys():
+        raise TypeError(f"no such link column: {', '.join(sorted(unknown))}")
     read: Mapping[str, object] = base or {}
     row = {k: read.get(k, d) for k, d in LINK_COLS.items()} | fields
     row["checked_at"] = row["checked_at"] or naive_utc_now()
@@ -326,14 +297,8 @@ async def for_code(
 
 def _key(r: LinkRow) -> tuple[str, ...]:
     """The table's sort key of link `r`."""
-    return (
-        r["org"],
-        r["code_namespace"],
-        r["path"],
-        r["qualified_name"],
-        r["namespace"],
-        r["memory_id"],
-    )
+    row = cast(Mapping[str, str], r)
+    return tuple(row[c] for c in _KEY_COLUMNS)
 
 
 async def _for_code(
