@@ -13,7 +13,7 @@ vi.mock("../api", async (importOriginal) => {
   return {
     ...actual,
     listSearchTraceLog: (...args: Parameters<typeof actual.listSearchTraceLog>) => listSearchTraceLog(...args),
-    memorySearchTrace: vi.fn(async () => ({ results: [], embedding_model: "" })),
+    searchMemory: vi.fn(async () => ({ results: [], embedding_model: "" })),
     isAuthDisabled: () => false,
   };
 });

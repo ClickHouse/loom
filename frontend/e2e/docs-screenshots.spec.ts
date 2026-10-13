@@ -445,8 +445,8 @@ function provenanceFor(key: string) {
   };
 }
 
-/** `memory.search_trace` candidates for the Recall view's query, best first. */
-function traceFor(query: string) {
+/** `memory.search` hits for the Recall view's query, best first. */
+function recallHitsFor(query: string) {
   if (!query) return [];
   const rows: Array<[string, number, number]> = [
     ["deploys/policy/windows", 0.83, 0.06],
@@ -455,7 +455,7 @@ function traceFor(query: string) {
     ["ci/cache/node-modules", 0.44, 0],
     ["staging/db/read-only-window", 0.39, 0],
   ];
-  return rows.map(([key, sim, boost], i) => {
+  return rows.map(([key, sim, boost]) => {
     const m = byKey(key);
     return {
       memory_key: key,
@@ -463,10 +463,10 @@ function traceFor(query: string) {
       content_excerpt: m?.value ?? "",
       distance: 1 - sim,
       similarity: sim,
-      entity_boost: boost,
       rank_score: sim + boost,
-      rank: i + 1,
-      source: "vector",
+      confidence: 1,
+      score_components: { entity_ann_boost: boost },
+      source: "fact",
     };
   });
 }
@@ -602,11 +602,10 @@ async function installDemoApi(page: Page): Promise<void> {
         return json({ steps: [] });
       case "/v1/memory.provenance":
         return json(provenanceFor(String(body.memory_key ?? "")));
-      case "/v1/memory.search_trace":
+      case "/v1/memory.search":
         return json({
-          results: traceFor(String(body.query ?? "")),
+          results: recallHitsFor(String(body.query ?? "")),
           embedding_model: "text-embedding-3-small",
-          entity_filter: [],
         });
       case "/v1/memory.search_trace_log":
         return json({ rows: [] });
