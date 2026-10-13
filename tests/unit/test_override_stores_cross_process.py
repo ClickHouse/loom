@@ -14,9 +14,11 @@ from pathlib import Path
 
 import pytest
 
+from server.core import ratelimit as ratelimit_mod
 from server.core import ratelimit_shared
 from server.core.errors import LoomServerError
 from server.core.ratelimit import Limit, Limiter
+from server.observability import budgets as budgets_mod
 from server.observability.budgets import BudgetOverrides
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -24,6 +26,7 @@ WRITERS, UPDATES = 4, 10
 
 _BUDGET_WRITER = """
 import sys
+from server.observability import budgets as budgets_mod
 from server.observability.budgets import BudgetOverrides
 o = BudgetOverrides()
 o.path = sys.argv[1]
@@ -106,3 +109,68 @@ def test_a_failed_replace_leaves_no_temporary_file(
     with pytest.raises(OSError):
         ratelimit_shared.publish_json(str(tmp_path / "x.json"), {"a": 1})
     assert list(tmp_path.iterdir()) == []
+
+
+def _unreadable(*_a: object, **_k: object) -> None:
+    raise ValueError("injected read failure")
+
+
+def test_a_budget_update_over_an_unreadable_file_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    a, b = BudgetOverrides(), BudgetOverrides()
+    a.path = b.path = str(tmp_path / "budgets.json")
+    b.set("memory.search", 30)
+    a.set("memory.set", 0)
+    before = Path(a.path).read_bytes()
+    monkeypatch.setattr(budgets_mod.json, "load", _unreadable)
+    with pytest.raises(LoomServerError, match="unreadable"):
+        b.set("memory.get", 5)
+    monkeypatch.undo()
+    assert Path(a.path).read_bytes() == before
+    assert b.effective("memory.set", 99) == 0
+
+
+def test_a_rate_limit_update_over_an_unreadable_file_is_refused(
+    settings_override, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    table = str(tmp_path / "rl.buckets")
+    settings_override(ratelimit_shared="on", ratelimit_shared_path=table)
+    a, b = Limiter(), Limiter()
+    b.set_namespace_limit("ns_b", "memory", Limit(capacity=30, rate=1.0))
+    a.set_namespace_limit("ns_a", "memory", Limit(capacity=1, rate=0.0))
+    before = Path(table + ".overrides.json").read_bytes()
+    monkeypatch.setattr(ratelimit_mod.json, "load", _unreadable)
+    with pytest.raises(LoomServerError, match="unreadable"):
+        b.set_namespace_limit("ns_b", "memory", Limit(capacity=2, rate=1.0))
+    monkeypatch.undo()
+    assert Path(table + ".overrides.json").read_bytes() == before
+    a.reset_all()
+    b.reset_all()
+
+
+def test_a_committed_budget_update_is_never_reported_as_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Once the rename commits the file, nothing left can fail the update."""
+    a, b = BudgetOverrides(), BudgetOverrides()
+    a.path = b.path = str(tmp_path / "budgets.json")
+    a.set("memory.set", 30)
+    real_replace, real_stat = os.replace, os.stat
+    committed = {"done": False}
+
+    def replace(src: str, dst: str) -> None:
+        real_replace(src, dst)
+        committed["done"] = True
+
+    def stat(*args: object, **kwargs: object) -> os.stat_result:
+        if committed["done"]:
+            raise OSError(errno.EIO, "injected stat failure")
+        return real_stat(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(ratelimit_shared.os, "replace", replace)
+    monkeypatch.setattr(ratelimit_shared.os, "stat", stat)
+    a.set("memory.set", 0)
+    monkeypatch.undo()
+    assert a.effective("memory.set", 99) == 0
+    assert b.effective("memory.set", 99) == 0

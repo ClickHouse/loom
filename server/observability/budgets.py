@@ -106,8 +106,10 @@ class BudgetOverrides:
 
         return os.path.join(runtime_dir(), f"loom-budgets-{os.getppid()}.json")
 
-    def _sync(self) -> None:
-        """Adopt the host file when it changed (caller holds `_lock`)."""
+    def _sync(self, *, strict: bool = False) -> None:
+        """Adopt the host file when it changed (caller holds `_lock`). An
+        unreadable file keeps the cached state, unless `strict`: an update must
+        not publish over state it cannot read."""
         path = self._file()
         if path is None:
             return
@@ -123,6 +125,8 @@ class BudgetOverrides:
         except FileNotFoundError:
             return
         except (OSError, ValueError, KeyError, TypeError) as e:
+            if strict:
+                raise OSError(f"{path} unreadable: {e}") from e
             log.warning("budget overrides: %s unreadable (%s); keeping mine", path, e)
             return
         self._overrides, self._by_consumer, self._file_sig = ops, by_consumer, sig
@@ -141,7 +145,7 @@ class BudgetOverrides:
 
             try:
                 with file_lock(path):
-                    self._sync()
+                    self._sync(strict=True)
                     before = (dict(self._overrides), dict(self._by_consumer))
                     yield
                     data = {

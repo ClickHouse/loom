@@ -368,9 +368,10 @@ class Limiter:
         store = self._store()
         return f"{store.path}.overrides.json" if store is not None else None
 
-    def _sync_overrides(self) -> None:
+    def _sync_overrides(self, *, strict: bool = False) -> None:
         """Adopt the host's override file when it changed. No file (none set
-        yet) or an unreadable one keeps this process's own overrides."""
+        yet) keeps this process's overrides, and so does an unreadable one
+        unless `strict`: an update must not publish over state it cannot read."""
         path = self._overrides_path()
         if path is None:
             return
@@ -390,6 +391,8 @@ class Limiter:
         except FileNotFoundError:
             return
         except (OSError, ValueError, KeyError, TypeError) as e:
+            if strict:
+                raise OSError(f"{path} unreadable: {e}") from e
             log.warning("rate limiter: override file %s unreadable (%s); keeping mine", path, e)
             return
         self._ns_overrides, self._org_overrides, self._actor_overrides = ns, org, actor
@@ -410,7 +413,7 @@ class Limiter:
 
         try:
             with file_lock(path):
-                self._sync_overrides()
+                self._sync_overrides(strict=True)
                 before = (
                     dict(self._ns_overrides),
                     dict(self._org_overrides),

@@ -101,17 +101,20 @@ def file_lock(path: str) -> Iterator[None]:
 
 def publish_json(path: str, data: object) -> tuple[int, int, int]:
     """Atomically replace `path` with `data` as JSON; returns the new file's
-    (inode, mtime_ns, size). Raises OSError and leaves no temporary file."""
+    (inode, mtime_ns, size), read from the written file before the rename
+    commits it (a rename keeps all three). Raises OSError, only before the
+    commit, and leaves no temporary file."""
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", prefix=".tmp-")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(data, fh)
+            fh.flush()
+            st = os.fstat(fh.fileno())
         os.replace(tmp, path)
     except BaseException:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
         raise
-    st = os.stat(path)
     return (st.st_ino, st.st_mtime_ns, st.st_size)
 
 
