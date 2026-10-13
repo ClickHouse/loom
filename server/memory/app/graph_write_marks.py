@@ -206,9 +206,9 @@ class GraphWriteMarks:
 
 
 def _default_dir() -> str:
-    from server.core.ratelimit_shared import runtime_dir
+    from server.core.runtime_files import server_file
 
-    return os.path.join(runtime_dir(), f"loom-graph-marks-{os.getppid()}")
+    return server_file("graph-marks")
 
 
 def _resolve_dir() -> str | None:

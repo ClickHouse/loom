@@ -19,9 +19,9 @@ class RateLimitSettings(BaseModel):
     # auto = when web_workers > 1; on = always; off = per-process buckets
     # divided by replicas × workers.
     ratelimit_shared: Literal["auto", "on", "off"] = "auto"
-    # Bucket file; "" = <runtime dir>/loom-ratelimit-<parent pid>.buckets
-    # ($XDG_RUNTIME_DIR/loom, else /run/loom, else /tmp). The file is 0600 and
-    # never opened through a symlink. Set it for two servers sharing one cap.
+    # Bucket file; "" = one per server in the runtime dir (server/core/runtime_files.py).
+    # The file is 0600 and never opened through a symlink. Set it for two servers
+    # sharing one cap; their rate-limit overrides then share `<path>.overrides.json`.
     ratelimit_shared_path: str = ""
     # Table slots (32 bytes each). Every process of a server must agree; a
     # mismatch falls back to per-process buckets and shows in /v1/health.

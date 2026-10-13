@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import os
 import stat
-import sys
 from pathlib import Path
 
 import pytest
@@ -19,9 +18,8 @@ from server.core.ratelimit_shared import (
     SharedBucketStore,
     default_path,
     open_table_fd,
-    runtime_dir,
-    server_file,
 )
+from server.core.runtime_files import runtime_dir, server_file
 from server.core.shared_document import FILE_MODE
 
 
@@ -85,7 +83,7 @@ def test_a_directory_or_a_foreign_file_at_the_path_is_refused(tmp_path: Path) ->
 def test_default_path_prefers_the_runtime_dir_and_falls_back_to_tmp(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from server.core import ratelimit_shared as rs
+    from server.core import runtime_files as rs
 
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run-user"))
     (tmp_path / "run-user").mkdir()
@@ -118,11 +116,3 @@ def test_the_limiter_uses_the_hardened_open(tmp_path: Path, settings_override) -
     lim = ratelimit.Limiter()
     assert lim.shared_active is True
     assert _mode(p) == 0o600
-
-
-@pytest.mark.skipif(sys.platform != "linux", reason="reads /proc")
-def test_server_files_are_named_by_the_parent_and_its_start_time() -> None:
-    """A later server that reuses the parent pid (a restarted container) gets new files."""
-    started = open(f"/proc/{os.getppid()}/stat").read().rsplit(")", 1)[1].split()[19]
-    name = os.path.basename(server_file("budgets"))
-    assert name == f"loom-budgets-{os.getppid()}-{started}"

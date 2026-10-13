@@ -38,6 +38,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
+from server.core.runtime_files import server_file
 from server.core.shared_document import open_private
 
 MAGIC = b"LRL1"
@@ -56,43 +57,8 @@ def key_hash(key: str) -> int:
     return h or 1
 
 
-RUN_DIR = "/run/loom"
-_TMP_DIR = "/tmp"
-
-
-def runtime_dir() -> str:
-    """The directory the table lives in: `$XDG_RUNTIME_DIR/loom`
-    when the variable names a writable directory, else `/run/loom` when it
-    exists or can be created, else `/tmp`. The first two are per-user or
-    per-service tmpfs paths another local account cannot list; `/tmp` is
-    the fallback for a container without one."""
-    xdg = str(os.environ.get("XDG_RUNTIME_DIR") or "").strip()
-    for base in ([os.path.join(xdg, "loom")] if xdg else []) + [RUN_DIR]:
-        try:
-            os.makedirs(base, mode=0o700, exist_ok=True)
-            if os.access(base, os.W_OK | os.X_OK):
-                return base
-        except OSError:
-            continue
-    return _TMP_DIR
-
-
-def server_file(name: str) -> str:
-    """`loom-<name>-<server>` in the runtime dir, one per server: the workers of one
-    `uvicorn --workers N` share a parent, named by its pid and start time so a
-    later server reusing the pid (a restarted container) starts afresh."""
-    ppid = os.getppid()
-    try:
-        # Field 22 of /proc/<pid>/stat, the start time; the fields after `comm`.
-        started = open(f"/proc/{ppid}/stat").read().rsplit(")", 1)[1].split()[19]
-    except (OSError, IndexError):
-        started = "0"
-    return os.path.join(runtime_dir(), f"loom-{name}-{ppid}-{started}")
-
-
 def default_path() -> str:
-    """One table per server (`server_file`); two servers on one host (two
-    isolated worktrees, say) get two files."""
+    """One table per server (`server_file`)."""
     return server_file("ratelimit") + ".buckets"
 
 
