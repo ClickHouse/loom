@@ -18,8 +18,8 @@ and a body it did not pick is paid for on every later turn.
 
 `code.symbol` over MCP leaves out the recent PRs (about a third of a definition's
 tokens): they serve a review, not a where/how lookup, and a model that wants them
-passes `include_history`. The lessons stay: they are the memories linked to that
-symbol, a few lines at most.
+passes `include_history`. The lessons stay: up to three memories linked to that
+symbol, each cut to its first 200 characters.
 
 `code.grep` over MCP answers ten matches a page (each with its enclosing
 function), the cursor for the rest: in paired runs an agent's grep through the
