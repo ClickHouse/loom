@@ -3192,3 +3192,37 @@ async def test_the_revise_judge_runs_on_its_own_model(monkeypatch) -> None:
     monkeypatch.setattr(settings, "code_link_revise_model", "fake-revise-1")
     assert await code_link_judge.judge_claim("returns rows", "a", "b") == ("holds", "")
     assert picked == ["fake-revise-1"]
+
+
+@pytest.mark.asyncio
+async def test_a_memory_that_links_nothing_is_linked_once(monkeypatch) -> None:
+    head = {
+        "org": "o",
+        "namespace": "agent-a",
+        "agent": "a",
+        "user_id": "-",
+        "session_id": "-",
+        "memory_key": "k",
+        "mid": "m",
+        "sha": "s",
+        "value": "raise the retry_budget before a deploy",  # a word of the prose only
+        "tags": ["repo:r"],
+        "files": [],
+        "status": "active",
+        "tombstoned_at": None,
+    }
+    calls: list[str] = []
+
+    async def record(name, out):
+        calls.append(name)
+        return out
+
+    monkeypatch.setattr(code_links.store, "for_memories", lambda org, ids: record("links", []))
+    monkeypatch.setattr(code_links.store, "memory_heads", lambda org, ids: record("heads", [head]))
+    monkeypatch.setattr(code_links.store, "insert", lambda rows: record("insert", None))
+    monkeypatch.setattr(code_links.code, "indexed_head", lambda org, cns: record("head", "h"))
+    monkeypatch.setattr(code_links.code, "candidates", lambda *a, **k: record("candidates", []))
+    for module in (code_links, code_link_reads):
+        monkeypatch.setattr(module, "code_namespace_for", lambda org, ns, tags: "code-r")
+    await code_links._link_org("o", [head], code_links.PassResult())
+    assert calls == ["links", "head", "insert", "heads"]  # one read back, nothing relinked

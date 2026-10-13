@@ -319,7 +319,7 @@ async def _link_org(
     marker expires, and the queue moves on.
     Links are last-write-wins, and a worker that read an older value of a memory may
     write after the one that linked its newer value; so each writer re-reads the heads it
-    linked and relinks those its links no longer match, `rereads` times at most."""
+    linked and relinks those rewritten since it read them, `rereads` times at most."""
     existing: dict[str, list[LinkRow]] = defaultdict(list)
     for a in await store.for_memories(org, [str(r["mid"]) for r in rows]):
         existing[a["memory_id"]].append(a)
@@ -369,7 +369,13 @@ async def _link_org(
         linked += [str(r["mid"]) for r in memories]
     await store.insert(out)
     if linked and rereads:
-        await _link_org(org, await store.memory_heads(org, linked), result, rereads=rereads - 1)
+        # one rewritten since it was read here: a writer of its newer value may have
+        # linked it before this insert replaced those links
+        read = {str(r["mid"]): r["inputs"] for memories in todo.values() for r in memories}
+        heads = await store.memory_heads(org, linked)
+        newer = [h for h in heads if inputs_now(org, h) != read.get(str(h["mid"]))]
+        if newer:
+            await _link_org(org, newer, result, rereads=rereads - 1)
 
 
 def _names_a_repository(memory: dict[str, Any], tags: list[str], links: list[LinkRow]) -> bool:
@@ -423,7 +429,15 @@ async def _link(
         return markers, [a for a in old if a["qualified_name"] != _AWAITING_INDEX]
     # one past the cap: a memory with exactly the cap's mentions is not cut
     named = {r["mid"]: mentions(_text(r["value"]), cap=_MAX_MENTIONS + 1) for r in memories}
-    names = sorted({bare_name(m.name) for ms in named.values() for m in ms})
+    # a word of the prose links only inside the memory's files
+    names = sorted(
+        {
+            bare_name(m.name)
+            for r in memories
+            for m in named[r["mid"]]
+            if not m.in_prose or r.get("files")
+        }
+    )
     found = await code.candidates(org, cns, names=names) if names else []
     refs = sorted({str(f) for r in memories for f in r.get("files") or []})
     paths = await code.live_paths(org, cns, refs) if refs else {}
