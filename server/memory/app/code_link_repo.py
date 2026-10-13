@@ -149,7 +149,8 @@ class Files:
             ("touched", base, head), lambda: code.touched_paths(self.org, self.cns, base, head)
         )
 
-    async def descends(self, ancestor: str, descendant: str) -> bool:
+    async def is_ancestor(self, ancestor: str, descendant: str) -> bool:
+        """Whether `ancestor` is in `descendant`'s history."""
         return await self._once(
             ("descends", ancestor, descendant),
             lambda: code.descends(self.org, self.cns, ancestor, descendant),

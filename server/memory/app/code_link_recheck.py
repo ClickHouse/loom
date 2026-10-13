@@ -148,7 +148,7 @@ _MAX_EDITS = 32
 
 
 # (org, repository, start, path, name) -> (the commit that removed its code from its
-# file, the last one it was in), the last `_ANCHORS_KEPT` used
+# file, the last one it was in), the last 4,096 used
 _anchors: repo.Recent[tuple[str, ...], tuple[str, str]] = repo.Recent(4096)
 
 
@@ -287,10 +287,10 @@ async def _recheck(
     for a in rows:
         checked, own = a["checked_commit"], changed
         if changed is not None and checked not in ("", changed.base):
-            if not await files.descends(checked, changed.base):
-                # checked after the range starts: from its own commit, once head has it
-                if await files.descends(head, checked):
-                    continue
+            if not await files.is_ancestor(checked, changed.base):
+                # checked after the range starts: followed from its own commit
+                if await files.is_ancestor(head, checked):
+                    continue  # checked at or after head: nothing to do
                 own = await files.range(checked, head)
         before = repo.link_of(a)
         now = own.paths.get(before.path, before.path) if own else before.path
@@ -384,7 +384,7 @@ async def _last_in_place(
     renames) still defines `local`: `head` when it still does; None when the history
     cannot tell."""
     key = (files.org, files.cns, start, before.read_path, local)
-    if (known := _anchors.used(key)) is not None and await files.descends(known[0], head):
+    if (known := _anchors.used(key)) is not None and await files.is_ancestor(known[0], head):
         return known[1]  # the commit that removed it is still in this history
     path, since = before.read_path, start
     while True:
@@ -563,8 +563,7 @@ async def _relink(
 
 async def _current_moves(org: str, moves: list[Move]) -> list[Move]:
     """The moves of links made from their memory as it is now: a link the queue replaced
-    since the recheck read it is not moved back in (the policy step drops any that a
-    race still lets through, as every move is due)."""
+    since the recheck read it is not moved back in."""
     if not moves:
         return []
     heads = {

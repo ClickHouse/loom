@@ -1,23 +1,18 @@
-"""Code-linked memories: link a memory to the symbols and files it names, follow the links
-as the code changes, and serve each memory with the state of its code.
+"""Code-linked memories: link a memory to the symbols and files it names. Following the
+links as the code changes is `code_link_recheck`; serving them, `code_link_reads`.
 
 A memory is linked against the trunk code namespace of the repository its `repo:` tag
 names, or of the code namespace it is written in (the team's file rules). Whether a
 definition is there, and its fingerprint, is what tree-sitter finds in the file at the
 repository's indexed head in the bare mirror; the index only proposes candidates. The
-rules are `server.code.domain.anchor`; the policies `server.memory.domain.code_change`.
+rules are `server.code.domain.anchor`.
 
-Loom never writes a memory: search leaves out one whose linked code is all gone, and
-`revise` attaches a suggested correction to a changed link.
-
-Work is acknowledged only once written: a memory whose repository failed waits behind
-a `*` marker, a repository's checked head moves only once all its links were rechecked
-there, and a link that changed under `revise` carries `policy_due` until it was judged.
+A memory whose repository cannot be read yet waits behind a `*` marker, and the queue
+moves on.
 """
 
 from __future__ import annotations
 
-import logging
 import time
 from collections import defaultdict
 from contextlib import AbstractAsyncContextManager
@@ -44,15 +39,10 @@ from server.memory.store import code_links as store
 from server.memory.store.code_links import LinkRow
 from server.settings import settings
 
-log = logging.getLogger(__name__)
-
-
+# names and links read of one memory at most
 _MAX_MENTIONS = 64
-
-
 _MAX_LINKS = 32
-
-
+# the name of a link that waits for its repository's first index
 AWAITING_INDEX = "*"
 
 

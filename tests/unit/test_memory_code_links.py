@@ -2218,7 +2218,7 @@ async def _recheck_across(
 
     files = code_link_repo.Files("o", "code-a")
     _reads(monkeypatch, files, at)
-    monkeypatch.setattr(files, "descends", descends)
+    monkeypatch.setattr(files, "is_ancestor", descends)
     monkeypatch.setattr(files, "range", range_from)
     _history(monkeypatch, files, commits, renames, traceable=traceable)
     monkeypatch.setattr(code_links.code, "candidates", candidates)
@@ -2483,7 +2483,7 @@ async def test_an_unresolved_link_follows_its_renamed_file_on_a_later_pass(monke
         return []
 
     _reads(monkeypatch, files, at)
-    monkeypatch.setattr(files, "descends", descends)
+    monkeypatch.setattr(files, "is_ancestor", descends)
     monkeypatch.setattr(code_links.code, "candidates", candidates)
     row = _full(
         {
@@ -3202,7 +3202,7 @@ async def test_a_remembered_anchor_counts_only_in_the_history_it_came_from(monke
 
         _reads(monkeypatch, files, at)
         _history(monkeypatch, files, commits)
-        monkeypatch.setattr(files, "descends", descends)
+        monkeypatch.setattr(files, "is_ancestor", descends)
         return files
 
     link = Link("pkg/a.py", "pkg.a::fetch_rows")
