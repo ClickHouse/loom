@@ -421,7 +421,7 @@ _PINNED = [
         "b.cpp",
         "#ifndef B_H\n#define B_H\n#if defined(READY) // ready\nint value() { return 3; }\n"
         "#endif\n#endif\n",
-        "53eac8828bc0c396",
+        "d96ca32882a6d502",
         "1c9983388715966e",
     ),
     (
@@ -433,31 +433,31 @@ _PINNED = [
     (
         "d.ts",
         "export function value(a: number): number {\n  return a + 3;\n}\n",
-        "917f7c4850f7a3f6",
+        "2cebd44d35d50d39",
         "f2510d1d465fe386",
     ),
     (
         "e.js",
         "class Box {\n  value() {\n    return 3;\n  }\n}\n",
-        "06c987d600d5698a",
+        "0d033ce92cbd0dd6",
         "bc386ec8267445b9",
     ),
     (
         "f.go",
         "package f\n\ntype Box struct{}\n\nfunc (b Box) value() int {\n\treturn 3\n}\n",
-        "015827db755ed703",
+        "ece58dcac5e37eb1",
         "3eff4fddcdae53cc",
     ),
     (
         "g.java",
         "class Box {\n  int value() {\n    return 3;\n  }\n}\n",
-        "9502c9ccc0d8a0b3",
+        "fe3460b82181bcec",
         "c2955123a94095f5",
     ),
     (
         "h.rs",
         "struct Box;\n\nimpl Box {\n    fn value(&self) -> i32 {\n        3\n    }\n}\n",
-        "76301bf46b9de6ec",
+        "833cc756a2f30672",
         "c745fbc574ab7693",
     ),
 ]
@@ -470,7 +470,7 @@ def test_a_fingerprint_changes_only_with_its_rules(
     from server.code.domain.declaration import fingerprint_version
 
     (d,) = [d for d in _definitions(path, src.encode()) if d.name == "value"]
-    pinned = ("5", body, shape)
+    pinned = ("6", body, shape)
     assert (fingerprint_version().split("-")[0], d.body_hash[:16], d.shape[:16]) == pinned, (
         "fingerprints changed: bump _RULES (a grammar upgrade alone needs none) and re-pin"
     )
@@ -510,3 +510,41 @@ def test_the_index_tree_is_reused_only_for_its_own_grammar() -> None:
     assert own is not None and own.root == tree.root_node
     other = Declarations.parse("a.ts", b"function value() { return 3; }\n", tree)
     assert other is not None and other.root != tree.root_node
+
+
+def _value(path: str, src: str) -> str:
+    return next(d.body_hash for d in _definitions(path, src.encode()) if d.name == "value")
+
+
+@pytest.mark.parametrize(
+    "reformatted",
+    [
+        "int value(int a) { return a+1; }\n",
+        "int value(int a)\n{\n    return a + 1;   \n}\n",
+        "int value(int a) { /* one more */ return a + 1; }\n",
+    ],
+)
+def test_a_reformat_outside_python_keeps_the_fingerprint(reformatted: str) -> None:
+    original = "int value(int a) { return a + 1; }\n"
+    assert _value("a.cpp", reformatted) == _value("a.cpp", original)
+
+
+@pytest.mark.parametrize(
+    ("path", "before", "after"),
+    [
+        (
+            "a.cpp",
+            'const char* value() { return "a b"; }\n',
+            'const char* value() { return "a  b"; }\n',
+        ),
+        (
+            "a.py",
+            "def value():\n    if a:\n        b()\n    c()\n",
+            "def value():\n    if a:\n        b()\n        c()\n",
+        ),
+    ],
+)
+def test_a_literal_or_python_indentation_still_changes_it(
+    path: str, before: str, after: str
+) -> None:
+    assert _value(path, before) != _value(path, after)

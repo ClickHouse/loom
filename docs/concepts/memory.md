@@ -271,8 +271,9 @@ define yet is retried for `memory_code_links_pending_days` (14), so a memory abo
 unmerged code links once it merges.
 
 A link is a tree-sitter `(path, qualified_name)` and a fingerprint of the definition's
-text (all its overloads, verbatim: indentation and literals are behaviour) when the
-memory was written. What a file defines is read from the file itself at the repository's
+text (all its overloads) when the memory was written: verbatim in Python, where
+indentation is behaviour, and its tokens elsewhere, so a reformat or a comment changes
+nothing while a literal's bytes still do. What a file defines is read from the file itself at the repository's
 indexed head, in its bare git mirror; the code index only suggests where to look, so a
 commit still being ingested never decides a link. A file the parser fails on is not
 code that is gone: its links keep their state and are rechecked every pass until it

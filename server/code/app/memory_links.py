@@ -269,7 +269,12 @@ def _definitions(path: str, source: bytes, named: str = "") -> list[Definition]:
             exact, calls, reads = (
                 fingerprint(part) if all(part) else "" for part in zip(*shapes, strict=True)
             )
-            body = fingerprint(texts)
+            body = fingerprint(
+                [
+                    (decls.printed(s.start_line, s.name) if decls else None) or text
+                    for s, text in zip(syms, texts, strict=True)
+                ]
+            )
             shown = "\n\n".join(
                 (decls.shown(s.start_line, s.name) if decls else None) or text
                 for s, text in zip(syms, texts, strict=True)

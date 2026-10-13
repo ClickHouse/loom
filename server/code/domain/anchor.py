@@ -228,8 +228,8 @@ def local_name(qualified_name: str, path: str) -> str:
 
 
 def fingerprint(texts: Sequence[str]) -> str:
-    """One hash over a definition's texts (its overloads, in order), verbatim but for line
-    endings: indentation and literals carry meaning, so any edit changes it."""
+    """One hash over a definition's texts (its overloads, in order), as given but for line
+    endings ('' when all are empty)."""
     joined = "\0".join(t.replace("\r\n", "\n") for t in texts)
     return hashlib.sha256(joined.encode()).hexdigest() if joined.strip("\0") else ""
 

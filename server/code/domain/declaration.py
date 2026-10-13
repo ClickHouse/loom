@@ -269,10 +269,11 @@ class Prints(NamedTuple):
 
 
 class _Member(NamedTuple):
-    """One declaration of a family: the text its fingerprint covers, its rename shapes,
-    and the text the judge reads."""
+    """One declaration of a family: its text, what its fingerprint covers, its rename
+    shapes, and the text the judge reads; the first two under its conditions."""
 
     text: str
+    printed: str
     shape: Shape
     shown: str
 
@@ -281,7 +282,7 @@ class _Member(NamedTuple):
 # the symbols a family starts from. With the installed grammars it is
 # `fingerprint_version`: links fingerprinted under another one are re-fingerprinted from
 # the commits they were hashed at.
-_RULES = 5
+_RULES = 6
 
 
 # the words that open a scope, its name after them (`class DLL_EXPORT Foo`, a template
@@ -493,6 +494,13 @@ class Declarations:
         at = self._at(line)
         return at[0].start_point[0] + 1 if at else line
 
+    def printed(self, line: int, name: str) -> str | None:
+        """What the fingerprint of the declaration at `line` covers (`_printed`); None as
+        `text`."""
+        name = unnumbered(name)
+        at = self._at(line, name)
+        return None if at is None else self._member(at, name, False).printed
+
     def text(self, line: int, name: str) -> str | None:
         """The source of the declaration at `line` naming `name`, decorators and template
         head included: its own bytes, not the lines it shares with others. None when the
@@ -520,7 +528,32 @@ class Declarations:
         indent = self.source[self.source.rfind(b"\n", 0, start) + 1 : start]
         shown = conditions + (indent.decode() if indent.isspace() else "") + own
         shape = self._shape_at(at, name) if shapes else NO_SHAPE
-        return _Member(f"{guard}\n{own}" if guard else own, shape, shown)
+        printed = self._printed(at, name, own)
+        return _Member(
+            f"{guard}\n{own}" if guard else own,
+            f"{guard}\n{printed}" if guard else printed,
+            shape,
+            shown,
+        )
+
+    def _printed(self, at: tuple[Any, Any], name: str, own: str) -> str:
+        """What a declaration's fingerprint covers: its own text in Python, where layout
+        is behaviour; elsewhere its tokens as the parser nests them, so a reformat or a
+        comment changes nothing while a literal's bytes still do."""
+        found = self._declared(at[1], name)
+        if self.grammar == "python" or found is None:
+            return own
+        skip = {_key(n) for n in [*_sibling_nodes(found[0]), *_comments_within(*at)]}
+        leaves, marks = _leaves(*at, _Fields(), skip)
+        out, opened = [], ""
+        for leaf, mark in zip(leaves, marks, strict=False):
+            if leaf.type in _COMMENTS:
+                opened += mark.removesuffix(leaf.type)  # the nodes it opened still nest
+                continue
+            text = self.source[leaf.start_byte : leaf.end_byte].decode("utf-8", "replace")
+            out.append(f"{opened}{mark} {text}")
+            opened = ""
+        return "\n".join([*out, opened + marks[-1]])
 
     def _own_text(self, at: tuple[Any, Any], name: str) -> str:
         found = self._declared(at[1], name)
@@ -623,7 +656,7 @@ class Declarations:
                 fingerprint(part) if all(part) else ""
                 for part in zip(*(m.shape for m in members), strict=True)
             )
-            body = fingerprint([m.text for m in members])
+            body = fingerprint([m.printed for m in members])
             shown = "\n\n".join(m.shown for m in members)
             self._prints[keys] = Prints(body, exact, calls, reads, shown)
         return self._prints[keys]
