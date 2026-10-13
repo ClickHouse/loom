@@ -546,7 +546,11 @@ The web processes share small files (rate-limit table, runtime overrides, graph 
 `/run/loom`, which the compose files mount as a tmpfs. A plain `docker run` without
 `--tmpfs /run/loom` keeps them in the container's writable layer, and a restarted
 container does not remove an earlier one's; mount the tmpfs, or remove the container
-(`docker run --rm`) rather than restarting it.
+(`docker run --rm`) rather than restarting it. With a read-only root filesystem and no
+tmpfs, several web processes have nowhere to share and `scripts/serve.sh` stops naming
+the directories it tried: mount a tmpfs at `/run/loom`, pin `LOOM_RUNTIME_DIR` to a
+writable directory only the server's user can enter, or run one web process
+(`LOOM_WEB_WORKERS=1`).
 
 Every release publishes a multi-arch image (linux/amd64 and linux/arm64) to
 `ghcr.io/clickhouse/loom`, tagged `X.Y.Z`, `X.Y` and, for a stable release, `latest`.

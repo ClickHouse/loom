@@ -407,6 +407,7 @@ def test_with_no_private_runtime_directory_overrides_are_refused_not_kept_local(
         raise OSError("none of /run/loom, /tmp/loom-1 is a directory only this user can enter")
 
     settings_override(ratelimit_shared="off", web_workers=3)
+    real = shared_document.server_file
     monkeypatch.setattr(shared_document, "server_file", nowhere)
     budgets = BudgetOverrides()
     for _ in range(2):
@@ -417,3 +418,8 @@ def test_with_no_private_runtime_directory_overrides_are_refused_not_kept_local(
     assert lim.check("ns1", "memory.set", org="o").allowed
     with pytest.raises(OverrideNotSharedError):
         lim.set_namespace_limit("ns1", "memory", Limit(capacity=1, rate=1.0))
+    lim.reset_all()  # nothing to remove, and nothing else removed
+    # The directory is fixed: the same processes share from the next update on.
+    monkeypatch.setattr(shared_document, "server_file", real)
+    budgets.set("memory.search", 123)
+    assert BudgetOverrides().get("memory.search") == 123

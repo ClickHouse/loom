@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 from server.core.datetimes import naive_utc_now
+from server.tasks.app import run as run_handlers
 from server.tasks.domain.session_runs import session_run_id
 
 pytestmark = pytest.mark.skipif(
@@ -60,7 +61,9 @@ async def _ledger_call(
 
 
 @pytest.mark.asyncio
-async def test_the_idle_sweep_closes_a_run_its_own_calls_did_not_keep_busy(ch: Any) -> None:
+async def test_the_idle_sweep_closes_a_run_its_own_calls_did_not_keep_busy(
+    ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """More busy runs than a pass closes do not hide a quiet one behind them, and
     a run an earlier server opened under `mcp-<session id>` closes too."""
     from server.tasks.api.models_run import RunBeginInput
@@ -94,8 +97,9 @@ async def test_the_idle_sweep_closes_a_run_its_own_calls_did_not_keep_busy(ch: A
         for run_id in busy:  # calls in another namespace
             await _ledger_call(ch, elsewhere, run_id, subject="sa:a", org=org)
         await _ledger_call(ch, namespace, borrowed, subject="sa:eve", org=org)  # another token
-        assert await close_idle_session_runs(1, limit=2, org=org) == 2
-        assert await close_idle_session_runs(1, limit=2, org=org) == 1
+        monkeypatch.setattr(run_handlers, "IDLE_CLOSE_BATCH", 2)
+        assert await close_idle_session_runs(1, org=org) == 2
+        assert await close_idle_session_runs(1, org=org) == 1
         assert all([await active_session_runs(org, run_id) for run_id in busy])
         assert await active_session_runs(org, quiet) == []
         assert await active_session_runs(org, borrowed) == []
@@ -109,7 +113,9 @@ async def test_the_idle_sweep_closes_a_run_its_own_calls_did_not_keep_busy(ch: A
 
 
 @pytest.mark.asyncio
-async def test_the_idle_sweep_reads_any_number_of_active_runs(ch: Any) -> None:
+async def test_the_idle_sweep_reads_any_number_of_active_runs(
+    ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The candidates stay inside ClickHouse: thousands of active runs are not
     one oversized parameter."""
     from server.tasks.app.run import close_idle_session_runs
@@ -135,7 +141,8 @@ async def test_the_idle_sweep_reads_any_number_of_active_runs(ch: Any) -> None:
             ],
             settings={"async_insert": 0},
         )
-        assert await close_idle_session_runs(60, limit=5, org=org) == 5
+        monkeypatch.setattr(run_handlers, "IDLE_CLOSE_BATCH", 5)
+        assert await close_idle_session_runs(60, org=org) == 5
     finally:
         await ch.execute(
             "DELETE FROM loom.agent_runs WHERE org = {org:String}", params={"org": org}

@@ -49,7 +49,8 @@ log = logging.getLogger(__name__)
 # Cached runs per process (the session→agent cache's cap); past it the least
 # recently used is forgotten.
 SESSION_RUN_CAP = 4096
-# A cached run is checked with the ledger at most this often.
+# A cached run is checked with the ledger at most this often, and a failed first
+# begin tried again.
 CHECK_INTERVAL_S = 60.0
 GOAL_MAX_CHARS = 2000
 
@@ -142,12 +143,6 @@ def reset() -> None:
     _BEGIN_FAILED_AT.clear()
 
 
-def idle_seconds() -> float:
-    from server.settings import settings
-
-    return float(settings.mcp_session_run_idle_seconds)
-
-
 def takes_run(op: Any) -> bool:
     """Whether a registry op belongs to a session run at all: its input model
     carries the identity `run_id`, outside the ledger's own and the code
@@ -195,7 +190,7 @@ async def ensure(
 ) -> SessionRun | None:
     """The session's run, begun on first use, in the org and namespace `defaults`
     name. None when the transport has no session or caller identity, or
-    `run.begin` failed (retried after the idle window, not on every call)."""
+    `run.begin` failed (retried after CHECK_INTERVAL_S, not on every call)."""
     if not session_id or not defaults or caller is None:
         return None
     now = time.monotonic() if now is None else now
@@ -218,7 +213,7 @@ async def ensure(
             )
         return run
     failed_at = _BEGIN_FAILED_AT.get(run_id)
-    if failed_at is not None and now - failed_at < idle_seconds():
+    if failed_at is not None and now - failed_at < CHECK_INTERVAL_S:
         return None
     if len(_RUNS) >= SESSION_RUN_CAP:
         # A cap, not a sign the session ended: its next call here joins the run.
@@ -344,7 +339,6 @@ __all__ = [
     "drain_ledger_writes",
     "ensure",
     "goal_of",
-    "idle_seconds",
     "reset",
     "stamps_run",
     "subject_of",

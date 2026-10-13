@@ -189,13 +189,13 @@ def test_begin_failure_is_swallowed_and_not_retried_every_call(ledger: _Ledger) 
         await mcp_runs.drain_ledger_writes()
         assert mcp_runs.current(rid("s")) is None
         ledger.fail_begin = False
-        # Within the idle window the failed session is not retried (no
+        # Within a check interval the failed session is not retried (no
         # run.begin per tool call while the ledger is down) …
         assert await mcp_runs.ensure("s", DEFAULTS, CALLER, goal="g", now=20.0) is None
         assert ledger.begins == []
         # … and after it, it is.
         r = await mcp_runs.ensure(
-            "s", DEFAULTS, CALLER, goal="g", now=20.0 + mcp_runs.idle_seconds()
+            "s", DEFAULTS, CALLER, goal="g", now=10.0 + mcp_runs.CHECK_INTERVAL_S
         )
         assert r is not None and r.run_id == rid("s")
 
@@ -317,7 +317,7 @@ def test_delete_route_is_wired() -> None:
     src = inspect.getsource(mcp.attach)
     assert '@router.delete("/mcp"' in src
     assert "_mcp_runs.close_session(" in src and "_mcp_runs.subject_of(auth)" in src
-    assert src.index("set_quota_key(quota_key_for(auth))") < src.index("_mcp_runs.close_session(")
+    assert src.index("set_current_auth(auth)") < src.index("_mcp_runs.close_session(")
 
 
 def test_loom_search_labels_the_read_and_emits_the_run() -> None:
@@ -425,7 +425,7 @@ def test_two_callers_sending_one_session_id_hold_two_runs(ledger: _Ledger) -> No
 
 
 def test_a_failed_check_keeps_the_run_and_tries_again(ledger: _Ledger, monkeypatch) -> None:
-    """Only a failed first begin waits out the idle window; a check that cannot
+    """Only a failed first begin waits a check interval; a check that cannot
     reach the ledger leaves the session's run in place."""
     import server.tasks.app.run as h
 

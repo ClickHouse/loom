@@ -14,7 +14,7 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   created at; `memory.set`, `bulk_set`, `update` and the `knowledge.*` writes are refused before
   any of their rows lands, and `/v1/health` reports `coded_width_mismatch` with the fix.
 - `OVERRIDE_NOT_SHARED` (503): a budget or rate-limit override the server's web processes could
-  not share is refused and changes nothing; the server log names the file.
+  not share is refused and changes nothing; the server log says what failed.
 - `LOOM_RUNTIME_DIR`: the directory one server's web processes share files in.
   `scripts/serve.sh` chooses it once and exports it; set it for another launcher that starts
   several workers.

@@ -20,7 +20,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from server.core.errors import OverloadedError, OverrideNotSharedError
+from server.core.errors import OverrideBusyError, OverrideNotSharedError
 from server.core.runtime_files import open_private, server_file
 
 log = logging.getLogger(__name__)
@@ -35,19 +35,34 @@ def _version(st: os.stat_result) -> _Version:
     return (st.st_ino, st.st_mtime_ns, st.st_size)
 
 
+class LockBusy(OSError):
+    """A sibling web process holds the document's lock."""
+
+
 class SharedDocument[T]:
     """`decode` turns the parsed JSON into the caller's state and `encode` turns
-    the state back; a document `decode` cannot read is corrupt."""
+    the state back; a document `decode` cannot read is corrupt. `path` may be a
+    function: it is called until it answers, and while it raises OSError a poll
+    keeps the current state and an update is refused."""
 
     def __init__(
-        self, path: str, decode: Callable[[Any], T], encode: Callable[[T], object]
+        self,
+        path: str | Callable[[], str],
+        decode: Callable[[Any], T],
+        encode: Callable[[T], object],
     ) -> None:
-        self.path = path
+        self._path = path
         self._decode, self._encode = decode, encode
         # The version last adopted, published or found corrupt.
         self._seen: _Version | None = None
         # The last read failure warned about, so a lasting one is logged once.
         self._warned = ""
+
+    @property
+    def path(self) -> str:
+        if callable(self._path):
+            self._path = self._path()
+        return self._path
 
     def poll(self) -> T | None:
         """The document if it changed since the last poll or update, else None.
@@ -57,7 +72,7 @@ class SharedDocument[T]:
         except OSError as e:
             if str(e) != self._warned:
                 self._warned = str(e)
-                log.warning("%s unreadable (%s); keeping the current state", self.path, e)
+                log.warning("shared document unreadable (%s); keeping the current state", e)
             return None
 
     def update(self, change: Callable[[T], T], default: T) -> T:
@@ -103,32 +118,13 @@ class SharedDocument[T]:
         return state
 
 
-class _Unshared[T](SharedDocument[T]):
-    """Stands in for a document no private runtime directory can hold: every
-    process keeps its own state, and an update is refused (OVERRIDE_NOT_SHARED)
-    rather than applied to this process alone."""
-
-    def __init__(self, reason: str) -> None:
-        self.path, self._reason = "", reason
-
-    def poll(self) -> T | None:
-        return None
-
-    def update(self, change: Callable[[T], T], default: T) -> T:
-        raise OSError(self._reason)
-
-
 def server_document[T](
     name: str, decode: Callable[[Any], T], encode: Callable[[T], object]
 ) -> SharedDocument[T]:
     """The document `name` this server's web processes share, in the runtime
-    directory (`server_file`)."""
-    try:
-        path = server_file(name) + ".json"
-    except OSError as e:
-        log.warning("%s cannot be shared: %s", name, e)
-        return _Unshared(str(e))
-    return SharedDocument(path, decode, encode)
+    directory (`server_file`), found on first use: until a private directory
+    exists, updates answer OVERRIDE_NOT_SHARED and each process keeps its own."""
+    return SharedDocument(lambda: server_file(name) + ".json", decode, encode)
 
 
 def share_override[T](
@@ -165,15 +161,6 @@ async def waiting_out_siblings[**P, R](
             if time.monotonic() >= deadline:
                 raise
             await asyncio.sleep(0.005)
-
-
-class LockBusy(OSError):
-    """A sibling web process holds the document's lock."""
-
-
-class OverrideBusyError(OverloadedError):
-    """A sibling web process was updating the same override document: retryable,
-    and nothing changed."""
 
 
 def _try_lock(fd: int, path: str) -> None:

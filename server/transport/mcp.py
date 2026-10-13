@@ -394,7 +394,8 @@ def attach(app: FastAPI) -> None:
         """The Streamable HTTP transport lets a client end its session with
         `DELETE` + `Mcp-Session-Id`. The session's implicit run closes here
         (status completed, outcome none); the `mcp_session_run_sweep` worker
-        closes the ones that go idle."""
+        closes the ones that go idle. No admission gates run: the close is
+        bounded by the caller's ClickHouse quota, which it is counted against."""
         from server.auth.jwt import TokenError
 
         mode = _effective_auth_mode()
@@ -406,10 +407,9 @@ def attach(app: FastAPI) -> None:
             auth = None
         if mode != "open" and auth is None:
             return _reject_unauthenticated(request, response, None, message="missing bearer token")
-        from server.auth.context import quota_key_for
-        from server.core.ch import set_quota_key
+        from server.auth.context import set_current_auth
 
-        set_quota_key(quota_key_for(auth))  # the run's close counts against the caller
+        set_current_auth(auth)  # the run's close counts against the caller's quota
         session_id = request.headers.get("mcp-session-id") or request.headers.get("Mcp-Session-Id")
         closed = await _mcp_runs.close_session(
             session_id, caller_org(auth) or "", _mcp_runs.subject_of(auth)

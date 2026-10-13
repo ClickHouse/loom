@@ -66,7 +66,9 @@ async def test_a_pass_stops_closing_when_its_time_is_spent(monkeypatch) -> None:
         ledger.completes.append(inp)
 
     monkeypatch.setattr(run_handlers, "handle_run_complete", slow_complete)
-    assert await run_handlers.close_idle_session_runs(1800, budget_s=0.1, at_once=1) == 1
+    monkeypatch.setattr(run_handlers, "IDLE_CLOSE_BUDGET_S", 0.1)
+    monkeypatch.setattr(run_handlers, "IDLE_CLOSES_AT_ONCE", 1)
+    assert await run_handlers.close_idle_session_runs(1800) == 1
     assert [c.run_id for c in ledger.completes] == ["slow"]  # "next" waits for the next pass
 
 
@@ -84,7 +86,8 @@ async def test_a_pass_closes_a_few_runs_at_a_time(monkeypatch) -> None:
         ledger.completes.append(inp)
 
     monkeypatch.setattr(run_handlers, "handle_run_complete", complete)
-    assert await run_handlers.close_idle_session_runs(1800, at_once=3) == 10
+    monkeypatch.setattr(run_handlers, "IDLE_CLOSES_AT_ONCE", 3)
+    assert await run_handlers.close_idle_session_runs(1800) == 10
     assert most == 3
 
 

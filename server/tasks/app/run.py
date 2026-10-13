@@ -263,24 +263,23 @@ async def close_session_run(org: str, run_id: str, *, reason: str) -> bool:
     return bool(active)
 
 
-async def close_idle_session_runs(
-    idle_seconds: int,
-    *,
-    limit: int = 500,
-    budget_s: float = 120.0,
-    at_once: int = 8,
-    org: str = "",
-) -> int:
+# One idle-sweep pass: how many runs it closes at most, how many at once, and
+# how long it starts new closes for (inside the worker's pass deadline).
+IDLE_CLOSE_BATCH = 500
+IDLE_CLOSES_AT_ONCE = 8
+IDLE_CLOSE_BUDGET_S = 120.0
+
+
+async def close_idle_session_runs(idle_seconds: int, *, org: str = "") -> int:
     """Complete the implicit session runs no call of their token reached within
     the idle window, from the ledger alone, so a run closes whichever web
-    process served it and after any restart. Closes up to `limit`, `at_once` at
-    a time, starting none once `budget_s` is spent; the next pass takes the
-    rest. Returns how many closed. `org` narrows it to one org, a test's seam."""
-    deadline = time.monotonic() + budget_s
+    process served it and after any restart; the next pass takes what one pass
+    leaves. Returns how many closed. `org` narrows the sweep to one org."""
+    deadline = time.monotonic() + IDLE_CLOSE_BUDGET_S
     stale = await runs_store.idle_session_runs(
-        get_client(), idle_seconds=idle_seconds, limit=limit, org=org
+        get_client(), idle_seconds=idle_seconds, limit=IDLE_CLOSE_BATCH, org=org
     )
-    slots = asyncio.Semaphore(at_once)
+    slots = asyncio.Semaphore(IDLE_CLOSES_AT_ONCE)
 
     async def close(row: RunLedgerRow) -> bool:
         async with slots:

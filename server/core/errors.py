@@ -107,6 +107,11 @@ class OverloadedError(LoomServerError):
         super().__init__(message, retry_after_s=retry_after_s)
 
 
+class OverrideBusyError(OverloadedError):
+    """OVERLOADED because another web process was updating the same runtime
+    override; the admin route waits it out, and nothing changed."""
+
+
 class RateLimitedError(LoomServerError):
     """429 — the caller is over one of its admission limits (the org's in-flight
     requests); `retry_after_s` is the hint the SDK's retry layer honours."""
@@ -165,8 +170,9 @@ class EmbedTimeoutError(LoomServerError):
 class OverrideNotSharedError(LoomServerError):
     """503 — a runtime override (budget or rate limit) could not be shared with
     the server's other web processes, so none of them took it. No
-    `Retry-After`: the fix is the runtime directory's (permissions, space);
-    the server log names the file."""
+    `Retry-After`: the fix is the runtime directory's (permissions, space, or
+    none private enough), and the next update tries again; the server log
+    says what failed."""
 
     code = "OVERRIDE_NOT_SHARED"
     status_code = 503
