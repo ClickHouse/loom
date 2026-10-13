@@ -28,19 +28,17 @@ salted per process and the whole point is that four processes agree.
 
 from __future__ import annotations
 
-import contextlib
 import fcntl
 import hashlib
-import json
 import mmap
 import os
-import stat
 import struct
-import tempfile
 import threading
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+
+from server.core.shared_document import open_private
 
 MAGIC = b"LRL1"
 VERSION = 2  # 2: bucket keys carry the traffic class
@@ -58,7 +56,6 @@ def key_hash(key: str) -> int:
     return h or 1
 
 
-FILE_MODE = 0o600
 RUN_DIR = "/run/loom"
 _TMP_DIR = "/tmp"
 
@@ -80,65 +77,31 @@ def runtime_dir() -> str:
     return _TMP_DIR
 
 
-def default_path() -> str:
-    """One table per server: the workers of one `uvicorn --workers N` share a
-    parent, so the parent pid is the rendezvous. Two servers on one host
-    (two isolated worktrees, say) get two files."""
-    return os.path.join(runtime_dir(), f"loom-ratelimit-{os.getppid()}.buckets")
-
-
-@contextlib.contextmanager
-def file_lock(path: str) -> Iterator[None]:
-    """Exclusive host-wide lock on `<path>.lock` for a read-modify-write of
-    `path`. Raises OSError when the lock file cannot be opened."""
-    with open(path + ".lock", "a+") as fh:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-
-
-def publish_json(path: str, data: object) -> tuple[int, int, int]:
-    """Atomically replace `path` with `data` as JSON; returns the new file's
-    (inode, mtime_ns, size), read from the written file before the rename
-    commits it (a rename keeps all three). Raises OSError, only before the
-    commit, and leaves no temporary file."""
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", prefix=".tmp-")
+def server_file(name: str) -> str:
+    """`loom-<name>-<server>` in the runtime dir, one per server: the workers of one
+    `uvicorn --workers N` share a parent, named by its pid and start time so a
+    later server reusing the pid (a restarted container) starts afresh."""
+    ppid = os.getppid()
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(data, fh)
-            fh.flush()
-            st = os.fstat(fh.fileno())
-        os.replace(tmp, path)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        raise
-    return (st.st_ino, st.st_mtime_ns, st.st_size)
+        # Field 22 of /proc/<pid>/stat, the start time; the fields after `comm`.
+        started = open(f"/proc/{ppid}/stat").read().rsplit(")", 1)[1].split()[19]
+    except (OSError, IndexError):
+        started = "0"
+    return os.path.join(runtime_dir(), f"loom-{name}-{ppid}-{started}")
+
+
+def default_path() -> str:
+    """One table per server (`server_file`); two servers on one host (two
+    isolated worktrees, say) get two files."""
+    return server_file("ratelimit") + ".buckets"
 
 
 def open_table_fd(path: str) -> int:
     """Open (or create) the backing file the way a shared table must be
-    opened: never through a symlink (`O_NOFOLLOW`), created
-    private to the server's user (0600), and — because the file may predate
-    this build or have been created by something else — checked to be a
-    regular file owned by this process, then tightened to 0600 if it was
-    wider. Raises OSError; the limiter falls back to per-process buckets
-    and names the reason in /v1/health."""
-    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, FILE_MODE)
-    try:
-        st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode):
-            raise OSError(f"{path}: not a regular file")
-        if st.st_uid != os.geteuid():
-            raise OSError(f"{path}: owned by uid {st.st_uid}, this process is {os.geteuid()}")
-        if stat.S_IMODE(st.st_mode) & 0o077:
-            os.fchmod(fd, FILE_MODE)
-    except Exception:
-        os.close(fd)
-        raise
-    return fd
+    opened (`open_private`): the file may predate this build or have been
+    created by something else. Raises OSError; the limiter falls back to
+    per-process buckets and names the reason in /v1/health."""
+    return open_private(path, os.O_RDWR | os.O_CREAT)
 
 
 @dataclass(frozen=True)

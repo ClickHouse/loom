@@ -42,4 +42,4 @@ def test_one_web_process_keeps_them_in_memory(tmp_path: Path, monkeypatch) -> No
     a = BudgetOverrides()
     a.set("memory.set", 1)
     assert a.get("memory.set") == 1
-    assert a._file() is None
+    assert a._document() is None

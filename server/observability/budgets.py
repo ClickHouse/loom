@@ -38,10 +38,13 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-import os
 import threading
 from collections.abc import Iterator
 from typing import Any
+
+from server.core.errors import BackendUnavailableError
+from server.core.ratelimit_shared import server_file
+from server.core.shared_document import SharedDocument
 
 log = logging.getLogger(__name__)
 
@@ -77,6 +80,16 @@ def _apply(value: int | float, default_ms: int) -> int:
     return int(value)
 
 
+_Budgets = tuple[dict[str, int], dict[tuple[str, str], int | float]]
+
+
+def _decode(data: Any) -> _Budgets:
+    """The per-op and per-consumer maps of `BudgetOverrides._encode`."""
+    ops = {str(k): int(v) for k, v in data["ops"].items()}
+    by_consumer = {(str(c), str(o)): v for c, o, v in data["consumer"]}
+    return ops, by_consumer
+
+
 class BudgetOverrides:
     """Singleton overrides registry: op_name → budget_ms, plus
     (consumer, op_name | "*") → budget_ms or multiplier."""
@@ -88,79 +101,60 @@ class BudgetOverrides:
         # The settings map, parsed once per distinct raw string.
         self._settings_raw: str | None = None
         self._settings_map: dict[str, dict[str, int | float]] = {}
-        # The host file's identity when last read or written; None = not yet.
-        self._file_sig: tuple[int, int, int] | None = None
+        # Shared with the server's other web processes (`_document`).
+        self._doc: SharedDocument[_Budgets] | None = None
         # Tests point this at a file; None = derive from settings.
         self.path: str | None = None
 
     # -- the host file the web processes share -----------------------------
 
-    def _file(self) -> str | None:
+    def _document(self) -> SharedDocument[_Budgets] | None:
+        """This server's runtime overrides file; None with one web process."""
         if self.path is not None:
-            return self.path
+            if self._doc is None or self._doc.path != self.path:
+                self._doc = SharedDocument(self.path, _decode)
+            return self._doc
         from server.settings import settings
 
         if int(settings.web_workers) <= 1:
             return None
-        from server.core.ratelimit_shared import runtime_dir
+        if self._doc is None:
+            self._doc = SharedDocument(server_file("budgets") + ".json", _decode)
+        return self._doc
 
-        return os.path.join(runtime_dir(), f"loom-budgets-{os.getppid()}.json")
-
-    def _sync(self, *, strict: bool = False) -> None:
-        """Adopt the host file when it changed (caller holds `_lock`). An
-        unreadable file keeps the cached state, unless `strict`: an update must
-        not publish over state it cannot read."""
-        path = self._file()
-        if path is None:
-            return
-        try:
-            st = os.stat(path)
-            sig = (st.st_ino, st.st_mtime_ns, st.st_size)
-            if sig == self._file_sig:
-                return
-            with open(path, encoding="utf-8") as fh:
-                data = json.load(fh)
-            ops = {str(k): int(v) for k, v in data["ops"].items()}
-            by_consumer = {(str(c), str(o)): v for c, o, v in data["consumer"]}
-        except FileNotFoundError:
-            return
-        except (OSError, ValueError, KeyError, TypeError) as e:
-            if strict:
-                raise OSError(f"{path} unreadable: {e}") from e
-            log.warning("budget overrides: %s unreadable (%s); keeping mine", path, e)
-            return
-        self._overrides, self._by_consumer, self._file_sig = ops, by_consumer, sig
+    def _poll(self) -> None:
+        """Adopt another worker's change (caller holds `_lock`)."""
+        doc = self._document()
+        latest = doc.poll() if doc is not None else None
+        if latest is not None:
+            self._overrides, self._by_consumer = latest
 
     @contextlib.contextmanager
     def _update(self) -> Iterator[None]:
-        """Mutate under `_lock` and the host file's lock: read, change, publish.
-        A change that cannot be published is rolled back and refused."""
+        """Change the overrides of every web process (`SharedDocument.edit`);
+        a change that cannot be shared is rolled back and refused."""
         with self._lock:
-            path = self._file()
-            if path is None:
+            doc = self._document()
+            if doc is None:
                 yield
                 return
-            from server.core.errors import LoomServerError
-            from server.core.ratelimit_shared import file_lock, publish_json
-
+            before: _Budgets | None = None
             try:
-                with file_lock(path):
-                    self._sync(strict=True)
-                    before = (dict(self._overrides), dict(self._by_consumer))
+                with doc.edit(self._encode) as latest:
+                    if latest is not None:
+                        self._overrides, self._by_consumer = latest
+                    before = dict(self._overrides), dict(self._by_consumer)
                     yield
-                    data = {
-                        "ops": self._overrides,
-                        "consumer": [[c, o, v] for (c, o), v in self._by_consumer.items()],
-                    }
-                    try:
-                        self._file_sig = publish_json(path, data)
-                    except OSError:
-                        self._overrides, self._by_consumer = before
-                        raise
             except OSError as e:
-                raise LoomServerError(
-                    f"budget override not applied: {path} could not be updated ({e})"
-                ) from e
+                if before is not None:
+                    self._overrides, self._by_consumer = before
+                raise BackendUnavailableError(f"budget override not applied: {e}") from e
+
+    def _encode(self) -> dict[str, Any]:
+        return {
+            "ops": self._overrides,
+            "consumer": [[c, o, v] for (c, o), v in self._by_consumer.items()],
+        }
 
     # -- per op (unchanged API) -------------------------------------------
 
@@ -172,7 +166,7 @@ class BudgetOverrides:
 
     def get(self, op_name: str) -> int | None:
         with self._lock:
-            self._sync()
+            self._poll()
             return self._overrides.get(op_name)
 
     def clear(self, op_name: str) -> None:
@@ -181,7 +175,7 @@ class BudgetOverrides:
 
     def snapshot(self) -> dict[str, int]:
         with self._lock:
-            self._sync()
+            self._poll()
             return dict(self._overrides)
 
     # -- per consumer --------------------------------------
@@ -199,7 +193,7 @@ class BudgetOverrides:
 
     def get_for_consumer(self, consumer: str, op_name: str) -> int | float | None:
         with self._lock:
-            self._sync()
+            self._poll()
             hit = self._by_consumer.get((consumer, op_name))
             if hit is None:
                 hit = self._by_consumer.get((consumer, ANY_OP))
@@ -211,7 +205,7 @@ class BudgetOverrides:
 
     def snapshot_by_consumer(self) -> dict[str, dict[str, int | float]]:
         with self._lock:
-            self._sync()
+            self._poll()
             out: dict[str, dict[str, int | float]] = {}
             for (consumer, op_name), value in self._by_consumer.items():
                 out.setdefault(consumer, {})[op_name] = value

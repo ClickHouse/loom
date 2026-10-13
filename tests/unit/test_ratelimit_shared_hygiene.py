@@ -8,19 +8,21 @@ from __future__ import annotations
 
 import os
 import stat
+import sys
 from pathlib import Path
 
 import pytest
 
 from server.core import ratelimit
 from server.core.ratelimit_shared import (
-    FILE_MODE,
     MIN_SLOTS,
     SharedBucketStore,
     default_path,
     open_table_fd,
     runtime_dir,
+    server_file,
 )
+from server.core.shared_document import FILE_MODE
 
 
 def _mode(p: Path) -> int:
@@ -89,9 +91,8 @@ def test_default_path_prefers_the_runtime_dir_and_falls_back_to_tmp(
     (tmp_path / "run-user").mkdir()
     assert runtime_dir() == str(tmp_path / "run-user" / "loom")
     assert stat.S_IMODE((tmp_path / "run-user" / "loom").stat().st_mode) == 0o700
-    assert default_path() == str(
-        tmp_path / "run-user" / "loom" / f"loom-ratelimit-{os.getppid()}.buckets"
-    )
+    assert default_path() == server_file("ratelimit") + ".buckets"
+    assert os.path.dirname(default_path()) == str(tmp_path / "run-user" / "loom")
     # no XDG dir and no writable /run/loom: the /tmp fallback
     monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
     monkeypatch.setattr(rs, "RUN_DIR", str(tmp_path / "no-perm" / "loom"))
@@ -100,7 +101,7 @@ def test_default_path_prefers_the_runtime_dir_and_falls_back_to_tmp(
         if os.geteuid() == 0:  # root can always write; the branch is not testable as root
             pytest.skip("running as root")
         assert runtime_dir() == "/tmp"
-        assert default_path() == f"/tmp/loom-ratelimit-{os.getppid()}.buckets"
+        assert os.path.dirname(default_path()) == "/tmp"
     finally:
         os.chmod(tmp_path / "no-perm", 0o700)
     # a creatable /run/loom stand-in is taken when XDG is unset
@@ -117,3 +118,11 @@ def test_the_limiter_uses_the_hardened_open(tmp_path: Path, settings_override) -
     lim = ratelimit.Limiter()
     assert lim.shared_active is True
     assert _mode(p) == 0o600
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="reads /proc")
+def test_server_files_are_named_by_the_parent_and_its_start_time() -> None:
+    """A later server that reuses the parent pid (a restarted container) gets new files."""
+    started = open(f"/proc/{os.getppid()}/stat").read().rsplit(")", 1)[1].split()[19]
+    name = os.path.basename(server_file("budgets"))
+    assert name == f"loom-budgets-{os.getppid()}-{started}"

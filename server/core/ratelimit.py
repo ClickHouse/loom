@@ -23,8 +23,10 @@ import os
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from server.core.errors import BackendUnavailableError
+from server.core.shared_document import SharedDocument
 from server.settings import settings
 
 if TYPE_CHECKING:
@@ -274,6 +276,19 @@ def effective_divisor(*, shared: bool) -> int:
     return effective_replicas()
 
 
+_Overrides = tuple[
+    dict[tuple[str, str], Limit], dict[tuple[str, str], Limit], dict[tuple[str, str, str], Limit]
+]
+
+
+def _decode_overrides(data: Any) -> _Overrides:
+    """The (namespace, org, actor) override maps of `Limiter._encode_overrides`."""
+    ns = {(str(a), str(b)): Limit(float(c), float(r)) for a, b, c, r in data["ns"]}
+    org = {(str(a), str(b)): Limit(float(c), float(r)) for a, b, c, r in data["org"]}
+    actor = {(str(a), str(b), str(o)): Limit(float(c), float(r)) for a, b, o, c, r in data["actor"]}
+    return ns, org, actor
+
+
 class Limiter:
     """Two-tier in-process registry: per-namespace AND per-org buckets.
 
@@ -315,13 +330,12 @@ class Limiter:
         self._shared_key: tuple[object, ...] | None = None
         self._shared_reason: str = "not resolved yet"
         self._shared_active: bool = False
-        # The shared table was asked for (several workers, or "on"), whether or not it opened.
-        self._shared_wanted: bool = False
-        # With the shared table the overrides live beside it too
+        # Several workers (or "on") need the shared table for overrides to bind them all.
+        self._shared_needed: bool = False
+        # With the shared table the overrides live beside it
         # (`<table>.overrides.json`), so an admin override set through one web
-        # worker binds every worker on the host: every check stats the file and
-        # re-reads it when its identity (inode, mtime, size) changed.
-        self._overrides_sig: tuple[int, int, int] | None = None
+        # worker binds every worker on the host.
+        self._overrides_doc: SharedDocument[_Overrides] | None = None
 
     # -- backend selection ---------------------------------
 
@@ -341,7 +355,7 @@ class Limiter:
             self._shared = None
         self._shared_key = key
         want = mode == "on" or (mode == "auto" and workers > 1)
-        self._shared_wanted = want
+        self._shared_needed = mode == "on" or workers > 1
         if not want:
             self._shared_reason = (
                 "off by LOOM_RATELIMIT_SHARED" if mode == "off" else "single web worker"
@@ -367,88 +381,59 @@ class Limiter:
 
     # -- overrides shared through the table's directory --------------------
 
-    def _overrides_path(self) -> str | None:
+    def _overrides_document(self) -> SharedDocument[_Overrides] | None:
         store = self._store()
-        return f"{store.path}.overrides.json" if store is not None else None
+        if store is None:
+            return None
+        path = f"{store.path}.overrides.json"
+        if self._overrides_doc is None or self._overrides_doc.path != path:
+            self._overrides_doc = SharedDocument(path, _decode_overrides)
+        return self._overrides_doc
 
-    def _sync_overrides(self, *, strict: bool = False) -> None:
-        """Adopt the host's override file when it changed. No file (none set
-        yet) keeps this process's overrides, and so does an unreadable one
-        unless `strict`: an update must not publish over state it cannot read."""
-        path = self._overrides_path()
-        if path is None:
-            return
-        try:
-            st = os.stat(path)
-            sig = (st.st_ino, st.st_mtime_ns, st.st_size)
-            if sig == self._overrides_sig:
-                return
-            with open(path, encoding="utf-8") as fh:
-                data = json.load(fh)
-            ns = {(str(a), str(b)): Limit(float(c), float(r)) for a, b, c, r in data["ns"]}
-            org = {(str(a), str(b)): Limit(float(c), float(r)) for a, b, c, r in data["org"]}
-            actor = {
-                (str(a), str(b), str(o)): Limit(float(c), float(r))
-                for a, b, o, c, r in data["actor"]
-            }
-        except FileNotFoundError:
-            return
-        except (OSError, ValueError, KeyError, TypeError) as e:
-            if strict:
-                raise OSError(f"{path} unreadable: {e}") from e
-            log.warning("rate limiter: override file %s unreadable (%s); keeping mine", path, e)
-            return
-        self._ns_overrides, self._org_overrides, self._actor_overrides = ns, org, actor
-        self._overrides_sig = sig
+    def _sync_overrides(self) -> None:
+        """Adopt the host's overrides when another worker changed them."""
+        doc = self._overrides_document()
+        latest = doc.poll() if doc is not None else None
+        if latest is not None:
+            self._ns_overrides, self._org_overrides, self._actor_overrides = latest
 
     @contextlib.contextmanager
     def _overrides_update(self) -> Iterator[None]:
-        """Read-modify-write of the host's override file under its lock, so two
-        workers updating at once never drop each other's change. A change that
-        cannot be published is rolled back and refused: it would bind only
-        this worker."""
-        from server.core.errors import LoomServerError
-
-        path = self._overrides_path()
-        if path is None:
-            if self._shared_wanted:
-                # Several workers but no shared table: the change would bind this one only.
-                raise LoomServerError(
+        """Change the overrides of every worker on the host (`SharedDocument.edit`).
+        A change that would bind only this worker is rolled back and refused."""
+        doc = self._overrides_document()
+        if doc is None:
+            if self._shared_needed:
+                raise BackendUnavailableError(
                     f"rate-limit override not applied: {self._shared_reason}; "
-                    "it would reach this worker only"
+                    "it would bind this worker only"
                 )
             yield
             return
-        from server.core.ratelimit_shared import file_lock, publish_json
-
+        before: _Overrides | None = None
         try:
-            with file_lock(path):
-                self._sync_overrides(strict=True)
+            with doc.edit(self._encode_overrides) as latest:
+                if latest is not None:
+                    self._ns_overrides, self._org_overrides, self._actor_overrides = latest
                 before = (
                     dict(self._ns_overrides),
                     dict(self._org_overrides),
                     dict(self._actor_overrides),
                 )
                 yield
-                data = {
-                    "ns": [[a, b, v.capacity, v.rate] for (a, b), v in self._ns_overrides.items()],
-                    "org": [
-                        [a, b, v.capacity, v.rate] for (a, b), v in self._org_overrides.items()
-                    ],
-                    "actor": [
-                        [a, b, o, v.capacity, v.rate]
-                        for (a, b, o), v in self._actor_overrides.items()
-                    ],
-                }
-                try:
-                    self._overrides_sig = publish_json(path, data)
-                except OSError:
-                    self._ns_overrides, self._org_overrides, self._actor_overrides = before
-                    raise
         except OSError as e:
-            raise LoomServerError(
-                f"rate-limit override not applied: {path} could not be updated ({e})"
-            ) from e
+            if before is not None:
+                self._ns_overrides, self._org_overrides, self._actor_overrides = before
+            raise BackendUnavailableError(f"rate-limit override not applied: {e}") from e
+
+    def _encode_overrides(self) -> dict[str, list[list[object]]]:
+        return {
+            "ns": [[a, b, v.capacity, v.rate] for (a, b), v in self._ns_overrides.items()],
+            "org": [[a, b, v.capacity, v.rate] for (a, b), v in self._org_overrides.items()],
+            "actor": [
+                [a, b, o, v.capacity, v.rate] for (a, b, o), v in self._actor_overrides.items()
+            ],
+        }
 
     @property
     def shared_active(self) -> bool:
@@ -750,11 +735,10 @@ class Limiter:
         self._actor_overrides.clear()
         if self._shared is not None:
             self._shared.reset()
-        path = self._overrides_path() if self._shared is not None else None
-        if path is not None:
+        if self._overrides_doc is not None:
             with contextlib.suppress(OSError):
-                os.remove(path)
-        self._overrides_sig = None
+                os.remove(self._overrides_doc.path)
+            self._overrides_doc = None
 
 
 _limiter = Limiter()
