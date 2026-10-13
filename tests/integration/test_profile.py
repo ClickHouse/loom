@@ -290,6 +290,7 @@ async def test_memory_search_excludes_profile_by_default(agent) -> None:
                 "fake-ngram-1024",
                 settings.embedding_dim,
                 [0.1] * settings.embedding_dim,
+                [0.0] * settings.embedding_dim,
                 1.0,
                 None,
                 __import__("datetime")
@@ -310,6 +311,7 @@ async def test_memory_search_excludes_profile_by_default(agent) -> None:
             "embedding_model",
             "embedding_dim",
             "embedding",
+            "memory_key_embedding",
             "confidence",
             "tombstoned_at",
             "created_at",

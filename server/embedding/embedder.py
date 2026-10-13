@@ -138,12 +138,8 @@ def _served(name: str) -> Embedder:
         )
         from server.embedding.fake import FakeNGramEmbedder
 
-        # The configured width, like the explicit-fake branch: the
-        # schema and HNSW index are sized from it.
-        return FakeNGramEmbedder(dim=settings.embedding_dim)
-    if provider == "fake":
-        from server.embedding.fake import FakeNGramEmbedder
-
+        # The configured width, as for an explicit fake model: the schema is
+        # sized from it.
         return FakeNGramEmbedder(dim=settings.embedding_dim)
     if provider == "local" and not (name == "local" or name.startswith("local:")):
         # LOOM_EMBEDDING_PROVIDER=local over a non-local model name.

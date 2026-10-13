@@ -165,6 +165,7 @@ def _seed(ch: Any, prefix: str, rnd: random.Random) -> None:
                                             model,
                                             dim,
                                             vec,
+                                            [0.0] * width,
                                             now if rnd.random() < 0.2 else None,
                                             rnd.choice(months),
                                             100 + v * 10 + rnd.randint(0, 3),
@@ -182,22 +183,24 @@ def _seed(ch: Any, prefix: str, rnd: random.Random) -> None:
                                         f"k{k}",
                                         now,
                                         now if rnd.random() < 0.2 else None,
+                                        [0.0] * width,
                                     ]
                                 )
     for i in range(20):
-        ev.append(["o1", "ns1", "a9", "u9", "alpha", f"gone{i}", now, None])
+        ev.append(["o1", "ns1", "a9", "u9", "alpha", f"gone{i}", now, None, [0.0] * width])
     mem_cols = [
         "org", "namespace", "agent", "user_id", "session_id", "memory_key", "value", "version",
         "tombstoned_at", "created_at", "status", "valid_to", "sensitivity", "entities",
     ]  # fmt: skip
     emb_cols = [
         "org", "namespace", "agent", "user_id", "session_id", "memory_key", "scope",
-        "content_excerpt", "embedding_model", "embedding_dim", "embedding", "tombstoned_at",
+        "content_excerpt", "embedding_model", "embedding_dim", "embedding",
+        "memory_key_embedding", "tombstoned_at",
         "created_at", "version", "entities",
     ]  # fmt: skip
     ev_cols = [
         "org", "namespace", "agent", "user_id", "entity_text", "memory_key", "created_at",
-        "tombstoned_at",
+        "tombstoned_at", "entity_embedding",
     ]  # fmt: skip
     # Several inserts per table: several parts, versions of one key split across them.
     for rows, table, cols in ((mem, "memory", mem_cols), (emb, "memory_embeddings", emb_cols)):
@@ -218,10 +221,10 @@ def _seed(ch: Any, prefix: str, rnd: random.Random) -> None:
     ch.insert(
         f"loom.{prefix}chunks",
         [
-            ["o1", "chunks_only", "u://1", 0, "c", "m1", 1, None, now],
-            ["o3", "chunks_only", "u://1", 0, "c", "m1", 1, None, now],
-            ["o1", "superseded_only", "u://2", 0, "c", "m1", 1, None, now],
-            ["o2", "superseded_only", "u://3", 0, "c", "m1", 1, now, now],
+            ["o1", "chunks_only", "u://1", 0, "c", "m1", 1, None, now, [0.0] * width],
+            ["o3", "chunks_only", "u://1", 0, "c", "m1", 1, None, now, [0.0] * width],
+            ["o1", "superseded_only", "u://2", 0, "c", "m1", 1, None, now, [0.0] * width],
+            ["o2", "superseded_only", "u://3", 0, "c", "m1", 1, now, now, [0.0] * width],
         ],
         column_names=[
             "org",
@@ -233,6 +236,7 @@ def _seed(ch: Any, prefix: str, rnd: random.Random) -> None:
             "doc_version",
             "doc_superseded_at",
             "created_at",
+            "embedding",
         ],  # fmt: skip
     )
     ch.insert(

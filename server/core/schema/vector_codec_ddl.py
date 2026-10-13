@@ -46,15 +46,6 @@ def codec_clause(dim: int, chain: str | None) -> str:
     return f"CODEC({inner})"
 
 
-def _default(declared: str, dim: int) -> str:
-    """A coded column takes only `dim`-long vectors, so an empty or absent
-    default becomes the zero placeholder (`server/core/vectors/placeholders.py`):
-    an INSERT that omits the column still writes a valid row."""
-    if declared.strip() in ("", "DEFAULT []"):
-        return f" DEFAULT CAST(arrayWithConstant({int(dim)}, 0), 'Array(BFloat16)')"
-    return declared
-
-
 def rewrite_statement(stmt: str, dim: int) -> str | None:
     """The statement to run instead of `stmt` — `stmt` itself when it does
     not touch a coded table's vector column, `None` when it must be skipped."""
@@ -66,11 +57,8 @@ def rewrite_statement(stmt: str, dim: int) -> str | None:
             pat = re.compile(
                 rf"`{re.escape(col)}`\s+Array\((?:Float32|BFloat16)\)((?:\s+DEFAULT\s+[^,\n]*?)?)(?:\s+CODEC\([^)]*\))?(?=\s*,|\s*\n|\s*\))"
             )
-            found = pat.search(out)
-            if found:
-                default = _default(found.group(1), dim)
-                coded = f"`{col}` Array(BFloat16){default} {codec_clause(dim, chain)}"
-                out = out[: found.start()] + coded + out[found.end() :]
+            replacement = f"`{col}` Array(BFloat16)\\1 {codec_clause(dim, chain)}"
+            out = pat.sub(replacement, out, count=1)
         return out
     m = _ALTER_RE.search(stmt)
     if m and m.group(1) in CODED_TABLES:
