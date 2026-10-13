@@ -217,7 +217,8 @@ def _layout(side: Side) -> tuple[dict[str, set[str]], set[str]]:
 def _renamed_scope(scope: str, before: Side, now: Side) -> tuple[str, bool]:
     """(the scope `scope` became in `now`, whether that is uncertain): the one new
     class keeping most of its members; `scope` itself when none does, unsure when a
-    class too small to share `_MIN_SHARED` members has one with them all unchanged. A
+    class too small to share `_MIN_SHARED` members was renamed alone, its members
+    unchanged. A
     scope this file does not show to be a class (its methods defined out of line, its
     class in a header) is never followed: unsure."""
     was, was_classes = _layout(before)
@@ -234,7 +235,11 @@ def _renamed_scope(scope: str, before: Side, now: Side) -> tuple[str, bool]:
     if not kept and len(old) < _MIN_SHARED:
         # too small to share members: a class with the same members, unchanged, may be it
         texts = _member_shapes(before, scope)
-        return scope, any(texts == _member_shapes(now, s) for s in news & set(members) if texts)
+        return scope, any(
+            texts == _member_shapes(now, s) and _renamed_alone(scope, s, before, now)
+            for s in news & set(members)
+            if texts
+        )
     return scope, bool(kept)
 
 
