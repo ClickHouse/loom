@@ -78,6 +78,7 @@ async def test_stub_inserted_directly_gets_embedded(
     """Insert a stub embedding row directly (simulating what the async-mode
     memory.set writes), then run the worker, verify it's filled in."""
     ns = f"emb-{uuid.uuid4().hex[:6]}"
+    await _seed_memory_row(ns, "pending_k", "clickhouse columnar speed")
     ch_client.command(
         """
         INSERT INTO loom.memory_embeddings
@@ -116,6 +117,41 @@ async def test_stub_inserted_directly_gets_embedded(
     assert _embedding_dim(ch_client, ns, "pending_k") > 0
 
 
+async def _seed_memory_row(ns: str, key: str, value: str) -> None:
+    """The memory row an async-mode memory.set writes beside its stub: the worker
+    fills only stubs whose head may keep a vector, and a stub with no head is an
+    orphan."""
+    import hashlib
+    import json
+    from datetime import UTC, datetime
+
+    from server.core.ch import get_client
+    from server.memory import store as M
+
+    ch = get_client()
+    await ch.connect()  # the shared client the worker pass uses next: left connected
+    row = M.build_first_version_row(
+        {
+            "org": ORG,
+            "namespace": ns,
+            "agent": "w",
+            "user_id": "-",
+            "session_id": "-",
+            "memory_key": key,
+            "memory_type": "semantic",
+            "value": json.dumps(value),
+            "value_json": "{}",
+            "content_sha256": hashlib.sha256(value.encode()).hexdigest(),
+            "confidence": 1.0,
+            "actor": "process:itest",
+            "source_class": "asserted",
+            "version": M.next_version(),
+        },
+        now=datetime.now(UTC).replace(tzinfo=None),
+    )
+    await M.insert_memory_versions([row], ch=ch)
+
+
 @pytest.mark.asyncio
 async def test_stub_invisible_to_search_until_embedded(
     control_plane_url: str,
@@ -129,6 +165,7 @@ async def test_stub_invisible_to_search_until_embedded(
     from loom import Agent
 
     ns = f"emb-srch-{uuid.uuid4().hex[:6]}"
+    await _seed_memory_row(ns, "pending", "distinctive query content here")
     ch_client.command(
         """
         INSERT INTO loom.memory_embeddings

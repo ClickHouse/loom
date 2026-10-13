@@ -223,6 +223,44 @@ async def _embed_batch(embedder: Any, texts: list[str]) -> list[tuple[list[float
     return out
 
 
+async def _stubs_still_served(
+    rows: list[dict[str, Any]], stub_embedding: list[float], now: datetime
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """The stubs whose head may still keep a vector, and tombstones (two above the
+    stub, its excerpt cleared) for the rest. Shared-scope stubs have no head of
+    their own and are kept."""
+    from server.memory.store import read_your_writes_enabled
+
+    own = [r for r in rows if str(r.get("scope") or "") != "shared"]
+    if not own:
+        return rows, []
+    sequential = read_your_writes_enabled()
+    heads = await memory_repo.head_sensitivities(
+        sorted({memory_repo.embedding_key(r) for r in own}), sequential=sequential
+    )
+
+    def served(r: dict[str, Any]) -> bool:
+        if str(r.get("scope") or "") == "shared":
+            return True
+        head = heads.get(memory_repo.embedding_key(r))
+        return head != "high" and (head is not None or not sequential)
+
+    keep = [r for r in rows if served(r)]
+    dropped = [
+        memory_repo.build_embedding_row(
+            **{**_carry_signals(r), "version": int(r["version"]) + 2},
+            content_excerpt="",
+            embedding_model=r["embedding_model"],
+            embedding_dim=0,
+            embedding=stub_embedding,
+            tombstoned_at=now,
+        )
+        for r in rows
+        if not served(r)
+    ]
+    return keep, dropped
+
+
 def _replacement_rows(
     r: dict[str, Any],
     vec: list[float],
@@ -389,6 +427,11 @@ async def run_pass(
         retries: list[dict[str, Any]] = []
         # tz-aware: clickhouse-connect reads naive datetimes as client-local.
         now = datetime.now(UTC)
+        # A stub whose head is now 'high' (or gone, on a sequential read) is never sent
+        # to the embedding provider: its excerpt may be the credential. It is retired.
+        rows, dropped = await _stubs_still_served(rows, stub_embedding, now)
+        if dropped:
+            await memory_repo.insert_embedding_rows(dropped)
         if rows:
             embedded = await _embed_batch(embedder, [r["content_excerpt"] for r in rows])
             for r, (vec, embed_err) in zip(rows, embedded, strict=True):

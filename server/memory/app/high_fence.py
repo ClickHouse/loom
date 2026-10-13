@@ -11,6 +11,7 @@ loom.memory.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from server.embedding import get_embedder
@@ -35,9 +36,17 @@ async def recheck_live_vectors(keys: list[Any], *, ch: Any = None) -> None:
     scan but after this write drew its own (dedup, reconcile-status) would stay: the
     keys' live vectors go through the same head re-check a copy runs."""
     import server.memory.store as memory_repo
+    from server.memory.store import read_your_writes_enabled
 
-    live = await memory_repo.live_rows_for_keys(keys, ch=ch)
-    await memory_repo.retire_copies_under_unembedded_heads(live, ch=ch)
+    try:
+        live = await memory_repo.live_rows_for_keys(
+            keys, ch=ch, sequential=read_your_writes_enabled()
+        )
+        await memory_repo.retire_copies_under_unembedded_heads(live, ch=ch)
+    except Exception as e:  # noqa: BLE001 — the high row and its fence are in; a missed re-check is logged
+        logging.getLogger(__name__).warning(
+            "fence_high: live-vector re-check failed for %d keys: %s", len(keys), e
+        )
 
 
 async def tombstone_chunks_of(keys: list[Any], *, ch: Any = None) -> None:

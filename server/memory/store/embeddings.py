@@ -332,25 +332,49 @@ async def reemit_embedding_rows_for_keys(
 
 
 async def live_rows_for_keys(
-    keys: list[EmbeddingKey], *, ch: _CHClient | None = None
+    keys: list[EmbeddingKey], *, ch: _CHClient | None = None, sequential: bool = False
 ) -> list[dict[str, Any]]:
-    """Every live memory_embeddings row of the given identity keys."""
-    return await _live_rows_for_keys(ch or _default_client(), keys)
+    """Every live memory_embeddings row of the given identity keys, `_HEAD_READ_BATCH`
+    keys per statement."""
+    ch = ch or _default_client()
+    out: list[dict[str, Any]] = []
+    for start in range(0, len(keys), _HEAD_READ_BATCH):
+        out += await _live_rows_for_keys(
+            ch, keys[start : start + _HEAD_READ_BATCH], sequential=sequential
+        )
+    return out
 
 
-async def _live_rows_for_keys(ch: _CHClient, keys: list[EmbeddingKey]) -> list[dict[str, Any]]:
+async def head_sensitivities(
+    keys: list[EmbeddingKey], *, ch: _CHClient | None = None, sequential: bool = False
+) -> dict[EmbeddingKey, str]:
+    """The live head's sensitivity per identity key (absent when there is none),
+    `_HEAD_READ_BATCH` keys per statement."""
+    ch = ch or _default_client()
+    heads: dict[EmbeddingKey, str] = {}
+    for start in range(0, len(keys), _HEAD_READ_BATCH):
+        heads |= await _head_sensitivity(ch, keys[start : start + _HEAD_READ_BATCH], sequential)
+    return heads
+
+
+async def _live_rows_for_keys(
+    ch: _CHClient, keys: list[EmbeddingKey], *, sequential: bool = False
+) -> list[dict[str, Any]]:
     """Every live memory_embeddings row of the given identity keys, in one
     keyed FINAL read (the key tuple in PREWHERE, see `_EMB_KEY_PREWHERE`)."""
+    from server.memory.store.sql import _SEQUENTIAL
+
     if not keys:
         return []
     cols = list(zip(*keys, strict=True))
     return await ch.query_all(
-        """
+        f"""
         SELECT * FROM loom.memory_embeddings FINAL
         PREWHERE (org, namespace, agent, user_id, session_id, memory_key) IN arrayZip(
-            {o:Array(String)}, {n:Array(String)}, {a:Array(String)},
-            {u:Array(String)}, {s:Array(String)}, {k:Array(String)})
+            {{o:Array(String)}}, {{n:Array(String)}}, {{a:Array(String)}},
+            {{u:Array(String)}}, {{s:Array(String)}}, {{k:Array(String)}})
         WHERE tombstoned_at IS NULL
+        {_SEQUENTIAL if sequential else ""}
         """,
         params={
             "o": list(cols[0]),
@@ -429,9 +453,7 @@ async def retire_copies_under_unembedded_heads(
     sequential = read_your_writes_enabled()
     try:
         keys = sorted({embedding_key(r) for r in copies})
-        heads: dict[EmbeddingKey, str] = {}
-        for start in range(0, len(keys), _HEAD_READ_BATCH):
-            heads |= await _head_sensitivity(ch, keys[start : start + _HEAD_READ_BATCH], sequential)
+        heads = await head_sensitivities(keys, ch=ch, sequential=sequential)
         stale = {k for k in keys if heads.get(k) == "high" or (sequential and k not in heads)}
         if not stale:
             return 0

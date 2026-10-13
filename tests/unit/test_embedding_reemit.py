@@ -816,13 +816,18 @@ async def test_every_vector_copy_site_rechecks_its_head(site: str, monkeypatch) 
     assert checked and checked[0][0]["memory_key"] == row["memory_key"]
 
 
-def test_the_embed_workers_fill_rechecks_its_heads() -> None:
-    """The worker's filled stubs are vector rows like any copy: a stub drawn before a
-    'high' write landed can sit above its fence, so the fill runs the re-check."""
-    import inspect
+@pytest.mark.asyncio
+async def test_the_live_read_is_chunked_and_can_be_sequential() -> None:
+    """fence_high re-reads the live vectors of every key it fenced (a rollback can pass
+    20,000): one statement per 500 keys, sequentially consistent when asked."""
+    calls: list[tuple[int, str]] = []
 
-    from server.memory.workers import embedding
+    class _CH:
+        async def query_all(self, sql: str, params: Any = None) -> list[Any]:
+            calls.append((len(params["k"]), sql))
+            return []
 
-    assert "retire_copies_under_unembedded_heads(replacements)" in inspect.getsource(
-        embedding.run_pass
-    )
+    keys = [("o", "n", "a", "u", "s", f"k{i}") for i in range(1203)]
+    await M.live_rows_for_keys(keys, ch=_CH(), sequential=True)
+    assert [n for n, _ in calls] == [500, 500, 203]
+    assert all("select_sequential_consistency" in sql for _, sql in calls)

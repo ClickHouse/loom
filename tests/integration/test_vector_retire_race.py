@@ -1575,3 +1575,112 @@ async def test_a_high_profile_section_never_gets_a_vector(ch: Any) -> None:
                 f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
                 params={"o": ORG, "n": ns},
             )
+
+
+async def _high_key_with_row_above_its_fence(
+    ch: Any, ns: str, key: str, *, dim: int
+) -> tuple[str, int]:
+    """A key made 'high' through memory.set, then a vector row (or a dim-0 stub) of
+    its old text written above the high row's fence, as a pass that drew its version
+    before the high write but inserted after it would leave."""
+    from server.embedding import get_embedder
+    from server.memory import store as M
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import write
+
+    secret = "sk-proj-" + uuid.uuid4().hex + uuid.uuid4().hex[:8]
+    ident = {"org": ORG, "namespace": ns, "agent": AGENT, "memory_key": key}
+    await write.handle_memory_set(MemorySetInput(**ident, value=f"root token {secret}"))
+    head = await ch.query_one(
+        "SELECT version FROM loom.memory FINAL WHERE org = {o:String}"
+        " AND namespace = {n:String} AND memory_key = {k:String}",
+        params={"o": ORG, "n": ns, "k": key},
+    )
+    embedder = get_embedder()
+    row = M.build_embedding_row(
+        org=ORG,
+        namespace=ns,
+        agent=AGENT,
+        user_id=USER,
+        session_id=SESSION,
+        memory_key=key,
+        memory_type="semantic",
+        scope="private",
+        content_excerpt=f"the old text and {secret}",
+        embedding_model=embedder.model_name,
+        embedding_dim=dim,
+        embedding=[0.1] * dim,
+        created_at=datetime.now(UTC).replace(tzinfo=None),
+        version=int(head["version"]) + 10,
+    )
+    await M.insert_embedding_rows([row], ch=ch)
+    return secret, int(head["version"])
+
+
+async def _live_rows(ch: Any, ns: str, key: str) -> int:
+    row = await ch.query_one(
+        "SELECT count() AS n FROM loom.memory_embeddings FINAL WHERE org = {o:String}"
+        " AND namespace = {n:String} AND memory_key = {k:String} AND tombstoned_at IS NULL",
+        params={"o": ORG, "n": ns, "k": key},
+    )
+    return int(row["n"])
+
+
+async def test_fence_high_retires_a_vector_written_above_its_fence(ch: Any) -> None:
+    from server.embedding import get_embedder
+    from server.memory.app.high_fence import fence_high
+
+    ns = f"itest-{uuid.uuid4().hex[:12]}"
+    key = f"above_fence_{uuid.uuid4().hex[:6]}"
+    try:
+        _secret, version = await _high_key_with_row_above_its_fence(
+            ch, ns, key, dim=get_embedder().dim
+        )
+        assert await _live_rows(ch, ns, key) == 1
+        await fence_high([((ORG, ns, AGENT, USER, SESSION, key), version)], ch=ch)
+        assert await _live_rows(ch, ns, key) == 0
+    finally:
+        for table in ("memory", "memory_embeddings", "entity_vectors", "memory_chunks"):
+            await ch.execute(
+                f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
+                params={"o": ORG, "n": ns},
+            )
+
+
+async def test_a_stub_above_a_high_fence_is_never_sent_to_the_embedder(
+    ch: Any, monkeypatch: Any
+) -> None:
+    from server.embedding import embedder as embedder_mod
+    from server.memory.workers.embedding import EmbeddingWorkerConfig, run_pass
+
+    ns = f"itest-{uuid.uuid4().hex[:12]}"
+    key = f"stub_above_fence_{uuid.uuid4().hex[:6]}"
+    sent: list[str] = []
+
+    class _Recording:
+        def __init__(self, inner: Any) -> None:
+            self._inner, self.model_name, self.dim = inner, inner.model_name, inner.dim
+
+        async def embed(self, text: str) -> list[float]:
+            sent.append(text)
+            return await self._inner.embed(text)
+
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            sent.extend(texts)
+            return await self._inner.embed_many(texts)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._inner, name)
+
+    try:
+        secret, _version = await _high_key_with_row_above_its_fence(ch, ns, key, dim=0)
+        monkeypatch.setattr(embedder_mod, "_cached", _Recording(embedder_mod.get_embedder()))
+        await run_pass(EmbeddingWorkerConfig(org_filter=ORG, namespace_filter=ns))
+        assert not any(secret in t for t in sent)
+        assert await _live_rows(ch, ns, key) == 0
+    finally:
+        for table in ("memory", "memory_embeddings", "entity_vectors", "memory_chunks"):
+            await ch.execute(
+                f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
+                params={"o": ORG, "n": ns},
+            )
