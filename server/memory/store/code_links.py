@@ -110,14 +110,18 @@ def link_row(base: LinkRow | None = None, *, follows: int | None = None, **field
 
 
 async def insert(rows: list[LinkRow], *, ch: _CHClient | None = None) -> None:
-    """Write `rows`; in an org an erasure is running in, or ran in today, then drop them
-    again for any memory that is gone by now. A writer that read before the erasure and
-    wrote after it would otherwise bring back what it removed; `sweep_page` catches what
-    this misses."""
+    """Write `rows`; where an org had a recent erasure, delete those of gone memories again."""
     if not rows:
         return
     ch = ch or _default_client()
     await ch.insert(TABLE, cast(list[dict[str, Any]], rows))
+    await _drop_links_of_erased(ch, rows)
+
+
+async def _drop_links_of_erased(ch: _CHClient, rows: list[LinkRow]) -> None:
+    """Delete the links just written for memories that are gone, in the orgs with a recent
+    erasure: a writer that read before it would bring back what it removed. `sweep_page`
+    retries what this misses."""
     by_org: dict[str, set[str]] = defaultdict(set)
     for r in rows:
         by_org[r["org"]].add(r["memory_id"])
@@ -143,11 +147,8 @@ _KEY_COLUMNS = _KEY.split(", ")
 async def sweep_page(
     after: tuple[str, ...] | None, limit: int, *, ch: _CHClient | None = None
 ) -> tuple[tuple[str, ...] | None, int]:
-    """Drop the links of the gone memories among the next `limit` link rows after
-    `after`, read in the table's sort order (the retry of an insert's cleanup that
-    failed, at whatever age), and the tombstones among them older than
-    `TOMBSTONE_DAYS`. Returns where the next page starts (None: the table was read to
-    its end) and how many memories' links went."""
+    """Drop gone memories' links and old tombstones among the next `limit` link rows after
+    `after`; returns the next page's start (None at the table's end) and the memories."""
     ch = ch or _default_client()
     # the tuple alone is no key condition: bounds on the key's first columns let the read
     # skip the rows before the cursor
@@ -222,9 +223,8 @@ async def drop_gone(org: str, memory_ids: set[str], *, ch: _CHClient | None = No
 
 
 async def _drop_gone(ch: _CHClient, by_org: dict[str, set[str]]) -> int:
-    """Delete the links of the memories in `by_org` that are gone or tombstoned; how many
-    memories that was. Only rows older than the liveness read go: a memory restored and
-    relinked meanwhile has links of a newer version, and they stay."""
+    """Delete the links older than this read of the memories in `by_org` that are gone or
+    tombstoned; returns how many memories that was."""
     dropped = 0
     for org, ids in by_org.items():
         before = time.time_ns()
@@ -474,13 +474,8 @@ async def queued_memories(
     lag_s: int,
     ch: _CHClient | None = None,
 ) -> tuple[list[dict[str, Any]], list[QueuePosition], QueuePosition]:
-    """(head rows, queue positions, cutoff) of the memory writes queued after `after`,
-    in insert order; the heads only of memories that may name code (tagged `repo:`,
-    written in one of `code_namespaces`, or linked). A position is (queue time µs,
-    version, identity): unique per write, so a page boundary never splits a bulk write
-    that shares one queue time. `lag_s` leaves concurrent inserts time to become
-    visible; `cutoff` is the position every write visible to this read precedes. Each
-    head carries `pos`, its latest."""
+    """(heads, positions, cutoff) of the writes queued after `after` and `lag_s` before
+    now, in queue order; heads only of memories that may name code, each with its `pos`."""
     ch = ch or _default_client()
     now = await ch.query_one(
         "SELECT toUnixTimestamp64Micro(now64(6) - toIntervalSecond({lag:UInt32})) AS t",

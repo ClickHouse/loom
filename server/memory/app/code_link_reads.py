@@ -69,8 +69,7 @@ def _judged_here(link: LinkRow) -> bool:
 
 
 async def current_links(org: str, links: list[LinkRow]) -> list[LinkRow]:
-    """`links` (any memories') less those `current` drops, and those of a memory no longer
-    stored."""
+    """The links among `links` that `current` keeps for their stored memory."""
     by_mid: dict[str, list[LinkRow]] = defaultdict(list)
     for a in links:
         by_mid[a["memory_id"]].append(a)
@@ -249,8 +248,9 @@ async def annotate_hits(input: Any, hits: list[Any]) -> None:
         # a link into code the caller may not read counts as live: whether a hit goes
         # must not tell them that code is gone
         judged = [a if a["code_namespace"] in seen else a | {"state": "fresh"} for a in links]
+        # a pending link keeps the memory: its code may yet exist
         if m and _hidden(m, judged, policies):
-            continue  # a pending link counts: its code may yet exist
+            continue
         readable = [
             a for a in links if a["state"] in code_change.STATE_RANK and a["code_namespace"] in seen
         ]
