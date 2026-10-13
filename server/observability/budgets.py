@@ -42,7 +42,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
-from server.core.errors import BackendUnavailableError
+from server.core.errors import OverrideNotSharedError
 from server.core.runtime_files import server_file
 from server.core.shared_document import SharedDocument
 
@@ -148,7 +148,10 @@ class BudgetOverrides:
             try:
                 new = change(mine) if doc is None else doc.update(change, mine)
             except OSError as e:
-                raise BackendUnavailableError(f"budget override not applied: {e}") from e
+                log.warning("budget override not shared: %s", e)
+                raise OverrideNotSharedError(
+                    "budget override not applied: the server's web processes could not share it"
+                ) from e
             self._overrides, self._by_consumer = new.ops, new.by_consumer
 
     # -- per op (unchanged API) -------------------------------------------

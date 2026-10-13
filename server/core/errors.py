@@ -161,6 +161,16 @@ class EmbedTimeoutError(LoomServerError):
     status_code = 503
 
 
+class OverrideNotSharedError(LoomServerError):
+    """503 — a runtime override (budget or rate limit) could not be shared with
+    the server's other web processes, so none of them took it. No
+    `Retry-After`: the fix is the runtime directory's (permissions, space);
+    the server log names the file."""
+
+    code = "OVERRIDE_NOT_SHARED"
+    status_code = 503
+
+
 class SchemaPendingError(LoomServerError):
     """503 — the statement names a table that a migration this build carries
     but the service has not applied would create. Refused

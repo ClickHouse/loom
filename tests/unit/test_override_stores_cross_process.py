@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from server.core import shared_document
-from server.core.errors import BackendUnavailableError
+from server.core.errors import OverrideNotSharedError
 from server.core.ratelimit import Limit, Limiter
 from server.observability.budgets import BudgetOverrides
 
@@ -37,6 +37,15 @@ lim = Limiter()
 for i in range(int(sys.argv[3])):
     lim.set_namespace_limit(f"ns{sys.argv[2]}_{i}", "memory", Limit(capacity=i + 1, rate=1.0))
 """
+
+
+@pytest.fixture(autouse=True)
+def _own_runtime_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Per-server files land in this test's directory, never the user's real one."""
+    from server.core import runtime_files
+
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
+    monkeypatch.setattr(runtime_files, "_pruned", set())
 
 
 def _race(code: str, path: str, env: dict[str, str]) -> None:
@@ -99,9 +108,9 @@ def test_an_unpublished_budget_update_is_refused(
     a, b, _ = _budgets(tmp_path)
     a.set("memory.set", 30)
     monkeypatch.setattr(shared_document.os, "replace", _no_space)
-    with pytest.raises(BackendUnavailableError, match="not applied"):
+    with pytest.raises(OverrideNotSharedError, match="not applied"):
         a.set("memory.set", 0)
-    with pytest.raises(BackendUnavailableError):
+    with pytest.raises(OverrideNotSharedError):
         a.clear("memory.set")
     assert a.effective("memory.set", 99) == 30
     assert b.effective("memory.set", 99) == 30
@@ -112,7 +121,7 @@ def test_an_unpublished_rate_limit_update_is_refused(
 ) -> None:
     a, _, _ = limiters
     monkeypatch.setattr(shared_document.os, "replace", _no_space)
-    with pytest.raises(BackendUnavailableError, match="not applied"):
+    with pytest.raises(OverrideNotSharedError, match="not applied"):
         a.set_namespace_limit("ns1", "memory", Limit(capacity=1, rate=0.0))
     assert ("ns1", "memory") not in a._ns_overrides
 
@@ -125,7 +134,7 @@ def test_a_budget_update_over_an_unreadable_file_is_refused(
     a.set("memory.set", 0)
     before = path.read_bytes()
     _deny_reads_of(monkeypatch, str(path))
-    with pytest.raises(BackendUnavailableError, match="not applied"):
+    with pytest.raises(OverrideNotSharedError, match="not applied"):
         b.set("memory.get", 5)
     monkeypatch.undo()
     assert path.read_bytes() == before
@@ -140,7 +149,7 @@ def test_a_rate_limit_update_over_an_unreadable_file_is_refused(
     a.set_namespace_limit("ns_a", "memory", Limit(capacity=1, rate=0.0))
     before = overrides.read_bytes()
     _deny_reads_of(monkeypatch, str(overrides))
-    with pytest.raises(BackendUnavailableError, match="not applied"):
+    with pytest.raises(OverrideNotSharedError, match="not applied"):
         b.set_namespace_limit("ns_b", "memory", Limit(capacity=2, rate=1.0))
     monkeypatch.undo()
     assert overrides.read_bytes() == before
@@ -194,11 +203,13 @@ async def test_admin_ratelimit_set_cannot_acknowledge_a_change_it_could_not_shar
     settings_override(ratelimit_shared="on", ratelimit_shared_path="/proc/loom-test.buckets")
     lim = Limiter()
     monkeypatch.setattr(ratelimit, "get_limiter", lambda: lim)
-    with pytest.raises(BackendUnavailableError) as refused:
+    with pytest.raises(OverrideNotSharedError) as refused:
         await admin_ratelimit_set(
             RatelimitSetInput(namespace="ns1", op_class="memory", capacity=3, rate=0.0)
         )
     assert refused.value.status_code == 503
+    assert refused.value.headers() is None  # no Retry-After: the fix is an operator's
+    assert "/proc" not in refused.value.message  # the file path stays in the server log
     assert ("ns1", "memory") not in lim._ns_overrides
 
 
@@ -264,3 +275,16 @@ def test_a_siblings_override_seen_inside_an_update_resizes_this_worker(settings_
     assert result.limit == 1.0 and not b.check("hot", "memory.set", org="o").allowed
     a.reset_all()
     b.reset_all()
+
+
+def test_a_refused_update_still_adopts_a_siblings_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    a, b, _ = _budgets(tmp_path)
+    a.set("memory.set", 30)
+    b.set("memory.set", 1)
+    monkeypatch.setattr(shared_document.os, "replace", _no_space)
+    with pytest.raises(OverrideNotSharedError):
+        a.set("memory.search", 5)
+    monkeypatch.undo()
+    assert a.effective("memory.set", 99) == 1

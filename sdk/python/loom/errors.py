@@ -96,6 +96,13 @@ class SchemaPending(BackendUnavailable):
     code = "SCHEMA_PENDING"
 
 
+class OverrideNotShared(BackendUnavailable):
+    """503 OVERRIDE_NOT_SHARED — a runtime override could not reach the
+    server's other web processes, so none took it; the server log says why."""
+
+    code = "OVERRIDE_NOT_SHARED"
+
+
 #: `code` of a `BackendUnavailable` for a request that got no complete
 #: response: the server could not be reached, or its answer was cut off.
 NETWORK_ERROR_CODE = "NETWORK"
@@ -135,6 +142,7 @@ ERROR_CODES: dict[str, type[LoomError]] = {
     "OVERLOADED": Overloaded,
     "BACKEND_TIMEOUT": BackendTimeout,
     "SCHEMA_PENDING": SchemaPending,
+    "OVERRIDE_NOT_SHARED": OverrideNotShared,
     "IDEMPOTENT_CONFLICT": IdempotentConflict,
     "PRECONDITION_FAILED": PreconditionFailed,
 }

@@ -78,3 +78,33 @@ def test_nothing_is_removed_when_the_namespace_is_unknown(
     monkeypatch.setattr(runtime_files, "_pid_namespace", lambda: "")
     server_file("x")
     assert stale.exists()
+
+
+def test_a_live_owner_whose_proc_entry_cannot_be_read_keeps_its_files(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server_file("x")
+    owner = f"{NS}-1-999999999"
+    files = [
+        run_dir / f"loom-budgets-{owner}.json",
+        run_dir / f"loom-budgets-{owner}.json.lock",
+        run_dir / f"loom-graph-marks-{owner}",
+    ]
+    files[0].write_text("{}")
+    files[1].write_text("")
+    files[2].mkdir()
+    real = Path.read_text
+
+    def read_text(self: Path, *args: object, **kwargs: object) -> str:
+        if str(self) == "/proc/1/stat":
+            raise PermissionError(13, "denied", str(self))
+        return real(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    _prune_again(monkeypatch)
+    server_file("x")
+    assert all(f.exists() for f in files)
+
+
+def test_a_missing_proc_entry_means_the_owner_is_gone() -> None:
+    assert runtime_files._started(2**22 + 12345) == ""  # beyond pid_max: no such process

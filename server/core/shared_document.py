@@ -62,9 +62,13 @@ class SharedDocument[T]:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX)
             self._seen = None
-            latest = self._read_changed()
-            new = change(default if latest is None else latest)
-            self._seen = _publish(self.path, self._encode(new))
+            try:
+                latest = self._read_changed()
+                new = change(default if latest is None else latest)
+                self._seen = _publish(self.path, self._encode(new))
+            except BaseException:
+                self._seen = None  # the caller kept its state, so the next poll adopts `latest`
+                raise
             return new
         finally:
             os.close(lock)
@@ -95,7 +99,10 @@ class SharedDocument[T]:
 def _publish(path: str, data: object) -> _Version:
     """Replace `path` atomically. The version comes from the written file before
     the rename (which keeps it), so nothing can fail once the rename commits."""
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", prefix=".tmp-")
+    # Named after the document, so a file left by a killed worker is pruned with it.
+    fd, tmp = tempfile.mkstemp(
+        dir=os.path.dirname(path) or ".", prefix=f"{os.path.basename(path)}.tmp-"
+    )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(data, fh)

@@ -43,13 +43,16 @@ def runtime_dir() -> str:
     return _TMP_DIR
 
 
-def _started(pid: int) -> str:
-    """The process's start time (field 22 of /proc/<pid>/stat); '' when not running."""
+def _started(pid: int) -> str | None:
+    """The process's start time (field 22 of /proc/<pid>/stat); '' when no such
+    process runs, None when /proc cannot say (unreadable)."""
     try:
-        stat = Path(f"/proc/{pid}/stat").read_text()
-    except OSError:
+        fields = Path(f"/proc/{pid}/stat").read_text()
+    except FileNotFoundError:
         return ""
-    return stat.rsplit(")", 1)[1].split()[19]
+    except OSError:
+        return None
+    return fields.rsplit(")", 1)[1].split()[19]
 
 
 def _pid_namespace() -> str:
@@ -78,8 +81,9 @@ def _prune(base: str, namespace: str) -> None:
             owned = _OWNED.match(entry.name)
             if owned is None or owned.group(1) != namespace:
                 continue
-            if _started(int(owned.group(2))) == owned.group(3):
-                continue
+            started = _started(int(owned.group(2)))
+            if started is None or started == owned.group(3):
+                continue  # running, or unknown: keep it
             with contextlib.suppress(OSError):
                 if entry.stat(follow_symlinks=False).st_uid != os.geteuid():
                     continue

@@ -176,3 +176,21 @@ def test_a_read_that_fails_after_opening_is_retried(
     monkeypatch.setattr(shared_document.json, "load", load)
     assert reader.poll() is None
     assert reader.poll() == {"x": 1}  # the same version, read again
+
+
+def test_a_failed_update_leaves_a_siblings_newer_version_to_adopt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "d.json"
+    a, b = _doc(path), _doc(path)
+    a.update(lambda _: {"x": 30}, NONE)
+    b.update(lambda _: {"x": 1}, NONE)  # a has not seen this yet
+
+    def no_space(*_a: object) -> None:
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(shared_document.os, "replace", no_space)
+    with pytest.raises(OSError):
+        a.update(lambda latest: {**latest, "y": 2}, NONE)  # reads b's version, then fails
+    monkeypatch.undo()
+    assert a.poll() == {"x": 1}
