@@ -105,6 +105,9 @@ async def test_reads_are_scoped_as_their_callers_rely_on() -> None:
             ["n"],
             ["changed"],
         )
+    await store.for_code("o", None, namespaces=["n"], memory_keys=["k"], ch=ch)
+    assert "memory_key IN {memory_key:Array(String)}" in ch.sql[-1][0]
+    assert ch.sql[-1][1]["memory_key"] == ["k"]
     await store.pending("o", "c", days=14, ch=ch)
     assert ch.sql[-1][1]["days"] == 14
     assert await store.policy_due("o", "c", ch=ch) == ["m"]

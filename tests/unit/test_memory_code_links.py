@@ -1073,8 +1073,9 @@ async def test_stale_links_are_the_current_links_of_served_memories_in_readable_
     def head(mid: str, status: str = "active", tombstoned: Any = None) -> dict[str, Any]:
         return {"mid": mid, "status": status, "tombstoned_at": tombstoned}
 
-    async def for_code(org, cns, *, namespaces, states):
+    async def for_code(org, cns, *, namespaces, memory_keys, states):
         assert cns is None and states == ["changed", "unresolved", "missing"]
+        assert memory_keys == ["k"]
         return [link("live"), link("deleted"), link("rejected"), link("hidden", "code-secret")]
 
     async def heads(org, ids):
@@ -1093,7 +1094,7 @@ async def test_stale_links_are_the_current_links_of_served_memories_in_readable_
     monkeypatch.setattr(code_link_reads, "readable_code", readable)
     monkeypatch.setattr(code_link_reads, "inputs_now", lambda org, memory: f"i-{memory['mid']}")
     monkeypatch.setattr(code_links.code_change, "held", lambda row: False)
-    links = await code_link_reads.stale_links("o", "ns")
+    links = await code_link_reads.stale_links("o", "ns", ["k"])
     assert [a["memory_id"] for a in links] == ["live"]
 
 

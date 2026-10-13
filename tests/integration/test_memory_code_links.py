@@ -376,6 +376,12 @@ async def test_memories_follow_their_code(env, monkeypatch) -> None:
     report = await handle_namespace_validate(NamespaceValidateInput(org=ORG, namespace=MEM))
     stale = next(f for f in report.findings if f.check == "code_links_stale")
     assert {s["memory_key"] for s in stale.samples} == {"fetch-retry", "helper-pinned"}
+    assert stale.count == 2
+    report = await handle_namespace_validate(
+        NamespaceValidateInput(org=ORG, namespace=MEM, keys=["helper-pinned"])
+    )
+    stale = next(f for f in report.findings if f.check == "code_links_stale")
+    assert [s["memory_key"] for s in stale.samples] == ["helper-pinned"] and stale.count == 1
 
     # c3: util.py comes back, and with it the rule
     c3 = repo.commit({"src/widgets/util.py": _UTIL})

@@ -198,15 +198,16 @@ async def for_code(
     *,
     paths: Sequence[str] | None = None,
     namespaces: Sequence[str] | None = None,
+    memory_keys: Sequence[str] | None = None,
     states: Sequence[str] | None = None,
     checked_commits: Sequence[str] | None = None,
     or_former_paths: bool = False,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """Live links of `code_namespaces` (None = every one), narrowed to `paths` (or, with
-    `or_former_paths`, links that lived there before a move or where they were made), the memory
-    `namespaces`, link `states` and the commits they were checked at when given; by
-    `paths` or by `checked_commits`, not both."""
+    `or_former_paths`, links that lived there before a move or where they were made), the
+    memory `namespaces` and `memory_keys`, link `states` and the commits they were checked
+    at when given; by `paths` or by `checked_commits`, not both."""
     if paths is not None and checked_commits is not None:
         raise ValueError("for_code narrows by paths or by commits, not both")
     # one read per column, each narrowed by its own index: an OR of them by none
@@ -220,6 +221,7 @@ async def for_code(
             {
                 column: paths,
                 "namespace": namespaces,
+                "memory_key": memory_keys,
                 "state": states,
                 "checked_commit": checked_commits,
             },

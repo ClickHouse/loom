@@ -43,7 +43,7 @@ class _CH:
 
 @pytest.fixture(autouse=True)
 def _no_code_links(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def stale_links(org: str, namespace: str) -> list[dict[str, Any]]:
+    async def stale_links(org: str, namespace: str, keys: Any = None) -> list[dict[str, Any]]:
         return []
 
     monkeypatch.setattr("server.memory.app.code_link_reads.stale_links", stale_links)
@@ -261,7 +261,7 @@ def test_keys_are_bounded_to_two_hundred() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stale_code_links_are_counted_from_the_links_newest_first(
+async def test_stale_code_links_count_memories_and_sample_links_newest_first(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from datetime import datetime
@@ -276,11 +276,16 @@ async def test_stale_code_links_are_counted_from_the_links_newest_first(
             "checked_at": datetime(2026, 1, day),
         }
 
-    async def stale_links(org: str, namespace: str) -> list[dict[str, Any]]:
-        return [link("old", 1), link("new", 2), link("other", 3)]
+    asked: list[Any] = []
+
+    async def stale_links(org: str, namespace: str, keys: Any = None) -> list[dict[str, Any]]:
+        asked.append(keys)
+        return [link("old", 1), link("new", 2), link("new", 3)]
 
     monkeypatch.setattr("server.memory.app.code_link_reads.stale_links", stale_links)
     monkeypatch.setattr(nv, "get_client", lambda: _CH({}))
     out = await nv.handle_namespace_validate(_inp(keys=["old", "new"], sample_limit=1))
     stale = next(f for f in out.findings if f.check == "code_links_stale")
     assert stale.count == 2 and [s["memory_key"] for s in stale.samples] == ["new"]
+    await nv.handle_namespace_validate(_inp())
+    assert asked == [["old", "new"], None]

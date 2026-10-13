@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections import defaultdict
+from collections.abc import Sequence
 from typing import Any
 
 from server.code.app import memory_links as code
@@ -78,11 +79,17 @@ async def current_links(
     return [a for h in heads for a in current(org, h, by_mid.get(str(h["mid"]), []))]
 
 
-async def stale_links(org: str, namespace: str) -> list[dict[str, Any]]:
+async def stale_links(
+    org: str, namespace: str, keys: Sequence[str] | None = None
+) -> list[dict[str, Any]]:
     """The namespace's changed, unresolved and missing links into repositories the caller
-    may read, of its served memories as they are now."""
+    may read, of its served memories (those under `keys` when given) as they are now."""
     rows = await store.for_code(
-        org, None, namespaces=[namespace], states=["changed", "unresolved", "missing"]
+        org,
+        None,
+        namespaces=[namespace],
+        memory_keys=keys,
+        states=["changed", "unresolved", "missing"],
     )
     links = await current_links(org, rows, served_only=True)
     seen = await readable_code(org, {str(a["code_namespace"]) for a in links})
