@@ -215,6 +215,8 @@ _NESTED_CLASSES = {
 }
 # the nodes a method's name is declared in: a bare call there is not the method
 _CLASS_NODES = {"class_definition", "class_body", "class_declaration", "impl_item", "trait_item"}
+# the declarations of a class, whose body names the class itself: a type, a constructor
+_CLASSES = {"class_definition", "class_declaration", "class_specifier", "struct_specifier"}
 _FUNCTIONS = {
     "function_definition",
     "function_declaration",
@@ -960,6 +962,10 @@ def _use(leaf: Any, grammar: str, decl: Any, body: Any, fields: _Fields) -> str 
     parameter, a default, an assignment target, a form not known to be a read), or None
     when it is not a name of that namespace (a member, a label, a module, a Rust macro, a
     Java variable)."""
+    if decl.type in _CLASSES and body is not None and _within(leaf, body):
+        prev = fields.prev(leaf)
+        if prev is None or prev.type not in _ACCESS:
+            return "read"  # the class itself: `-> Reader`, `x: Reader`, `Reader()`
     if leaf.type == "type_identifier":  # a type of that name (`using NAME = Box;`, a
         # TypeScript class) may be what a bare call or read means; Java keeps types apart
         prev = fields.prev(leaf)

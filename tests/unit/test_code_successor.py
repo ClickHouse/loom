@@ -516,3 +516,22 @@ def test_a_rust_impl_renamed_without_its_struct_carries_its_methods() -> None:
         ("src/r.rs", before), ("src/r.rs", before.replace("Reader", "Loader")), name="get"
     )
     assert (link.state, link.qualified_name) == ("changed", "crate::r::Loader::get")
+
+
+@pytest.mark.parametrize(
+    "program",
+    [
+        "class {0}:\n    def clone(self) -> {0}:\n        return {0}()\n\n"
+        "    def size(self):\n        return 1\n",
+        "export class {0} {{\n  clone(): {0} {{ return new {0}(); }}\n"
+        "  size(): number {{ return 1; }}\n}}\n",
+    ],
+)
+def test_a_class_naming_its_own_type_renamed_alone_moves_its_methods(program: str) -> None:
+    path = "m.py" if program.startswith("class") else "m.ts"
+    before, after = program.format("Reader"), program.format("RowReader")
+    link = _after((path, before), (path, after), name="size")
+    assert (link.state, link.qualified_name.rsplit("::", 2)[-2:]) == (
+        "moved",
+        ["RowReader", "size"],
+    )
