@@ -70,20 +70,27 @@ async def test_a_merged_row_that_reads_as_high_gets_no_vector(
 
 
 @pytest.mark.asyncio
-async def test_reindex_stamps_its_rows_with_the_memory_rows_version() -> None:
+async def test_reindex_stamps_its_rows_above_the_keys_newest_row() -> None:
     import server.memory.store as memory_repo
 
-    seen: list[str] = []
+    ident = {"agent": "a", "user_id": "-", "session_id": "-", "memory_key": "k"}
 
     class _CH:
-        async def query_all(self, sql: str, params: Any = None) -> list[Any]:
-            seen.append(sql)
-            return []
+        def __init__(self) -> None:
+            self.calls = 0
 
-    await memory_repo.find_memories_to_reindex(
+        async def query_all(self, sql: str, params: Any = None) -> list[Any]:
+            self.calls += 1
+            if self.calls == 1:
+                return [{**ident, "version": 10}, {**ident, "memory_key": "k2", "version": 20}]
+            assert "max(version) AS ev" in sql and params["model"] == "m"
+            return [{**ident, "ev": 15}]
+
+    rows = await memory_repo.find_memories_to_reindex(
         "o", "n", embedding_model="m", force=False, limit=5, ch=_CH()
     )
-    assert "greatest(m.version, e.ev) + 1 AS version" in seen[0]
+    # above the newer embedding row of k; above its own memory row for k2
+    assert [r["version"] for r in rows] == [16, 21]
 
 
 @pytest.mark.asyncio

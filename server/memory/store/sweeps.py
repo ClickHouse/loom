@@ -279,25 +279,10 @@ async def find_memories_to_reindex(
                 AND tombstoned_at IS NULL
           )"""
     )
-    # One above the newest of the memory row and the key's rows of this model (an
-    # embedding-only re-emit or a stub tombstone can sit above the memory row), not
-    # a version drawn after the embed call: a 'high' write that lands meanwhile
-    # fences above it.
-    return await ch.query_all(
+    rows = await ch.query_all(
         f"""
-        SELECT {_EMBEDDING_MIRROR_COLUMNS}, greatest(m.version, e.ev) + 1 AS version
+        SELECT {_EMBEDDING_MIRROR_COLUMNS}, m.version AS version
         FROM loom.memory AS m FINAL
-        LEFT JOIN (
-            SELECT org, namespace, agent, user_id, session_id, memory_key,
-                   max(version) AS ev
-            FROM loom.memory_embeddings
-            WHERE org = {{org:String}} AND namespace = {{ns:String}}
-              AND embedding_model = {{model:String}}
-            GROUP BY org, namespace, agent, user_id, session_id, memory_key
-        ) AS e
-          ON m.org = e.org AND m.namespace = e.namespace AND m.agent = e.agent
-         AND m.user_id = e.user_id AND m.session_id = e.session_id
-         AND m.memory_key = e.memory_key
         WHERE m.org = {{org:String}} AND m.namespace = {{ns:String}}
           AND m.tombstoned_at IS NULL
           AND m.sensitivity != 'high'
@@ -313,6 +298,37 @@ async def find_memories_to_reindex(
             "unsearchable": sorted(NON_SEARCHABLE_TYPES),
         },
     )
+    if not rows:
+        return []
+    # Each row is written one above the newest of its memory row and its key's rows of
+    # this model (an embedding-only re-emit or a stub tombstone can sit above the
+    # memory row), not at a version drawn after the embed call: a 'high' write that
+    # lands meanwhile fences above it. One keyed read for the batch.
+    keys = [
+        tuple(str(r[c]) for c in ("agent", "user_id", "session_id", "memory_key")) for r in rows
+    ]
+    newest = await ch.query_all(
+        """
+        SELECT agent, user_id, session_id, memory_key, max(version) AS ev
+        FROM loom.memory_embeddings
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND embedding_model = {model:String}
+          AND (agent, user_id, session_id, memory_key)
+              IN {keys:Array(Tuple(String, String, String, String))}
+        GROUP BY agent, user_id, session_id, memory_key
+        """,
+        params={"org": org, "ns": namespace, "model": embedding_model, "keys": keys},
+    )
+    ev = {
+        (str(n["agent"]), str(n["user_id"]), str(n["session_id"]), str(n["memory_key"])): int(
+            n["ev"]
+        )
+        for n in newest
+    }
+    return [
+        {**r, "version": max(int(r["version"]), ev.get(k, 0)) + 1}
+        for r, k in zip(rows, keys, strict=True)
+    ]
 
 
 async def find_memories_without_embedding_rows(
