@@ -223,6 +223,11 @@ async def test_apply_relabels_tombstones_high_and_tags_medium(monkeypatch) -> No
         return len(items)
 
     monkeypatch.setattr(memory_repo, "fence_vectors", _fence)
+
+    async def _no_heads(keys, **_k):
+        return {}  # a newer write replaced the relabel: no post-relabel retire
+
+    monkeypatch.setattr(memory_repo, "memory_rows_by_identity_keys", _no_heads)
     ch.rows = [
         {
             "org": "clickhouse",
@@ -530,7 +535,22 @@ async def test_a_high_relabel_retires_the_keys_chunks_again_after_the_label(
     monkeypatch.setattr(memory_repo, "retire_vectors_for_keys", _retire)
     monkeypatch.setattr(memory_repo, "fence_vectors", _fence)
     monkeypatch.setattr(high_fence, "tombstone_set_chunks", _chunks)
+    relabel_version: list[int] = []
+    real_next = memory_repo.next_version
+
+    def _next() -> int:
+        v = real_next()
+        relabel_version.append(v)
+        return v
+
+    async def _heads(keys, **_k):
+        from types import SimpleNamespace
+
+        return {keys[0]: SimpleNamespace(version=relabel_version[0])}  # the relabel is head
+
+    monkeypatch.setattr(memory_repo, "next_version", _next)
+    monkeypatch.setattr(memory_repo, "memory_rows_by_identity_keys", _heads)
     cand = sweep.SweepCandidate("1", "o", "n", "a", "-", "-", "k", "high", ("credential",))
     res = await sweep.apply([cand], ch=_CH())
     assert not res.errors
-    assert order == ["retire", "fence", "chunks", "relabel", "chunks"]
+    assert order == ["retire", "fence", "chunks", "relabel", "chunks", "retire"]

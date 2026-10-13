@@ -93,9 +93,7 @@ def _run_with(monkeypatch: Any, ch: _CH, embedder: Any, **inp: Any) -> Any:
     async def _heads_unchanged(*_a: Any, **_k: Any) -> None:
         return None  # the post-insert head check has its own test
 
-    monkeypatch.setattr(
-        "server.memory.app.ops._retire_reindexed_rows_no_longer_served", _heads_unchanged
-    )
+    monkeypatch.setattr("server.memory.app.ops._recheck_reindexed_heads", _heads_unchanged)
     return asyncio.run(handle_memory_reindex(MemoryReindexInput(org="o", namespace="n", **inp)))
 
 
@@ -197,28 +195,46 @@ def test_a_procedural_row_is_reindexed_from_its_procedure_text() -> None:
     assert "cold cache" in got[1] and "{" not in got[1]
 
 
-def test_a_key_made_high_during_the_reindex_has_its_vectors_retired(monkeypatch: Any) -> None:
-    """The heads are re-read after the insert: a key whose head is now 'high' (or
-    gone) is retired at a version drawn then, above the reindexed row."""
+def test_the_heads_are_rechecked_after_the_insert(monkeypatch: Any) -> None:
+    """A head now 'high' or gone is retired above the reindexed row; a head that
+    changed since the read is handed back to the embed worker as a fresh stub; an
+    unchanged head is left alone."""
     from types import SimpleNamespace
 
     from server.memory.app import ops
 
     retired: list[tuple[Any, int]] = []
+    stubs: list[dict[str, Any]] = []
 
     async def _heads(keys: Any, **_k: Any) -> dict[Any, Any]:
+        by_key = {k[5]: k for k in keys}
         return {
-            keys[0]: SimpleNamespace(memory_type="semantic", sensitivity="high"),
-            keys[1]: SimpleNamespace(memory_type="semantic", sensitivity=""),
-        }  # keys[2] is gone
+            by_key["k1"]: SimpleNamespace(memory_type="semantic", sensitivity="high", version=5),
+            by_key["k2"]: SimpleNamespace(memory_type="semantic", sensitivity="", version=5),
+            by_key["k4"]: SimpleNamespace(memory_type="semantic", sensitivity="", version=9),
+        }  # k3 is gone
 
     async def _retire(items: Any, **_k: Any) -> int:
         retired.extend(items)
         return len(items)
 
+    async def _mirror(keys: Any, **_k: Any) -> list[dict[str, Any]]:
+        return [{**_memory_mirror_row(), "memory_key": k[5], "version": 9} for k in keys]
+
+    async def _insert(rows: Any, **_k: Any) -> None:
+        stubs.extend(rows)
+
     monkeypatch.setattr(mr, "memory_rows_by_identity_keys", _heads)
     monkeypatch.setattr(mr, "retire_vectors_for_keys", _retire)
-    rows = [{**_memory_mirror_row(), "memory_key": k, "version": 6} for k in ("k1", "k2", "k3")]
-    asyncio.run(ops._retire_reindexed_rows_no_longer_served(rows, ch=object()))
-    assert [k[5] for k, _ in retired] == ["k1", "k3"]
+    monkeypatch.setattr(mr, "memory_mirror_rows_for_keys", _mirror)
+    monkeypatch.setattr(mr, "insert_embedding_rows", _insert)
+    rows = [
+        {**_memory_mirror_row(), "memory_key": k, "memory_version": 5, "version": 6}
+        for k in ("k1", "k2", "k3", "k4")
+    ]
+    asyncio.run(ops._recheck_reindexed_heads(rows, ch=object(), model="fake-model"))
+    assert sorted(k[5] for k, _ in retired) == ["k1", "k3"]
     assert all(v > 6 for _, v in retired)
+    [stub] = stubs
+    assert stub["memory_key"] == "k4" and stub["embedding_dim"] == 0
+    assert stub["tombstoned_at"] is None and stub["version"] > 9

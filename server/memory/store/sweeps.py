@@ -329,7 +329,11 @@ async def find_memories_to_reindex(
         for n in newest
     }
     return [
-        {**r, "version": max(int(r["version"]), ev.get(k, 0)) + 1}
+        {
+            **r,
+            "memory_version": int(r["version"]),  # the head it read; the caller re-checks it
+            "version": max(int(r["version"]), ev.get(k, 0)) + 1,
+        }
         for r, k in zip(rows, keys, strict=True)
     ]
 
@@ -468,6 +472,30 @@ async def find_memories_without_embedding_rows(
         LIMIT {{lim:UInt32}}
         """,
         params={**{k: v for k, v in params.items() if k != "since_s"}, "keys": keys},
+    )
+
+
+async def memory_mirror_rows_for_keys(
+    keys: list[tuple[str, str, str, str, str, str]], *, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """The live, embeddable memory rows of the given identity keys as embedding-mirror
+    rows (`_EMBEDDING_MIRROR_COLUMNS` plus `version`): what a stub for the embed worker
+    is built from."""
+    if not keys:
+        return []
+    ch = ch or _default_client()
+    return await ch.query_all(
+        f"""
+        SELECT {_EMBEDDING_MIRROR_COLUMNS}, m.version AS version
+        FROM loom.memory AS m FINAL
+        WHERE (m.org, m.namespace, m.agent, m.user_id, m.session_id, m.memory_key)
+              IN {{keys:Array(Tuple(String, String, String, String, String, String))}}
+          AND m.tombstoned_at IS NULL
+          AND m.sensitivity != 'high'
+          AND m.memory_type NOT IN {{unsearchable:Array(String)}}
+          AND length(m.value) > 0
+        """,
+        params={"keys": [tuple(k) for k in keys], "unsearchable": sorted(NON_SEARCHABLE_TYPES)},
     )
 
 

@@ -1036,3 +1036,111 @@ async def test_chunks_landing_between_the_sweeps_fence_and_its_relabel_are_retir
                 f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
                 params={"o": ORG, "n": ns},
             )
+
+
+async def test_a_reindex_between_the_sweeps_fence_and_its_relabel_leaves_no_vector(
+    ch: Any, monkeypatch: Any
+) -> None:
+    """A whole reindex runs while the sweep is between its fence and its relabel: it
+    reads an unlabelled head and lands above the fence. The sweep retires the key's
+    vectors again once its relabel is the head."""
+    import server.memory.store as memory_repo
+    from server.memory.api.models_admin import MemoryReindexInput
+    from server.memory.app import ops, sensitivity_sweep
+
+    ns = f"itest-{uuid.uuid4().hex[:12]}"
+    key = f"sweep_reindex_{uuid.uuid4().hex[:6]}"
+    await _memory_only_row(ch, ns, key, f"the {key} vault password is hunter2")
+    row = await ch.query_one(
+        "SELECT toString(memory_id) AS id FROM loom.memory FINAL WHERE org = {o:String}"
+        " AND namespace = {n:String} AND memory_key = {k:String}",
+        params={"o": ORG, "n": ns, "k": key},
+    )
+    entered, gate = asyncio.Event(), asyncio.Event()
+    real_wv = memory_repo.write_versions_by_ids
+
+    async def paused_wv(*a: Any, **kw: Any) -> int:
+        entered.set()
+        await gate.wait()
+        return await real_wv(*a, **kw)
+
+    monkeypatch.setattr(memory_repo, "write_versions_by_ids", paused_wv)
+    cand = sensitivity_sweep.SweepCandidate(
+        row["id"], ORG, ns, AGENT, "-", "-", key, "high", ("credential",)
+    )
+    try:
+        sweep = asyncio.create_task(sensitivity_sweep.apply([cand], ch=ch))
+        await asyncio.wait_for(entered.wait(), 30)
+        await ops.handle_memory_reindex(MemoryReindexInput(org=ORG, namespace=ns))
+        gate.set()
+        res = await asyncio.wait_for(sweep, 30)
+        assert res.errors == [] and res.high == 1
+        head = await ch.query_one(
+            "SELECT sensitivity FROM loom.memory FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND memory_key = {k:String}",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        live = await ch.query_one(
+            "SELECT count() AS n FROM loom.memory_embeddings FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND memory_key = {k:String}"
+            " AND tombstoned_at IS NULL AND embedding_dim > 0",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        assert head["sensitivity"] == "high"
+        assert int(live["n"]) == 0
+    finally:
+        gate.set()
+        for table in ("memory", "memory_embeddings", "entity_vectors", "memory_chunks"):
+            await ch.execute(
+                f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
+                params={"o": ORG, "n": ns},
+            )
+
+
+async def test_a_newer_plain_write_between_the_reindex_reads_keeps_its_value(
+    ch: Any, monkeypatch: Any
+) -> None:
+    """A plain memory.set lands between reindex's row read and its max(version) read:
+    the reindexed (older) vector would sit above the new one. The re-check hands the
+    key back to the embed worker, which serves the newer value."""
+    import server.core.ch as ch_mod
+    from server.memory.api.models_admin import MemoryReindexInput
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import ops, write
+    from server.memory.workers.embedding import EmbeddingWorkerConfig, run_pass
+
+    ns = f"itest-{uuid.uuid4().hex[:12]}"
+    key = f"reindex_newer_{uuid.uuid4().hex[:6]}"
+    await _memory_only_row(ch, ns, key, "OLDVALUE the deploy uses blue")
+
+    async def newer() -> None:
+        await write.handle_memory_set(
+            MemorySetInput(
+                org=ORG,
+                namespace=ns,
+                agent=AGENT,
+                memory_key=key,
+                value="NEWVALUE the deploy uses green",
+            )
+        )
+
+    try:
+        proxy = _ProxyBeforeMaxRead(ch, newer)
+        monkeypatch.setattr(ch_mod, "get_client", lambda: proxy)
+        await ops.handle_memory_reindex(MemoryReindexInput(org=ORG, namespace=ns))
+        assert proxy.fired
+        monkeypatch.setattr(ch_mod, "get_client", lambda: ch)
+        await run_pass(EmbeddingWorkerConfig(org_filter=ORG, namespace_filter=ns))
+        rows = await ch.query_all(
+            "SELECT content_excerpt FROM loom.memory_embeddings FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND memory_key = {k:String}"
+            " AND tombstoned_at IS NULL AND embedding_dim > 0",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        assert rows and all("NEWVALUE" in str(r["content_excerpt"]) for r in rows), rows
+    finally:
+        for table in ("memory", "memory_embeddings", "entity_vectors", "memory_chunks"):
+            await ch.execute(
+                f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
+                params={"o": ORG, "n": ns},
+            )

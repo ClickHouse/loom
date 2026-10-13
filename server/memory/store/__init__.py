@@ -159,6 +159,7 @@ from server.memory.store.sweeps import (
     find_expired_candidates,
     find_memories_to_reindex,
     find_memories_without_embedding_rows,
+    memory_mirror_rows_for_keys,
 )
 from server.memory.store.usage import record_usage_event
 
@@ -232,6 +233,7 @@ __all__ = [
     "live_shared_embedding_rows_for_key",
     "live_source_count",
     "MEMORY_PERSISTED_COLS",
+    "memory_mirror_rows_for_keys",
     "memory_rows_by_identity_keys",
     "MemoryRow",
     "mirror_status_to_embeddings",

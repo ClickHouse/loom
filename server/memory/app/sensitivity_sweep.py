@@ -272,9 +272,18 @@ async def apply(candidates: list[SweepCandidate], *, ch: _CHClient | None = None
                 result.high += 1
                 result.embeddings_tombstoned += retired
                 # Again now the label is in: a chunk writer re-checks the head after its
-                # insert, so chunks that landed between the fence and the relabel saw an
-                # unlabelled head and stayed.
+                # insert, and so does a reindex, so chunks or a vector that landed between
+                # the fence and the relabel saw an unlabelled head and stayed. The vector
+                # retire takes a version drawn now: a reindexed row sits above the fence.
                 await tombstone_chunks_of([key], ch=ch)
+                heads = await memory_repo.memory_rows_by_identity_keys(
+                    [key], ch=ch, sequential=memory_repo.read_your_writes_enabled()
+                )
+                head = heads.get(key)
+                if head is not None and int(head.version) == version:  # still this relabel
+                    await memory_repo.retire_vectors_for_keys(
+                        [(key, memory_repo.next_version())], ch=ch
+                    )
             else:
                 result.medium += 1
                 result.embeddings_tagged += await _tag_embeddings(c, ch=ch)
