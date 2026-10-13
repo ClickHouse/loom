@@ -288,7 +288,7 @@ async def _bulk_intra_batch_pairs(
 async def _bulk_judge_same_key(
     ch: Any, input: MemoryBulkSetInput, state: _BulkWriteState, plan: BulkVerdictPlan
 ) -> JudgedRetirements:
-    """Phase 9b: under `auto_reinforce` with the conflict judge on, the judge
+    """Phase 8b: under `auto_reinforce` with the conflict judge on, the judge
     reads each new row against the newest live rows of its key and subject, before
     the insert (`key_supersession.judge_same_key_rows`). A new row that loses lands
     superseded and leaves the plan's conflict marks and refines, so nothing after
@@ -329,6 +329,24 @@ async def _bulk_judge_same_key(
         for res in state.results:
             res.superseded_by = behind.get(res.memory_key, "")
     return judged
+
+
+def _drop_retired_peers(plan: BulkVerdictPlan, retired: set[str]) -> None:
+    """A stored row the same-key judge retired leaves the peers the settling steps
+    write: another key's conflict mark would re-emit it `conflicted`, and its
+    refines would re-point its `superseded_by`."""
+    if not retired:
+        return
+    plan.conflict_marks = [
+        (n, kept)
+        for n, peers in plan.conflict_marks
+        if (kept := [p for p in peers if str(p) not in retired])
+    ]
+    plan.refines = [
+        (n, k, kept, rel, v)
+        for n, k, refined, rel, v in plan.refines
+        if (kept := [p for p in refined if str(getattr(p, "memory_id", "")) not in retired])
+    ]
 
 
 async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
@@ -404,7 +422,11 @@ def _vectors_to_retire(state: _BulkWriteState) -> dict[str, tuple[Any, int]]:
 
 
 async def _bulk_post_insert_links(
-    ch: Any, input: MemoryBulkSetInput, state: _BulkWriteState, judged: JudgedRetirements
+    ch: Any,
+    input: MemoryBulkSetInput,
+    state: _BulkWriteState,
+    judged: JudgedRetirements,
+    plan: BulkVerdictPlan,
 ) -> list[Any]:
     """Phase 11, after the insert so the new ids exist: same-key supersession
     (the judged peers too), then value-update linking; returns the value-update
@@ -430,6 +452,7 @@ async def _bulk_post_insert_links(
         _n_key_superseded += len(_retired)
         # Only the rows that did retire: the triple plane must not close a live row's triples.
         state.judged_follow_pairs += [(v["memory_id"], v["superseded_by"]) for v in _retired]
+        _drop_retired_peers(plan, {str(v["memory_id"]) for v in _retired})
 
     # Value-update supersession (memory.app.value_updates). Runs after the
     # insert so the new row's id exists for the cross-link; fail-open; off by
@@ -713,15 +736,15 @@ async def handle_memory_bulk_set(
 
     plan = await _bulk_verdicts(input, state, emb_idx_of, value_vectors, _bulk_clock)
 
-    _intra_pairs = await _bulk_intra_batch_pairs(ch, input, state)
-
     _judged = await _bulk_judge_same_key(ch, input, state, plan)
     _bulk_clock.mark("same_key_judge")
+
+    _intra_pairs = await _bulk_intra_batch_pairs(ch, input, state)
 
     await _bulk_insert(ch, state)
     _bulk_clock.mark("insert")
 
-    _value_links = await _bulk_post_insert_links(ch, input, state, _judged)
+    _value_links = await _bulk_post_insert_links(ch, input, state, _judged, plan)
 
     _bulk_clock.mark("value_updates")
 

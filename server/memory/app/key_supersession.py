@@ -222,10 +222,13 @@ def judged_victims(
 def _rank(row: Mapping[str, Any]) -> tuple[datetime, datetime, str]:
     """When a row's statement holds, as one total order: its valid time, else when
     it was written (`updated_at`: a revision carries `created_at` forward from the
-    key's first version), then when it was written, then its id. The SQL that picks
-    the newest peers orders by the same key. Times in UTC, to the second."""
-    written = _utc(row.get("updated_at")) or _utc(row.get("created_at")) or datetime.min
-    return (_utc(row.get("valid_at")) or written, written, str(row.get("memory_id") or ""))
+    key's first version), capped at when it was written (a fact dated in the future
+    is still stated when it was written); then when it was written; then its id, an
+    arbitrary but fixed tie-break. The SQL that picks the newest peers orders by the
+    same key. Times in UTC, to the second, within ClickHouse's DateTime range."""
+    written = _utc(row.get("updated_at")) or _utc(row.get("created_at")) or _DT_MIN
+    valid = _utc(row.get("valid_at")) or written
+    return (min(valid, written), written, str(row.get("memory_id") or ""))
 
 
 def _older(a: Mapping[str, Any], b: Mapping[str, Any]) -> bool:
@@ -233,20 +236,26 @@ def _older(a: Mapping[str, Any], b: Mapping[str, Any]) -> bool:
     return _rank(a) < _rank(b)
 
 
+_DT_MIN = datetime(1970, 1, 1)
+_DT_MAX = datetime(2106, 1, 1)
+
+
 def _utc(raw: Any) -> datetime | None:
-    """A datetime or ISO string as naive UTC to the second (ClickHouse `DateTime`
-    stores whole seconds, a row built in Python has microseconds); None otherwise."""
+    """A datetime or ISO string as naive UTC to the second, clamped to ClickHouse's
+    `DateTime` range, so a row ranks the same before and after it is stored (the
+    column holds whole seconds and clamps; a row built in Python has microseconds).
+    None for anything else."""
     dt: datetime | None = None
     if isinstance(raw, datetime):
-        dt = parse_iso_dt(to_naive_utc(raw))
+        dt = to_naive_utc(raw)
     elif isinstance(raw, str) and raw.strip():
         try:
-            dt = parse_iso_dt(
-                to_naive_utc(datetime.fromisoformat(raw.strip().replace("Z", "+00:00")))
-            )
+            dt = to_naive_utc(datetime.fromisoformat(raw.strip().replace("Z", "+00:00")))
         except ValueError:
             dt = parse_iso_dt(raw)
-    return dt.replace(microsecond=0) if dt is not None else None
+    if dt is None:
+        return None
+    return min(max(dt, _DT_MIN), _DT_MAX).replace(microsecond=0)
 
 
 class _Peer(NamedTuple):
@@ -374,6 +383,11 @@ async def judge_same_key_rows(
             "users": sorted({str(r.get("user_id") or "-") for r in judged_rows}),
             "ids": sorted({str(r.get("memory_id") or "") for r in memory_rows}),
             "n": max(int(settings.memory_conflict_judge_max_peers), 1),
+            # The write's own identity: its stored row is the row this write revises,
+            # never a peer (the batch's ids miss it when the existing-row lookup failed).
+            "own_agent": str(judged_rows[0].get("agent") or ""),
+            "own_user": str(judged_rows[0].get("user_id") or "-"),
+            "own_session": str(judged_rows[0].get("session_id") or "-"),
         }
         # A write judges and retires only rows inside the writer's read scope.
         in_scope = scope_and(request_scope(), params)
@@ -386,8 +400,11 @@ async def judge_same_key_rows(
               AND memory_key IN {{keys:Array(String)}} AND user_id IN {{users:Array(String)}}
               AND tombstoned_at IS NULL AND pinned = 0 AND sensitivity != 'high'
               AND status IN ('active', 'duplicate', 'conflicted')
-              AND toString(memory_id) NOT IN {{ids:Array(String)}}{in_scope}
-            ORDER BY coalesce(valid_at, updated_at) DESC, updated_at DESC, memory_id DESC
+              AND toString(memory_id) NOT IN {{ids:Array(String)}}
+              AND NOT (agent = {{own_agent:String}} AND user_id = {{own_user:String}}
+                       AND session_id = {{own_session:String}}){in_scope}
+            ORDER BY least(coalesce(valid_at, updated_at), updated_at) DESC, updated_at DESC,
+                     memory_id DESC
             LIMIT {{n:UInt32}} BY memory_key, user_id, if(user_id = '-', agent, '')
             SETTINGS select_sequential_consistency = 1
             """,
@@ -447,7 +464,9 @@ async def retire_judged_peers(
             written.add(mid)
             return False
 
-        await supersede_duplicates(org, victims, ch=ch, skip=skip)
+        # Read-your-writes: a replica serving the judged version after a revision would
+        # pass the version check and rebuild the stale value.
+        await supersede_duplicates(org, victims, ch=ch, skip=skip, strong=True)
         return [v for v in victims if str(v["memory_id"]) in written]
     except Exception as e:  # noqa: BLE001 — the rows are in; retirement is best effort
         log.warning("same-key judged retirement failed (non-fatal): %s", e)

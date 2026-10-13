@@ -196,19 +196,22 @@ sample of 60 same-key pairs from chat-history namespaces 58 were different facts
 
 So, before its insert, a bulk write asks the conflict judge about the newest live rows of
 each key it writes for the same subject: the same `user_id`, or for the anonymous user
-`-` the same agent (`key_supersession.judge_same_key_rows`).
+`-` the same agent (`key_supersession.judge_same_key_rows`). The writer's own identity is
+never a peer: its stored row is the one the write revises.
 
 - **What gets judged.** Entries of one bulk share an identity, so for a key written
   twice only the highest version, the one `FINAL` keeps, is judged.
 - **The cap.** At most `LOOM_MEMORY_CONFLICT_JUDGE_MAX_PEERS` (3) stored rows per key
   and subject are read, newest first. An older row past them stays live until a later
   write of the key reaches it.
-- **Which row is older.** Only the older row of a pair ever retires. Rows rank by one
-  total key, in Python and in the SQL that picks the newest peers. The key is the row's
-  valid time, else when it was written (`updated_at`, since a revision carries
-  `created_at` forward from the key's first version), then when it was written, then
-  its id. Times are compared in UTC to the second. Two writers that judge each other
-  never retire both, because each reads before its own insert.
+- **Which row is older.** Only the older row of a pair ever retires, so two writers that
+  judge each other never retire both. Rows rank by one total key, in Python and in the
+  SQL that picks the newest peers. The key's first part is the row's valid time, else
+  when it was written (`updated_at`, since a revision carries `created_at` forward from
+  the key's first version). It is capped at the write time, because a fact dated in the
+  future was still stated when it was written. Then come the write time and the id.
+  Times are compared in UTC to the second, within ClickHouse's `DateTime` range. Rows
+  that tie on both times are separated by id, which is arbitrary but fixed.
   - **A late old session:** its rows carry their session date, so it doesn't bury a
     later value, whether that value is dated or undated.
   - **An undated late row:** it counts as stated when it was written, so it is the later
@@ -227,12 +230,14 @@ Then by label:
   unlabelled all keep both rows. The flag path reads an unlabelled peer as a
   contradiction; a retirement does not.
 
-A stored row retires after the insert only if, since the judge read it, it wasn't
-locked, pinned, retired or revised. `superseded_by` names the row that was the later
-statement when the retirement happened. That row can itself retire later, so a reader
-follows the chain. A row labelled `sensitivity='high'` is never judged or read as a
-peer, so its value never reaches the LLM. The read is bounded by the writer's read
-scope, like every same-key retirement.
+A stored row retires after the insert only if it isn't locked, and wasn't pinned,
+retired or revised since the judge read it (the retirement reads it read-your-writes).
+It also leaves the write's other conflict marks and refines, so no other verdict of the
+write re-emits it. `superseded_by` names the row that was the later statement when the
+retirement happened. That row can itself retire later, so a reader follows the chain. A
+row labelled `sensitivity='high'` is never judged or read as a peer, so its value never
+reaches the LLM. The read is bounded by the writer's read scope, like every same-key
+retirement.
 
 This costs one judge call per new row that has such peers, on top of the bulk conflict
 check's own calls. The calls are bounded by the same settings

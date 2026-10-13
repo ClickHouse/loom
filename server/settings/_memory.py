@@ -85,8 +85,9 @@ class MemorySettings(BaseModel):
     # the verdict follows: conflict / refines (supersedes with a `refines`
     # edge) / merge / clear. One call per flagged write. On a bulk write under
     # auto_reinforce it also judges, before the insert, each new row against the newest
-    # live rows of its key and user from other writes (one call per such row, bounded by
-    # bulk_conflict_check_max_entries and _concurrency): the older row of a contradiction,
+    # live rows of its key and subject (the user; for the anonymous user, the agent) from
+    # other writes: one call per such row, at most bulk_conflict_check_max_entries of
+    # them, bulk_conflict_check_concurrency at a time. The older row of a contradiction,
     # or of an elaboration by the newer row, lands or turns superseded.
     memory_conflict_judge: bool = False
     # Closest peers the conflict judge labels in its one call per flagged write.

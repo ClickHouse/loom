@@ -37,6 +37,7 @@ async def write_versions_by_ids(
     *,
     ch: _CHClient | None = None,
     skip: Callable[[MemoryRow], bool] | None = None,
+    strong: bool = False,
 ) -> int:
     """Write new RMT versions for live rows addressed by memory_id.
 
@@ -45,7 +46,8 @@ async def write_versions_by_ids(
     one, and it carries every persisted column forward via
     build_memory_version_row. This is the preferred replacement for
     in-place status flips on `loom.memory`. A row `skip(existing)` answers
-    True for is left as it is.
+    True for is left as it is. `strong` reads each row read-your-writes (the
+    caller decided on a version it read earlier and must not rebuild a stale one).
     """
 
     if not memory_ids:
@@ -58,7 +60,7 @@ async def write_versions_by_ids(
         if not mid or mid in seen:
             continue
         seen.add(mid)
-        existing = await get_by_id(mid, org=org, ch=ch, scope=WHOLE_NAMESPACE)
+        existing = await get_by_id(mid, org=org, ch=ch, scope=WHOLE_NAMESPACE, strong=strong)
         if existing is None or (skip is not None and skip(existing)):
             continue
         overrides = dict(update(existing))
@@ -83,6 +85,7 @@ async def supersede_duplicates(
     *,
     ch: _CHClient | None = None,
     skip: Callable[[MemoryRow], bool] | None = None,
+    strong: bool = False,
 ) -> int:
     """Mark near-duplicate memories status='superseded' in BOTH loom.memory
     and loom.memory_embeddings via version re-emit (never an in-place ALTER,
@@ -98,7 +101,8 @@ async def supersede_duplicates(
     (`agent`, `user_id`, `session_id`, `memory_key`) and `superseded_by`
     (the kept row's memory_id). Empty short-circuits. A victim whose head
     row `skip` answers True for (the caller's policy, e.g. a lock) is left
-    live in both tables and not counted. Returns how many were retired."""
+    live in both tables and not counted. `strong` reads the rows read-your-writes
+    (`write_versions_by_ids`). Returns how many were retired."""
     if not victims:
         return 0
     ch = ch or _default_client()
@@ -128,6 +132,7 @@ async def supersede_duplicates(
         },
         ch=ch,
         skip=_skip,
+        strong=strong,
     )
     victims = [v for v in victims if str(v["memory_id"]) not in skipped]
     # 2) loom.memory_embeddings — the write recall actually reads.
