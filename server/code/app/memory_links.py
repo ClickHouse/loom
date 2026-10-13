@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -18,6 +19,8 @@ from server.code.domain.definitions import definitions
 from server.code.domain.index.remote import repo_tag
 from server.code.domain.index.repos import configured_repos, docs_namespaces, repo_for_namespace
 from server.code.store.index import CodeRepo
+
+log = logging.getLogger(__name__)
 
 
 def trunk_namespace(org: str, namespace: str) -> str:
@@ -66,7 +69,10 @@ async def kept_paths(org: str, namespace: str, base: str, head: str) -> dict[str
         if not await gitrepo.is_ancestor(cfg.git_dir, base, head):
             return None
         return await gitrepo.diff_paths_renamed(cfg.git_dir, base, head)
-    except gitrepo.GitError:
+    except gitrepo.GitError as e:
+        log.warning(
+            "memory links: %s..%s of %s unread, rechecked in full: %s", base, head, namespace, e
+        )
         return None
 
 

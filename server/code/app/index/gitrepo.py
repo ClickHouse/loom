@@ -845,17 +845,22 @@ def parse_name_status_z(out: str) -> list[DiffEntry]:
     return entries
 
 
+# files on either side of a range past which renames with edits are not looked for
+_RENAME_LIMIT = 2000
+
+
 async def diff_paths_renamed(git_dir: str, base_sha: str, head_sha: str) -> dict[str, str]:
     """old path -> path at `head_sha` for every path the range changed: itself when
-    added or modified, the new path when renamed (`-M`), '' when deleted. No rename
-    limit (`-l0`): past one git drops renames with edits and only warns."""
+    added or modified, the new path when renamed (`-M`), '' when deleted. Past
+    `_RENAME_LIMIT` files on a side git looks for exact renames only, so a range that
+    moves a whole tree stays bounded."""
     out = await _git(
         git_dir,
         "diff",
         "--name-status",
         "-z",
         "-M",
-        "-l0",
+        f"-l{_RENAME_LIMIT}",
         "--end-of-options",
         _rev(base_sha),
         _rev(head_sha),
