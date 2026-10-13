@@ -524,8 +524,7 @@ class Declarations:
         found = self._declared(at[1], name)
         if found is None:
             return own
-        skip = {_key(n) for n in [*_sibling_nodes(found[0]), *_layout_in(*at)]}
-        leaves, marks = _leaves(*at, _Fields(), skip)
+        leaves, marks = _leaves(*at, _Fields(), _skipped(at, found[0]))
         texts = [self.source[x.start_byte : x.end_byte].decode("utf-8", "replace") for x in leaves]
         return "\n".join([*(f"{m} {t}" for m, t in zip(marks, texts, strict=False)), marks[-1]])
 
@@ -680,8 +679,7 @@ class Declarations:
         decl, named, body = found
         guard = self._guard(at[1])
         fields = _Fields()
-        skip = {_key(n) for n in [*_sibling_nodes(decl), *_comments_within(*at)]}
-        leaves, marks = _leaves(*at, fields, skip)
+        leaves, marks = _leaves(*at, fields, _skipped(at, decl))
         texts = [self.source[x.start_byte : x.end_byte].decode("utf-8", "replace") for x in leaves]
         uses = {
             i: _use(x, self.grammar, decl, body, fields)
@@ -831,6 +829,12 @@ def _sibling_nodes(decl: Any) -> list[Any]:
         else:
             segment.append(c)
     return out
+
+
+def _skipped(at: tuple[Any, Any], decl: Any) -> set[tuple[int, int, str]]:
+    """What a fingerprint and a rename shape leave out of `at`: the sibling declarators
+    beside `decl` and the layout (`_layout_in`)."""
+    return {_key(n) for n in [*_sibling_nodes(decl), *_layout_in(*at)]}
 
 
 def _layout_in(first: Any, last: Any) -> list[Any]:

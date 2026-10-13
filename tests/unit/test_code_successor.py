@@ -572,3 +572,26 @@ def test_a_class_of_one_method_renamed_alone_leaves_it_unsure(path: str, program
     # one member is too little to follow the class by: the link is served, never hidden
     link = _after((path, program.format("Reader")), (path, program.format("Writer")), name="read")
     assert link.state == "unresolved"
+
+
+def test_a_rename_with_a_comment_added_in_its_body_is_moved() -> None:
+    before = "def fetch_rows(a):\n    return a * 2 + 1\n"
+    after = "def load_rows(a):\n    # note\n    return a * 2 + 1\n"
+    got = _after(("reader.py", before), ("reader.py", after))
+    assert (got.state, got.qualified_name) == ("moved", "reader::load_rows")
+
+
+@pytest.mark.parametrize("name", ["fetch_rows", "close"])
+def test_a_class_renamed_with_a_comment_added_above_a_method_moves_its_methods(
+    name: str,
+) -> None:
+    def program(cls: str, comment: str = "") -> str:
+        return (
+            f"class {cls}:\n    def fetch_rows(self):\n        return 1\n\n{comment}"
+            "    def close(self):\n        pass\n\n\nclass Writer:\n    def flush(self):\n"
+            "        pass\n"
+        )
+
+    before, after = program("Reader"), program("Loader", "    # closes it\n")
+    got = _after(("reader.py", before), ("reader.py", after), name)
+    assert (got.state, got.qualified_name) == ("moved", f"reader::Loader::{name}")
