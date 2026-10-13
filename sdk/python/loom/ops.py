@@ -9797,6 +9797,7 @@ class MemoryBulkSetOutput(TypedDict, total=False):
     unchecked: NotRequired[int]
     retyped: NotRequired[list[str]]
     identity_duplicates: NotRequired[dict[str, str]]
+    superseded_on_write: NotRequired[list[str]]
     stage_ms: NotRequired[dict[str, float]]
 
 

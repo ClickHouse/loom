@@ -3872,6 +3872,7 @@ export interface MemoryBulkSetOutput {
   unchecked?: number;
   retyped?: string[];
   identity_duplicates?: Record<string, string>;
+  superseded_on_write?: string[];
   stage_ms?: Record<string, number>;
 }
 

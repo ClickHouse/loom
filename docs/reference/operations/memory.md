@@ -349,7 +349,8 @@ Insert many memory entries in one batched CH insert.
 | `unchecked` | `int` | Entries past bulk_conflict_check_max_entries, written without a check. |
 | `retyped` | `list[str]` | Entries declared procedural whose value is not a procedure body, stored as semantic tagged retyped_from:procedural. |
 | `identity_duplicates` | `dict[str, str]` | Entries not written because a live row in the same identity already carries the same content: entry key -> the keeper's key. |
-| `stage_ms` | `dict[str, float]` | Wall time per phase of the write (existing_lookup, entity_resolution, prepare, embed, verdicts, insert, value_updates, projections, total) — Diagnostic; readers tolerate unknown keys. |
+| `superseded_on_write` | `list[str]` | Keys written already superseded: under `auto_reinforce` with the conflict judge on, a stored row of the same key and user is a later statement that contradicts the entry (an old session ingested late). |
+| `stage_ms` | `dict[str, float]` | Wall time per phase of the write (existing_lookup, entity_resolution, prepare, embed, verdicts, same_key_judge, insert, value_updates, projections, total) — Diagnostic; readers tolerate unknown keys. |
 
 ## `memory.clear`
 

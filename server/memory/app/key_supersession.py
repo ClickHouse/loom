@@ -30,10 +30,9 @@ from datetime import datetime
 from typing import Any, NamedTuple
 
 from server.core.datetimes import parse_iso_dt, to_naive_utc
-from server.memory.app.conflict_judge import CONTRADICTION, ELABORATION
-
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
+from server.memory.app.conflict_judge import CONTRADICTION, ELABORATION
 
 log = logging.getLogger(__name__)
 
@@ -353,29 +352,31 @@ async def judge_same_key_rows(
         ][:cap]
         if not judged_rows:
             return JudgedRetirements()
-        per_subject = max(int(settings.memory_conflict_judge_max_peers), 1)
+        params: dict[str, Any] = {
+            "org": org,
+            "ns": namespace,
+            "keys": sorted({str(r["memory_key"]) for r in judged_rows}),
+            "users": sorted({str(r.get("user_id") or "-") for r in judged_rows}),
+            "ids": sorted({str(r.get("memory_id") or "") for r in memory_rows}),
+            "n": max(int(settings.memory_conflict_judge_max_peers), 1),
+        }
+        # A write judges and retires only rows inside the writer's read scope.
+        in_scope = scope_and(request_scope(), params)
         live = await ch.query_all(
-            """
+            f"""
             SELECT toString(memory_id) AS memory_id, namespace, agent, user_id, session_id,
                    memory_key, value, pinned, valid_at, created_at
             FROM loom.memory FINAL
-            WHERE org = {org:String} AND namespace = {ns:String}
-              AND memory_key IN {keys:Array(String)} AND user_id IN {users:Array(String)}
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND memory_key IN {{keys:Array(String)}} AND user_id IN {{users:Array(String)}}
               AND tombstoned_at IS NULL AND pinned = 0 AND sensitivity != 'high'
               AND status IN ('active', 'duplicate', 'conflicted')
-              AND toString(memory_id) NOT IN {ids:Array(String)}
+              AND toString(memory_id) NOT IN {{ids:Array(String)}}{in_scope}
             ORDER BY coalesce(valid_at, created_at) DESC, created_at DESC
-            LIMIT {n:UInt32} BY memory_key, user_id, if(user_id = '-', agent, '')
+            LIMIT {{n:UInt32}} BY memory_key, user_id, if(user_id = '-', agent, '')
             SETTINGS select_sequential_consistency = 1
             """,
-            params={
-                "org": org,
-                "ns": namespace,
-                "keys": sorted({str(r["memory_key"]) for r in judged_rows}),
-                "users": sorted({str(r.get("user_id") or "-") for r in judged_rows}),
-                "ids": sorted({str(r.get("memory_id") or "") for r in memory_rows}),
-                "n": per_subject,
-            },
+            params=params,
         )
         peers = same_key_peers(judged_rows, live)
         if not peers:
