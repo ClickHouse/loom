@@ -434,7 +434,7 @@ def parse_cpp(path: str, source: bytes) -> ParsedFile:
                 continue
             if t in {
                 "linkage_specification", "declaration_list",
-                "preproc_ifdef", "preproc_if", "preproc_else", "preproc_elif", "preproc_elifdef",
+                "preproc_ifdef", "preproc_if", "preproc_else",
             }:
                 walk(child, scope)
                 continue

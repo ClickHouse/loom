@@ -117,12 +117,6 @@ def _is_function_like(node: Any) -> bool:
     return node is not None and _unwrap(node).type in _FUNCTION_LIKE
 
 
-def bound_function(value: Any) -> Any:
-    """The function a variable's value is, as the index reads one: through `(…)`, `as`,
-    `satisfies`, `!` and wrapper calls; None when it is not one."""
-    return _unwrap(value) if _is_function_like(value) else _wrapped_function(value)
-
-
 def _chain_function(call: Any) -> Any:
     """The function-like argument of a call chain (`a.b(x).c(fn)` → fn),
     the outermost call's first: None when no call in the chain takes one."""

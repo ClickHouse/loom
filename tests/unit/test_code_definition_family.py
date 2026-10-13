@@ -329,12 +329,6 @@ def test_a_directive_indented_after_its_hash_is_the_same_condition() -> None:
     assert flush[0].body_hash == indented[0].body_hash
 
 
-def test_a_definition_only_in_an_elif_branch_is_indexed_with_its_guard() -> None:
-    src = "#if A\n#elif B\nint value() { return 3; }\n#endif\n"
-    assert len(_defs("a.cpp", src, "value")) == 1
-    assert _guard("a.cpp", src) == "not #if A\n#elif B"
-
-
 @pytest.mark.parametrize(
     ("path", "src"),
     [

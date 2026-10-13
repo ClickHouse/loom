@@ -14,7 +14,11 @@ from functools import lru_cache
 from typing import Any, NamedTuple
 
 from server.code.domain.anchor import fingerprint, unnumbered
-from server.code.domain.extract.lang_typescript_nodes import bound_function
+from server.code.domain.extract.lang_typescript_nodes import (
+    _is_function_like,
+    _unwrap,
+    _wrapped_function,
+)
 
 _GRAMMARS = {
     ".py": "python",
@@ -227,6 +231,13 @@ _FUNCTIONS = {
 # an import of one name that may carry an alias: the field each part is in
 _ALIASED = {"aliased_import": "alias", "import_specifier": "alias", "use_as_clause": "alias"}
 _PATHS = {"scoped_identifier", "qualified_identifier", "scoped_type_identifier", "dotted_name"}
+
+
+def bound_function(value: Any) -> Any:
+    """The function a variable's value is, as the index reads one: through `(…)`, `as`,
+    `satisfies`, `!` and wrapper calls; None when it is not one. Kept out of the
+    extractor modules so it moves no extractor stamp."""
+    return _unwrap(value) if _is_function_like(value) else _wrapped_function(value)
 
 
 class Shape(NamedTuple):
