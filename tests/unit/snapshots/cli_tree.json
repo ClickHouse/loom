@@ -10308,7 +10308,7 @@
     },
     {
      "dest": "reembed",
-     "help": "Re-embed vectors whose embedding_model != the configured embedder (run after changing LOOM_EMBEDDING_MODEL — Loom does not auto-re-embed). Covers memory, entity, and conversation vectors.",
+     "help": "Re-embed vectors whose embedding_model != the configured embedder (run after changing LOOM_EMBEDDING_MODEL — Loom does not auto-re-embed). Covers memory, entity, and conversation vectors. Coded vector tables keep their width: change a model of another width in Settings → Models & keys, which rebuilds them.",
      "metavar": "reembed"
     },
     {

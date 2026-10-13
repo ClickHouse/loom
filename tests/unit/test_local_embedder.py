@@ -378,9 +378,7 @@ def test_onnx_threads_stay_within_the_cpu_quota(
     from server.embedding import local
 
     (tmp_path / "cpu.max").write_text("200000 100000\n")
-    limit = functools.partial(
-        web_workers.cpu_limit, cpus=32, proc_cgroup="0::/\n", root=tmp_path
-    )
+    limit = functools.partial(web_workers.cpu_limit, cpus=32, proc_cgroup="0::/\n", root=tmp_path)
     monkeypatch.setattr(web_workers, "cpu_limit", limit)
     monkeypatch.setattr(emb.settings, "web_workers", 1)
     assert local.onnx_threads() == 2

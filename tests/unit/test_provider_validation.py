@@ -248,9 +248,7 @@ def test_explicit_empty_key_does_not_use_environment(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("coded", "ready"), [(True, False), (False, True)]
-)
+@pytest.mark.parametrize(("coded", "ready"), [(True, False), (False, True)])
 async def test_a_width_the_coded_tables_cannot_take_is_refused_before_any_probe(
     monkeypatch: pytest.MonkeyPatch, coded: bool, ready: bool
 ) -> None:
