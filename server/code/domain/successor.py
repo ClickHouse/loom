@@ -215,12 +215,11 @@ def _layout(side: Side) -> tuple[dict[str, set[str]], set[str]]:
 
 
 def _renamed_scope(scope: str, before: Side, now: Side) -> tuple[str, bool]:
-    """(the scope `scope` became in `now`, whether that is uncertain): the one new
-    class keeping most of its members; `scope` itself when none does, unsure when a
-    class too small to share `_MIN_SHARED` members was renamed alone, its members
-    unchanged. A
-    scope this file does not show to be a class (its methods defined out of line, its
-    class in a header) is never followed: unsure."""
+    """(the scope `scope` became in `now`, whether that is uncertain): the one new class
+    keeping most of its members; `scope` itself when none does, unsure when a class too
+    small to share `_MIN_SHARED` members was renamed alone, its members unchanged. A scope
+    this file does not show to be a class (its methods defined out of line, its class in
+    a header) is never followed: unsure."""
     was, was_classes = _layout(before)
     members, classes = _layout(now)
     old = was[scope]
