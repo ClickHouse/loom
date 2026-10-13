@@ -9,11 +9,13 @@ file atomically, so concurrent updates never drop each other's change.
 from __future__ import annotations
 
 import contextlib
+import errno
 import fcntl
 import json
 import logging
 import os
 import tempfile
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -23,6 +25,9 @@ from server.core.runtime_files import open_private
 log = logging.getLogger(__name__)
 
 _Version = tuple[int, int, int]  # inode, mtime_ns, size
+# How long an update waits for a sibling's lock; an update holds it for one
+# read and one atomic replace.
+LOCK_WAIT_S = 1.0
 
 
 def _version(st: os.stat_result) -> _Version:
@@ -61,7 +66,7 @@ class SharedDocument[T]:
         written."""
         lock = open_private(self.path + ".lock", os.O_RDWR | os.O_CREAT)
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+            _lock_within(lock, self.path, LOCK_WAIT_S)
             self._seen = None
             try:
                 latest = self._read_changed()
@@ -112,6 +117,20 @@ def share_override[T](
         raise OverrideNotSharedError(
             f"{what} not applied: the server's web processes could not share it"
         ) from e
+
+
+def _lock_within(fd: int, path: str, wait_s: float) -> None:
+    """Take the exclusive lock, or raise OSError after `wait_s`: an update runs
+    on the event loop, which a stuck sibling must not hold up."""
+    deadline = time.monotonic() + wait_s
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise OSError(errno.EWOULDBLOCK, f"{path}.lock held past {wait_s:g} s") from None
+            time.sleep(0.002)
 
 
 def _publish(path: str, data: object) -> _Version:

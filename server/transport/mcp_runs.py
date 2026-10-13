@@ -26,7 +26,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from server.core.background import TaskSet
 
@@ -149,16 +149,19 @@ async def ensure(
         return None
     now = time.monotonic() if now is None else now
     run = _RUNS.get(session_id)
-    if run is not None:
+    if run is not None and now - run.last_seen < idle_seconds():
         run.last_seen = now
         return run
+    # Absent, or idle here for so long that a sibling web process may have closed
+    # it: run.begin again, which joins the run while it is active.
     failed_at = _BEGIN_FAILED_AT.get(session_id)
     if failed_at is not None and now - failed_at < idle_seconds():
         return None
-    if len(_RUNS) >= SESSION_RUN_CAP:
+    if run is None and len(_RUNS) >= SESSION_RUN_CAP:
+        # A cap, not a sign the session ended: the close does not wait for the
+        # session to go idle, and a sibling still serving it reopens the run.
         idlest = min(_RUNS.values(), key=lambda r: r.last_seen)
         _RUNS.pop(idlest.session_id, None)
-        # Off the call's path: the close reads the ledger first.
         _PENDING.spawn(_close(idlest, reason="evicted"), name=f"mcp-run-evict:{idlest.session_id}")
     org = str(defaults.get("org") or "")
     namespace = str(defaults.get("namespace") or "")
@@ -231,12 +234,18 @@ async def drain_ledger_writes() -> None:
         await asyncio.gather(*_PENDING, return_exceptions=True)
 
 
-async def _close(run: SessionRun, *, reason: str) -> bool:
+# What a close did: completed the run; found it gone (closed elsewhere, or its
+# begin never landed); or left it for a later sweep (served lately, or the
+# ledger did not answer).
+_Closed = Literal["closed", "gone", "later"]
+
+
+async def _close(run: SessionRun, *, reason: str) -> _Closed:
     begin_task = run.extra.get("begin_task")
     if isinstance(begin_task, asyncio.Task) and not begin_task.done():
         await asyncio.gather(begin_task, return_exceptions=True)  # complete after begin
     if _BEGIN_FAILED_AT.get(run.session_id) is not None and _RUNS.get(run.session_id) is not run:
-        return False  # begin never landed; there is no run to complete
+        return "gone"
     try:
         from server.core.datetimes import naive_utc_now
         from server.tasks.api.models_run import RunCompleteInput
@@ -245,13 +254,11 @@ async def _close(run: SessionRun, *, reason: str) -> bool:
         # The ledger, not this process, says whether the session is over.
         found = await session_run_calls(run.org, run.run_id)
         if found is None:
-            return False  # a sibling web process closed it
+            return "gone"
         namespace, calls, last_call = found
-        if reason != "session_end" and last_call is not None:
-            # An idle or evicted run closes only when no process served it lately;
-            # a client's DELETE ends the session at once.
+        if reason == "idle" and last_call is not None:
             if (naive_utc_now() - last_call).total_seconds() < idle_seconds():
-                return False
+                return "later"  # a sibling web process served it lately
         await handle_run_complete(
             RunCompleteInput(
                 org=run.org,
@@ -266,25 +273,36 @@ async def _close(run: SessionRun, *, reason: str) -> bool:
                 metadata={"closed_by": f"mcp_{reason}", "calls": calls},
             )
         )
-        return True
-    except Exception as e:  # noqa: BLE001 — best effort
+        return "closed"
+    except Exception as e:  # noqa: BLE001 — best effort; the next sweep tries again
         log.warning("mcp session run: run.complete failed for %s (non-fatal): %s", run.run_id, e)
-        return False
+        return "later"
 
 
-async def close_session(session_id: str | None) -> bool:
-    """`DELETE /mcp`: the client ended the session; close its run."""
+async def close_session(session_id: str | None, org: str = "") -> bool:
+    """`DELETE /mcp`: the client ended the session; close its run. A web process
+    that never served the session closes it by id in `org` (the caller's)."""
     if not session_id:
         return False
     run = _RUNS.pop(session_id, None)
     if run is None:
-        return False
-    return await _close(run, reason="session_end")
+        if not org:
+            return False
+        run = SessionRun(
+            run_id=run_id_for(session_id),
+            org=org,
+            namespace="",
+            agent="",
+            session_id=session_id,
+            last_seen=time.monotonic(),
+        )
+    return await _close(run, reason="session_end") == "closed"
 
 
 async def sweep_idle(*, now: float | None = None, force: bool = False) -> int:
     """Close runs idle for longer than the idle window. Throttled to once per
-    SWEEP_MIN_INTERVAL_S unless forced. Returns how many closed."""
+    SWEEP_MIN_INTERVAL_S unless forced. A run the ledger shows another process
+    served lately stays, for the next sweep. Returns how many closed."""
     global _last_sweep
     now = time.monotonic() if now is None else now
     if not force and now - _last_sweep < SWEEP_MIN_INTERVAL_S:
@@ -294,9 +312,12 @@ async def sweep_idle(*, now: float | None = None, force: bool = False) -> int:
     stale = [r for r in _RUNS.values() if now - r.last_seen >= idle]
     closed = 0
     for run in stale:
-        _RUNS.pop(run.session_id, None)
-        if await _close(run, reason="idle"):
-            closed += 1
+        outcome = await _close(run, reason="idle")
+        if outcome == "later":
+            continue
+        if _RUNS.get(run.session_id) is run:
+            _RUNS.pop(run.session_id)
+        closed += outcome == "closed"
     for sid, t in list(_BEGIN_FAILED_AT.items()):
         if now - t >= idle:
             _BEGIN_FAILED_AT.pop(sid, None)

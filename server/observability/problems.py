@@ -137,9 +137,9 @@ def _embedder_problems(settings: Any, state: HealthState) -> list[Problem]:
     provider = _embedder_provider(model)
     fix_real = (
         "Choose an embedding model in Settings → Models & keys, which re-embeds what is "
-        "stored at the model's width. Setting LOOM_EMBEDDING_MODEL=text-embedding-3-small "
-        "with OPENAI_API_KEY (or local:bge-small for a keyless CPU embedder) and running "
-        "`loom reembed` works only on plain vector tables or coded ones of that width."
+        "stored at the model's width. Or set LOOM_EMBEDDING_MODEL=text-embedding-3-large "
+        "with OPENAI_API_KEY and run `loom reembed`: that keeps the vector tables' width, "
+        "which a model of another width (local:bge-small, 384) cannot do."
     )
     if provider == "fake":
         out.append(
@@ -193,9 +193,10 @@ def _embedder_problems(settings: Any, state: HealthState) -> list[Problem]:
                 "error",
                 f"A Quantized codec fixes its column's width when the table is created, so "
                 f"these writes fail: {columns}.",
-                "Set LOOM_EMBEDDING_DIM (or the label's dim in LOOM_CODE_VECTOR_TABLES) to the "
-                "width the table was created at, or change the model in Settings → Models & "
-                "keys, which rebuilds the vector tables at the new width.",
+                "Change the model in Settings → Models & keys, which rebuilds the vector tables "
+                "at the new width. Setting LOOM_EMBEDDING_DIM (or the label's dim in "
+                "LOOM_CODE_VECTOR_TABLES) back to the stored width helps only a model that "
+                "can emit it.",
                 source="runtime",
             )
         )

@@ -346,10 +346,14 @@ async def _bind_session_run(
 
         if defaults and _mcp_runs.takes_run(op):
             # The run row lives where the session's first call worked: its
-            # explicit namespace when it named one, else the caller default.
+            # explicit org and namespace when it named them, else the caller's.
             _run = await _mcp_runs.ensure(
                 mcp_session_id,
-                {**defaults, "namespace": str(arguments.get("namespace") or defaults["namespace"])},
+                {
+                    **defaults,
+                    "org": str(arguments.get("org") or defaults["org"]),
+                    "namespace": str(arguments.get("namespace") or defaults["namespace"]),
+                },
                 goal=_mcp_runs.goal_of(arguments, f"mcp session ({defaults['agent']})"),
             )
             if _run is not None:

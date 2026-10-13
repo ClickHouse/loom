@@ -194,3 +194,24 @@ def test_a_failed_update_leaves_a_siblings_newer_version_to_adopt(
         a.update(lambda latest: {**latest, "y": 2}, NONE)  # reads b's version, then fails
     monkeypatch.undo()
     assert a.poll() == {"x": 1}
+
+
+def test_an_update_gives_up_on_a_lock_a_sibling_holds(tmp_path, monkeypatch) -> None:
+    import fcntl
+    import os
+
+    import pytest
+
+    from server.core import shared_document
+
+    path = str(tmp_path / "doc.json")
+    holder = os.open(path + ".lock", os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    monkeypatch.setattr(shared_document, "LOCK_WAIT_S", 0.05)
+    doc = shared_document.SharedDocument(path, lambda d: d, lambda d: d)
+    try:
+        with pytest.raises(OSError, match="held past"):
+            doc.update(lambda d: {**d, "a": 1}, {})
+    finally:
+        os.close(holder)
+    assert doc.update(lambda d: {**d, "a": 1}, {}) == {"a": 1}

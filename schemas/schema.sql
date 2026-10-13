@@ -130,7 +130,8 @@ CREATE TABLE IF NOT EXISTS loom.agent_runs
     `grade_reason` String DEFAULT '',
     `grade_ref` String DEFAULT '',
     `graded_at` Nullable(DateTime64(3)) DEFAULT NULL,
-    `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9)))
+    `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9))),
+    INDEX run_id_bloom_idx run_id TYPE bloom_filter(0.01) GRANULARITY 1
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, run_id)
