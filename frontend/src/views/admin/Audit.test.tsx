@@ -16,9 +16,9 @@ vi.mock("../../api", async (importOriginal) => {
   };
 });
 
-const row = (actor: string, subject: string): AuditEntry => ({
+const row = (actor: string, subject: string, event_type = "namespace.register"): AuditEntry => ({
   ts: new Date().toISOString(),
-  event_type: "namespace.register",
+  event_type,
   actor,
   subject,
   request_id: "",
@@ -52,5 +52,21 @@ describe("Audit rows", () => {
     expect(screen.getByText(/by carol/)).toBeTruthy();
     expect(screen.getAllByText("Created namespace (private)")).toHaveLength(3);
     expect(screen.queryByRole("button", { name: /Details/ })).toBeNull();
+  });
+
+  it("says when Loom retired memories on its own, and when one was restored", async () => {
+    vi.mocked(api.listAuditLog).mockResolvedValueOnce({
+      rows: [
+        row("process:loom", '{"reason":"same_key_judge","count":3,"retired":[]}', "memory.auto_supersede"),
+        row("process:loom", '{"reason":"value_update","count":1,"retired":[]}', "memory.auto_supersede"),
+        row("alice", '{"memory_key":"user_city","memory_id":"m1"}', "memory.unsupersede"),
+      ],
+    });
+    render(<Audit />);
+    expect(
+      await screen.findByText("Loom retired 3 memories automatically (a later session restated them)"),
+    ).toBeTruthy();
+    expect(screen.getByText("Loom retired 1 memory automatically (replaced by an updated value)")).toBeTruthy();
+    expect(screen.getByText('Restored "user_city" after it was retired')).toBeTruthy();
   });
 });

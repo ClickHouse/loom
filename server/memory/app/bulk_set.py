@@ -489,6 +489,7 @@ async def _bulk_post_insert_links(
             new_rows=state.memory_rows,
             ch=ch,
         )
+    _retired: list[dict[str, Any]] = []
     if judged.peers:
         from server.memory.app.key_supersession import retire_judged_peers
 
@@ -498,6 +499,7 @@ async def _bulk_post_insert_links(
         state.judged_follow_pairs += [(v["memory_id"], v["superseded_by"]) for v in _retired]
         _drop_retired_peers(plan, {str(v["memory_id"]) for v in _retired})
         _settle_results(state, plan, retired_peers={str(v["memory_id"]) for v in _retired})
+    await _record_judged_retirements(input, state, judged, _retired)
 
     # Value-update supersession (memory.app.value_updates). Runs after the
     # insert so the new row's id exists for the cross-link; fail-open; off by
@@ -533,6 +535,76 @@ async def _bulk_post_insert_links(
             log.warning("bulk_set: value-update linking failed (non-fatal): %s", e)
     last_value_updates_linked.set(_n_value_links)
     return _value_links
+
+
+def _judged_new_row_entries(
+    memory_rows: list[dict[str, Any]], judged: JudgedRetirements
+) -> list[dict[str, Any]]:
+    """The audit entries for the rows of this write that landed superseded behind a
+    stored row the judge read as newer: one per id (a key sent twice is one row)."""
+    behind = dict(judged.new_rows)
+    out: dict[str, dict[str, Any]] = {}
+    for r in memory_rows:
+        mid = str(r.get("memory_id") or "")
+        if mid not in behind:
+            continue
+        out[mid] = {
+            **r,
+            "superseded_by": behind[mid],
+            # A same-key peer shares the key.
+            "superseded_by_key": r.get("memory_key"),
+            "label": judged.new_row_labels.get(mid, ""),
+        }
+    return list(out.values())
+
+
+async def _record_judged_retirements(
+    input: MemoryBulkSetInput,
+    state: _BulkWriteState,
+    judged: JudgedRetirements,
+    retired_peers: list[dict[str, Any]],
+) -> None:
+    """After the insert and the peers' retirement: one `memory.auto_supersede` row
+    for what the same-key judge retired, the new rows that landed superseded and the
+    stored rows that did retire (never one a lock or a revision kept live)."""
+    from server.memory.app.auto_resolution import SAME_KEY_JUDGE, record_auto_supersessions
+
+    retired = _judged_new_row_entries(state.memory_rows, judged) + [
+        {**v, "superseded_by_key": v.get("memory_key")} for v in retired_peers
+    ]
+    await record_auto_supersessions(
+        org=input.org, namespace=input.namespace, retired=retired, reason=SAME_KEY_JUDGE
+    )
+
+
+async def _record_intra_batch_retirements(
+    input: MemoryBulkSetInput, state: _BulkWriteState, pairs: list[tuple[str, str]]
+) -> None:
+    """After the insert: one `memory.auto_supersede` row for the earlier rows of the
+    batch's templated pairs, which `newest_wins` landed superseded."""
+    if not pairs:
+        return
+    from server.memory.app.auto_resolution import (
+        NEWEST_WINS_CONTRADICTION,
+        record_auto_supersessions,
+    )
+
+    by_id = {str(r.get("memory_id") or ""): r for r in state.memory_rows}
+    retired = [
+        {
+            **by_id[older],
+            "superseded_by": newer,
+            "superseded_by_key": by_id.get(newer, {}).get("memory_key"),
+        }
+        for older, newer in pairs
+        if older in by_id
+    ]
+    await record_auto_supersessions(
+        org=input.org,
+        namespace=input.namespace,
+        retired=retired,
+        reason=NEWEST_WINS_CONTRADICTION,
+    )
 
 
 async def _bulk_settle_verdicts(
@@ -788,6 +860,7 @@ async def handle_memory_bulk_set(
 
     await _bulk_insert(ch, state)
     _bulk_clock.mark("insert")
+    await _record_intra_batch_retirements(input, state, _intra_pairs)
 
     _value_links = await _bulk_post_insert_links(ch, input, state, _judged, plan)
 

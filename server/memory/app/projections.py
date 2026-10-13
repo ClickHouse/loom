@@ -682,6 +682,7 @@ def retirement_victims(
                 "session_id": str(m["session_id"]),
                 "memory_key": key,
                 "superseded_by": str(by["memory_id"]) if by else "",
+                "superseded_by_key": sk if by else "",
             }
         )
     return out
@@ -752,9 +753,21 @@ async def _retire_memories_behind_repairs(
             len(memories),
         )
         return 0
+    from server.memory.app.auto_resolution import (
+        NEWEST_WINS_CONTRADICTION,
+        RetirementTracker,
+        record_auto_supersessions,
+    )
     from server.memory.domain.lock import refuses_retirement
 
-    n = await supersede_duplicates(input.org, victims, ch=ch, skip=refuses_retirement)
+    tracker = RetirementTracker(refuses_retirement)
+    n = await supersede_duplicates(input.org, victims, ch=ch, skip=tracker.skip)
+    await record_auto_supersessions(
+        org=input.org,
+        namespace=input.namespace,
+        retired=tracker.retired(victims),
+        reason=NEWEST_WINS_CONTRADICTION,
+    )
     log.info("newest_wins retired %d memories behind %d repaired triples", n, len(repairs))
     return n
 

@@ -123,9 +123,18 @@ async with Agent(org="acme", namespace="support", agent="curator") as agent:
 ### The Review queue
 
 The dashboard's Review queue (`/me/admin/review_queue`, `g r`) lists conflicted pairs and
-applies `conflicts.resolve`. Two more tabs appear when they have content: **Learnings**
-([learnings](./procedures-and-learnings.md#learnings-review-queue)) and **Exceptions**
-(the allowlist). See [the dashboard](../dashboard.md).
+applies `conflicts.resolve`. Three more tabs appear when they have content: **Learnings**
+([learnings](./procedures-and-learnings.md#learnings-review-queue)), **Auto-resolved**
+(below) and **Exceptions** (the allowlist). See [the dashboard](../dashboard.md).
+
+### Automatic retirements
+
+When Loom retires memories on its own (the same-key judge, `newest_wins`, a `refines`
+verdict, a value update), it writes one `memory.auto_supersede` audit row per write. The
+row names each retired memory, the row it retired behind and the reason; it holds ids,
+keys and identity, never value text. The Review queue's **Auto-resolved** tab lists them,
+and its Undo calls `memory.restore`, which brings a superseded row back `active` and
+records `memory.unsupersede`.
 
 ## Duplicates
 

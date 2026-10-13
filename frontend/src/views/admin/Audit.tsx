@@ -41,6 +41,16 @@ function subjectRecord(raw: unknown): Record<string, unknown> {
  *
  * Unknown event types fall through to a generic, readable fallback.
  */
+/** Why Loom retired memories on its own, as a clause (`memory.auto_supersede`'s `reason`). */
+const AUTO_SUPERSEDE_WHY: Record<string, string> = {
+  same_key_judge: "a later session restated them",
+  same_key_newest_wins: "a newer write won under the namespace policy",
+  newest_wins_contradiction: "a newer write won under the namespace policy",
+  refines: "a newer memory restated them with more detail",
+  value_update: "replaced by an updated value",
+  dedup_sweep: "duplicates of another memory",
+};
+
 function summarize(event_type: string, subject: Record<string, unknown>): string {
   const s = (k: string) => (subject[k] != null ? String(subject[k]) : "");
 
@@ -101,6 +111,14 @@ function summarize(event_type: string, subject: Record<string, unknown>): string
       return `Recorded outcome for "${s("memory_key")}": ${s("outcome") || s("result")}`;
     case "memory.touch":
       return `Touched "${s("memory_key")}"`;
+    case "memory.auto_supersede": {
+      const n = Number(subject["count"] ?? 0);
+      const what = n === 1 ? "1 memory" : `${n} memories`;
+      const why = AUTO_SUPERSEDE_WHY[s("reason")];
+      return why ? `Loom retired ${what} automatically (${why})` : `Loom retired ${what} automatically`;
+    }
+    case "memory.unsupersede":
+      return `Restored "${s("memory_key")}" after it was retired`;
     case "knowledge.upsert":
       return `Uploaded document ${s("source_uri") || s("title")}`;
     case "knowledge.add":

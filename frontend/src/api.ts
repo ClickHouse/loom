@@ -300,10 +300,12 @@ export async function listMemories(
   return out;
 }
 
-/** Undo a tombstone within the 14-day grace window. Returns
- *  restored=true on success, expired=true if the window has closed,
- *  restored=false (no-op) if the row was already live or doesn't exist.
- *  user_id / session_id complete the row's identity tuple. */
+/** Bring a row back live: undo a tombstone within the 14-day grace window, or undo a
+ *  supersession (a row Loom retired on its own, or a later write replaced). Returns
+ *  restored=true on success, expired=true if the delete window has closed, restored=false
+ *  (no-op) if the row was already live or doesn't exist. `from_status` says what it was
+ *  restored from ("tombstoned" or "superseded"; empty on a no-op). user_id / session_id
+ *  complete the row's identity tuple. */
 export async function restoreMemory(
   id: Identity,
   key: string,
@@ -313,6 +315,7 @@ export async function restoreMemory(
   memory_id?: string | null;
   version?: number | null;
   expired?: boolean;
+  from_status?: "tombstoned" | "superseded" | "";
 }> {
   return post("/v1/memory.restore", {
     ...id,

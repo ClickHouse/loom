@@ -1,7 +1,7 @@
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AllowlistRow, ConflictRow, LearningEntry } from "../../api";
+import type { AllowlistRow, AutoResolvedRow, ConflictRow, LearningEntry } from "../../api";
 import { useStore } from "../../lib/state";
 import { ReviewQueue } from "./ReviewQueue";
 
@@ -19,9 +19,20 @@ vi.mock("../../api", async (importOriginal) => {
     removeAllowlist: vi.fn(async () => ({ removed: true })),
     listLearnings: vi.fn(),
     reviewLearning: vi.fn(),
+    listAutoResolved: vi.fn(),
+    listUnsuperseded: vi.fn(),
+    restoreMemory: vi.fn(),
   };
 });
-import { listAllowlist, listConflicts, listLearnings, resolveConflict } from "../../api";
+import {
+  listAllowlist,
+  listAutoResolved,
+  listConflicts,
+  listLearnings,
+  listUnsuperseded,
+  resolveConflict,
+  restoreMemory,
+} from "../../api";
 
 const ORG = "dev";
 const WAIT = { timeout: 5000 };
@@ -62,6 +73,18 @@ const exception = (a: string, b: string): AllowlistRow => ({
   reason: "",
 });
 
+const retired = (key: string, extra: Partial<AutoResolvedRow> = {}): AutoResolvedRow => ({
+  memory_id: `id-${key}`,
+  memory_key: key,
+  agent: "claude",
+  user_id: "u1",
+  session_id: "s1",
+  superseded_by: `id-${key}-new`,
+  reason: "same_key_judge",
+  ts: "2026-10-01T10:00:00Z",
+  ...extra,
+});
+
 function seed(namespace: string) {
   act(() => {
     useStore.setState({ identity: { org: ORG, namespace, agent: "loom-ui" } });
@@ -75,6 +98,11 @@ describe("ReviewQueue", () => {
     vi.mocked(listLearnings).mockReset();
     vi.mocked(listAllowlist).mockResolvedValue({ rows: [] });
     vi.mocked(listLearnings).mockResolvedValue({ rows: [] });
+    vi.mocked(listAutoResolved).mockReset();
+    vi.mocked(listUnsuperseded).mockReset();
+    vi.mocked(restoreMemory).mockReset();
+    vi.mocked(listAutoResolved).mockResolvedValue({ rows: [] });
+    vi.mocked(listUnsuperseded).mockResolvedValue(new Map());
   });
   afterEach(() => {
     cleanup();
@@ -134,5 +162,65 @@ describe("ReviewQueue", () => {
     render(<ReviewQueue />);
     await userEvent.click(await screen.findByRole("tab", { name: /Exceptions/ }, WAIT));
     expect(await screen.findByRole("button", { name: "Remove exception k/a ↔ k/b" }, WAIT)).toBeTruthy();
+  });
+
+  it("lists what Loom retired on its own, why and behind what, with an Undo", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listAutoResolved).mockResolvedValue({
+      rows: [
+        retired("user_city", { superseded_by_key: "user_city_current", label: "contradiction" }),
+        retired("user_job", { reason: "refines", superseded_by: "abc123" }),
+      ],
+    });
+    vi.mocked(restoreMemory).mockResolvedValue({ restored: true, from_status: "superseded" });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
+
+    expect(await screen.findByText("user_city", {}, WAIT)).toBeTruthy();
+    expect(screen.getByText("A later session stated this attribute differently")).toBeTruthy();
+    expect(screen.getByText("user_city_current")).toBeTruthy();
+    expect(screen.getByText("A newer memory restates this one with more detail")).toBeTruthy();
+    // No key for the row it retired behind: its id.
+    expect(screen.getByText("abc123")).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: "Undo retirement of user_city" }));
+    await waitFor(() =>
+      expect(restoreMemory).toHaveBeenCalledWith({ org: ORG, namespace: "ns-a", agent: "claude" }, "user_city", {
+        user_id: "u1",
+        session_id: "s1",
+      }),
+    );
+    expect(await screen.findByText("Restored", {}, WAIT)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Undo retirement of user_city" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Undo retirement of user_job" })).toBeTruthy();
+  });
+
+  it("shows a retirement already undone as Restored, unless it was retired again since", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listAutoResolved).mockResolvedValue({
+      rows: [retired("undone"), retired("again", { ts: "2026-10-03T10:00:00Z" })],
+    });
+    vi.mocked(listUnsuperseded).mockResolvedValue(
+      new Map([
+        ["id-undone", "2026-10-02T10:00:00Z"],
+        ["id-again", "2026-10-02T10:00:00Z"],
+      ]),
+    );
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
+    expect(await screen.findByText("Restored", {}, WAIT)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Undo retirement of undone" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Undo retirement of again" })).toBeTruthy();
+  });
+
+  it("hides the Auto-resolved tab when Loom retired nothing", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("No conflicts", {}, WAIT);
+    await waitFor(() => expect(listAutoResolved).toHaveBeenCalled(), WAIT);
+    expect(screen.queryByRole("tab", { name: /Auto-resolved/ })).toBeNull();
   });
 });

@@ -715,6 +715,105 @@ export async function listAuditLog(
   return post("/v1/audit.list", body, opts.signal);
 }
 
+// ===== automatic retirements =====
+
+/** Why Loom retired a memory on its own (`server/memory/app/auto_resolution.py`). */
+export type AutoResolveReason =
+  | "same_key_judge"
+  | "same_key_newest_wins"
+  | "refines"
+  | "newest_wins_contradiction"
+  | "value_update"
+  | "dedup_sweep";
+
+/** One retired row of a `memory.auto_supersede` audit row: ids, keys and identity, no value. */
+export interface AutoResolvedRow {
+  memory_id: string;
+  memory_key: string;
+  agent: string;
+  user_id: string;
+  session_id: string;
+  superseded_by: string;
+  superseded_by_key?: string;
+  /** The judge's label (`contradiction` / `elaboration`) on a same-key judgement. */
+  label?: string;
+  reason: AutoResolveReason | string;
+  /** When the retirement was recorded (the audit row's `ts`). */
+  ts: string;
+}
+
+function parseSubject(raw: string): Record<string, unknown> {
+  try {
+    const v: unknown = JSON.parse(raw);
+    return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+const str = (v: unknown): string => (v == null ? "" : String(v));
+
+/** The memories Loom retired on its own in a namespace, newest first: one row per retired
+ *  memory, flattened out of the `memory.auto_supersede` audit rows. */
+export async function listAutoResolved(
+  id: Pick<Identity, "org" | "namespace">,
+  opts: { limit?: number; since?: string } & RequestOpts = {},
+): Promise<{ rows: AutoResolvedRow[] }> {
+  const { rows } = await listAuditLog(id, {
+    event_type: "memory.auto_supersede",
+    limit: opts.limit ?? 100,
+    since: opts.since,
+    fields: ["ts", "subject"],
+    signal: opts.signal,
+  });
+  const out: AutoResolvedRow[] = [];
+  for (const r of rows || []) {
+    const subject = parseSubject(r.subject);
+    const retired = Array.isArray(subject["retired"]) ? (subject["retired"] as unknown[]) : [];
+    for (const e of retired) {
+      if (!e || typeof e !== "object") continue;
+      const m = e as Record<string, unknown>;
+      if (!m["memory_id"] || !m["memory_key"]) continue;
+      out.push({
+        memory_id: str(m["memory_id"]),
+        memory_key: str(m["memory_key"]),
+        agent: str(m["agent"]) || "-",
+        user_id: str(m["user_id"]) || "-",
+        session_id: str(m["session_id"]) || "-",
+        superseded_by: str(m["superseded_by"]),
+        superseded_by_key: m["superseded_by_key"] ? str(m["superseded_by_key"]) : undefined,
+        label: m["label"] ? str(m["label"]) : undefined,
+        reason: str(subject["reason"]),
+        ts: r.ts,
+      });
+    }
+  }
+  return { rows: out };
+}
+
+/** memory_id -> when it was last restored from `superseded` (`memory.unsupersede` audit
+ *  rows), so a retirement already undone reads as such. */
+export async function listUnsuperseded(
+  id: Pick<Identity, "org" | "namespace">,
+  opts: { limit?: number; since?: string } & RequestOpts = {},
+): Promise<Map<string, string>> {
+  const { rows } = await listAuditLog(id, {
+    event_type: "memory.unsupersede",
+    limit: opts.limit ?? 500,
+    since: opts.since,
+    fields: ["ts", "subject"],
+    signal: opts.signal,
+  });
+  const out = new Map<string, string>();
+  for (const r of rows || []) {
+    const mid = str(parseSubject(r.subject)["memory_id"]);
+    if (!mid) continue;
+    const prev = out.get(mid);
+    if (!prev || r.ts > prev) out.set(mid, r.ts);
+  }
+  return out;
+}
+
 // ===== cost rollup =====
 
 // Shape backed by /v1/cost.summary — field names mirror the backend

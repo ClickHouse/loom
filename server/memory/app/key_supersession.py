@@ -163,10 +163,12 @@ def same_key_peers(
 class JudgedRetirements:
     """What the judge's labels retire. `new_rows`: (new row id, the peer it
     retires behind) for rows of this write that land superseded; `peers`: the
-    stored rows that retire behind a row of this write (`_victim` dicts)."""
+    stored rows that retire behind a row of this write (`_victim` dicts, each with
+    the judge's `label`); `new_row_labels`: new row id -> the label that retired it."""
 
     new_rows: list[tuple[str, str]] = field(default_factory=list)
     peers: list[dict[str, Any]] = field(default_factory=list)
+    new_row_labels: dict[str, str] = field(default_factory=dict)
 
 
 def judged_victims(
@@ -206,12 +208,18 @@ def judged_victims(
         )
         if newer_contradiction is not None and not bool(new.get("pinned")):
             out.new_rows.append((new_id, str(newer_contradiction.get("memory_id") or "")))
+            out.new_row_labels[new_id] = CONTRADICTION
             continue
         for peer in peers:
             peer_id = str(peer.get("memory_id") or "")
-            if labels.get((new_id, peer_id)) in (CONTRADICTION, ELABORATION) and retires(new, peer):
+            label = labels.get((new_id, peer_id))
+            if label in (CONTRADICTION, ELABORATION) and retires(new, peer):
                 # The version judged: a peer revised since is not the row the judge read.
-                victim = {**_victim(peer, new_id), "judged_version": peer.get("version")}
+                victim = {
+                    **_victim(peer, new_id),
+                    "judged_version": peer.get("version"),
+                    "label": label,
+                }
                 peer_victims.setdefault(peer_id, victim)
     # No two new rows share a peer (one row is judged per key, and a bulk has one
     # identity), so no new row retires behind a peer another one retires.
@@ -515,10 +523,22 @@ async def supersede_same_key_rows(
         victims = same_key_victims(new_rows, live)
         if not victims:
             return 0
+        from server.memory.app.auto_resolution import (
+            SAME_KEY_NEWEST_WINS,
+            RetirementTracker,
+            record_auto_supersessions,
+        )
         from server.memory.domain.lock import refuses_retirement
         from server.memory.store import supersede_duplicates
 
-        n = await supersede_duplicates(org, victims, ch=ch, skip=refuses_retirement)
+        tracker = RetirementTracker(refuses_retirement)
+        n = await supersede_duplicates(org, victims, ch=ch, skip=tracker.skip)
+        await record_auto_supersessions(
+            org=org,
+            namespace=namespace,
+            retired=[{**v, "superseded_by_key": v["memory_key"]} for v in tracker.retired(victims)],
+            reason=SAME_KEY_NEWEST_WINS,
+        )
         log.info(
             "same-key supersession (%s): %d older rows retired behind %d keys in %s/%s",
             policy,

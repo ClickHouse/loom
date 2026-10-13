@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import * as Tabs from "@radix-ui/react-tabs";
-import { ShieldCheck, AlertTriangle, Sparkles, Check, X, SkipForward, ShieldOff } from "lucide-react";
+import { ShieldCheck, AlertTriangle, Sparkles, Check, X, SkipForward, ShieldOff, Undo2, Wand } from "lucide-react";
 import {
   listConflicts,
   resolveConflict,
@@ -8,6 +8,10 @@ import {
   removeAllowlist,
   listLearnings,
   reviewLearning,
+  listAutoResolved,
+  listUnsuperseded,
+  restoreMemory,
+  type AutoResolvedRow,
   type ConflictRow,
   type AllowlistRow,
   type ResolveDecision,
@@ -22,6 +26,7 @@ import { toast } from "../../components/Toast";
 import { confirmAction } from "../../components/ConfirmDialog";
 import { relativeTime, formatValue, truncate, humanizeError } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
+import { canWrite, useNamespaceRole } from "../../lib/namespaceRole";
 import { PageContainer } from "../../layout/PageContainer";
 
 /**
@@ -35,6 +40,8 @@ import { PageContainer } from "../../layout/PageContainer";
  * Sub-tabs:
  *   - Conflicts:   pairs of memories that disagree on a value
  *   - Learnings:   facts the extractor proposed for promotion
+ *   - Auto-resolved: memories Loom retired on its own (`memory.auto_supersede`), each
+ *                    with an Undo (`memory.restore`)
  *   - Exceptions:  allowlist of pairs we've explicitly said may coexist
  */
 export function ReviewQueue() {
@@ -50,6 +57,8 @@ export function ReviewQueue() {
   const [probedExceptions, setProbedExceptions] = useState<AllowlistRow[] | null>(null);
   const hasLearnings = (probedLearnings?.length ?? 0) > 0;
   const hasExceptions = (probedExceptions?.length ?? 0) > 0;
+  const [probedAuto, setProbedAuto] = useState<AutoResolvedRow[] | null>(null);
+  const hasAuto = (probedAuto?.length ?? 0) > 0;
   // A namespace switch starts from Conflicts: the previous namespace's probes (and a tab
   // they revealed) must not outlive it, or a namespace with neither sub-tab strands the
   // viewer on a hidden panel.
@@ -58,6 +67,7 @@ export function ReviewQueue() {
     (signal, live) => {
       setProbedLearnings(null);
       setProbedExceptions(null);
+      setProbedAuto(null);
       setTab("conflicts");
       listLearnings({ org: identity.org, namespace: identity.namespace }, "pending", 50, { signal })
         .then((r) => {
@@ -67,6 +77,11 @@ export function ReviewQueue() {
       listAllowlist({ org: identity.org, namespace: identity.namespace }, { signal })
         .then((r) => {
           if (live()) setProbedExceptions(r.rows || []);
+        })
+        .catch(() => {});
+      listAutoResolved({ org: identity.org, namespace: identity.namespace }, { signal })
+        .then((r) => {
+          if (live()) setProbedAuto(r.rows || []);
         })
         .catch(() => {});
     },
@@ -86,7 +101,7 @@ export function ReviewQueue() {
         one. Most users never see anything here; that's a feature.
       </p>
       <Tabs.Root value={tab} onValueChange={setTab}>
-        {(hasLearnings || hasExceptions) && (
+        {(hasLearnings || hasExceptions || hasAuto) && (
           <Tabs.List className="flex border-b border-[var(--color-border)] mb-5">
             <TabTrigger value="conflicts" icon={AlertTriangle}>
               Conflicts
@@ -94,6 +109,11 @@ export function ReviewQueue() {
             {hasLearnings && (
               <TabTrigger value="learnings" icon={Sparkles}>
                 Learnings
+              </TabTrigger>
+            )}
+            {hasAuto && (
+              <TabTrigger value="auto" icon={Wand}>
+                Auto-resolved
               </TabTrigger>
             )}
             {hasExceptions && (
@@ -109,6 +129,11 @@ export function ReviewQueue() {
         {hasLearnings && (
           <Tabs.Content value="learnings" className="outline-none">
             <LearningsPanel initialPending={probedLearnings} />
+          </Tabs.Content>
+        )}
+        {hasAuto && probedAuto && (
+          <Tabs.Content value="auto" className="outline-none">
+            <AutoResolvedPanel rows={probedAuto} />
           </Tabs.Content>
         )}
         {hasExceptions && (
@@ -388,6 +413,120 @@ function LearningsPanel({ initialPending }: { initialPending?: LearningEntry[] |
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Auto-resolved panel ───────────────────────────────────────────────
+
+/** Why Loom retired a row, in plain words (`server/memory/app/auto_resolution.py`). */
+function autoResolveReason(reason: string, label?: string): string {
+  switch (reason) {
+    case "same_key_judge":
+      return label === "elaboration"
+        ? "A later session stated this attribute more fully"
+        : "A later session stated this attribute differently";
+    case "refines":
+      return "A newer memory restates this one with more detail";
+    case "value_update":
+      return "Replaced by an updated value";
+    case "newest_wins_contradiction":
+    case "same_key_newest_wins":
+      return "Newer write wins (namespace policy)";
+    case "dedup_sweep":
+      return "Duplicate of another memory";
+    default:
+      return "Retired automatically";
+  }
+}
+
+function AutoResolvedPanel({ rows }: { rows: AutoResolvedRow[] }) {
+  const identity = useIdentity();
+  const role = useNamespaceRole(identity.namespace);
+  // memory_id -> when it was last restored from superseded.
+  const [undone, setUndone] = useState<Map<string, string>>(new Map());
+  const [restored, setRestored] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState<string | null>(null);
+
+  useAbortableEffect(
+    (signal, live) => {
+      setRestored(new Set());
+      listUnsuperseded({ org: identity.org, namespace: identity.namespace }, { signal })
+        .then((m) => {
+          if (live()) setUndone(m);
+        })
+        .catch(() => {});
+    },
+    [identity.org, identity.namespace],
+  );
+
+  // A row retired again after an undo is retired, so the undo must be the later event.
+  const isRestored = (r: AutoResolvedRow) => {
+    if (restored.has(r.memory_id)) return true;
+    const at = undone.get(r.memory_id);
+    return at != null && at >= r.ts;
+  };
+
+  const undo = async (r: AutoResolvedRow) => {
+    setBusy(r.memory_id);
+    try {
+      const out = await restoreMemory(
+        { org: identity.org, namespace: identity.namespace, agent: r.agent || "-" },
+        r.memory_key,
+        { user_id: r.user_id, session_id: r.session_id },
+      );
+      if (out.restored) {
+        setRestored((s) => new Set(s).add(r.memory_id));
+        toast("Restored", "ok");
+      } else {
+        toast("Nothing to restore — the row is live or has changed since", "info");
+      }
+    } catch (e) {
+      toast(`Failed: ${humanizeError(e)}`, "error");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div>
+      <p className="text-sm text-[var(--color-text-muted)] mb-3 max-w-2xl">
+        Memories Loom retired on its own. They no longer come back in recall, but history keeps them. Undo brings one
+        back.
+      </p>
+      <div className="space-y-1.5">
+        {rows.map((r) => (
+          <div
+            key={`${r.ts}-${r.memory_id}`}
+            className="p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] flex items-start gap-3"
+          >
+            <div className="flex-1 min-w-0">
+              <div className="font-mono text-base text-[var(--color-text)] truncate">{r.memory_key}</div>
+              <div className="text-sm text-[var(--color-text)] mt-0.5">{autoResolveReason(r.reason, r.label)}</div>
+              <div className="text-xs text-[var(--color-text-muted)] tabular mt-1">
+                Behind <span className="font-mono">{r.superseded_by_key || r.superseded_by || "—"}</span> ·{" "}
+                {relativeTime(r.ts)}
+              </div>
+            </div>
+            {isRestored(r) ? (
+              <span className="inline-flex items-center gap-1 text-sm text-[var(--color-success)] px-2 py-1.5">
+                <Check size={13} /> Restored
+              </span>
+            ) : (
+              canWrite(role) && (
+                <button
+                  onClick={() => undo(r)}
+                  disabled={busy === r.memory_id}
+                  aria-label={`Undo retirement of ${r.memory_key}`}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border border-[var(--color-border-strong)] rounded-md hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                >
+                  <Undo2 size={13} /> Undo
+                </button>
+              )
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

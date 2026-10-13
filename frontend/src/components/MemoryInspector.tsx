@@ -46,6 +46,7 @@ import {
   conflictKeys,
   getProvenance,
   moveMemory,
+  restoreMemory,
 } from "../api";
 import { useStore } from "../lib/state";
 import { Waypoints } from "lucide-react";
@@ -338,6 +339,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
   // viewer never sees a button the server would refuse.
   const canMove = canCall("memory.move", role, whoami);
   const canTogglePin = canCall(detail?.pinned ? "memory.unpin" : "memory.pin", role, whoami);
+  const canRestore = canCall("memory.restore", role, whoami);
   useEffect(() => {
     setConflictCount(0);
     if (!conflictsReadable) return;
@@ -537,6 +539,26 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
     }
   };
 
+  // A superseded row (Loom retired it, or a later write replaced it) comes back live.
+  const onRestore = async () => {
+    if (!detail) return;
+    try {
+      const r = await restoreMemory({ ...identity, agent: detail.agent || identity.agent }, memoryKey, {
+        user_id: detail.user_id || undefined,
+        session_id: detail.session_id || undefined,
+      });
+      if (!r.restored) {
+        toast("Nothing to restore", "info");
+        return;
+      }
+      toast("Restored", "ok");
+      setDetail(await getMemory(identity, memoryKey, { include_recall_breakdown: true }));
+      onChanged();
+    } catch (e) {
+      toast(`Restore failed: ${humanizeError(e)}`, "error");
+    }
+  };
+
   const onDelete = async () => {
     if (
       !(await confirmAction({
@@ -692,7 +714,22 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                         </dd>
                       </>
                     )}
-                    <Row label="Status" value={statusLabel(detail.status)} />
+                    {detail.status === "superseded" && canRestore ? (
+                      <>
+                        <dt className="text-[var(--color-text-muted)]">Status</dt>
+                        <dd className="text-[var(--color-text)] flex items-center gap-2 flex-wrap">
+                          {statusLabel(detail.status)}
+                          <button
+                            onClick={onRestore}
+                            className="px-2 py-0.5 text-xs font-medium border border-[var(--color-border-strong)] rounded-md hover:bg-[var(--color-surface-2)]"
+                          >
+                            Restore
+                          </button>
+                        </dd>
+                      </>
+                    ) : (
+                      <Row label="Status" value={statusLabel(detail.status)} />
+                    )}
                     <Row label="Created" value={detail.created_at ? relativeTime(detail.created_at) : "—"} />
                     {detail.updated_at && detail.updated_at !== detail.created_at && (
                       <Row label="Updated" value={relativeTime(detail.updated_at)} />

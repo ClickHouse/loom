@@ -867,14 +867,28 @@ async def apply_refines(
     ]
     n = 0
     if victims:
+        from server.memory.app.auto_resolution import (
+            NEWEST_WINS_CONTRADICTION,
+            REFINES,
+            RetirementTracker,
+            record_auto_supersessions,
+        )
+
+        tracker = RetirementTracker()
         try:
             from server.memory.domain.lock import refuses_retirement
 
-            n = await supersede_duplicates(
-                org, victims, ch=ch or get_client(), skip=refuses_retirement
-            )
+            tracker = RetirementTracker(refuses_retirement)
+            n = await supersede_duplicates(org, victims, ch=ch or get_client(), skip=tracker.skip)
         except Exception as e:  # noqa: BLE001 — the row is in; retirement is best effort
             logging.getLogger(__name__).warning("refines: supersede failed (non-fatal): %s", e)
+            tracker.written.clear()
+        await record_auto_supersessions(
+            org=org,
+            namespace=namespace,
+            retired=[{**v, "superseded_by_key": new_memory_key} for v in tracker.retired(victims)],
+            reason=REFINES if relation == "refines" else NEWEST_WINS_CONTRADICTION,
+        )
     for p in refined_peers:
         if p.memory_key == new_memory_key:
             continue
