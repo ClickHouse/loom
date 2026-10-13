@@ -321,7 +321,8 @@ across repositories; what is left stays due for the next pass. A namespace switc
 `revise` judges a link at its code's next edit, not the changes it already flagged. The
 judge reads every declaration the fingerprint covers, overload signatures included. A
 memory labelled `high` sensitivity is never judged: its value never goes to the model, and
-its link stays `changed`. A change it could not see is not judged either: a method its
+its link stays `changed`. The label is read again before each judgement, and a judgement
+that was running when the memory was labelled is dropped. A change it could not see is not judged either: a method its
 renamed class carried drops any correction it had and stays `changed` until the memory is
 rewritten. A lost link is weighed only against the files touched since its code was last in its file
 that define its name; past 32 such files a link that was in place reads `unresolved`,

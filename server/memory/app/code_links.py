@@ -1195,8 +1195,8 @@ async def _apply_policies(
                 latest = now[0] if now else None
                 if latest is None or len(current(org, latest, mine)) != len(mine):
                     continue  # rewritten meanwhile: its links are relinked first
-                if code_change.held(latest):
-                    updated = {}
+                if not _judgeable(latest):
+                    updated = {}  # held or labelled high while the last judgement ran
             rows += [
                 store.link_row(
                     updated.get(k, a), follows=int(a["version"]), policy_due=int(k in left)
@@ -1222,17 +1222,13 @@ async def _revise(
     """The `revise` policy for one memory: the links it updated and those it left due
     (past the budget), by (path, qualified_name); None when the whole memory is deferred
     to the next pass. Each changed definition is judged on its own."""
-    if row.get("tombstoned_at") is not None or row["status"] not in SERVED:
-        return {}, set()
     changed = [
         a
         for a in links
         if a["state"] == "changed" and a["qualified_name"] and int(a.get("policy_due") or 0)
     ]
-    if policy != code_change.REVISE or not changed or code_change.held(row):
+    if policy != code_change.REVISE or not changed or not _judgeable(row):
         return {}, set()
-    if row.get("sensitivity") == "high":
-        return {}, set()  # its value never goes to the judge's model: it stays changed
     claim = _claim(row["value"])
     if claim is None:
         return {}, set()
@@ -1243,11 +1239,26 @@ async def _revise(
         if budget.judgements <= 0:
             due.add(key)
             continue
+        # a judgement awaits the model: the memory may have changed since it was read
+        now = await store.memory_heads(org, [str(row["mid"])])
+        if not now or now[0]["sha"] != row["sha"] or not _judgeable(now[0]):
+            return {}, set()
         link = await _judge(files, claim, a, head, budget)
         if link is not None:
             updated[key] = link
             result.suggested += bool(link["suggestion"])
     return None if len(due) == len(changed) else (updated, due)
+
+
+def _judgeable(row: dict[str, Any]) -> bool:
+    """Whether the judge may read memory `row`: served, not held by a person, and not
+    labelled `high`, whose value never goes to the judge's model."""
+    return (
+        row.get("tombstoned_at") is None
+        and row["status"] in SERVED
+        and not code_change.held(row)
+        and row.get("sensitivity") != "high"
+    )
 
 
 async def _judge(

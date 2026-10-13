@@ -2925,6 +2925,37 @@ async def test_a_high_sensitivity_memory_is_never_judged(env, monkeypatch, label
     assert (link["state"], link["suggestion"]) == ("changed", "")
 
 
+@pytest.mark.parametrize("names", [["secret_rows"], ["secret_rows", "secret_keys"]])
+async def test_a_memory_labelled_high_while_it_is_judged_is_judged_no_further(
+    env, monkeypatch, names
+) -> None:
+    from server.memory.app import code_link_judge
+
+    def program(value: int) -> str:
+        return "".join(f"def {n}():\n    return {value}\n\n\n" for n in names)
+
+    c1 = env.commit({"src/s.py": program(1)})
+    await _index(TRUNK, env, c1, ["src/s.py"])
+    await _set_policy(MEM, "revise")
+    claim = " and ".join(f"`{n}` returns one" for n in names) + f" ({MEM})"
+    mid = await _remember(MEM, "secret", claim)
+    await _pass()
+    calls: list[str] = []
+
+    async def judge(judged: str, before: str, after: str) -> tuple[str, str]:
+        calls.append(judged)
+        await _remember(MEM, "secret", claim, sensitivity="high")  # labelled meanwhile
+        return "contradicted", "they return two"
+
+    monkeypatch.setattr(code_link_judge, "judge_claim", judge)
+    await _relink_once(env, "src/s.py", program(2))
+    await _pass()
+    assert len(calls) == 1  # no judgement starts once it is high
+    assert [(x["state"], x["suggestion"]) for x in await _links(mid)] == [("changed", "")] * len(
+        names
+    )
+
+
 async def test_a_class_rename_drops_the_suggestion_its_method_carried(env, monkeypatch) -> None:
     from server.memory.api.models_crud import MemoryGetInput
     from server.memory.app import code_link_judge
