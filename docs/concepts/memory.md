@@ -271,14 +271,16 @@ define yet is retried for `memory_code_links_pending_days` (14), so a memory abo
 unmerged code links once it merges.
 
 A link is a tree-sitter `(path, qualified_name)` and a fingerprint of the definition's
-text (all its overloads) when the memory was written: verbatim in Python, where
-indentation is behaviour, and its tokens elsewhere, so a reformat or a comment changes
-nothing while a literal's bytes still do. What a file defines is read from the file itself at the repository's
-indexed head, in its bare git mirror; the code index only suggests where to look, so a
-commit still being ingested never decides a link. A file the parser fails on is not
-code that is gone: its links keep their state and are rechecked every pass until it
-parses, while the rest of the repository moves on. On every indexed commit the worker
-follows the commit's renames and edits:
+text (all its overloads) when the memory was written: its tokens as the parser nests
+them, so a reformat or a comment changes nothing while a literal's bytes still do. A
+Python block is a node of its own, so moving a statement into or out of an `if` changes
+the fingerprint while a re-indent does not; the spaces inside an f-string's `{x = }`,
+which Python prints, are no token and change nothing. What a file defines is read from
+the file itself at the repository's indexed head, in its bare git mirror; the code index
+only suggests where to look, so a commit still being ingested never decides a link. A
+file the parser fails on is not code that is gone: its links keep their state and are
+rechecked every pass until it parses, while the rest of the repository moves on. On
+every indexed commit the worker follows the commit's renames and edits:
 
 | Link state   | When                                                                                                               |
 | ------------ | ------------------------------------------------------------------------------------------------------------------ |
@@ -291,17 +293,22 @@ follows the commit's renames and edits:
 A definition follows to one with the same qualified name; to the same name inside its
 module after a file move; to the one new definition with its text under a new name; or,
 renamed and edited, to the one new definition in its scope close to its old text and in
-its place among the definitions that stayed (read `changed`). A method follows its
-class when the class was renamed and the new class keeps most of its members: `moved`
-when only the class's name changed, else `changed`, since the method's own text cannot
-show what changed around it. A namesake in another class or namespace never inherits a link. A small definition
-renamed and edited is followed only when its new name is related to the old one: grown
-or shrunk (`fetch` -> `fetch_all`), a `v` version bumped (`parse_v1` -> `parse_v2`), or
-keeping a word past the ones both begin with (`fetch_rows` -> `load_rows`, not
-`fetch_users`). A link already `missing` is found again only when its own name comes
-back, in its own file or, for 30 days after it went missing, in another; never by a
-definition added later. An `unresolved` link is weighed against new definitions in
-other files for those 30 days too, and after them only when its own file changes.
+its place among the definitions that stayed (read `changed`). A method follows its class
+when the class was renamed and the new class keeps most of its members: `moved` when
+only the class's name changed, else `changed`, since the method's own text cannot show
+what changed around it. A namesake in another class or namespace never inherits a link.
+Members follow their class only within one file: in another file a definition is found
+only under its qualified name or the same name inside its module, so a class renamed and
+moved to another file at once leaves its methods' links lost (`missing`, or `unresolved`
+where its old file has new definitions that may be them) until the memory is rewritten.
+A small definition renamed and edited is followed only when its new name is related to
+the old one: grown or shrunk (`fetch` -> `fetch_all`), a `v` version bumped (`parse_v1`
+-> `parse_v2`), or keeping a word past the ones both begin with (`fetch_rows` ->
+`load_rows`, not `fetch_users`). A link already `missing` is found again only when its
+own name comes back, in its own file or, for 30 days after it went missing, in another;
+never by a definition added later. An `unresolved` link is weighed against new
+definitions in other files for those 30 days too, and after them only when its own file
+changes.
 
 Each link records the fingerprint rules its hashes were computed with. After an upgrade
 the worker re-hashes every link from the commits its hashes were taken at, including the
@@ -319,13 +326,14 @@ newer state. `revise` judges a link once per edit, within a per-pass budget shar
 across repositories; what is left stays due for the next pass. A namespace switched to
 `revise` judges a link at its code's next edit, not the changes it already flagged. The
 judge reads every declaration the fingerprint covers, overload signatures included. A
-memory labelled `high` sensitivity is never judged: its value never goes to the model, and
-its link stays `changed`. The label is read again before each judgement, and a judgement
-that was running when the memory was labelled is dropped. A change it could not see is
-not judged either: a method a renamed and edited class carried drops any correction it
-had and stays `changed` until the memory is rewritten. A lost link is weighed only
-against the files touched since its code was last in its file that define its name; past 32 such files a link that was in place reads `unresolved`,
-and one already `missing` stays `missing`.
+memory labelled `high` sensitivity is never judged: its value never goes to the model,
+and its link stays `changed`. The label is read again before each judgement, and a
+judgement that was running when the memory was labelled is dropped. A change it could
+not see is not judged either: a method a renamed and edited class carried drops any
+correction it had and stays `changed` until the memory is rewritten. A lost link is
+weighed only against the files touched since its code was last in its file that define
+its name; past 32 such files a link that was in place reads `unresolved`, and one
+already `missing` stays `missing`.
 
 Loom never writes the memory. The namespace's `code_change_policy`
 (`namespace.register`) decides what reads make of a change:
@@ -341,7 +349,9 @@ cap, is only flagged. Links made for an earlier value of a memory (its text, fil
 repository or user) are ignored by every read until the memory is relinked.
 
 A trunk link that reads `missing` still serves a branch that has the definition: a
-lesson on a release branch compares that branch's own definition.
+lesson on a release branch compares that branch's own definition. Where the branch's
+files cannot be read (a read replica has no git mirror), a lesson carries trunk's last
+state instead, and a link trunk lost is left out.
 
 The links are read where the code is:
 
