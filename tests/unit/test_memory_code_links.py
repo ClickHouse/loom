@@ -917,6 +917,22 @@ async def test_a_mirror_git_cannot_read_raises_and_a_missing_file_does_not(tmp_p
     assert await file_at(gd, head, "gone.py") is None
     with pytest.raises(GitError):
         await file_at(str(tmp_path / "nowhere"), head, "a.py")
+    with pytest.raises(GitError):
+        await file_at(gd, "0" * 40, "a.py")
+
+
+@pytest.mark.asyncio
+async def test_a_directory_or_submodule_at_a_path_is_no_file(tmp_path) -> None:
+    from server.code.app.index.gitrepo import file_at
+
+    git, commit = _repo(tmp_path)
+    first = commit({"lib/b.py": "y = 2\n"})
+    git("update-index", "--add", "--cacheinfo", f"160000,{first},sub")
+    git("commit", "-q", "-m", "submodule")
+    head, gd = git("rev-parse", "HEAD"), str(tmp_path / ".git")
+    assert await file_at(gd, head, "lib/b.py") == b"y = 2\n"
+    assert await file_at(gd, head, "lib") is None
+    assert await file_at(gd, head, "sub") is None
 
 
 @pytest.mark.asyncio

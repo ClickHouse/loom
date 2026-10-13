@@ -983,15 +983,16 @@ async def commit_meta_many(git_dir: str, shas: list[str]) -> dict[str, tuple[str
 
 
 async def show_file(git_dir: str, sha: str, path: str) -> bytes | None:
-    """File contents at a commit; None when the path doesn't exist there (or
-    `sha` is not a revision)."""
+    """File contents at a commit; None when the path is no file there (absent, a
+    directory, a submodule) or `sha` is not a revision."""
     if not _is_rev(sha):
         return None
     proc = await asyncio.create_subprocess_exec(
         "git",
         "--git-dir",
         git_dir,
-        "show",
+        "cat-file",
+        "blob",
         f"{sha}:{path}",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -1000,20 +1001,22 @@ async def show_file(git_dir: str, sha: str, path: str) -> bytes | None:
     try:
         out, _err = await communicate_or_kill(proc, timeout_s=_GIT_TIMEOUT_S)
     except TimeoutError:
-        raise GitError(f"git show {path} timed out") from None
+        raise GitError(f"git cat-file {path} timed out") from None
     if proc.returncode != 0:
         return None
     return out
 
 
 async def file_at(git_dir: str, sha: str, path: str) -> bytes | None:
-    """`path` at `sha`; None only when that commit has no such file. A mirror git cannot
-    read, or a commit it does not have, raises GitError."""
+    """`path` at `sha`; None only when that commit has no such file (a directory or a
+    submodule there is none). A mirror git cannot read, or a commit it does not have,
+    raises GitError."""
     data = await show_file(git_dir, sha, path)
     if data is not None:
         return data
-    if (await _git(git_dir, "ls-tree", "--name-only", _rev(sha), "--", path)).strip():
-        raise GitError(f"git show {path} failed at {sha}")
+    listed = await _git(git_dir, "ls-tree", _rev(sha), "--", path)
+    if any(line.split(" ", 2)[1:2] == ["blob"] for line in listed.splitlines()):
+        raise GitError(f"git cat-file {path} failed at {sha}")
     return None
 
 
