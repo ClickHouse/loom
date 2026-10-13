@@ -5,6 +5,7 @@ evidence, the events scrub and the code index of a code namespace."""
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable, Sequence
 
 from server.core.datetimes import naive_utc_now
@@ -545,6 +546,67 @@ async def delete_memory_versions_by_user(
 _CODE_LINK_TABLES = ("loom.memory_code_links", "loom.memory_code_link_queue")
 
 
+_CURSORS = "loom.code_index_state"
+_LINK_CURSOR_NS = "memory_code_links"  # the link worker's cursors (`code_link_pass.Cursor`)
+_NO_MEMORY = "00000000-0000-0000-0000-000000000000"
+
+
+def _scrubbed(key: str, value: str, org: str, namespaces: set[str], user_id: str) -> str | None:
+    """The link worker's cursor `key` without the erased memories' identity, None when it
+    names none. The cursor stays where it was: the identity it drops only re-reads a
+    few rows."""
+    data = json.loads(value) if value else None
+
+    def names(ns: str, uid: str) -> bool:
+        return ns in namespaces or bool(user_id) and uid == user_id
+
+    if key == "queue" and data and data[2] == org and names(data[3], data[5]):
+        return json.dumps([*data[:2], *[""] * 6])
+    after = data.get("after") if isinstance(data, dict) else None
+    if key == "backfill" and after and after[0] == org and names(after[1], after[3]):
+        return json.dumps({**data, "after": [*after[:2], *[""] * 4]})
+    if key == "sweep" and after and after[0] == org and (after[4] in namespaces or user_id):
+        return json.dumps({**data, "after": [*after[:5], _NO_MEMORY]})
+    return None
+
+
+async def _scrub_link_cursors(
+    org: str, namespaces: set[str], user_id: str, ch: _CHClient | None
+) -> None:
+    """Rewrite the link worker's cursors that name an erased memory, and delete the
+    versions that did."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        f"SELECT state_key, state_value, version FROM {_CURSORS} FINAL "
+        "WHERE org = '' AND namespace = {ns:String}",
+        params={"ns": _LINK_CURSOR_NS},
+    )
+    for r in rows:
+        value = _scrubbed(str(r["state_key"]), str(r["state_value"]), org, namespaces, user_id)
+        if value is None:
+            continue
+        version = int(r["version"]) + 1
+        await ch.insert(
+            _CURSORS,
+            [
+                {
+                    "org": "",
+                    "namespace": _LINK_CURSOR_NS,
+                    "state_key": r["state_key"],
+                    "state_value": value,
+                    "updated_at": naive_utc_now(),
+                    "version": version,
+                }
+            ],
+        )
+        await ch.execute(
+            f"DELETE FROM {_CURSORS} WHERE org = '' AND namespace = {{ns:String}} "
+            "AND state_key = {key:String} AND version < {v:UInt64} "
+            "SETTINGS lightweight_deletes_sync = 2",
+            params={"ns": _LINK_CURSOR_NS, "key": r["state_key"], "v": version},
+        )
+
+
 async def delete_code_links_by_namespace(
     org: str,
     namespace: str | Sequence[str],
@@ -564,6 +626,8 @@ async def delete_code_links_by_namespace(
             final=False,
             ch=ch,
         )
+    names = {namespace} if isinstance(namespace, str) else set(namespace)
+    await _scrub_link_cursors(org, names, "", ch)
     return n
 
 
@@ -585,6 +649,7 @@ async def delete_code_links_by_user(
             final=False,
             ch=ch,
         )
+    await _scrub_link_cursors(org, set(), user_id, ch)
     return n
 
 
