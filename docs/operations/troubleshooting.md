@@ -109,11 +109,13 @@ each field means is in [monitoring](./monitoring.md#health-checks).
 ### Searches fail with 503 EMBED_TIMEOUT
 
 - **Cause:** the embedding provider did not answer the query embedding within
-  `LOOM_MEMORY_SEARCH_EMBED_BOUND_S` (2.5 s) on any of its attempts
-  (`LOOM_MEMORY_SEARCH_EMBED_BOUND_RETRIES`, 1). A query whose vector is in the embedding
-  cache still answers.
-- **Check:** `curl -s localhost:7777/v1/health | jq '.problems[].code'` shows
-  `provider_failing:<name>` while the provider is down; the provider's own status page.
+  `LOOM_MEMORY_SEARCH_EMBED_BOUND_S` (2.5 s) on both of its attempts by default (one
+  retry, `LOOM_MEMORY_SEARCH_EMBED_BOUND_RETRIES`). A query whose vector is in the
+  embedding cache still answers.
+- **Check:** the server log's `query embed exceeded …s (attempt n/m)` warnings, and
+  `loom.agent_events` rows with `error_code = 'EMBED_TIMEOUT'`. A provider that hangs
+  sets no health flag; `/v1/health` shows `provider_failing:<name>` only when it also
+  answers errors. The provider's own status page.
 - **Fix:** retry once. If it repeats, the provider is slow or down: wait it out, or raise
   the bound for a provider that is slow but answering. Each failed search holds the
   server for up to one bound per attempt.

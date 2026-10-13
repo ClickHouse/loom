@@ -143,8 +143,8 @@ class BackendTimeoutError(LoomServerError):
 
 class EmbedTimeoutError(LoomServerError):
     """503 — the query embedding did not answer within
-    `memory_search_embed_bound_s` on any attempt; the search can be retried
-    at once."""
+    `memory_search_embed_bound_s` on any attempt. The search wrote nothing:
+    retry it once, then back off."""
 
     code = "EMBED_TIMEOUT"
     status_code = 503
