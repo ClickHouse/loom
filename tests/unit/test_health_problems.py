@@ -129,6 +129,22 @@ def test_gemini_embedder_accepts_either_key(monkeypatch: pytest.MonkeyPatch) -> 
     )
 
 
+def test_a_width_the_coded_tables_do_not_take_is_an_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    s = _settings(
+        monkeypatch,
+        LOOM_EMBEDDING_MODEL="fake-ngram-1024",
+        LOOM_EMBEDDING_DIM="1024",
+        LOOM_LLM_PROVIDER="fake",
+    )
+    stale = HealthState(probed_dim=1024, coded_widths=frozenset({3072}))
+    p = _by_code(collect_problems(s, stale), "coded_width_mismatch")
+    assert p.severity == "error" and "LOOM_EMBEDDING_DIM=3072" in p.fix
+    fine = HealthState(probed_dim=1024, coded_widths=frozenset({1024}))
+    assert "coded_width_mismatch" not in _codes(collect_problems(s, fine))
+
+
 def test_embedding_dim_mismatch_is_an_error_naming_the_probed_dim(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

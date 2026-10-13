@@ -44,7 +44,10 @@ class _FakeCH:
         if self.fail:
             raise RuntimeError("boom")
         if "system.columns" in sql:
-            return [{"table": t, "name": c} for t, c in self.coded]
+            return [
+                {"table": t, "name": c, "compression_codec": "CODEC(Quantized('rabitq', 1024, 0))"}
+                for t, c in self.coded
+            ]
         if "system.parts" in sql:
             return [
                 {"table": t, "patch_parts": n}
@@ -123,6 +126,7 @@ async def test_probe_reads_codecs_then_patch_parts_of_coded_tables_only() -> Non
     # an uncoded table is not asked about
     assert patch_parts.last_reading("loom.code_summaries") is None
     assert len(ch.calls) == 2
+    assert vector_codes_state.coded_widths() == {1024}
 
 
 @pytest.mark.asyncio

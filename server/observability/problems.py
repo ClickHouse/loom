@@ -53,6 +53,8 @@ class HealthState:
     server (post-boot) share one collector."""
 
     probed_dim: int | None = None
+    # Vector widths the Quantized-coded columns fix (`codes_state.coded_widths`).
+    coded_widths: frozenset[int] = frozenset()
     provider_status: Mapping[str, Any] | None = None  # provider_health.status()
     pending_migrations: tuple[str, ...] | None = None
     worker_lease_held: bool | None = None
@@ -172,6 +174,21 @@ def _embedder_problems(settings: Any, state: HealthState) -> list[Problem]:
                 "width fail or mis-rank.",
                 f"Set LOOM_EMBEDDING_DIM={state.probed_dim} and run `loom reembed` if rows "
                 "were written at the old width.",
+                source="runtime",
+            )
+        )
+    width = state.probed_dim or int(settings.embedding_dim)
+    stored = sorted(w for w in state.coded_widths if w != width)
+    if stored:
+        out.append(
+            Problem(
+                "coded_width_mismatch",
+                "error",
+                f"The vector tables are coded for {stored[0]}-dim vectors (a Quantized codec "
+                f"is fixed when its table is created) but {model} emits {width}: every "
+                "vector write fails.",
+                f"Set LOOM_EMBEDDING_DIM={stored[0]} again, or change the model in Settings → "
+                "Models & keys, which rebuilds the vector tables at the new width.",
                 source="runtime",
             )
         )

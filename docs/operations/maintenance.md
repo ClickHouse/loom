@@ -24,6 +24,11 @@ before ClickHouse applies it; watch `system.mutations`.
   Python loop. The Python path reads `--batch-size` rows at a time in sort-key order and
   prints a `resume:` token after each page; `--resume <token>` continues an interrupted
   run there.
+- **A model of another width.** On ClickHouse 26.8 or later a fresh install codes its
+  vector columns (`Quantized`), and a coded column takes vectors of the width it was
+  created with only. Change to a model of another width in Settings → Models & keys, which
+  rebuilds the vector tables at the new width; editing `LOOM_EMBEDDING_DIM` alone makes
+  every vector write fail, and `/v1/health` reports `coded_width_mismatch`.
 - **`loom rechunk --org ORG --namespace NS`** re-runs every live document through
   `knowledge.upsert` from its stored content, so documents pick up the current chunking
   and vectors (`--source-uri` for one document). Dry run until `--apply`.

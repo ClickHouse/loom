@@ -29,15 +29,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from typing import Any
 
 log = logging.getLogger(__name__)
 
 CODED_COLUMNS_SQL = (
-    "SELECT table, name FROM system.columns "
+    "SELECT table, name, compression_codec FROM system.columns "
     "WHERE database = {db:String} AND compression_codec LIKE '%Quantized(%'"
 )
+# The width argument of Quantized('<method>', <dim>, ...).
+_WIDTH = re.compile(r"Quantized\([^,]*,\s*(\d+)")
 PATCH_PARTS_SQL = (
     "SELECT table, countIf(startsWith(name, 'patch')) AS patch_parts "
     "FROM system.parts "
@@ -47,6 +50,8 @@ PATCH_PARTS_SQL = (
 
 # "loom.table.column" of every coded vector column; None = never read.
 _coded: frozenset[str] | None = None
+# The vector widths those codecs fix; a write of any other length fails.
+_widths: frozenset[int] = frozenset()
 # monotonic time of the last completed probe; None = never probed
 _probed_at: float | None = None
 _ch: Any = None
@@ -59,8 +64,9 @@ def _qualify(table: str) -> str:
 
 def reset() -> None:
     """Test seam."""
-    global _coded, _probed_at, _ch, _refresh
+    global _coded, _widths, _probed_at, _ch, _refresh
     _coded = None
+    _widths = frozenset()
     _probed_at = None
     _ch = None
     _refresh = None
@@ -74,6 +80,11 @@ def set_coded(columns: set[str] | frozenset[str] | None) -> None:
 
 def coded_columns() -> frozenset[str] | None:
     return _coded
+
+
+def coded_widths() -> frozenset[int]:
+    """The vector lengths the coded columns accept (empty: none coded, or never probed)."""
+    return _widths
 
 
 def is_coded(table: str, column: str) -> bool | None:
@@ -98,13 +109,15 @@ def codes_apply(table: str, column: str = "embedding") -> bool:
 
 async def probe(ch: Any) -> None:
     """Read both facts once. A failed read keeps the previous reading."""
-    global _probed_at, _ch
+    global _probed_at, _ch, _widths
     from server.core.vectors import patch_parts
 
     _ch = ch
     try:
         rows = await ch.query_all(CODED_COLUMNS_SQL, {"db": "loom"})
         set_coded({f"loom.{r['table']}.{r['name']}" for r in rows})
+        found = (_WIDTH.search(str(r.get("compression_codec") or "")) for r in rows)
+        _widths = frozenset(int(m.group(1)) for m in found if m)
     except Exception as e:  # noqa: BLE001 — advisory; the previous reading stands
         log.info("coded-column probe failed: %s", str(e)[:160])
     tables = sorted({c.rsplit(".", 1)[0].split(".", 1)[1] for c in (_coded or ())})

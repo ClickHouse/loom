@@ -51,6 +51,7 @@ def _health_provider_fields(
     from server.auth import revocation
     from server.code.app.index.sandbox import layout_refusal, sandbox_state
     from server.core.ch import reader_user_error, reader_user_state
+    from server.core.vectors import codes_state
     from server.embedding.embedder import effective_embedding_dim
     from server.llm.client import provider_key_missing
     from server.observability import instance as _instance
@@ -65,6 +66,7 @@ def _health_provider_fields(
     fake_llm = llm_provider == "fake" or provider_key_missing(llm_provider)
     provider_status = provider_health.status()
     probed_dim = effective_embedding_dim()
+    coded_widths = codes_state.coded_widths()
     lease = _leader.current()
     main = _main_state()
     reachable = main.get("reachable")
@@ -72,6 +74,7 @@ def _health_provider_fields(
         settings,
         HealthState(
             probed_dim=probed_dim,
+            coded_widths=coded_widths,
             provider_status=provider_status,
             pending_migrations=boot.SKIPPED_PENDING_MIGRATIONS,
             worker_lease_held=bool(lease.held) if lease else None,
@@ -92,7 +95,8 @@ def _health_provider_fields(
         "embedding_model": embedding_model,
         "embedding_dim_configured": settings.embedding_dim,
         "embedding_dim_probed": probed_dim,
-        "embedding_dim_mismatch": probed_dim != settings.embedding_dim,
+        "embedding_dim_mismatch": probed_dim != settings.embedding_dim
+        or any(w != probed_dim for w in coded_widths),
         "llm_provider": llm_provider,
         "llm_model": settings.llm_model,
         "providers_degraded": fake_embedding or fake_llm or provider_status["degraded"],
