@@ -650,47 +650,71 @@ async def code_change_policies(
     return {str(r["namespace"]): str(r["code_change_policy"] or "") for r in rows}
 
 
+def inputs_hash_sql(sha: str, files: str, cns: str, user_id: str) -> str:
+    """`code_link_reads.inputs_hash` in SQL, over these expressions."""
+    joined = f"arrayConcat([{sha}], arraySort({files}), [{cns}, {user_id}])"
+    return f"lower(hex(SHA256(arrayStringConcat({joined}, char(0)))))"
+
+
 async def stale_of_served(
     org: str,
     namespace: str,
     states: Sequence[str],
     memory_keys: Sequence[str] | None = None,
     *,
+    trunk: str,
+    tag_namespaces: Sequence[tuple[str, str]],
+    readable: Sequence[str],
+    limit: int,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
-    """The namespace's live links in `states` of its served memories (those under
-    `memory_keys` when given): each link's code, state and inputs hash beside the head
-    columns that hash is made from."""
+    """Up to `limit` (at least one) of the namespace's live links in `states` made from
+    their served memory as it is now (under `memory_keys` when given), into `readable`
+    code, newest check first; `total` counts their memories. A memory's code namespace is
+    `trunk`, else that of the first (repo tag, namespace) of `tag_namespaces` it is tagged."""
     keys = "AND memory_key IN {mks:Array(String)}" if memory_keys is not None else ""
     narrow = (
         f"org = {{org:String}} AND namespace = {{ns:String}} "
         f"AND state IN {{states:Array(String)}} {keys}"
+    )
+    cns_now = (
+        "if({trunk:String} != '', {trunk:String}, arrayElement({tag_cns:Array(String)}, "
+        "arrayFirstIndex(t -> has(tags, t), {repo_tags:Array(String)})))"
     )
     return await (ch or _default_client()).query_all(
         f"""
         SELECT l.memory_key AS memory_key, l.code_namespace AS code_namespace,
                l.path AS path, l.qualified_name AS qualified_name, l.state AS state,
                l.changed_since AS changed_since, l.checked_at AS checked_at,
-               l.inputs_hash AS inputs_hash, m.namespace AS namespace, m.tags AS tags,
-               m.files AS files, m.sha AS sha, m.user_id AS user_id
+               uniqExact(l.memory_key) OVER () AS total
         FROM (
             SELECT memory_id, memory_key, code_namespace, path, qualified_name, state,
                    changed_since, checked_at, inputs_hash
-            {_LIVE} AND {narrow}
+            {_LIVE} AND {narrow} AND code_namespace IN {{readable:Array(String)}}
         ) AS l
         INNER JOIN (
-            SELECT memory_id, namespace, tags, files, toString(content_sha256) AS sha, user_id
+            SELECT memory_id,
+                   {inputs_hash_sql("toString(content_sha256)", "files", cns_now, "user_id")}
+                   AS inputs_now
             FROM loom.memory FINAL
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND memory_id IN (SELECT memory_id FROM {TABLE} WHERE {narrow})
               AND tombstoned_at IS NULL AND status IN ('active', 'conflicted')
         ) AS m ON m.memory_id = l.memory_id
+        WHERE l.inputs_hash = m.inputs_now
+        ORDER BY l.checked_at DESC, l.memory_key, l.path, l.qualified_name
+        LIMIT {{lim:UInt32}}
         """,
         params={
             "org": org,
             "ns": namespace,
             "states": list(states),
             "mks": list(memory_keys or []),
+            "trunk": trunk,
+            "repo_tags": [t for t, _ in tag_namespaces],
+            "tag_cns": [c for _, c in tag_namespaces],
+            "readable": sorted(readable),
+            "lim": max(int(limit), 1),
         },
     )
 

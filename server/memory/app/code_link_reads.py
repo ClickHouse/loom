@@ -12,6 +12,8 @@ from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
 from server.code.app import memory_links as code
+from server.code.domain.index.remote import repo_tag
+from server.code.domain.index.repos import configured_repos
 from server.memory.api.models_crud import CodeLink
 from server.memory.domain import code_change
 from server.memory.store import code_links as store
@@ -30,7 +32,8 @@ def code_namespace_for(org: str, namespace: str, tags: list[str]) -> str:
 
 
 def inputs_hash(sha: str, files: list[str], cns: str, user_id: str) -> str:
-    """Everything a memory's links are made from: its text, files, repository, user."""
+    """Everything a memory's links are made from: its text, files, repository, user
+    (`store.inputs_hash_sql` reads the same in SQL)."""
     key = [sha, *sorted(files), cns, user_id]
     return hashlib.sha256("\0".join(key).encode()).hexdigest()
 
@@ -78,18 +81,38 @@ async def current_links(org: str, links: list[LinkRow]) -> list[LinkRow]:
 
 
 async def stale_links(
-    org: str, namespace: str, keys: Sequence[str] | None = None
+    org: str, namespace: str, keys: Sequence[str] | None = None, *, limit: int
 ) -> list[dict[str, Any]]:
-    """The namespace's changed, unresolved and missing links into repositories the caller
-    may read, of its served memories (those under `keys` when given) as they are now:
-    each with its memory_key, code_namespace, path, qualified_name, state, changed_since
-    and checked_at."""
-    rows = await store.stale_of_served(
-        org, namespace, ["changed", "unresolved", "missing"], memory_keys=keys
+    """Up to `limit` of the namespace's changed, unresolved and missing links into
+    repositories the caller may read, of its served memories (those under `keys` when
+    given) as they are now, newest check first; each with its memory_key,
+    code_namespace, path, qualified_name, state, changed_since, checked_at and `total`,
+    the number of memories they are of."""
+    trunk = code.trunk_namespace(org, namespace)
+    tagged = [] if trunk else _tag_namespaces(org)
+    seen = await readable_code(org, {trunk, *(cns for _, cns in tagged)} - {""})
+    if not seen:
+        return []
+    return await store.stale_of_served(
+        org,
+        namespace,
+        ["changed", "unresolved", "missing"],
+        memory_keys=keys,
+        trunk=trunk,
+        tag_namespaces=tagged,
+        readable=sorted(seen),
+        limit=limit,
     )
-    links = [r for r in rows if r["inputs_hash"] == inputs_now(org, r)]
-    seen = await readable_code(org, {a["code_namespace"] for a in links})
-    return [a for a in links if a["code_namespace"] in seen]
+
+
+def _tag_namespaces(org: str) -> list[tuple[str, str]]:
+    """(repo tag, trunk namespace) of the org's repositories, in the order
+    `namespace_for_tags` tries them."""
+    return [
+        (repo_tag(cfg.git_remote or cfg.repo), code.trunk_namespace(org, cfg.namespace))
+        for cfg in configured_repos()
+        if cfg.org == org
+    ]
 
 
 async def readable_code(org: str, namespaces: set[str]) -> set[str]:

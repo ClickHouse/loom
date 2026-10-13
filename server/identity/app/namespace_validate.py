@@ -329,19 +329,19 @@ async def _code_links_stale(params: dict[str, Any]) -> list[dict[str, Any]]:
     """`code_links_stale`'s rows, newest check first, in the shape the SQL checks give."""
     from server.memory.app.code_link_reads import stale_links
 
-    links = await stale_links(params["org"], params["ns"], params["keys"] or None)
-    links.sort(key=lambda a: (-a["checked_at"].timestamp(), a["memory_key"]))
-    memories = len({a["memory_key"] for a in links})
+    links = await stale_links(
+        params["org"], params["ns"], params["keys"] or None, limit=params["lim"]
+    )
     return [
         {
-            "total": memories,
+            "total": a["total"],
             "memory_key": a["memory_key"],
             "symbol": a["qualified_name"],
             "path": a["path"],
             "state": a["state"],
             "since": a["changed_since"],
         }
-        for a in links[: params["lim"]]
+        for a in links
     ]
 
 

@@ -2141,7 +2141,7 @@ async def test_validate_reports_an_unreadable_staleness_check_as_skipped(env, mo
     await _remove_fetch_rows(env, TRUNK)
     await _pass()
 
-    async def timeout(*args: Any) -> list[Any]:
+    async def timeout(*args: Any, **kw: Any) -> list[Any]:
         raise TimeoutError("read timed out")
 
     monkeypatch.setattr(code_link_reads, "stale_links", timeout)
@@ -3640,3 +3640,43 @@ async def test_a_lapsed_lock_no_longer_keeps_a_memory_whose_code_is_gone(env) ->
     await _remove_fetch_rows(env, TRUNK)
     await _pass()
     assert "note" not in await _search(MEM, "fetch_rows returns n")
+
+
+async def test_validate_counts_stale_memories_past_the_sample_limit(env) -> None:
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.identity.api.models_namespace_catalog import NamespaceValidateInput
+    from server.identity.app.namespace_validate import handle_namespace_validate
+    from server.operations.base import Role
+
+    await _drop_fetch_rows(env, TRUNK)
+    # files out of order and past ASCII: the SQL inputs hash must sort them as Python does
+    await _remember(MEM, "first", "`fetch_rows` returns n", files=["src/é.py", "src/c.py"])
+    await _pass()
+    await _remember(MEM, "second", "`fetch_rows` returns rows", files=["src/c.py", "Z.py"])
+    await _pass()
+    await _remove_fetch_rows(env, TRUNK)
+    await _pass()
+
+    async def stale(limit: int) -> Any:
+        auth = AuthInfo(
+            subject="it@example.com",
+            org=ORG,
+            namespaces=(MEM, TRUNK),
+            roles=(Role.VIEWER,),
+            is_service_account=False,
+        )
+        set_current_auth(auth)
+        try:
+            report = await handle_namespace_validate(
+                NamespaceValidateInput(org=ORG, namespace=MEM, sample_limit=limit)
+            )
+        finally:
+            set_current_auth(None)
+        return next(f for f in report.findings if f.check == "code_links_stale")
+
+    none = await stale(0)
+    assert (none.count, none.samples) == (2, [])
+    every = await stale(10)
+    assert every.count == 2 and {s["memory_key"] for s in every.samples} == {"first", "second"}
+    assert (await stale(1)).samples == every.samples[:1]

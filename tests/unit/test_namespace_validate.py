@@ -43,7 +43,7 @@ class _CH:
 
 @pytest.fixture(autouse=True)
 def _no_code_links(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def stale_links(org: str, namespace: str, keys: Any = None) -> list[dict[str, Any]]:
+    async def stale_links(org: str, namespace: str, keys: Any = None, **kw: Any) -> list[Any]:
         return []
 
     monkeypatch.setattr("server.memory.app.code_link_reads.stale_links", stale_links)
@@ -261,26 +261,24 @@ def test_keys_are_bounded_to_two_hundred() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stale_code_links_count_memories_and_sample_links_newest_first(
+async def test_stale_code_links_count_memories_and_sample_the_links_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from datetime import datetime
-
-    def link(key: str, day: int) -> dict[str, Any]:
+    def link(key: str) -> dict[str, Any]:
         return {
             "memory_key": key,
             "qualified_name": f"m::{key}",
             "path": "src/m.py",
             "state": "missing",
             "changed_since": "c2",
-            "checked_at": datetime(2026, 1, day),
+            "total": 2,
         }
 
     asked: list[Any] = []
 
-    async def stale_links(org: str, namespace: str, keys: Any = None) -> list[dict[str, Any]]:
-        asked.append(keys)
-        return [link("old", 1), link("new", 2), link("new", 3)]
+    async def stale_links(org: str, namespace: str, keys: Any = None, *, limit: int) -> Any:
+        asked.append((keys, limit))
+        return [link("new")]
 
     monkeypatch.setattr("server.memory.app.code_link_reads.stale_links", stale_links)
     monkeypatch.setattr(nv, "get_client", lambda: _CH({}))
@@ -288,4 +286,4 @@ async def test_stale_code_links_count_memories_and_sample_links_newest_first(
     stale = next(f for f in out.findings if f.check == "code_links_stale")
     assert stale.count == 2 and [s["memory_key"] for s in stale.samples] == ["new"]
     await nv.handle_namespace_validate(_inp())
-    assert asked == [["old", "new"], None]
+    assert asked == [(["old", "new"], 1), (None, 5)]

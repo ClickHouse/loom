@@ -1268,26 +1268,38 @@ async def test_a_hash_whose_code_is_gone_is_cleared_and_every_page_is_rehashed(
 
 
 @pytest.mark.asyncio
-async def test_stale_links_are_the_current_links_of_served_memories_in_readable_repositories(
-    monkeypatch,
-) -> None:
-    def link(key: str, cns: str = "code-a", made: str = "") -> dict[str, Any]:
-        head = _row(key)
-        return {"memory_key": key, "code_namespace": cns, "inputs_hash": made or _inputs(head)}
+async def test_stale_links_read_only_repositories_the_caller_may_read(monkeypatch) -> None:
+    asked: dict[str, Any] = {}
 
-    async def stale_of_served(org, ns, states, memory_keys):
-        assert (ns, states, memory_keys) == ("ns", ["changed", "unresolved", "missing"], ["k"])
-        rows = [link("live"), link("older", made="i-old"), link("hidden", "code-secret")]
-        return [_row(r["memory_key"]) | r for r in rows]
+    async def stale_of_served(org, ns, states, memory_keys, **kw):
+        asked.update(kw, states=states, keys=memory_keys)
+        return [{"memory_key": "k"}]
 
     async def readable(org, nss):
         return {n for n in nss if n != "code-secret"}
 
+    cfgs = [
+        SimpleNamespace(org="o", repo="acme/a", git_remote="", namespace="code-a"),
+        SimpleNamespace(org="x", repo="acme/x", git_remote="", namespace="code-x"),
+        SimpleNamespace(org="o", repo="acme/s", git_remote="", namespace="code-secret"),
+    ]
     monkeypatch.setattr(code_links.store, "stale_of_served", stale_of_served)
     monkeypatch.setattr(code_link_reads, "readable_code", readable)
-    monkeypatch.setattr(code_link_reads, "code_namespace_for", lambda org, ns, tags: "code-a")
-    links = await code_link_reads.stale_links("o", "ns", ["k"])
-    assert [a["memory_key"] for a in links] == ["live"]
+    monkeypatch.setattr(code_link_reads, "configured_repos", lambda: cfgs)
+    monkeypatch.setattr(code_link_reads, "repo_tag", lambda r: f"repo:{r}")
+    monkeypatch.setattr(
+        code_link_reads.code, "trunk_namespace", lambda org, ns: "" if ns == "ns" else ns
+    )
+    assert await code_link_reads.stale_links("o", "ns", ["k"], limit=3) == [{"memory_key": "k"}]
+    assert asked["states"] == ["changed", "unresolved", "missing"] and asked["keys"] == ["k"]
+    assert asked["trunk"] == "" and asked["readable"] == ["code-a"] and asked["limit"] == 3
+    assert asked["tag_namespaces"] == [("repo:acme/a", "code-a"), ("repo:acme/s", "code-secret")]
+    monkeypatch.setattr(code_link_reads, "readable_code", lambda org, nss: _async(set()))
+    assert await code_link_reads.stale_links("o", "ns", limit=3) == []  # nothing readable
+
+
+async def _async(value: Any) -> Any:
+    return value
 
 
 @pytest.mark.asyncio
@@ -1303,11 +1315,13 @@ async def test_stale_links_read_served_heads_and_only_the_columns_they_need() ->
             return []
 
     ch = _Rec()
-    assert await store.stale_of_served("o", "ns", ["missing"], ["k"], ch=ch) == []
+    kw: dict[str, Any] = {"trunk": "", "tag_namespaces": [], "readable": ["c"], "limit": 0}
+    assert await store.stale_of_served("o", "ns", ["missing"], ["k"], ch=ch, **kw) == []
     assert "SELECT *" not in ch.sql and "value" not in ch.sql
     assert "status IN ('active', 'conflicted')" in ch.sql and "tombstoned_at IS NULL" in ch.sql
     assert ch.sql.count("memory_key IN {mks:Array(String)}") == 2 and ch.params["mks"] == ["k"]
-    await store.stale_of_served("o", "ns", ["missing"], ch=ch)
+    assert "ORDER BY l.checked_at DESC" in ch.sql and ch.params["lim"] == 1  # the count rides it
+    await store.stale_of_served("o", "ns", ["missing"], ch=ch, **kw)
     assert "mks:" not in ch.sql
 
 

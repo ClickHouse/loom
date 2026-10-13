@@ -473,6 +473,22 @@ async def _deep_evidence(ch: RecordingCH, c: dict[str, Any]) -> None:
     )
 
 
+async def _stale_links(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.memory.store.code_links import stale_of_served
+
+    await stale_of_served(
+        ORG,
+        NS,
+        ["changed", "missing"],
+        ["k"] if c["keys"] else None,
+        trunk="",
+        tag_namespaces=[("repo:acme/a", "code-a")],
+        readable=["code-a"],
+        limit=5,
+        ch=ch,
+    )
+
+
 def cases() -> list[Case]:
     return [
         Case(
@@ -561,4 +577,10 @@ def cases() -> list[Case]:
         ),
         Case("memory_repo.workers", MR, _memory_workers, {"filters": (False, True)}),
         Case("deep_evidence", DE, _deep_evidence, {}),
+        Case(
+            "code_links.stale_of_served",
+            "server.memory.store.code_links",
+            _stale_links,
+            {"keys": (False, True)},
+        ),
     ]
