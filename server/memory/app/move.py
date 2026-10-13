@@ -21,6 +21,7 @@ import server.memory.store as memory_repo
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_crud import MemoryDeleteInput, MemorySetInput
 from server.memory.api.models_move import MemoryMoveInput, MemoryMoveOutput
 from server.memory.app import handlers as _mem
@@ -70,7 +71,9 @@ async def _load_source(input: MemoryMoveInput) -> MemoryRow:
         session_id=input.session_id,
     )
     # fresh: a move right after the set that wrote the key must see it.
-    source = await memory_repo.get_by_key(identity, input.from_key, fresh=True, strong=True)
+    source = await memory_repo.get_by_key(
+        identity, input.from_key, fresh=True, strong=True, scope=WHOLE_NAMESPACE
+    )
     if source is None or source.tombstoned_at is not None:
         raise _refuse(404, "NOT_FOUND", f"no live row under {input.from_key!r}")
     if str(source.status or "") == "duplicate":
@@ -151,7 +154,9 @@ async def _redirect_source(source: MemoryRow, dest_id: str, ch: Any) -> None:
             if (str(r.get("agent")), str(r.get("user_id")), str(r.get("session_id")))
             == (source.agent, source.user_id, source.session_id)
         ]
-        await memory_repo.restamp_embedding_rows(mine, status="duplicate", ch=ch)
+        await memory_repo.restamp_embedding_rows(
+            mine, status="duplicate", version=row["version"], ch=ch
+        )
     except Exception as e:  # noqa: BLE001 — the move stands
         log.warning(
             "memory.move: mirror restamp failed for %s (non-fatal): %s", source.memory_key, e
@@ -188,7 +193,9 @@ async def _destination_id(set_out: Any, set_input: Any) -> str:
         user_id=set_input.user_id,
         session_id=set_input.session_id,
     )
-    dest = await memory_repo.get_by_key(identity, set_input.memory_key, fresh=True, strong=True)
+    dest = await memory_repo.get_by_key(
+        identity, set_input.memory_key, fresh=True, strong=True, scope=WHOLE_NAMESPACE
+    )
     if dest is None:
         raise _refuse(
             409,

@@ -72,9 +72,10 @@ def require_real_signing_secret(
 
 
 class RevocationUnavailable(TokenError):
-    """The token may be valid, but this process has not yet loaded the
-    revocation list, so it cannot tell whether the token was revoked.
-    Retryable: the list loads on the next refresh."""
+    """The token may be valid, but this process has not loaded the
+    revocation list, or its copy is older than
+    `jwt_revocation_max_stale_seconds`, so it cannot tell whether the token
+    was revoked. Retryable: the list loads on the next refresh."""
 
 
 @dataclass(frozen=True)
@@ -128,6 +129,22 @@ class AuthInfo:
     # interactive | bench. '' = the namespace row (then the request's hint,
     # then interactive) decides.
     traffic_class: str = ""
+    # Delegation chain (server/auth/delegation.py). `parents`: the token ids
+    # of every ancestor token, root first; revoking any of them kills this
+    # token. `creator`: the root principal whose live grants and account this
+    # token is rechecked against on every request. '' = not a delegated token.
+    # `parent_subjects`: the ancestors' `sub`s, in the same order, so revoking
+    # an ancestor by subject (a service account's revoke) kills this token too.
+    # `parent_iats`: each ancestor's `iat`, aligned with `parent_subjects`, so
+    # an issued-before cutoff on an ancestor is judged by that ancestor's age.
+    parents: tuple[str, ...] = ()
+    parent_subjects: tuple[str, ...] = ()
+    parent_iats: tuple[int, ...] = ()
+    creator: str = ""
+    # `iat` as unix seconds; None for an identity no token backs (dev mode).
+    issued_at: int | None = None
+    # `exp` as unix seconds; None for a token without one.
+    expires_at: int | None = None
 
     def has_role(self, required: Role) -> bool:
         return any(r.value >= required.value for r in self.roles)
@@ -208,6 +225,10 @@ def mint_token(
     traffic_class: str | None = None,
     consumer: str | None = None,
     jti: str | None = None,
+    parents: list[str] | None = None,
+    parent_subjects: list[str] | None = None,
+    parent_iats: list[int] | None = None,
+    creator: str | None = None,
 ) -> str:
     """Mint a JWT for service accounts, user onboarding, and tests.
 
@@ -225,6 +246,9 @@ def mint_token(
     authorization per namespace instead of the flat `roles`. No `ttl_seconds`
     => no `exp` => indefinite token. The active kid goes in the header so
     verifiers pick the matching secret during signing-key rotation.
+    `parents` / `parent_subjects` / `parent_iats` / `creator` are the delegation claims
+    `delegation.delegate` computes; a token minted from another token gets
+    them from there.
     """
     now = int(time.time())
     payload: dict[str, Any] = {
@@ -262,6 +286,14 @@ def mint_token(
         if not c:
             raise TokenError(f"consumer must be a printable name, got {consumer!r}")
         payload["consumer"] = c
+    if parents:
+        payload["parents"] = list(parents)
+    if parent_subjects:
+        payload["parent_subjects"] = list(parent_subjects)
+    if parent_iats:
+        payload["parent_iats"] = list(parent_iats)
+    if creator:
+        payload["creator"] = creator
     if ttl_seconds is not None:
         payload["exp"] = now + ttl_seconds
     if secret is not None:
@@ -331,6 +363,14 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
         raise TokenError(f"token expired: {e}") from e
     except jwt.PyJWTError as e:  # InvalidKeyError is not an InvalidTokenError
         raise TokenError(f"invalid token: {e}") from e
+    # PyJWT accepts a numeric string for these; delegation and revocation read them
+    # as numbers, so a string `exp` would mint an unbounded child. JSON numbers only.
+    for claim in ("exp", "iat"):
+        value = decoded.get(claim)
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int | float)):
+            raise TokenError(f"claim {claim!r} must be a number")
+    if not isinstance(decoded.get("iss"), str):
+        raise TokenError("claim 'iss' must be a string")
     if decoded.get("iss") not in trusted_issuers:
         # The trusted list is deployment config: logged, not told to the caller.
         logging.getLogger(__name__).warning(
@@ -338,20 +378,7 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
         )
         raise TokenError(f"untrusted issuer {decoded.get('iss')!r}")
 
-    # Revocation by `jti` (one token), by `sub` (every token of a principal),
-    # or by `sub` with an issued-before cutoff (the
-    # tokens minted before the cutoff die, a re-mint after it stays valid).
-    # `iat` is in the required set above, so the cutoff always has an anchor.
-    from server.auth.revocation import is_revoked, loaded
-
-    if not loaded():
-        raise RevocationUnavailable("token revocation list not loaded yet; retry shortly")
-    jti = decoded.get("jti")
-    if jti and is_revoked(str(jti)):
-        raise TokenError(f"token jti {jti!r} is revoked")
-    sub_for_revoke = decoded.get("sub")
-    if sub_for_revoke and is_revoked(str(sub_for_revoke), issued_at=_iat_of(decoded)):
-        raise TokenError(f"token sub {sub_for_revoke!r} is revoked")
+    _check_not_revoked(decoded)
 
     roles: list[Role] = []
     for name in _str_list(decoded, "roles"):
@@ -366,6 +393,7 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
     org = decoded.get("org", "")
     if not isinstance(org, str):
         raise TokenError("claim 'org' must be a string")
+    exp = decoded.get("exp")
 
     return AuthInfo(
         subject=str(decoded["sub"]),
@@ -374,13 +402,85 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
         write_namespaces=tuple(_str_list(decoded, "ns_write")),
         ns_roles=tuple((str(k), str(v)) for k, v in ns_roles_claim.items()),
         roles=tuple(roles),
-        is_service_account=bool(decoded.get("sa", False)),
-        read_scope=str(decoded.get("read_scope") or ""),
-        read_user_id=str(decoded.get("read_user_id") or ""),
+        is_service_account=_bool_claim(decoded, "sa"),
+        read_scope=_read_scope_claim(decoded),
+        read_user_id=_optional_str_claim(decoded, "read_user_id"),
         token_id=token_id_of(token, decoded.get("jti")),
         traffic_class=_traffic_class_claim(decoded.get("traffic_class")),
         consumer=_consumer_claim(decoded.get("consumer")),
+        parents=tuple(_str_list(decoded, "parents")),
+        parent_subjects=tuple(_str_list(decoded, "parent_subjects")),
+        parent_iats=tuple(_parent_iats(decoded)),
+        creator=_creator_claim(decoded),
+        issued_at=_iat_of(decoded),
+        expires_at=int(exp) if exp is not None else None,
     )
+
+
+def _check_not_revoked(decoded: dict[str, Any]) -> None:
+    """Refuse a token revoked by `jti` (one token), by `sub` (every token of
+    a principal) or by `sub` with an issued-before cutoff (tokens minted
+    before it die, a re-mint after it stays valid). A delegated token also
+    dies with any ancestor token (`parents`), any ancestor's `sub`
+    (`parent_subjects`, each judged by its own `parent_iats` entry: a child
+    minted after the cutoff from an older parent must die with it) and its
+    creator's `sub` (judged by the root's `iat`, the oldest in the chain).
+    `iat` is required, so the cutoff always has an anchor."""
+    from server.auth.revocation import is_revoked, loaded, snapshot_age_seconds
+
+    if not loaded():
+        raise RevocationUnavailable("token revocation list not loaded yet; retry shortly")
+    if snapshot_age_seconds() > settings.jwt_revocation_max_stale_seconds:
+        raise RevocationUnavailable("token revocation list is stale; retry shortly")
+    jti = decoded.get("jti")
+    if jti and is_revoked(str(jti)):
+        raise TokenError(f"token jti {jti!r} is revoked")
+    issued_at = _iat_of(decoded)
+    sub_for_revoke = decoded.get("sub")
+    if sub_for_revoke and is_revoked(str(sub_for_revoke), issued_at=issued_at):
+        raise TokenError(f"token sub {sub_for_revoke!r} is revoked")
+    if any(is_revoked(parent) for parent in _str_list(decoded, "parents")):
+        raise TokenError("a parent of this token is revoked")
+    parent_iats = _parent_iats(decoded)
+    creator = _creator_claim(decoded)
+    oldest = min([*parent_iats, issued_at]) if issued_at is not None else None
+    if creator and is_revoked(creator, issued_at=oldest):
+        raise TokenError(f"token creator {creator!r} is revoked")
+    chain = zip(_str_list(decoded, "parent_subjects"), parent_iats, strict=True)
+    if any(is_revoked(sub, issued_at=iat) for sub, iat in chain):
+        raise TokenError("a parent of this token is revoked")
+
+
+def _bool_claim(decoded: dict[str, Any], claim: str) -> bool:
+    value = decoded.get(claim, False)
+    if not isinstance(value, bool):
+        raise TokenError(f"claim {claim!r} must be a boolean")  # "false" is truthy
+    return value
+
+
+def _optional_str_claim(decoded: dict[str, Any], claim: str) -> str:
+    value = decoded.get(claim)
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise TokenError(f"claim {claim!r} must be a string")  # 0 / false read as unset
+    return value
+
+
+def _read_scope_claim(decoded: dict[str, Any]) -> str:
+    """'' (namespace-wide) when absent; otherwise exactly one of READ_SCOPES. Any
+    other value is refused: read as '' it would widen the token to the namespace."""
+    value = _optional_str_claim(decoded, "read_scope")
+    if value and value not in READ_SCOPES:
+        raise TokenError(f"claim 'read_scope' must be one of {', '.join(READ_SCOPES)}")
+    return value
+
+
+def _creator_claim(decoded: dict[str, Any]) -> str:
+    creator = decoded.get("creator") or ""
+    if not isinstance(creator, str):
+        raise TokenError("claim 'creator' must be a string")
+    return creator
 
 
 def _accepted_algorithms() -> frozenset[str]:
@@ -398,6 +498,21 @@ def _str_list(decoded: dict[str, Any], claim: str) -> list[str]:
     value = decoded.get(claim) or []
     if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
         raise TokenError(f"claim {claim!r} must be a list of strings")
+    return value
+
+
+def _parent_iats(decoded: dict[str, Any]) -> list[int]:
+    """The `parent_iats` claim, one int per `parent_subjects` entry. A missing
+    or misaligned list is refused: without it an ancestor's cutoff would be
+    judged by this token's (younger) `iat` and miss."""
+    value = decoded.get("parent_iats") or []
+    subjects = _str_list(decoded, "parent_subjects")
+    if (
+        not isinstance(value, list)
+        or not all(isinstance(v, int) and not isinstance(v, bool) for v in value)
+        or len(value) != len(subjects)
+    ):
+        raise TokenError("claim 'parent_iats' must list one int per parent subject")
     return value
 
 
@@ -421,13 +536,10 @@ def new_jti() -> str:
 
 
 def _iat_of(decoded: dict[str, Any]) -> int | None:
-    """The token's `iat` as unix seconds, None when it is not a number (the
-    `require` list above already refused a token without one)."""
+    """The token's `iat` as unix seconds (verify_token requires it and refuses a
+    non-number); None only for a claims dict that carries none."""
     raw = decoded.get("iat")
-    try:
-        return int(raw) if raw is not None else None
-    except (TypeError, ValueError):
-        return None
+    return int(raw) if raw is not None else None
 
 
 def _consumer_claim(raw: Any) -> str:

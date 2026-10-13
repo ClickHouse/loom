@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 from server.embedding import _cache as ec
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.app import profile_search as ps
 from server.memory.app.loom_search.fanout import profile_hit_matches
 
@@ -104,6 +105,7 @@ def _run(
             lexical=profile_hit_matches,
             ch=ch,
             embedder=emb or _Embedder(),
+            scope=WHOLE_NAMESPACE,
         )
     )
 

@@ -18,6 +18,7 @@ from typing import Any
 
 import pytest
 
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.store import (
     CONTAINS_PREDICATE,
     Identity,
@@ -106,7 +107,7 @@ async def test_get_by_key_hits_correct_filters_and_hydrates() -> None:
         agent="claude-desktop",
         user_id="alice@example.com",
     )
-    row = await get_by_key(identity, "deploy_window", ch=ch)
+    row = await get_by_key(identity, "deploy_window", ch=ch, scope=WHOLE_NAMESPACE)
 
     # Right SQL shape
     sql, params = ch.query_one_calls[0]
@@ -136,7 +137,7 @@ async def test_get_by_key_returns_none_when_missing() -> None:
     ch = StubCH()
     ch.query_one_returns.append(None)
     identity = Identity(org="clickhouse", namespace="ns", agent="bot")
-    assert await get_by_key(identity, "missing", ch=ch) is None
+    assert await get_by_key(identity, "missing", ch=ch, scope=WHOLE_NAMESPACE) is None
 
 
 @pytest.mark.asyncio
@@ -165,6 +166,7 @@ async def test_get_by_key_can_overlay_usage_totals() -> None:
         "deploy_window",
         ch=ch,
         include_usage_totals=True,
+        scope=WHOLE_NAMESPACE,
     )
 
     assert row is not None
@@ -190,6 +192,7 @@ async def test_list_by_namespace_applies_filters_and_limit() -> None:
         pinned_only=True,
         limit=50,
         ch=ch,
+        scope=WHOLE_NAMESPACE,
     )
 
     sql, params = ch.query_all_calls[0]
@@ -208,7 +211,7 @@ async def test_list_by_namespace_without_optional_filters() -> None:
     ch.query_all_returns.append([])
 
     identity = Identity(org="clickhouse", namespace="ns", agent="bot")
-    await list_by_namespace(identity, ch=ch)
+    await list_by_namespace(identity, ch=ch, scope=WHOLE_NAMESPACE)
 
     sql, params = ch.query_all_calls[0]
     assert "memory_type = " not in sql
@@ -228,8 +231,10 @@ async def test_list_and_count_filter_by_contained_text(preview: bool) -> None:
     ch.query_one_returns.append({"n": 146})
     identity = Identity(org="clickhouse", namespace="ns", agent="*")
 
-    await list_by_namespace(identity, contains="Azure", preview=preview, ch=ch)
-    total = await count_by_namespace(identity, contains="Azure", ch=ch)
+    await list_by_namespace(
+        identity, contains="Azure", preview=preview, ch=ch, scope=WHOLE_NAMESPACE
+    )
+    total = await count_by_namespace(identity, contains="Azure", ch=ch, scope=WHOLE_NAMESPACE)
 
     list_sql, list_params = ch.query_all_calls[0]
     count_sql, count_params = ch.query_one_calls[0]
@@ -249,7 +254,7 @@ async def test_list_without_contains_reads_no_values(contains: str | None) -> No
     ch.query_all_returns.append([])
     identity = Identity(org="clickhouse", namespace="ns", agent="*")
 
-    await list_by_namespace(identity, contains=contains, preview=True, ch=ch)
+    await list_by_namespace(identity, contains=contains, preview=True, ch=ch, scope=WHOLE_NAMESPACE)
 
     sql, params = ch.query_all_calls[0]
     assert "positionCaseInsensitiveUTF8" not in sql
@@ -270,6 +275,7 @@ async def test_list_by_namespace_key_prefix_and_order_options() -> None:
         key_prefix="deploy_",
         order_by="memory_key_asc",
         ch=ch,
+        scope=WHOLE_NAMESPACE,
     )
     sql, params = ch.query_all_calls[0]
     assert "startsWith(memory_key, {prefix:String})" in sql
@@ -297,7 +303,9 @@ async def test_list_by_namespace_order_is_total(order_by: str, lead: str, previe
     ch.query_all_returns.append([])
     identity = Identity(org="o", namespace="ns", agent="*", user_id="*", session_id="*")
 
-    await list_by_namespace(identity, order_by=order_by, preview=preview, ch=ch)
+    await list_by_namespace(
+        identity, order_by=order_by, preview=preview, ch=ch, scope=WHOLE_NAMESPACE
+    )
     sql, _ = ch.query_all_calls[0]
     assert f"ORDER BY {lead}memory_key, agent, user_id, session_id\n" in sql
 
@@ -309,7 +317,7 @@ async def test_list_by_namespace_rejects_unknown_order_by() -> None:
     ch = StubCH()
     identity = Identity(org="clickhouse", namespace="ns", agent="bot")
     with pytest.raises(ValueError, match="unknown order_by"):
-        await list_by_namespace(identity, order_by="bogus", ch=ch)
+        await list_by_namespace(identity, order_by="bogus", ch=ch, scope=WHOLE_NAMESPACE)
 
 
 @pytest.mark.asyncio
@@ -319,7 +327,7 @@ async def test_get_many_by_keys_empty_input_skips_ch() -> None:
 
     ch = StubCH()
     identity = Identity(org="clickhouse", namespace="ns", agent="bot")
-    out = await get_many_by_keys(identity, [], ch=ch)
+    out = await get_many_by_keys(identity, [], ch=ch, scope=WHOLE_NAMESPACE)
     assert out == []
     assert ch.query_all_calls == []
 
@@ -333,7 +341,7 @@ async def test_get_many_by_keys_emits_array_filter() -> None:
     ch = StubCH()
     ch.query_all_returns.append([_sample_row(), _sample_row()])
     identity = Identity(org="clickhouse", namespace="ns", agent="bot")
-    out = await get_many_by_keys(identity, ["k1", "k2", "k3"], ch=ch)
+    out = await get_many_by_keys(identity, ["k1", "k2", "k3"], ch=ch, scope=WHOLE_NAMESPACE)
     sql, params = ch.query_all_calls[0]
     assert "memory_key IN {keys:Array(String)}" in sql
     assert params["keys"] == ["k1", "k2", "k3"]
@@ -347,7 +355,7 @@ async def test_get_by_id_uses_uuid_param_type() -> None:
     a regression would silently use string-comparison and return nothing."""
     ch = StubCH()
     ch.query_one_returns.append(None)
-    await get_by_id("11111111-2222-3333-4444-555555555555", ch=ch)
+    await get_by_id("11111111-2222-3333-4444-555555555555", ch=ch, scope=WHOLE_NAMESPACE)
     sql, params = ch.query_one_calls[0]
     assert "{mid:UUID}" in sql
     assert params["mid"] == "11111111-2222-3333-4444-555555555555"
@@ -366,6 +374,7 @@ async def test_get_by_id_scopes_by_org_when_requested() -> None:
         "11111111-2222-3333-4444-555555555555",
         org="clickhouse",
         ch=ch,
+        scope=WHOLE_NAMESPACE,
     )
     sql, params = ch.query_one_calls[0]
     assert "org = {org:String}" in sql

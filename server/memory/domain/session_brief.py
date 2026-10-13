@@ -44,6 +44,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
+from urllib.parse import quote, unquote
 
 from pydantic import BaseModel, Field
 
@@ -53,6 +54,11 @@ PROMPT_VERSION = "sb-4"
 # a name the user chose. Path-like, no spaces, bounded.
 BRIEF_KEY_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:/@+-]{0,159}$"
 _BRIEF_KEY_RE = re.compile(BRIEF_KEY_PATTERN)
+# A key as stored: a requested key, optionally behind the owner prefix of
+# `owner_key_prefix`. A namespace-wide token lists and addresses briefs this way.
+STORED_KEY_PATTERN = r"^(~[A-Za-z0-9_.%-]+~([A-Za-z0-9_.%-]+~)?)?" + BRIEF_KEY_PATTERN[1:]
+STORED_KEY_MAX = 600
+_STORED_KEY_RE = re.compile(STORED_KEY_PATTERN)
 
 EventKind = Literal[
     "user", "assistant", "edit", "command", "error", "read", "search", "tool", "note", "summary"
@@ -172,6 +178,40 @@ class BriefSections(BaseModel):
 
 def brief_key_ok(key: str) -> bool:
     return bool(_BRIEF_KEY_RE.match(key or ""))
+
+
+def stored_key_ok(key: str) -> bool:
+    """A key as stored, whose owner prefix (if any) is exactly what
+    `owner_key_prefix` writes for that owner, so the owner's reads find it."""
+    if len(key or "") > STORED_KEY_MAX or not _STORED_KEY_RE.match(key or ""):
+        return False
+    owner = key_owner(key)
+    return owner is None or key.startswith(owner_key_prefix(*owner))
+
+
+def owner_key_prefix(user_id: str, session_id: str | None = None) -> str:
+    """The stored-key prefix of a brief saved under a token bounded to one user
+    (and session): `~<user>~` or `~<user>~<session>~`. A requested key never
+    starts with or holds `~` (BRIEF_KEY_PATTERN), and `~` is escaped out of the
+    ids, so two owners never share a stored key and none equals a plain key."""
+
+    def tag(value: str) -> str:
+        return quote(value, safe="").replace("~", "%7E")
+
+    if session_id is None:
+        return f"~{tag(user_id)}~"
+    return f"~{tag(user_id)}~{tag(session_id)}~"
+
+
+def key_owner(stored_key: str) -> tuple[str, str | None] | None:
+    """The (user, session) an `owner_key_prefix` names on a stored key (session
+    None for a `~<user>~` prefix), or None for a key with no prefix."""
+    if not stored_key.startswith("~"):
+        return None
+    parts = stored_key.split("~")
+    if len(parts) == 4:
+        return unquote(parts[1]), unquote(parts[2])
+    return unquote(parts[1]), None
 
 
 def auto_brief_key(project: str, branch: str) -> str:

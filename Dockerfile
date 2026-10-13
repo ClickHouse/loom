@@ -3,12 +3,14 @@
 # Three stages: Python deps, frontend bundle, runtime. uvicorn binds via
 # the container's PORT env var.
 
-FROM python:3.12-slim AS py-builder
+# Base images are pinned by digest; Renovate (renovate.json) keeps the pins current.
+FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 AS py-builder
+COPY --from=ghcr.io/astral-sh/uv:0.12.2@sha256:069a51314a7bb6031777a9273205fe1b0b19e914ef418207d1338b268df641dd /uv /bin/uv
 WORKDIR /build
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
-COPY pyproject.toml README.md ./
+COPY pyproject.toml uv.lock README.md ./
 COPY server ./server
 COPY sdk ./sdk
 # [lemma] (lemmagen3) ships in the image: it is the lexical leg's English
@@ -25,14 +27,17 @@ COPY sdk ./sdk
 # they don't import. Flipping LOOM_EMBEDDING_MODEL between local and cloud
 # in .env re-triggers this layer on the next --build.
 ARG LOOM_EMBEDDING_MODEL=""
-RUN pip install --no-cache-dir --upgrade pip \
-    && case "$LOOM_EMBEDDING_MODEL" in \
-         local*) EXTRAS=".[code,lemma,local-embedder]" ;; \
-         *) EXTRAS=".[code,lemma]" ;; \
+# Dependencies come from uv.lock exactly (--locked: the build fails when the
+# lock no longer matches pyproject.toml; hashes checked) into a venv the
+# runtime stage copies at the same path.
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv UV_PYTHON_DOWNLOADS=never UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
+RUN case "$LOOM_EMBEDDING_MODEL" in \
+         local*) EXTRAS="--extra code --extra lemma --extra local-embedder" ;; \
+         *) EXTRAS="--extra code --extra lemma" ;; \
        esac \
-    && pip install --no-cache-dir --prefix=/install "$EXTRAS"
+    && uv sync --locked --no-editable --no-cache $EXTRAS
 
-FROM node:22-alpine AS frontend-builder
+FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS frontend-builder
 WORKDIR /frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
@@ -50,7 +55,7 @@ RUN node /tmp/loom-license/frontend_third_party_notices.mjs --root /frontend \
 # arm64), checked against the sha256 go.dev publishes for it (a new GO_VERSION
 # needs its two checksums too). scip-go's module download is verified by the Go
 # checksum database.
-FROM python:3.12-slim AS go-builder
+FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 AS go-builder
 ARG TARGETARCH
 ARG GO_VERSION=1.23.4
 ARG GO_SHA256_AMD64=6924efde5de86fe277676e929dc9917d466efa02fb934197bc2eba35d5680971
@@ -78,7 +83,7 @@ RUN go install "github.com/scip-code/scip-go/cmd/scip-go@${SCIP_GO_VERSION}" \
 # runtime stage can prepare fresh checkouts automatically. The tarball is
 # checked against the sha256 in the release's
 # SHASUMS256.txt (a new NODE_VERSION needs its two checksums too).
-FROM python:3.12-slim AS node-builder
+FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 AS node-builder
 ARG TARGETARCH
 ARG NODE_VERSION=22.23.2
 ARG NODE_SHA256_X64=d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307
@@ -99,12 +104,17 @@ COPY scripts/install-code-toolchains.sh /tmp/install-code-toolchains.sh
 RUN LOOM_CODE_TOOLCHAIN_PREFIX=/usr/local/node sh /tmp/install-code-toolchains.sh \
     && npm cache clean --force
 
-FROM python:3.12-slim
+FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
 # git: the code_ingest worker and async code.refresh maintain the bare
 # repo mirror (fetch + cat-file) by shelling out to git. Mounted repos are
 # owned by the host operator, not uid 999 — without safe.directory git
 # refuses every command with "dubious ownership".
+# bubblewrap: the repository-job sandbox (clone, fetch, dependency installs and
+# the compiler tiers run inside it). It needs user namespaces, which Docker's
+# default seccomp profile blocks: see "Repository-job sandbox" in
+# docs/operations/code-index-operations.md for the container options.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    bubblewrap \
     ca-certificates \
     git \
     && rm -rf /var/lib/apt/lists/* \
@@ -116,7 +126,7 @@ WORKDIR /app
 ARG LOOM_BUILD_COMMIT=""
 ENV LOOM_BUILD_COMMIT=${LOOM_BUILD_COMMIT}
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES ./
-COPY --from=py-builder /install /usr/local
+COPY --from=py-builder /opt/venv /opt/venv
 # `go` + scip-go on PATH so code_scip_go_delta can run in the
 # workers container (a repository's Go compiler tier refreshes per merge)
 COPY --from=go-builder /usr/local/go /usr/local/go
@@ -125,7 +135,7 @@ COPY --from=go-builder /usr/local/bin/scip-go /usr/local/bin/scip-go
 # so code_scip_ts_delta can run in the workers container (a repository's
 # TypeScript compiler tier refreshes per merge instead of by a host-side run)
 COPY --from=node-builder /usr/local/node /usr/local/node
-ENV PATH=/usr/local/node/bin:/usr/local/go/bin:$PATH GOFLAGS=-mod=mod GOMODCACHE=/app/var/gomodcache GOCACHE=/app/var/gocache
+ENV PATH=/opt/venv/bin:/usr/local/node/bin:/usr/local/go/bin:$PATH GOFLAGS=-mod=mod GOMODCACHE=/app/var/gomodcache GOCACHE=/app/var/gocache
 COPY server ./server
 COPY sdk ./sdk
 # Schema migrations: the `/v1/admin/schema.status` endpoint reads these
@@ -156,9 +166,15 @@ RUN groupadd -r loom && useradd -r -g loom -d /app loom \
     && chown -R loom:loom /app
 USER loom
 
+# LOOM_BIND_HOST is the address the port is published on, which the startup
+# checks read: the container itself always listens on all its interfaces.
+# 0.0.0.0 = reachable by others, so it needs LOOM_PUBLIC_BASE_URL, auth and a
+# real signing secret. A compose stack that publishes on loopback passes its
+# LOOM_BIND_HOST through.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PORT=7777
+    PORT=7777 \
+    LOOM_BIND_HOST=0.0.0.0
 
 EXPOSE 7777
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
@@ -175,9 +191,10 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 # container until docker's stop grace expires and SIGKILLs it, skipping the
 # lifespan drains (events emitter, drop ledger, events stream). 10 s bounds
 # the wait; compose's stop_grace_period leaves room for the drains after it.
+# LOOM_TRUSTED_PROXIES: the peers whose X-Forwarded-For/Proto uvicorn applies.
 # `exec`: the shell that expands these variables must hand PID 1 to uvicorn.
 # Without it `sh` is PID 1 and a POSIX shell does not forward SIGTERM to its
 # foreground child, so uvicorn never sees the stop, the graceful timeout
 # never starts, and docker SIGKILLs the tree at stop_grace_period (exit 137,
 # with tens of seconds of refused connections during a colour swap).
-CMD ["sh", "-c", "exec uvicorn server.main:app --host 0.0.0.0 --port ${PORT} --workers ${LOOM_WEB_WORKERS:-1} --loop ${LOOM_UVICORN_LOOP:-auto} --timeout-graceful-shutdown ${LOOM_GRACEFUL_SHUTDOWN_S:-10} --proxy-headers --forwarded-allow-ips='*'"]
+CMD ["sh", "-c", "exec uvicorn server.main:app --host 0.0.0.0 --port ${PORT} --workers ${LOOM_WEB_WORKERS:-1} --loop ${LOOM_UVICORN_LOOP:-auto} --timeout-graceful-shutdown ${LOOM_GRACEFUL_SHUTDOWN_S:-10} --proxy-headers --forwarded-allow-ips=\"${LOOM_TRUSTED_PROXIES:-127.0.0.1}\""]

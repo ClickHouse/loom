@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.app.curation import fetch_timeline
 
 
@@ -21,7 +22,7 @@ class _CH:
 
 def test_timeline_reads_only_live_served_rows() -> None:
     ch = _CH()
-    asyncio.run(fetch_timeline(org="o", namespace="n", entity="nate", ch=ch))  # type: ignore[arg-type]
+    asyncio.run(fetch_timeline(org="o", namespace="n", entity="nate", ch=ch, scope=WHOLE_NAMESPACE))  # type: ignore[arg-type]
     [sql] = ch.sql
     assert "tombstoned_at IS NULL" in sql
     assert "(expires_at IS NULL OR expires_at > now())" in sql

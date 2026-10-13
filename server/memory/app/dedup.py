@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_graph import (
     MemoryDedupCollapseInput,
     MemoryDedupCollapseOutput,
@@ -358,7 +360,9 @@ async def handle_memory_dedup_resolve(input: MemoryDedupResolveInput) -> MemoryD
 
     if input.decision == "keep_canonical":
         _lock.assert_unlocked(
-            await memory_repo.get_by_id(dup_row.memory_id, org=input.org, fresh=True, strong=True),
+            await memory_repo.get_by_id(
+                dup_row.memory_id, org=input.org, fresh=True, strong=True, scope=WHOLE_NAMESPACE
+            ),
             "delete",
             op="memory.dedup_resolve",
         )
@@ -367,7 +371,7 @@ async def handle_memory_dedup_resolve(input: MemoryDedupResolveInput) -> MemoryD
     elif input.decision == "keep_duplicate":
         _lock.assert_unlocked(
             await memory_repo.get_by_id(
-                canon_row.memory_id, org=input.org, fresh=True, strong=True
+                canon_row.memory_id, org=input.org, fresh=True, strong=True, scope=WHOLE_NAMESPACE
             ),
             "delete",
             op="memory.dedup_resolve",
@@ -421,11 +425,14 @@ async def handle_memory_related(input: MemoryRelatedInput) -> MemoryRelatedOutpu
             input.memory_key,
             top_k=input.top_k,
             min_overlap=input.min_overlap,
+            scope=request_scope(),
         )
 
     if not source_entities:
         # Distinguish "row missing" from "row exists but no entities".
-        src = await memory_repo.get_by_key(identity, input.memory_key, fresh=True)
+        src = await memory_repo.get_by_key(
+            identity, input.memory_key, fresh=True, scope=request_scope()
+        )
         reason = "source_not_found" if src is None else "source_has_no_entities"
         return MemoryRelatedOutput(results=[], source_entities=[], reason=reason)
 
@@ -466,11 +473,16 @@ async def handle_memory_dedup_collapse(
     """
     import server.memory.store as memory_repo
 
+    version = memory_repo.next_version()  # before the scan: the restamp is a retire
     pairs = await memory_repo.find_duplicate_pairs(
         input.org, input.namespace, key_prefix=input.prefix or "", limit=input.limit
     )
     canon_rows = await memory_repo.canonical_rows_by_ids(
-        input.org, [input.namespace], [p.duplicate_of for p in pairs]
+        input.org,
+        [input.namespace],
+        [p.duplicate_of for p in pairs],
+        # The pairs are the whole namespace's; the canonicals must be too.
+        scope=WHOLE_NAMESPACE,
     )
     canonical_key = {r.canonical_id: r.memory_key for r in canon_rows}
     live = [p for p in pairs if p.duplicate_of in canonical_key]
@@ -487,7 +499,9 @@ async def handle_memory_dedup_collapse(
     ]
     restamped = 0
     if not input.dry_run and stale:
-        restamped = await memory_repo.restamp_embedding_rows(stale, status="duplicate")
+        restamped = await memory_repo.restamp_embedding_rows(
+            stale, status="duplicate", version=version
+        )
     sample = [
         _DedupCollapsePair(
             duplicate_key=p.memory_key,

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
+from server.identity.app.request_scope import request_narrowed
 from server.memory.api.models_records import (
     MemoryRecordWriteInput,
     MemorySchemaRegisterInput,
@@ -23,8 +24,13 @@ async def _write_inline_record_projection(
     schema: Mapping[str, object],
     *,
     evidence_ids: list[str],
-) -> None:
-    """Project ad-hoc record_schema extraction into memory_records."""
+) -> bool:
+    """Project ad-hoc record_schema extraction into memory_records. False when
+    the projection is skipped for a caller bounded below the namespace."""
+    # memory_records is keyed without a user: a caller bounded to one user would
+    # fold into or supersede another user's record of the same key.
+    if request_narrowed():
+        return False
 
     from server.memory.app.records import (
         handle_memory_record_write,
@@ -84,3 +90,4 @@ async def _write_inline_record_projection(
             valid_at=getattr(input, "valid_at", None),
         )
     )
+    return True

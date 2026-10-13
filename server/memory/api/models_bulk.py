@@ -266,6 +266,10 @@ class MemorySetFromMessagesOutput(BaseModel):
     # after its retries and wrote as null (never a fabricated value). Empty
     # when every field validated or on the messages path.
     stubbed_fields: list[str] = Field(default_factory=list)
+    # Schema mode only: what the response skipped and why, e.g. the
+    # memory_records projection for a caller bounded to one user. Empty when
+    # nothing was skipped.
+    degraded: list[str] = Field(default_factory=list)
     # defer=true: nothing extracted yet; `written` is empty and `queue_id` is
     # the handle memory.extraction_status reports on.
     deferred: bool = False

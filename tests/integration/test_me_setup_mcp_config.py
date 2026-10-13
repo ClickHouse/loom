@@ -36,6 +36,7 @@ async def test_setup_mcp_config_claude_desktop(control_plane_url: str) -> None:
         org="clickhouse",
         namespaces=["personal-alice"],
         roles=["WRITER"],
+        is_service_account=False,
     )
     r = await _post(control_plane_url, token, {"client": "claude-desktop"})
     assert r.status_code == 200, r.text
@@ -96,6 +97,7 @@ async def test_setup_mcp_config_vscode_uses_servers_key(control_plane_url: str) 
         org="clickhouse",
         namespaces=["personal-alice"],
         roles=["WRITER"],
+        is_service_account=False,
     )
     r = await _post(control_plane_url, token, {"client": "vscode"})
     assert r.status_code == 200, r.text
@@ -117,6 +119,7 @@ async def test_setup_mcp_config_claude_code_uses_http_type(
         org="clickhouse",
         namespaces=["personal-alice"],
         roles=["WRITER"],
+        is_service_account=False,
     )
     r = await _post(control_plane_url, token, {"client": "claude-code"})
     assert r.status_code == 200, r.text
@@ -127,7 +130,8 @@ async def test_setup_mcp_config_claude_code_uses_http_type(
 
 @pytest.mark.asyncio
 async def test_setup_mcp_config_explicit_namespace(control_plane_url: str) -> None:
-    """If the body specifies a namespace, the minted token covers it."""
+    """A named namespace is delegated only where the caller holds a live grant: the
+    caller's token claim alone is not enough (server/auth/delegation.py)."""
     from server.auth.jwt import mint_token
 
     token = mint_token(
@@ -135,6 +139,7 @@ async def test_setup_mcp_config_explicit_namespace(control_plane_url: str) -> No
         org="clickhouse",
         namespaces=["personal-alice", "team-shared"],
         roles=["WRITER"],
+        is_service_account=False,
     )
     r = await _post(
         control_plane_url,
@@ -144,17 +149,13 @@ async def test_setup_mcp_config_explicit_namespace(control_plane_url: str) -> No
             "namespace": "team-shared",
         },
     )
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["namespace"] == "team-shared"
-    assert body["namespace_scope"] == "single"
-    decoded = pyjwt.decode(body["token"], options={"verify_signature": False})
-    assert decoded["namespaces"] == ["team-shared"]
+    assert r.status_code == 403, r.text
+    assert "team-shared" in r.json()["detail"]["message"]
 
 
 @pytest.mark.asyncio
 async def test_setup_mcp_config_ttl_days(control_plane_url: str) -> None:
-    """Passing ttl_days produces a token with an exp claim."""
+    """Every setup token expires: ttl_days when given, else 90 days."""
     from server.auth.jwt import mint_token
 
     token = mint_token(
@@ -162,6 +163,7 @@ async def test_setup_mcp_config_ttl_days(control_plane_url: str) -> None:
         org="clickhouse",
         namespaces=["personal-alice"],
         roles=["WRITER"],
+        is_service_account=False,
     )
     r = await _post(
         control_plane_url,
@@ -175,11 +177,11 @@ async def test_setup_mcp_config_ttl_days(control_plane_url: str) -> None:
     body = r.json()
     decoded = pyjwt.decode(body["token"], options={"verify_signature": False})
     assert "exp" in decoded
-    # Indefinite (no ttl_days) — exp should be absent.
+    # No ttl_days: the delegation default, 90 days.
     r2 = await _post(control_plane_url, token, {"client": "claude-desktop"})
     assert r2.status_code == 200, r2.text
     decoded2 = pyjwt.decode(r2.json()["token"], options={"verify_signature": False})
-    assert "exp" not in decoded2
+    assert decoded2["exp"] - decoded2["iat"] == 90 * 86400
 
 
 @pytest.mark.asyncio
@@ -191,6 +193,7 @@ async def test_setup_mcp_config_rejects_unknown_client(control_plane_url: str) -
         org="clickhouse",
         namespaces=["personal-alice"],
         roles=["WRITER"],
+        is_service_account=False,
     )
     r = await _post(control_plane_url, token, {"client": "emacs"})
     assert r.status_code == 422
@@ -231,6 +234,7 @@ async def test_restricted_namespaces_must_be_restricted_and_persisted(
         org="clickhouse",
         namespaces=["personal-alice"],
         roles=["WRITER"],
+        is_service_account=False,
     )
     r = await _post(
         control_plane_url,

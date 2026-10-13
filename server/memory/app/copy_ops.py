@@ -6,7 +6,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from server.auth.context import current_auth
 from server.core.datetimes import naive_utc_now
+from server.identity.app.request_scope import request_scope
 from server.memory.api.models_lifecycle import (
     MemoryCopyToInput,
     MemoryCopyToOutput,
@@ -122,7 +124,12 @@ async def handle_memory_cross_promote(
                 f"{caller!r} is not an admin of {input.from_org}/{ns}; cannot cross-promote"
             )
 
-    src = await memory_repo.get_by_id(input.from_memory_id, org=input.from_org, fresh=True)
+    src = await memory_repo.get_by_id(
+        input.from_memory_id,
+        org=input.from_org,
+        fresh=True,
+        scope=request_scope(),
+    )
     # The id is org-wide; the ADMIN check above covered from_namespace only. A row
     # in any other namespace reads as not found, so the copy can't reach it and
     # the answer doesn't confirm the id exists.
@@ -241,7 +248,9 @@ async def handle_memory_copy_to(
         user_id=input.from_user_id,
         session_id=input.from_session_id,
     )
-    src = await memory_repo.get_by_key(identity, input.memory_key, fresh=True)
+    src = await memory_repo.get_by_key(
+        identity, input.memory_key, fresh=True, scope=request_scope()
+    )
     if src is None:
         raise NotFoundError(
             f"source memory {input.memory_key!r} not found in "
@@ -307,7 +316,6 @@ async def handle_memory_copy_to(
 
 def _resolve_subject_local() -> str:
     """Return the caller's subject from the auth ContextVar, or raise if absent."""
-    from server.auth.context import current_auth
     from server.core.errors import ValidationError
 
     auth = current_auth()

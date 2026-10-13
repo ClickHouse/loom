@@ -218,10 +218,9 @@ def _consolidation_canonical_row(
         # is not any one fact's grade, so it starts ungraded.
         "grounding": "",
         "evidence": "",
-        # Clusters are built from embedding rows, so a 'high' row (never
-        # embedded) cannot enter one — but a 'medium' row (an email, a phone
-        # number) is embedded and can. The merged row is never labelled
-        # lower than its most sensitive source or its own text.
+        # The candidate query keeps 'high' rows out of a cluster, but a 'medium'
+        # row (an email, a phone number) is embedded and can enter one. The merged
+        # row is never labelled lower than its most sensitive source or its own text.
         "sensitivity": inherited_sensitivity(
             (str(r.get("sensitivity") or "") for r in cluster), canonical_value
         ),
@@ -339,7 +338,13 @@ WHERE m.org = {org:String}
   -- Same for a lock in force: a no_delete or
   -- read_only row is never merged away.
   AND (m.lock_mode = '' OR (m.lock_until IS NOT NULL AND m.lock_until <= now()))
+  -- a live vector only: a retired copy or a high write's fence is not a candidate
+  AND e.tombstoned_at IS NULL
+  AND e.embedding_dim > 0
+  -- the served model's vectors only: one row per memory, comparable cosines
+  AND e.embedding_model = {model:String}
   AND length(e.embedding) > 0
+  AND m.sensitivity != 'high'
 ORDER BY m.created_at DESC
 LIMIT {limit:UInt32}
 """
@@ -452,7 +457,6 @@ async def _write_canonical(
     import server.memory.store as memory_repo
     from server.core.hashing import sha256_value as _content_sha256
 
-    canonical_embedding = await embedder.embed(canonical_value)
     canonical_sha = _content_sha256(canonical_value)
     version = next_version()
     canonical_row = _consolidation_canonical_row(
@@ -481,6 +485,13 @@ async def _write_canonical(
         )
     except Exception as e:  # noqa: BLE001 — lineage is additive
         log.warning("consolidate: derived_from links failed (non-fatal): %s", e)
+    if canonical_row["sensitivity"] == "high":
+        # The merged text holds a credential: no vector, and the key is fenced.
+        from server.memory.app.high_fence import fence_high
+
+        await fence_high([(memory_repo.embedding_key(canonical_row), version)], ch=ch)
+        return canonical_row
+    canonical_embedding = await embedder.embed(canonical_value)
     await ch.insert(
         "loom.memory_embeddings",
         [
@@ -528,6 +539,7 @@ async def _retire_merged(
     omitted column would be zeroed under FINAL (memory_id/tags/entities/created_at/
     pinned/content_sha256) and leave memory.restore nothing to restore."""
     import server.memory.store as memory_repo
+    from server.memory.app.set_chunks import tombstone_set_chunks_fail_open
 
     tombstone_ids = [
         str(r["memory_id"])
@@ -535,8 +547,10 @@ async def _retire_merged(
         if r["memory_key"] != canonical_key and r.get("memory_id")
     ]
 
+    version = memory_repo.next_version()  # the tombstones', which the vector retire carries
+
     def _tombstone(existing: memory_repo.MemoryRow, _ts: datetime = now_naive) -> dict[str, Any]:
-        return {"tombstoned_at": _ts, "expires_at": None}
+        return {"tombstoned_at": _ts, "expires_at": None, "version": version}
 
     await memory_repo.write_versions_by_ids(
         input.org,
@@ -561,6 +575,7 @@ async def _retire_merged(
                 str(r.get("session_id") or "-"),
                 str(r["memory_key"]),
                 ts=now_naive,
+                version=version,
                 ch=ch,
             )
         except Exception as e:  # noqa: BLE001 — the memory tombstone stands
@@ -569,6 +584,15 @@ async def _retire_merged(
                 r["memory_key"],
                 e,
             )
+        # and its verbatim chunks, as memory.delete does: the chunk leg reads them with
+        # no join back to loom.memory
+        await tombstone_set_chunks_fail_open(
+            org=input.org,
+            namespace=input.namespace,
+            memory_key=str(r["memory_key"]),
+            user_id=input.user_id,
+            ch=ch,
+        )
 
 
 @staged("consolidate_merge")
@@ -604,6 +628,7 @@ async def handle_memory_consolidate(
             "uid": input.user_id,
             "age_cutoff": age_cutoff.replace(tzinfo=None),
             "limit": int(input.limit),
+            "model": embedder.model_name,
         },
     )
 

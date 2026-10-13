@@ -7,6 +7,8 @@ import json
 from datetime import datetime
 from typing import Any
 
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import ReadFilters, scope_and
 from server.memory.api.models_lifecycle import (
     MemoryEvidenceInput,
     MemoryEvidenceItem,
@@ -61,6 +63,31 @@ def evidence_scope(support_type: str, char_start: int, char_end: int, n_links: i
     return scope
 
 
+async def _belief_links(
+    ch: Any, input: MemoryEvidenceInput, memory_id: str, scope: ReadFilters
+) -> list[dict[str, Any]]:
+    """The key's belief-source links. Versioned, not FINAL: one row per link,
+    latest wins. Keyed on the key, so another user's row under the same key
+    shares them: a bounded read keeps only the links of the row it resolved."""
+    params: dict[str, Any] = {"o": input.org, "n": input.namespace, "k": input.memory_key}
+    own_row = ""
+    if scope.narrowed:
+        own_row = "AND memory_id = {mid:UUID} "
+        params["mid"] = memory_id
+    links: list[dict[str, Any]] = await ch.query_all(
+        "SELECT toString(evidence_id) AS eid, argMax(support_type, created_at) AS support_type, "
+        "argMax(char_start, created_at) AS char_start, argMax(char_end, created_at) AS char_end, "
+        "min(created_at) AS first_seen, argMax(tombstoned_at, created_at) AS tomb_latest "
+        "FROM loom.memory_belief_sources "
+        "WHERE org = {o:String} AND namespace = {n:String} AND memory_key = {k:String} "
+        + own_row
+        + "GROUP BY evidence_id HAVING tomb_latest IS NULL "
+        "ORDER BY first_seen, evidence_id LIMIT 1000",
+        params,
+    )
+    return links
+
+
 async def handle_memory_evidence(input: MemoryEvidenceInput) -> MemoryEvidenceOutput:
     """The turns a memory was extracted from, with spans and link scope.
 
@@ -77,7 +104,8 @@ async def handle_memory_evidence(input: MemoryEvidenceInput) -> MemoryEvidenceOu
         user_id=input.user_id,
         session_id=input.session_id,
     )
-    row = await memory_repo.get_by_key(identity, input.memory_key, fresh=True)
+    scope = request_scope()
+    row = await memory_repo.get_by_key(identity, input.memory_key, fresh=True, scope=scope)
     ch = _get_client()
     memory_id = str(getattr(row, "memory_id", "") or "") if row is not None else ""
     value: Any = row.value if row is not None else None
@@ -85,29 +113,22 @@ async def handle_memory_evidence(input: MemoryEvidenceInput) -> MemoryEvidenceOu
         # Wildcard identity, as memory.list accepts: a key is unique within a
         # namespace, so resolve the live row by key alone. Extracted memories
         # carry the extraction's session_id, which a caller auditing a
-        # namespace does not know.
+        # namespace does not know. Still inside the read scope.
+        params: dict[str, Any] = {"o": input.org, "n": input.namespace, "k": input.memory_key}
         hit = await ch.query_all(
             "SELECT toString(memory_id) AS mid, value FROM loom.memory FINAL "
             "WHERE org = {o:String} AND namespace = {n:String} AND memory_key = {k:String} "
-            "AND tombstoned_at IS NULL ORDER BY status = 'active' DESC, version DESC LIMIT 1",
-            {"o": input.org, "n": input.namespace, "k": input.memory_key},
+            "AND tombstoned_at IS NULL"
+            + scope_and(scope, params)
+            + " ORDER BY status = 'active' DESC, version DESC LIMIT 1",
+            params,
         )
         if hit:
             memory_id = str(hit[0].get("mid") or "")
             value = hit[0].get("value")
     if row is None and not memory_id:
         return MemoryEvidenceOutput(found=False)
-    # Versioned, not FINAL: one row per link, latest wins.
-    links = await ch.query_all(
-        "SELECT toString(evidence_id) AS eid, argMax(support_type, created_at) AS support_type, "
-        "argMax(char_start, created_at) AS char_start, argMax(char_end, created_at) AS char_end, "
-        "min(created_at) AS first_seen, argMax(tombstoned_at, created_at) AS tomb_latest "
-        "FROM loom.memory_belief_sources "
-        "WHERE org = {o:String} AND namespace = {n:String} AND memory_key = {k:String} "
-        "GROUP BY evidence_id HAVING tomb_latest IS NULL "
-        "ORDER BY first_seen, evidence_id LIMIT 1000",
-        {"o": input.org, "n": input.namespace, "k": input.memory_key},
-    )
+    links = await _belief_links(ch, input, memory_id, scope)
     n_links = len(links)
     counts = {"cited": 0, "lexical": 0, "window": 0, "derived": 0}
     scoped: list[tuple[dict[str, Any], str]] = []
@@ -127,6 +148,7 @@ async def handle_memory_evidence(input: MemoryEvidenceInput) -> MemoryEvidenceOu
     ev_by_id: dict[str, dict[str, Any]] = {}
     if ids:
         # Versioned, not FINAL: latest row per id.
+        ev_params: dict[str, Any] = {"o": input.org, "n": input.namespace, "ids": ids}
         ev_rows = await ch.query_all(
             "SELECT toString(evidence_id) AS eid, argMax(role, created_at) AS role, "
             "argMax(observed_at, created_at) AS observed_at, "
@@ -134,20 +156,23 @@ async def handle_memory_evidence(input: MemoryEvidenceInput) -> MemoryEvidenceOu
             "argMax(tombstoned_at, created_at) AS tomb_latest "
             "FROM loom.memory_evidence "
             "WHERE org = {o:String} AND namespace = {n:String} "
-            "AND evidence_id IN {ids:Array(UUID)} "
-            "GROUP BY evidence_id HAVING tomb_latest IS NULL",
-            {"o": input.org, "n": input.namespace, "ids": ids},
+            "AND evidence_id IN {ids:Array(UUID)}"
+            + scope_and(scope, ev_params)
+            + " GROUP BY evidence_id HAVING tomb_latest IS NULL",
+            ev_params,
         )
         ev_by_id = {str(r.get("eid")): r for r in ev_rows}
     if src_ids:
         # A derived row (consolidation) cites the memories it compressed; the "evidence" is
         # their text, which is what a drift audit of the derived row compares against.
+        src_params: dict[str, Any] = {"o": input.org, "n": input.namespace, "ids": src_ids}
         src_rows = await ch.query_all(
             "SELECT toString(memory_id) AS eid, memory_key, value, created_at AS observed_at "
             "FROM loom.memory FINAL "
             "WHERE org = {o:String} AND namespace = {n:String} "
-            "AND memory_id IN {ids:Array(UUID)} AND tombstoned_at IS NULL",
-            {"o": input.org, "n": input.namespace, "ids": src_ids},
+            "AND memory_id IN {ids:Array(UUID)} AND tombstoned_at IS NULL"
+            + scope_and(scope, src_params),
+            src_params,
         )
         for r in src_rows:
             val = r.get("value")
@@ -215,7 +240,9 @@ async def handle_memory_provenance(
         user_id=input.user_id,
         session_id=input.session_id,
     )
-    row = await memory_repo.get_by_key(identity, input.memory_key, fresh=True)
+    row = await memory_repo.get_by_key(
+        identity, input.memory_key, fresh=True, scope=request_scope()
+    )
     if row is None:
         return MemoryProvenanceOutput(found=False)
 

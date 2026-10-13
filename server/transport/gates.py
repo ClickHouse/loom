@@ -1,9 +1,10 @@
 """The admission sequence both transports run for a registry op.
 
 authn → authz target → authz → traffic class → history policy → rate limit
-→ dispatch. HTTP and MCP each verify the token and render refusals in their
-own protocol (a status + detail, an `isError` tool result); the decisions in
-between are made here, once:
+→ dispatch, holding one of the org's in-flight slots (`tenant_slot`). HTTP
+and MCP each verify the token and render refusals in their own protocol (a
+status + detail, an `isError` tool result); the decisions in between are made
+here, once:
 
 - `authz_target`: the (org, namespace) a call is authorized against, which
   is also what its handler reads. An empty or "-" field is absent. The org is
@@ -15,6 +16,8 @@ between are made here, once:
   the restricted-access audit row and the first-write registration.
 - `policy`: the history policy gate on the authorized identity (raises
   PolicyForbiddenError).
+- `read_scope`: the read scope (token ceiling and pin, narrowed by the
+  request), resolved once and bound for the handler's store reads.
 - `traffic_class` and `rate_limit`: availability controls. Both FAIL OPEN on
   their own errors — an unclassifiable call is `interactive`, a limiter that
   raises admits the call — and each failure is counted and logged once per
@@ -25,11 +28,14 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from server.code.app.common import plane_namespace_for, plane_org_for
-from server.core.errors import IdentityIncompleteError
+from server.core.errors import IdentityIncompleteError, RateLimitedError
+from server.settings import settings
 
 if TYPE_CHECKING:
     from server.auth.jwt import AuthInfo
@@ -160,6 +166,67 @@ async def policy(
     await gate(op, identity, raw_args, request_id=request_id)
 
 
+def read_scope(op: Operation, auth: AuthInfo | None, input_obj: Any) -> Any:
+    """Resolve the call's read scope and bind it for the request
+    (`server.identity.domain.read_scope`; the rules are in
+    docs/concepts/identities-and-namespaces.md). Returns the input the handler runs with:
+    under a narrowed scope it names the bound user (and session).
+
+    Not obvious: a body user the token is not pinned to, or `*` under a narrowed scope, is
+    refused for every op, writes included. A scope that does not resolve is refused here for
+    a read op (`SCOPED_OPS`) and for an op that would otherwise write or count as user '-'
+    (`_would_act_as_nobody`); any other op is admitted and its first memory read raises.
+    An op that cannot keep its answer inside a narrowed scope is refused with
+    AuthInsufficientError."""
+    from server.core.errors import AuthInsufficientError
+    from server.identity.domain.read_scope import (
+        SCOPED_OPS,
+        bind_request_read_filters,
+        honours_read_scope,
+        resolve_read_filters,
+        with_read_identity,
+    )
+
+    try:
+        result: Any = resolve_read_filters(
+            requested=getattr(input_obj, "read_scope", None),
+            user_id=getattr(input_obj, "user_id", None),
+            session_id=getattr(input_obj, "session_id", None),
+            auth=auth,
+        )
+        narrowed = result.narrowed
+    except (AuthInsufficientError, IdentityIncompleteError) as e:
+        result, narrowed = e, True
+    bind_request_read_filters(auth, result)
+    if narrowed and not honours_read_scope(op.name):
+        raise AuthInsufficientError(
+            f"{op.name} cannot keep its answer inside this token's read scope "
+            "(read_scope / read_user_id); call it with a namespace-scoped token"
+        )
+    # A body naming another user than the token's pin (or `*`) is refused for
+    # every op, writes included: a pinned token never writes as someone else.
+    if isinstance(result, AuthInsufficientError):
+        raise result
+    if isinstance(result, Exception):
+        if op.name in SCOPED_OPS or _would_act_as_nobody(op):
+            raise result
+        # Bound above: a memory read inside this op raises the same refusal.
+        return input_obj
+    return with_read_identity(input_obj, result)
+
+
+def _would_act_as_nobody(op: Operation) -> bool:
+    """An op that, admitted under a scope that did not resolve, would write or count
+    as user '-': a write whose body carries a user or session, and cost.summary (its
+    counts are filtered by the body's user). Code-index ops carry a user field but
+    reach no user's rows: their memory reads raise the bound refusal on their own."""
+    if op.name.startswith("code."):
+        return False
+    fields = getattr(op.input_model, "model_fields", {})
+    carries_identity = "user_id" in fields or "session_id" in fields
+    return carries_identity and (not op.read_only or op.name == "cost.summary")
+
+
 def _fail_open(gate: str, op_name: str, err: BaseException) -> None:
     """Count one fail-open and log it at most once per interval per gate."""
     _FAIL_OPEN_TOTAL[gate] = _FAIL_OPEN_TOTAL.get(gate, 0) + 1
@@ -230,6 +297,47 @@ def rate_limit(
     except Exception as e:  # noqa: BLE001 — FAILS OPEN: a limiter error admits the call
         _fail_open("rate_limit", op.name, e)
         return None
+
+
+# Requests each org has running in this process (org -> count).
+_IN_FLIGHT: dict[str, int] = {}
+
+
+def tenant_inflight_cap() -> int:
+    """This process's share of LOOM_TENANT_MAX_CONCURRENT_REQUESTS, divided the way
+    the rate limits are (replicas × web workers, at least 1); 0 = no cap."""
+    configured = int(settings.tenant_max_concurrent_requests)
+    if configured <= 0:
+        return 0
+    from server.core.ratelimit import effective_divisor
+
+    return max(1, configured // effective_divisor(shared=False))
+
+
+@contextmanager
+def tenant_slot(auth: AuthInfo | None, target: Target | None) -> Iterator[None]:
+    """Hold one of the org's in-flight slots while the handler runs, released however
+    it ends. RateLimitedError (429 RATE_LIMITED) when the org's share is all in use. The
+    org is the verified token's, else the target's, as for the rate limiter."""
+    org = _rate_limit_org(auth, target) if target is not None else _token_org(auth)
+    cap = tenant_inflight_cap()
+    if not org or cap <= 0:
+        yield
+        return
+    if _IN_FLIGHT.get(org, 0) >= cap:
+        raise RateLimitedError(
+            f"org {org!r} already has {cap} requests running on this server; retry shortly",
+            retry_after_s=1,
+        )
+    _IN_FLIGHT[org] = _IN_FLIGHT.get(org, 0) + 1
+    try:
+        yield
+    finally:
+        left = _IN_FLIGHT[org] - 1
+        if left > 0:
+            _IN_FLIGHT[org] = left
+        else:
+            del _IN_FLIGHT[org]
 
 
 @dataclass(frozen=True, slots=True)

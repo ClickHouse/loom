@@ -97,7 +97,8 @@ last `--days` are left alone. It never deletes.
 The `extraction_queue` worker replays a deferred request through the same handler. A
 failed replay retries until `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS`, then becomes `failed`
 with `last_error`. `memory.extraction_status` reports batches by `queue_id` or `status`
-(`pending`, `running`, `done`, `failed`). Until a batch runs, `memory.search` and
+(`pending`, `running`, `done`, `failed`); a token bounded to one user sees only that
+user's batches. Until a batch runs, `memory.search` and
 `memory.ask` report `pending_extraction`. With the worker off, deferred saves stay
 `pending`.
 

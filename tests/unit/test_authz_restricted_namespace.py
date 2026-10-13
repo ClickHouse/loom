@@ -77,7 +77,7 @@ def restricted(monkeypatch: pytest.MonkeyPatch):
     async def _grant(org, ns, subject):
         return state["grants"].get((org, ns, subject))
 
-    monkeypatch.setattr(authz, "_grant_role_for", _grant)
+    monkeypatch.setattr(authz, "grant_role_for", _grant)
 
     async def _creator(org, sa, **_kw):  # inheritance must never be consulted for NS
         return "alice@x"

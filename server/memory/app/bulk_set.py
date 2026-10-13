@@ -14,6 +14,8 @@ from server.core.ch import get_client
 from server.core.hashing import hash_text
 from server.core.hashing import sha256_value as _content_sha256
 from server.embedding import get_embedder
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import scope_and
 from server.memory.api.models_bulk import (
     MemoryBulkSetInput,
     MemoryBulkSetOutput,
@@ -28,6 +30,7 @@ from server.memory.app.bulk_verdicts import BulkVerdictPlan, apply_bulk_verdicts
 from server.memory.app.entity_projections import (
     _write_derived_facts,
 )
+from server.memory.app.high_fence import fence_high
 from server.memory.app.projection_errors import (
     bulk_projection_payload,
     bulk_source_resource_id,
@@ -39,6 +42,7 @@ from server.memory.app.projections import (
     write_entity_vectors,
 )
 from server.memory.app.provenance import writer_actor
+from server.memory.domain.memory_types import is_embedded
 
 if TYPE_CHECKING:
     from server.memory.app.search.clock import StageClock
@@ -123,29 +127,32 @@ async def _bulk_identity_dupes(ch: Any, input: MemoryBulkSetInput) -> dict[str, 
     if _dedup_scope == "identity" and input.entries:
         try:
             _shas = sorted({_content_sha256(entry.value) for entry in input.entries})
+            params: dict[str, Any] = {
+                "org": input.org,
+                "ns": input.namespace,
+                "agent": input.agent,
+                "uid": input.user_id,
+                "shas": _shas,
+            }
+            # Under own_session the keeper must be in the caller's session too.
+            in_scope = scope_and(request_scope(), params)
             _rows = await ch.query_all(
-                """
+                f"""
                 SELECT content_sha256, memory_key,
                        toString(argMax(memory_id, version)) AS memory_id
                 FROM loom.memory
-                WHERE org = {org:String}
-                  AND namespace = {ns:String}
-                  AND agent = {agent:String}
-                  AND user_id = {uid:String}
-                  AND content_sha256 IN {shas:Array(String)}
+                WHERE org = {{org:String}}
+                  AND namespace = {{ns:String}}
+                  AND agent = {{agent:String}}
+                  AND user_id = {{uid:String}}
+                  AND content_sha256 IN {{shas:Array(String)}}{in_scope}
                 GROUP BY content_sha256, memory_key
                 HAVING argMax(tombstoned_at IS NULL, version) = 1
                    AND argMax(status, version) IN ('active', 'duplicate', 'conflicted')
                 ORDER BY content_sha256, memory_key
                 SETTINGS select_sequential_consistency = 1
                 """,
-                params={
-                    "org": input.org,
-                    "ns": input.namespace,
-                    "agent": input.agent,
-                    "uid": input.user_id,
-                    "shas": _shas,
-                },
+                params=params,
             )
             for _r in _rows:
                 identity_dupes.setdefault(
@@ -288,10 +295,65 @@ async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
         # Full version rows (revision or first version), so the typed insert checks them.
         await memory_repo.insert_memory_versions(state.memory_rows, ch=ch)
 
+    retire = _vectors_to_retire(state)
+    # A key whose winning row is unembedded keeps no vector, not even one of this batch.
+    state.embedding_rows = [
+        r for r in state.embedding_rows if str(r.get("memory_key")) not in retire
+    ]
     await asyncio.gather(
         _insert_memory_rows(),
         memory_repo.insert_embedding_rows(state.embedding_rows, ch=ch),
     )
+    # The entries' versions were drawn before the batch embedded: a slow batch indexes
+    # its own BM25 stats.
+    await memory_repo.index_late_rows(state.embedding_rows, ch=ch)
+    await memory_repo.retire_vectors_for_keys(list(retire.values()), ch=ch)
+    fences = _high_winners(state)
+    if fences:
+        await fence_high(fences, ch=ch)
+
+
+def _winners(state: _BulkWriteState) -> dict[str, dict[str, Any]]:
+    """memory_key -> the batch's highest-version row of it."""
+    winners: dict[str, dict[str, Any]] = {}
+    for r in state.memory_rows:
+        key = str(r.get("memory_key"))
+        if key not in winners or int(r["version"]) >= int(winners[key]["version"]):
+            winners[key] = r
+    return winners
+
+
+def _high_winners(state: _BulkWriteState) -> list[tuple[Any, int]]:
+    """(identity key, version) of each key whose winning row is 'high': the fence an
+    older write's late vector lands under."""
+    import server.memory.store as memory_repo
+
+    return [
+        (memory_repo.embedding_key(r), int(r["version"]))
+        for r in _winners(state).values()
+        if str(r.get("sensitivity") or "") == "high"
+    ]
+
+
+def _vectors_to_retire(state: _BulkWriteState) -> dict[str, tuple[Any, int]]:
+    """memory_key -> (identity key, version) of each key whose winning row (the
+    highest version in the batch) lands unembedded and may have a live vector: the
+    batch embedded an earlier entry of it, the replaced version was embedded, or the
+    lookup failed and nobody knows."""
+    winners = _winners(state)
+    batch_embedded = {str(r.get("memory_key")) for r in state.embedding_rows}
+    out: dict[str, tuple[Any, int]] = {}
+    for key, r in winners.items():
+        if is_embedded(str(r.get("memory_type")), str(r.get("sensitivity") or "")):
+            continue
+        prev = state.existing_rows.get(key)
+        prev_embedded = prev is not None and is_embedded(
+            prev.memory_type, getattr(prev, "sensitivity", "")
+        )
+        if key in batch_embedded or not state.existing_lookup_ok or prev_embedded:
+            ident = (r["org"], r["namespace"], r["agent"], r["user_id"], r["session_id"], key)
+            out[key] = (ident, int(r["version"]))
+    return out
 
 
 async def _bulk_post_insert_links(

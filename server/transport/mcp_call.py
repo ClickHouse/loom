@@ -246,7 +246,8 @@ async def _call_tool(
     )
     refused = await _admission_refusal(call)
     if refused is not None:
-        return refused  # POLICY_FORBIDDEN or RATE_LIMITED
+        return refused  # POLICY_FORBIDDEN, AUTH_INSUFFICIENT (read scope) or RATE_LIMITED
+    input_obj = call.input_obj  # names the user a scoped read binds
 
     # The replay cache is read only for an admitted caller.
     replay, idem_scope, idem_body_hash = await _idempotency_gate(call, name, client_idem_key)
@@ -284,7 +285,8 @@ async def _call_tool(
 
     start = time.perf_counter()
     try:
-        result = await op.handler(input_obj)
+        with gates.tenant_slot(auth, target):
+            result = await op.handler(input_obj)
     except Exception as e:  # noqa: BLE001 — any handler error becomes a refusal or RPC error
         return _handler_failed(
             e,
@@ -415,8 +417,10 @@ async def _bind_caller_identity(
     # current_auth()-reading handlers (list_mine, browse/join/leave, …) see
     # the caller. HTTP does this in _make_endpoint; without it those reject.
     from server.auth.context import set_current_auth
+    from server.identity.domain.read_scope import clear_request_read_filters
 
     set_current_auth(auth)
+    clear_request_read_filters()
     # The consumer column — the call's own `consumer`, else
     # the token's subject class — published for the event, audit and budget
     # writers of this call.
@@ -656,23 +660,37 @@ class _AdmittedCall:
 
 
 async def _admission_refusal(call: _AdmittedCall) -> dict[str, Any] | None:
-    """Phase 6 of `_call_tool`: the traffic class, the history policy gate,
-    then the rate limiter — HTTP's order after authorization. Returns the
-    refusal response, or None to run the handler. The classifier and the
-    limiter FAIL OPEN (gates); the policy gate turns only
-    PolicyForbiddenError into a refusal."""
+    """Phase 6 of `_call_tool`: the traffic class, the read scope (which may
+    rewrite `call.input_obj`), the history policy gate, then the rate
+    limiter — HTTP's order after authorization. Returns the refusal
+    response, or None to run the handler. The classifier and the limiter
+    FAIL OPEN (gates); the policy gate turns only PolicyForbiddenError, and
+    the read-scope gate only AuthInsufficientError and
+    IdentityIncompleteError, into a refusal."""
     req_id, op, input_obj, arguments = call.req_id, call.op, call.input_obj, call.arguments
     auth, request_id, target = call.auth, call.request_id, call.target
     # Published for the ClickHouse settings composer, the ask handler's tier
     # policy and the ledger row; keys the limiter below.
     traffic_class, _source = await gates.traffic_class(op, auth, target, arguments)
 
+    # Read scope first, as HTTP: the policy never evaluates a rule for a user the
+    # token is not pinned to, and it sees the pinned input.
+    from server.core.errors import AuthInsufficientError, IdentityIncompleteError
+
+    try:
+        call.input_obj = gates.read_scope(op, auth, input_obj)
+    except (AuthInsufficientError, IdentityIncompleteError) as e:
+        _emit_mcp_event(
+            op.name, arguments, 0, success=False, error_code=e.code, request_id=request_id
+        )
+        return _ok(req_id, _refusal_result(e))
+
     # History policy, at parity with HTTP: after authz, before the handler.
     # Off → no-op; shadow → records; enforce → structured denial.
     from server.identity.app.policy_gate import PolicyForbiddenError as _PolicyForbidden
 
     try:
-        await gates.policy(op, target, input_obj, arguments, request_id=request_id)
+        await gates.policy(op, target, call.input_obj, arguments, request_id=request_id)
     except _PolicyForbidden as e:
         _emit_mcp_event(
             op.name,
@@ -690,7 +708,6 @@ async def _admission_refusal(call: _AdmittedCall) -> dict[str, Any] | None:
                 "structuredContent": e.to_detail(),
             },
         )
-
     rl = gates.rate_limit(op, auth, target, traffic_class)
     if rl is not None and not rl.allowed:
         # Wait out the hint once and re-check. The SDK honours Retry-After;

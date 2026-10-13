@@ -9,10 +9,13 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from server.core.ch import get_client
+from server.auth.context import current_auth
+from server.core.ch import caller_shaped, get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import hash_text
 from server.core.hashing import sha256_value_json as _sha256_value_json
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import scope_where
 from server.memory.api.models_bulk import MemoryBulkGetInput, MemoryBulkGetOutput
 from server.memory.api.models_crud import (
     MemoryGetOutput,
@@ -25,7 +28,7 @@ from server.memory.api.models_search import (
     MemoryAggregateOutput,
     _AggregateRow,
 )
-from server.memory.app.served_superseded import ServedFlags
+from server.memory.app.served_superseded import ServedFlags, shown_successors
 from server.memory.domain import trust as _trust
 from server.memory.domain.entity_sentinels import public_entities
 
@@ -132,7 +135,6 @@ def _caller_is_below_writer(org: str, namespace: str) -> bool:
     roles (a grant that elevates a viewer is not consulted here — the cap is
     a page size, not an authorization decision, and a page is still
     readable)."""
-    from server.auth.context import current_auth
     from server.operations.base import Role
 
     auth = current_auth()
@@ -217,6 +219,7 @@ async def _hidden_under_prefix(
         include_duplicates=True,
         include_superseded=True,
         include_proposed=True,
+        scope=request_scope(),
     )
     if every <= total:
         return {}
@@ -256,6 +259,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
         user_id=input.user_id,
         session_id=input.session_id,
     )
+    scope = request_scope()
     from server.memory.app.served_superseded import served_flags
 
     _served = served_flags(input)  # duplicates and superseded rows
@@ -298,6 +302,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
             as_of=input.as_of,
             preview=True,  # The stored 2 KB preview, not the value
             **_served,
+            scope=scope,
         )
     truncated = len(rows) > input.limit
     rows = rows[: input.limit]
@@ -307,6 +312,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
 
     _today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
     count_key = (
+        scope,
         input.org,
         input.namespace,
         input.agent,
@@ -337,6 +343,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
             include_tombstoned=input.include_tombstoned,
             as_of=input.as_of,
             **_served,
+            scope=scope,
         )
         # "Today" = created since UTC midnight. CH stores naive-UTC DateTimes, so
         # pass a naive UTC boundary to match.
@@ -350,6 +357,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
             include_tombstoned=input.include_tombstoned,
             created_since=_today_start,
             **_served,
+            scope=scope,
         )
         if namespace_version:
             if len(_list_counts_cache) > 2048:
@@ -421,6 +429,7 @@ async def _list_by_score(
         "org = {org:String}",
         "namespace = {ns:String}",
         "tombstoned_at IS NULL",
+        *scope_where(request_scope(), params),
     ]
     # `*` on an identity axis drops that axis from WHERE, the rule the recency path
     # (`memory_repo.list_by_namespace`) applies; comparing `agent = '*'` literally would return
@@ -631,6 +640,7 @@ async def handle_memory_aggregate(
         "agent": input.agent,
         "uid": input.user_id,
     }
+    where.extend(scope_where(request_scope(), params))
     for i, (k, v) in enumerate(input.filter.items()):
         ph = f"f{i}"
         where.append(f"{_json_string(k)} = {{{ph}:String}}")
@@ -648,7 +658,9 @@ async def handle_memory_aggregate(
     )
 
     ch = get_client()
-    rows = await ch.query_all(sql, params=params)
+    # the caller picks the fields, groups and filters: the caller-shaped ceilings apply
+    with caller_shaped():
+        rows = await ch.query_all(sql, params=params)
 
     out_rows: list[_AggregateRow] = []
     for r in rows:
@@ -682,7 +694,12 @@ async def follow_duplicate(input: Any, row: Any) -> tuple[Any, str | None]:
         if not target:
             break
         canon = await memory_repo.get_by_id(
-            target, org=input.org, as_of=input.as_of, include_usage_totals=True, fresh=True
+            target,
+            org=input.org,
+            as_of=input.as_of,
+            include_usage_totals=True,
+            fresh=True,
+            scope=request_scope(),
         )
         if canon is None or getattr(canon, "tombstoned_at", None) is not None:
             break
@@ -764,8 +781,9 @@ async def _handle_memory_bulk_get(
         if parent:
             parent_of[k] = parent
     wanted = list(dict.fromkeys([parent_of.get(k, k) for k in input.memory_keys]))
-    rows = await memory_repo.get_many_by_keys(identity, wanted)
+    rows = await memory_repo.get_many_by_keys(identity, wanted, scope=request_scope())
     canonical = await _canonical_keys_for_rows(input.org, input.namespace, rows)
+    successors = await shown_successors(input.org, input.namespace, rows)
     # Same read shape as memory.get so a bulk reader (the OKF exporter, the
     # /me preload) sees identity, lifecycle and attestation without N gets.
     results: dict[str, MemoryGetOutput] = {}
@@ -786,7 +804,7 @@ async def _handle_memory_bulk_get(
             pinned=r.pinned,
             agent=r.agent or "",
             status=r.status,
-            superseded_by=str(getattr(r, "superseded_by", "") or ""),
+            superseded_by=successors.get(str(r.memory_id), ""),
             sensitivity=str(getattr(r, "sensitivity", "") or ""),
             source_class=getattr(r, "source_class", "") or "",
             actor=getattr(r, "actor", "") or "",

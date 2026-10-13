@@ -16,6 +16,7 @@ from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value as _content_sha256
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.embedding import get_embedder
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_crud import (
     MemoryUpdateByIdInput,
     MemoryUpdateByIdOutput,
@@ -25,6 +26,7 @@ from server.memory.api.models_crud import (
 )
 from server.memory.app import conflict_deferred as _cd
 from server.memory.app import provenance as app_provenance
+from server.memory.app.high_fence import fence_high
 from server.memory.domain import lock as _lock
 from server.memory.domain.embed_text import _build_embed_text, key_axis_text
 from server.memory.domain.excerpt import build_excerpt
@@ -141,6 +143,7 @@ async def handle_memory_update_by_id(input: MemoryUpdateByIdInput) -> MemoryUpda
         fresh=True,
         # With a hash precondition the read must be of the latest version.
         strong=True,  # always — the head feeds a write
+        scope=WHOLE_NAMESPACE,
     )
     if existing is None:
         return MemoryUpdateByIdOutput(updated=False)
@@ -202,6 +205,7 @@ async def handle_memory_update(input: MemoryUpdateInput) -> MemoryUpdateOutput:
         org=input.org,
         fresh=True,
         strong=True,  # always — the head feeds a write
+        scope=WHOLE_NAMESPACE,
     )
     if existing is None:
         return MemoryUpdateOutput(updated=False, memory_key=input.memory_key, reason="not_found")
@@ -315,6 +319,8 @@ def _update_embedding_row(
         # attestation still binds the new hash.
         status=memory_row["status"],
         source_class=memory_row["source_class"] or "",
+        # The version row's: a newer write's retire or fence outranks a late vector.
+        version=int(memory_row["version"]),
         verified=int(
             verification_state(
                 memory_row["verified_by"],
@@ -391,25 +397,6 @@ def _update_sensitivity(
         [getattr(existing, "sensitivity", ""), resolve_sensitivity("", serialized_value)]
     )
     return level, [*tags, *sensitivity_tags(level, tags)]
-
-
-async def _drop_embedding_rows(existing: MemoryRow, ch: Any) -> None:
-    """A revision that leaves the row unembedded ('high') tombstones the key's
-    embedding rows: no search leg may serve the old vector or excerpt."""
-    import server.memory.store as memory_repo
-
-    if not is_embedded(existing.memory_type, getattr(existing, "sensitivity", "")):
-        return  # never embedded
-    await memory_repo.tombstone_embeddings_for_key(
-        existing.org,
-        existing.namespace,
-        existing.agent,
-        existing.user_id,
-        existing.session_id,
-        existing.memory_key,
-        ts=naive_utc_now(),
-        ch=ch,
-    )
 
 
 def _revised_fields(input: Any, existing: MemoryRow) -> tuple[Any, str, str, list[str], list[str]]:
@@ -571,7 +558,7 @@ async def _update_live_row(
         existing.memory_key,
     ):
         head = await memory_repo.get_by_id(
-            str(existing.memory_id), org=input.org, fresh=True, strong=True
+            str(existing.memory_id), org=input.org, fresh=True, strong=True, scope=WHOLE_NAMESPACE
         )
         if head is None:
             return MemoryUpdateByIdOutput(updated=False)
@@ -680,11 +667,23 @@ async def _write_revision(
         if embedder is not None
         else []
     )
-    await asyncio.gather(
-        insert_memory_versions([memory_row], ch=ch),
-        *([memory_repo.insert_embedding_rows(emb_rows, ch=ch)] if emb_rows else []),
-        *([] if searchable else [_drop_embedding_rows(existing, ch)]),
-    )
+    try:
+        await asyncio.gather(
+            insert_memory_versions([memory_row], ch=ch),
+            *([memory_repo.insert_embedding_rows(emb_rows, ch=ch)] if emb_rows else []),
+            *(
+                []
+                if searchable
+                else [memory_repo.tombstone_vectors_of(existing, version=new_version, ch=ch)]
+            ),
+        )
+    finally:
+        if sensitivity == "high":
+            # After the retire (at the same version, the later insert wins the tie),
+            # and even when the gather failed: the version row may be in.
+            await fence_high([(memory_repo.embedding_key(existing), new_version)], ch=ch)
+    # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
+    await memory_repo.index_late_rows(emb_rows, ch=ch)
     cfg = await cfg_task
     _cd.schedule_settle(
         _settle_identity(input.org, existing, revision_run_id),

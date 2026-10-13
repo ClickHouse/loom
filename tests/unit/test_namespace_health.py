@@ -267,7 +267,7 @@ def test_pack_renders_the_section_for_a_critical_namespace(monkeypatch: pytest.M
     assert len(body) <= nh.RENDER_CHARS
     assert out.section_meta["namespace_health"]["criticals"] == 2
     assert "exact_key_store" in out.section_meta["namespace_health"]["codes"]
-    assert out.rendered.startswith("<namespace_health>\n")
+    assert out.rendered.split("\n\n", 1)[1].startswith("<namespace_health>\n")
     assert [b.section for b in out.blocks] == ["namespace_health"]
     assert out.blocks[0].label == "core.namespace_health"
     # Query-independent: part of the stable prefix like the profile.

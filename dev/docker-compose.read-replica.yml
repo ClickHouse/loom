@@ -30,11 +30,13 @@ services:
       LOOM_BLOB_DIR: /app/var/blobs
       LOOM_DEPLOYMENT: "1"
       LOOM_INSTANCE_LABEL: "deploy:read-replica"
+      # The address the port is published on; see docs/operations/deployment.md.
+      LOOM_BIND_HOST: "${LOOM_BIND_HOST:-127.0.0.1}"
     volumes:
       # The provider-process proofs live here; keep it persistent.
       - loom-replica-blobs:/app/var/blobs
     ports:
-      - "7777:7777"
+      - "${LOOM_BIND_HOST:-127.0.0.1}:7777:7777"
     healthcheck:
       test:
         [

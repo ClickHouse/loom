@@ -161,9 +161,9 @@ export interface McpConfigResponse {
   namespace: string;
   namespace_scope: "all" | "single";
   /** How reads are scoped. `inherited_grants`: the token reads every
-   * namespace its creator holds a grant on, now and later; `namespace_scope` only says
-   *  where it writes. */
-  read_scope?: "inherited_grants";
+   * namespace its creator holds a grant on, now and later. `named_namespaces`: only the
+   * namespaces it names, while its creator still holds a grant there. */
+  read_scope?: "inherited_grants" | "named_namespaces";
   /** Restricted namespaces this token reads by name. */
   restricted_namespaces?: string[];
   mcp_url: string;

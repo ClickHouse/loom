@@ -15,6 +15,8 @@ from fastapi import HTTPException
 
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now as _now
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import row_in_read_scope
 from server.memory.api.models_working_memory import (
     DEFAULT_CHAR_LIMIT,
     WorkingMemoryAppendInput,
@@ -87,6 +89,13 @@ def _row_identity(input: Any) -> dict[str, Any]:
     }
 
 
+def _in_read_scope(input: Any) -> bool:
+    """Blocks are read by their exact identity, so the request's own user and
+    session decide whether the read scope admits them."""
+    scope = request_scope()
+    return row_in_read_scope(scope, input.user_id, input.session_id)
+
+
 async def _get_row(input: Any, block_key: str) -> dict[str, Any] | None:
     """The block's head — the read `get` answers and `append` / `replace` /
     `delete` build their write from, so it must see the caller's own last
@@ -112,6 +121,8 @@ async def _get_row(input: Any, block_key: str) -> dict[str, Any] | None:
 async def handle_working_memory_get(
     input: WorkingMemoryGetInput,
 ) -> WorkingMemoryGetOutput:
+    if not _in_read_scope(input):
+        return WorkingMemoryGetOutput(found=False, block_key=input.block_key)
     row = await _get_row(input, input.block_key)
     if row is None:
         return WorkingMemoryGetOutput(found=False, block_key=input.block_key)
@@ -253,7 +264,8 @@ async def handle_working_memory_delete(
 async def handle_working_memory_render(
     input: WorkingMemoryRenderInput,
 ) -> WorkingMemoryRenderOutput:
-
+    if not _in_read_scope(input):
+        return WorkingMemoryRenderOutput(rendered="", block_count=0, total_chars=0)
     ch = get_client()
     where = [_scope_where(), "tombstoned_at IS NULL"]
     params = _params(input)

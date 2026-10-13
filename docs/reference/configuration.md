@@ -39,6 +39,7 @@ Source: `server/settings/_auth.py`
 | `LOOM_JWT_PUBLIC_KEYS_JSON` | `str` | *(unset)* | JSON (or base64 JSON) map kid → PEM public key: this deployment's own keys under RS256, and a gateway's keys whose RS256 tokens it accepts. |
 | `LOOM_JWT_LEEWAY_SECONDS` | `int` | `30` | Clock-skew tolerance on iat/exp, seconds; small enough to give replay no useful post-exp window. |
 | `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` | `float` | `30.0` | Seconds the `loom.revoked_tokens` snapshot is cached; verify checks both jti and sub against it, so a revoke takes effect within this TTL. |
+| `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS` | `float` | `600.0` | Oldest revocation snapshot a process still trusts, seconds. Past it (refreshes keep failing) every bearer is refused with a retryable 503. |
 | `LOOM_SELF_SIGNUP` | `'off' \| 'open'` | `'off'` | Browser self-signup: "off" (endpoint 404s) or "open" (/v1/auth/self-signup mints JWTs scoped to the requested namespace). |
 | `LOOM_SELF_SIGNUP_ORG` | `str` | `'dev'` | Default org for self-signed tokens. |
 | `LOOM_IDENTITY_PROVIDER` | `'' \| 'single-user' \| 'trust-network' \| 'gateway'` | `''` | Identity mode; decides how callers authenticate. single-user    — no auth, one anonymous identity. trust-network  — self-signup, first-claim-wins. gateway        — an upstream proxy mints short-lived Loom JWTs with the shared HS256 secret; Loom only validates. Empty = inferred from auth_required + self_signup at boot. |
@@ -75,6 +76,10 @@ Source: `server/settings/_clickhouse.py`
 | `LOOM_CH_TIMEOUT_WRITE_S` | `float` | `60.0` | Deadline, seconds, for INSERT and UPDATE statements; 0 = no bound. |
 | `LOOM_CH_TIMEOUT_DDL_S` | `float` | `300.0` | Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound. |
 | `LOOM_CH_POOL_WAIT_MS` | `int` | `500` | Max wait, ms, for a pool slot before failing fast with 503 OVERLOADED. 0 = no slot gate. |
+| `LOOM_CH_CALLER_SHAPED_MAX_EXECUTION_S` | `float` | `30.0` | Ceilings for the reads a caller shapes (code.grep, code.search with a pattern or globs, memory.aggregate, memory.record.query). A ceiling only lowers the statement's own value, so no request can widen it; 0 = none. The shipped loom_reader profile (nlp_user_settings.xml) caps these three at their defaults, with a floor no statement can go under (time: 0.05 s, code.grep's statement floor), so none can be set to 0 even in the SQL. Raising a setting above its cap needs the profile raised too; a 0 sends no ceiling, so the profile's cap applies (code.grep's deadline is then clamped to ch_timeout_read_s, which the profile's cap matches). Seconds one such read may run (the read class default). |
+| `LOOM_CH_CALLER_SHAPED_MAX_MEMORY_BYTES` | `int` | `4000000000` | Bytes of memory one such read may use. |
+| `LOOM_CH_CALLER_SHAPED_MAX_ROWS_TO_READ` | `int` | `500000000` | Rows one such read may scan; past it the read fails (422), never a partial answer. |
+| `LOOM_CH_READER_USER` | `str` | `''` | ClickHouse user the caller-shaped reads run as, with `ch_password`; the shipped config defines `loom_reader` (SELECT only). Empty = `ch_user`. |
 | `LOOM_CH_SETTINGS_BY_TRAFFIC_CLASS` | `str` | `'{"production": {"priority": 1}, "interactive": {"priorit…` | JSON map {traffic class: ClickHouse settings} applied by `server.core.ch.statement_settings` to every read (an explicit per-call setting wins). `priority`: 1 served first, larger waits, 0 opts out; `max_threads` caps CPU per statement. Neither changes the rows returned. `background` (workers, operator CLIs) bypasses the filesystem cache on a miss so a backfill scan does not evict interactive data. |
 | `LOOM_BOOT_MIGRATE_LOCK_PATH` | `str` | `'/tmp/loom-migrate.lock'` | Advisory flock that serialises boot migrations across the processes of one host. |
 | `LOOM_BOOT_MIGRATE` | `bool` | `True` | Apply pending migrations at boot. Set False for any server started from a branch against a shared service, or it applies unmerged migrations. |
@@ -121,6 +126,10 @@ Source: `server/settings/_code.py`
 | `LOOM_CODE_BOOTSTRAP_FILES_PER_PASS` | `int` | `400` | Files indexed per pass while a new entry's initial index builds; the cursor persists in code_index_state (400 ≈ 1 min at the live rate). |
 | `LOOM_CODE_REPOS_REFRESH_SECONDS` | `int` | `30` | Seconds between re-reads of loom.code_repos. |
 | `LOOM_CODE_BOOTSTRAP_CLONE_TIMEOUT_S` | `float` | `1800.0` | Seconds a bare clone may take before the worker gives up for the pass and retries next pass. |
+| `LOOM_CODE_SANDBOX_CPU_SECONDS` | `int` | `7200` | rlimits for each process of a sandboxed repository job (clone, fetch, dependency install, compiler-tier harness; code/app/index/sandbox.py). They bound each process, not a job's total: there is no cgroup. CPU seconds a process may use. |
+| `LOOM_CODE_SANDBOX_MEMORY_MB` | `int` | `16384` | Data memory (heap and private mappings, RLIMIT_DATA) a process may use, in MiB. Not address space: node reserves far more of that than it uses. |
+| `LOOM_CODE_SANDBOX_MAX_PIDS` | `int` | `2048` | Processes and threads the server's uid may run at once (RLIMIT_NPROC): shared by every job running at the time, not one job's own. |
+| `LOOM_CODE_SANDBOX_MAX_FILE_MB` | `int` | `32768` | Largest file a process may write, in MiB (a pack or index.scip). |
 | `LOOM_CODE_GIT_DIR` | `str` | `''` | Bare clone the ingest worker fetches into (created by `loom code init`) and its remote. Empty = derived from code_repo: `var/code_repos/<name>.git` and `https://github.com/<owner>/<name>.git`. |
 | `LOOM_CODE_GIT_REMOTE` | `str` | `''` | The scalar entry's fetch remote; empty = `https://github.com/<owner>/<name>.git`. |
 | `LOOM_CODE_GIT_BRANCH` | `str` | `'main'` | The scalar entry's branch: the one the ingest worker fetches and indexes. |
@@ -180,7 +189,7 @@ Source: `server/settings/_code.py`
 | `LOOM_CODE_SCIP_GO_BIN_DIR` | `str` | `''` | Where `go` and scip-go live when not on PATH |
 | `LOOM_CODE_SCIP_GO_DELTA_TIMEOUT_SECONDS` | `int` | `7200` | Seconds the Go delta harness may run before it is killed; also the pass deadline. |
 | `LOOM_CODE_SCIP_GO_JOBS` | `int` | `2` | Parallel module builds (~4 GB each) |
-| `LOOM_CODE_SCIP_GO_MODCACHE` | `str` | `'var/gocache'` | GOMODCACHE across passes |
+| `LOOM_CODE_SCIP_GO_MODCACHE` | `str` | `'var/gocache'` | Root of the Go module caches kept across passes: one per entry beneath it (<root>/<org>/<namespace>), never shared between repositories. |
 | `LOOM_CODE_SCIP_GO_PRIVATE` | `str` | `''` | GOPRIVATE / GONOSUMDB (a vanity import host) |
 | `LOOM_CODE_PR_HISTORY_ENABLED` | `bool` | `False` | Merged-PR history sync (GitHub REST, cursor-resumable). |
 | `LOOM_CODE_PR_HISTORY_INTERVAL_SECONDS` | `int` | `900` | Seconds between PR-history sync passes. |
@@ -381,7 +390,7 @@ Source: `server/settings/_code.py`
 | `LOOM_CODE_SEARCH_CARD_LEG_MODE` | `'skeleton' \| 'best_chunk'` | `'skeleton'` | What a voted file contributes: `skeleton` (its class skeletons) or `best_chunk` (its source chunks nearest the query by exact cosine). |
 | `LOOM_CODE_SEARCH_CARD_LEG_CAP` | `float` | `1.0` | Max share of the best two-leg RRF score a card row contributes. |
 | `LOOM_CODE_SEARCH_CARD_LEG_KINDS` | `str` | `'responsibility'` | CSV of prose question kinds the card leg votes on; `any` = all. |
-| `LOOM_CODE_SEARCH_RERANK_DEFAULT` | `str` | `''` | Rerank endpoint code.search and code.ask use when the request names none (same values as the per-request `rerank`; rerank="none" turns it off). Empty = no default rerank. |
+| `LOOM_CODE_SEARCH_RERANK_DEFAULT` | `str` | `''` | Reranker code.search and code.ask use when the request names none (same values as the per-request `rerank`: a builtin or a name in LOOM_RERANK_ENDPOINTS_JSON; rerank="none" turns it off). Empty = no default rerank. |
 | `LOOM_CODE_SEARCH_RERANK_KINDS` | `str` | `'responsibility'` | Prose question kinds the default rerank applies to (`any` = all); symbol-shaped or constrained searches are never default-reranked. |
 | `LOOM_CODE_SEARCH_RERANK_TOP` | `int` | `20` | How many fused units the default rerank reads. |
 | `LOOM_CODE_SEARCH_RERANK_EXCERPT_CHARS` | `int` | `300` | Characters of each candidate shown to the default rerank (path and signature first, then the body head). |
@@ -1039,6 +1048,7 @@ Source: `server/settings/_providers.py`
 | `LOOM_LLM_HIDDEN_REASONING_RESERVE_MAX` | `int` | `16384` | Most output tokens a call adds over the caller's cap for a model's hidden reasoning. The reserve per model is learned from the reasoning tokens its replies report (twice the most it has spent) and capped here. |
 | `LOOM_LLM_REQUEST_TIMEOUT_S` | `float` | `300.0` | Seconds an LLM call waits for its reply before the client retries. Generous on purpose: it only catches a hung connection, so a slow model or a long output never hits it. Calls that must be fast set their own, shorter deadline (HyDE, search budgets). |
 | `LOOM_LLM_POLICY_BY_TRAFFIC_CLASS` | `str` | `'{"bench": {"llm_cache": true}}'` | JSON {class: {"llm_cache": bool, "strong": bool, "mid": bool}}: `llm_cache` overrides the class's cache default (a per-request pin wins); `strong`/`mid` false bars the cascade from that tier. Unlisted = every tier eligible. |
+| `LOOM_RERANK_ENDPOINTS_JSON` | `str` | `'{}'` | JSON {name: url}: the rerank endpoints a request's `rerank`, a namespace's `rerank_endpoint` and LOOM_CODE_SEARCH_RERANK_DEFAULT may name. Names are short identifiers, URLs http(s). Loom posts candidate text only to these. |
 | `LOOM_LLM_RERANK_SKIP_ABOVE` | `float` | `0.62` | Skip the rerank when the vector top hit's cosine is ≥ this (strong matches rank reliably; the rerank costs ~500 ms). Fallback when the adaptive gate has no probe. |
 | `LOOM_EMBEDDING_WORKER_ENABLED` | `bool` | `True` | Recovery worker: retries failed embeds and reconciles orphan scope='shared' rows (the write path embeds inline). |
 | `LOOM_EMBEDDING_WORKER_INTERVAL_SECONDS` | `int` | `5` | Seconds between recovery worker passes while there is work. |
@@ -1060,6 +1070,7 @@ Source: `server/settings/_ratelimit.py`
 | `LOOM_RATELIMIT_SHARED_PATH` | `str` | `''` | Bucket file; "" = <runtime dir>/loom-ratelimit-<parent pid>.buckets ($XDG_RUNTIME_DIR/loom, else /run/loom, else /tmp). The file is 0600 and never opened through a symlink. Set it for two servers sharing one cap. |
 | `LOOM_RATELIMIT_SHARED_SLOTS` | `int` | `16384` | Table slots (32 bytes each). Every process of a server must agree; a mismatch falls back to per-process buckets and shows in /v1/health. |
 | `LOOM_RATELIMIT_CLASS_FRACTIONS` | `str` | `'{"bench": 0.5}'` | JSON {class: fraction}: a traffic class carved into its own bucket of the base cap × fraction, so a bench sweep never spends production's budget. Class = token `traffic_class` claim, else namespace row, else request hint, else interactive. Absent class = 1.0 (base bucket). |
+| `LOOM_TENANT_MAX_CONCURRENT_REQUESTS` | `int` | `256` | Requests one org may have in flight at once, deployment-wide. Each process holds its share (divided by replicas × web workers, at least 1); a call over it gets 429 RATE_LIMITED. 0 = no cap. |
 
 ## ReadReplica
 
@@ -1099,7 +1110,10 @@ Source: `server/settings/_runtime.py`
 | `LOOM_DEPLOYMENT` | `bool` | `False` | The deployment's compose files set LOOM_DEPLOYMENT=1; every other process must set LOOM_INSTANCE_LABEL (e.g. `iso:<worktree>:<port>`, `ci:integration`). A process with neither refuses to start, so every ledger row is attributable. |
 | `LOOM_BUDGET_VIOLATION_AUDIT_INTERVAL_S` | `float` | `60.0` | At most one `budget.violated` audit row per op per this many seconds (the row carries `suppressed_since_last`). 0 = a row per violation. |
 | `LOOM_BUDGET_VIOLATION_AUDIT_BURST` | `int` | `5` | Violations per window that still write their own row before the rest are folded into the next: a short burst stays visible, a storm costs at most this many inserts a minute per (op, org, namespace). |
-| `LOOM_PUBLIC_BASE_URL` | `str` | `''` | The address the server hands to clients — the Setup page's config block, `claude mcp add`, a bot's claim_url. Empty = derive it from the request's X-Forwarded-Proto/Host. Set it when a proxy in front cannot be trusted to forward the client-facing scheme. |
+| `LOOM_PUBLIC_BASE_URL` | `str` | `''` | The address the server hands to clients — the Setup page's config block, `claude mcp add`, a bot's claim_url, OAuth metadata. Empty = the request's own Host and scheme, which only a loopback bind may rely on: a non-loopback bind_host refuses to start without it. |
+| `LOOM_BIND_HOST` | `str` | `'127.0.0.1'` | The address Loom is reachable on: `loom serve` and `make server` bind it; in a container (which listens on all its interfaces) it is the address the port is published on. Anything but loopback turns on the startup checks for the dev secret, auth-off and public_base_url. |
+| `LOOM_TRUSTED_PROXIES` | `str` | `'127.0.0.1'` | Comma-separated peer addresses or CIDRs whose X-Forwarded-For/Proto headers uvicorn applies; any other peer's are ignored. "*" trusts all. |
+| `LOOM_ALLOW_INSECURE` | `bool` | `False` | True lets a non-loopback bind start with the dev signing secret or with auth off. Only for a port that is not actually reachable by others. |
 
 ## Storage
 
@@ -1156,7 +1170,7 @@ Source: `server/settings/_tasks.py`
 | `LOOM_TASK_LEASE_SWEEP_INTERVAL_SECONDS` | `int` | `60` | Seconds between passes while there is work. |
 | `LOOM_TASK_LEASE_SWEEP_IDLE_INTERVAL_SECONDS` | `int` | `300` | Seconds between passes that found nothing. |
 | `LOOM_TASK_LEASE_BACKEND` | `'auto' \| 'keeper' \| 'log'` | `'auto'` | Claim arbitration: "auto" = KeeperMap when loom.task_leases exists, else the append-only claim log; "keeper" / "log" pin one. |
-| `LOOM_TASK_WEBHOOK_DELIVER_ENABLED` | `bool` | `True` | Post one Standard Webhooks-signed notice per new event batch to each inbox's webhook_url; the secret comes from the env var task_inboxes.webhook_secret_ref names. |
+| `LOOM_TASK_WEBHOOK_DELIVER_ENABLED` | `bool` | `True` | Post one Standard Webhooks-signed notice per new event batch to each inbox's webhook_url; the secret comes from the env var task_inboxes.webhook_secret_ref names (`LOOM_WEBHOOK_SECRET_<ORG>__<NAME>`, one of the inbox org's own). |
 | `LOOM_TASK_WEBHOOK_DELIVER_INTERVAL_SECONDS` | `int` | `5` | Seconds between passes while notices are going out. |
 | `LOOM_TASK_WEBHOOK_DELIVER_IDLE_INTERVAL_SECONDS` | `int` | `30` | Seconds between passes that found no new event. |
 

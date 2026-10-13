@@ -167,15 +167,81 @@ def _doctor_otel_erasure_index_check(settings: Any) -> tuple[str, str, str]:
 _GRADE_BY_SEVERITY = {"error": FAIL, "warn": WARN, "info": PASS}
 
 
+def _doctor_reader_probe(settings: Any) -> tuple[str, str]:
+    """Whether ClickHouse accepts the boot probe's read as LOOM_CH_READER_USER,
+    under the caller-shaped caps: `("ok", "")`, `("failing", <error>)`, or
+    `("not_probed", <reason>)`. The reason is empty when the user is unset or
+    ClickHouse does not answer (`clickhouse_reachable` says so), and names the
+    missing table before migrations created loom.memory."""
+    import httpx
+
+    from server.core.ch import (
+        BEFORE_MIGRATIONS_CODES,
+        READER_PROBE_SQL,
+        caller_shaped,
+        statement_settings,
+    )
+    from server.core.ch_errors import error_code
+
+    if not settings.ch_reader_user or not settings.ch_host:
+        return "not_probed", ""
+    base, _ = _doctor_ch_endpoint(settings)
+    auth = (str(settings.ch_reader_user), str(settings.ch_password))
+    with caller_shaped():
+        query = {k: str(v) for k, v in statement_settings(READER_PROBE_SQL).items()}
+    try:
+        with httpx.Client(timeout=10.0) as c:
+            r = c.post(f"{base}/", params=query, content=READER_PROBE_SQL, auth=auth)
+    except httpx.HTTPError:
+        return "not_probed", ""
+    if r.status_code != 200:
+        if error_code(r.text) in BEFORE_MIGRATIONS_CODES:
+            return "not_probed", "reader user not probed: loom.memory missing"
+        return "failing", r.text.strip()
+    if r.text.split("\t")[0] != settings.ch_reader_user:
+        return "failing", ""
+    return "ok", ""
+
+
+def _doctor_run_claims(settings: Any) -> bool | None:
+    """Whether run.begin claims run ids in Keeper here; None when ClickHouse
+    does not answer (`clickhouse_reachable` says so)."""
+    from server.core.schema.migrate_lease import RUN_CLAIMS_TABLE_SQL, is_keeper_table
+
+    if not settings.ch_host:
+        return None
+    try:
+        rows = _doctor_ch_query(settings, RUN_CLAIMS_TABLE_SQL + " FORMAT JSONEachRow", {})
+    except Exception:  # noqa: BLE001 — a doctor line must never crash the doctor
+        return None
+    return is_keeper_table(rows[0] if rows else None)
+
+
 def _doctor_problems() -> list[Any]:
     """The shared problem list as the doctor sees it: settings
     only — no probed dim, breaker, lease or ledger before boot. Empty when
     settings do not load (the `settings_load` check already says so)."""
     try:
-        from server.observability.problems import HealthState, collect_problems
+        from server.code.app.index.sandbox import layout_refusal, sandbox_available
+        from server.observability.problems import HealthState, Problem, collect_problems
         from server.settings import settings
 
-        return collect_problems(settings, HealthState())
+        status, detail = _doctor_reader_probe(settings)
+        problems = collect_problems(
+            settings,
+            HealthState(
+                repo_sandbox=sandbox_available(),
+                repo_sandbox_refusal=layout_refusal(),
+                ch_reader_ok={"ok": True, "failing": False}.get(status),
+                ch_reader_error=detail if status == "failing" else "",
+                run_claims_atomic=_doctor_run_claims(settings),
+            ),
+        )
+        if status == "not_probed" and detail:
+            problems.append(
+                Problem("ch_reader_user_not_probed", "info", detail, "run `loom migrate`.")
+            )
+        return problems
     except Exception:  # noqa: BLE001 — a doctor line must never crash the doctor
         return []
 

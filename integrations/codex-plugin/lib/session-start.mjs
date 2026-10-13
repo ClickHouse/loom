@@ -8,7 +8,8 @@
 // LOOM_CONTEXT_RUNS=false leaves it out; LOOM_CONTEXT_RUNS_LIMIT bounds the rows.
 
 import { envNumber, envSwitch } from "./loom-client.mjs";
-import { runIdFor } from "./run-hook.mjs";
+import { recalledDataBlock } from "./prompt-recall.mjs";
+import { sessionRunId } from "./run-hook.mjs";
 import { blockKeyFor } from "./working-memory.mjs";
 
 /** The recent-runs shortlist in the session-start primer, off unless
@@ -42,9 +43,9 @@ export function startPackBody(scope, payload, { tokenBudget = 1200, runId = "", 
     // Only this project's Stop-hook bookmark, not every
     // repository's the agent has worked in.
     session_block: blockKeyFor(scope.project),
-    // The session's own id and the run hook's run id (cc-<session_id>), so
+    // The session's own id and the run hook's run id (sessionRunId), so
     // the primer's exposure row joins the session's judged outcome.
-    ...(sessionId ? { session_id: String(sessionId), run_id: runIdFor(sessionId) } : {}),
+    ...(sessionId ? { session_id: String(sessionId), run_id: sessionRunId(sessionId) } : {}),
   };
   if (wantsRuns(env)) {
     body.include_runs = true;
@@ -82,7 +83,9 @@ export function renderPrimer({
     .join("");
   const primer = rendered.trim();
   const head = notice ? `${notice}\n\n` : "";
-  const body = primer ? `# Loom memory primer — project: ${project}\n\n${repoLine}${primer}\n\n` : repoLine;
+  const body = primer
+    ? `# Loom memory primer — project: ${project}\n\n${repoLine}${recalledDataBlock(primer)}\n\n`
+    : repoLine;
   return `${head}${body}${codeBlock}${extra}${recordingLine}\n`;
 }
 

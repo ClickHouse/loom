@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from server.identity.domain.read_scope import ReadFilters
 from server.memory.store import code_plane_reads as reads
 
 
@@ -24,10 +25,13 @@ async def lessons_matching(
     return await reads.lessons_matching(org, namespaces, token=token, paths=paths, limit=limit)
 
 
-async def user_file_dirs(org: str, user_id: str) -> list[str]:
-    """The parent directories of the files the user's live memories name, in
-    path order, each once."""
+async def user_file_dirs(
+    org: str, user_id: str, namespaces: Sequence[str] | None, *, scope: ReadFilters
+) -> list[str]:
+    """The parent directories of the files the user's live memories in
+    `namespaces` (None: every namespace) and inside `scope` name, in path order,
+    each once."""
     dirs: dict[str, None] = {}
-    for f in await reads.user_file_paths(org, user_id):
+    for f in await reads.user_file_paths(org, user_id, namespaces, scope=scope):
         dirs.setdefault(f.rsplit("/", 1)[0] if "/" in f else f, None)
     return list(dirs)

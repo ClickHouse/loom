@@ -104,15 +104,19 @@ async def test_pipeline_errors_surface_on_output(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("projected", [True, False])
 async def test_schema_mode_surfaces_stubbed_fields(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, projected: bool
 ) -> None:
     """Schema mode: fields the extractor gave up on are reported on the
-    output, so "extracted" and "gave up" are distinguishable to the caller."""
+    output, so "extracted" and "gave up" are distinguishable to the caller;
+    so is a records projection skipped for a caller bounded to one user."""
     import server.memory.app.extract.handler as mx
     from server.llm.client import LLMResult
     from server.memory.app.extract import ExtractedRecord
+    from server.observability import degradations
 
+    degradations.begin()  # the transport does this per request; a note left by an earlier test must not count
     _stub_projections(monkeypatch)
 
     async def _fake_bulk(bulk_input):
@@ -122,7 +126,7 @@ async def test_schema_mode_surfaces_stubbed_fields(
         return _Out()
 
     async def _fake_inline(*args, **kwargs):
-        return None
+        return projected
 
     async def _fake_typed(msgs, schema, *, max_tokens=1024, observation_date=None):
         return (
@@ -144,6 +148,7 @@ async def test_schema_mode_surfaces_stubbed_fields(
         )
     )
     assert out.stubbed_fields == ["category"]
+    assert bool(out.degraded) is not projected
 
 
 @pytest.mark.asyncio
@@ -177,3 +182,100 @@ async def test_any_pipeline_failure_stops_the_digest_draft(
         await mx.handle_memory_set_from_messages(_input())
     await asyncio.sleep(0)
     assert cancelled == [True]
+
+
+@pytest.mark.asyncio
+async def test_schema_mode_reports_the_fallbacks_noted_during_the_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import server.memory.app.extract.handler as mx
+    from server.llm.client import LLMResult
+    from server.memory.app.extract import ExtractedRecord
+    from server.observability import degradations
+
+    _stub_projections(monkeypatch)
+    monkeypatch.setattr("server.observability.provider_health.record_failure", lambda *a: None)
+    degradations.begin()
+
+    async def _fake_bulk(bulk_input):
+        degradations.note("embed", "fake_vector_kept", "timeout")
+
+        class _Out:
+            written: list = []
+
+        return _Out()
+
+    async def _fake_inline(*args, **kwargs):
+        return False
+
+    async def _fake_typed(msgs, schema, *, max_tokens=1024, observation_date=None):
+        return (
+            ExtractedRecord(record={"amount": 4.5}),
+            LLMResult(text="", tokens_in=0, tokens_out=0, provider="p", model="m"),
+        )
+
+    monkeypatch.setattr(mx, "handle_memory_bulk_set", _fake_bulk)
+    monkeypatch.setattr(mx, "_write_inline_record_projection", _fake_inline)
+    monkeypatch.setattr("server.memory.app.extract.extract_typed_record_iterative", _fake_typed)
+    out = await mx.handle_memory_set_from_messages(
+        MemorySetFromMessagesInput(
+            org="dev",
+            namespace="ns",
+            agent="a",
+            messages=[{"role": "user", "content": "Spent 4.50 on snacks."}],
+            memory_key="rec1",
+            record_schema={"amount": "number"},
+        )
+    )
+    assert out.degraded[0] == "embed: fake_vector_kept (timeout)"
+    assert out.degraded[1].startswith("records: projection_skipped")
+
+
+@pytest.mark.asyncio
+async def test_a_scope_skipped_record_projection_leaves_provider_health_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A narrowed caller's skipped record projection is a scope decision, not a
+    provider failure: it is noted on the response but must not flip /v1/health."""
+    import server.memory.app.extract.handler as mx
+    from server.llm.client import LLMResult
+    from server.memory.app.extract import ExtractedRecord
+    from server.observability import degradations, provider_health
+
+    _stub_projections(monkeypatch)
+    provider_health.reset()
+    degradations.begin()
+
+    async def _fake_bulk(bulk_input):
+        class _Out:
+            written: list = []
+
+        return _Out()
+
+    async def _fake_inline(*args, **kwargs):
+        return False
+
+    async def _fake_typed(msgs, schema, *, max_tokens=1024, observation_date=None):
+        return (
+            ExtractedRecord(record={"amount": 4.5}),
+            LLMResult(text="", tokens_in=0, tokens_out=0, provider="p", model="m"),
+        )
+
+    monkeypatch.setattr(mx, "handle_memory_bulk_set", _fake_bulk)
+    monkeypatch.setattr(mx, "_write_inline_record_projection", _fake_inline)
+    monkeypatch.setattr("server.memory.app.extract.extract_typed_record_iterative", _fake_typed)
+    try:
+        out = await mx.handle_memory_set_from_messages(
+            MemorySetFromMessagesInput(
+                org="dev",
+                namespace="ns",
+                agent="a",
+                messages=[{"role": "user", "content": "Spent 4.50 on snacks."}],
+                memory_key="rec1",
+                record_schema={"amount": "number"},
+            )
+        )
+        assert out.degraded == ["records: projection_skipped (read scope below the namespace)"]
+        assert provider_health.status()["degraded"] is False
+    finally:
+        provider_health.reset()

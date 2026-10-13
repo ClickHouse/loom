@@ -450,7 +450,7 @@ def _row(
 def follow_env(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     from server.memory import store as memory_repo
 
-    e = SimpleNamespace(row=_row(), by_id={}, id_calls=[], canon={})
+    e = SimpleNamespace(row=_row(), by_id={}, id_calls=[], canon={}, live=set())
 
     async def get_by_key(identity: Any, key: str, **kw: Any) -> Any:
         return e.row
@@ -460,7 +460,7 @@ def follow_env(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         return e.by_id.get(memory_id)
 
     async def canonical_rows_by_ids(
-        org: str, nss: list[str], ids: list[str], *, ch: Any = None
+        org: str, nss: list[str], ids: list[str], *, scope: Any = None, ch: Any = None
     ) -> list[CanonicalRow]:
         return [
             CanonicalRow.from_row(x)
@@ -473,7 +473,14 @@ def follow_env(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
 
     monkeypatch.setattr(memory_repo, "get_by_key", get_by_key)
     monkeypatch.setattr(memory_repo, "get_by_id", get_by_id)
+
+    async def live_ids_in_scope(
+        org: str, nss: list[str], ids: list[str], *, scope: Any = None, ch: Any = None
+    ) -> set[str]:
+        return {i for i in ids if i in e.live}
+
     monkeypatch.setattr(memory_repo, "canonical_rows_by_ids", canonical_rows_by_ids)
+    monkeypatch.setattr(memory_repo, "live_ids_in_scope", live_ids_in_scope)
     monkeypatch.setattr("server.memory.app.query._record_read_exposure", lambda *a, **k: None)
     return e
 
@@ -617,3 +624,108 @@ def test_event_loop_is_clean() -> None:
     assert cd.pending_count() == 0
     assert not [t for t in cd._TASKS if not t.done()]
     asyncio.get_event_loop_policy()
+
+
+@pytest.mark.asyncio
+async def test_get_never_names_a_canonical_outside_the_read_scope(
+    follow_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """U's duplicate pointing at V's canonical: a read pinned to U gets neither
+    V's key nor V's id."""
+    from server.identity.domain.read_scope import ReadFilters
+    from server.memory import store as memory_repo
+    from server.memory.app import handlers as mem
+
+    only_u = ReadFilters(scope="own_user", user_id="u", session_id=None)
+    seen: list[Any] = []
+
+    async def canonical_rows_by_ids(
+        org: str, nss: list[str], ids: list[str], *, scope: Any = None, ch: Any = None
+    ) -> list[CanonicalRow]:
+        seen.append(scope)
+        if scope is not None and scope.narrowed:
+            return []  # V's canonical is outside U's scope
+        row = {"namespace": nss[0], "canonical_id": _CANON_ID, "memory_key": "v_secret_key"}
+        return [CanonicalRow.from_row(row)]
+
+    monkeypatch.setattr(memory_repo, "canonical_rows_by_ids", canonical_rows_by_ids)
+    monkeypatch.setattr("server.memory.app.served_duplicates.request_scope", lambda: only_u)
+    monkeypatch.setattr(mem, "request_narrowed", lambda: True)
+    follow_env.row = _row("k", "duplicate", _CANON_ID)
+
+    out = await mem.handle_memory_get(
+        MemoryGetInput(org="o", namespace="n", agent="a", memory_key="k", user_id="u")
+    )
+    assert seen == [only_u]
+    dumped = json.dumps(out.model_dump(), default=str)
+    assert "v_secret_key" not in dumped and _CANON_ID not in dumped
+    assert out.status == "duplicate" and out.value == {"t": 1}
+
+
+@pytest.mark.asyncio
+async def test_get_names_the_canonical_id_to_an_unbounded_read(follow_env) -> None:
+    from server.memory.app import handlers as mem
+
+    follow_env.row = _row("k", "duplicate", _CANON_ID)
+    out = await mem.handle_memory_get(
+        MemoryGetInput(org="o", namespace="n", agent="a", memory_key="k")
+    )
+    # Gone to a whole-namespace read too, but nothing there is foreign: the id stays.
+    assert out.duplicate_of == _CANON_ID and out.model_dump()["canonical_key"] == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bounded", [True, False])
+async def test_get_names_a_successor_only_inside_the_read_scope(
+    follow_env, monkeypatch: pytest.MonkeyPatch, bounded: bool
+) -> None:
+    from server.memory.app import handlers as mem
+
+    monkeypatch.setattr("server.identity.app.request_scope.request_narrowed", lambda: bounded)
+    row = _row("k", "superseded")
+    row.superseded_by = _CANON_ID  # V's row: outside a scope bounded to U
+    follow_env.row = row
+    out = await mem.handle_memory_get(
+        MemoryGetInput(org="o", namespace="n", agent="a", memory_key="k")
+    )
+    assert out.status == "superseded"
+    assert out.superseded_by == ("" if bounded else _CANON_ID)
+
+
+@pytest.mark.asyncio
+async def test_bounded_get_names_an_in_scope_successor_that_is_itself_superseded(
+    follow_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A -> B -> C: B is superseded (not active) but inside the read's scope, so a
+    # bounded get names it, as memory.search's successor read does.
+    from server.memory.app import handlers as mem
+
+    monkeypatch.setattr("server.identity.app.request_scope.request_narrowed", lambda: True)
+    row = _row("k", "superseded")
+    row.superseded_by = _CANON_ID
+    follow_env.row = row
+    follow_env.live = {_CANON_ID}  # live, but no active canonical row behind it
+    out = await mem.handle_memory_get(
+        MemoryGetInput(org="o", namespace="n", agent="a", memory_key="k")
+    )
+    assert out.superseded_by == _CANON_ID
+
+
+@pytest.mark.asyncio
+async def test_live_ids_in_scope_reads_any_status_inside_the_scope() -> None:
+    from server.identity.domain.read_scope import ReadFilters
+    from server.memory.store.dedup import live_ids_in_scope
+
+    seen: list[tuple[str, dict[str, Any]]] = []
+
+    class _CH:
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            seen.append((sql, params))
+            return [{"mid": _CANON_ID}]
+
+    scope = ReadFilters(scope="own_user", user_id="u", session_id=None)
+    got = await live_ids_in_scope("o", ["n"], [_CANON_ID, "not-a-uuid"], scope=scope, ch=_CH())
+    assert got == {_CANON_ID}
+    sql, params = seen[0]
+    assert "status" not in sql and "tombstoned_at IS NULL" in sql
+    assert params["ids"] == [_CANON_ID] and "u" in params.values()

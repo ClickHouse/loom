@@ -24,12 +24,14 @@ from datetime import datetime
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
+from server.identity.domain.read_scope import ReadFilters, scope_and, scope_where
 
 
 async def list_conflicted(
     org: str,
     namespace: str,
     *,
+    scope: ReadFilters,
     before_version: int | None = None,
     limit: int = 100,
     ch: _CHClient | None = None,
@@ -51,6 +53,7 @@ async def list_conflicted(
     if before_version is not None:
         where.append("version < {bv:UInt64}")
         params["bv"] = before_version
+    where.extend(scope_where(scope, params))
     # Locate, then fetch. `status = 'conflicted'` is not in the sort key, so
     # under FINAL a statement that selects `value` reads every value in the
     # namespace to keep the few conflicted rows (31.4 MB for 8 rows of 1,490).
@@ -70,6 +73,15 @@ async def list_conflicted(
     )
     if not located:
         return []
+    if scope.narrowed:
+        # A peer outside the scope is not named, not even by its id.
+        visible = await _ids_in_scope(
+            ch, org, namespace, [str(p) for r in located for p in r["conflict_with"]], scope
+        )
+        located = [
+            {**r, "conflict_with": [p for p in r["conflict_with"] if str(p) in visible]}
+            for r in located
+        ]
     pairs = [(str(r["memory_id"]), int(r["version"])) for r in located]
     values = await ch.query_all(
         """
@@ -91,10 +103,31 @@ async def list_conflicted(
     return out
 
 
+async def _ids_in_scope(
+    ch: _CHClient, org: str, namespace: str, memory_ids: list[str], scope: ReadFilters
+) -> set[str]:
+    """The ids among `memory_ids` whose rows lie inside `scope`."""
+    if not memory_ids:
+        return set()
+    params: dict[str, Any] = {"org": org, "ns": namespace, "ids": sorted(set(memory_ids))}
+    rows = await ch.query_all(
+        f"""
+        SELECT DISTINCT toString(memory_id) AS mid
+        FROM loom.memory
+        WHERE org = {{org:String}}
+          AND namespace = {{ns:String}}
+          AND memory_id IN {{ids:Array(UUID)}}{scope_and(scope, params)}
+        """,
+        params=params,
+    )
+    return {str(r["mid"]) for r in rows}
+
+
 async def count_conflicted(
     org: str,
     namespace: str,
     *,
+    scope: ReadFilters,
     ch: _CHClient | None = None,
 ) -> int:
     """The badge's number: live conflicted rows in the namespace, under FINAL
@@ -102,14 +135,15 @@ async def count_conflicted(
     but without the value column, which reads 33 MB per tick on a namespace
     of large values."""
     ch = ch or _default_client()
+    params: dict[str, Any] = {"org": org, "ns": namespace}
     rows = await ch.query_all(
-        """
+        f"""
         SELECT count() AS n
         FROM loom.memory FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND status = 'conflicted' AND tombstoned_at IS NULL
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND status = 'conflicted' AND tombstoned_at IS NULL{scope_and(scope, params)}
         """,
-        params={"org": org, "ns": namespace},
+        params=params,
     )
     return int((rows[0] if rows else {}).get("n") or 0)
 
@@ -118,6 +152,7 @@ async def conflicted_keys(
     org: str,
     namespace: str,
     *,
+    scope: ReadFilters,
     limit: int = 5000,
     ch: _CHClient | None = None,
 ) -> list[str]:
@@ -125,16 +160,17 @@ async def conflicted_keys(
     columns for the cards' conflict chips. The row listing reads the value
     column too (49.5 MB for 2.3 kB of answer on a namespace of large values)."""
     ch = ch or _default_client()
+    params: dict[str, Any] = {"org": org, "ns": namespace, "limit": int(limit)}
     rows = await ch.query_all(
-        """
+        f"""
         SELECT memory_key
         FROM loom.memory FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND status = 'conflicted' AND tombstoned_at IS NULL
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND status = 'conflicted' AND tombstoned_at IS NULL{scope_and(scope, params)}
         ORDER BY version DESC
-        LIMIT {limit:UInt32}
+        LIMIT {{limit:UInt32}}
         """,
-        params={"org": org, "ns": namespace, "limit": int(limit)},
+        params=params,
     )
     return [str(r["memory_key"]) for r in rows]
 

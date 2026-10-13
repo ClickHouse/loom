@@ -10,6 +10,9 @@
   An AI function takes a named collection's name as a string first
   argument, e.g. SELECT aiClassify('openai_default', text, ['a', 'b']).
   See named_collections.xml.template.
+
+  It also holds the loom user's limits: a per-tenant quota and the
+  read_overflow_mode constraint (see the comments below).
 -->
 <clickhouse>
     <profiles>
@@ -20,17 +23,90 @@
             <use_query_condition_cache>0</use_query_condition_cache>
             <allow_experimental_nlp_functions>1</allow_experimental_nlp_functions>
             <allow_experimental_ai_functions>1</allow_experimental_ai_functions>
+            <constraints>
+                <!-- Loom caps caller-shaped reads with max_rows_to_read and
+                     max_memory_usage. No statement may switch the overflow mode
+                     to `break`, which would turn a cap into a silent partial answer. -->
+                <read_overflow_mode>
+                    <readonly/>
+                </read_overflow_mode>
+            </constraints>
         </default>
+        <!-- read-only; settings may still change, within the constraints above.
+             The three caps equal the defaults of Loom's ch_caller_shaped_*
+             settings (LOOM_CH_CALLER_SHAPED_*): no statement may raise them, so a
+             deployment that raises one of those settings raises it here too.
+             Each cap also has a min, so no statement can set it to 0, which
+             ClickHouse reads as "no limit". The time min is 0.05 s, code.grep's
+             statement floor (STATEMENT_FLOOR_S in server/code/domain/deadline.py):
+             with deadline_ms it sends sub-second limits.
+             timeout_overflow_mode stays changeable: code.grep with deadline_ms
+             sets it to `break` and reports the hits as partial. -->
+        <loom_reader>
+            <profile>default</profile>
+            <readonly>2</readonly>
+            <max_execution_time>30</max_execution_time>
+            <max_memory_usage>4000000000</max_memory_usage>
+            <max_rows_to_read>500000000</max_rows_to_read>
+            <constraints>
+                <max_execution_time>
+                    <min>0.05</min>
+                    <max>30</max>
+                </max_execution_time>
+                <max_memory_usage>
+                    <min>1</min>
+                    <max>4000000000</max>
+                </max_memory_usage>
+                <max_rows_to_read>
+                    <min>1</min>
+                    <max>500000000</max>
+                </max_rows_to_read>
+            </constraints>
+        </loom_reader>
     </profiles>
+    <!-- Keyed by the quota_key Loom sends per request (<org>:<subject>); every
+         limit is 0, so it only counts per tenant in system.quotas_usage. -->
+    <quotas>
+        <loom_tenant>
+            <!-- keyed = by the client's quota_key, else the user name -->
+            <keyed/>
+            <interval>
+                <duration>3600</duration>
+                <queries>0</queries>
+                <errors>0</errors>
+                <result_rows>0</result_rows>
+                <read_rows>0</read_rows>
+                <execution_time>0</execution_time>
+            </interval>
+        </loom_tenant>
+    </quotas>
     <!--
       The loom user resolves named collections by name. It never needs to
       read their secrets, so show_named_collections_secrets stays off.
     -->
     <users>
         <loom>
+            <quota>loom_tenant</quota>
             <access_management>1</access_management>
             <named_collection_control>1</named_collection_control>
             <show_named_collections>1</show_named_collections>
         </loom>
+        <!--
+          Loom runs caller-shaped reads (a caller's regex, globs or aggregate)
+          as this user when LOOM_CH_READER_USER=loom_reader: SELECT on loom.*
+          only (no system tables beyond the ones every user may read), no
+          access management, same password as the loom user.
+        -->
+        <loom_reader>
+            <password from_env="CLICKHOUSE_PASSWORD"/>
+            <profile>loom_reader</profile>
+            <quota>loom_tenant</quota>
+            <networks>
+                <ip>::/0</ip>
+            </networks>
+            <grants>
+                <query>GRANT SELECT ON loom.*</query>
+            </grants>
+        </loom_reader>
     </users>
 </clickhouse>

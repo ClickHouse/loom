@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
+from server.identity.domain.read_scope import ReadFilters, scope_and, scope_where
 from server.memory.domain.temporal_sql import as_of_predicate
 from server.memory.store.rows import Identity, MemoryRow, _hydrate
 from server.memory.store.sql import (
@@ -63,6 +64,7 @@ async def get_by_key(
     identity: Identity,
     memory_key: str,
     *,
+    scope: ReadFilters,
     ch: _CHClient | None = None,
     as_of: datetime | None = None,
     include_tombstoned: bool = False,
@@ -88,6 +90,9 @@ async def get_by_key(
 
     `as_of` restricts to rows valid as of that time (replay). The OR form
     (not coalesce) keeps the `created_at` index prune fast.
+
+    `scope`: the request's read scope (`identity.domain.read_scope`); a
+    write path that reads the row it replaces passes `WHOLE_NAMESPACE`.
     """
     ch = ch or _default_client()
     as_of_clause = "AND " + as_of_predicate("valid_time") if as_of is not None else ""
@@ -117,6 +122,7 @@ async def get_by_key(
             "AND agent = {agent:String} AND user_id = {uid:String} AND session_id = {sid:String}"
         )
         order_clause = ""
+    identity_clause += scope_and(scope, params)
     # The sort key goes in PREWHERE, applied per
     # part before the FINAL merge, so only the granules that hold the key
     # read their remaining ~60 columns. Sort-key columns are identical across
@@ -153,6 +159,7 @@ async def get_by_key(
 async def get_by_id(
     memory_id: str,
     *,
+    scope: ReadFilters,
     org: str | None = None,
     ch: _CHClient | None = None,
     as_of: datetime | None = None,
@@ -173,6 +180,8 @@ async def get_by_id(
     `as_of`: bi-temporal filter — see `get_by_key`. `fresh`: the row may have
     been written moments ago — on a miss, read once more with sequential
     consistency (see `_point_lookup`).
+
+    `scope`: a row outside the read scope is not found (None), never refused.
     """
     ch = ch or _default_client()
     params: dict[str, Any] = {"mid": memory_id}
@@ -180,6 +189,7 @@ async def get_by_id(
     if org is not None:
         org_pred = "AND org = {org:String}"
         params["org"] = org
+    org_pred += scope_and(scope, params)
     # Discover the row's org, namespace, created_at and memory_key without
     # FINAL, then read by them. loom.memory is sorted by (org, namespace,
     # agent, user_id, session_id, memory_key); memory_id is not in the sort
@@ -291,10 +301,48 @@ async def key_holds_established_fact(
     return int((row or {}).get("n") or 0) > 0
 
 
+async def actors_by_key(
+    org: str,
+    keys: Sequence[tuple[str, str]],
+    *,
+    scope: ReadFilters,
+    ch: _CHClient | None = None,
+) -> dict[tuple[str, str], list[dict[str, str]]]:
+    """The live rows under each (namespace, memory_key), read inside `scope`, as
+    `{agent, user_id, session_id, actor}`: one entry per row, so a caller labels a recalled
+    item with the writer of the row it came from, not every writer of the key. Rows with
+    no recorded actor are left out."""
+    if not keys:
+        return {}
+    ch = ch or _default_client()
+    params: dict[str, Any] = {"org": org, "keys": sorted({(str(n), str(k)) for n, k in keys})}
+    where = [
+        "org = {org:String}",
+        "(namespace, memory_key) IN {keys:Array(Tuple(String, String))}",
+        "tombstoned_at IS NULL",
+        "actor != ''",
+        *scope_where(scope, params),
+    ]
+    rows = await ch.query_all(
+        f"""
+        SELECT namespace, memory_key, agent, user_id, session_id, actor
+        FROM loom.memory FINAL
+        WHERE {" AND ".join(where)}
+        """,
+        params=params,
+    )
+    out: dict[tuple[str, str], list[dict[str, str]]] = {}
+    for r in rows:
+        row = {c: str(r[c]) for c in ("agent", "user_id", "session_id", "actor")}
+        out.setdefault((str(r["namespace"]), str(r["memory_key"])), []).append(row)
+    return out
+
+
 async def get_many_by_keys(
     identity: Identity,
     memory_keys: list[str],
     *,
+    scope: ReadFilters,
     ch: _CHClient | None = None,
     strong: bool = False,
 ) -> list[MemoryRow]:
@@ -337,6 +385,7 @@ async def get_many_by_keys(
     if identity.session_id != "*" and not (wildcard_agent and identity.session_id == "-"):
         session_clause = "AND session_id = {sid:String}"
         params["sid"] = identity.session_id
+    session_clause += scope_and(scope, params)
     # With any axis open, several identities may hold the same key: the
     # newest row per key answers, the way `get_by_key`'s wildcard read orders
     # (version DESC, created_at DESC) and takes one.
@@ -423,6 +472,7 @@ async def find_related_by_entities(
     identity: Identity,
     memory_key: str,
     *,
+    scope: ReadFilters,
     top_k: int = 10,
     min_overlap: int = 1,
     ch: _CHClient | None = None,
@@ -440,29 +490,33 @@ async def find_related_by_entities(
         overlap_count, shared_entities} for matches. Self is excluded.
 
     If source_entities is empty, related_rows is also empty (no query).
+    Both statements stay inside `scope`.
     """
     ch = ch or _default_client()
+    source_params: dict[str, Any] = {
+        "org": identity.org,
+        "ns": identity.namespace,
+        "agent": identity.agent,
+        "uid": identity.user_id,
+        "sid": identity.session_id,
+        "key": memory_key,
+    }
+    source_scope = scope_and(scope, source_params)
     source = await ch.query_one(
-        """
+        f"""
         SELECT entities
         FROM loom.memory FINAL
-        WHERE org = {org:String}
-          AND namespace = {ns:String}
-          AND agent = {agent:String}
-          AND user_id = {uid:String}
-          AND session_id = {sid:String}
-          AND memory_key = {key:String}
+        WHERE org = {{org:String}}
+          AND namespace = {{ns:String}}
+          AND agent = {{agent:String}}
+          AND user_id = {{uid:String}}
+          AND session_id = {{sid:String}}
+          AND memory_key = {{key:String}}
           AND tombstoned_at IS NULL
+          {source_scope}
         LIMIT 1
         """,
-        params={
-            "org": identity.org,
-            "ns": identity.namespace,
-            "agent": identity.agent,
-            "uid": identity.user_id,
-            "sid": identity.session_id,
-            "key": memory_key,
-        },
+        params=source_params,
     )
     if source is None:
         return ([], [])
@@ -475,33 +529,36 @@ async def find_related_by_entities(
     # the top_k winners alone are read afterwards by their exact (memory_id,
     # version), from the stored 2 KB preview, never the
     # value column of every candidate (66 MB for four hits).
+    related_params: dict[str, Any] = {
+        "org": identity.org,
+        "ns": identity.namespace,
+        "ents": source_entities,
+        "key": memory_key,
+        "min_overlap": int(min_overlap),
+        "top_k": int(top_k),
+    }
+    related_scope = scope_and(scope, related_params)
     rows = await ch.query_all(
-        """
+        f"""
         SELECT
             memory_id,
             memory_key,
             memory_type,
             version,
-            arrayIntersect(entities, {ents:Array(String)}) AS shared_entities,
-            length(arrayIntersect(entities, {ents:Array(String)})) AS overlap_count
+            arrayIntersect(entities, {{ents:Array(String)}}) AS shared_entities,
+            length(arrayIntersect(entities, {{ents:Array(String)}})) AS overlap_count
         FROM loom.memory FINAL
-        WHERE org = {org:String}
-          AND namespace = {ns:String}
+        WHERE org = {{org:String}}
+          AND namespace = {{ns:String}}
           AND tombstoned_at IS NULL
-          AND memory_key != {key:String}
-          AND hasAny(entities, {ents:Array(String)})
-          AND length(arrayIntersect(entities, {ents:Array(String)})) >= {min_overlap:UInt32}
+          AND memory_key != {{key:String}}
+          AND hasAny(entities, {{ents:Array(String)}})
+          AND length(arrayIntersect(entities, {{ents:Array(String)}})) >= {{min_overlap:UInt32}}
+          {related_scope}
         ORDER BY overlap_count DESC, created_at DESC
-        LIMIT {top_k:UInt32}
+        LIMIT {{top_k:UInt32}}
         """,
-        params={
-            "org": identity.org,
-            "ns": identity.namespace,
-            "ents": source_entities,
-            "key": memory_key,
-            "min_overlap": int(min_overlap),
-            "top_k": int(top_k),
-        },
+        params=related_params,
     )
     if not rows or all("content_excerpt" in r for r in rows):
         return (source_entities, rows)
@@ -554,6 +611,7 @@ CONTAINS_PREDICATE = (
 async def list_by_namespace(
     identity: Identity,
     *,
+    scope: ReadFilters,
     memory_type: str | None = None,
     pinned_only: bool = False,
     key_prefix: str | None = None,
@@ -628,6 +686,7 @@ async def list_by_namespace(
     if identity.session_id != "*":
         where.append("session_id = {sid:String}")
         params["sid"] = identity.session_id
+    where.extend(scope_where(scope, params))
     if memory_type is not None:
         where.append("memory_type = {mt:String}")
         params["mt"] = memory_type
@@ -760,6 +819,7 @@ async def namespace_version(org: str, namespace: str, *, ch: _CHClient | None = 
 async def count_by_namespace(
     identity: Identity,
     *,
+    scope: ReadFilters,
     memory_type: str | None = None,
     pinned_only: bool = False,
     key_prefix: str | None = None,
@@ -805,6 +865,7 @@ async def count_by_namespace(
     if identity.session_id != "*":
         where.append("session_id = {sid:String}")
         params["sid"] = identity.session_id
+    where.extend(scope_where(scope, params))
     if memory_type is not None:
         where.append("memory_type = {mt:String}")
         params["mt"] = memory_type

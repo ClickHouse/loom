@@ -136,6 +136,9 @@ class _ProcedureMatch(BaseModel):
     # agent, folded from the ledger on evolve.
     for_agent: dict[str, int] = Field(default_factory=dict)
     run_stats_by_agent: dict[str, dict[str, int]] = Field(default_factory=dict)
+    # Who wrote the procedure (`human:<subject>` / `process:<subject>`); "" when unrecorded.
+    # context.pack and memory.stack auto-inject only the caller's own.
+    actor: str = ""
 
 
 class ProcedureMatchOutput(BaseModel):

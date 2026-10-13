@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import Any
 
 from server.core.datetimes import naive_utc_now as now
+from server.identity.domain.read_scope import ReadFilters, scope_and, scope_where
 from server.memory.store.rows import next_version
 
 TABLE = "loom.session_briefs"
@@ -115,31 +116,36 @@ async def insert(ch: Any, row: dict[str, Any]) -> None:
     await ch.insert(TABLE, [row])
 
 
-async def current(ch: Any, org: str, namespace: str, brief_key: str) -> dict[str, Any] | None:
+async def current(
+    ch: Any, org: str, namespace: str, brief_key: str, *, scope: ReadFilters
+) -> dict[str, Any] | None:
     """The newest version of one brief, tombstoned or not (a save after a
-    delete continues the revision count). Read with sequential consistency:
-    the previous save is often seconds old (PreCompact, then SessionEnd)."""
+    delete continues the revision count), inside the read `scope`. Read with
+    sequential consistency: the previous save is often seconds old
+    (PreCompact, then SessionEnd)."""
     from server.core.ch import own_write_reads
 
+    params: dict[str, Any] = {"org": org, "ns": namespace, "key": brief_key}
     with own_write_reads():
         row = await ch.query_one(
             f"""
             SELECT {_SELECT}
             FROM {TABLE} FINAL
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
-              AND brief_key = {{key:String}}
+              AND brief_key = {{key:String}}{scope_and(scope, params)}
             LIMIT 1
             """,
-            params={"org": org, "ns": namespace, "key": brief_key},
+            params=params,
         )
     return dict(row) if row else None
 
 
 async def by_revision(
-    ch: Any, org: str, namespace: str, brief_key: str, revision: int
+    ch: Any, org: str, namespace: str, brief_key: str, revision: int, *, scope: ReadFilters
 ) -> dict[str, Any] | None:
     """One past revision from the append-only history (the newest write of
-    that revision number when two saves raced to it)."""
+    that revision number when two saves raced to it), inside the read `scope`."""
+    params: dict[str, Any] = {"org": org, "ns": namespace, "key": brief_key, "rev": int(revision)}
     row = await ch.query_one(
         f"""
         SELECT brief_key, revision, agent, user_id, session_id, head_sha, trigger,
@@ -147,11 +153,11 @@ async def by_revision(
                actor, updated_at, tombstoned_at, version
         FROM {REVISIONS}
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
-          AND brief_key = {{key:String}} AND revision = {{rev:UInt32}}
+          AND brief_key = {{key:String}} AND revision = {{rev:UInt32}}{scope_and(scope, params)}
         ORDER BY version DESC
         LIMIT 1
         """,
-        params={"org": org, "ns": namespace, "key": brief_key, "rev": int(revision)},
+        params=params,
     )
     return dict(row) if row else None
 
@@ -196,10 +202,18 @@ async def listing(
     agent: str = "",
     from_session: str = "",
     limit: int = 20,
+    scope: ReadFilters,
+    key_prefix: str = "",
 ) -> list[dict[str, Any]]:
-    """Live briefs of a namespace, most recently saved first."""
-    where: list[str] = []
+    """Live briefs of a namespace inside the read `scope` whose key starts with
+    `key_prefix` and holds no further `~` (an own_user prefix must not match
+    that user's own_session briefs), most recently saved first."""
     params: dict[str, Any] = {"org": org, "ns": namespace, "lim": int(limit)}
+    where: list[str] = scope_where(scope, params)
+    if key_prefix:
+        where.append("startsWith(brief_key, {key_prefix:String})")
+        where.append("position(brief_key, '~', length({key_prefix:String}) + 1) = 0")
+        params["key_prefix"] = key_prefix
     if project:
         where.append("project = {project:String}")
         params["project"] = project

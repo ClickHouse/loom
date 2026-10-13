@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.core.naming import SENTINEL as _WM_SENTINEL
+from server.identity.app.request_scope import request_scope
 from server.memory.api.models_context import ContextBlock, ContextPackInput, ContextPackOutput
 from server.memory.api.models_lifecycle import MemoryStackInput
 from server.memory.api.models_procedure import ProcedureMatchInput
@@ -24,6 +25,7 @@ from server.memory.domain.context_layout import (
     _BLOCK_LABELS,
     _DEFAULT_SECTION_ORDER,
     _DEFAULT_SECTION_TOKENS,
+    RECALLED_SECTIONS,
     _ordered_section_names,
     _own_bookmark,
     _procedure_line,
@@ -32,6 +34,10 @@ from server.memory.domain.context_layout import (
     _stable_prefix,
     _tokens_estimate,
     _trim,
+    author_label,
+    escape_data,
+    label_part,
+    one_item,
 )
 from server.memory.domain.evidence_pack import EvidenceItem, pack_evidence
 
@@ -166,6 +172,8 @@ class _PackState:
         default_section_tokens = self.default_section_tokens
         if not body:
             return
+        if name in RECALLED_SECTIONS:
+            body = escape_data(body)
         trimmed, was_truncated = _trim(
             body,
             _section_budget(input, name, default_section_tokens.get(name, 300)),
@@ -203,6 +211,10 @@ async def _pack_working_memory(st: _PackState) -> None:
             citations=[f"working_memory:{b.block_key}" for b in blocks],
             source_count=len(blocks),
         )
+
+
+# The stack layers that are stored memories with a writer; profile and knowledge are not.
+_STACK_MEMORY_LAYERS = frozenset({"pinned", "recent_recall", "procedure"})
 
 
 async def _pack_memory_stack(st: _PackState) -> None:
@@ -243,7 +255,9 @@ async def _pack_memory_stack(st: _PackState) -> None:
             layers.append(layer)
         cite = f"stack:{layer}/{entry.memory_key or entry.memory_type}"
         citations.append(cite)
-        lines.append(f"- [{layer}/{entry.memory_key}] {entry.value}")
+        author = author_label([entry.actor]) if layer in _STACK_MEMORY_LAYERS else ""
+        label = label_part(f"{layer}/{entry.memory_key}")
+        lines.append(one_item(f"- [{label}{author}] {entry.value}"))
     st.put(
         "memory_stack",
         "\n".join(lines),
@@ -324,12 +338,14 @@ async def _pack_startup_recall(st: _PackState) -> None:
             pinned_only=True,
             order_by="created_at_desc",
             limit=k,
+            scope=request_scope(),
         )
         recent = await memory_repo.list_by_namespace(
             ident,
             exclude_high_sensitivity=True,
             order_by="created_at_desc",
             limit=k * 2,
+            scope=request_scope(),
         )
     except Exception as e:  # noqa: BLE001 — recall is best-effort
         log.warning("context.pack startup recall failed: %s", e)
@@ -362,6 +378,7 @@ async def _pack_startup_recall(st: _PackState) -> None:
                 else ""
             ),
             conflict=(r.status == "conflicted"),
+            author=author_label([getattr(r, "actor", "")]),
         )
         for r in rows
     ]
@@ -387,7 +404,51 @@ async def _pack_startup_recall(st: _PackState) -> None:
     )
 
 
-async def _pack_decisions_from_hits(st: _PackState, decision_hits: list[Any]) -> None:
+def _hit_row_key(input: ContextPackInput, h: Any) -> tuple[str, str]:
+    """The (namespace, memory_key) of the stored row a hit came from: a chunk's parent."""
+    key = getattr(h, "parent_memory_key", "") or h.memory_key
+    return (getattr(h, "namespace", "") or input.namespace, str(key))
+
+
+_KeyWriters = dict[tuple[str, str], list[dict[str, str]]]
+
+
+def _hit_author(actors: _KeyWriters, input: ContextPackInput, h: Any) -> str:
+    """` by=` for the row a hit came from. Rows under the hit's key are narrowed by the
+    identity the hit carries (user, session, agent, where the leg read them); when the rows
+    left were written by more than one actor the label says `unknown`, never a writer whose
+    row this may not be."""
+    rows = actors.get(_hit_row_key(input, h)) or []
+    for col, value in (
+        ("user_id", getattr(h, "user_id", "")),
+        ("session_id", getattr(h, "session_id", "")),
+        ("agent", getattr(h, "_row_agent", None)),
+    ):
+        if value:
+            rows = [r for r in rows if r[col] == value]
+    names = {r["actor"] for r in rows}
+    return author_label(names if len(names) == 1 else [])
+
+
+async def _hit_actors(input: ContextPackInput, hits: list[Any]) -> _KeyWriters:
+    """Each hit's recorded writers, read inside the request's read scope. {} when the
+    read fails: the lines then say by=unknown rather than naming anyone."""
+    import server.memory.store as memory_repo
+
+    try:
+        return await memory_repo.actors_by_key(
+            input.org,
+            [_hit_row_key(input, h) for h in hits],
+            scope=request_scope(),
+        )
+    except Exception as e:  # noqa: BLE001 — authorship labels are best-effort; lines say by=unknown
+        log.warning("context.pack: memory authors unavailable: %s", e)
+        return {}
+
+
+async def _pack_decisions_from_hits(
+    st: _PackState, decision_hits: list[Any], actors: _KeyWriters
+) -> None:
     """Decision-typed hits leave the memories block and render as their
     own tagged section with the structured record (scenario, outcome,
     realized outcome). One search, two planes on the wire: the reader
@@ -395,11 +456,14 @@ async def _pack_decisions_from_hits(st: _PackState, decision_hits: list[Any]) ->
     input = st.input
     keys = [str(h.memory_key) for h in decision_hits]
     records: dict[str, dict[str, Any]] = {}
+    # The records are read by key alone, across users: a bounded read keeps the hit's excerpt.
+    narrowed = request_scope().narrowed
     try:
         from server.core.ch import get_client
         from server.memory.app.decision import _decision_records
 
-        records = await _decision_records(get_client(), input.org, input.namespace, keys)
+        if not narrowed:
+            records = await _decision_records(get_client(), input.org, input.namespace, keys)
     except Exception as e:  # noqa: BLE001 — the excerpt is the fallback
         log.warning("context.pack: decision records unavailable: %s", e)
     lines: list[str] = []
@@ -415,7 +479,9 @@ async def _pack_decisions_from_hits(st: _PackState, decision_hits: list[Any]) ->
         realized = str(rec.get("realized_outcome") or "").strip()
         reasoning = str(rec.get("reasoning") or "").strip()
         made = str(rec.get("made_at") or "")[:10]
-        line = f"- [{ns}/{h.memory_key}]" + (f" {made}" if made else "") + f" {scenario}"
+        author = _hit_author(actors, input, h)
+        line = f"- [{label_part(f'{ns}/{h.memory_key}')}{author}]"
+        line += (f" {made}" if made else "") + f" {scenario}"
         if outcome:
             line += f" → decided: {outcome}"
         if reasoning:
@@ -424,7 +490,7 @@ async def _pack_decisions_from_hits(st: _PackState, decision_hits: list[Any]) ->
             succ = rec.get("success")
             verdict = " (succeeded)" if succ is True else " (failed)" if succ is False else ""
             line += f"; realized: {realized}{verdict}"
-        lines.append(line)
+        lines.append(one_item(line))
         citations.append(f"decision:{ns}/{h.memory_key}")
     st.put(
         "decisions",
@@ -481,12 +547,13 @@ async def _pack_memories(st: _PackState) -> None:
     search_input._context_pack_block_tokens = int(_memories_token_budget)
     out = await handle_memory_search(search_input)
     hits = _without_transcript_rows(list(out.results or []))
+    actors = await _hit_actors(input, hits) if hits else {}
     if input.include_decisions and st.wanted("decisions"):
         decision_hits = [h for h in hits if str(getattr(h, "memory_type", "") or "") == "decision"]
         if decision_hits:
             dec_ids = {id(h) for h in decision_hits}
             hits = [h for h in hits if id(h) not in dec_ids]
-            await _pack_decisions_from_hits(st, decision_hits)
+            await _pack_decisions_from_hits(st, decision_hits, actors)
     if hits:
         evidence: list[EvidenceItem] = []
         for h in hits:
@@ -513,6 +580,8 @@ async def _pack_memories(st: _PackState) -> None:
                     ),
                     # the row state rides `status`; `memory_type` is never "conflicted"
                     conflict=getattr(h, "status", "") == "conflicted",
+                    author=_hit_author(actors, input, h),
+                    derived_from=tuple(getattr(h, "derived_from", None) or ()),
                 )
             )
         packed = pack_evidence(
@@ -549,7 +618,7 @@ async def _pack_procedures(st: _PackState) -> None:
     situation = input.situation or input.query
     if not situation:
         return
-    from server.memory.app.procedure import handle_procedure_match
+    from server.memory.app.procedure import handle_procedure_match, own_procedures
 
     # Two-factor match when the caller separated the state it is in from
     # the objective it pursues: the situation scores the precondition
@@ -571,7 +640,7 @@ async def _pack_procedures(st: _PackState) -> None:
             top_k=min(input.top_k, 5),
         )
     )
-    matches = list(out.matches)
+    matches = own_procedures(list(out.matches))
     explore_meta: dict[str, Any] = {}
     if matches and _explore_this_pack(input, situation):
         # Exploration: withhold the top match so the ledger learns how the run goes without
@@ -666,6 +735,8 @@ async def _pack_conversations(st: _PackState) -> None:
         return
     if not input.include_conversations or not input.query:
         return
+    if request_scope().narrowed:
+        return  # conversations carry no user bound this leg can apply
     from server.knowledge.api.models_conversations import ConversationSearchInput
     from server.knowledge.app.conversations import handle_conversation_search
 
@@ -717,6 +788,8 @@ async def _pack_runs(st: _PackState) -> None:
     # Opt-in; identity-scoped; fail-open inside runs_manifest.
     if not st.wanted("runs") or not input.include_runs:
         return
+    if request_scope().narrowed:
+        return  # the manifest reads every session of a user, past a session bound
     from server.memory.app.runs_manifest import runs_manifest
 
     body, count = await runs_manifest(
@@ -881,7 +954,7 @@ async def _working_memory_layers(input: Any) -> tuple[list[Any], str]:
     # its body.
     rendered = "\n".join(
         f'<working-memory block="{_esc(b.block_key, quote=True)}">'
-        f"{_esc(b.content)}</working-memory>"
+        f"{escape_data(b.content)}</working-memory>"
         for b in blocks
     )
     return blocks, rendered

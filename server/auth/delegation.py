@@ -1,0 +1,326 @@
+"""One delegation policy for every token minted from another token.
+
+A child gets requested ∩ the parent token's ceiling ∩ the creator's live
+grants, never more. The rules and the recheck on every request are in
+docs/guides/tokens-and-grants.md (Delegated tokens). `loom mint-token`
+holds the signing secret and is not a delegation.
+"""
+
+from __future__ import annotations
+
+import logging
+import math
+import time
+from dataclasses import dataclass
+from typing import Any
+
+from fastapi import HTTPException
+
+from server.auth import authz
+from server.auth import jwt as jwt_mod
+from server.auth.authz import grant_role
+from server.auth.jwt import AuthInfo
+from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT
+from server.operations.base import GRANT_ROLES, Role, grant_rank
+from server.settings import settings
+
+log = logging.getLogger(__name__)
+
+# A delegated token without an explicit TTL lives this long.
+DEFAULT_TTL_DAYS = 90
+# The longest parent chain a token may carry.
+MAX_CHAIN_DEPTH = 8
+
+
+@dataclass(frozen=True)
+class Delegated:
+    """What `delegate` allows: the claims to mint the child with."""
+
+    org: str
+    namespaces: list[str]
+    roles: list[str]
+    ns_roles: dict[str, str] | None
+    write_namespaces: list[str] | None
+    read_scope: str
+    read_user_id: str
+    ttl_seconds: int
+    parents: list[str]
+    parent_subjects: list[str]
+    parent_iats: list[int]
+    creator: str
+    is_service_account: bool
+
+    @property
+    def ttl_days(self) -> int:
+        """The TTL in whole days, rounded up: a live token never shows 0."""
+        return math.ceil(self.ttl_seconds / 86400)
+
+    def mint(self, subject: str, *, jti: str | None = None, consumer: str | None = None) -> str:
+        return jwt_mod.mint_token(
+            subject=subject,
+            org=self.org,
+            namespaces=self.namespaces,
+            roles=self.roles,
+            write_namespaces=self.write_namespaces,
+            ns_roles=self.ns_roles,
+            ttl_seconds=self.ttl_seconds,
+            is_service_account=self.is_service_account,
+            read_scope=self.read_scope or None,
+            read_user_id=self.read_user_id or None,
+            consumer=consumer,
+            jti=jti,
+            parents=self.parents,
+            parent_subjects=self.parent_subjects,
+            parent_iats=self.parent_iats,
+            creator=self.creator,
+        )
+
+
+def _refuse(message: str) -> HTTPException:
+    return HTTPException(status_code=403, detail={"code": "AUTH_INSUFFICIENT", "message": message})
+
+
+async def delegate(
+    parent: AuthInfo,
+    *,
+    org: str,
+    requested: dict[str, str | None],
+    scoped: bool,
+    ttl_seconds: int | None,
+    is_service_account: bool,
+) -> Delegated:
+    """The child `parent` may mint in `org`. `requested` maps each namespace,
+    in read-priority order, to the role asked for there; None asks for the
+    highest the parent and the creator allow. `"*"` (flat only) asks for
+    whatever the creator holds live. `scoped` mints an `ns_roles` token;
+    otherwise a flat token whose one role is the lowest role allowed on any
+    requested namespace. Raises 403 AUTH_INSUFFICIENT naming what was refused."""
+    child_org = _child_org(parent, org)
+    if parent.is_service_account and not is_service_account:
+        raise _refuse("a service-account token can only mint service-account tokens")
+    parents = [*parent.parents, parent.token_id] if parent.token_id else list(parent.parents)
+    if len(parents) > MAX_CHAIN_DEPTH:
+        raise _refuse(f"delegation chain is limited to {MAX_CHAIN_DEPTH} tokens")
+    if scoped and "*" in requested:
+        raise _refuse("a per-namespace token cannot name '*'")
+    if parent.issued_at is None:
+        # The child's revocation check needs the parent's age (jwt.parent_iats).
+        raise _refuse("the parent token carries no issue time")
+    creator = parent.creator or parent.subject
+    roles = await _allowed_roles(parent, child_org, creator, requested, scoped)
+    if scoped:
+        ns_roles: dict[str, str] | None = {ns: r.name.lower() for ns, r in roles.items()}
+        flat: list[str] = []
+    else:
+        ns_roles = None
+        flat = [min(roles.values()).name.lower()]
+    return Delegated(
+        org=child_org,
+        namespaces=list(roles),
+        roles=flat,
+        ns_roles=ns_roles,
+        write_namespaces=list(parent.write_namespaces) if parent.write_namespaces else None,
+        read_scope=parent.read_scope,
+        read_user_id=parent.read_user_id,
+        ttl_seconds=_child_ttl(parent, ttl_seconds),
+        parents=parents,
+        parent_subjects=[*parent.parent_subjects, parent.subject],
+        parent_iats=[*parent.parent_iats, parent.issued_at],
+        creator=creator,
+        is_service_account=is_service_account,
+    )
+
+
+def _child_org(parent: AuthInfo, org: str) -> str:
+    """A child lives in its parent's org; an org-wide (`*`) parent names one."""
+    if parent.org not in ("*", org):
+        raise _refuse(f"cannot mint a token for org {org!r} from org {parent.org!r}")
+    return org
+
+
+def _child_ttl(parent: AuthInfo, ttl_seconds: int | None) -> int:
+    """The child's TTL: the one asked for, else the default, clipped so the
+    child never outlives its parent."""
+    ttl = ttl_seconds if ttl_seconds is not None else DEFAULT_TTL_DAYS * 86400
+    if parent.expires_at is not None:
+        left = parent.expires_at - int(time.time())
+        if left <= 0:
+            raise _refuse("the parent token has expired")
+        ttl = min(ttl, left)
+    return ttl
+
+
+async def _allowed_roles(
+    parent: AuthInfo, org: str, creator: str, requested: dict[str, str | None], scoped: bool
+) -> dict[str, Role]:
+    """The role the child gets on each namespace. A namespace the caller named
+    and may not have is refused; one that came from expanding `*` over a
+    narrow parent's list is left out instead. A scoped child asking to write
+    a namespace needs the parent to be able to write it; one naming no role
+    there gets at most viewer."""
+    expanded = _expand_wildcard(parent, requested)
+    out: dict[str, Role] = {}
+    for ns, asked in expanded.items():
+        want = delegable_role(asked)
+        writes = scoped and want is not None and want >= Role.WRITER
+        allowed = ceiling_role(parent, org, ns, write=writes)
+        if ns != "*":
+            allowed = _lower(allowed, await authz.grant_role_for(org, ns, creator))
+        if allowed is None or (want is not None and want > allowed):
+            if ns not in requested:
+                continue
+            raise _refuse(f"cannot delegate {want.name.lower() if want else 'access'} on {ns}")
+        if scoped and want is None and ceiling_role(parent, org, ns, write=True) is None:
+            # The parent can't write here, so neither can the child: say viewer.
+            allowed = min(allowed, Role.VIEWER)
+        out[ns] = want or allowed
+    if not out:
+        raise _refuse("cannot delegate access to any of the requested namespaces")
+    return out
+
+
+def _expand_wildcard(parent: AuthInfo, requested: dict[str, str | None]) -> dict[str, str | None]:
+    """`*` stays dynamic only under a parent whose own reach is dynamic: a
+    primary flat token (login, OAuth) or a delegated token whose claim is
+    `*`. Under a narrower parent it becomes that parent's namespace list."""
+    if "*" not in requested:
+        return requested
+    narrow = parent.has_ns_roles() or (bool(parent.creator) and "*" not in parent.namespaces)
+    if not narrow:
+        return requested
+    out = {ns: role for ns, role in requested.items() if ns != "*"}
+    for ns in parent.namespaces:
+        if ns != "*" and ns not in out:
+            out[ns] = requested["*"]
+    return out
+
+
+def delegable_role(name: str | None) -> Role | None:
+    """The grant role `name` asks for (None for None). 403 for an org-wide
+    role, which is never delegated; 422 for a name that is no role."""
+    if name is None:
+        return None
+    role = grant_role(name)
+    if role is not None:
+        return role
+    if name.strip().upper() in Role.__members__:
+        raise _refuse(f"{name.strip().lower()} is never delegated")
+    raise HTTPException(
+        status_code=422,
+        detail={"code": "VALIDATION_FAILED", "message": f"unknown role {name!r}"},
+    )
+
+
+def _lower(a: Role | None, b: Role | None) -> Role | None:
+    if a is None or b is None:
+        return None
+    return min(a, b)
+
+
+def ceiling_role(token: AuthInfo, org: str, namespace: str, *, write: bool = False) -> Role | None:
+    """The most `token` itself allows on `namespace`, at most admin. A scoped
+    token's `ns_roles` entry; a delegated flat token's role where its claim
+    covers the namespace (`write`: its write claim); a primary flat token's
+    role anywhere, since it reads through its subject's grants by design.
+    A write also stays inside a scoped token's `ns_write` claim when it has one."""
+    if token.has_ns_roles():
+        if write and token.write_namespaces and not token.can_write(org, namespace):
+            return None
+        return token.effective_role(org, namespace)
+    flat = max(token.roles, default=None)
+    if flat is None:
+        return None
+    if token.creator:
+        covered = token.can_write(org, namespace) if write else token.can_access(org, namespace)
+        if not covered:
+            return None
+    return min(flat, Role.ADMIN)
+
+
+@dataclass(frozen=True)
+class _Account:
+    """What the creator's rows in one org say about its delegated tokens."""
+
+    active: bool
+    best_grant: Role | None
+
+
+# (org, creator) -> (time.monotonic() of the read, the account). Only the
+# token's own org reaches it (authz checks the org first); the cap bounds it.
+_account_active: dict[tuple[str, str], tuple[float, _Account]] = {}
+_ACCOUNT_CACHE_MAX = 4096
+
+_RANK_ROLE = {grant_rank(name): grant_role(name) for name in GRANT_ROLES}
+
+
+async def creator_account_active(org: str, creator: str) -> bool:
+    """False when the creator's account in `org` is disabled, so every token
+    it delegated stops: it owns namespaces and none is active any more
+    (deactivated), or it held grants and none is live (a claim release
+    tombstones them and blanks the owner). A creator with neither (an
+    operator subject) is not disabled. A failed read counts as disabled."""
+    return (await _creator_account(org, creator)).active
+
+
+async def creator_best_grant(org: str, creator: str) -> Role | None:
+    """The highest live grant the creator holds on any namespace of `org`."""
+    return (await _creator_account(org, creator)).best_grant
+
+
+async def _creator_account(org: str, creator: str) -> _Account:
+    """Cached for the revocation refresh interval; a failed read is not cached."""
+    from server.auth.aliases import subject_aliases
+    from server.core.ch import get_client
+
+    key = (org, creator)
+    now = time.monotonic()
+    hit = _account_active.get(key)
+    if hit is not None and now - hit[0] < settings.jwt_revocation_cache_ttl_seconds:
+        return hit[1]
+    try:
+        subjects = await subject_aliases(org, creator)
+        row = await get_client().query_one(
+            f"""
+            SELECT o.owned AS owned, o.owned_live AS owned_live,
+                   g.granted AS granted, g.best_rank AS best_rank
+            FROM (
+                SELECT count() AS owned, countIf(active = 1) AS owned_live
+                FROM loom.namespaces FINAL
+                WHERE org = {{org:String}} AND owner_email IN {{subs:Array(String)}}
+            ) AS o
+            CROSS JOIN (
+                SELECT countIf(status = 'active') AS granted,
+                       maxIf({GRANT_RANK_SQL}, {LIVE_GRANT}) AS best_rank
+                FROM loom.namespace_grants FINAL
+                WHERE org = {{org:String}} AND subject IN {{subs:Array(String)}}
+            ) AS g
+            """,
+            params={"org": org, "subs": subjects},
+        )
+    except Exception as e:  # noqa: BLE001 — an unreadable account counts as disabled (closed)
+        log.warning("account lookup failed for %s/%s: %s", org, creator, e)
+        return _Account(active=False, best_grant=None)
+    account = _account_from_row(row or {})
+    if len(_account_active) >= _ACCOUNT_CACHE_MAX:
+        _account_active.clear()
+    _account_active[key] = (now, account)
+    return account
+
+
+def _account_from_row(row: dict[str, Any]) -> _Account:
+    counts = {k: int(row.get(k) or 0) for k in ("owned", "owned_live", "granted", "best_rank")}
+    best = _RANK_ROLE.get(counts["best_rank"])
+    owns_ok = counts["owned"] == 0 or counts["owned_live"] > 0
+    grants_ok = counts["granted"] == 0 or best is not None
+    return _Account(active=owns_ok and grants_ok, best_grant=best)
+
+
+__all__ = [
+    "DEFAULT_TTL_DAYS",
+    "Delegated",
+    "ceiling_role",
+    "creator_account_active",
+    "creator_best_grant",
+    "delegable_role",
+    "delegate",
+]

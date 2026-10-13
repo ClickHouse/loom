@@ -112,6 +112,19 @@ async with Agent(org="acme", namespace="private", agent="admin", api_key=ADMIN_T
 | `webhook_url`                   | empty       | Receives a signed wake-up notice when the inbox has new events. |
 | `webhook_secret_ref`            | empty       | Environment variable holding the webhook signing secret.        |
 
+`webhook_url` is an `http` or `https` URL whose host resolves only to public addresses:
+each delivery resolves it, refuses loopback, private, link-local (cloud metadata) and
+multicast addresses, connects to the address it checked (the name stays the `Host`
+header and TLS SNI) and follows no redirect. `webhook_secret_ref` must name one of the
+inbox org's own variables, `LOOM_WEBHOOK_SECRET_<ORG>__<NAME>`: ORG is the org id
+with lower-case letters upper-cased, digits kept and every other byte (upper-case
+letters included) written `_` and two hex digits (org `acme-corp` →
+`LOOM_WEBHOOK_SECRET_ACME_2DCORP__ALERTS`, `acme_corp` → `ACME_5FCORP`), NAME is
+letters and digits.
+`inbox.register` refuses any other name (422), and a row that names one is never read,
+so no tenant can have Loom sign with another tenant's secret. No two org ids share an
+ORG part.
+
 ### Post a task
 
 ```python

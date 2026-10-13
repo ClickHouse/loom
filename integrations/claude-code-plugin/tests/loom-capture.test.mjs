@@ -106,3 +106,49 @@ test("fallbackReason: a grep after a code answer names why, from the server's se
     assert.ok(serverSet.has(fallbackReason(row)));
   }
 });
+
+test("captured tool input, output and error are redacted before they are sent", () => {
+  // Assembled at run time so the repo's own secret scanner does not flag the fixture.
+  const pem = (edge) => `-----${edge} OPENSSH PRIVATE` + " KEY-----";
+  const awsId = "AKIA" + "IOSFODNN7EXAMPLE";
+  const key = [pem("BEGIN"), "b3BlbnNzaC1rZXktdjEAAAAA", pem("END")];
+  const body = buildObservation(
+    "PostToolUseFailure",
+    {
+      session_id: "s1",
+      tool_name: "Bash",
+      tool_input: {
+        command: "GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123 curl -H 'Authorization: Bearer sk-live-abc' x",
+      },
+      tool_response: {
+        stdout: `${key.join("\n")}\n${awsId}\npassword = hunter2\nxoxb-1234567890-abcdefghij`,
+        error: "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln rejected; api_key: 's3cr3t'",
+      },
+    },
+    scope,
+  );
+  const sent = [body.tool_input, body.tool_output, body.error].join("\n");
+  for (const secret of [
+    "ghp_abcdefghij",
+    "sk-live-abc",
+    "b3BlbnNzaC1rZXkt",
+    awsId,
+    "hunter2",
+    "xoxb-1234567890",
+    "eyJhbGciOiJIUzI1NiJ9",
+    "s3cr3t",
+  ]) {
+    assert.equal(sent.includes(secret), false, `${secret} leaked`);
+  }
+  assert.match(body.tool_input, /curl -H/, "the rest of the command survives");
+  assert.deepEqual(Object.keys(JSON.parse(body.tool_input)), ["command"], "redacted JSON still parses");
+});
+
+test("redaction leaves ordinary text alone", () => {
+  const body = buildObservation(
+    "PostToolUse",
+    { session_id: "s1", tool_name: "Bash", tool_input: { command: "echo max_tokens=800" }, tool_response: "ok" },
+    scope,
+  );
+  assert.match(body.tool_input, /max_tokens=800/);
+});

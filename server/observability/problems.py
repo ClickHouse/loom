@@ -12,16 +12,22 @@ doctor runs before boot) and skips that check rather than guessing.
 from __future__ import annotations
 
 import os
+import re
+import shutil
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
+from server.core.ch_errors import error_code
 from server.core.provider_keys import saved_key_presence
 
 Severity = Literal["info", "warn", "error"]
 
 # Ordered so a rendered list reads worst-first.
 SEVERITY_RANK: dict[str, int] = {"error": 0, "warn": 1, "info": 2}
+
+# ClickHouse's error code for a setting outside a profile's constraints.
+_SETTING_CONSTRAINT_VIOLATION = 452
 
 
 @dataclass(frozen=True)
@@ -64,6 +70,18 @@ class HealthState:
     # Seconds since this process read loom.revoked_tokens (inf = never);
     # None = not a server process.
     revocation_age_s: float | None = None
+    # Whether repository jobs run inside the sandbox (code/app/index/sandbox.py):
+    # None = not probed yet in this process.
+    repo_sandbox: bool | None = None
+    # Why the host layout refuses sandboxed jobs ('' = it does not).
+    repo_sandbox_refusal: str = ""
+    # Whether a read as LOOM_CH_READER_USER worked: None = not probed or unset.
+    ch_reader_ok: bool | None = None
+    # ClickHouse's answer when that read failed.
+    ch_reader_error: str = ""
+    # Whether run.begin claims run ids in Keeper (loom.agent_run_claims exists):
+    # None = no run.begin has asked yet in this process.
+    run_claims_atomic: bool | None = None
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     # Saved keys take precedence over the environment, including explicit empty keys.
     saved_keys: Mapping[str, bool] = field(default_factory=saved_key_presence)
@@ -240,14 +258,27 @@ def _revocation_problems(settings: Any, state: HealthState) -> list[Problem]:
                 source="runtime",
             )
         ]
-    stale_after = max(300.0, 10 * float(settings.jwt_revocation_cache_ttl_seconds))
+    max_stale = float(settings.jwt_revocation_max_stale_seconds)
+    if age > max_stale:
+        return [
+            Problem(
+                "revocation_too_stale",
+                "error",
+                f"The token revocation list was last read {int(age)}s ago, past the "
+                f"{int(max_stale)}s bound: every bearer is refused with 503.",
+                fix,
+                source="runtime",
+            )
+        ]
+    stale_after = min(max_stale, max(300.0, 10 * float(settings.jwt_revocation_cache_ttl_seconds)))
     if age > stale_after:
         return [
             Problem(
                 "revocation_stale",
                 "warn",
                 f"The token revocation list was last read {int(age)}s ago: a token revoked "
-                "since then still authenticates on this process.",
+                "since then still authenticates on this process until the snapshot is "
+                f"{int(max_stale)}s old.",
                 fix,
                 source="runtime",
             )
@@ -291,6 +322,72 @@ def _auth_problems(settings: Any) -> list[Problem]:
             )
         ]
     return []
+
+
+def _exposure_problems(settings: Any) -> list[Problem]:
+    """A server others can reach (non-loopback LOOM_BIND_HOST) without its
+    safeguards, and forwarded-header or CORS settings that trust everyone.
+    The bind ones also stop the server at boot unless LOOM_ALLOW_INSECURE=1."""
+    from server.auth.public_url import cors_origin_list, is_loopback_host
+
+    out: list[Problem] = []
+    reachable = not is_loopback_host(str(settings.bind_host))
+    severity: Severity = "warn" if settings.allow_insecure else "error"
+    if reachable and not str(settings.public_base_url).strip():
+        out.append(
+            Problem(
+                "public_base_url_missing",
+                "error",
+                f"LOOM_BIND_HOST={settings.bind_host} is not loopback and LOOM_PUBLIC_BASE_URL "
+                "is unset: the server refuses to start.",
+                "Set LOOM_PUBLIC_BASE_URL to the address clients use, or bind 127.0.0.1.",
+            )
+        )
+    if reachable and not settings.auth_actually_required():
+        out.append(
+            Problem(
+                "insecure_bind_auth_off",
+                severity,
+                f"Auth is off on a non-loopback bind (LOOM_BIND_HOST={settings.bind_host}): "
+                "anyone who reaches the port has full access.",
+                "Turn auth on or bind 127.0.0.1 (LOOM_ALLOW_INSECURE=1 only if the port is "
+                "not actually reachable).",
+            )
+        )
+    if reachable and settings.jwt_secret_is_dev_default():
+        out.append(
+            Problem(
+                "insecure_bind_dev_secret",
+                severity,
+                f"LOOM_JWT_SECRET is the checked-in dev default on a non-loopback bind "
+                f"(LOOM_BIND_HOST={settings.bind_host}).",
+                "Set LOOM_JWT_SECRET to a random secret (`openssl rand -hex 32`) or bind "
+                "127.0.0.1.",
+            )
+        )
+    if "*" in [p.strip() for p in str(settings.trusted_proxies).split(",")]:
+        out.append(
+            Problem(
+                "trusted_proxies_any",
+                "warn",
+                "LOOM_TRUSTED_PROXIES is '*': any caller can set its own X-Forwarded-For "
+                "(rate-limit address) and X-Forwarded-Proto.",
+                "List the proxy addresses or CIDRs in front of Loom.",
+            )
+        )
+    try:
+        cors_origin_list(str(settings.cors_origins))
+    except RuntimeError:
+        out.append(
+            Problem(
+                "cors_wildcard",
+                "error",
+                "LOOM_CORS_ORIGINS contains '*' while CORS allows credentials: the server "
+                "refuses to start.",
+                "List the exact origins allowed to call Loom from a browser.",
+            )
+        )
+    return out
 
 
 def _deployment_problems(settings: Any, state: HealthState) -> list[Problem]:
@@ -393,6 +490,114 @@ def _replica_problems(settings: Any, state: HealthState) -> list[Problem]:
     ]
 
 
+def _layout_problems(state: HealthState) -> list[Problem]:
+    """A host layout the sandbox refuses: jobs fail only where they would run
+    sandboxed. Before the first job probes, bwrap on PATH stands in for the probe
+    (no process is spawned from a health check)."""
+    if not state.repo_sandbox_refusal:
+        return []
+    sandboxed = state.repo_sandbox is True or (
+        state.repo_sandbox is None and shutil.which("bwrap") is not None
+    )
+    fix = (
+        "Move the data paths (LOOM_BLOB_DIR, LOOM_CODE_REPOS_ROOT, "
+        "LOOM_CODE_SCIP_CHECKOUT_DIR, LOOM_ENV_FILE) out of the Python install and "
+        "system directories."
+    )
+    why = (
+        "The server's Python or a system path lies in Loom's data, and no sandbox mount "
+        "could hide it."
+    )
+    if sandboxed:
+        message = f"Repository jobs fail: {state.repo_sandbox_refusal}. {why}"
+        return [Problem("repo_sandbox_layout_refused", "error", message, fix, source="runtime")]
+    message = f"Sandboxed repository jobs would be refused: {state.repo_sandbox_refusal}. {why}"
+    return [Problem("repo_sandbox_layout_refused", "warn", message, fix, source="runtime")]
+
+
+def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
+    """Repository jobs run without the sandbox: an operator's repositories still
+    get their build-based tiers, which execute the repository's code on this
+    host; self-registered ones get none, are not fetched over the network, and
+    adding one is refused."""
+    if not settings.code_ingest_enabled:
+        return []
+    problems = _layout_problems(state)
+    if state.repo_sandbox is not False:
+        return problems
+    return [
+        *problems,
+        Problem(
+            "repo_jobs_unsandboxed",
+            "warn",
+            "Repository jobs (clone, fetch, dependency installs, compiler tiers) run "
+            "unsandboxed: operator repositories' build tiers execute repository code on "
+            "this host; self-registered repositories get no build tier, those with a "
+            "network remote are not cloned or fetched, and adding one from the page is "
+            "refused.",
+            "Install bubblewrap and allow unprivileged user namespaces (in a container: a "
+            "seccomp profile that permits them) — 'Repository-job sandbox' in "
+            "docs/operations/code-index-operations.md.",
+            source="runtime",
+        ),
+    ]
+
+
+def _reader_user_problems(settings: Any, state: HealthState) -> list[Problem]:
+    """The caller-shaped reads (code.grep, code.search with a pattern or globs,
+    memory.aggregate, memory.record.query) run as the reader user, so they all
+    fail while ClickHouse refuses it."""
+    if state.ch_reader_ok is not False:
+        return []
+    user = settings.ch_reader_user
+    fix = (
+        f"Install deploy/clickhouse-config/nlp_user_settings.xml (it defines {user}) in "
+        "the server's users.d and restart ClickHouse, or unset LOOM_CH_READER_USER."
+    )
+    if error_code(state.ch_reader_error) == _SETTING_CONSTRAINT_VIOLATION:
+        fix = (
+            f"A LOOM_CH_CALLER_SHAPED_* ceiling is outside the {user} profile's bounds "
+            f"(ClickHouse: {_constraint_message(state.ch_reader_error)}). Bring it within "
+            "them, or change the bounds in nlp_user_settings.xml to match."
+        )
+    return [
+        Problem(
+            "ch_reader_user_failing",
+            "error",
+            f"A read as LOOM_CH_READER_USER={user} failed (the boot probe, or `loom doctor`): "
+            "code.grep, code.search with a pattern or globs, memory.aggregate and "
+            "memory.record.query fail while it does.",
+            fix,
+            source="runtime",
+        )
+    ]
+
+
+def _run_claim_problems(state: HealthState) -> list[Problem]:
+    """No Keeper: two concurrent run.begin calls on one run id can both keep it."""
+    if state.run_claims_atomic is not False:
+        return []
+    return [
+        Problem(
+            "run_claims_not_atomic",
+            "info",
+            "loom.agent_run_claims is absent (no ClickHouse Keeper), so run.begin checks a "
+            "caller-supplied run_id and then writes it: two users' concurrent begins on one "
+            "run_id can both keep it, and only one run survives.",
+            "Run ClickHouse with a Keeper (deploy/clickhouse-config/keeper.xml), create the "
+            "table from schemas/migrations/025_agent_run_claims.sql (the migration skipped "
+            "it) and restart Loom.",
+            source="runtime",
+        )
+    ]
+
+
+def _constraint_message(error: str) -> str:
+    """`Setting max_execution_time shouldn't be greater than 30` out of the error text."""
+    m = re.search(r"Setting \w+ [^.(]*", error)
+    return m.group(0).strip() if m else error[:200]
+
+
 def collect_problems(settings: Any, state: HealthState | None = None) -> list[Problem]:
     """Every known problem for this process, worst-first. Pure: reads
     `settings`, `state` and `state.env` only."""
@@ -402,10 +607,14 @@ def collect_problems(settings: Any, state: HealthState | None = None) -> list[Pr
         + _llm_problems(settings, st)
         + _runtime_problems(st)
         + _auth_problems(settings)
+        + _exposure_problems(settings)
         + _revocation_problems(settings, st)
         + _deployment_problems(settings, st)
         + _otel_problems(settings, st)
         + _replica_problems(settings, st)
+        + _sandbox_problems(settings, st)
+        + _reader_user_problems(settings, st)
+        + _run_claim_problems(st)
     )
     return sorted(problems, key=lambda p: (SEVERITY_RANK.get(p.severity, 9), p.code))
 

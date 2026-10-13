@@ -291,3 +291,24 @@ def test_the_literal_fallback_is_skipped_when_the_scan_spent_the_budget() -> Non
     assert out.fallback == "" and out.verdict == "no_template_match" and out.partial
     assert "scan stopped at the deadline" in out.partial_reason
     assert "literal fallback skipped" in out.partial_reason
+
+
+def test_a_long_deadline_never_raises_the_caller_shaped_ceiling(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "ch_caller_shaped_max_execution_s", 30.0)
+    repo = _Repo(literal=[FACTORY_CHUNK])
+    _grep(repo, pattern="InterpreterSelectQueryAnalyzer", deadline_ms=48_000)
+    bound = repo.calls[0][2]
+    assert bound is not None and bound <= 30.0
+    sql = grep_sql.grep_files_sql("1", "", "", code_deadline.break_settings(bound))
+    assert "max_execution_time = 30.000" in sql
+
+
+def test_no_caller_shaped_ceiling_clamps_to_the_read_class_timeout(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "ch_caller_shaped_max_execution_s", 0.0)
+    monkeypatch.setattr(settings, "ch_timeout_read_s", 30.0)
+    repo = _Repo(literal=[FACTORY_CHUNK])
+    _grep(repo, pattern="InterpreterSelectQueryAnalyzer", deadline_ms=60_000)
+    bound = repo.calls[0][2]
+    assert bound is not None and bound <= 30.0
+    sql = grep_sql.grep_files_sql("1", "", "", code_deadline.break_settings(bound))
+    assert "max_execution_time = 30.000" in sql

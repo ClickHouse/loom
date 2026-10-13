@@ -142,13 +142,14 @@ async def test_rerank_http_fallback_notes_the_degradation(monkeypatch):
             raise httpx.ReadTimeout("slow reranker")
 
     monkeypatch.setattr(R.httpx, "AsyncClient", lambda **k: _Client())
+    monkeypatch.setattr(R.settings, "rerank_endpoints_json", '{"slow": "http://x"}')
     cands = [
         R.RerankCandidate(
             memory_key="k", namespace="n", content_excerpt="c", memory_type="fact", similarity=0.5
         )
     ]
     D.begin()
-    out = await R.rerank(endpoint="http://x", prompt_template="", query="q", candidates=cands)
+    out = await R.rerank(endpoint="slow", prompt_template="", query="q", candidates=cands)
     assert out == cands  # fail-open order kept
     assert D.current() == ["rerank: input_order_kept (ReadTimeout: slow reranker)"]
 

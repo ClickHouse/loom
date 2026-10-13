@@ -168,3 +168,21 @@ def test_legacy_token_without_kid_header_falls_back(monkeypatch) -> None:
     )
     info = verify_token(legacy_token)
     assert info.subject == "old"
+
+
+def test_retiring_a_kid_kills_its_tokens_and_the_new_kid_works(monkeypatch) -> None:
+    """The remediation rotation: mint under A, make B active and drop A from
+    LOOM_JWT_SECRETS_JSON. The A token is refused; a B token verifies."""
+    monkeypatch.setattr(settings, "jwt_algorithm", "HS256")
+    monkeypatch.setattr(settings, "jwt_secrets_json", '{"A": "' + "a" * 32 + '"}')
+    monkeypatch.setattr(settings, "jwt_active_kid", "A")
+    before = mint_token(subject="alice", org="o", namespaces=["n"], roles=["writer"])
+    assert verify_token(before).subject == "alice"
+
+    monkeypatch.setattr(settings, "jwt_secrets_json", '{"B": "' + "b" * 32 + '"}')
+    monkeypatch.setattr(settings, "jwt_active_kid", "B")
+    with pytest.raises(TokenError, match="kid"):
+        verify_token(before)
+    after = mint_token(subject="alice", org="o", namespaces=["n"], roles=["writer"])
+    assert pyjwt.get_unverified_header(after)["kid"] == "B"
+    assert verify_token(after).subject == "alice"

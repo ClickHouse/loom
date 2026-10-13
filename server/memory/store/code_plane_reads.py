@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
+from server.identity.domain.read_scope import ReadFilters, scope_and
 
 
 async def lesson_corpus(
@@ -67,18 +68,34 @@ async def lessons_matching(
 
 
 async def user_file_paths(
-    org: str, user_id: str, *, limit: int = 200, ch: _CHClient | None = None
+    org: str,
+    user_id: str,
+    namespaces: Sequence[str] | None,
+    *,
+    scope: ReadFilters,
+    limit: int = 200,
+    ch: _CHClient | None = None,
 ) -> list[str]:
-    """The distinct files the user's live memories name, sorted, at most `limit`."""
+    """The distinct files the user's live memories in `namespaces` and inside `scope`
+    name, sorted, at most `limit`. `namespaces=None` reads every namespace of the org
+    (no caller to bound it)."""
+    if namespaces is not None and not namespaces:
+        return []
     ch = ch or _default_client()
+    params: dict[str, Any] = {"org": org, "uid": user_id, "lim": int(limit)}
+    in_namespaces = ""
+    if namespaces is not None:
+        in_namespaces = "AND namespace IN {nss:Array(String)}"
+        params["nss"] = list(namespaces)
+    in_scope = scope_and(scope, params)
     rows = await ch.query_all(
-        """
+        f"""
         SELECT DISTINCT arrayJoin(files) AS f FROM loom.memory FINAL
-        WHERE org = {org:String}
-          AND user_id = {uid:String} AND notEmpty(files)
-          AND tombstoned_at IS NULL
-        ORDER BY f LIMIT {lim:UInt32}
+        WHERE org = {{org:String}} {in_namespaces}
+          AND user_id = {{uid:String}} AND notEmpty(files)
+          AND tombstoned_at IS NULL{in_scope}
+        ORDER BY f LIMIT {{lim:UInt32}}
         """,
-        {"org": org, "uid": user_id, "lim": int(limit)},
+        params,
     )
     return [str(r["f"]) for r in rows]

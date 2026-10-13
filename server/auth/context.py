@@ -13,9 +13,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from server.auth.directory import ClassificationUnavailable, directory
+from server.core.ch import set_quota_key
 
 if TYPE_CHECKING:
     from server.auth.jwt import AuthInfo
+    from server.operations.base import Role
 
 current_auth_var: ContextVar[AuthInfo | None] = ContextVar(
     "current_auth",
@@ -35,9 +37,19 @@ def current_caller() -> tuple[str, str | None]:
     return auth.subject or "", auth.org
 
 
+def quota_key_for(auth: AuthInfo | None) -> str:
+    """The ClickHouse quota key of a verified caller, `<org>:<subject>`; '' without one."""
+    if auth is None:
+        return ""
+    return f"{auth.org}:{auth.subject}"
+
+
 def set_current_auth(auth: AuthInfo | None) -> None:
     current_auth_var.set(auth)
     _fanout_memo.set(None)
+    creator_grant_memo.set({} if getattr(auth, "creator", "") else None)
+    # every ClickHouse query of this request draws the caller's own quota bucket
+    set_quota_key(quota_key_for(auth))
 
 
 # The fan-out set the current principal resolved in `org`, kept for the rest
@@ -45,6 +57,12 @@ def set_current_auth(auth: AuthInfo | None) -> None:
 # search handler reads it again. Binding a principal clears it.
 _fanout_memo: ContextVar[tuple[str, list[str]] | None] = ContextVar(
     "loom_fanout_namespaces", default=None
+)
+
+# A delegated token's creator grants, (org, namespace, creator) -> role, read
+# once per request by `authz._check_delegated`. Binding a principal resets it.
+creator_grant_memo: ContextVar[dict[tuple[str, str, str], Role | None] | None] = ContextVar(
+    "loom_creator_grants", default=None
 )
 
 
@@ -63,12 +81,13 @@ async def resolve_my_namespaces(org: str, subject: str | None = None) -> list[st
       `namespaces` claim and active `loom.namespace_grants` rows (grants
       widen), returned sorted.
 
+    A delegated token (a `creator` claim) is neither: its claim narrowed to
+    the creator's live grants (`_delegated_namespaces`).
+
     `subject` lets dev mode pass an explicit identity when no JWT is present.
     """
     from server.auth.authz import may_act_in_org
     from server.auth.service_accounts import inheriting_creator
-    from server.core.ch import get_client
-    from server.core.grant_sql import LIVE_GRANT
 
     auth = current_auth()
 
@@ -78,6 +97,10 @@ async def resolve_my_namespaces(org: str, subject: str | None = None) -> list[st
     # before any grant read).
     if auth is not None and not may_act_in_org(auth, org):
         return []
+
+    # Delegated token: its claim, cut down to the creator's live grants.
+    if auth is not None and auth.creator:
+        return await _without_unreadable_restricted(org, await _delegated_namespaces(auth, org))
 
     # Scoped token: the ordered namespace claim is authoritative. Preserve
     # order (= read priority); do not union other grants (= subset restrict).
@@ -107,17 +130,40 @@ async def resolve_my_namespaces(org: str, subject: str | None = None) -> list[st
         creator = await inheriting_creator(org, resolved_subject)
         if creator is not None:
             subjects = [*subjects, *await subject_aliases(org, creator)]
-        rows = await get_client().query_all(
-            """
-            SELECT DISTINCT namespace
-            FROM (SELECT * FROM loom.namespace_grants FINAL)
-            WHERE org = {org:String} AND subject IN {subs:Array(String)} AND {live}
-            """.replace("{live}", LIVE_GRANT),
-            params={"org": org, "subs": subjects},
-        )
-        grant_namespaces = {str(r["namespace"]) for r in rows if r.get("namespace")}
+        grant_namespaces = await _granted_namespaces(org, subjects)
 
     return await _without_unreadable_restricted(org, sorted(jwt_namespaces | grant_namespaces))
+
+
+async def _granted_namespaces(org: str, subjects: list[str]) -> set[str]:
+    """Namespaces of `org` where any of `subjects` holds a live grant."""
+    from server.core.ch import get_client
+    from server.core.grant_sql import LIVE_GRANT
+
+    rows = await get_client().query_all(
+        """
+        SELECT DISTINCT namespace
+        FROM (SELECT * FROM loom.namespace_grants FINAL)
+        WHERE org = {org:String} AND subject IN {subs:Array(String)} AND {live}
+        """.replace("{live}", LIVE_GRANT),
+        params={"org": org, "subs": subjects},
+    )
+    return {str(r["namespace"]) for r in rows if r.get("namespace")}
+
+
+async def _delegated_namespaces(auth: AuthInfo, org: str) -> list[str]:
+    """A delegated token's namespaces: where its creator holds a live grant
+    now, inside the token's own claim (all of them under a flat `*` claim).
+    Claim order is kept; nothing when the creator's account is disabled."""
+    from server.auth.aliases import subject_aliases
+    from server.auth.delegation import creator_account_active
+
+    if not await creator_account_active(org, auth.creator):
+        return []
+    granted = await _granted_namespaces(org, await subject_aliases(org, auth.creator))
+    if "*" in auth.namespaces and not auth.has_ns_roles():
+        return sorted(granted)
+    return [ns for ns in auth.namespaces if ns in granted]
 
 
 async def resolve_fanout_namespaces(org: str) -> list[str]:

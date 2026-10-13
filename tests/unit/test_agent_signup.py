@@ -9,6 +9,7 @@ and prints the claim code once. Hermetic: the ClickHouse client is faked.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from pathlib import Path
@@ -76,22 +77,39 @@ def test_rate_limit_is_five_per_address_per_hour() -> None:
     assert ss._agent_signups.allow("1.2.3.4", now=1000.0 + 3601)  # the window slid
 
 
-def test_client_address_is_the_hop_the_proxy_appended() -> None:
-    # The client wrote 1.1.1.1; the proxy in front appended what it saw.
+def _address_seen(peer: str, xff: str, trusted: str) -> str:
+    """client_address behind uvicorn's ProxyHeadersMiddleware, as `loom serve`
+    runs it with LOOM_TRUSTED_PROXIES=`trusted`."""
+    from starlette.requests import Request
+    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
+    seen: list[str] = []
+
+    async def app(scope: Any, receive: Any, send: Any) -> None:
+        seen.append(ss.client_address(Request(scope)))
+
+    scope = {
+        "type": "http",
+        "client": (peer, 5000),
+        "headers": [(b"x-forwarded-for", xff.encode())],
+    }
+    asyncio.run(ProxyHeadersMiddleware(app, trusted_hosts=trusted)(scope, None, None))  # type: ignore[arg-type]
+    return seen[0]
+
+
+def test_a_forwarded_for_from_an_untrusted_peer_is_ignored() -> None:
+    assert _address_seen("203.0.113.7", "1.1.1.1", trusted="127.0.0.1") == "203.0.113.7"
+
+
+def test_a_trusted_proxy_names_the_client() -> None:
+    # The client wrote 1.1.1.1; the proxy appended the address it saw.
+    assert _address_seen("127.0.0.1", "1.1.1.1, 2.2.2.2", trusted="127.0.0.1") == "2.2.2.2"
+
+
+def test_without_a_proxy_the_peer_is_the_address() -> None:
     assert (
-        ss.client_address(_Req(ip="9.9.9.9", headers={"x-forwarded-for": "1.1.1.1, 2.2.2.2"}))
-        == "2.2.2.2"
+        ss.client_address(_Req(ip="9.9.9.9", headers={"x-forwarded-for": "1.1.1.1"})) == "9.9.9.9"
     )
-    assert ss.client_address(_Req(ip="9.9.9.9", headers={})) == "9.9.9.9"
-
-
-def test_a_forged_forwarded_header_does_not_buy_a_fresh_bucket() -> None:
-    ss._agent_signups.clear()
-    for i in range(5):
-        req = _Req(headers={"x-forwarded-for": f"10.9.9.{i}, 203.0.113.7"})
-        assert ss._agent_signups.allow(ss.client_address(req), now=1000.0 + i)
-    forged = _Req(headers={"x-forwarded-for": "10.9.9.99, 203.0.113.7"})
-    assert not ss._agent_signups.allow(ss.client_address(forged), now=1010.0)
 
 
 def test_the_tracked_addresses_are_bounded(monkeypatch: pytest.MonkeyPatch) -> None:

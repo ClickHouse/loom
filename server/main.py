@@ -20,11 +20,18 @@ from fastapi import FastAPI, Request
 from fastapi.responses import Response
 
 from server import __version__, boot
-from server.core.ch import get_client
+from server.auth.public_url import (
+    cors_origin_list,
+    host_header_allowed,
+    origin_matches_host,
+    same_origin,
+)
+from server.core.ch import get_client, probe_reader_user
 from server.core.logging_config import configure_logging
 from server.observability import get_emitter
 from server.operations.capabilities import operation_rows
 from server.settings import settings
+from server.tasks.store import runs as runs_store
 from server.transport import http as http_transport
 from server.transport import mcp as mcp_transport
 from server.wiring import wire
@@ -54,6 +61,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         auth_required=settings.auth_actually_required(),
         dev_secret=settings.jwt_secret_is_dev_default(),
         dev_sealing_secret=settings.jwt_sealing_secret_is_dev_default(),
+    )
+    boot.require_safe_bind(
+        bind_host=settings.bind_host,
+        public_base_url=settings.public_base_url,
+        auth_required=settings.auth_actually_required(),
+        dev_secret=settings.jwt_secret_is_dev_default(),
+        allow_insecure=settings.allow_insecure,
     )
 
     ch = get_client()
@@ -142,6 +156,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # revoked set now and keeps it fresh itself unless the supervisor's
     # jwt_revocation_refresh worker runs here.
     revocation_loop = await boot.start_revocation(lease.held)
+    await probe_reader_user(ch)
+    await runs_store.probe_claims(ch)
     tracker_sources_loop = boot.start_tracker_sources_refresher(ch)
     lease_retry: asyncio.Task[None] | None = None
     if lease.held:
@@ -246,21 +262,22 @@ async def root_dashboard_redirect() -> Response:
 
 
 @app.middleware("http")
-async def _immutable_hashed_assets(request: Request, call_next: Any) -> Response:
+async def _cache_and_nosniff_headers(request: Request, call_next: Any) -> Response:
     response: Response = await call_next(request)
     if request.url.path.startswith("/me/assets/") and response.status_code == 200:
         response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    # No response is ever sniffed into a type it was not served as.
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
     return response
 
 
-# CORS — opt-in via LOOM_CORS_ORIGINS (comma-separated). "*" = allow-all.
+# CORS — opt-in via LOOM_CORS_ORIGINS (comma-separated exact origins).
 if settings.cors_origins:
     from fastapi.middleware.cors import CORSMiddleware
 
-    origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=origins,
+        allow_origins=cors_origin_list(settings.cors_origins),
         allow_credentials=True,
         allow_methods=["GET", "POST"],
         allow_headers=["*"],
@@ -277,6 +294,82 @@ if settings.cors_origins:
         ],
     )
 
+
+def _refused(status: int, *, code: str, message: str) -> Response:
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(
+        status_code=status,
+        content={"detail": {"code": code, "message": message}},
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
+
+
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def _own_origin(origin: str, request: Request) -> bool:
+    if settings.public_base_url.strip():
+        return same_origin(origin, settings.public_base_url.strip().rstrip("/"))
+    return origin_matches_host(origin, request.headers.get("host", ""))
+
+
+def _is_navigation(request: Request) -> bool:
+    """A top-level page load, such as following a link to /me from another site."""
+    return (
+        request.method in ("GET", "HEAD")
+        and request.headers.get("sec-fetch-mode") == "navigate"
+        and request.headers.get("sec-fetch-dest") == "document"
+    )
+
+
+def web_refusal(request: Request) -> Response | None:
+    """What stops a page on another site from driving this server, or None to let the
+    request through. A cross-origin POST with a text/plain body needs no preflight, and
+    in proxy mode the front proxy adds the bearer itself, so a foreign Origin or a
+    cross-site / same-site fetch is refused (403) unless LOOM_CORS_ORIGINS lists it.
+    curl and the SDKs send neither header. With auth off every method is checked except
+    a top-level navigation, and a foreign Host is DNS rebinding (421)."""
+    auth_off = not settings.auth_actually_required()
+    if auth_off and not host_header_allowed(
+        request.headers.get("host", ""), settings.public_base_url
+    ):
+        return _refused(
+            421,
+            code="MISDIRECTED_REQUEST",
+            message="this server answers only localhost or LOOM_PUBLIC_BASE_URL",
+        )
+    if not auth_off and request.method in _SAFE_METHODS:
+        return None
+    if _is_navigation(request):
+        return None
+    origin = request.headers.get("origin")
+    if origin is not None and origin in cors_origin_list(settings.cors_origins):
+        return None
+    foreign_origin = origin is not None and not _own_origin(origin, request)
+    fetch_site = request.headers.get("sec-fetch-site")
+    if foreign_origin or fetch_site in ("cross-site", "same-site"):
+        return _refused(
+            403, code="CROSS_SITE_REQUEST", message="this server refuses cross-site requests"
+        )
+    return None
+
+
+async def _web_gate(request: Request, call_next: Any) -> Response:
+    """Runs before any route handler; the auth mode is read per request."""
+    refusal = web_refusal(request)
+    if refusal is not None:
+        return refusal
+    response: Response = await call_next(request)
+    return response
+
+
+def attach_web_gate(target: FastAPI) -> None:
+    target.middleware("http")(_web_gate)
+
+
+attach_web_gate(app)
+
 http_transport.attach(app)
 mcp_transport.attach(app)
 
@@ -292,9 +385,11 @@ _claim_release.attach(app)
 _oauth.attach(app)
 
 from server.insights.app.admin_routes import admin_router as _admin_router  # noqa: E402
+from server.insights.app.admin_routes import org_admin_router as _org_admin_router  # noqa: E402
 from server.insights.app.provider_routes import provider_router as _provider_router  # noqa: E402
 
 app.include_router(_admin_router)
+app.include_router(_org_admin_router)
 app.include_router(_provider_router)
 
 # attach() mounts the StaticFiles assets dir before including the router so the

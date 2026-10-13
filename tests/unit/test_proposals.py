@@ -88,7 +88,7 @@ def repo(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     seen: dict[str, Any] = {"mirror": [], "audit": [], "flagged": []}
 
     async def _many(
-        ident: Any, keys: list[str], *, ch: Any = None, strong: bool = False
+        ident: Any, keys: list[str], *, ch: Any = None, strong: bool = False, scope: Any = None
     ) -> list[Any]:
         assert strong and ident.agent == "*"
         return [rows[k] for k in keys if k in rows]

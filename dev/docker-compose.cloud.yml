@@ -85,8 +85,10 @@ services:
       # is set — and its rows carry the label `deploy:web`.
       LOOM_DEPLOYMENT: "1"
       LOOM_INSTANCE_LABEL: "deploy:web"
+      # The address the port is published on; see docs/operations/deployment.md.
+      LOOM_BIND_HOST: "${LOOM_BIND_HOST:-127.0.0.1}"
     ports:
-      - "7777:7777"
+      - "${LOOM_BIND_HOST:-127.0.0.1}:7777:7777"
     healthcheck:
       test:
         [
@@ -105,6 +107,13 @@ services:
   loom-workers:
     <<: *loom-common
     container_name: loom-workers
+    # Listens on loopback only: nothing outside this container calls it.
+    command:
+      [
+        "sh",
+        "-c",
+        "exec uvicorn server.main:app --host 127.0.0.1 --port $$PORT --loop $${LOOM_UVICORN_LOOP:-auto} --timeout-graceful-shutdown $${LOOM_GRACEFUL_SHUTDOWN_S:-10}",
+      ]
     # The workers' process boots the same lifespan (migrations under the same
     # ledger — whichever container applies them first, the other finds
     # nothing pending), then runs the WorkerSupervisor. One uvicorn process:
@@ -121,6 +130,8 @@ services:
       PORT: "7778"
       LOOM_DEPLOYMENT: "1"
       LOOM_INSTANCE_LABEL: "deploy:workers"
+      # No published port.
+      LOOM_BIND_HOST: "127.0.0.1"
       # The shared rate table is keyed by the uvicorn parent pid
       # and shared by the web workers of ONE server. This process serves no
       # client traffic (no published port) and runs one web worker, so it

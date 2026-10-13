@@ -35,6 +35,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import scope_and
+
 log = logging.getLogger(__name__)
 
 # support_type values written by the extract path; the first
@@ -161,39 +164,55 @@ async def select_candidates(
 # `LIMIT 1 BY` over the key after `ORDER BY created_at DESC` is the merge, on
 # the granules the primary key already selected. The tombstone filter sits
 # outside so a tombstoned latest version cannot let an older live one through.
-_LINKS_SQL = """
+# Keys repeat across users, so a narrowed read (`in_scope` holds its
+# predicates) keeps only the links of the memory rows its scope reaches.
+def _links_sql(in_scope: str) -> str:
+    own_rows = (
+        f"""
+              AND memory_id IN (
+                  SELECT memory_id FROM loom.memory
+                  WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                    AND memory_key IN {{keys:Array(String)}}{in_scope}
+              )"""
+        if in_scope
+        else ""
+    )
+    return f"""
         SELECT memory_key, support_type, char_start, char_end, toString(evidence_id) AS evidence_id
         FROM (
             SELECT memory_key, support_type, char_start, char_end, evidence_id, tombstoned_at
             FROM loom.memory_belief_sources
-            WHERE org = {org:String}
-              AND namespace = {ns:String}
-              AND memory_key IN {keys:Array(String)}
+            WHERE org = {{org:String}}
+              AND namespace = {{ns:String}}
+              AND memory_key IN {{keys:Array(String)}}{own_rows}
             ORDER BY memory_key, evidence_id, created_at DESC
             LIMIT 1 BY memory_key, evidence_id
         )
         WHERE tombstoned_at IS NULL
 """
 
+
 # The evidence rows for a set of ids: the same versioned shape (latest version
 # per id, no FINAL), keyed as UUIDs. `evidence_id` is last in the table's
 # primary key, so the key alone selects the namespace and the row filter
 # decides which granules' `content` is read — 256-row granules make that a
 # read of the rows asked for, not their 8,192 neighbours.
-_EVIDENCE_SQL = """
+def _evidence_sql(in_scope: str) -> str:
+    return f"""
         SELECT toString(evidence_id) AS evidence_id, role,
                toString(observed_at) AS observed_at, content
         FROM (
             SELECT evidence_id, role, observed_at, content, tombstoned_at
             FROM loom.memory_evidence
-            WHERE org = {org:String}
-              AND namespace = {ns:String}
-              AND evidence_id IN {ids:Array(UUID)}
+            WHERE org = {{org:String}}
+              AND namespace = {{ns:String}}
+              AND evidence_id IN {{ids:Array(UUID)}}{in_scope}
             ORDER BY evidence_id, created_at DESC
             LIMIT 1 BY evidence_id
         )
         WHERE tombstoned_at IS NULL AND content != ''
 """
+
 
 _RAW_EVIDENCE_ROW_CAP = 400
 
@@ -262,13 +281,15 @@ async def fetch_raw_evidence(
     from server.core.ch import get_client
 
     client = ch or get_client()
+    base: dict[str, Any] = {"org": org, "ns": namespace}
+    in_scope = scope_and(request_scope(), base)
     try:
         links = await client.query_all(
-            _LINKS_SQL, params={"org": org, "ns": namespace, "keys": list(memory_keys)}
+            _links_sql(in_scope), params={**base, "keys": list(memory_keys)}
         )
         ids = sorted({str(r.get("evidence_id") or "") for r in links} - {""})
         evidence = (
-            await client.query_all(_EVIDENCE_SQL, params={"org": org, "ns": namespace, "ids": ids})
+            await client.query_all(_evidence_sql(in_scope), params={**base, "ids": ids})
             if ids
             else []
         )
@@ -411,19 +432,22 @@ async def fetch_session_turns(
     from server.core.ch import get_client
 
     client = ch or get_client()
+    # Session ids repeat across users: a narrowed read opens only its own.
+    params: dict[str, Any] = {"org": org, "ns": namespace, "sids": list(session_ids)}
+    in_scope = scope_and(request_scope(), params)
     # Versioned, not FINAL: an evidence row's id is minted per
     # insert, so the only re-insert is a tombstone; the latest version by
     # `created_at` decides, as FINAL would, without the query-time merge
     # (same rows, a fraction of the read).
-    sql = """
+    sql = f"""
         SELECT session_id, role, toString(observed_at) AS observed_at, content
         FROM (
             SELECT session_id, role, observed_at, content, evidence_id, tombstoned_at
             FROM loom.memory_evidence
-            WHERE org = {org:String}
-              AND namespace = {ns:String}
-              AND session_id IN {sids:Array(String)}
-              AND content != ''
+            WHERE org = {{org:String}}
+              AND namespace = {{ns:String}}
+              AND session_id IN {{sids:Array(String)}}
+              AND content != ''{in_scope}
             ORDER BY evidence_id, created_at DESC
             LIMIT 1 BY evidence_id
         )
@@ -432,9 +456,7 @@ async def fetch_session_turns(
         LIMIT 2000
     """
     try:
-        rows = await client.query_all(
-            sql, params={"org": org, "ns": namespace, "sids": list(session_ids)}
-        )
+        rows = await client.query_all(sql, params=params)
     except Exception as e:  # noqa: BLE001 — fail-open
         log.warning("deep-evidence session fetch failed (fail-open): %s", e)
         return []

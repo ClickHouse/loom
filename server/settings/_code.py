@@ -103,6 +103,19 @@ class CodeSettings(BaseModel):
     # Seconds a bare clone may take before the worker gives up for the pass
     # and retries next pass.
     code_bootstrap_clone_timeout_s: float = 1800.0
+    # rlimits for each process of a sandboxed repository job (clone, fetch,
+    # dependency install, compiler-tier harness; code/app/index/sandbox.py).
+    # They bound each process, not a job's total: there is no cgroup.
+    # CPU seconds a process may use.
+    code_sandbox_cpu_seconds: int = 7200
+    # Data memory (heap and private mappings, RLIMIT_DATA) a process may use, in
+    # MiB. Not address space: node reserves far more of that than it uses.
+    code_sandbox_memory_mb: int = 16384
+    # Processes and threads the server's uid may run at once (RLIMIT_NPROC):
+    # shared by every job running at the time, not one job's own.
+    code_sandbox_max_pids: int = 2048
+    # Largest file a process may write, in MiB (a pack or index.scip).
+    code_sandbox_max_file_mb: int = 32768
     # Bare clone the ingest worker fetches into (created by `loom code init`)
     # and its remote. Empty = derived from code_repo: `var/code_repos/<name>.git`
     # and `https://github.com/<owner>/<name>.git`.
@@ -269,7 +282,9 @@ class CodeSettings(BaseModel):
     # pass deadline.
     code_scip_go_delta_timeout_seconds: int = 7200
     code_scip_go_jobs: int = 2  # Parallel module builds (~4 GB each)
-    code_scip_go_modcache: str = "var/gocache"  # GOMODCACHE across passes
+    # Root of the Go module caches kept across passes: one per entry beneath it
+    # (<root>/<org>/<namespace>), never shared between repositories.
+    code_scip_go_modcache: str = "var/gocache"
     code_scip_go_private: str = ""  # GOPRIVATE / GONOSUMDB (a vanity import host)
 
     # Merged-PR history sync (GitHub REST, cursor-resumable).
@@ -636,9 +651,9 @@ class CodeSettings(BaseModel):
     code_search_card_leg_cap: float = 1.0
     # CSV of prose question kinds the card leg votes on; `any` = all.
     code_search_card_leg_kinds: str = "responsibility"
-    # Rerank endpoint code.search and code.ask use when the request names none
-    # (same values as the per-request `rerank`; rerank="none" turns it off).
-    # Empty = no default rerank.
+    # Reranker code.search and code.ask use when the request names none (same
+    # values as the per-request `rerank`: a builtin or a name in
+    # LOOM_RERANK_ENDPOINTS_JSON; rerank="none" turns it off). Empty = no default rerank.
     code_search_rerank_default: str = ""
     # Prose question kinds the default rerank applies to (`any` = all);
     # symbol-shaped or constrained searches are never default-reranked.

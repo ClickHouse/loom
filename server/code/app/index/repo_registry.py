@@ -305,27 +305,23 @@ async def _ls_remote(
     """`git ls-remote <flag> <remote> <refs>` against the repository's remote: its
     stdout, or ValueError with a sentence a person can act on. Authenticates through the
     environment (the token never reaches argv); the child never outlives the call."""
-    import asyncio
-
-    from server.code.app.index.gitrepo import auth_env, communicate_or_kill
+    from server.code.app.index.gitrepo import auth_env, remote_access
+    from server.code.app.index.sandbox import run_job
 
     remote = git_remote or remote_for(repo)
     provider = parse_remote(remote).provider
-    proc = await asyncio.create_subprocess_exec(
-        "git",
-        "ls-remote",
-        flag,
-        remote,
-        *refs,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env={**os.environ, **auth_env(token, remote), "GIT_TERMINAL_PROMPT": "0"},
-    )
     try:
-        out, err = await communicate_or_kill(proc, timeout_s=timeout_s)
+        done = await run_job(
+            ["git", "ls-remote", flag, remote, *refs],
+            env=auth_env(token, remote),
+            timeout_s=timeout_s,
+            keep_stdout=True,
+            **remote_access(remote),
+        )
     except TimeoutError:
         raise ValueError(f"{provider} remote did not answer in time; try again") from None
-    if proc.returncode != 0:
+    out, err = done.stdout, done.stderr
+    if done.returncode != 0:
         text = err.decode(errors="replace").lower()
         if "not found" in text or "authentication" in text or "could not read" in text:
             raise ValueError(

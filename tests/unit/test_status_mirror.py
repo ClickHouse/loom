@@ -70,7 +70,9 @@ def _existing(status: str = "active") -> Any:
 
 
 def _wire(monkeypatch: pytest.MonkeyPatch, ch: _CH, existing: Any) -> None:
-    async def _get_by_id(memory_id: str, *, org: str | None = None, ch: Any = None) -> Any:
+    async def _get_by_id(
+        memory_id: str, *, org: str | None = None, ch: Any = None, scope: Any = None
+    ) -> Any:
         return existing
 
     def _build(row: Any, **overrides: Any) -> dict[str, Any]:
@@ -183,6 +185,12 @@ async def test_reconcile_counts_on_dry_run_and_mirrors_otherwise() -> None:
     wet = await memory_repo.reconcile_embedding_status("o", "n", dry_run=False, ch=ch)
     assert wet["mirrored"] == 2
     assert {r["status"] for _, rows in ch.inserts for r in rows} == {"superseded", "conflicted"}
+    by_status = {r["status"]: r["version"] for _, rows in ch.inserts for r in rows}
+    # the copy that hides the row is a retire, stamped with the version drawn
+    # before the scan; the one that serves it again is read + 1, so a
+    # memory.delete racing the pass keeps its later retire
+    assert by_status["superseded"] > memory_repo.reemit_version({"version": 1})
+    assert by_status["conflicted"] == memory_repo.reemit_version({"version": 1})
 
 
 @pytest.mark.asyncio

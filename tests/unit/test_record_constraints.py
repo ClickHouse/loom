@@ -138,3 +138,20 @@ def test_field_constraints_pass_through_the_schema_field() -> None:
     f = {"name": "pr", "type": "string", "pattern": r"^PR-\d+$", "max_length": 12}
     assert SchemaFieldInput(**f).pattern == r"^PR-\d+$"
     assert rc.from_field(SchemaFieldInput(**f)) == {"pattern": r"^PR-\d+$", "max_length": 12}
+
+
+def test_a_record_pattern_runs_in_linear_time() -> None:
+    import time
+
+    started = time.monotonic()
+    got = rc.violation(
+        "f", "string", {"pattern": r"^(a+)+$"}, value_string="a" * 50_000 + "!", value_number=0.0
+    )
+    assert got is not None and "does not match" in got
+    assert time.monotonic() - started < 1.0
+
+
+def test_a_record_pattern_re2_cannot_run_is_refused() -> None:
+    assert "does not compile" in (rc.validate_shape("f", "string", {"pattern": r"(a)\1"}) or "")
+    got = rc.violation("f", "string", {"pattern": r"(a)\1"}, value_string="aa", value_number=0.0)
+    assert got is not None and "not RE2" in got

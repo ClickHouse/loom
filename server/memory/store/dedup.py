@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
+from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, scope_and
 from server.memory.store.embeddings import mirror_status_to_embeddings
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.reads import get_by_id
@@ -388,6 +389,7 @@ async def status_by_keys(
     namespaces: list[str],
     memory_keys: list[str],
     *,
+    scope: ReadFilters,
     ch: _CHClient | None = None,
 ) -> list[DuplicateStatus]:
     """Per (namespace, memory_key) over the served keys of one search: how
@@ -407,27 +409,32 @@ async def status_by_keys(
     p90 429 ms against 13 ms without). A row whose duplicate verdict landed a
     moment ago is served once more at worst; its own mirror row already
     carries the status.
+
+    Only rows inside `scope` are counted, so another user's row under the
+    same key neither serves nor names a canonical for this read.
     """
     keys = sorted({str(k) for k in memory_keys if k})
     nss = sorted({str(n) for n in namespaces if n})
     if not keys or not nss:
         return []
     ch = ch or _default_client()
+    params: dict[str, Any] = {"org": org, "nss": nss, "keys": keys}
+    in_scope = scope_and(scope, params)
     rows = await ch.query_all(
-        """
+        f"""
         SELECT namespace, memory_key,
                countIf(status IN ('active', 'conflicted')) AS served_rows,
                countIf(status = 'duplicate') AS duplicate_rows,
                argMaxIf(duplicate_of, version, status = 'duplicate') AS canonical_id
         FROM loom.memory FINAL
-        WHERE org = {org:String}
-          AND namespace IN {nss:Array(String)}
-          AND memory_key IN {keys:Array(String)}
-          AND tombstoned_at IS NULL
+        WHERE org = {{org:String}}
+          AND namespace IN {{nss:Array(String)}}
+          AND memory_key IN {{keys:Array(String)}}
+          AND tombstoned_at IS NULL{in_scope}
         GROUP BY namespace, memory_key
         SETTINGS select_sequential_consistency = 0
         """,
-        params={"org": org, "nss": nss, "keys": keys},
+        params=params,
     )
     return [DuplicateStatus.from_row(r) for r in rows]
 
@@ -437,37 +444,74 @@ async def canonical_rows_by_ids(
     namespaces: list[str],
     memory_ids: list[str],
     *,
+    scope: ReadFilters,
     ch: _CHClient | None = None,
 ) -> list[CanonicalRow]:
     """The live ACTIVE rows behind a set of `duplicate_of` ids, one per id:
     the canonical that answers for a hidden duplicate.
     Returns nothing for an id whose row is gone or no longer active, so the
     caller drops the duplicate without a substitute. Malformed ids are
-    skipped rather than bound."""
+    skipped rather than bound. A canonical outside `scope` is not returned:
+    to this read it is gone."""
     ids = _uuid_strings(memory_ids)
     nss = sorted({str(n) for n in namespaces if n})
     if not ids or not nss:
         return []
     ch = ch or _default_client()
+    params: dict[str, Any] = {"org": org, "nss": nss, "ids": ids}
+    in_scope = scope_and(scope, params)
     rows = await ch.query_all(
-        """
+        f"""
         SELECT namespace, toString(memory_id) AS canonical_id, memory_key, memory_type,
                value, tags, version, session_id, user_id, source_class,
                toString(created_at) AS created_at,
                toString(coalesce(valid_at, toDateTime(0))) AS valid_at
         FROM loom.memory FINAL
-        WHERE org = {org:String}
-          AND namespace IN {nss:Array(String)}
-          AND memory_id IN {ids:Array(UUID)}
+        WHERE org = {{org:String}}
+          AND namespace IN {{nss:Array(String)}}
+          AND memory_id IN {{ids:Array(UUID)}}
           AND tombstoned_at IS NULL
-          AND status = 'active'
+          AND status = 'active'{in_scope}
         ORDER BY namespace, memory_id, version DESC
         LIMIT 1 BY namespace, memory_id
         SETTINGS select_sequential_consistency = 0
         """,
-        params={"org": org, "nss": nss, "ids": ids},
+        params=params,
     )
     return [CanonicalRow.from_row(r) for r in rows]
+
+
+async def live_ids_in_scope(
+    org: str,
+    namespaces: list[str],
+    memory_ids: list[str],
+    *,
+    scope: ReadFilters,
+    ch: _CHClient | None = None,
+) -> set[str]:
+    """The ids among `memory_ids` whose row is live (not tombstoned) inside `scope`,
+    whatever its status: a successor that was itself superseded or conflicted still
+    names a row this read may see. Malformed ids are skipped rather than bound."""
+    ids = _uuid_strings(memory_ids)
+    nss = sorted({str(n) for n in namespaces if n})
+    if not ids or not nss:
+        return set()
+    ch = ch or _default_client()
+    params: dict[str, Any] = {"org": org, "nss": nss, "ids": ids}
+    in_scope = scope_and(scope, params)
+    rows = await ch.query_all(
+        f"""
+        SELECT DISTINCT toString(memory_id) AS mid
+        FROM loom.memory FINAL
+        WHERE org = {{org:String}}
+          AND namespace IN {{nss:Array(String)}}
+          AND memory_id IN {{ids:Array(UUID)}}
+          AND tombstoned_at IS NULL{in_scope}
+        SETTINGS select_sequential_consistency = 0
+        """,
+        params=params,
+    )
+    return {str(r["mid"]) for r in rows}
 
 
 async def superseded_successors(
@@ -475,44 +519,50 @@ async def superseded_successors(
     namespaces: list[str],
     memory_keys: list[str],
     *,
+    scope: ReadFilters,
     ch: _CHClient | None = None,
 ) -> list[SupersededSuccessor]:
     """Per superseded (namespace, memory_key) in one search's pool: the row's
     `superseded_by` id, the successor's memory_key when that row is still
     live, and the retirement instant (`invalid_at`, else the row's own
     `updated_at`). One statement, the served keys only; the
-    newest superseded version of a key answers for it."""
+    newest superseded version of a key answers for it. Both the superseded
+    row and its successor are read inside `scope`: another user's row under
+    the same key never answers, and a successor outside it is unnamed ('').
+    """
     keys = sorted({str(k) for k in memory_keys if k})
     nss = sorted({str(n) for n in namespaces if n})
     if not keys or not nss:
         return []
     ch = ch or _default_client()
+    params: dict[str, Any] = {"org": org, "nss": nss, "keys": keys}
+    in_scope = scope_and(scope, params)
     rows = await ch.query_all(
-        """
+        f"""
         SELECT m.namespace AS namespace, m.memory_key AS memory_key,
                m.superseded_by AS superseded_by, s.memory_key AS successor_key,
                toString(coalesce(m.invalid_at, m.updated_at, m.created_at)) AS superseded_at
         FROM (
             SELECT namespace, memory_key, superseded_by, invalid_at, updated_at, created_at
             FROM loom.memory FINAL
-            WHERE org = {org:String}
-              AND namespace IN {nss:Array(String)}
-              AND memory_key IN {keys:Array(String)}
+            WHERE org = {{org:String}}
+              AND namespace IN {{nss:Array(String)}}
+              AND memory_key IN {{keys:Array(String)}}
               AND status = 'superseded'
-              AND tombstoned_at IS NULL
+              AND tombstoned_at IS NULL{in_scope}
             ORDER BY namespace, memory_key, version DESC
             LIMIT 1 BY namespace, memory_key
         ) AS m
         LEFT JOIN (
             SELECT namespace, toString(memory_id) AS mid, memory_key
             FROM loom.memory FINAL
-            WHERE org = {org:String}
-              AND namespace IN {nss:Array(String)}
-              AND tombstoned_at IS NULL
+            WHERE org = {{org:String}}
+              AND namespace IN {{nss:Array(String)}}
+              AND tombstoned_at IS NULL{in_scope}
         ) AS s ON s.namespace = m.namespace AND s.mid = m.superseded_by
         SETTINGS select_sequential_consistency = 0
         """,
-        params={"org": org, "nss": nss, "keys": keys},
+        params=params,
     )
     return [SupersededSuccessor.from_row(r) for r in rows]
 
@@ -572,7 +622,7 @@ async def clear_duplicate_tag(
     new status, which is what memory.search reads. False when no live row
     has that id."""
     ch = ch or _default_client()
-    existing = await get_by_id(memory_id, org=org, ch=ch, fresh=True)
+    existing = await get_by_id(memory_id, org=org, ch=ch, fresh=True, scope=WHOLE_NAMESPACE)
     if existing is None:
         return False
     row = build_memory_version_row(

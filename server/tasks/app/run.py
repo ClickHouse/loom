@@ -13,6 +13,7 @@ planes it summarises. The statements live in `server.tasks.store.runs`.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import uuid
@@ -22,7 +23,9 @@ from typing import Any
 
 from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now as _now
-from server.core.errors import NotFoundError
+from server.core.errors import AuthInsufficientError, IdentityIncompleteError, NotFoundError
+from server.identity.app.request_scope import request_narrowed, request_scope
+from server.identity.domain.read_scope import WHOLE_NAMESPACE, row_in_read_scope
 from server.memory.app import run_feedback, run_retention
 from server.operations.read_projection import project_rows
 from server.tasks.api.models_run import (
@@ -136,12 +139,120 @@ async def _recalled_keys(ch: Any, org: str, ns: str, run_id: str) -> list[str] |
     return await runs_store.traced_recall_keys(ch, org, ns, run_id)
 
 
+def _run_in_scope(run: RunLedgerRow) -> bool:
+    """Whether the caller's read scope covers `run` (the whole namespace with no
+    auth bound). A scope that does not resolve covers no run."""
+    try:
+        scope = request_scope()
+    except (AuthInsufficientError, IdentityIncompleteError):
+        return False
+    return row_in_read_scope(scope, run.get("user_id"), run.get("session_id"))
+
+
+def _owned_by(row: RunLedgerRow, user: str) -> bool:
+    """`row` (a run, or the claim on its id) is this begin's user's, inside the
+    caller's scope: a begin re-opens only its own user's run, whoever calls."""
+    return str(row.get("user_id") or "-") == user and _run_in_scope(row)
+
+
+async def _target_run(
+    ch: Any, input: RunBeginInput, run_id: str, claim: runs_store.RunClaim | runs_store.NoClaim
+) -> tuple[str, RunLedgerRow | None]:
+    """`run_id` and its row when the caller may (re)open it, else the caller's own id
+    for it (`_own_run_id`). `claim` is this begin's claim on `run_id`, made before
+    this is called."""
+    # Sequential: it must see the synchronous insert of a begin that has
+    # already dropped its claim.
+    with sequential_reads():
+        existing = await runs_store.fetch_run(ch, input.org, input.namespace, run_id)
+    if isinstance(claim, runs_store.RunClaim) and not claim.won:
+        holder: RunLedgerRow = {"user_id": claim.user_id, "session_id": claim.session_id}
+        held_by_caller = not claim.unreadable and _owned_by(holder, _user_of(input))
+        if not held_by_caller and not (
+            existing is not None and _owned_by(existing, _user_of(input))
+        ):
+            # Another user's claim, or one we cannot read, and no run of the caller's
+            # under this id: a retry of the caller's own run keeps it (that holder
+            # will read this row and go to its own id).
+            return await _own_run(ch, input, run_id)
+    if existing is not None and not _owned_by(existing, _user_of(input)):
+        # Another user's run: start the caller's own run instead of taking that one over.
+        return await _own_run(ch, input, run_id)
+    if existing is None:
+        # A begin that went to the caller's own id (no claim then) and lost its answer
+        # is re-sent: it re-opens that run, whether or not a claim can be made now.
+        # The server cannot tell a first begin from that retry, so every first begin
+        # with a supplied id pays this one point read.
+        own_id, own_row = await _own_run(ch, input, run_id)
+        if own_row is not None:
+            return own_id, own_row
+        if claim is runs_store.NoClaim.UNAVAILABLE and request_narrowed():
+            # Nothing atomic keeps another user's concurrent first begin off this id,
+            # so a narrowed caller opens a new id only under its own server-made id.
+            return own_id, None
+    return run_id, existing
+
+
+def _own_run_id(input: RunBeginInput, requested: str) -> str:
+    """The server-made id a caller gets for `requested` when it cannot have that id:
+    derived from (org, namespace, user, session, requested), so a retry of a begin
+    whose answer was lost lands on the same run, and no other user or session can."""
+    seed = json.dumps(
+        [input.org, input.namespace, _user_of(input), input.session_id or "-", requested]
+    )
+    return "r" + hashlib.sha256(seed.encode()).hexdigest()[:31]
+
+
+async def _own_run(
+    ch: Any, input: RunBeginInput, requested: str
+) -> tuple[str, RunLedgerRow | None]:
+    """The caller's own id for `requested`, with its row when a begin already opened it."""
+    run_id = _own_run_id(input, requested)
+    with sequential_reads():
+        existing = await runs_store.fetch_run(ch, input.org, input.namespace, run_id)
+    if existing is not None and not _owned_by(existing, _user_of(input)):
+        # Another caller named this derived id as its own run_id: a fresh id, so this
+        # caller's retries lose their idempotency but never reach that run.
+        return uuid.uuid4().hex, None
+    return run_id, existing
+
+
+def _user_of(input: RunBeginInput) -> str:
+    return input.user_id or "-"
+
+
 # ------------------------------------------------------------------- handlers
 
 
 async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:
+    """Open a run. A caller-supplied run_id is claimed in Keeper, then checked
+    against its row, then written, then released. A begin that finds the claim
+    held by another user goes to a fresh id. A begin that takes the claim after
+    the holder released it reads the holder's row, so it goes to a fresh id too:
+    that is why the row read comes after the claim. The claim is released only
+    once the row is written; a begin that fails first keeps it, so no other
+    user's begin can take the id before a row holds it. Without a claim (no
+    Keeper, or Keeper failed) a narrowed caller keeps a supplied id only for a
+    run of its own that already exists; a new one gets a server-made id."""
     ch = get_client()
-    run_id = (input.run_id or "").strip() or uuid.uuid4().hex
+    supplied = (input.run_id or "").strip()
+    if not supplied:
+        # A server-made id cannot collide: nothing to claim or check.
+        return await _open_run(ch, input, uuid.uuid4().hex, None)
+    claim = await runs_store.claim_run(
+        ch, input.org, input.namespace, supplied, _user_of(input), input.session_id or "-"
+    )
+    run_id, existing = await _target_run(ch, input, supplied, claim)
+    opened = await _open_run(ch, input, run_id, existing)
+    if isinstance(claim, runs_store.RunClaim) and claim.won:
+        await runs_store.delete_claim(ch, input.org, input.namespace, supplied)
+    return opened
+
+
+async def _open_run(
+    ch: Any, input: RunBeginInput, run_id: str, existing: RunLedgerRow | None
+) -> RunBeginOutput:
+    """Write the run's active row and answer with its id."""
     # The begin row in the ledger carries the run it opened, so begin and complete join
     # on `run_id` (the body names none; the transport's fallback is the header run, empty
     # for a bare client).
@@ -149,7 +260,6 @@ async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:
 
     set_ledger_run(run_id)
     started = _now()
-    existing = await runs_store.fetch_run(ch, input.org, input.namespace, run_id)
     if existing is not None and existing.get("started_at"):
         # Same run_id re-sent (hook retry, tracing id reuse): a replace that
         # keeps the original start so duration stays honest.
@@ -222,7 +332,16 @@ async def _credit_used(
     used_applied = 0
     evidence_applied = 0
     harm_applied = 0
-    id_rows = await runs_store.live_memories_by_key(ch, input.org, input.namespace, used_keys)
+    # Only rows inside the caller's read scope take credit: a token bounded to one
+    # user never moves another user's counters. A scope that does not resolve
+    # credits nothing (the close itself still lands).
+    try:
+        scope = request_scope()
+    except (AuthInsufficientError, IdentityIncompleteError):
+        return _UsageCredit(used_keys=[], id_rows=[])
+    id_rows = await runs_store.live_memories_by_key(
+        ch, input.org, input.namespace, used_keys, scope=scope
+    )
     # The row records what the agent relied on among memories that exist;
     # a key that resolves to nothing is reported (used_applied) but not
     # kept, so the ledger never points at a memory that is not there.
@@ -286,7 +405,8 @@ async def handle_run_complete(input: RunCompleteInput) -> RunCompleteOutput:
     # synchronous insert that preceded it.
     with sequential_reads():
         existing = await runs_store.fetch_run(ch, input.org, input.namespace, input.run_id)
-    if existing is None:
+    # Another user's run answers like a missing one.
+    if existing is None or not _run_in_scope(existing):
         raise NotFoundError(
             f"run {input.run_id!r} not found in {input.org}/{input.namespace}; "
             "call run.begin first",
@@ -338,8 +458,13 @@ async def handle_run_complete(input: RunCompleteInput) -> RunCompleteOutput:
     if outcome in ("positive", "negative") and session_id != "-":
         await _label_session(ch, existing, input, outcome, session_id)
 
-    written = await runs_store.written_keys(ch, input.org, input.namespace, input.run_id)
-    observations = await runs_store.observation_count(ch, input.org, input.namespace, input.run_id)
+    scope = request_scope()
+    written = await runs_store.written_keys(
+        ch, input.org, input.namespace, input.run_id, scope=scope
+    )
+    observations = await runs_store.observation_count(
+        ch, input.org, input.namespace, input.run_id, scope=scope
+    )
     recalled = await _recalled_keys(ch, input.org, input.namespace, input.run_id)
     retain_mode, retention = await _retain_run_rows(ch, input, now)
 
@@ -365,6 +490,8 @@ async def handle_run_complete(input: RunCompleteInput) -> RunCompleteOutput:
         }
     )
     await runs_store.insert_runs(ch, [row])
+    # run.begin already dropped its claim; this drops one a begin left behind.
+    await runs_store.delete_claim(ch, input.org, input.namespace, input.run_id)
     from server.memory.app.recall_credit import note_closer_from_request
 
     note_closer_from_request(input.org)  # this consumer closes the usage loop
@@ -643,8 +770,14 @@ async def handle_run_get(input: RunGetInput) -> RunGetOutput:
     if existing is None:
         return RunGetOutput(found=False)
     run = _row_to_model(existing)
-    written = await runs_store.written_keys(ch, input.org, input.namespace, input.run_id)
-    observations = await runs_store.observation_count(ch, input.org, input.namespace, input.run_id)
+    # run.get is refused to narrowed tokens (in neither SCOPED_OPS nor NARROW_SAFE_OPS),
+    # so it always reads the whole namespace.
+    written = await runs_store.written_keys(
+        ch, input.org, input.namespace, input.run_id, scope=WHOLE_NAMESPACE
+    )
+    observations = await runs_store.observation_count(
+        ch, input.org, input.namespace, input.run_id, scope=WHOLE_NAMESPACE
+    )
     recalled = await _recalled_keys(ch, input.org, input.namespace, input.run_id)
     # The keys the plugin's hooks saw served under this session join the trace-derived
     # set (MCP reads are ledgered under the connection's own run and never reach the

@@ -1,0 +1,58 @@
+"""What a key becoming 'high' leaves behind on the tables search reads.
+
+A 'high' row is kept out of every search leg by having no live vector. Each
+path that makes a key high retires the vectors the key had
+(`retire_vectors_for_keys`) and then calls `fence_high`: a tombstoned,
+vector-less memory_embeddings row at the high row's version (an older write's
+vector still in flight lands below it), and tombstones for the key's verbatim
+memory.set chunks, which the chunk leg reads without a join back to
+loom.memory.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from server.embedding import get_embedder
+from server.memory.app.set_chunks import tombstone_set_chunks
+
+
+async def fence_high(items: list[tuple[Any, int]], *, ch: Any = None) -> None:
+    """`items` are (identity key, version of the high memory row). Call it after the
+    high row is in: a chunk writer still embedding re-reads the head after its insert,
+    and only a head already labelled high makes it retire its own chunks."""
+    import server.memory.store as memory_repo
+
+    if not items:
+        return
+    await memory_repo.fence_vectors(items, model=get_embedder().model_name, ch=ch)
+    await tombstone_chunks_of([key for key, _version in items], ch=ch)
+    await recheck_live_vectors([key for key, _version in items], ch=ch)
+
+
+async def recheck_live_vectors(keys: list[Any], *, ch: Any = None) -> None:
+    """A vector written above the fence by a pass that drew its version before its
+    scan but after this write drew its own (dedup, reconcile-status) would stay: the
+    keys' live vectors go through the same head re-check a copy runs."""
+    import server.memory.store as memory_repo
+    from server.memory.store import read_your_writes_enabled
+
+    try:
+        live = await memory_repo.live_rows_for_keys(
+            keys, ch=ch, sequential=read_your_writes_enabled()
+        )
+        await memory_repo.retire_copies_under_unembedded_heads(live, ch=ch)
+    except Exception as e:  # noqa: BLE001 — the high row and its fence are in; a missed re-check is logged
+        logging.getLogger(__name__).warning(
+            "fence_high: live-vector re-check failed for %d keys: %s", len(keys), e
+        )
+
+
+async def tombstone_chunks_of(keys: list[Any], *, ch: Any = None) -> None:
+    """Tombstone each key's live memory.set chunks, read with sequential consistency
+    so a chunk insert another replica took is seen."""
+    for key in keys:
+        await tombstone_set_chunks(
+            org=key[0], namespace=key[1], memory_key=key[5], user_id=key[3], ch=ch, strong=True
+        )

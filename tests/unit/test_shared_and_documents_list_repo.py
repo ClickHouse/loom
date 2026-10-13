@@ -230,7 +230,7 @@ async def test_tombstone_shared_embedding_re_emits_a_versioned_row() -> None:
             }
         ]
     )
-    await shared_repo.tombstone_shared_embedding("clickhouse", "ns", "k", when, ch=ch)
+    await shared_repo.tombstone_shared_embedding("clickhouse", "ns", "k", when, version=9, ch=ch)
     assert ch.execute_calls == []
     read_sql, read_params = ch.query_all_calls[0]
     assert "scope = 'shared'" in read_sql and "tombstoned_at IS NULL" in read_sql
@@ -243,14 +243,14 @@ async def test_tombstone_shared_embedding_re_emits_a_versioned_row() -> None:
     (row,) = rows
     assert set(row) >= set(EMBEDDING_PERSISTED_COLS)
     assert row["tombstoned_at"] == when and row["scope"] == "shared"
-    assert row["embedding"] == [0.1, 0.2, 0.3] and row["version"] != 7
+    assert row["embedding"] == [0.1, 0.2, 0.3] and row["version"] == 9  # the demote's
 
 
 @pytest.mark.asyncio
 async def test_tombstone_shared_embedding_with_no_live_row_writes_nothing() -> None:
     ch = StubCH()
     await shared_repo.tombstone_shared_embedding(
-        "clickhouse", "ns", "k", datetime(2026, 5, 17, tzinfo=UTC), ch=ch
+        "clickhouse", "ns", "k", datetime(2026, 5, 17, tzinfo=UTC), version=9, ch=ch
     )
     assert ch.insert_calls == [] and ch.execute_calls == []
 

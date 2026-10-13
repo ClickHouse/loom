@@ -29,8 +29,9 @@ import pytest
 
 # The unit suite runs as CI does: no dotenv, no LOOM_* or provider keys from
 # the developer's shell. Set before `server.settings` builds its singleton.
-# LOOM_UPDATE_* are the snapshot tests' regenerate switches, not settings.
-_TEST_SWITCH_PREFIX = "LOOM_UPDATE_"
+# LOOM_UPDATE_* are the snapshot tests' regenerate switches and LOOM_TEST_* other
+# test switches (LOOM_TEST_REQUIRE_SANDBOX), not settings.
+_TEST_SWITCH_PREFIX = ("LOOM_UPDATE_", "LOOM_TEST_")
 for _name in [
     n for n in os.environ if n.startswith("LOOM_") and not n.startswith(_TEST_SWITCH_PREFIX)
 ] + [
@@ -232,6 +233,82 @@ def _guarded_getaddrinfo(host: Any, *args: Any, **kwargs: Any) -> Any:
 socket.socket.connect = _guarded_connect  # type: ignore[method-assign]
 socket.socket.connect_ex = _guarded_connect_ex  # type: ignore[method-assign]
 socket.getaddrinfo = _guarded_getaddrinfo
+
+
+@pytest.fixture(autouse=True)
+def _no_repo_job_sandbox() -> Iterator[None]:
+    """Repository jobs run as plain children in unit tests, whether or not this
+    host can run bubblewrap: the tests fake the child process. The tests of the
+    real sandbox (test_repo_job_sandbox_hostile.py) switch it back on."""
+    from server.code.app.index import sandbox
+
+    before = sandbox._available
+    sandbox._available = False
+    yield
+    sandbox._available = before
+
+
+@pytest.fixture(autouse=True)
+def _no_copy_head_check(request: pytest.FixtureRequest) -> Iterator[None]:
+    """A vector copy re-reads its keys' heads after its insert
+    (`retire_copies_under_unembedded_heads`); unit fakes answer statements by
+    count and shape, so that read (and `fence_high`'s re-check of the keys' live
+    vectors, and the embed worker's pre-embed head read) is off unless a test is
+    marked `copy_head_check`."""
+    if request.node.get_closest_marker("copy_head_check"):
+        yield
+        return
+    import server.memory.store as memory_repo
+    from server.memory.app import high_fence
+    from server.memory.store import embeddings, entities
+    from server.memory.workers import embedding as embedding_worker
+
+    async def _skip(*_a: object, **_k: object) -> int:
+        return 0
+
+    async def _skip_recheck(*_a: object, **_k: object) -> None:
+        return None
+
+    async def _all_served(rows: list[object], *_a: object) -> tuple[list[object], list[object]]:
+        return rows, []
+
+    targets = [
+        (embeddings, "retire_copies_under_unembedded_heads", _skip),
+        (entities, "retire_copies_under_unembedded_heads", _skip),
+        (memory_repo, "retire_copies_under_unembedded_heads", _skip),
+        (high_fence, "recheck_live_vectors", _skip_recheck),
+        (embedding_worker, "_stubs_still_served", _all_served),
+    ]
+    before = [(mod, name, getattr(mod, name)) for mod, name, _ in targets]
+    for mod, name, stub in targets:
+        setattr(mod, name, stub)
+    yield
+    for mod, name, original in before:
+        setattr(mod, name, original)
+
+
+@pytest.fixture(autouse=True)
+def _no_run_claims() -> Iterator[None]:
+    """run.begin sees no Keeper unless a test says otherwise: the claims-table
+    check is cached per process, so without this the first test to ask decides
+    it for every later one (and asks whatever client it wired)."""
+    from server.tasks.store import runs
+
+    before = (runs._claims_atomic, runs._keeper_errors_logged)
+    runs._claims_atomic, runs._keeper_errors_logged = False, set()
+    yield
+    runs._claims_atomic, runs._keeper_errors_logged = before
+
+
+@pytest.fixture(autouse=True)
+def _no_quota_key() -> Iterator[None]:
+    """A test that verifies a bearer sets the ClickHouse quota key in this
+    context; clear it so the next test's queries carry none."""
+    from server.core import ch
+
+    ch.quota_key_var.set("")
+    yield
+    ch.quota_key_var.set("")
 
 
 @pytest.fixture(autouse=True)
@@ -536,16 +613,19 @@ def _vector_read_state_not_probed() -> Iterator[None]:
 @pytest.fixture(autouse=True)
 def _revocation_snapshot_loaded() -> Iterator[None]:
     """A unit test models a booted process: the revocation snapshot has been
-    read (and is empty). Tests of the not-yet-loaded state
+    read just now (and is empty), and no creator's account state is cached
+    yet. Tests of the not-yet-loaded state
     set `_loaded` back to False. Saved and restored by hand, not through
     `monkeypatch`: requesting it here would set it up before
     `_settings_left_as_found` and so tear it down after that check."""
+    import server.auth.delegation as delegation
     import server.auth.revocation as rev
 
-    saved = rev._loaded
-    rev._loaded = True
+    saved = rev._loaded, rev._loaded_at
+    rev._loaded, rev._loaded_at = True, rev.time.monotonic()
+    delegation._account_active.clear()
     yield
-    rev._loaded = saved
+    rev._loaded, rev._loaded_at = saved
 
 
 # The scalar repository the code-plane fixtures model, with its repository-shaped

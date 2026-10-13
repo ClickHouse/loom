@@ -6,6 +6,7 @@ Handlers run against a scripted fake ClickHouse; usage events are captured at
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -40,7 +41,11 @@ def env(monkeypatch):
     async def record(**kw):
         events.append(kw)
 
+    async def get_by_id(memory_id, **kw):
+        return SimpleNamespace(memory_id=memory_id, namespace="n")
+
     monkeypatch.setattr(memory_repo, "record_usage_event", record)
+    monkeypatch.setattr(memory_repo, "get_by_id", get_by_id)
     monkeypatch.setattr(ch_mod, "get_client", lambda: fake)
     return fake, events
 

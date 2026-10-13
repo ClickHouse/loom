@@ -116,7 +116,7 @@ python scripts/codegen/push_langfuse_prompts.py --write  # push, then write the 
 `--write` needs both Langfuse settings. A prompt whose text is already the latest version
 is not pushed again.
 
-`POST /v1/admin/prompts.evaluate` (admin) reads Langfuse traces tagged
+`POST /v1/admin/prompts.evaluate` (platform admin) reads Langfuse traces tagged
 `prompt:<name>:<version>` and returns a should-promote verdict from their rubric scores
 against a minimum count and threshold. It never writes to Langfuse, and answers 501
 `INTEGRATION_NOT_CONFIGURED` when Langfuse is not set up.

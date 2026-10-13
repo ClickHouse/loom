@@ -35,6 +35,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import scope_and
+
 log = logging.getLogger(__name__)
 
 # Value tokens: clock times (27:12, 5:30pm), dates, money, percentages, plain
@@ -224,7 +227,7 @@ def _supersession_update(
     return _update
 
 
-def _peers_sql_many(n: int) -> str:
+def _peers_sql_many(n: int, in_scope: str = "") -> str:
     """Batched form of `_peers`: one namespace read for `n`
     freshly written rows, one `cosineDistance` term per row (an `arrayMap`
     over the vector column replicates it per row per fact), `LIMIT 8 BY qidx`
@@ -255,7 +258,7 @@ def _peers_sql_many(n: int) -> str:
           AND m.status IN ('active', 'conflicted')
           AND e.tombstoned_at IS NULL
           AND e.embedding_dim = {{dim:UInt16}}
-          AND length(e.embedding) = {{dim:UInt16}}
+          AND length(e.embedding) = {{dim:UInt16}}{in_scope}
         ORDER BY qidx ASC, cos DESC
         LIMIT 8 BY qidx
         """
@@ -274,18 +277,18 @@ async def _peers_many(
     if not items:
         return {}
     dim = len(items[0][2])
-    rows = await ch.query_all(
-        _peers_sql_many(len(items)),
-        params={
-            "org": org,
-            "ns": namespace,
-            "embs": [it[2] for it in items],
-            "types": [it[0] for it in items],
-            "keys": [it[1] for it in items],
-            "dim": dim,
-            "min_cos": float(min_cosine),
-        },
-    )
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "embs": [it[2] for it in items],
+        "types": [it[0] for it in items],
+        "keys": [it[1] for it in items],
+        "dim": dim,
+        "min_cos": float(min_cosine),
+    }
+    # A write retires only rows inside the writer's read scope.
+    in_scope = scope_and(request_scope(), params, "m")
+    rows = await ch.query_all(_peers_sql_many(len(items), in_scope), params=params)
     out: dict[int, list[dict[str, Any]]] = {i: [] for i in range(len(items))}
     for r in rows:
         q = int(r.get("qidx") or 0)
@@ -304,41 +307,41 @@ async def _peers(
     embedding: list[float],
     min_cosine: float,
 ) -> list[dict[str, Any]]:
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "mt": memory_type,
+        "self_key": memory_key,
+        "emb": embedding,
+        "dim": len(embedding),
+        "min_cos": float(min_cosine),
+    }
+    in_scope = scope_and(request_scope(), params, "m")
     rows = await ch.query_all(
-        """
+        f"""
         SELECT toString(m.memory_id) AS memory_id, m.memory_key AS memory_key,
                m.value AS value, m.valid_at AS valid_at, m.created_at AS created_at,
-               1 - """
-        + "cosineDistance(e.embedding, {emb:Array(Float32)})"
-        + """ AS cos
+               1 - cosineDistance(e.embedding, {{emb:Array(Float32)}}) AS cos
         FROM loom.memory m FINAL
         JOIN loom.memory_embeddings e FINAL
           ON  e.org = m.org AND e.namespace = m.namespace
           AND e.memory_key = m.memory_key
           AND e.user_id = m.user_id AND e.session_id = m.session_id
           AND e.agent = m.agent
-        WHERE m.org = {org:String}
-          AND m.namespace = {ns:String}
-          AND m.memory_type = {mt:String}
-          AND m.memory_key != {self_key:String}
+        WHERE m.org = {{org:String}}
+          AND m.namespace = {{ns:String}}
+          AND m.memory_type = {{mt:String}}
+          AND m.memory_key != {{self_key:String}}
           AND m.tombstoned_at IS NULL
           AND m.status IN ('active', 'conflicted')
           AND e.tombstoned_at IS NULL
-          AND e.embedding_dim = {dim:UInt16}
-          AND length(e.embedding) = {dim:UInt16}
-        HAVING cos >= {min_cos:Float32}
+          AND e.embedding_dim = {{dim:UInt16}}
+          AND length(e.embedding) = {{dim:UInt16}}{in_scope}
+        HAVING cos >= {{min_cos:Float32}}
         ORDER BY cos DESC
         LIMIT 8
         """,
-        params={
-            "org": org,
-            "ns": namespace,
-            "mt": memory_type,
-            "self_key": memory_key,
-            "emb": embedding,
-            "dim": len(embedding),
-            "min_cos": float(min_cosine),
-        },
+        params=params,
     )
     return [dict(r) for r in rows]
 

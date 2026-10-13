@@ -98,6 +98,40 @@ async def knowledge_download(
     )
 
 
+# Types a browser renders without running script. Anything else (HTML, SVG,
+# XML, PDF, unknown) is never served inline: an uploaded file is attacker-chosen
+# bytes with an attacker-chosen label, on the dashboard's own origin.
+_TEXT_TYPES = frozenset({"text/plain", "text/markdown", "text/csv", "application/json"})
+# A binary type is previewed only when the bytes start the way that format
+# does, so HTML labelled image/png is not rendered as anything.
+_BINARY_MAGIC = {
+    "image/png": (b"\x89PNG\r\n\x1a\n",),
+    "image/jpeg": (b"\xff\xd8\xff",),
+    "image/gif": (b"GIF87a", b"GIF89a"),
+    "image/webp": (b"RIFF",),
+}
+# Opening the URL on its own (not through the dashboard) still runs no script.
+_DOWNLOAD_CSP = "sandbox; default-src 'none'"
+
+
+def _base_type(content_type: str) -> str:
+    return content_type.split(";")[0].strip().lower()
+
+
+def preview_type(content_type: str, data: bytes) -> str | None:
+    """The Content-Type an inline preview is served with, or None when the
+    file must download instead. Text kinds are all served as plain text."""
+    base = _base_type(content_type)
+    if base in _TEXT_TYPES:
+        return "text/plain; charset=utf-8"
+    magic = _BINARY_MAGIC.get(base)
+    if magic and data.startswith(magic):
+        if base == "image/webp" and data[8:12] != b"WEBP":
+            return None
+        return base
+    return None
+
+
 def _download_response(
     data: bytes,
     *,
@@ -108,22 +142,31 @@ def _download_response(
 ) -> Response:
     """The bytes of a `knowledge.download` answer with its headers.
 
-    `inline=true` lets the /me preview render PDFs in an iframe; the default
-    is attachment so plain GETs download rather than surprise-render. The
+    `inline=true` previews only the passive types `preview_type` allows;
+    anything else is an attachment of `application/octet-stream`. A plain
+    download keeps its type only when it is one of those passive types. The
     file name is reduced to printable ASCII without quotes or backslashes
     so it cannot break out of the Content-Disposition header.
     """
     safe_name = "".join(c if 32 <= ord(c) < 127 and c not in '"\\' else "_" for c in filename)
-    disposition = "inline" if inline else "attachment"
+    passive = preview_type(content_type, data)
+    if inline and passive:
+        disposition, media_type = "inline", passive
+    elif passive:
+        disposition, media_type = "attachment", _base_type(content_type)
+    else:
+        disposition, media_type = "attachment", "application/octet-stream"
     return Response(
         content=data,
-        media_type=content_type,
+        media_type=media_type,
         headers={
             "Content-Disposition": f'{disposition}; filename="{safe_name}"',
             "Content-Length": str(len(data)),
             # no-store: the row can be repointed at new bytes.
             "Cache-Control": "no-store",
             "X-Loom-Download-Source": source,
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": _DOWNLOAD_CSP,
         },
     )
 

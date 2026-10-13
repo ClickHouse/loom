@@ -316,3 +316,35 @@ test("shunt: the whole hook ends by its deadline even when one answer is slower 
     assert.ok(r.ms < 8000, `took ${r.ms} ms`);
   });
 });
+
+test("shunt: a tracker search reaches tracker.duplicate_check redacted", async () => {
+  const dir = checkout();
+  const tmp = freshTmp();
+  seedIndexed(dir, tmp);
+  const bodies = [];
+  const server = http.createServer((req, res) => {
+    let raw = "";
+    req.on("data", (c) => (raw += c));
+    req.on("end", () => {
+      bodies.push({ url: req.url, body: raw ? JSON.parse(raw) : null });
+      res.statusCode = 500;
+      res.end("{}");
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  try {
+    const url = `http://127.0.0.1:${server.address().port}`;
+    const command = 'gh issue list --search "login fails password=hunter2"';
+    await run(
+      "loom-code-shunt.mjs",
+      { tool_name: "Bash", tool_input: { command }, cwd: dir, session_id: "s" },
+      { tmp, url },
+    );
+  } finally {
+    server.closeAllConnections();
+    server.close();
+  }
+  const check = bodies.find((b) => b.url === "/v1/tracker.duplicate_check");
+  assert.ok(check, JSON.stringify(bodies.map((b) => b.url)));
+  assert.equal(check.body.title, "login fails password=[redacted]");
+});

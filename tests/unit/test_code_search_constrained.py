@@ -398,3 +398,10 @@ def test_handler_scope_helper_takes_only_path_filters_from_grep() -> None:
     sc2 = _scope_of(CodeSearchInput(query="q", pattern="needle", regex=True, case_sensitive=True))
     assert sc2.has_pattern and sc2.regex and sc2.case_sensitive
     assert not _scope_of(CodeSearchInput(query="q")).constrained
+
+
+def test_a_regex_pattern_is_validated_as_re2() -> None:
+    from server.code.domain.search_scope import build_scope
+
+    with pytest.raises(ValidationError, match="RE2"):
+        build_scope(pattern=r"(ab)\1", regex=True)

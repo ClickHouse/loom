@@ -43,26 +43,40 @@ from server.insights.app.admin_models import (
 )
 from server.insights.store import admin as admin_repo
 from server.observability import audit
+from server.operations.base import Role
 from server.settings import settings
 
 if TYPE_CHECKING:
+    from server.auth.delegation import Delegated
     from server.auth.jwt import AuthInfo
 
 log = logging.getLogger(__name__)
 
 
 async def require_admin(request: Request) -> AuthInfo | None:
-    """Bearer + ADMIN-role gate for the whole admin surface.
+    """Bearer + PLATFORM_ADMIN gate for the deployment-wide admin endpoints.
 
     Admin routes never pass through the operation-registry transport (and its
-    auth step), so the check has to live on this router. Returns the verified
-    principal, or None when the effective auth mode is off — the same
-    `auth_actually_required()` the transport reads, so a `single-user`
+    auth step), so the check has to live on these routers. Returns the
+    verified principal, or None when the effective auth mode is off — the
+    same `auth_actually_required()` the transport reads, so a `single-user`
     identity provider over a prod-derived `LOOM_AUTH_REQUIRED=true` does not
     lock the admin surface while every other route is open.
     """
+    return _verified_admin(request, Role.PLATFORM_ADMIN)
+
+
+async def require_org_admin(request: Request) -> AuthInfo | None:
+    """Bearer + ORG_ADMIN gate for the endpoints that act inside the one org
+    their body names; each handler pins that org to the caller's own (a
+    platform admin passes for any org)."""
+    return _verified_admin(request, Role.ORG_ADMIN)
+
+
+def _verified_admin(request: Request, needed: Role) -> AuthInfo | None:
+    """A per-namespace admin (a flat `admin` role, or a scoped token's
+    `ns_roles`) is not deployment or org authority and never passes."""
     from server.auth.bearer import verify_bearer_header
-    from server.operations.base import Role
 
     if not settings.auth_actually_required():
         return None
@@ -72,20 +86,22 @@ async def require_admin(request: Request) -> AuthInfo | None:
             status_code=401,
             detail={"code": "AUTH_INVALID", "message": "missing bearer token"},
         )
-    if not info.has_role(Role.ADMIN):
+    if info.has_ns_roles() or not info.has_role(needed):
         raise HTTPException(
             status_code=403,
             detail={
                 "code": "AUTH_INSUFFICIENT",
-                "message": "admin endpoints require ADMIN role",
+                "message": f"this admin endpoint requires the {needed.name} role",
             },
         )
     return info
 
 
-# Router-level dependency runs `require_admin` before every handler, so no
-# admin endpoint can ship unauthenticated by omission.
+# Router-level dependencies run the gate before every handler, so no admin
+# endpoint can ship unauthenticated by omission. A new endpoint goes on
+# `admin_router` (deployment-wide) unless it acts inside one org only.
 admin_router = APIRouter(dependencies=[Depends(require_admin)])
+org_admin_router = APIRouter(dependencies=[Depends(require_org_admin)])
 
 
 # ============================================================
@@ -757,51 +773,71 @@ async def admin_prompts_evaluate(input: PromptsEvaluateInput) -> PromptsEvaluate
 # ============================================================
 
 
-@admin_router.post("/v1/admin/token.mint")
+@org_admin_router.post("/v1/admin/token.mint")
 async def admin_token_mint(
     request: Request,
     input: TokenMintInput,
 ) -> TokenMintOutput:
-    """Mint a Loom JWT. Requires ADMIN role on the caller."""
+    """Mint a Loom JWT. Requires ORG_ADMIN in `input.org`; the token is
+    delegated from the caller's (`server.auth.delegation`), so it never
+    outranks the caller's token or live grants."""
+    from server.auth.delegation import delegable_role, delegate
     from server.auth.jwt import mint_token, new_jti
 
     # Redundant with the router-level dependency; kept so the gate holds even
     # if this handler is ever mounted on another router.
-    info = await require_admin(request)
-    await _check_mint_scope(info, input)
+    info = await require_org_admin(request)
+    refuse_foreign_org(info, input.org, "mint a token for")
 
     jti = new_jti()
-    minted = mint_token(
-        jti=jti,
-        subject=input.subject,
-        org=input.org,
-        namespaces=list(input.namespaces),
-        roles=list(input.roles),
-        ns_roles=dict(input.ns_roles) if input.ns_roles else None,
-        consumer=input.consumer or None,
-        ttl_seconds=input.ttl_seconds,
-        is_service_account=input.is_service_account,
-    )
+    if info is None:
+        # Auth off: nothing to delegate from.
+        minted = mint_token(
+            jti=jti,
+            subject=input.subject,
+            org=input.org,
+            namespaces=list(input.namespaces),
+            roles=list(input.roles),
+            ns_roles=dict(input.ns_roles) if input.ns_roles else None,
+            consumer=input.consumer or None,
+            ttl_seconds=input.ttl_seconds,
+            is_service_account=input.is_service_account,
+        )
+        namespaces, roles, ns_roles = list(input.namespaces), list(input.roles), input.ns_roles
+        ttl_seconds = input.ttl_seconds
+    else:
+        for name in input.roles:
+            delegable_role(name)
+        delegated = await delegate(
+            info,
+            org=input.org,
+            requested={ns: input.requested_role_for(ns) for ns in input.namespaces},
+            scoped=bool(input.ns_roles),
+            ttl_seconds=input.ttl_seconds,
+            is_service_account=input.is_service_account,
+        )
+        minted = delegated.mint(input.subject, jti=jti, consumer=input.consumer or None)
+        namespaces, roles, ns_roles = delegated.namespaces, delegated.roles, delegated.ns_roles
+        ttl_seconds = delegated.ttl_seconds
+        await _audit_mint(info, input, delegated, jti)
     return TokenMintOutput.model_validate(
         {
             "token": minted,
             "jti": jti,
             "subject": input.subject,
             "org": input.org,
-            "namespaces": list(input.namespaces),
-            "roles": list(input.roles),
-            "ns_roles": dict(input.ns_roles) if input.ns_roles else None,
+            "namespaces": namespaces,
+            "roles": roles,
+            "ns_roles": ns_roles or None,
             "consumer": input.consumer,
-            "ttl_seconds": input.ttl_seconds,
+            "ttl_seconds": ttl_seconds,
             "is_service_account": input.is_service_account,
         }
     )
 
 
-def _refuse_foreign_org(info: AuthInfo | None, org: str, action: str) -> None:
+def refuse_foreign_org(info: AuthInfo | None, org: str, action: str) -> None:
     """An admin token acts inside its own org; only a platform admin crosses orgs."""
-    from server.operations.base import Role
-
     if info is not None and org != info.org and not info.has_role(Role.PLATFORM_ADMIN):
         raise HTTPException(
             status_code=403,
@@ -812,85 +848,27 @@ def _refuse_foreign_org(info: AuthInfo | None, org: str, action: str) -> None:
         )
 
 
-async def _check_mint_scope(info: AuthInfo | None, input: TokenMintInput) -> None:
-    """An admin token mints inside its own org, and a
-    namespace classified restricted is minted only by a caller who holds a
-    direct grant there at or above the roles requested. The CLI
-    `loom mint-token` (operator, holds the signing secret) is unchanged."""
-    if info is None:
-        return
-    from server.operations.base import Role
-
-    _refuse_foreign_org(info, input.org, "mint a token for")
-    if not info.has_role(Role.PLATFORM_ADMIN):
-        # A minted token never outranks its minter: no role above the caller's
-        # own, and no org-wide read (`*`) from a caller who does not hold one.
-        for name in input.roles:
-            wanted = Role.__members__.get(name.upper())
-            if wanted is None:
-                raise HTTPException(
-                    status_code=422,
-                    detail={"code": "VALIDATION_ERROR", "message": f"unknown role {name!r}"},
-                )
-            if not info.has_role(wanted):
-                raise HTTPException(
-                    status_code=403,
-                    detail={
-                        "code": "AUTH_INSUFFICIENT",
-                        "message": f"cannot mint {wanted.name.lower()}: above the caller's role",
-                    },
-                )
-        if "*" in input.namespaces and "*" not in info.namespaces:
-            if not info.has_role(Role.ORG_ADMIN):
-                raise HTTPException(
-                    status_code=403,
-                    detail={
-                        "code": "AUTH_INSUFFICIENT",
-                        "message": "cannot mint namespaces=['*'] without org-wide access",
-                    },
-                )
-    from server.auth.authz import _grant_role_for
-    from server.auth.directory import ClassificationUnavailable
-    from server.identity.app.namespace_classification import is_restricted
-
-    for ns in input.namespaces:
-        if not ns or ns == "*":
-            continue  # a wildcard never reads a restricted namespace
-        # the role asked for on THIS namespace — its ns_roles entry, else the flat max — is
-        # what the caller's grant must cover
-        requested = Role[input.requested_role_for(ns).upper()]
-        try:
-            restricted = await is_restricted(input.org, ns)
-        except ClassificationUnavailable:
-            restricted = True
-        if not restricted:
-            continue
-        grant = await _grant_role_for(input.org, ns, info.subject)
-        if grant is None or grant.value < requested.value:
-            raise HTTPException(
-                status_code=403,
-                detail={
-                    "code": "AUTH_INSUFFICIENT",
-                    "message": f"cannot mint {requested.name.lower()} on {input.org}/{ns}",
-                },
-            )
+async def _audit_mint(info: AuthInfo, input: TokenMintInput, granted: Delegated, jti: str) -> None:
+    """Records what the child was granted, not what was asked for."""
+    namespaces = granted.namespaces
     await audit.emit(
         "token.minted",
         org=input.org,
-        namespace=input.namespaces[0] if len(input.namespaces) == 1 else "-",
+        namespace=namespaces[0] if len(namespaces) == 1 else "-",
         actor=info.subject,
         subject={
             "subject": input.subject,
-            "namespaces": list(input.namespaces),
-            "roles": list(input.roles),
-            "ns_roles": dict(input.ns_roles) if input.ns_roles else None,
+            "jti": jti,
+            "namespaces": namespaces,
+            "roles": granted.roles,
+            "ns_roles": granted.ns_roles,
             "consumer": input.consumer,
             "is_service_account": input.is_service_account,
         },
     )
 
 
-@admin_router.post("/v1/admin/namespace.adopt")
+@org_admin_router.post("/v1/admin/namespace.adopt")
 async def admin_namespace_adopt(
     request: Request,
     input: NamespaceAdoptInput,
@@ -901,8 +879,8 @@ async def admin_namespace_adopt(
     """
     # Redundant with the router-level dependency; kept because this handler
     # also needs the verified subject as the audit actor.
-    info = await require_admin(request)
-    _refuse_foreign_org(info, input.org, "adopt a namespace in")
+    info = await require_org_admin(request)
+    refuse_foreign_org(info, input.org, "adopt a namespace in")
     actor = info.subject if info is not None else "dev-admin"
 
     from server.identity.app.grants import adopt_namespace
@@ -929,4 +907,4 @@ async def admin_namespace_adopt(
     }
 
 
-__all__ = ["admin_router"]
+__all__ = ["admin_router", "org_admin_router"]

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_crud import (
     MemoryRestoreInput,
     MemoryRestoreOutput,
@@ -37,7 +38,12 @@ async def _restore_superseded(
         session_id=input.session_id,
     )
     existing = await memory_repo.get_by_key(
-        identity, input.memory_key, include_tombstoned=True, fresh=True, strong=True
+        identity,
+        input.memory_key,
+        include_tombstoned=True,
+        fresh=True,
+        strong=True,
+        scope=WHOLE_NAMESPACE,
     )
     if existing is None or str(getattr(existing, "status", "")) != "superseded":
         return MemoryRestoreOutput(
@@ -104,12 +110,19 @@ def _attested(row: MemoryRow) -> bool:
 async def _restore_embedding_mirror(
     ch: Any, input: Any, existing: MemoryRow, memory_type: str
 ) -> None:
-    """Propagate a restore to memory_embeddings, for every memory type (delete's mirror)."""
+    """Propagate a restore to memory_embeddings, for every memory type (delete's mirror).
+    A 'high' row gets none: its key's last rows are a retired vector or a fence, and
+    reviving either would serve it."""
     import server.memory.store as memory_repo
+
+    if existing.sensitivity == "high":
+        return
 
     # Vectors live only on the embeddings table (re-read here);
     # other columns mirror from `existing`. argMax keys on version
-    # (the RMT merge key). The key-vector pair uses argMaxIf to skip
+    # (the RMT merge key). `key_embedding_dim` is not named after its column: that
+    # alias would be substituted into the argMaxIf conditions and nest an aggregate
+    # (ILLEGAL_AGGREGATION, every restore). The key-vector pair uses argMaxIf to skip
     # rows holding the schema default ([], dim 0), which would
     # otherwise win as the latest version.
     existing_emb_rows = await ch.query_all(
@@ -124,7 +137,7 @@ async def _restore_embedding_mirror(
                 AS memory_key_embedding,
             argMaxIf(memory_key_embedding_dim, version,
                      memory_key_embedding_dim != 0)
-                AS memory_key_embedding_dim
+                AS key_embedding_dim
         FROM loom.memory_embeddings
         WHERE org = {org:String}
           AND namespace = {ns:String}
@@ -164,7 +177,7 @@ async def _restore_embedding_mirror(
             embedding_dim=int(emb["embedding_dim"] or 0),
             embedding=list(emb["embedding"]),
             memory_key_embedding=list(emb.get("memory_key_embedding") or []),
-            memory_key_embedding_dim=int(emb.get("memory_key_embedding_dim") or 0),
+            memory_key_embedding_dim=int(emb.get("key_embedding_dim") or 0),
             confidence=float(existing.confidence),
             tombstoned_at=None,
             created_at=naive_utc_now(),
@@ -274,6 +287,7 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
         include_tombstoned=True,
         fresh=True,
         strong=True,  # restore follows delete; read the latest head (no miss)
+        scope=WHOLE_NAMESPACE,
     )
     if existing is None or existing.tombstoned_at is None:
         # Race: tombstone vanished between the SELECT above and here.
@@ -290,6 +304,11 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
         expires_at=None,
     )
     await insert_memory_versions([restore_row], ch=ch)
+    if existing.sensitivity == "high":
+        # The key is high again: a plain write still embedding lands below the fence.
+        from server.memory.app.high_fence import fence_high
+
+        await fence_high([(memory_repo.embedding_key(existing), new_version)], ch=ch)
 
     # Propagate restore to memory_embeddings — mirror delete's logic, for every memory type.
     try:

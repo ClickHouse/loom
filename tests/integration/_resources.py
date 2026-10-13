@@ -20,9 +20,9 @@ import pytest
 _ORG_SHAPE = re.compile(r"^it-[a-z0-9][a-z0-9-]{0,40}-[0-9a-f]{8}$")
 _minted: set[str] = set()
 
-# Server-side buffers (events, usage, async inserts) flush about every half
-# second; a row flushed after the purge is retried once past this window.
-_LATE_FLUSH_S = 3.0
+# Server-side buffers flush every half second or so (namespace write marks
+# every 5 s); a row flushed after the purge is retried once past this window.
+_LATE_FLUSH_S = 6.0
 _MUTATION_WAIT_S = 120.0
 
 
@@ -115,7 +115,7 @@ def residue(client: Any, database: str, orgs: frozenset[str]) -> dict[str, int]:
 
 
 def purge(client: Any, database: str, orgs: frozenset[str]) -> dict[str, int]:
-    """Delete every row of `orgs`; return the residue after one late-flush retry."""
+    """Delete every row of `orgs`; return the residue after a few late-flush retries."""
     foreign = sorted(o for o in orgs if not _ORG_SHAPE.match(o))
     if foreign:
         raise ValueError(f"refusing to purge orgs the suite did not mint: {foreign}")
@@ -123,7 +123,11 @@ def purge(client: Any, database: str, orgs: frozenset[str]) -> dict[str, int]:
         return {}
     _delete(client, database, _org_tables(client, database), orgs)
     left = residue(client, database, orgs)
-    if left:
+    # A response's follow-up work can still be writing when the run ends, so
+    # one retry isn't always past the last flush.
+    for _ in range(3):
+        if not left:
+            break
         time.sleep(_LATE_FLUSH_S)
         _delete(client, database, sorted(left), orgs)
         left = residue(client, database, orgs)

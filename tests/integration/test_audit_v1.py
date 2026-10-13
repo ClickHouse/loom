@@ -245,14 +245,15 @@ async def test_namespace_get_returns_audit_v1_fields(control_plane_url) -> None:
     suffix = uuid.uuid4().hex[:6]
     me = _signup_or_skip(control_plane_url, f"ex-{suffix}")
 
-    _post(
+    reg = _post(
         control_plane_url,
         "/v1/namespace.register",
         {
             "org": me["org"],
             "namespace": me["namespace"],
             "owner_email": me["subject"],
-            "rerank_endpoint": "http://localhost:9/r",
+            # A rerank choice is a name, never a URL (a URL is a 422).
+            "rerank_endpoint": "builtin:cohere",
             "classify_endpoint": "http://localhost:9/c",
             "tag_registry": [
                 {
@@ -266,6 +267,7 @@ async def test_namespace_get_returns_audit_v1_fields(control_plane_url) -> None:
         },
         me["token"],
     )
+    assert reg.status_code == 200, reg.text
 
     r = _post(
         control_plane_url,
@@ -279,7 +281,7 @@ async def test_namespace_get_returns_audit_v1_fields(control_plane_url) -> None:
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["found"] is True
-    assert body["rerank_endpoint"] == "http://localhost:9/r"
+    assert body["rerank_endpoint"] == "builtin:cohere"
     assert body["classify_endpoint"] == "http://localhost:9/c"
     tag_registry = body["tag_registry"]
     assert len(tag_registry) == 1

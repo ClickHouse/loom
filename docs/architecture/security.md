@@ -64,9 +64,12 @@ boot and refreshes it every `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` (30 s), thro
 `jwt_revocation_refresh` worker on the leader or the process's own loop elsewhere.
 
 - Until the first load succeeds, every token gets 503 `AUTH_UNAVAILABLE`.
-- After that, a ClickHouse outage keeps the last good snapshot.
-- `/v1/health` reports `revocation_not_loaded` (error) and `revocation_stale` (warning,
-  once older than `max(300 s, 10 × the refresh interval)`).
+- After that, a ClickHouse outage keeps the last good snapshot for at most
+  `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS` (600 s, and it must be larger than the refresh
+  interval); past it every token gets 503 again until a refresh lands.
+- `/v1/health` reports `revocation_not_loaded` (error), `revocation_stale` (warning,
+  once older than `max(300 s, 10 × the refresh interval)`) and `revocation_too_stale`
+  (error, past the max-stale bound).
 
 **Why fail closed.** Admitting tokens before the list is loaded would accept a revoked
 token on every fresh process, which is when an operator restarts the fleet after
@@ -102,13 +105,18 @@ authenticated call, from `gates.authorize` in both transports:
 1. A scoped token (with `ns_roles`) on a request missing its org or namespace gets 400
    `IDENTITY_INCOMPLETE`, unless the op is `deployment_scoped` or `row_scoped`; those pass
    on the token's best namespace role in its own org.
-2. A restricted namespace goes to the restricted gate only.
-3. A viewer read of an org-readable code namespace (`LOOM_CODE_ORG_READABLE` or the
+2. A delegated token (a `creator` claim, minted by `server/auth/delegation.py`) is refused
+   when its creator's account is disabled, on an op with no namespace that writes unless the
+   creator holds that role somewhere in the org, and on a namespace needs its own claim to reach
+   the role and the creator's live grant to reach it too (`_check_delegated`; restricted
+   namespaces also take the restricted gate). Nothing below applies to it.
+3. A restricted namespace goes to the restricted gate only.
+4. A viewer read of an org-readable code namespace (`LOOM_CODE_ORG_READABLE` or the
    entry's `org_readable`) passes for any principal of that org.
-4. A scoped token's `ns_roles` decide for the namespaces they name, in the token's org
+5. A scoped token's `ns_roles` decide for the namespaces they name, in the token's org
    only. Grants are not consulted for them, except viewer reads of a code namespace.
-5. A token acts in its own org only (or `*`, or as platform admin).
-6. A flat token's roles apply to every namespace its claims cover. Otherwise a live grant
+6. A token acts in its own org only (or `*`, or as platform admin).
+7. A flat token's roles apply to every namespace its claims cover. Otherwise a live grant
    in `loom.namespace_grants` decides: unrevoked and `active` (`grant_sql.LIVE_GRANT`); a
    `pending` join request grants nothing. A service account with no grant reads its
    creator's. A grant raises a flat token's role, never lowers it. A failed grant read
@@ -195,15 +203,43 @@ default):
   account is active and re-derives its roles.
 
 **Unauthenticated routes.** Sign-up and password sign-in are rate-limited in-process
-(`server/auth/attempts.py`) per client address (the last `X-Forwarded-For` hop, set by
-the proxy), and sign-in also per identifier. An unknown account costs one full argon2id
+(`server/auth/attempts.py`) per client address (the connection's peer, which uvicorn
+replaces with the `X-Forwarded-For` client only when the peer is in
+`LOOM_TRUSTED_PROXIES`), and sign-in also per identifier. An unknown account costs one full argon2id
 hash, like a wrong password. The limits are per process, so N replicas allow N times the
 limit.
 
 **Client-facing URLs** (OAuth metadata, setup config, claim links) come from
-`LOOM_OAUTH_ISSUER` / `LOOM_PUBLIC_BASE_URL`, else the forwarded scheme and host,
-validated as `http(s)://hostname[:port]`. The OIDC callback comes from configuration
-only.
+`LOOM_OAUTH_ISSUER` / `LOOM_PUBLIC_BASE_URL`, else (only on a loopback bind) the
+request's own scheme and `Host`, validated as `http(s)://hostname[:port]`.
+`X-Forwarded-Host` is never read. The OIDC callback comes from configuration only.
+
+**Exposure.** A non-loopback `LOOM_BIND_HOST` refuses to start without
+`LOOM_PUBLIC_BASE_URL`, and with auth off or the dev JWT secret unless
+`LOOM_ALLOW_INSECURE=1`. `LOOM_CORS_ORIGINS=*` refuses to start (CORS allows
+credentials). With auth off, a request whose `Host` is not a loopback host or the
+public URL's host gets `421`, so a DNS-rebinding page cannot drive a local server. A
+request whose `Origin` is not the server's own (and is not in `LOOM_CORS_ORIGINS`), or
+whose `Sec-Fetch-Site` is `cross-site` or `same-site`, gets `403`, so a page on another
+site cannot post to it either: every request with auth off except a top-level page load
+(`Sec-Fetch-Mode: navigate`, `Sec-Fetch-Dest: document`, GET or HEAD), and every
+non-GET request with auth on, because in proxy mode the front proxy adds the bearer to
+whatever the browser sends. The server's own origin is `LOOM_PUBLIC_BASE_URL` (scheme,
+host and port) when it is set; otherwise an `Origin` whose host and port match the
+request's `Host` counts, whatever its scheme, so a TLS proxy whose `X-Forwarded-Proto`
+is not trusted still works. `loom doctor` and `/v1/health` report each of these.
+
+**Browser.** Every response is `X-Content-Type-Options: nosniff`. `/me` carries a
+Content-Security-Policy whose `script-src` admits the bundle's origin and the one boot
+snippet by a per-response nonce, never `unsafe-inline`. An uploaded document is
+attacker-chosen bytes under an attacker-chosen type, so `knowledge.download` previews
+inline only plain text (text, Markdown, CSV and JSON, all served as `text/plain`) and
+PNG, JPEG, GIF and WebP whose bytes match their type; anything else (HTML, SVG, XML, PDF,
+unknown, mismatched) is an `application/octet-stream` attachment, and every download
+carries `Content-Security-Policy: sandbox; default-src 'none'`. The dashboard applies the
+same allowlist itself, because a `blob:` URL ignores the server's headers: it re-types
+text as `text/plain` in an `<iframe sandbox="">`, shows images with `<img>`, and
+downloads everything else, PDF and SVG included.
 
 ## Rate limiting
 

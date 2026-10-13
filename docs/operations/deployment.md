@@ -44,14 +44,30 @@ through the stock stack.
 
 ClickHouse starts with the files in `deploy/clickhouse-config/`:
 
-| File                                    | Why                                                                                                                     |
-| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `lemmatizers.xml` + `deploy/lemmagen3/` | The English lemmatizer behind the stemmed lexical search leg.                                                           |
-| `nlp_user_settings.xml`                 | Enables ClickHouse's experimental NLP and AI SQL functions for ad-hoc queries; Loom sets the flags per statement.       |
-| `merge_tree_settings.xml`               | MergeTree defaults that let lightweight `UPDATE` (tombstone paths) work on OSS.                                         |
-| `keeper.xml`                            | An embedded single-node Keeper, so the `KeeperMap` task-inbox lease table works on OSS.                                 |
-| `named_collections.xml`                 | Named collections for ClickHouse's `ai*` SQL functions. Git-ignored; defines none as shipped; keys come via `from_env`. |
+| File                                    | Why                                                                                                                                                                             |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lemmatizers.xml` + `deploy/lemmagen3/` | The English lemmatizer behind the stemmed lexical search leg.                                                                                                                   |
+| `nlp_user_settings.xml`                 | Enables ClickHouse's experimental NLP and AI SQL functions for ad-hoc queries; Loom sets the flags per statement. Also the per-tenant quota and the `loom_reader` user (below). |
+| `merge_tree_settings.xml`               | MergeTree defaults that let lightweight `UPDATE` (tombstone paths) work on OSS.                                                                                                 |
+| `keeper.xml`                            | An embedded single-node Keeper, so the `KeeperMap` task-inbox lease table works on OSS.                                                                                         |
+| `named_collections.xml`                 | Named collections for ClickHouse's `ai*` SQL functions. Git-ignored; defines none as shipped; keys come via `from_env`.                                                         |
 
+- **Read-only user.** `nlp_user_settings.xml` defines `loom_reader`: SELECT on
+  `loom.*` only (it cannot read `system.query_log`), a read-only profile whose
+  time, memory and rows-read caps each have a ceiling no statement can raise and a
+  floor no statement can go under, so none can be set to 0 (no limit), not even by a
+  `SETTINGS` clause in the SQL. The time floor is 0.05 s, `code.grep`'s statement floor
+  under `deadline_ms`. Its password is the `loom` user's
+  (`CLICKHOUSE_PASSWORD`). The caps equal the `LOOM_CH_CALLER_SHAPED_*` defaults;
+  raising one of those settings needs the profile raised too, and setting one to 0 leaves the profile's cap in force. With `LOOM_CH_READER_USER=loom_reader` (set in the
+  shipped compose files) the reads a caller shapes (`code.grep`, a patterned
+  `code.search`, `memory.aggregate`, `memory.record.query`) run as that user, so
+  none of them can write, change schema or grant. Unset, they run as `LOOM_CH_USER`.
+  The server probes the user at boot with a read of `loom.memory` under those caps;
+  `/v1/health` and `loom doctor` report `ch_reader_user_failing` when ClickHouse
+  refuses it (a missing grant, or a `LOOM_CH_CALLER_SHAPED_*` outside the profile's
+  bounds). Before migrations have created `loom.memory` the boot probe reports
+  nothing, and `loom doctor` says the reader user was not probed.
 - **Ports.** If `8123` or `9000` is taken, set `LOOM_CH_HOST_PORT` or
   `LOOM_CH_NATIVE_HOST_PORT` in `.env`. These are compose variables for the host side
   only; containers always talk to `clickhouse:8123`.
@@ -167,12 +183,15 @@ renaming the database; give each its own service.
 
 ### Public URL and clients
 
-| Variable               | Default          | Set it when                                                                                                        |
-| ---------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `LOOM_PUBLIC_BASE_URL` | empty            | The proxy cannot be trusted to forward the client-facing scheme. Empty derives it from `X-Forwarded-Proto`/`Host`. |
-| `LOOM_OAUTH_ENABLED`   | `false`          | You want one-click MCP connect (OAuth 2.1 browser sign-in instead of a pasted token).                              |
-| `LOOM_OAUTH_ISSUER`    | empty            | OAuth is on: the public HTTPS base URL the discovery metadata advertises. Empty derives it per request.            |
-| `LOOM_CORS_ORIGINS`    | empty (CORS off) | A browser application on another origin calls Loom directly. List exactly those origins.                           |
+| Variable               | Default          | Set it when                                                                                                             |
+| ---------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `LOOM_PUBLIC_BASE_URL` | empty            | Always, off loopback: a non-loopback `LOOM_BIND_HOST` refuses to start without it. Empty uses the request's own `Host`. |
+| `LOOM_BIND_HOST`       | `127.0.0.1`      | Loom must be reachable by others. In a container it is the address the port is published on.                            |
+| `LOOM_TRUSTED_PROXIES` | `127.0.0.1`      | A proxy in front of Loom: its addresses or CIDRs. Only those peers' `X-Forwarded-For`/`-Proto` are honoured.            |
+| `LOOM_ALLOW_INSECURE`  | `false`          | Never on a reachable port. Lets a non-loopback bind start with auth off or the dev JWT secret.                          |
+| `LOOM_OAUTH_ENABLED`   | `false`          | You want one-click MCP connect (OAuth 2.1 browser sign-in instead of a pasted token).                                   |
+| `LOOM_OAUTH_ISSUER`    | empty            | OAuth is on: the public HTTPS base URL the discovery metadata advertises. Empty derives it per request.                 |
+| `LOOM_CORS_ORIGINS`    | empty (CORS off) | A browser application on another origin calls Loom directly. List exactly those origins; `*` refuses to start.          |
 
 OAuth sign-in through your identity provider also needs `LOOM_OAUTH_LOGIN_PROVIDER=oidc`
 and the `LOOM_OIDC_*` settings ([auth settings](../reference/configuration.md#auth)).
@@ -195,14 +214,20 @@ out of `.env`.
 
 ## ClickHouse requirements
 
-| Requirement                | Why                                                                                                         | ClickHouse Cloud                                                    | Self-managed OSS                                                                                                                                                       |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Lightweight `UPDATE`       | knowledge tombstones, memory reject, bulk tombstone                                                         | native                                                              | needs the MergeTree defaults in `deploy/clickhouse-config/merge_tree_settings.xml` (25.1 or later)                                                                     |
-| Keeper                     | the `KeeperMap` migration lock and the task-inbox lease table                                               | present                                                             | optional: `deploy/clickhouse-config/keeper.xml` runs one embedded node; without it the migration runner falls back to a lease row and `002_task_leases.sql` is skipped |
-| Experimental NLP functions | the stemmed and lemmatized lexical columns                                                                  | flag is read-only; the runner drops it and `stem()` runs without it | `nlp_user_settings.xml` and `lemmatizers.xml` with the Lemmagen3 model in `deploy/lemmagen3/`                                                                          |
-| `aiEmbed` (26.7 or later)  | only `loom reembed --in-database`                                                                           | where the service version has it                                    | needs a named collection (`named_collections.xml.template`)                                                                                                            |
-| The version CI tests       | `dev/ci_start_clickhouse.sh` and `dev/docker-compose.dev.yml` pin `clickhouse/clickhouse-server:26.5.1.882` | n/a                                                                 | run that version or later                                                                                                                                              |
+| Requirement                | Why                                                                                                                                                                                                                                                                                                      | ClickHouse Cloud                                                    | Self-managed OSS                                                                                                                                                                                       |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Lightweight `UPDATE`       | knowledge tombstones, memory reject, bulk tombstone                                                                                                                                                                                                                                                      | native                                                              | needs the MergeTree defaults in `deploy/clickhouse-config/merge_tree_settings.xml` (25.1 or later)                                                                                                     |
+| Keeper                     | the `KeeperMap` migration lock, the task-inbox lease table and the run id claims (a key lives only while a `run.begin` runs; one left by a begin that failed or died before writing its row stays until the same user and session re-begin and complete that id, or an erasure of its namespace or user) | present                                                             | optional: `deploy/clickhouse-config/keeper.xml` runs one embedded node; without it the migration runner falls back to a lease row and `002_task_leases.sql` and `025_agent_run_claims.sql` are skipped |
+| Experimental NLP functions | the stemmed and lemmatized lexical columns                                                                                                                                                                                                                                                               | flag is read-only; the runner drops it and `stem()` runs without it | `nlp_user_settings.xml` and `lemmatizers.xml` with the Lemmagen3 model in `deploy/lemmagen3/`                                                                                                          |
+| `aiEmbed` (26.7 or later)  | only `loom reembed --in-database`                                                                                                                                                                                                                                                                        | where the service version has it                                    | needs a named collection (`named_collections.xml.template`)                                                                                                                                            |
+| The version CI tests       | `dev/ci_start_clickhouse.sh` and `dev/docker-compose.dev.yml` pin `clickhouse/clickhouse-server:26.5.1.882`                                                                                                                                                                                              | n/a                                                                 | run that version or later                                                                                                                                                                              |
 
+- **Run ids without Keeper.** Without Keeper (or while Keeper fails) a narrowed
+  token's `run.begin` with a new caller-supplied `run_id` gets a server-made id
+  instead, so a client that makes the id itself must use the returned `run_id` (the
+  Claude Code and Codex plugins switch to it once run.begin answers). Known gap: a namespace-wide caller whose claim
+  hits a Keeper error while a narrowed user wins the claim on the same new id at the
+  same moment can end up sharing that id with them.
 - **ClickHouse Cloud.** Loom's DDL uses plain `MergeTree` engines, which Cloud runs as
   `SharedMergeTree`, so replication and durability come with the service. The one
   migration that needs the NLP functions is skipped and recorded, so the lexical leg
@@ -440,9 +465,33 @@ ledger row.
 
 The image serves plain HTTP. Put a TLS-terminating proxy or load balancer in front.
 
-- The server runs uvicorn with `--proxy-headers --forwarded-allow-ips='*'`, so it trusts
-  `X-Forwarded-*` from whatever reaches it. Do not publish the container port where a
-  client can bypass your proxy.
+- uvicorn honours `X-Forwarded-For` and `X-Forwarded-Proto` only from the peers in
+  `LOOM_TRUSTED_PROXIES` (default `127.0.0.1`); set it to your proxy's address or
+  network. `X-Forwarded-Host` is never read: client-facing URLs come from
+  `LOOM_PUBLIC_BASE_URL`.
+- With `deploy/standalone/compose.yaml` or `dev/docker-compose.cloud.yml` and a proxy on
+  the host, the proxy reaches Loom through the published port, so Loom sees the Docker
+  network's gateway as the peer, not `127.0.0.1`. Set `LOOM_TRUSTED_PROXIES` to that
+  gateway, which
+  `docker network inspect <project>_default -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}'`
+  prints. Left at the default, forwarded headers are dropped, URLs say `http://` and
+  every client shares the proxy's address for rate limits and sign-in lockouts. Every
+  process on the host also arrives from that gateway, so trust it only on a host you
+  control.
+- A non-loopback `LOOM_BIND_HOST` refuses to start without `LOOM_PUBLIC_BASE_URL`, and
+  with auth off or the dev JWT secret unless `LOOM_ALLOW_INSECURE=1`. With auth off, any
+  request whose `Host` is not a loopback host or the public URL's host gets `421` (DNS
+  rebinding). A request from a page on another origin (an `Origin` that is not the
+  server's own, or `Sec-Fetch-Site: cross-site` / `same-site`) gets `403` unless
+  `LOOM_CORS_ORIGINS` lists that origin: every request with auth off except following a
+  link to a page, and every non-GET request with auth on, since in proxy mode the proxy
+  adds the bearer itself. With `LOOM_PUBLIC_BASE_URL` set the `Origin` must be exactly
+  that scheme, host and port; without it, an `Origin` with the request's `Host` (host
+  and port, any scheme) counts. A proxy that rewrites `Host` needs
+  `LOOM_PUBLIC_BASE_URL` set for the dashboard's own calls to count as same-origin.
+- In a container the server listens on every interface, so the check trusts the
+  declared `LOOM_BIND_HOST`, not the socket: it must match the address the compose
+  file publishes the port on.
 - Raise the file-descriptor limit on anything that holds many connections; the compose
   files set `nofile` to 65536.
 - `/docs`, `/redoc`, `/openapi.json` and `/v1/api/openapi.json` answer without a token.

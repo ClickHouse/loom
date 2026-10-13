@@ -5582,6 +5582,7 @@ export interface MemorySetFromMessagesOutput {
   pipeline_errors?: string[];
   value_updates_linked?: number;
   stubbed_fields?: string[];
+  degraded?: string[];
   deferred?: boolean;
   queue_id?: string;
   deferred_by?: string;
@@ -5617,6 +5618,7 @@ export interface StackEntry {
   pinned?: boolean;
   recall_count?: number;
   last_recalled_at?: string | null;
+  actor?: string;
 }
 
 export interface MemoryStackOutput {
@@ -6997,6 +6999,7 @@ export interface ProcedureMatch {
   goal_similarity?: number | null;
   for_agent?: Record<string, number>;
   run_stats_by_agent?: Record<string, Record<string, number>>;
+  actor?: string;
 }
 
 export interface ProcedureMatchOutput {
@@ -7176,6 +7179,8 @@ export interface RunReflection {
 export interface RunCompleteInput {
   org: string;
   namespace: string;
+  user_id?: string;
+  session_id?: string;
   run_id: string;
   status: "completed" | "failed" | "cancelled";
   final_response?: string;
@@ -7395,6 +7400,7 @@ export interface SessionBriefGetOutput {
   head_sha?: string;
   author?: string;
   trigger?: string;
+  actor?: string;
   source_sessions?: string[];
   updated_at?: string | null;
   age_seconds?: number;
@@ -7427,6 +7433,7 @@ export interface SessionBriefSummary {
   goal?: string;
   status?: string;
   author?: string;
+  actor?: string;
   updated_at?: string | null;
   age_seconds?: number;
   brief_chars?: number;

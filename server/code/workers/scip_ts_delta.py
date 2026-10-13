@@ -38,15 +38,17 @@ from typing import TYPE_CHECKING
 
 from server.code.app.index.compiler_tier import (
     checkout_fetch_args,
-    communicate_or_kill,
     compiler_target,
     git,
     gone_documents,
     harness_failure,
     resolve_binary,
     resolve_checkout,
+    run_harness,
     run_tier,
 )
+from server.code.app.index.gitrepo import auth_env, communicate_or_kill, git_config_env
+from server.code.app.index.sandbox import tool_mounts
 from server.code.app.index.typescript_dependencies import (
     LOCKFILES,
     install_roots,
@@ -118,7 +120,7 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipTsDeltaResu
     if missing:
         result.skipped.append(f"{cfg.namespace}: {missing}")
         return
-    await git(checkout, *checkout_fetch_args(bare, target))
+    await git(checkout, *checkout_fetch_args(bare, target), local_remote=bare)
     await git(checkout, "checkout", "--force", target)
     lockfile_changed = bool(scip_commit and await _lockfile_changed(checkout, scip_commit, target))
     if lockfile_changed:
@@ -179,6 +181,7 @@ def _harness_env(delta_path: Path, projects: tuple[str, ...] = ()) -> dict[str, 
     # sits beside the LINK, not beside its target
     binary = resolve_binary(settings.code_scip_typescript_path)
     env = {
+        **git_config_env(),
         # the binary's directory first: an npm-installed scip-typescript sits
         # beside the pnpm / node shims the harness needs
         "PATH": f"{binary.parent}:{os.environ.get('PATH', os.defpath)}",
@@ -211,8 +214,9 @@ async def _lockfile_changed(checkout: Path, base: str, head: str) -> bool:
         *(f":(glob)**/{lock}" for lock in _LOCKFILES),  # a project's own lockfile too
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
+        env=auth_env(),
     )
-    out = await communicate_or_kill(proc, 120.0)
+    out, _err = await communicate_or_kill(proc, timeout_s=120.0)
     return bool(out.strip())
 
 
@@ -222,28 +226,18 @@ async def _run_harness(
     """`run_typescript_delta.sh` in DELTA_OUT mode: index, convert, write
     the JSON delta — no upload, no watermark read (the worker owns both)."""
     env = await asyncio.to_thread(_harness_env, delta_path, projects)
-    proc = await asyncio.create_subprocess_exec(
-        "bash",
-        str(_HARNESS),
-        str(checkout),
-        base,
-        head,
-        env=env,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-        start_new_session=True,
+    binary = await asyncio.to_thread(resolve_binary, settings.code_scip_typescript_path)
+    returncode, out = await run_harness(
+        _HARNESS,
+        checkout,
+        [base, head],
+        env,
+        out_dir=delta_path.parent,
+        timeout_s=settings.code_scip_ts_delta_timeout_seconds,
+        readonly=tool_mounts(binary.parent),
     )
-    try:
-        out = await communicate_or_kill(
-            proc, settings.code_scip_ts_delta_timeout_seconds, group=True
-        )
-    except TimeoutError:
-        raise RuntimeError(
-            f"harness timed out after {settings.code_scip_ts_delta_timeout_seconds}s"
-        ) from None
-    tail = out.decode("utf-8", "replace")[-2000:]
-    if proc.returncode != 0:
-        raise harness_failure(proc.returncode, tail)
+    if returncode != 0:
+        raise harness_failure(returncode, out[-2000:])
 
 
 __all__ = ["PRODUCER", "WATERMARK", "CodeScipTsDeltaResult", "run_pass"]

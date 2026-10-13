@@ -93,6 +93,7 @@ services:
       LOOM_CH_HOST: clickhouse
       LOOM_CH_PORT: "8123"
       LOOM_CH_USER: loom
+      LOOM_CH_READER_USER: loom_reader
       LOOM_CH_PASSWORD: loomdev
       LOOM_CH_DATABASE: loom
       LOOM_CH_SECURE: "false"
@@ -157,6 +158,8 @@ services:
       # one service (workers in-process, under the supervisor lease).
       LOOM_DEPLOYMENT: "1"
       LOOM_INSTANCE_LABEL: "deploy:dev"
+      # The address the port is published on; see docs/operations/deployment.md.
+      LOOM_BIND_HOST: "${LOOM_BIND_HOST:-127.0.0.1}"
       # Self-service repositories must make progress in the stock stack. These
       # workers are idle until a repository is added and do not require an LLM.
       LOOM_CODE_INGEST_ENABLED: "${LOOM_CODE_INGEST_ENABLED:-true}"

@@ -49,11 +49,14 @@ def _health_provider_fields(
     error — a configured fake is a warn unless LOOM_REQUIRE_REAL_PROVIDERS.
     """
     from server.auth import revocation
+    from server.code.app.index.sandbox import layout_refusal, sandbox_state
+    from server.core.ch import reader_user_error, reader_user_state
     from server.embedding.embedder import effective_embedding_dim
     from server.llm.client import provider_key_missing
     from server.observability import instance as _instance
     from server.observability import provider_health
     from server.observability.problems import HealthState, collect_problems, derive_status
+    from server.tasks.store.runs import claims_atomic
     from server.workers import leader as _leader
 
     embedding_model = settings.embedding_model
@@ -77,6 +80,11 @@ def _health_provider_fields(
             revocation_age_s=revocation.snapshot_age_seconds(),
             main_reachable=reachable if isinstance(reachable, bool) else None,
             main_error=str(main.get("error") or ""),
+            repo_sandbox=sandbox_state(),
+            repo_sandbox_refusal=layout_refusal(),
+            ch_reader_ok=reader_user_state(),
+            ch_reader_error=reader_user_error(),
+            run_claims_atomic=claims_atomic(),
         ),
     )
     return {

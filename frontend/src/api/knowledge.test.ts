@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { downloadKnowledge, fetchKnowledgeInlineUrl } from "./knowledge";
+import { downloadKnowledge, fetchKnowledgeInlineUrl, previewKind } from "./knowledge";
 import { ApiError } from "../lib/errors";
 
 // knowledge.download is a GET the browser then saves; it rides the shared request path,
@@ -108,5 +108,87 @@ describe("downloadKnowledge success", () => {
     const { saved } = captureDownload();
     await downloadKnowledge(id, "doc://a", "a.md");
     expect(saved.map((s) => s.download)).toEqual(["a.md"]);
+  });
+});
+
+describe("previewKind", () => {
+  it("previews only passive text and raster image types", () => {
+    for (const t of ["text/plain", "text/plain; charset=utf-8", "TEXT/MARKDOWN", "text/csv", "application/json"])
+      expect(previewKind(t)).toBe("text");
+    for (const t of ["image/png", "image/jpeg", "image/gif", "image/webp"]) expect(previewKind(t)).toBe("image");
+  });
+
+  it("downloads active, unknown and document types", () => {
+    for (const t of [
+      "text/html",
+      "image/svg+xml",
+      "application/xhtml+xml",
+      "application/xml",
+      "text/xml",
+      "application/pdf",
+      "application/octet-stream",
+      "text/javascript",
+      "",
+      "garbage",
+    ])
+      expect(previewKind(t)).toBe("download");
+  });
+});
+
+describe("fetchKnowledgeInlineUrl re-types the blob", () => {
+  function captureBlobs() {
+    const blobs: Blob[] = [];
+    vi.stubGlobal(
+      "URL",
+      class extends URL {
+        static createObjectURL = vi.fn((b: Blob) => {
+          blobs.push(b);
+          return `blob:p-${blobs.length}`;
+        });
+        static revokeObjectURL = vi.fn();
+      },
+    );
+    return blobs;
+  }
+
+  it("serves text as text/plain whatever the response says it is", async () => {
+    stubFetch(200, "<script>alert(1)</script>", { "Content-Type": "text/markdown" });
+    const blobs = captureBlobs();
+    const p = await fetchKnowledgeInlineUrl(id, "doc://a");
+    expect(p).toMatchObject({ kind: "text", url: "blob:p-1" });
+    expect(blobs[0].type).toBe("text/plain;charset=utf-8");
+  });
+
+  it("gives an image its own allowlisted type", async () => {
+    stubFetch(200, "x", { "Content-Type": "image/png; foo=bar" });
+    const blobs = captureBlobs();
+    expect(await fetchKnowledgeInlineUrl(id, "doc://a")).toMatchObject({ kind: "image", url: "blob:p-1" });
+    expect(blobs[0].type).toBe("image/png");
+  });
+
+  it("makes no URL for an active or unknown type", async () => {
+    for (const t of ["text/html", "image/svg+xml", "application/pdf", "application/octet-stream"]) {
+      stubFetch(200, "<svg onload=alert(1)>", { "Content-Type": t });
+      const blobs = captureBlobs();
+      expect(await fetchKnowledgeInlineUrl(id, "doc://a")).toMatchObject({ kind: "download", url: null });
+      expect(blobs).toEqual([]);
+    }
+  });
+});
+
+describe("downloadKnowledge blob", () => {
+  it("is application/octet-stream so the blob: URL never renders", async () => {
+    stubFetch(200, "<html><script>alert(1)</script>", { "Content-Type": "text/html" });
+    const blobs: Blob[] = [];
+    vi.stubGlobal(
+      "URL",
+      class extends URL {
+        static createObjectURL = vi.fn((b: Blob) => (blobs.push(b), "blob:d"));
+        static revokeObjectURL = vi.fn();
+      },
+    );
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    await downloadKnowledge(id, "doc://a", "a.html");
+    expect(blobs.map((b) => b.type)).toEqual(["application/octet-stream"]);
   });
 });

@@ -29,11 +29,11 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client
+from server.memory.app.high_fence import fence_high, tombstone_chunks_of
 from server.memory.domain.sensitivity import HIGH, MEDIUM, detect_sensitivity, sensitivity_tags
 
 # RE2, for ClickHouse `match()`: a superset of the shapes in
@@ -180,7 +180,6 @@ class ApplyResult:
     high: int = 0
     medium: int = 0
     embeddings_tombstoned: int = 0  # high rows' embedding rows
-    entity_vectors_tombstoned: int = 0  # high rows' entity vectors
     embeddings_tagged: int = 0  # medium rows' embedding rows re-emitted with the tag
     errors: list[str] = field(default_factory=list)
 
@@ -190,27 +189,9 @@ class ApplyResult:
             "high": self.high,
             "medium": self.medium,
             "embeddings_tombstoned": self.embeddings_tombstoned,
-            "entity_vectors_tombstoned": self.entity_vectors_tombstoned,
             "embeddings_tagged": self.embeddings_tagged,
             "errors": len(self.errors),
         }
-
-
-async def _tombstone_entity_vectors(c: SweepCandidate, *, now: datetime, ch: _CHClient) -> int:
-    from server.memory.store.sweeps import entity_vectors_live_sql
-
-    live = await ch.query_all(
-        entity_vectors_live_sql(),
-        params={"org": c.org, "ns": c.namespace, "keys": [c.memory_key]},
-    )
-    if not live:
-        return 0
-    await ch.insert(
-        "loom.entity_vectors",
-        [{**row, "tombstoned_at": now} for row in live],
-        settings={"async_insert": 0, "wait_for_async_insert": 1},
-    )
-    return len(live)
 
 
 async def _tag_embeddings(c: SweepCandidate, *, ch: _CHClient) -> int:
@@ -222,7 +203,8 @@ async def _tag_embeddings(c: SweepCandidate, *, ch: _CHClient) -> int:
         build_embedding_row,
         insert_embedding_rows,
         live_embedding_rows_for_key,
-        next_version,
+        reemit_version,
+        retire_copies_under_unembedded_heads,
     )
 
     rows = await live_embedding_rows_for_key(
@@ -244,12 +226,13 @@ async def _tag_embeddings(c: SweepCandidate, *, ch: _CHClient) -> int:
             build_embedding_row(
                 **(
                     {col: val for col, val in r.items() if col in EMBEDDING_PERSISTED_COLS}
-                    | {"tags": [*tags, *extra], "version": next_version()}
+                    | {"tags": [*tags, *extra], "version": reemit_version(r)}
                 )
             )
         )
     if out:
         await insert_embedding_rows(out, ch=ch)
+        await retire_copies_under_unembedded_heads(out, ch=ch)
     return len(out)
 
 
@@ -263,34 +246,46 @@ async def apply(candidates: list[SweepCandidate], *, ch: _CHClient | None = None
     now = naive_utc_now()
     for c in candidates:
         try:
+            version = memory_repo.next_version()  # the relabel's, which the high retire carries
 
-            def _relabel(existing: Any, _c: SweepCandidate = c) -> dict[str, Any]:
+            def _relabel(
+                existing: Any, _c: SweepCandidate = c, _v: int = version
+            ) -> dict[str, Any]:
                 tags = list(getattr(existing, "tags", None) or [])
                 return {
                     "sensitivity": _c.level,
                     "tags": [*tags, *sensitivity_tags(_c.level, tags)],
                     "updated_at": now,
+                    "version": _v,
                 }
 
+            if c.level == HIGH:
+                # Vectors and chunks go first, at the relabel's version: if they fail,
+                # the row keeps its empty label and the next pass retries it (the
+                # scan only reads unlabelled rows).
+                key = (c.org, c.namespace, c.agent, c.user_id, c.session_id, c.memory_key)
+                retired = await memory_repo.retire_vectors_for_keys([(key, version)], ch=ch)
+                await fence_high([(key, version)], ch=ch)
             n = await memory_repo.write_versions_by_ids(c.org, [c.memory_id], _relabel, ch=ch)
             if not n:
                 continue  # gone between scan and apply
             result.relabelled += n
             if c.level == HIGH:
                 result.high += 1
-                result.embeddings_tombstoned += await memory_repo.tombstone_embeddings_for_key(
-                    c.org,
-                    c.namespace,
-                    c.agent,
-                    c.user_id,
-                    c.session_id,
-                    c.memory_key,
-                    ts=now,
-                    ch=ch,
+                result.embeddings_tombstoned += retired
+                # Again now the label is in: a chunk writer re-checks the head after its
+                # insert, and so does a reindex, so chunks or a vector that landed between
+                # the fence and the relabel saw an unlabelled head and stayed. The vector
+                # retire takes a version drawn now: a reindexed row sits above the fence.
+                await tombstone_chunks_of([key], ch=ch)
+                heads = await memory_repo.memory_rows_by_identity_keys(
+                    [key], ch=ch, sequential=memory_repo.read_your_writes_enabled()
                 )
-                result.entity_vectors_tombstoned += await _tombstone_entity_vectors(
-                    c, now=now, ch=ch
-                )
+                head = heads.get(key)
+                if head is not None and int(head.version) == version:  # still this relabel
+                    await memory_repo.retire_vectors_for_keys(
+                        [(key, memory_repo.next_version())], ch=ch
+                    )
             else:
                 result.medium += 1
                 result.embeddings_tagged += await _tag_embeddings(c, ch=ch)

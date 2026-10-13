@@ -209,6 +209,7 @@ async def handle_blacklist_sweep(input: BlacklistSweepInput) -> BlacklistSweepOu
 async def handle_blacklist_list(
     input: BlacklistListInput,
 ) -> BlacklistListOutput:
+    # A token narrowed to one user never reaches here (NARROW_SAFE_OPS).
     rows = await blacklist_repo.list_for_scope(
         input.org,
         input.namespace,

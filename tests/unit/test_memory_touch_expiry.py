@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_crud import MemoryTouchInput
 from server.memory.app import handlers as mem_handlers
 from server.memory.app import restore as _restore_mod
@@ -36,7 +37,7 @@ def stubs(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     rows = {k: _row(k, entities=["mergetree"], reinforcement_count=4) for k in ("a", "b")}
 
     async def _get_many(
-        ident: Any, keys: list[str], *, ch: Any = None, strong: bool = False
+        ident: Any, keys: list[str], *, ch: Any = None, strong: bool = False, scope: Any = None
     ) -> list[Any]:
         calls["many"].append((list(keys), strong))
         return [rows[k] for k in keys if k in rows]
@@ -178,12 +179,12 @@ async def test_the_heads_a_touch_writes_from_are_whole_rows() -> None:
     ident = mr.Identity(org="o", namespace="n", agent="a", user_id="-", session_id="-")
     written = mr.build_memory_version_row(_mk_row(), version=1)
     ch = _SQLCapture()
-    await mr.get_many_by_keys(ident, ["k"], ch=ch, strong=True)  # type: ignore[arg-type]
+    await mr.get_many_by_keys(ident, ["k"], ch=ch, strong=True, scope=WHOLE_NAMESPACE)  # type: ignore[arg-type]
     assert len(ch.sql) == 2 and "FINAL" not in ch.sql[1]
     select = ch.sql[1].split("FROM loom.memory", 1)[0]
     missing = [c for c in written if not re.search(rf"\b{c}\b", select)]
     assert missing == []
     # the plain bulk read (memory.bulk_get) keeps its narrower fetch
     ch = _SQLCapture()
-    await mr.get_many_by_keys(ident, ["k"], ch=ch)  # type: ignore[arg-type]
+    await mr.get_many_by_keys(ident, ["k"], ch=ch, scope=WHOLE_NAMESPACE)  # type: ignore[arg-type]
     assert "duplicate_of" not in ch.sql[1].split("FROM loom.memory", 1)[0]

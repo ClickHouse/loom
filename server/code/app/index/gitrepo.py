@@ -15,7 +15,10 @@ import fnmatch
 import logging
 import os
 import re
+import signal
 from dataclasses import dataclass
+from pathlib import Path
+from typing import TypedDict
 
 logger = logging.getLogger("loom.code_index.git")
 
@@ -66,17 +69,46 @@ def _rev(value: str) -> str:
     return value
 
 
-def auth_env(token: str, remote: str = "https://github.com/") -> dict[str, str]:
-    """The environment that authenticates git against `remote` with `token`: the
-    credential rides an `http.<remote>.extraheader` set through GIT_CONFIG_*, so it
-    appears in no argv, no remote URL, no stored config and no
-    `code_index_state.repo_remote`. Empty token = no change. GIT_TERMINAL_PROMPT=0 makes
-    a missing credential a failure, not a hang."""
-    env = dict(os.environ)
+def add_git_config(env: dict[str, str], key: str, value: str) -> None:
+    """Append one `-c key=value` to `env` through GIT_CONFIG_COUNT / _KEY_n / _VALUE_n."""
+    n = int(env.get("GIT_CONFIG_COUNT", "0"))
+    env[f"GIT_CONFIG_KEY_{n}"] = key
+    env[f"GIT_CONFIG_VALUE_{n}"] = value
+    env["GIT_CONFIG_COUNT"] = str(n + 1)
+
+
+def is_local_remote(remote: str) -> bool:
+    """A remote that is a path on this host (an operator's local mirror). As git
+    reads it: no `scheme://` and no `host:` before the first slash (`mirror.git`
+    and `dir/repo` are relative paths, `git@host:a/b` is ssh)."""
+    if remote.startswith("file://"):
+        return True
+    return bool(remote) and "://" not in remote and ":" not in remote.split("/", 1)[0]
+
+
+def auth_env(token: str = "", remote: str = "https://github.com/") -> dict[str, str]:
+    """The environment every repository-job git runs with. It inherits nothing
+    from the server but PATH, HOME, LANG and TMPDIR; no system or global git
+    config is read; only the https and ssh transports are allowed (plus local
+    paths when `remote` itself is one), so `ext::`, `file://` and the rest are
+    refused for submodules and redirects too. GIT_TERMINAL_PROMPT=0 makes a
+    missing credential a failure, not a hang.
+
+    `token` rides an `http.<remote>.extraheader`, so it appears in no argv, no
+    remote URL, no stored config and no `code_index_state.repo_remote`."""
+    env = {k: os.environ[k] for k in ("PATH", "HOME", "LANG", "TMPDIR") if k in os.environ}
     env["GIT_TERMINAL_PROMPT"] = "0"
-    if not token:
-        return env
-    if not remote.startswith(("https://", "http://")):
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    # The system config this replaces is where the image trusted mounted repos
+    # owned by another uid; inside the sandbox every file has a foreign owner.
+    add_git_config(env, "safe.directory", "*")
+    add_git_config(env, "protocol.allow", "never")
+    add_git_config(env, "protocol.https.allow", "always")
+    add_git_config(env, "protocol.ssh.allow", "always")
+    if is_local_remote(remote):
+        add_git_config(env, "protocol.file.allow", "always")
+    if not token or not remote.startswith(("https://", "http://")):
         return env
     host = remote.split("/")[2]
     username = {
@@ -85,23 +117,65 @@ def auth_env(token: str, remote: str = "https://github.com/") -> dict[str, str]:
         "bitbucket.org": "x-token-auth",
     }.get(host.split(":", 1)[0].lower(), "oauth2")
     basic = base64.b64encode(f"{username}:{token}".encode()).decode()
-    env["GIT_CONFIG_COUNT"] = "1"
-    env["GIT_CONFIG_KEY_0"] = f"http.https://{host}/.extraheader"
-    env["GIT_CONFIG_VALUE_0"] = f"AUTHORIZATION: basic {basic}"
+    add_git_config(env, f"http.https://{host}/.extraheader", f"AUTHORIZATION: basic {basic}")
     return env
 
 
+def git_config_env() -> dict[str, str]:
+    """`auth_env`'s git settings alone (no token), for a harness environment
+    built from scratch: the git a build or `go mod download` runs gets them too."""
+    return {k: v for k, v in auth_env().items() if k.startswith("GIT_")}
+
+
+class RemoteAccess(TypedDict, total=False):
+    """The `sandbox.JobOptions` a job talking to a remote needs."""
+
+    readonly: list[Path]
+    network: bool
+    allow_remote_port: int | None
+
+
+def remote_access(remote: str) -> RemoteAccess:
+    """`sandbox.run_job` arguments for a job talking to `remote`: a local mirror is
+    mounted read-only, any other remote is reached through the egress proxy."""
+    if is_local_remote(remote):
+        return {"readonly": [Path(remote.removeprefix("file://")).absolute()]}
+    return {"network": True, "allow_remote_port": remote_port(remote)}
+
+
+def remote_port(remote: str) -> int | None:
+    """The port a network remote is reached on: an explicit `:port`, else 443
+    for https and 22 for ssh. None for a local path."""
+    if is_local_remote(remote):
+        return None
+    if "://" not in remote:
+        return 22  # scp-style user@host:path
+    scheme, rest = remote.split("://", 1)
+    authority = rest.split("/", 1)[0].rsplit("@", 1)[-1]
+    if authority.rsplit(":", 1)[-1].isdigit() and not authority.endswith("]"):
+        return int(authority.rsplit(":", 1)[-1])
+    return 22 if scheme == "ssh" else 443
+
+
 async def communicate_or_kill(
-    proc: asyncio.subprocess.Process, stdin: bytes | None = None, *, timeout_s: float
+    proc: asyncio.subprocess.Process,
+    stdin: bytes | None = None,
+    *,
+    timeout_s: float,
+    group: bool = False,
 ) -> tuple[bytes, bytes]:
     """`proc.communicate(stdin)` bounded by `timeout_s` (TimeoutError past it). On
     any exit that is not a normal finish — the timeout, the caller's cancellation (a
     `code.refresh` whose wait gave up, a dropped fan-out), any error — the child is
-    killed and reaped, so no git process outlives the call that started it."""
+    killed and reaped, so no git process outlives the call that started it. With
+    `group` (a child started in its own session) its whole process group is killed."""
     talk = proc.communicate(stdin) if stdin is not None else proc.communicate()
     try:
         return await asyncio.wait_for(talk, timeout=timeout_s)
     except BaseException:
+        if group:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(proc.pid, signal.SIGKILL)
         await _kill(proc)
         raise
 
@@ -124,30 +198,56 @@ async def _git(
     git_dir: str,
     *args: str,
     timeout_s: float = _GIT_TIMEOUT_S,
+    remote: str = "",
     token: str = "",
     stdin: bytes | None = None,
 ) -> str:
-    proc = await asyncio.create_subprocess_exec(
-        "git",
-        *UNQUOTED_PATHS,
-        "--git-dir",
-        git_dir,
-        *args,
-        stdin=asyncio.subprocess.PIPE if stdin is not None else None,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=auth_env(token),
-    )
-    try:
-        out, err = await communicate_or_kill(proc, stdin, timeout_s=timeout_s)
-    except TimeoutError:
-        raise GitError(f"git {' '.join(args[:2])} timed out after {timeout_s}s") from None
-    if proc.returncode != 0:
+    """A git command on the bare clone. With `remote` it talks to that remote, so it
+    runs as a repository job (sandbox.run_job): the network only through the egress
+    proxy, the clone the one writable path, `token` for the remote's host."""
+    argv = ["git", *UNQUOTED_PATHS, "--git-dir", git_dir, *args]
+    returncode: int | None
+    if remote:
+        returncode, out, err = await _network_git(argv, git_dir, remote, token, stdin, timeout_s)
+    else:
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            stdin=asyncio.subprocess.PIPE if stdin is not None else None,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=auth_env(),
+        )
+        try:
+            out, err = await communicate_or_kill(proc, stdin, timeout_s=timeout_s)
+        except TimeoutError:
+            raise GitError(f"git {' '.join(args[:2])} timed out after {timeout_s}s") from None
+        returncode = proc.returncode
+    if returncode != 0:
         raise GitError(
-            f"git {' '.join(args[:3])} rc={proc.returncode}: "
+            f"git {' '.join(args[:3])} rc={returncode}: "
             f"{_redact(err.decode('utf-8', 'replace'), token)[:500]}"
         )
     return out.decode("utf-8", "replace")
+
+
+async def _network_git(
+    argv: list[str], git_dir: str, remote: str, token: str, stdin: bytes | None, timeout_s: float
+) -> tuple[int, bytes, bytes]:
+    from server.code.app.index.sandbox import run_job
+
+    try:
+        done = await run_job(
+            argv,
+            env=auth_env(token, remote),
+            timeout_s=timeout_s,
+            writable=[Path(git_dir)],
+            stdin=stdin,
+            keep_stdout=True,
+            **remote_access(remote),
+        )
+    except TimeoutError:
+        raise GitError(f"git {' '.join(argv[5:7])} timed out after {timeout_s}s") from None
+    return done.returncode, done.stdout, done.stderr
 
 
 async def run(git_dir: str, *args: str, timeout_s: float = _GIT_TIMEOUT_S) -> str:
@@ -172,7 +272,7 @@ async def run_bounded(
         *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
-        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        env=auth_env(),
     )
     assert proc.stdout is not None
     chunks: list[bytes] = []
@@ -235,7 +335,7 @@ async def grep_paths(
         *pathspecs,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
-        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        env=auth_env(),
     )
     try:
         out, err = await communicate_or_kill(proc, timeout_s=timeout_s)
@@ -273,7 +373,7 @@ async def is_ancestor(
         descendant,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,
-        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        env=auth_env(),
     )
     try:
         await communicate_or_kill(proc, timeout_s=timeout_s)
@@ -335,6 +435,7 @@ async def fetch(git_dir: str, remote: str, branch: str, *, token: str = "") -> N
         remote,
         f"+refs/heads/{branch}:refs/heads/{branch}",
         timeout_s=_FETCH_TIMEOUT_S,
+        remote=remote,
         token=token,
     )
 
@@ -353,6 +454,7 @@ async def fetch_many(git_dir: str, remote: str, branches: list[str], *, token: s
         remote,
         *(f"+refs/heads/{b}:refs/heads/{b}" for b in wanted),
         timeout_s=_FETCH_TIMEOUT_S,
+        remote=remote,
         token=token,
     )
 
@@ -394,7 +496,15 @@ def parse_ls_remote_heads(text: str) -> dict[str, str]:
 async def remote_branches(git_dir: str, remote: str, *, token: str = "") -> dict[str, str]:
     """Every branch the remote advertises with its tip (one `ls-remote
     --heads`; ~1 MB for a repository with 16k heads, 0.3 s)."""
-    out = await _git(git_dir, "ls-remote", "--heads", remote, timeout_s=_GIT_TIMEOUT_S, token=token)
+    out = await _git(
+        git_dir,
+        "ls-remote",
+        "--heads",
+        remote,
+        timeout_s=_GIT_TIMEOUT_S,
+        remote=remote,
+        token=token,
+    )
     return parse_ls_remote_heads(out)
 
 
@@ -436,6 +546,7 @@ async def fetch_branches(git_dir: str, remote: str, branches: list[str], *, toke
         "--stdin",
         remote,
         timeout_s=_FETCH_TIMEOUT_S,
+        remote=remote,
         token=token,
         stdin=refspecs,
     )
@@ -461,6 +572,7 @@ async def fetch_shas(git_dir: str, remote: str, shas: list[str], *, token: str =
         "--stdin",
         remote,
         timeout_s=_FETCH_TIMEOUT_S,
+        remote=remote,
         token=token,
         stdin=refspecs,
     )
@@ -503,7 +615,13 @@ async def remote_pull_heads(git_dir: str, remote: str, *, token: str = "") -> di
     """Every PR head upstream: PR number → tip sha. One `ls-remote` (5.5 MB / 87,904
     refs in ~1 s on ClickHouse/ClickHouse)."""
     out = await _git(
-        git_dir, "ls-remote", remote, f"{PULL_HEAD_PREFIX}*/head", timeout_s=60.0, token=token
+        git_dir,
+        "ls-remote",
+        remote,
+        f"{PULL_HEAD_PREFIX}*/head",
+        timeout_s=60.0,
+        remote=remote,
+        token=token,
     )
     return parse_ls_remote_pull_heads(out)
 
@@ -554,6 +672,7 @@ async def fetch_pull_heads(
         "--stdin",
         remote,
         timeout_s=_FETCH_TIMEOUT_S,
+        remote=remote,
         token=token,
         stdin=refspecs,
     )
@@ -767,6 +886,7 @@ async def show_file(git_dir: str, sha: str, path: str) -> bytes | None:
         f"{sha}:{path}",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        env=auth_env(),
     )
     try:
         out, _err = await communicate_or_kill(proc, timeout_s=_GIT_TIMEOUT_S)

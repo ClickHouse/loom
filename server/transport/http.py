@@ -29,7 +29,7 @@ from server.code.app.common import (
     schedule_code_trace_validation_failure,
 )
 from server.core import idempotency, read_replica
-from server.core.errors import IdentityIncompleteError, LoomServerError
+from server.core.errors import AuthInsufficientError, IdentityIncompleteError, LoomServerError
 from server.observability.consumer import (
     bind_current_consumer,
     explicit_consumer,
@@ -50,6 +50,7 @@ from server.transport import gates
 from server.transport._common import (
     ANONYMOUS_ACTOR,
     bind_request,
+    ledger_identity,
     request_identity,
     validation_errors,
     validation_note,
@@ -183,6 +184,7 @@ class _HttpCall:
     raw_body: dict[str, Any] = field(default_factory=dict)
     auth: AuthInfo | None = None
     identity: dict[str, str] = field(default_factory=dict)
+    target: gates.Target | None = None
 
 
 def _begin_request(op: Operation, request: Request, response: Response) -> str:
@@ -397,9 +399,10 @@ def _rate_limit(op: Operation, response: Response, call: _HttpCall, target: gate
 
 async def _bind_context_and_policy(
     op: Operation, request: Request, call: _HttpCall, target: gates.Target, payload: Any
-) -> None:
+) -> Any:
     """The verified caller and the ambient run id on the request context,
-    then the history policy gate — a structured 403 when it denies."""
+    then the read scope, then the history policy gate (a structured 403 when
+    it denies) on the scoped input. Returns the input the handler runs with."""
     request_id, raw_body, auth = call.request_id, call.raw_body, call.auth
     # Make auth visible to handlers via request.state and a ContextVar
     # (so handlers can read the caller's identity without taking Request).
@@ -415,6 +418,14 @@ async def _bind_context_and_policy(
 
     set_ledger_run(request.headers.get("X-Loom-Run-Id") or "")
 
+    # Read scope first: a body naming another user than the token's pin is refused
+    # before any rule is evaluated for that user, and the policy sees the pinned input.
+    try:
+        payload = gates.read_scope(op, auth, payload)
+    except IdentityIncompleteError as e:
+        raise _refuse(op, call, 400, "IDENTITY_INCOMPLETE", e) from e
+    except AuthInsufficientError as e:
+        raise _refuse(op, call, 403, gates.ROLE_REFUSAL_CODE, e) from e
     # History policy: after the role check, before the
     # handler. No-op when LOOM_POLICY_MODE=off or no rule applies; in
     # shadow it only records; in enforce a denial is a structured 403
@@ -433,6 +444,7 @@ async def _bind_context_and_policy(
             error_code="POLICY_FORBIDDEN",
         )
         raise HTTPException(status_code=403, detail=e.to_detail()) from e
+    return payload
 
 
 def _record_failure(op: Operation, identity: dict[str, str], elapsed_ms: int) -> None:
@@ -511,7 +523,8 @@ async def _run_handler(op: Operation, payload: Any, call: _HttpCall) -> tuple[An
     request_id, raw_body, identity = call.request_id, call.raw_body, call.identity
     start = time.perf_counter()
     try:
-        result = await op.handler(payload)
+        with gates.tenant_slot(call.auth, call.target):
+            result = await op.handler(payload)
     except HTTPException as he:
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         _emit_event(
@@ -681,9 +694,9 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
         call.identity = request_identity(raw_body)
 
         # The shared admission sequence (server/transport/gates.py):
-        # authorization target, authorization, policy, then the limiter.
-        target = await _authorize(op, response, call, payload)
-        await _bind_context_and_policy(op, request, call, target, payload)
+        # authorization target, authorization, read scope, policy, then the limiter.
+        call.target = target = await _authorize(op, response, call, payload)
+        payload = await _bind_context_and_policy(op, request, call, target, payload)
         _rate_limit(op, response, call, target)
         replay = await _idempotency_gate(op, request, response, call, target, payload)
         if replay.hit is not None:
@@ -760,7 +773,7 @@ def _emit_event(
     result: Any = None,
     error: BaseException | None = None,
 ) -> None:
-    identity = request_identity(raw_body)
+    identity = ledger_identity(raw_body)
     # memory_key (memory.* family) lets cost.summary roll up per key; empty
     # for ops without one.
     raw_memory_key = raw_body.get("memory_key", "")

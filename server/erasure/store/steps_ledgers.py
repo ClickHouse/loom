@@ -7,9 +7,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from server.core.repo_base import _CHClient
-from server.erasure.store.mutations import delete_scoped, tombstone_scoped
-from server.erasure.store.predicates import NS_EQ, UID
+from server.core.repo_base import _CHClient, _default_client
+from server.core.schema.migrate_lease import RUN_CLAIMS_TABLE_SQL, is_keeper_table
+from server.erasure.store import mutations as erasure_mutations
+from server.erasure.store.mutations import delete_scoped, namespaces_of, tombstone_scoped
+from server.erasure.store.predicates import NS_EQ, NS_IN, UID
 
 # ---------------------------------------------------------------------------
 # Steps for tables outside the census. Every `loom.*` table is a census row,
@@ -222,17 +224,36 @@ async def delete_learnings_queue_by_namespace(
     )
 
 
+async def _delete_run_claims(
+    org: str, scope_where: str, params: dict[str, Any], ch: _CHClient | None
+) -> None:
+    """agent_run_claims: the run ids and user ids of runs not yet closed. KeeperMap,
+    so a key drop rather than a part mutation (never in system.mutations), and
+    absent on a server without a Keeper."""
+    ch = ch or _default_client()
+    if not is_keeper_table(await ch.query_one(RUN_CLAIMS_TABLE_SQL)):
+        return
+    await erasure_mutations.run_keeper_delete(
+        "loom.agent_run_claims",
+        where=f"org = {{org:String}} AND {scope_where}",
+        params={"org": org, **params},
+        ch=ch,
+    )
+
+
 async def delete_agent_runs_by_namespace(
     org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
 ) -> int:
     """agent_runs: goal, user_request and final_response per run; RMT
-    without a soft-delete column."""
+    without a soft-delete column. The runs' claims go with them."""
+    await _delete_run_claims(org, NS_IN, {"ns": namespaces_of(namespace)}, ch)
     return await delete_scoped(
         "loom.agent_runs", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
     )
 
 
 async def delete_agent_runs_by_user(org: str, user_id: str, *, ch: _CHClient | None = None) -> int:
+    await _delete_run_claims(org, UID, {"uid": user_id}, ch)
     return await delete_scoped(
         "loom.agent_runs", org=org, scope_where=UID, params={"uid": user_id}, ch=ch
     )

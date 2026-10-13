@@ -16,6 +16,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import scope_and
+
 log = logging.getLogger(__name__)
 
 # Suffixes an extractor adds to avoid "overwriting" an attribute it has seen
@@ -132,17 +135,20 @@ async def supersede_same_key_rows(
         # The rows this write inserted moments ago must be visible so they are
         # recognised as the new rows and not retired themselves (CH Cloud
         # replicas; no-op on plain MergeTree).
+        params: dict[str, Any] = {"org": org, "ns": namespace, "keys": keys}
+        # A write retires only rows inside the writer's read scope.
+        in_scope = scope_and(request_scope(), params)
         live = await ch.query_all(
-            """
+            f"""
             SELECT toString(memory_id) AS memory_id, namespace, agent, user_id, session_id,
                    memory_key, value, pinned
             FROM loom.memory FINAL
-            WHERE org = {org:String} AND namespace = {ns:String}
-              AND memory_key IN {keys:Array(String)} AND tombstoned_at IS NULL
-              AND status IN ('active', 'duplicate', 'conflicted')
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND memory_key IN {{keys:Array(String)}} AND tombstoned_at IS NULL
+              AND status IN ('active', 'duplicate', 'conflicted'){in_scope}
             SETTINGS select_sequential_consistency = 1
             """,
-            params={"org": org, "ns": namespace, "keys": keys},
+            params=params,
         )
         victims = same_key_victims(new_rows, live)
         if not victims:

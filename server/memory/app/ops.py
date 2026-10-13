@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_admin import (
     MemoryAgentsListInput,
     MemoryAgentsListOutput,
@@ -82,11 +84,16 @@ async def handle_memory_outcome(input: MemoryOutcomeInput) -> MemoryOutcomeOutpu
     from server.core.ch import get_client
 
     ch = get_client()
-    # Resolve memory_key → memory_id when the caller addressed the row by key.
-    memory_id = input.memory_id
-    if not memory_id:
-        if not input.memory_key:
-            return MemoryOutcomeOutput(recorded=False, evidence_count_after=0)
+    # Resolve the row first, by key or by id, under the request's scope: a row
+    # outside it (or in another namespace) answers like a missing one, before
+    # any counter is read or written.
+    if input.memory_id:
+        row = await memory_repo.get_by_id(
+            input.memory_id, org=input.org, fresh=True, scope=request_scope()
+        )
+        if row is not None and row.namespace != input.namespace:
+            row = None
+    elif input.memory_key:
         ident = memory_repo.Identity(
             org=input.org,
             namespace=input.namespace,
@@ -94,10 +101,14 @@ async def handle_memory_outcome(input: MemoryOutcomeInput) -> MemoryOutcomeOutpu
             user_id=input.user_id or "-",
             session_id="-",
         )
-        row = await memory_repo.get_by_key(ident, input.memory_key, fresh=True)
-        if row is None:
-            return MemoryOutcomeOutput(recorded=False, evidence_count_after=0)
-        memory_id = str(row.memory_id)
+        row = await memory_repo.get_by_key(
+            ident, input.memory_key, fresh=True, scope=request_scope()
+        )
+    else:
+        row = None
+    if row is None:
+        return MemoryOutcomeOutput(recorded=False, evidence_count_after=0)
+    memory_id = str(row.memory_id)
 
     if input.outcome in ("positive", "used"):
         try:
@@ -246,6 +257,93 @@ def _reindex_texts(r: dict[str, Any]) -> tuple[str, str, str]:
     )
 
 
+async def _recheck_reindexed_heads(
+    rows: list[dict[str, Any]], written: list[dict[str, Any]], *, ch: Any, model: str
+) -> None:
+    """The heads, re-read after the insert, against what the reindex read (`rows`, each
+    with the `memory_version` it read) and wrote (`written`, the same order). No
+    write below takes a fresh version: each sits just above the newest version it
+    read, so a 'high' write that lands later still fences above it. (The copy paths —
+    touch, verify, apply, the entity tagger — never copy a vector under a head that
+    is not embedded, so nothing re-emits the reindexed row under a 'high' head.)
+
+    - A head no longer embedded ('high', unsearchable, gone): the key's vectors are
+      retired two above the newest version read (the reindexed row, the head).
+    - A head whose version changed with the same value and type (a touch, a verify, a
+      tag): the reindexed vectors are re-emitted on the current head's columns.
+    - A head whose value changed (a newer write landed between the reads, its vector
+      may sit under the reindexed one): a dim-0 stub of the current head for the embed
+      worker, which fills it at + 1 from the head's value."""
+    import server.memory.store as memory_repo
+    from server.memory.domain.memory_types import is_embedded
+    from server.memory.store import read_your_writes_enabled
+
+    sequential = read_your_writes_enabled()
+    read = {memory_repo.embedding_key(r): (r, w) for r, w in zip(rows, written, strict=True)}
+    heads = await memory_repo.memory_rows_by_identity_keys(list(read), ch=ch, sequential=sequential)
+    gone: list[tuple[Any, int]] = []
+    changed: list[Any] = []
+    for key, (r, w) in read.items():
+        head = heads.get(key)
+        if head is None or not is_embedded(head.memory_type, head.sensitivity):
+            # Two above the newest version read: a read + 1 copy of the reindexed row
+            # (touch, verify, the entity tagger) inserted after this retire stays below.
+            newest = max(int(w["version"]), int(head.version) if head is not None else 0)
+            gone.append((key, newest + 2))
+        elif int(head.version) != int(r["memory_version"]):
+            changed.append(key)
+    if gone:
+        await memory_repo.retire_vectors_for_keys(gone, ch=ch)
+    if not changed:
+        return
+    mirror = await memory_repo.memory_mirror_rows_for_keys(changed, ch=ch, sequential=sequential)
+    out: list[dict[str, Any]] = []
+    for m in mirror:
+        r, w = read[memory_repo.embedding_key(m)]
+        cols = {k: v for k, v in m.items() if k not in ("created_at", "version")}
+        version = max(int(m["version"]), int(w["version"])) + 1
+        same_text = (m["content_excerpt"], m["memory_type"]) == (
+            r["content_excerpt"],
+            r["memory_type"],
+        )  # the embed text depends on both
+        if same_text:  # keep the vectors
+            vectors = {
+                c: w[c]
+                for c in (
+                    "content_excerpt",
+                    "embedding_model",
+                    "embedding_dim",
+                    "embedding",
+                    "memory_key_embedding",
+                    "memory_key_embedding_dim",
+                )
+            }
+            out.append(
+                memory_repo.build_embedding_row(
+                    **(cols | vectors),
+                    embed_attempts=1,
+                    created_at=m["created_at"],
+                    version=version,
+                )
+            )
+        else:
+            out.append(
+                memory_repo.build_embedding_row(
+                    **cols,
+                    embedding_model=model,
+                    embedding_dim=0,
+                    embedding=[],  # dim 0: the worker's queue
+                    tombstoned_at=None,
+                    embed_attempts=0,
+                    created_at=m["created_at"],
+                    version=version,
+                )
+            )
+    if out:
+        await memory_repo.insert_embedding_rows(out, ch=ch)
+        await memory_repo.retire_copies_under_unembedded_heads(out, ch=ch)
+
+
 async def handle_memory_reindex(input: MemoryReindexInput) -> MemoryReindexOutput:
     """Re-embed a namespace's memories whose vectors were made by another embedding model (or all of
     them with `force`)."""
@@ -296,7 +394,8 @@ async def handle_memory_reindex(input: MemoryReindexInput) -> MemoryReindexOutpu
         key_vec = key_vecs.get(i, [])
         embedding_rows.append(
             memory_repo.build_embedding_row(
-                **{**r, "content_excerpt": texts[i][0]},
+                **{k: v for k, v in r.items() if k not in ("memory_version", "content_excerpt")},
+                content_excerpt=texts[i][0],
                 embedding_model=target_model,
                 embedding_dim=embedder.dim,
                 embedding=vectors[i],
@@ -306,6 +405,9 @@ async def handle_memory_reindex(input: MemoryReindexInput) -> MemoryReindexOutpu
             )
         )
     await memory_repo.insert_embedding_rows(embedding_rows, ch=ch)
+    await _recheck_reindexed_heads(rows, embedding_rows, ch=ch, model=target_model)
+    # One above versions read before the embed call: under the BM25 watermark.
+    await memory_repo.index_late_rows(embedding_rows, ch=ch)
 
     return MemoryReindexOutput(
         processed=len(embedding_rows),
@@ -396,8 +498,12 @@ async def _open_conflict_for_edge(org: str, namespace: str, from_key: str, to_ke
         org=org, namespace=namespace, agent="*", user_id="-", session_id="-"
     )
     try:
-        a = await memory_repo.get_by_key(ident, from_key, fresh=True, strong=True)
-        b = await memory_repo.get_by_key(ident, to_key, fresh=True, strong=True)
+        a = await memory_repo.get_by_key(
+            ident, from_key, fresh=True, strong=True, scope=WHOLE_NAMESPACE
+        )
+        b = await memory_repo.get_by_key(
+            ident, to_key, fresh=True, strong=True, scope=WHOLE_NAMESPACE
+        )
     except Exception as e:  # noqa: BLE001 — the edge is kept
         log.warning("memory.link contradicts: lookup failed (%s); edge kept", e)
         return False

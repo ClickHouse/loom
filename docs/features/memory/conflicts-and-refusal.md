@@ -160,7 +160,9 @@ bulk and extraction paths skip the entry and count it.
 | `sweep`        | Also tombstone the live rows the pattern already matches.                          |
 
 `blacklist.add` is a writer op and an MCP tool (`loom_blacklist_add`), so an agent can
-honour "never remember my home address" inside the conversation.
+honour "never remember my home address" inside the conversation. A token bounded to one
+user (`read_scope` `own_user` / `own_session`) gets `AUTH_INSUFFICIENT` on every
+`blacklist.*` op: a pattern refuses every user's writes in the namespace.
 
 A regex is checked at add time: at most 256 characters, no nested quantifier such as
 `(a+)+`, and a probe that finishes inside 1 ms.

@@ -56,14 +56,7 @@ class Attempts:
 
 
 def client_address(request: Any) -> str:
-    """The address an attempt limit counts. Behind the TLS proxy Loom is
-    deployed with, the LAST X-Forwarded-For hop is the one that proxy
-    appended; every hop before it is whatever the client sent, so keying on
-    the first let a caller mint a fresh bucket per request.
-    Known limit: one trusted proxy hop; behind a chain every caller shares the
-    outer proxy's bucket (safe, strict) — a trusted-hop count is the upgrade."""
-    forwarded: str = request.headers.get("x-forwarded-for", "")
-    hops = [h.strip() for h in forwarded.split(",")]
-    if hops[-1]:
-        return hops[-1]
+    """The address an attempt limit counts: the connection's peer. uvicorn has
+    already replaced it with the X-Forwarded-For client when the peer is one
+    of LOOM_TRUSTED_PROXIES, so a header from any other peer changes nothing."""
     return request.client.host if request.client else "?"

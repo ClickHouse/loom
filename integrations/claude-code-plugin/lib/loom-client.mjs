@@ -591,24 +591,80 @@ export function postFireAndForget(opName, body, { token, serverUrl, timeoutMs } 
  * verdict): the parsed body of a 2xx answer, else null. `timeoutMs` may
  * exceed the default for a caller that runs rarely (the repository lookup).
  */
-export async function postBounded(opName, body, { token, serverUrl, timeoutMs } = {}) {
-  const bearer = token || resolveToken();
-  if (!bearer) return null;
-  const bound = Number(timeoutMs) > 0 ? Number(timeoutMs) : requestTimeoutMs();
-  const res = await requestJson(opUrl(opName, serverUrl), { body, token: bearer, timeoutMs: bound });
+export async function postBounded(opName, body, opts = {}) {
+  const res = await postBoundedResult(opName, body, opts);
   return res.status >= 200 && res.status < 300 && res.body && typeof res.body === "object" ? res.body : null;
+}
+
+/** postBounded's answer with its status: 0 for no token, a timeout or a network error. */
+export async function postBoundedResult(opName, body, { token, serverUrl, timeoutMs } = {}) {
+  const bearer = token || resolveToken();
+  if (!bearer) return { status: 0, body: null };
+  const bound = Number(timeoutMs) > 0 ? Number(timeoutMs) : requestTimeoutMs();
+  return requestJson(opUrl(opName, serverUrl), { body, token: bearer, timeoutMs: bound });
 }
 
 // --- diagnostics ------------------------------------------------------------
 
-const JWT_RE = /\beyJ[\w-]*\.[\w-]+\.[\w-]*/g;
-const BEARER_RE = /\b(Bearer)\s+\S+/gi;
+// Best effort, not a guarantee: common credential shapes only. A secret in
+// another shape still reaches the server, whose blacklist and sensitivity
+// sweep are the next line. Every open-ended run is bounded ({0,64} and the
+// like): an unbounded one retried from each start is quadratic on a long
+// tool output.
+const PRIVATE_KEY_RE = /-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g;
+const TOKEN_SHAPES_RE =
+  /\b(?:(?:AKIA|ASIA)[0-9A-Z]{16}|(?:ghp|gho|ghs|ghu|ghr)_[A-Za-z0-9]{20,}|github_pat_\w{20,}|xox[abeprs]-[A-Za-z0-9-]{10,}|sk-(?:ant|proj)-[\w-]{20,}|glpat-[\w-]{20,})\b/g;
+// `password=…`, `"api_key": "…"`, `AWS_SECRET_ACCESS_KEY=…`: the name stays, the value goes.
+const SECRET_ASSIGNMENT_RE =
+  /\b([\w.-]{0,64}?(?:password|passwd|secret|secret[_-]?key|token|api[_-]?key|access[_-]?key|private[_-]?key)\b["']?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s"'\\,;}]+)/gi;
+const JWT_RE = /\beyJ[\w-]{0,512}\.[\w-]{1,8192}\.[\w-]{0,1024}/g;
+const BEARER_RE = /\b(Bearer)\s+[^\s"'\\]+/gi;
+const BASIC_AUTH_RE = /(\bAuthorization["']?\s*[:=]\s*["']?Basic)\s+[^\s"'\\]+/gi;
+// `https://user:pass@host`: the scheme and host stay, the credentials go.
+const URL_CREDENTIALS_RE = /\b([a-z][a-z0-9+.-]{0,31}:\/\/)[^\s/@"']{1,256}:[^\s/@"']{0,256}@/gi;
 
-/** `text` with bearer tokens, JWTs and the resolved token itself replaced. */
+/** `replacement` in the quotes `value` had, so redacted JSON still parses. */
+function quoted(value, replacement) {
+  const q = value[0] === '"' || value[0] === "'" ? value[0] : "";
+  return q + replacement + q;
+}
+
+/** `text` with private keys, cloud/GitHub/GitLab/Slack/OpenAI/Anthropic
+ *  tokens, secret assignments, bearer and basic credentials, URL passwords,
+ *  JWTs and the resolved token itself replaced. */
 export function redactSecrets(text, token = resolveToken()) {
   let s = String(text ?? "");
   if (token && token.length >= 8) s = s.split(token).join("[redacted]");
-  return s.replace(JWT_RE, "[redacted]").replace(BEARER_RE, "$1 [redacted]");
+  return s
+    .replace(PRIVATE_KEY_RE, "[redacted private key]")
+    .replace(TOKEN_SHAPES_RE, "[redacted]")
+    .replace(SECRET_ASSIGNMENT_RE, (_, name, value) => name + quoted(value, "[redacted]"))
+    .replace(JWT_RE, "[redacted]")
+    .replace(BEARER_RE, "$1 [redacted]")
+    .replace(BASIC_AUTH_RE, "$1 [redacted]")
+    .replace(URL_CREDENTIALS_RE, "$1[redacted]@");
+}
+
+// Room past a cut for the longest bounded pattern (a JWT is under 10 KB), so
+// a secret that straddles the cut is still matched whole.
+const REDACT_MARGIN = 16 * 1024;
+
+/** `redactSecrets` over the head of `text` its caller keeps (`max` chars, plus
+ *  a margin): a multi-megabyte tool output is not scanned only to be cut. */
+export function redactHead(text, max, token = resolveToken()) {
+  const s = String(text ?? "");
+  let cut = max + REDACT_MARGIN;
+  // A secret split by the cut is not matched and stays, unredacted, at the
+  // very end. Earlier redactions shorten the text and could pull it inside
+  // `max`, so the last margin of the redacted text is always dropped; when
+  // that leaves less than `max`, scan further (a few times at most).
+  for (let tries = 0; tries < 4 && cut < s.length; tries++) {
+    const out = redactSecrets(s.slice(0, cut), token);
+    const keep = out.length - REDACT_MARGIN;
+    if (keep >= max || tries === 3) return out.slice(0, Math.max(0, keep));
+    cut += max - keep + REDACT_MARGIN;
+  }
+  return redactSecrets(s, token);
 }
 
 /**
@@ -622,7 +678,7 @@ export function runHookMain(main) {
     .catch((e) => {
       if (envSwitch("LOOM_HOOK_DEBUG", false)) {
         const line = String((e && (e.stack || e.message)) || e).split("\n")[0];
-        process.stderr.write(`loom hook ${basename(process.argv[1] || "")}: ${redactSecrets(line).slice(0, 300)}\n`);
+        process.stderr.write(`loom hook ${basename(process.argv[1] || "")}: ${redactHead(line, 300).slice(0, 300)}\n`);
       }
       scheduleExit(0);
     });

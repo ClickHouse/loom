@@ -30,15 +30,17 @@ from typing import TYPE_CHECKING
 
 from server.code.app.index.compiler_tier import (
     checkout_fetch_args,
-    communicate_or_kill,
     compiler_target,
     git,
     gone_documents,
     harness_failure,
     resolve_binary,
     resolve_checkout,
+    run_harness,
     run_tier,
 )
+from server.code.app.index.gitrepo import git_config_env
+from server.code.app.index.sandbox import tool_mounts
 from server.core.paths import SCIP_HARNESS_DIR
 from server.settings import settings
 
@@ -90,7 +92,7 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipPyDeltaResu
     if missing:
         result.skipped.append(f"{cfg.namespace}: {missing}")
         return
-    await git(checkout, *checkout_fetch_args(bare, target))
+    await git(checkout, *checkout_fetch_args(bare, target), local_remote=bare)
     await git(checkout, "checkout", "--force", target)
     with tempfile.TemporaryDirectory(prefix="scip_py_delta_") as tmp:
         delta_path = Path(tmp) / "delta.json"
@@ -130,6 +132,7 @@ def _harness_env(delta_path: Path) -> dict[str, str]:
     node it was installed beside."""
     binary = resolve_binary(settings.code_scip_python_path)
     env = {
+        **git_config_env(),
         "PATH": f"{binary.parent}:/usr/local/bin:/usr/bin:/bin",
         "PYTHON": sys.executable,  # converter needs the server's venv (protobuf runtime)
         "DELTA_OUT": str(delta_path),
@@ -147,28 +150,21 @@ async def _run_harness(checkout: Path, base: str, head: str, delta_path: Path) -
     """`run_python_delta.sh` in DELTA_OUT mode: index, convert, write the
     JSON delta — no upload, no watermark read (the worker owns both)."""
     env = await asyncio.to_thread(_harness_env, delta_path)
-    proc = await asyncio.create_subprocess_exec(
-        "bash",
-        str(_HARNESS),
-        str(checkout),
-        base,
-        head,
-        env=env,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-        start_new_session=True,
+    binary = await asyncio.to_thread(resolve_binary, settings.code_scip_python_path)
+    readonly = tool_mounts(binary.parent)
+    if "SCIP_ENV_JSON" in env:
+        readonly.append(Path(env["SCIP_ENV_JSON"]))
+    returncode, out = await run_harness(
+        _HARNESS,
+        checkout,
+        [base, head],
+        env,
+        out_dir=delta_path.parent,
+        timeout_s=settings.code_scip_py_delta_timeout_seconds,
+        readonly=readonly,
     )
-    try:
-        out = await communicate_or_kill(
-            proc, settings.code_scip_py_delta_timeout_seconds, group=True
-        )
-    except TimeoutError:
-        raise RuntimeError(
-            f"harness timed out after {settings.code_scip_py_delta_timeout_seconds}s"
-        ) from None
-    tail = out.decode("utf-8", "replace")[-2000:]
-    if proc.returncode != 0:
-        raise harness_failure(proc.returncode, tail)
+    if returncode != 0:
+        raise harness_failure(returncode, out[-2000:])
 
 
 __all__ = ["PRODUCER", "WATERMARK", "CodeScipPyDeltaResult", "run_pass"]

@@ -9,10 +9,19 @@ lacks), and a read is `FINAL`.
 
 from __future__ import annotations
 
+import enum
+import json
+import logging
+from dataclasses import dataclass
 from typing import Any
 
 from server.core.ch import sequential_reads
+from server.core.schema.migrate_lease import RUN_CLAIMS_TABLE_SQL, is_keeper_table, key_exists
+from server.identity.domain.read_scope import ReadFilters, scope_and
+from server.observability import degradations, provider_health
 from server.tasks.store.rows import RunLedgerRow
+
+log = logging.getLogger(__name__)
 
 # Cap on the keys a derived read returns.
 DERIVED_LIMIT = 500
@@ -84,6 +93,138 @@ async def insert_runs(ch: Any, rows: list[RunLedgerRow]) -> None:
     await ch.insert("loom.agent_runs", [run_row(r) for r in rows], settings=_SYNC_INSERT)
 
 
+# ---------------------------------------------------------------- run id claims
+
+# Whether loom.agent_run_claims exists here (its migration ran on a server with a
+# Keeper): None until the boot probe or the first run.begin asks.
+_claims_atomic: bool | None = None
+# A Keeper error is logged once per kind of failure, then only noted.
+_keeper_errors_logged: set[str] = set()
+
+
+@dataclass(frozen=True)
+class RunClaim:
+    """Who holds the claim on a run id. `won`: this call's insert made it.
+    `unreadable`: the key is held but its holder could not be read."""
+
+    won: bool
+    user_id: str
+    session_id: str
+    unreadable: bool = False
+
+
+class NoClaim(enum.Enum):
+    """Why claim_run holds no claim. UNAVAILABLE: no claims table here, or Keeper
+    failed, so nothing keeps two users' first begins apart. RELEASED: the key was
+    taken and dropped again, so its holder's row is already written."""
+
+    UNAVAILABLE = "unavailable"
+    RELEASED = "released"
+
+
+def claims_atomic() -> bool | None:
+    """Whether run ids are claimed in Keeper here; None = not asked yet."""
+    return _claims_atomic
+
+
+async def _claims_available(ch: Any) -> bool:
+    global _claims_atomic
+    if _claims_atomic is None:
+        _claims_atomic = is_keeper_table(await ch.query_one(RUN_CLAIMS_TABLE_SQL))
+        if not _claims_atomic:
+            log.info("run.begin: no loom.agent_run_claims (no Keeper); run ids are not claimed")
+    return _claims_atomic
+
+
+async def probe_claims(ch: Any) -> None:
+    """At boot, so /v1/health names `run_claims_not_atomic` before any run.begin."""
+    try:
+        await _claims_available(ch)
+    except Exception as e:  # noqa: BLE001 — a failed probe leaves it to the first run.begin
+        log.warning("run claims: could not read system.tables: %s", e)
+
+
+def _keeper_failed(e: BaseException, what: str = "Keeper claim failed") -> None:
+    """The claim could not be made: run.begin falls back to the row check (a
+    narrowed caller only re-opens its own run, else gets a fresh id)."""
+    if what not in _keeper_errors_logged:
+        _keeper_errors_logged.add(what)
+        log.warning("run.begin: %s, checking the run row only: %s", what, e)
+    with provider_health.unrecorded():
+        degradations.note("run_claims", "row_check_only", e)
+
+
+async def claim_run(
+    ch: Any, org: str, ns: str, run_id: str, user_id: str, session_id: str
+) -> RunClaim | NoClaim:
+    """Claim (org, ns, run_id) for this user and session, or read the claim that
+    already holds it. NoClaim says why there is none."""
+    key = json.dumps([org, ns, run_id])
+    try:
+        available = await _claims_available(ch)
+    except Exception as e:  # noqa: BLE001 — an unknown claims table falls back to the row check
+        _keeper_failed(e, "could not read system.tables for the claims table")
+        return NoClaim.UNAVAILABLE
+    if not available:
+        return NoClaim.UNAVAILABLE
+    try:
+        await ch.execute(
+            "INSERT INTO loom.agent_run_claims "
+            "(claim_key, org, namespace, run_id, user_id, session_id, claimed_at) "
+            "SETTINGS keeper_map_strict_mode = 1 "
+            "VALUES ({k:String}, {org:String}, {ns:String}, {rid:String}, "
+            "{uid:String}, {sid:String}, now64(3))",
+            params={
+                "k": key,
+                "org": org,
+                "ns": ns,
+                "rid": run_id,
+                "uid": user_id,
+                "sid": session_id,
+            },
+        )
+        return RunClaim(won=True, user_id=user_id, session_id=session_id)
+    except Exception as e:  # noqa: BLE001 — Keeper down falls back to the row check
+        if not key_exists(e):
+            _keeper_failed(e)
+            return NoClaim.UNAVAILABLE
+    return await _claim_holder(ch, key)
+
+
+async def _claim_holder(ch: Any, key: str) -> RunClaim | NoClaim:
+    """Who holds `key`, after our insert found it taken. RELEASED when the key is gone
+    again (its holder wrote its row and released it): the row check then decides.
+    A key that cannot be read is never the caller's."""
+    try:
+        row = await ch.query_one(
+            "SELECT user_id, session_id FROM loom.agent_run_claims WHERE claim_key = {k:String}",
+            params={"k": key},
+        )
+    except Exception as e:  # noqa: BLE001 — unreadable counts as another user's claim
+        log.debug("run.begin: claim %s not readable: %s", key, e)
+        with provider_health.unrecorded():
+            degradations.note("run_claims", "claim_unreadable", e)
+        return RunClaim(won=False, user_id="", session_id="", unreadable=True)
+    if row is None:
+        return NoClaim.RELEASED
+    return RunClaim(won=False, user_id=str(row["user_id"]), session_id=str(row["session_id"]))
+
+
+async def delete_claim(ch: Any, org: str, ns: str, run_id: str) -> None:
+    """Drop the run id's claim once its run row is written: from then on the row
+    itself keeps other users off the id. A Keeper key drop, not a part mutation.
+    Best effort: a claim left behind only sends other users to a fresh id."""
+    try:
+        if not await _claims_available(ch):
+            return
+        await ch.execute(
+            "ALTER TABLE loom.agent_run_claims DELETE WHERE claim_key = {k:String}",
+            params={"k": json.dumps([org, ns, run_id])},
+        )
+    except Exception as e:  # noqa: BLE001 — a claim left behind never fails the caller
+        log.debug("run claim for %s not dropped: %s", run_id, e)
+
+
 async def runs_to_grade(
     ch: Any, org: str, ns: str, *, run_id: str, session_id: str, limit: int
 ) -> list[RunLedgerRow]:
@@ -145,35 +286,39 @@ async def recent_run_heads(
 # ---------------------------------------------------------------- derivations
 
 
-async def written_keys(ch: Any, org: str, ns: str, run_id: str) -> list[str]:
-    """memory_keys written under this run_id. Episodic observations are
-    counted separately and the run's own reflection is reported as
+async def written_keys(ch: Any, org: str, ns: str, run_id: str, *, scope: ReadFilters) -> list[str]:
+    """memory_keys written under this run_id inside `scope`. Episodic observations
+    are counted separately and the run's own reflection is reported as
     `reflection_key`: neither is a fact the run produced."""
+    params: dict[str, Any] = {"org": org, "ns": ns, "rid": run_id, "lim": DERIVED_LIMIT}
+    in_scope = scope_and(scope, params)
     rows = await ch.query_all(
-        """
+        f"""
         SELECT DISTINCT memory_key
         FROM loom.memory FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND run_id = {rid:String}
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND run_id = {{rid:String}}
           AND memory_type NOT IN ('episodic', 'reflection')
-          AND tombstoned_at IS NULL
+          AND tombstoned_at IS NULL{in_scope}
         ORDER BY memory_key
-        LIMIT {lim:UInt32}
+        LIMIT {{lim:UInt32}}
         """,
-        params={"org": org, "ns": ns, "rid": run_id, "lim": DERIVED_LIMIT},
+        params=params,
     )
     return [str(r["memory_key"]) for r in rows if r.get("memory_key")]
 
 
-async def observation_count(ch: Any, org: str, ns: str, run_id: str) -> int:
+async def observation_count(ch: Any, org: str, ns: str, run_id: str, *, scope: ReadFilters) -> int:
+    params: dict[str, Any] = {"org": org, "ns": ns, "rid": run_id}
+    in_scope = scope_and(scope, params)
     row = await ch.query_one(
-        """
+        f"""
         SELECT count() AS n FROM loom.memory FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND run_id = {rid:String} AND memory_type = 'episodic'
-          AND tombstoned_at IS NULL
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND run_id = {{rid:String}} AND memory_type = 'episodic'
+          AND tombstoned_at IS NULL{in_scope}
         """,
-        params={"org": org, "ns": ns, "rid": run_id},
+        params=params,
     )
     return int((row or {}).get("n") or 0)
 
@@ -207,21 +352,25 @@ async def session_cost(ch: Any, org: str, ns: str, session_id: str) -> tuple[int
     return int(row.get("turns") or 0), round(float(row.get("cost") or 0.0), 6)
 
 
-async def live_memories_by_key(ch: Any, org: str, ns: str, keys: list[str]) -> list[dict[str, Any]]:
-    """One row per live memory_key of `keys`: its newest memory_id (as
-    `memory_id`), memory_type, agent, user_id and session_id. A key is shared
+async def live_memories_by_key(
+    ch: Any, org: str, ns: str, keys: list[str], *, scope: ReadFilters
+) -> list[dict[str, Any]]:
+    """One row per live memory_key of `keys` inside `scope`: its newest memory_id
+    (as `memory_id`), memory_type, agent, user_id and session_id. A key is shared
     by every session's copy of the fact, and a run's credit is one use."""
+    params: dict[str, Any] = {"org": org, "ns": ns, "keys": keys}
+    in_scope = scope_and(scope, params)
     rows: list[dict[str, Any]] = await ch.query_all(
-        """
+        f"""
         SELECT argMax(toString(memory_id), updated_at) AS mid, memory_key,
                any(memory_type) AS memory_type, any(agent) AS agent,
                any(user_id) AS user_id, any(session_id) AS session_id
         FROM loom.memory FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND memory_key IN {keys:Array(String)} AND tombstoned_at IS NULL
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND memory_key IN {{keys:Array(String)}} AND tombstoned_at IS NULL{in_scope}
         GROUP BY memory_key
         """,
-        params={"org": org, "ns": ns, "keys": keys},
+        params=params,
     )
     # `AS mid`, not `AS memory_id`: a same-named alias shadows the column in WHERE.
     for r in rows:

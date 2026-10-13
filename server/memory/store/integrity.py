@@ -134,14 +134,14 @@ async def dim0_with_vector_rows(
 async def repair_dim0_rows(
     rows: list[dict[str, Any]], *, ch: _CHClient | None = None, dry_run: bool = False
 ) -> int:
-    """Re-emit each row with `embedding_dim = length(embedding)` and a fresh
-    version: the vector is the truth, the dim was the omission. Returns rows
+    """Re-emit each row with `embedding_dim = length(embedding)` at its version
+    + 1: the vector is the truth, the dim was the omission. Returns rows
     re-emitted (or, with `dry_run`, the number that would be)."""
     from server.memory.store import (
         EMBEDDING_PERSISTED_COLS,
         build_embedding_row,
         insert_embedding_rows,
-        next_version,
+        reemit_version,
     )
 
     out: list[dict[str, Any]] = []
@@ -153,13 +153,21 @@ async def repair_dim0_rows(
             build_embedding_row(
                 **(
                     {c: val for c, val in r.items() if c in EMBEDDING_PERSISTED_COLS}
-                    | {"embedding": vec, "embedding_dim": len(vec), "version": next_version()}
+                    | {"embedding": vec, "embedding_dim": len(vec), "version": reemit_version(r)}
                 )
             )
         )
     if dry_run or not out:
         return len(out)
-    await insert_embedding_rows(out, ch=ch or _default_client())
+    ch = ch or _default_client()
+    await insert_embedding_rows(out, ch=ch)
+    from server.memory.store.embeddings import retire_copies_under_unembedded_heads
+
+    await retire_copies_under_unembedded_heads(out, ch=ch)
+    # A row that was dim 0 was never counted, and its + 1 sits under the BM25 watermark.
+    from server.memory.store.bm25_stats import index_late_rows
+
+    await index_late_rows(out, ch=ch)
     return len(out)
 
 

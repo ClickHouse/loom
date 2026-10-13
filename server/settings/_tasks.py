@@ -22,7 +22,8 @@ class TaskSettings(BaseModel):
     task_lease_backend: Literal["auto", "keeper", "log"] = "auto"
     # Post one Standard Webhooks-signed notice per new event batch to each
     # inbox's webhook_url; the secret comes from the env var
-    # task_inboxes.webhook_secret_ref names.
+    # task_inboxes.webhook_secret_ref names (`LOOM_WEBHOOK_SECRET_<ORG>__<NAME>`,
+    # one of the inbox org's own).
     task_webhook_deliver_enabled: bool = True
     # Seconds between passes while notices are going out.
     task_webhook_deliver_interval_seconds: int = 5

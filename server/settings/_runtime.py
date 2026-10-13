@@ -65,7 +65,18 @@ class RuntimeSettings(BaseModel):
     # this many inserts a minute per (op, org, namespace).
     budget_violation_audit_burst: int = 5
     # The address the server hands to clients — the Setup page's config
-    # block, `claude mcp add`, a bot's claim_url. Empty = derive it from the
-    # request's X-Forwarded-Proto/Host. Set it when a proxy
-    # in front cannot be trusted to forward the client-facing scheme.
+    # block, `claude mcp add`, a bot's claim_url, OAuth metadata. Empty = the
+    # request's own Host and scheme, which only a loopback bind may rely on:
+    # a non-loopback bind_host refuses to start without it.
     public_base_url: str = ""
+    # The address Loom is reachable on: `loom serve` and `make server` bind
+    # it; in a container (which listens on all its interfaces) it is the
+    # address the port is published on. Anything but loopback turns on the
+    # startup checks for the dev secret, auth-off and public_base_url.
+    bind_host: str = "127.0.0.1"
+    # Comma-separated peer addresses or CIDRs whose X-Forwarded-For/Proto
+    # headers uvicorn applies; any other peer's are ignored. "*" trusts all.
+    trusted_proxies: str = "127.0.0.1"
+    # True lets a non-loopback bind start with the dev signing secret or
+    # with auth off. Only for a port that is not actually reachable by others.
+    allow_insecure: bool = False

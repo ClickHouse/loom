@@ -21,6 +21,7 @@ from server.identity.api.models_policy import (
     PolicySetOutput,
 )
 from server.identity.app import history_policy as _policy
+from server.identity.app.request_scope import request_scope
 from server.identity.domain import policy_rules
 from server.identity.domain.policy_change import ChangeVerdict, classify_change
 from server.identity.store import policy as policy_repo
@@ -201,8 +202,13 @@ async def handle_policy_check(input: PolicyCheckInput) -> PolicyCheckOutput:
 async def handle_policy_decisions(input: PolicyDecisionsInput) -> PolicyDecisionsOutput:
     """List the recorded history-policy decisions for a namespace, optionally one verdict."""
 
+    # A token narrowed to one user sees only that user's decisions.
     rows = await policy_repo.list_decisions(
-        input.org, input.namespace, limit=input.limit, decision=input.decision
+        input.org,
+        input.namespace,
+        limit=input.limit,
+        decision=input.decision,
+        scope=request_scope(),
     )
     return PolicyDecisionsOutput(
         rows=[

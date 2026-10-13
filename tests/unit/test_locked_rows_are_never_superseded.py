@@ -51,20 +51,20 @@ async def test_supersede_leaves_a_locked_victim_live_in_both_tables(monkeypatch)
         "lapsed": _row("lapsed", lock_mode="read_only", lock_until=datetime(2000, 1, 1)),
     }
 
-    async def _get(mid: str, *, org: str, ch: Any = None) -> MemoryRow | None:
+    async def _get(mid: str, *, org: str, ch: Any = None, scope: Any = None) -> MemoryRow | None:
         return heads.get(mid)
 
     embedded: list[str] = []
 
-    async def _live(ch: Any, **kw: Any) -> list[dict[str, Any]]:
-        embedded.append(kw["memory_key"])
-        return []
+    async def _reemit(items: Any, *, ch: Any = None) -> int:
+        embedded.extend(key[5] for key, _ in items)
+        return 0
 
     async def _mirror(rows: Any, *, ch: Any = None) -> None:
-        return None
+        embedded.extend(r["memory_key"] for r in rows)
 
     monkeypatch.setattr(lc, "get_by_id", _get)
-    monkeypatch.setattr(lc, "live_embedding_rows_for_key", _live)
+    monkeypatch.setattr(lc, "reemit_embedding_rows_for_keys", _reemit)
     monkeypatch.setattr(lc, "mirror_status_to_embeddings", _mirror)
     victims = [
         {

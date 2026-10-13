@@ -482,6 +482,6 @@ def test_context_pack_marks_a_conflicted_memory_on_the_query_path(
     out = asyncio.run(
         handle_context_pack(ContextPackInput(org="o", namespace="ns", agent="a", query="q"))
     )
-    lines = [ln for ln in out.rendered.splitlines() if "fact a" in ln or "fact b" in ln]
-    assert any("fact a" in ln and "conflict=true" in ln for ln in lines), lines
-    assert not any("fact b" in ln and "conflict=true" in ln for ln in lines), lines
+    lines = [ln for ln in out.rendered.splitlines() if "] fact a" in ln or "] fact b" in ln]
+    assert any("] fact a" in ln and "conflict=true" in ln for ln in lines), lines
+    assert not any("] fact b" in ln and "conflict=true" in ln for ln in lines), lines

@@ -6,7 +6,8 @@ and readers that do not go through search still see it. The sweep finds the live
 pattern matches — inside the caller's org, and inside the namespace for a
 namespace-scoped pattern — and tombstones them through the one by-id funnel that also
 mirrors the tombstone onto the embeddings table, leaving a `memory_drops` row per
-pattern so the ledger says what a Refuse removed.
+pattern so the ledger says what a Refuse removed. A token narrowed to one user never
+reaches a sweep (no blacklist op is in NARROW_SAFE_OPS).
 
 Matching is the SQL twin of `server.memory.app.blacklist_guard._matches`: `position(value,
 pattern) > 0` for a substring pattern (case-sensitive, like the in-process

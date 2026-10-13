@@ -125,8 +125,8 @@ earn those terms at all: leaving out `extracted` keeps an inference from outrank
 statement on its priors.
 
 **Reranker.** `rerank` on the request, or the namespace's `rerank_endpoint`, sends the
-pool to a reranker (`builtin:openai[:model]`, another built-in provider, or
-your own URL). The pool is widened first (`LOOM_MEMORY_SEARCH_POOL_MULTIPLIER_RERANK`),
+pool to a reranker (`builtin:openai[:model]`, `builtin:cohere[:model]`, or the name of an
+endpoint the operator configured in `LOOM_RERANK_ENDPOINTS_JSON`; a URL is refused). The pool is widened first (`LOOM_MEMORY_SEARCH_POOL_MULTIPLIER_RERANK`),
 because a reranker only reorders what the first stage surfaced. It fails open and never
 drops a candidate.
 

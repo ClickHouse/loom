@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import re
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, PrivateAttr, model_validator
 
-from server.settings._env import CaseFolded, JsonObject
+from server.settings._env import CaseFolded, JsonObject, json_map_items
 from server.settings._models import ModelSettings
+
+# A configured rerank endpoint's name: what a request or a namespace sends instead of a URL.
+RERANK_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 
 
 class ProviderSettings(ModelSettings):
@@ -139,6 +144,33 @@ class ProviderSettings(ModelSettings):
     # wins); `strong`/`mid` false bars the cascade from that tier. Unlisted =
     # every tier eligible.
     llm_policy_by_traffic_class: Annotated[str, JsonObject] = '{"bench": {"llm_cache": true}}'
+    # JSON {name: url}: the rerank endpoints a request's `rerank`, a namespace's
+    # `rerank_endpoint` and LOOM_CODE_SEARCH_RERANK_DEFAULT may name. Names are
+    # short identifiers, URLs http(s). Loom posts candidate text only to these.
+    rerank_endpoints_json: Annotated[str, JsonObject] = "{}"
+
+    def rerank_endpoint_map(self) -> dict[str, str]:
+        """The operator's rerank endpoints, name → URL."""
+        raw = self.rerank_endpoints_json.strip()
+        if not raw:
+            return {}
+        return dict(json_map_items(raw, "rerank_endpoints_json", non_empty=False))
+
+    @model_validator(mode="after")
+    def _check_rerank_endpoints(self) -> ProviderSettings:
+        """Every name is a short identifier and every URL http(s) with a host. The
+        error names the entry, never the URL (it can carry a credential)."""
+        for name, url in self.rerank_endpoint_map().items():
+            if not RERANK_NAME_RE.fullmatch(name) or name == "none":
+                raise ValueError(
+                    f"LOOM_RERANK_ENDPOINTS_JSON: {name[:64]!r} is not a valid name "
+                    "(letters, digits, '_' or '-', at most 64, not 'none')"
+                )
+            parts = urlsplit(url)
+            if parts.scheme not in ("http", "https") or not parts.hostname:
+                raise ValueError(f"LOOM_RERANK_ENDPOINTS_JSON: {name!r} is not an http(s) URL")
+        return self
+
     # Skip the rerank when the vector top hit's cosine is ≥ this (strong
     # matches rank reliably; the rerank costs ~500 ms). Fallback when the
     # adaptive gate has no probe.

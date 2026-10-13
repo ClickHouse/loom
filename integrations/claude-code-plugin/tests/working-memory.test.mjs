@@ -164,3 +164,13 @@ test("firstUserPrompt keeps a pasted image as a placeholder beside its text", ()
   const objs = [{ type: "user", message: { content: [{ type: "text", text: "what does this show?" }, png] } }];
   assert.equal(firstUserPrompt(objs), "what does this show?\n[image: image/png]");
 });
+
+test("the session-state note carries no secret from the goal or the last reply", () => {
+  const secret = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
+  const note = buildSessionState({ goal: `deploy with ${secret}`, lastText: `used ${secret} to push` });
+  const line = scratchpadAppendBody({ org: "o", namespace: "n", agent: "a" }, "r", `pushed with ${secret}`).addition;
+  for (const text of [note, line]) {
+    assert.ok(!text.includes(secret.slice(4)), text);
+    assert.ok(text.includes("[redacted]"), text);
+  }
+});

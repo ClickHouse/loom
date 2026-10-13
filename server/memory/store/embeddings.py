@@ -6,15 +6,18 @@ override), and the status reconciliation against loom.memory.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
+from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client
+from server.memory.domain.temporal_sql import SERVED_STATUSES
 from server.memory.store.inserts import insert_embedding_rows
 from server.memory.store.rows import (
     EMBEDDING_PERSISTED_COLS,
     build_embedding_row,
     next_version,
+    reemit_version,
 )
 
 _log = logging.getLogger(__name__)
@@ -76,9 +79,11 @@ async def mirror_status_to_embeddings(
     batch: int = 500,
 ) -> int:
     """Re-emit each identity's live memory_embeddings rows with the memory
-    row's `status` (and `invalid_at` / `superseded_by`-implied retirement),
-    version bumped — the same re-emit `supersede_duplicates` does, for every
-    path that flips status through `write_versions_by_ids`. Returns the number
+    row's `status` (and `invalid_at`, and `tombstoned_at` when the memory row is
+    a tombstone), at the memory row's `version` — a status that hides the row is
+    a retire — skipping embedding rows at or above it (a newer write's); a memory
+    row without a version falls back to read + 1. Every path that flips status
+    through `write_versions_by_ids` mirrors here. Returns the number
     of embedding rows re-emitted (or, with `dry_run`, the number that would
     be); a row already carrying the status is left alone. The mirror is read
     by the FULL identity tuple (org, namespace, agent, user_id, session_id,
@@ -101,6 +106,10 @@ async def mirror_status_to_embeddings(
         overrides: dict[str, Any] = {"status": m.get("status")}
         if m.get("invalid_at") is not None:
             overrides["invalid_at"] = m.get("invalid_at")
+        if m.get("tombstoned_at") is not None:
+            overrides["tombstoned_at"] = m.get("tombstoned_at")
+        if m.get("version"):
+            overrides["version"] = int(m["version"])
         wanted[key] = overrides
     keys = list(wanted)
     out: list[dict[str, Any]] = []
@@ -113,23 +122,20 @@ async def mirror_status_to_embeddings(
             _log.warning("status mirror: embeddings read failed for %d keys: %s", len(chunk), e)
             continue
         for r in rows:
-            want = wanted.get(_embedding_key(r))
-            if want is None or str(r.get("status") or "") == str(want["status"]):
+            want = wanted.get(embedding_key(r))
+            if want is None or (
+                str(r.get("status") or "") == str(want["status"]) and "tombstoned_at" not in want
+            ):
                 continue  # not asked for, or already mirrored
-            out.append(
-                build_embedding_row(
-                    **(
-                        {c: val for c, val in r.items() if c in EMBEDDING_PERSISTED_COLS}
-                        | want
-                        | {"version": next_version()}
-                    )
-                )
-            )
+            row = _copy_row(r, want)
+            if row is not None:
+                out.append(row)
     if dry_run:
         return len(out)
     if out:
         try:
             await insert_embedding_rows(out, ch=ch)
+            await retire_copies_under_unembedded_heads(out, ch=ch)
         except Exception as e:  # noqa: BLE001 — projection, never the write; reconcile-status repairs
             _log.warning("status mirror: embeddings re-emit failed (%d rows): %s", len(out), e)
             return 0
@@ -231,6 +237,7 @@ async def reconcile_embedding_status(
     the mirror is written in) and `mirrored` rows written (the same count on
     a dry run — what it WOULD write)."""
     ch = ch or _default_client()
+    version = next_version()  # before the scan: a row written after it is newer, and kept
     rows = await ch.query_all(
         status_divergence_sql(), params={"org": org, "ns": namespace, "lim": int(limit)}
     )
@@ -241,8 +248,16 @@ async def reconcile_embedding_status(
     if not rows:
         counts["mirrored"] = 0
         return counts
+    # A copy to a status not served by default is a retire, stamped with the pre-scan
+    # version so a late metadata copy can't bring it back. One that serves the row
+    # again takes read + 1, so a memory.delete racing the pass keeps its retire.
     counts["mirrored"] = await mirror_status_to_embeddings(
-        [dict(r) for r in rows], ch=ch, dry_run=dry_run
+        [
+            dict(r) | ({} if str(r["status"]) in SERVED_STATUSES else {"version": version})
+            for r in rows
+        ],
+        ch=ch,
+        dry_run=dry_run,
     )
     return counts
 
@@ -260,13 +275,14 @@ async def reemit_embedding_rows_for_key(
 ) -> int:
     """Re-emit every live memory_embeddings row of one (identity, memory_key)
     as a new version with `overrides` applied — the RMT rule: every persisted
-    column carried forward, the vectors included, a fresh `version`. This is
-    the ONLY way a state-of-row column (expires_at, confidence, tags,
-    tombstoned_at, status) changes on the vector table: a lightweight UPDATE
-    leaves a patch part, and one patch part switches the codes-first lazy
-    read off for every fact leg. The read is one keyed FINAL statement; the
-    write one committed insert. Returns the
-    rows re-emitted (0 when the key has no live embedding row)."""
+    column carried forward, the vectors included, the read row's version + 1
+    (`reemit_version`: a write that lands after the read keeps winning; a
+    `version` in `overrides` replaces it). This is the ONLY way a state-of-row
+    column (expires_at, confidence, tags, tombstoned_at, status) changes on the
+    vector table: a lightweight UPDATE leaves a patch part, and one patch part
+    switches the codes-first lazy read off for every fact leg. The read is one
+    keyed FINAL statement; the write one committed insert. Returns the rows
+    re-emitted (0 when the key has no live embedding row)."""
     ch = ch or _default_client()
     rows = await live_embedding_rows_for_key(
         ch,
@@ -293,8 +309,9 @@ async def reemit_embedding_rows_for_keys(
     """`reemit_embedding_rows_for_key` for many keys at once: one keyed FINAL
     read and one committed insert per `batch` keys, instead of one of each
     per key (one-row parts from a sweep of ~1,000 keys a pass would dominate
-    memory_embeddings' part count). Each key keeps its own overrides; a key
-    listed twice takes the last. Returns the rows re-emitted."""
+    memory_embeddings' part count). Each key keeps its own overrides (a
+    `version` among them replaces the read row's + 1, and only rows older than it are
+    re-emitted); a key listed twice takes the last. Returns the rows re-emitted."""
     ch = ch or _default_client()
     by_key: dict[EmbeddingKey, dict[str, Any]] = {k: dict(o) for k, o in items}
     keys = list(by_key)
@@ -303,37 +320,61 @@ async def reemit_embedding_rows_for_keys(
         rows = await _live_rows_for_keys(ch, keys[start : start + max(1, int(batch))])
         out = []
         for r in rows:
-            overrides = by_key.get(_embedding_key(r))
-            if overrides is None:
-                continue
-            out.append(
-                build_embedding_row(
-                    **(
-                        {c: val for c, val in r.items() if c in EMBEDDING_PERSISTED_COLS}
-                        | overrides
-                        | {"version": next_version()}
-                    )
-                )
-            )
+            overrides = by_key.get(embedding_key(r))
+            row = _copy_row(r, overrides) if overrides is not None else None
+            if row is not None:
+                out.append(row)
         if out:
             await insert_embedding_rows(out, ch=ch)
+            await retire_copies_under_unembedded_heads(out, ch=ch)
             written += len(out)
     return written
 
 
-async def _live_rows_for_keys(ch: _CHClient, keys: list[EmbeddingKey]) -> list[dict[str, Any]]:
+async def live_rows_for_keys(
+    keys: list[EmbeddingKey], *, ch: _CHClient | None = None, sequential: bool = False
+) -> list[dict[str, Any]]:
+    """Every live memory_embeddings row of the given identity keys, `_HEAD_READ_BATCH`
+    keys per statement."""
+    ch = ch or _default_client()
+    out: list[dict[str, Any]] = []
+    for start in range(0, len(keys), _HEAD_READ_BATCH):
+        out += await _live_rows_for_keys(
+            ch, keys[start : start + _HEAD_READ_BATCH], sequential=sequential
+        )
+    return out
+
+
+async def head_sensitivities(
+    keys: list[EmbeddingKey], *, ch: _CHClient | None = None, sequential: bool = False
+) -> dict[EmbeddingKey, str]:
+    """The live head's sensitivity per identity key (absent when there is none),
+    `_HEAD_READ_BATCH` keys per statement."""
+    ch = ch or _default_client()
+    heads: dict[EmbeddingKey, str] = {}
+    for start in range(0, len(keys), _HEAD_READ_BATCH):
+        heads |= await _head_sensitivity(ch, keys[start : start + _HEAD_READ_BATCH], sequential)
+    return heads
+
+
+async def _live_rows_for_keys(
+    ch: _CHClient, keys: list[EmbeddingKey], *, sequential: bool = False
+) -> list[dict[str, Any]]:
     """Every live memory_embeddings row of the given identity keys, in one
     keyed FINAL read (the key tuple in PREWHERE, see `_EMB_KEY_PREWHERE`)."""
+    from server.memory.store.sql import _SEQUENTIAL
+
     if not keys:
         return []
     cols = list(zip(*keys, strict=True))
     return await ch.query_all(
-        """
+        f"""
         SELECT * FROM loom.memory_embeddings FINAL
         PREWHERE (org, namespace, agent, user_id, session_id, memory_key) IN arrayZip(
-            {o:Array(String)}, {n:Array(String)}, {a:Array(String)},
-            {u:Array(String)}, {s:Array(String)}, {k:Array(String)})
+            {{o:Array(String)}}, {{n:Array(String)}}, {{a:Array(String)}},
+            {{u:Array(String)}}, {{s:Array(String)}}, {{k:Array(String)}})
         WHERE tombstoned_at IS NULL
+        {_SEQUENTIAL if sequential else ""}
         """,
         params={
             "o": list(cols[0]),
@@ -346,33 +387,114 @@ async def _live_rows_for_keys(ch: _CHClient, keys: list[EmbeddingKey]) -> list[d
     )
 
 
-def _embedding_key(r: dict[str, Any]) -> EmbeddingKey:
-    return (
-        str(r["org"]),
-        str(r["namespace"]),
-        str(r["agent"]),
-        str(r["user_id"]),
-        str(r["session_id"]),
-        str(r["memory_key"]),
+def embedding_key(r: Any) -> EmbeddingKey:
+    """The identity a memory or embedding row (a dict or a MemoryRow) is keyed by."""
+    cols = ("org", "namespace", "agent", "user_id", "session_id", "memory_key")
+    if isinstance(r, dict):
+        return tuple(str(r[c]) for c in cols)  # type: ignore[return-value]
+    return tuple(str(getattr(r, c)) for c in cols)  # type: ignore[return-value]
+
+
+def _copy_row(r: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any] | None:
+    """A new version of read row `r` with `overrides`: at read + 1, or at the `version`
+    the overrides pin (a retire's). None when the row is at or above that pin: it is a
+    newer write's, and an older retire must not touch it."""
+    pinned = overrides.get("version")
+    if pinned is not None and int(r.get("version") or 0) >= int(pinned):
+        return None
+    return build_embedding_row(
+        **(
+            {c: val for c, val in r.items() if c in EMBEDDING_PERSISTED_COLS}
+            | {"version": reemit_version(r)}
+            | dict(overrides)
+        )
     )
 
 
 async def _reemit_rows(
     rows: list[dict[str, Any]], overrides: dict[str, Any], *, ch: _CHClient
 ) -> int:
-    out = [
-        build_embedding_row(
-            **(
-                {c: val for c, val in r.items() if c in EMBEDDING_PERSISTED_COLS}
-                | dict(overrides)
-                | {"version": next_version()}
-            )
-        )
-        for r in rows
-    ]
+    out = [row for r in rows if (row := _copy_row(r, overrides)) is not None]
     if out:
         await insert_embedding_rows(out, ch=ch)
+        await retire_copies_under_unembedded_heads(out, ch=ch)
     return len(out)
+
+
+# Identity keys per head read: past ~2,000 ClickHouse refuses the request's form field.
+_HEAD_READ_BATCH = 500
+
+
+async def retire_copies_under_unembedded_heads(
+    written: list[dict[str, Any]], *, ch: _CHClient | None = None
+) -> int:
+    """After a copy of live vector rows (a touch, a verify, a tag, a status mirror),
+    re-read the keys' heads; a key whose head is 'high' or deleted has each copied
+    row tombstoned two above itself. A copy that read its head before a 'high' write
+    landed would otherwise carry the vector up past that write's retire, and copies
+    chain: each one checks after its own insert, so the last to land retires above
+    itself. Tombstones, dim-0 rows and shared-scope rows (no head of their own) are
+    not checked. A missing head counts only on a sequentially consistent read (a
+    lagging replica can miss a fresh key). Never raises: the copy already landed, and
+    a failed check is logged (the orphan reconcile is the backstop for a deleted
+    head). Returns the rows tombstoned."""
+    from server.memory.store.sql import read_your_writes_enabled
+
+    copies = [
+        r
+        for r in written
+        if r.get("tombstoned_at") is None
+        and str(r.get("scope") or "") != "shared"
+        and int(r.get("embedding_dim") or 0) > 0
+    ]
+    if not copies:
+        return 0
+    ch = ch or _default_client()
+    sequential = read_your_writes_enabled()
+    try:
+        keys = sorted({embedding_key(r) for r in copies})
+        heads = await head_sensitivities(keys, ch=ch, sequential=sequential)
+        stale = {k for k in keys if heads.get(k) == "high" or (sequential and k not in heads)}
+        if not stale:
+            return 0
+        now = naive_utc_now()
+        tombstones = [
+            build_embedding_row(
+                **(
+                    {c: v for c, v in r.items() if c in EMBEDDING_PERSISTED_COLS}
+                    # two above: a read + 1 copy of this copy stays below it
+                    | {"tombstoned_at": now, "version": int(r["version"]) + 2}
+                )
+            )
+            for r in copies
+            if embedding_key(r) in stale
+        ]
+        await insert_embedding_rows(tombstones, ch=ch)
+        return len(tombstones)
+    except Exception as e:  # noqa: BLE001 — the copy landed; a missed check is logged, not raised
+        _log.warning("vector copy: head re-check failed for %d rows: %s", len(copies), e)
+        return 0
+
+
+async def _head_sensitivity(
+    ch: _CHClient, keys: list[EmbeddingKey], sequential: bool
+) -> dict[EmbeddingKey, str]:
+    """The live head's sensitivity per identity key (absent when there is none): the
+    narrow keyed read the post-copy check needs."""
+    from server.memory.store.sql import _SEQUENTIAL
+
+    rows = await ch.query_all(
+        f"""
+        SELECT org, namespace, agent, user_id, session_id, memory_key, sensitivity
+        FROM loom.memory FINAL
+        PREWHERE (org, namespace, agent, user_id, session_id, memory_key)
+                 IN {{keys:Array(Tuple(String, String, String, String, String, String))}}
+        WHERE tombstoned_at IS NULL
+        {_SEQUENTIAL if sequential else ""}
+        """,
+        params={"keys": [tuple(k) for k in keys]},
+    )
+    return {embedding_key(r): str(r.get("sensitivity") or "") for r in rows}
 
 
 _EMB_SHARED_PREWHERE = (
@@ -422,15 +544,166 @@ async def tombstone_embeddings_for_key(
     memory_key: str,
     *,
     ts: datetime,
+    version: int,
     ch: _CHClient | None = None,
 ) -> int:
     """Mirror a loom.memory tombstone onto every live memory_embeddings row
     of one key: same identity, every persisted column carried, tombstoned_at
-    set, fresh version. Search reads the embeddings table, so a memory
-    tombstoned only in loom.memory keeps surfacing. Returns rows re-emitted."""
-    return await reemit_embedding_rows_for_key(
-        org, namespace, agent, user_id, session_id, memory_key, ch=ch, tombstoned_at=ts
+    set. Search reads the embeddings table, so a memory tombstoned only in
+    loom.memory keeps surfacing. `version` is the loom.memory row that retires
+    the key (the delete's tombstone, the sweep's relabel): a late metadata copy
+    of an older read writes read + 1, below it, so it cannot bring the vector
+    back; rows at or above it (a newer write's) are kept. Returns rows re-emitted."""
+    key = (org, namespace, agent, user_id, session_id, memory_key)
+    return await reemit_embedding_rows_for_keys(
+        [(key, {"tombstoned_at": ts, "version": int(version)})], ch=ch
     )
+
+
+async def tombstone_vectors_of(previous: Any, *, version: int, ch: _CHClient | None = None) -> int:
+    """A new version that is not embedded ('high', or a non-searchable type) retires
+    the vectors of the version it replaces: no search leg may keep serving the old
+    vector or excerpt. `previous` is that version's loom.memory row (a key that was
+    never embedded has nothing to drop); `version` is the new row's."""
+    from server.memory.domain.memory_types import is_embedded
+
+    if previous is None or not is_embedded(
+        previous.memory_type, getattr(previous, "sensitivity", "")
+    ):
+        return 0
+    key = (
+        previous.org,
+        previous.namespace,
+        previous.agent,
+        previous.user_id,
+        previous.session_id,
+        previous.memory_key,
+    )
+    return await retire_vectors_for_keys([(key, version)], ch=ch)
+
+
+async def retire_vectors_for_keys(
+    items: list[tuple[EmbeddingKey, int]], *, ch: _CHClient | None = None
+) -> int:
+    """Tombstone the live vectors each key had before the given version, the one of
+    the unembedded memory row that replaces them: its memory_embeddings rows below
+    that version and its entity_vectors rows created no later than that second. A
+    concurrent embedded write that lands a newer version keeps its memory_embeddings
+    rows, and its entity_vectors rows only when created in a later second. Residual:
+    created_at is whole seconds, so a newer write's entity vectors from the same
+    second are retired too; that write loses only its entity boost (those rows carry
+    no text). Returns the memory_embeddings rows retired."""
+    from server.core.datetimes import naive_utc_now
+
+    if not items:
+        return 0
+    ch = ch or _default_client()
+    now = naive_utc_now()
+    n = await reemit_embedding_rows_for_keys(
+        [(key, {"tombstoned_at": now, "version": int(v)}) for key, v in items], ch=ch
+    )
+    # entity_vectors has no version, only a created_at in whole seconds (see the residual above).
+    cutoffs = {key: version_second(v) for key, v in items}
+    await tombstone_entity_vectors_for_keys(list(cutoffs), ts=now, ch=ch, created_by=cutoffs)
+    return n
+
+
+async def fence_vectors(
+    items: list[tuple[EmbeddingKey, int]], *, model: str, ch: _CHClient | None = None
+) -> int:
+    """Write a tombstoned, vector-less row for each key at the given version, the one
+    of the 'high' memory row that keeps the key unembedded. An older write's vector
+    still in flight carries its own (lower) memory version, so it lands under this row
+    and stays hidden, even for a key that had no vector to retire. `model` is the served
+    embedder's: it is in the sort key, and only rows of that model are written. Returns
+    the rows written."""
+    if not items:
+        return 0
+    ch = ch or _default_client()
+    from server.core.datetimes import naive_utc_now
+
+    now = naive_utc_now()
+    rows = [
+        build_embedding_row(
+            org=key[0],
+            namespace=key[1],
+            agent=key[2],
+            user_id=key[3],
+            session_id=key[4],
+            memory_key=key[5],
+            scope="private",
+            embedding_model=model,
+            embedding_dim=0,
+            created_at=now,
+            tombstoned_at=now,
+            version=int(version),
+        )
+        for key, version in items
+    ]
+    await insert_embedding_rows(rows, ch=ch)
+    return len(rows)
+
+
+def version_second(version: int) -> datetime:
+    """The naive-UTC second a next_version() stamp (epoch ns) was drawn in."""
+    return datetime.fromtimestamp(int(version) // 1_000_000_000, UTC).replace(tzinfo=None)
+
+
+def _naive_utc(ts: datetime) -> datetime:
+    return ts.astimezone(UTC).replace(tzinfo=None) if ts.tzinfo else ts
+
+
+async def tombstone_entity_vectors_for_keys(
+    keys: list[EmbeddingKey],
+    *,
+    ts: datetime,
+    ch: _CHClient | None = None,
+    created_by: dict[EmbeddingKey, datetime] | None = None,
+) -> int:
+    """Re-emit the live loom.entity_vectors rows of each key with `tombstoned_at`
+    (the table is RMT on created_at, so the copy keeps it and wins as the later
+    insert). That table has no session column: a key's rows are matched on
+    (agent, user_id, memory_key). `created_by` keeps a key's rows created after its
+    cutoff (a newer write's). One read per namespace. Returns rows re-emitted."""
+    from server.memory.store.sweeps import entity_vectors_live_sql
+
+    ch = ch or _default_client()
+    by_ns: dict[tuple[str, str], dict[tuple[str, str, str], datetime | None]] = {}
+    for full in keys:
+        org, ns, agent, user_id, _session, key = full
+        wanted = by_ns.setdefault((org, ns), {})
+        cutoff = created_by.get(full) if created_by else None
+        prior = wanted.get((agent, user_id, key))
+        if prior is not None and cutoff is not None:
+            cutoff = max(prior, cutoff)  # two sessions share these rows: retire the most
+        wanted[(agent, user_id, key)] = cutoff
+    written = 0
+    for (org, ns), wanted in by_ns.items():
+        live = await ch.query_all(
+            entity_vectors_live_sql(),
+            params={"org": org, "ns": ns, "keys": sorted({k for _, _, k in wanted})},
+        )
+        rows = []
+        for r in live:
+            ident = (str(r.get("agent")), str(r.get("user_id")), str(r.get("memory_key")))
+            if ident not in wanted:
+                continue
+            cutoff, created = wanted[ident], r.get("created_at")
+            if (
+                cutoff is not None
+                and isinstance(created, datetime)
+                and _naive_utc(created) > cutoff
+            ):
+                continue
+            rows.append({**r, "tombstoned_at": ts})
+        if rows:
+            await ch.insert(
+                "loom.entity_vectors",
+                rows,
+                settings={"async_insert": 0, "wait_for_async_insert": 1},
+            )
+            written += len(rows)
+    return written
 
 
 async def unsupersede_embeddings(
@@ -460,13 +733,14 @@ async def unsupersede_embeddings(
         build_embedding_row(
             **(
                 {c: val for c, val in r.items() if c in EMBEDDING_PERSISTED_COLS}
-                | {"status": "active", "invalid_at": None, "version": next_version()}
+                | {"status": "active", "invalid_at": None, "version": reemit_version(r)}
             )
         )
         for r in rows
     ]
     if out:
         await insert_embedding_rows(out, ch=ch)
+        await retire_copies_under_unembedded_heads(out, ch=ch)
     return len(out)
 
 
@@ -501,21 +775,17 @@ async def restamp_embedding_rows(
     rows: list[dict[str, Any]],
     *,
     status: str,
+    version: int,
     ch: _CHClient | None = None,
 ) -> int:
-    """Re-emit mirror rows with `status` and a bumped version — an insert,
-    never an in-place ALTER (those diverge under FINAL). Every other
-    persisted column is carried forward. Returns the rows written."""
-    if not rows:
-        return 0
-    out = [
-        build_embedding_row(
-            **(
-                {c: val for c, val in r.items() if c in EMBEDDING_PERSISTED_COLS}
-                | {"status": status, "version": next_version()}
-            )
-        )
-        for r in rows
-    ]
-    await insert_embedding_rows(out, ch=ch)
+    """Re-emit mirror rows with `status` at `version` — an insert, never an
+    in-place ALTER (those diverge under FINAL). `duplicate` hides a row from
+    search, so this is a retire: `version` is the memory row's that caused it
+    (or one drawn before the caller's scan), and rows at or above it are kept.
+    Every other persisted column is carried forward. Returns the rows written."""
+    overrides = {"status": status, "version": int(version)}
+    out = [row for r in rows if (row := _copy_row(r, overrides)) is not None]
+    if out:
+        await insert_embedding_rows(out, ch=ch)
+        await retire_copies_under_unembedded_heads(out, ch=ch)
     return len(out)

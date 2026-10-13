@@ -13,7 +13,8 @@ seconds) and ``webhook-signature: v1,<base64 HMAC-SHA256>`` over
 ``"{id}.{timestamp}.{body}"``. The secret is read from the environment
 variable ``task_inboxes.webhook_secret_ref`` names (a ``whsec_`` prefix
 marks a base64 key, as the spec's generators emit); it is never stored in
-ClickHouse and never logged. Acknowledgement is any 2xx inside a 10 s
+ClickHouse and never logged, and only a name of the inbox org's own
+(``states.webhook_secret_ref_ok``) is read. Acknowledgement is any 2xx inside a 10 s
 window; anything else retries with backoff (next pass, 5 s, 5 min, 30 min,
 capped) tracked in ``loom.task_webhook_cursor``.
 """
@@ -30,11 +31,14 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
 from server.core.datetimes import to_naive_utc as _naive
+from server.core.hosts import vet_host
 from server.tasks.domain import cursors as task_cursors
+from server.tasks.domain.states import webhook_secret_org_prefix, webhook_secret_ref_ok
 from server.tasks.store import repo as repo
 from server.tasks.store.rows import TaskEventRow, WebhookCursorRow, WebhookInboxRow
 from server.workers import pass_context
@@ -155,12 +159,51 @@ def _cursor_row(
     }
 
 
-async def _post(client: httpx.AsyncClient, url: str, headers: dict[str, str], body: bytes) -> int:
-    """The HTTP status, or 0 when no answer arrived inside the ack window."""
+async def pinned_target(url: str) -> tuple[str, str, str, str]:
+    """(refusal, request URL, Host header, TLS server name) for a webhook URL. The
+    host must resolve to public addresses only (`vet_host`, as for tracker
+    sources), and the request goes to the address vetted here, so a second DNS
+    answer cannot point it inward; the name stays the Host header, the SNI and the
+    name the certificate is checked against. http and https only."""
+    parts = urlsplit(url)
+    host = parts.hostname or ""
+    if parts.scheme not in ("http", "https") or not host:
+        return "webhook_url must be an http or https URL with a host", "", "", ""
     try:
-        response = await client.post(
-            url, content=body, headers=headers, timeout=ACK_TIMEOUT_SECONDS
-        )
+        port = parts.port
+    except ValueError:
+        return "webhook_url has an invalid port", "", "", ""
+    refusal, address = await vet_host(host)
+    if refusal:
+        return refusal, "", "", ""
+    suffix = f":{port}" if port else ""
+    literal = f"[{address}]" if ":" in address else address
+    name = f"[{host}]" if ":" in host else host
+    pinned = urlunsplit((parts.scheme, literal + suffix, parts.path, parts.query, ""))
+    return "", pinned, name + suffix, host
+
+
+async def _post(
+    transport: httpx.AsyncBaseTransport | None, url: str, headers: dict[str, str], body: bytes
+) -> int:
+    """The HTTP status, or 0 when the URL is refused or no answer arrived inside
+    the ack window. Redirects are not followed. Each delivery has its own client:
+    a pooled connection is keyed by the pinned address, so a second inbox on the
+    same address would reuse a TLS session verified for another name."""
+    refusal, pinned, host_header, server_name = await pinned_target(url)
+    if refusal:
+        log.warning("task webhook: %s refused: %s", url, refusal)
+        return 0
+    try:
+        async with httpx.AsyncClient(transport=transport, follow_redirects=False) as client:
+            response = await client.post(
+                pinned,
+                content=body,
+                headers={**headers, "Host": host_header},
+                timeout=ACK_TIMEOUT_SECONDS,
+                follow_redirects=False,
+                extensions={"sni_hostname": server_name},
+            )
     except httpx.HTTPError as e:
         log.info("task webhook: no answer from %s: %s", url, type(e).__name__)
         return 0
@@ -169,24 +212,26 @@ async def _post(client: httpx.AsyncClient, url: str, headers: dict[str, str], bo
 
 def _secret_for(inbox_row: WebhookInboxRow, env: Mapping[str, str]) -> bytes | None:
     ref = str(inbox_row.get("webhook_secret_ref") or "")
-    raw = env.get(ref, "") if ref else ""
+    key = (str(inbox_row["org"]), str(inbox_row["inbox"]))
+    # A row written before the org rule may name any variable: never read it.
+    raw = env.get(ref, "") if webhook_secret_ref_ok(key[0], ref) else ""
     if not raw:
-        key = (str(inbox_row["org"]), str(inbox_row["inbox"]))
         if key not in _warned_missing_secret:
             _warned_missing_secret.add(key)
             log.warning(
-                "task webhook: inbox %s/%s has a webhook_url but no secret in env %r; "
-                "notices are held until it is set",
+                "task webhook: inbox %s/%s has a webhook_url but no secret in env %r "
+                "(it must be set and start %s); notices are held until then",
                 key[0],
                 key[1],
                 ref or "<unset>",
+                webhook_secret_org_prefix(key[0]),
             )
         return None
     return secret_bytes(raw)
 
 
 async def _deliver_inbox(
-    client: httpx.AsyncClient,
+    transport: httpx.AsyncBaseTransport | None,
     inbox_row: WebhookInboxRow,
     cursor: WebhookCursorRow | None,
     *,
@@ -214,7 +259,7 @@ async def _deliver_inbox(
     body = notice_body(org, inbox, last_seq, rows)
     msg_id = str(int(rows[-1]["seq"]))
     headers = signed_headers(secret, msg_id=msg_id, timestamp=int(time.time()), body=body)
-    status = await _post(client, str(inbox_row["webhook_url"]), headers, body)
+    status = await _post(transport, str(inbox_row["webhook_url"]), headers, body)
     if 200 <= status < 300:
         await repo.insert_webhook_cursor(
             _cursor_row(
@@ -254,11 +299,12 @@ async def _record_failure(
 
 async def deliver_once(
     *,
-    client: httpx.AsyncClient,
+    transport: httpx.AsyncBaseTransport | None = None,
     now: datetime | None = None,
     env: Mapping[str, str] | None = None,
 ) -> DeliverResult:
-    """One pass over every inbox with a webhook_url."""
+    """One pass over every inbox with a webhook_url. `transport` replaces the
+    network (tests); each delivery gets a fresh client on it."""
     now = now or datetime.now(UTC)
     env = os.environ if env is None else env
     inboxes = await repo.list_webhook_inboxes()
@@ -278,7 +324,7 @@ async def deliver_once(
         org, inbox = str(row["org"]), str(row["inbox"])
         cursor = cursors.get((org, inbox))
         try:
-            outcome = await _deliver_inbox(client, row, cursor, now=now, env=env)
+            outcome = await _deliver_inbox(transport, row, cursor, now=now, env=env)
         except Exception as e:  # noqa: BLE001 — one inbox's bad URL or secret must not stop the rest
             # Type only: the message of a secret-decoding error must not reach a log line.
             log.warning("task webhook: inbox %s/%s failed: %s", org, inbox, type(e).__name__)
@@ -298,8 +344,7 @@ async def deliver_once(
 
 async def run_pass() -> DeliverResult:
     with record_pass("task_webhook_deliver") as rec:
-        async with httpx.AsyncClient(follow_redirects=False) as client:
-            result = await deliver_once(client=client)
+        result = await deliver_once()
         rec.outcome = {
             "delivered": result.delivered,
             "failed": result.failed,

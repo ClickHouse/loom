@@ -14,11 +14,13 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from server.auth.context import current_auth
 from server.code.app.member_writes import assert_own_row
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.embedding import get_embedder
+from server.identity.app.request_scope import request_narrowed, request_scope
 from server.memory.api.models_crud import (
     MemoryClearInput,
     MemoryClearOutput,
@@ -50,7 +52,7 @@ log = logging.getLogger(__name__)
 
 # Leaf module (no internal imports) shared with memory.app.retrieval to
 # avoid a circular import.
-from server.memory.domain.memory_types import is_searchable_type  # noqa: E402
+from server.memory.domain.memory_types import is_embedded, is_searchable_type  # noqa: E402
 
 
 def existing_context_limit(msgs: list[dict[str, str]], limit: int) -> int:
@@ -137,7 +139,7 @@ async def _fetch_relevant_existing_memories(
         user_id=identity.user_id,
         session_id="*",
     )
-    rows = await memory_repo.get_many_by_keys(any_session, hit_keys)
+    rows = await memory_repo.get_many_by_keys(any_session, hit_keys, scope=request_scope())
     by_key = {r.memory_key: r for r in rows}
     out: list[dict[str, str]] = []
     for h in hits:
@@ -197,7 +199,6 @@ async def _get_chunk_with_neighbors(input: MemoryGetInput) -> MemoryGetOutput:
     # (read_user_id; a body naming another user is refused, as memory.search
     # refuses it) — keeps the chunk and its neighbours to that user's rows;
     # chunks stamped '-' (no user) are not served under a bound.
-    from server.auth.context import current_auth
     from server.identity.domain.read_scope import resolve_read_filters
 
     bound = resolve_read_filters(
@@ -285,6 +286,7 @@ async def _point_lookup(identity: Any, input: MemoryGetInput) -> Any:
             fresh=True,  # the SDK pattern is set → get; a miss re-reads once
             strong=strong,
             include_expired=False,  # an expired fact reads as gone, like search
+            scope=request_scope(),
         )
     if row is not None or identity.agent == "*":
         return row
@@ -304,6 +306,7 @@ async def _point_lookup(identity: Any, input: MemoryGetInput) -> Any:
             fresh=True,
             strong=strong,
             include_expired=False,
+            scope=request_scope(),
         )
     return row if row is not None and same_user(row, identity) else None
 
@@ -313,7 +316,6 @@ async def handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
     # as search before constructing the point-lookup identity. Without this,
     # a token pinned to one end user could name another user in the body and
     # retrieve that row by key.
-    from server.auth.context import current_auth
     from server.identity.domain.read_scope import resolve_read_filters
     from server.operations import read_projection
 
@@ -453,6 +455,10 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
     from server.memory.app.query import _canonical_keys_for_rows
 
     canonical = await _canonical_keys_for_rows(input.org, input.namespace, [row])
+    duplicate_of = _duplicate_of_shown(row, canonical.get(input.memory_key))
+    from server.memory.app.served_superseded import shown_successors
+
+    successors = await shown_successors(input.org, input.namespace, [row])
     return MemoryGetOutput(
         found=True,
         canonical_key=(
@@ -478,10 +484,10 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
         sensitivity=str(getattr(row, "sensitivity", "") or ""),
         agent=getattr(row, "agent", "") or "",
         status=getattr(row, "status", None),
-        superseded_by=str(getattr(row, "superseded_by", "") or ""),
-        duplicate_of=str(getattr(row, "duplicate_of", "") or ""),
+        superseded_by=successors.get(str(row.memory_id), ""),
+        duplicate_of=duplicate_of,
         conflict_verdict=_cd.verdict_from_row(
-            str(row.memory_id), getattr(row, "status", None), getattr(row, "duplicate_of", "")
+            str(row.memory_id), getattr(row, "status", None), duplicate_of
         ),
         content_sha256=sha,
         tags=list(getattr(row, "tags", None) or []),
@@ -498,6 +504,16 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
             getattr(row, "verified_by", ""), getattr(row, "verified_sha256", ""), sha
         ),
     )
+
+
+def _duplicate_of_shown(row: Any, canonical_key: str | None) -> str:
+    """The row's `duplicate_of` id as memory.get shows it. A read bounded to one
+    user or session sees it only when the canonical resolved inside that scope:
+    otherwise the id may name another user's row, and gone and foreign look alike."""
+    dup_of = str(getattr(row, "duplicate_of", "") or "")
+    if dup_of and not canonical_key and request_narrowed():
+        return ""
+    return dup_of
 
 
 async def handle_memory_pin(input: MemorySetInput) -> MemorySetOutput:
@@ -519,7 +535,9 @@ async def handle_memory_unpin(input: MemoryUnpinInput) -> MemoryUnpinOutput:
         user_id=input.user_id,
         session_id=input.session_id,
     )
-    existing = await memory_repo.get_by_key(identity, input.memory_key, fresh=True, strong=True)
+    existing = await memory_repo.get_by_key(
+        identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
+    )
     if existing is None and identity.agent != "*":
         wide = memory_repo.Identity(
             org=input.org,
@@ -528,7 +546,9 @@ async def handle_memory_unpin(input: MemoryUnpinInput) -> MemoryUnpinOutput:
             user_id=input.user_id,
             session_id=input.session_id,
         )
-        existing = await memory_repo.get_by_key(wide, input.memory_key, fresh=True, strong=True)
+        existing = await memory_repo.get_by_key(
+            wide, input.memory_key, fresh=True, strong=True, scope=request_scope()
+        )
         if existing is not None and not same_user(existing, identity):
             existing = None
     if existing is None:
@@ -564,7 +584,6 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     from server.observability.otel import traced
 
     ch = get_client()
-    version = next_version()
     now = datetime.now(UTC)
 
     identity = memory_repo.Identity(
@@ -576,7 +595,9 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     )
     with traced("ch.query.memory.precheck", op="tombstone_lookup"):
         # fresh: a delete right after a set must not no-op on a replica lag miss.
-        existing = await memory_repo.get_by_key(identity, input.memory_key, fresh=True, strong=True)
+        existing = await memory_repo.get_by_key(
+            identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
+        )
     if existing is None and identity.agent != "*":
         # A delete names a key, not the identity that wrote it (hooks write under their own
         # agent/session; a chat client deleting the key holds another), and an exact-identity
@@ -588,17 +609,22 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
             user_id=input.user_id,
             session_id=input.session_id,
         )
-        existing = await memory_repo.get_by_key(wide, input.memory_key, fresh=True, strong=True)
+        existing = await memory_repo.get_by_key(
+            wide, input.memory_key, fresh=True, strong=True, scope=request_scope()
+        )
         if existing is not None and not same_user(existing, identity):
             existing = None  # the wide form ignores user_id; another user's row is not ours
     if existing is None:
         # Idempotent: deleting a non-existent row is a no-op — and says so.
-        return MemoryDeleteOutput(tombstoned=False, found=False, version=version)
+        return MemoryDeleteOutput(tombstoned=False, found=False, version=next_version())
     _lock.assert_unlocked(existing, "delete", op="memory.delete")
     assert_own_row(existing, op="memory.delete")
 
     # build_memory_version_row carries every live column forward (avoiding
-    # silent column loss); only the tombstone deltas override.
+    # silent column loss); only the tombstone deltas override. The version is drawn
+    # here, right before the insert: the vector retire below skips rows at or above
+    # it, so the later it is drawn the fewer late vector writes it leaves live.
+    version = next_version()
     tombstone_row = memory_repo.build_memory_version_row(
         existing,
         version=version,
@@ -625,6 +651,7 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
             existing.session_id,
             input.memory_key,
             ts=now.replace(tzinfo=None) if now.tzinfo else now,
+            version=version,
             ch=ch,
         )
     except Exception as e:  # noqa: BLE001 — the memory row tombstone already landed; mirror is best-effort
@@ -750,7 +777,9 @@ async def handle_memory_touch(input: MemoryTouchInput) -> MemoryTouchOutput:
     )
     if input.memory_keys:
         wanted = list(dict.fromkeys(k for k in input.memory_keys if k))
-        rows = await memory_repo.get_many_by_keys(ident, wanted, ch=ch, strong=True)
+        rows = await memory_repo.get_many_by_keys(
+            ident, wanted, ch=ch, strong=True, scope=request_scope()
+        )
     else:
         wanted = [input.memory_key]
         one = await memory_repo.get_by_key(
@@ -758,6 +787,7 @@ async def handle_memory_touch(input: MemoryTouchInput) -> MemoryTouchOutput:
             input.memory_key,
             fresh=True,  # touch follows set
             strong=True,  # the head feeds a write
+            scope=request_scope(),
         )
         rows = [one] if one is not None else []
     by_key = {r.memory_key: r for r in rows}
@@ -796,7 +826,8 @@ async def handle_memory_touch(input: MemoryTouchInput) -> MemoryTouchOutput:
                 {"expires_at": naive_expiry},
             )
             for r in (by_key[k] for k in versions)
-            if is_searchable_type(r.memory_type)
+            # a 'high' head keeps no vector: never copy one forward under it
+            if is_embedded(r.memory_type, r.sensitivity)
         ]
         if mirror:
             try:
@@ -839,6 +870,7 @@ async def handle_memory_get_by_id(input: MemoryGetByIdInput) -> MemoryGetByIdOut
         as_of=getattr(input, "as_of", None),
         include_usage_totals=True,
         fresh=True,
+        scope=request_scope(),
     )
     if row is None:
         return MemoryGetByIdOutput(found=False)

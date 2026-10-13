@@ -85,6 +85,7 @@ class _CH:
 
 _DEMOTE_REEMITS: list[tuple[str, dict[str, Any]]] = []
 reemit_calls: list[int] = []
+retired: list[tuple[str, int]] = []
 
 
 def _stub(monkeypatch: pytest.MonkeyPatch, rows: list[MemoryRow]) -> tuple[_CH, list[str]]:
@@ -100,7 +101,7 @@ def _stub(monkeypatch: pytest.MonkeyPatch, rows: list[MemoryRow]) -> tuple[_CH, 
     async def _find(**_: Any) -> list[MemoryRow]:
         return rows
 
-    async def _tomb_emb(org, ns, agent, uid, sid, key, *, ts, ch=None) -> int:
+    async def _tomb_emb(org, ns, agent, uid, sid, key, *, ts, version, ch=None) -> int:
         tombstoned_keys.append(key)
         return 1
 
@@ -121,6 +122,16 @@ def _stub(monkeypatch: pytest.MonkeyPatch, rows: list[MemoryRow]) -> tuple[_CH, 
         return len(items)
 
     monkeypatch.setattr("server.memory.store.reemit_embedding_rows_for_keys", _reemit_many)
+    retired.clear()
+
+    async def _retire_many(items, *, ch=None) -> int:
+        # Tombstone and anonymize retire memory_embeddings AND entity_vectors.
+        for (_o, _n, _a, _u, _s, key), version in items:
+            tombstoned_keys.append(key)
+            retired.append((key, version))
+        return len(items)
+
+    monkeypatch.setattr("server.memory.store.retire_vectors_for_keys", _retire_many)
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     return ch, tombstoned_keys
 
@@ -158,7 +169,10 @@ async def test_sweep_writes_one_batched_insert_and_mirrors(monkeypatch: pytest.M
         ("e", {"expires_at": None, "confidence": 0.4}),
     ]
     assert res.failures == [] and len(res.sample) == 4
-    assert reemit_calls == [4]  # One batched mirror for the pass, not four
+    # One batched retire and one batched demote copy for the pass, never one per key;
+    # each retire carries its memory row's version.
+    assert reemit_calls == [2]
+    assert sorted(retired) == sorted((k, written[k]["version"]) for k in ("a", "c"))
 
 
 @pytest.mark.asyncio

@@ -59,11 +59,21 @@ def test_worker_service_publishes_no_port_and_healthchecks_its_own() -> None:
     d = _load(CLOUD)
     web, workers = d["services"]["loom"], d["services"]["loom-workers"]
     assert "ports" not in workers
-    assert web["ports"] == ["7777:7777"]
+    # Published on loopback unless the operator says otherwise.
+    assert web["ports"] == ["${LOOM_BIND_HOST:-127.0.0.1}:7777:7777"]
     wenv = _env(workers)
     assert wenv["PORT"] == "7778"
     assert "127.0.0.1:7778/v1/health" in workers["healthcheck"]["test"][-1]
     assert "127.0.0.1:7777/v1/health" in web["healthcheck"]["test"][-1]
+
+
+@pytest.mark.parametrize(("path", "service"), [(CLOUD, "loom-workers"), (COLOUR, "workers")])
+def test_a_workers_container_listens_where_it_says_it_binds(path: Path, service: str) -> None:
+    # LOOM_BIND_HOST=127.0.0.1 skips the reachable-server checks, so the
+    # process must not listen on the Docker network either.
+    workers = _load(path)["services"][service]
+    assert _env(workers)["LOOM_BIND_HOST"] == "127.0.0.1"
+    assert "--host 127.0.0.1 " in workers["command"][-1]
 
 
 def test_both_services_share_the_flock_volume_and_the_data_mounts() -> None:

@@ -179,8 +179,10 @@ async def find_embedding_stubs(
         GROUP BY org, namespace, agent, user_id, session_id, scope,
                  embedding_model, memory_key
         HAVING argMax(embedding_dim, version) = 0
-           AND argMax(tombstoned_at, version) IS NULL
-           AND argMax(embed_failed_at, version) IS NULL
+           -- argMax skips NULLs: test IS NULL inside it, or an older tombstoned
+           -- row (a high write's fence) hides the newer live stub above it
+           AND argMax(tombstoned_at IS NULL, version) = 1
+           AND argMax(embed_failed_at IS NULL, version) = 1
            AND argMax(embed_attempts, version) < {{ma:UInt16}}
         """,
         params={**params, "keys": keys},
@@ -277,9 +279,9 @@ async def find_memories_to_reindex(
                 AND tombstoned_at IS NULL
           )"""
     )
-    return await ch.query_all(
+    rows = await ch.query_all(
         f"""
-        SELECT {_EMBEDDING_MIRROR_COLUMNS}
+        SELECT {_EMBEDDING_MIRROR_COLUMNS}, m.version AS version
         FROM loom.memory AS m FINAL
         WHERE m.org = {{org:String}} AND m.namespace = {{ns:String}}
           AND m.tombstoned_at IS NULL
@@ -296,6 +298,44 @@ async def find_memories_to_reindex(
             "unsearchable": sorted(NON_SEARCHABLE_TYPES),
         },
     )
+    if not rows:
+        return []
+    # Each row is written one above the newest of its memory row and its key's rows of
+    # this model (an embedding-only re-emit or a stub tombstone can sit above the
+    # memory row), not at a version drawn after the embed call: a 'high' write that
+    # lands meanwhile fences above it. One keyed read for the batch. That read can
+    # also see a high write's fence landing after the row read; the reindex re-reads
+    # the heads after its insert for that (`memory.reindex`).
+    keys: list[tuple[str, str, str, str]] = [
+        (str(r["agent"]), str(r["user_id"]), str(r["session_id"]), str(r["memory_key"]))
+        for r in rows
+    ]
+    newest = await ch.query_all(
+        """
+        SELECT agent, user_id, session_id, memory_key, max(version) AS ev
+        FROM loom.memory_embeddings
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND embedding_model = {model:String}
+          AND (agent, user_id, session_id, memory_key)
+              IN {keys:Array(Tuple(String, String, String, String))}
+        GROUP BY agent, user_id, session_id, memory_key
+        """,
+        params={"org": org, "ns": namespace, "model": embedding_model, "keys": keys},
+    )
+    ev = {
+        (str(n["agent"]), str(n["user_id"]), str(n["session_id"]), str(n["memory_key"])): int(
+            n["ev"]
+        )
+        for n in newest
+    }
+    return [
+        {
+            **r,
+            "memory_version": int(r["version"]),  # the head it read; the caller re-checks it
+            "version": max(int(r["version"]), ev.get(k, 0)) + 1,
+        }
+        for r, k in zip(rows, keys, strict=True)
+    ]
 
 
 async def find_memories_without_embedding_rows(
@@ -416,9 +456,11 @@ async def find_memories_without_embedding_rows(
         )
         for r in orphan_keys
     ]
+    # The memory row's version rides along as the stub's: a 'high' write that lands
+    # after this read fences above it, so the stub (and its fill at + 1) stays hidden.
     return await ch.query_all(
         f"""
-        SELECT {_EMBEDDING_MIRROR_COLUMNS}
+        SELECT {_EMBEDDING_MIRROR_COLUMNS}, m.version AS version
         FROM loom.memory AS m FINAL
         WHERE (m.org, m.namespace, m.agent, m.user_id, m.session_id, m.memory_key)
               IN {{keys:Array(Tuple(String, String, String, String, String, String))}}
@@ -430,6 +472,34 @@ async def find_memories_without_embedding_rows(
         LIMIT {{lim:UInt32}}
         """,
         params={**{k: v for k, v in params.items() if k != "since_s"}, "keys": keys},
+    )
+
+
+async def memory_mirror_rows_for_keys(
+    keys: list[tuple[str, str, str, str, str, str]],
+    *,
+    ch: _CHClient | None = None,
+    sequential: bool = False,
+) -> list[dict[str, Any]]:
+    """The live, embeddable memory rows of the given identity keys as embedding-mirror
+    rows (`_EMBEDDING_MIRROR_COLUMNS` plus `version`): what a stub for the embed worker
+    is built from."""
+    if not keys:
+        return []
+    ch = ch or _default_client()
+    return await ch.query_all(
+        f"""
+        SELECT {_EMBEDDING_MIRROR_COLUMNS}, m.version AS version
+        FROM loom.memory AS m FINAL
+        WHERE (m.org, m.namespace, m.agent, m.user_id, m.session_id, m.memory_key)
+              IN {{keys:Array(Tuple(String, String, String, String, String, String))}}
+          AND m.tombstoned_at IS NULL
+          AND m.sensitivity != 'high'
+          AND m.memory_type NOT IN {{unsearchable:Array(String)}}
+          AND length(m.value) > 0
+        {_SEQUENTIAL if sequential else ""}
+        """,
+        params={"keys": [tuple(k) for k in keys], "unsearchable": sorted(NON_SEARCHABLE_TYPES)},
     )
 
 

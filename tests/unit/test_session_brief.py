@@ -361,7 +361,10 @@ class _MemCH:
     async def query_one(self, sql: str, params: dict[str, Any] | None = None):
         p = params or {}
         if "FROM loom.session_briefs FINAL" in sql:
-            return self._newest().get(p["key"])
+            row = self._newest().get(p["key"])
+            if row and "scope_uid" in p and row["user_id"] != p["scope_uid"]:
+                return None
+            return row
         if "uniqExact(revision)" in sql:
             return {"n": len({r["revision"] for r in self.revisions if r["brief_key"] == p["key"]})}
         if "FROM loom.session_brief_revisions" in sql:
@@ -383,6 +386,15 @@ class _MemCH:
             rows = [r for r in rows if r["agent"] == p["agent"]]
         if "sid" in p:
             rows = [r for r in rows if p["sid"] in r["source_sessions"]]
+        if "scope_uid" in p:
+            rows = [r for r in rows if r["user_id"] == p["scope_uid"]]
+        if "key_prefix" in p:
+            px = p["key_prefix"]
+            rows = [
+                r
+                for r in rows
+                if r["brief_key"].startswith(px) and "~" not in r["brief_key"][len(px) :]
+            ]
         rows.sort(key=lambda r: r["updated_at"], reverse=True)
         return rows[: p.get("lim", 1)]
 
@@ -675,6 +687,203 @@ def test_a_deleted_brief_serves_no_revision(mem, monkeypatch) -> None:
         h.handle_session_brief_get(SessionBriefGetInput(**IDENT, brief_key="gone", revision=1))
     )
     assert not past.found and past.deleted
+
+
+def test_users_bounded_to_themselves_keep_separate_briefs_under_one_key(mem, monkeypatch) -> None:
+    from tests.unit.principals import acting_as, principal
+
+    _llm(monkeypatch, [])
+    key = "auto/loom/main"
+    # A namespace-wide save of the plain key belongs to no pinned user.
+    _save(brief_key=key, user_id="u2", use_llm=False, events=[E(kind="user", text="shared")])
+
+    def as_user(uid: str):
+        return acting_as(principal("writer", org="o", namespaces=("ns",), read_user_id=uid))
+
+    def get(uid: str):
+        return asyncio.run(
+            h.handle_session_brief_get(SessionBriefGetInput(**IDENT, user_id=uid, brief_key=key))
+        )
+
+    for uid in ("u1", "u2"):
+        with as_user(uid):
+            assert not get(uid).found  # the namespace-wide row is not theirs
+            saved = _save(
+                brief_key=key, user_id=uid, use_llm=False, events=[E(kind="user", text=uid)]
+            )
+            assert saved.changed and saved.revision == 1 and saved.brief_key == key
+    for uid in ("u1", "u2"):
+        with as_user(uid):
+            got = get(uid)
+            assert got.found and got.brief_key == key and f"{uid}" in got.rendered
+            assert "shared" not in got.rendered
+            listed = asyncio.run(
+                h.handle_session_brief_list(SessionBriefListInput(**IDENT, user_id=uid))
+            )
+            assert [b.brief_key for b in listed.briefs] == [key]
+    with as_user("u1"):
+        gone = asyncio.run(
+            h.handle_session_brief_delete(
+                SessionBriefDeleteInput(**IDENT, user_id="u1", brief_key=key)
+            )
+        )
+        assert gone.deleted
+        assert not get("u1").found
+        # the tombstone does not block a fresh save of the same key
+        again = _save(brief_key=key, user_id="u1", use_llm=False, events=_session())
+        assert again.changed and again.revision == 2
+    with as_user("u2"):
+        assert get("u2").found and get("u2").revision == 1
+    newest = mem._newest()
+    assert newest[key]["user_id"] == "u2" and "shared" in newest[key]["rendered"]
+    assert newest["~u1~" + key]["user_id"] == "u1"
+    assert newest["~u2~" + key]["tombstoned_at"] is None
+
+
+def test_sessions_bounded_to_themselves_keep_separate_briefs(mem, monkeypatch) -> None:
+    from server.identity.domain.read_scope import ReadFilters, bind_request_read_filters
+    from tests.unit.principals import acting_as, principal
+
+    _llm(monkeypatch, [])
+    token = principal("writer", org="o", namespaces=("ns",), read_scope="own_session")
+    with acting_as(token) as auth:
+        for sid in ("s1", "s2"):
+            bind_request_read_filters(auth, ReadFilters("own_session", "u1", sid))
+            out = _save(
+                project="loom",
+                branch="main",
+                user_id="u1",
+                session_id=sid,
+                use_llm=False,
+                events=[E(kind="user", text=f"work in {sid}")],
+            )
+            assert out.revision == 1 and out.brief_key == "auto/loom/main"
+    assert {k for k in mem._newest()} == {"~u1~s1~auto/loom/main", "~u1~s2~auto/loom/main"}
+
+
+def test_every_listed_key_opens_and_deletes_under_the_token_that_listed_it(
+    mem, monkeypatch
+) -> None:
+    from server.identity.domain.read_scope import ReadFilters, bind_request_read_filters
+    from tests.unit.principals import acting_as, principal
+
+    _llm(monkeypatch, [])
+
+    def save(key: str) -> None:
+        _save(brief_key=key, user_id="u1", session_id="s1", use_llm=False, events=_session())
+
+    def listed() -> list[str]:
+        out = asyncio.run(h.handle_session_brief_list(SessionBriefListInput(**IDENT)))
+        return [b.brief_key for b in out.briefs]
+
+    def round_trip(keys: list[str]) -> None:
+        for key in keys:
+            assert asyncio.run(
+                h.handle_session_brief_get(SessionBriefGetInput(**IDENT, brief_key=key))
+            ).found
+            assert asyncio.run(
+                h.handle_session_brief_delete(SessionBriefDeleteInput(**IDENT, brief_key=key))
+            ).deleted
+
+    session_token = principal("writer", org="o", namespaces=("ns",), read_scope="own_session")
+    with acting_as(session_token) as auth:
+        bind_request_read_filters(auth, ReadFilters("own_session", "u1", "s1"))
+        save("sess")
+        assert listed() == ["sess"]
+    user_token = principal("writer", org="o", namespaces=("ns",), read_user_id="u1")
+    with acting_as(user_token):
+        save("mine")
+        assert listed() == ["mine"]  # not the own_session brief, which it can't address
+        for bad in ("~u2~mine", "~u1~mine"):
+            with pytest.raises(HTTPException) as e:
+                asyncio.run(
+                    h.handle_session_brief_get(SessionBriefGetInput(**IDENT, brief_key=bad))
+                )
+            assert e.value.status_code == 422
+        round_trip(["mine"])
+    save("plain")
+    assert sorted(listed()) == ["plain", "~u1~s1~sess"]
+    round_trip(listed())
+    assert listed() == []
+
+
+def test_owner_key_prefixes_never_collide() -> None:
+    assert sb.owner_key_prefix("a~b") != sb.owner_key_prefix("a", "b")
+    assert sb.owner_key_prefix("a/b") + "c" != sb.owner_key_prefix("a") + "b/c"
+    assert sb.owner_key_prefix("a~b", "c") != sb.owner_key_prefix("a", "b~c")
+    assert not sb.brief_key_ok(sb.owner_key_prefix("u") + "k")
+    assert sb.stored_key_ok(sb.owner_key_prefix("a~/b", "s 1") + "k")
+    assert sb.key_owner(sb.owner_key_prefix("a~/b", "s 1") + "k") == ("a~/b", "s 1")
+    assert sb.key_owner(sb.owner_key_prefix("a~/b") + "k") == ("a~/b", None)
+    assert sb.key_owner("k") is None
+
+
+def test_a_narrowed_save_whose_stored_key_runs_past_the_cap_is_refused(mem, monkeypatch) -> None:
+    """Get and delete refuse a stored key over STORED_KEY_MAX, so a save must not store one."""
+    from server.identity.domain.read_scope import ReadFilters, bind_request_read_filters
+    from tests.unit.principals import acting_as, principal
+
+    _llm(monkeypatch, [])
+    sid = "s" * 700
+    token = principal("writer", org="o", namespaces=("ns",), read_scope="own_session")
+    with acting_as(token) as auth:
+        bind_request_read_filters(auth, ReadFilters("own_session", "u1", sid))
+        with pytest.raises(HTTPException) as e:
+            _save(brief_key="k", user_id="u1", session_id=sid, use_llm=False, events=_session())
+    assert e.value.status_code == 422 and e.value.detail["code"] == "BAD_BRIEF_KEY"
+    assert mem.rows == []
+
+
+def test_a_namespace_wide_save_to_an_owner_key_keeps_the_owner(mem, monkeypatch) -> None:
+    from tests.unit.principals import acting_as, principal
+
+    _llm(monkeypatch, [])
+    alice = principal("writer", org="o", namespaces=("ns",), read_user_id="alice")
+
+    def alice_get() -> Any:
+        with acting_as(alice):
+            return asyncio.run(
+                h.handle_session_brief_get(
+                    SessionBriefGetInput(**IDENT, user_id="alice", brief_key="k")
+                )
+            )
+
+    with acting_as(alice):
+        _save(brief_key="k", user_id="alice", sections={"goal": "alice-goal"})
+    out = _save(brief_key="~alice~k", user_id="-", session_id="-", sections={"goal": "ops"})
+    assert out.changed
+    got = alice_get()
+    assert got.found and got.revision == 2 and "ops" in got.rendered
+    assert got.actor == "process:session_brief"  # alice's reads name who wrote it
+    with acting_as(alice):
+        listed = asyncio.run(
+            h.handle_session_brief_list(SessionBriefListInput(**IDENT, user_id="alice"))
+        )
+    assert [(b.brief_key, b.actor) for b in listed.briefs] == [("k", "process:session_brief")]
+    row = mem._newest()["~alice~k"]
+    assert (row["user_id"], row["session_id"]) == ("alice", "s1")
+
+
+@pytest.mark.parametrize("key", ["~%61lice~k6", "~alice~%73~k", "~%7e~k"])
+def test_a_save_to_an_owner_prefix_not_in_canonical_form_is_refused(
+    mem, monkeypatch, key: str
+) -> None:
+    """The owner's reads look the prefix up as owner_key_prefix writes it, so a row
+    under another spelling would carry her identity where she cannot reach it."""
+    _llm(monkeypatch, [])
+    with pytest.raises(HTTPException) as e:
+        _save(brief_key=key, use_llm=False, events=_session())
+    assert e.value.status_code == 422 and e.value.detail["code"] == "BAD_BRIEF_KEY"
+    assert mem.rows == []
+
+
+@pytest.mark.parametrize("key", ["~~k2", "~bob~~k3", "~~~k"])
+def test_an_owner_prefix_with_an_empty_user_or_session_is_refused(key: str) -> None:
+    from pydantic import ValidationError
+
+    assert not sb.stored_key_ok(key)
+    with pytest.raises(ValidationError):
+        SessionBriefSaveInput(**IDENT, brief_key=key)
 
 
 def test_registration() -> None:

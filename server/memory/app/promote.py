@@ -11,6 +11,7 @@ from fastapi import HTTPException
 
 from server.core.datetimes import naive_utc_now
 from server.embedding import get_embedder
+from server.identity.app.request_scope import request_scope
 from server.memory.api.models_lifecycle import (
     MemoryDemoteInput,
     MemoryDemoteOutput,
@@ -40,6 +41,7 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
         ),
         input.memory_key,
         fresh=True,  # promote follows set; a replica-lag miss is not 'not found'
+        scope=request_scope(),
     )
     if src is None:
         raise HTTPException(
@@ -64,6 +66,22 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
                     "have each agent write its own block; cross-agent "
                     "shared blocks is a separate primitive that doesn't "
                     "exist yet."
+                ),
+            },
+        )
+
+    # A 'high' row is kept out of every search leg by having no vector; loom.shared has
+    # no sensitivity column, so a promoted copy would be embedded and served to the
+    # whole namespace. Refuse.
+    if (getattr(src, "sensitivity", "") or "") == "high":
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "HIGH_SENSITIVITY_PROMOTION_REFUSED",
+                "message": (
+                    "memory.promote refuses rows labelled sensitivity='high': "
+                    "shared memory carries no sensitivity label and is searchable "
+                    "namespace-wide."
                 ),
             },
         )
@@ -205,6 +223,7 @@ async def handle_memory_demote(input: MemoryDemoteInput) -> MemoryDemoteOutput:
 
     # Tombstone via higher-version INSERT, mirroring every live column except
     # tombstoned_at + version (omitting any column zeros it for FINAL readers).
+    version = next_version()  # the tombstone's, which the vector retire carries
     await shared_repo.insert_shared_row(
         {
             "org": input.org,
@@ -222,7 +241,7 @@ async def handle_memory_demote(input: MemoryDemoteInput) -> MemoryDemoteOutput:
             "reversible_until": row["reversible_until"],
             "superseded_by": None,
             "tombstoned_at": now_naive,
-            "version": next_version(),
+            "version": version,
         }
     )
 
@@ -232,6 +251,7 @@ async def handle_memory_demote(input: MemoryDemoteInput) -> MemoryDemoteOutput:
         input.namespace,
         input.memory_key,
         now_naive,
+        version=version,
     )
 
     return MemoryDemoteOutput(

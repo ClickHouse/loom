@@ -17,6 +17,11 @@ from fastapi import HTTPException
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.embedding import get_embedder
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import (
+    WHOLE_NAMESPACE,
+    row_in_read_scope,
+)
 from server.memory.api.models_common import (
     SET_PEERS_MAX,
     MemorySetPeer,
@@ -29,6 +34,7 @@ from server.memory.api.models_crud import (
 )
 from server.memory.app import conflict_deferred as _cd
 from server.memory.app.drops import record_drop
+from server.memory.app.high_fence import fence_high
 from server.memory.domain.embed_text import embedding_texts
 from server.memory.domain.trust import attests
 from server.memory.store.inserts import insert_memory_versions
@@ -71,11 +77,41 @@ def _count_write(namespace: str, outcome: str) -> None:
         pass
 
 
+def _peer_in_read_scope(peer: Any) -> bool:
+    """Whether the writer may see `peer`: a conflict verdict never names a row
+    outside the caller's read scope, and a scope the request cannot resolve
+    shows none."""
+    from server.core.errors import AuthInsufficientError, IdentityIncompleteError
+
+    try:
+        scope = request_scope()
+    except (AuthInsufficientError, IdentityIncompleteError):
+        return False
+    return row_in_read_scope(scope, getattr(peer, "user_id", ""), getattr(peer, "session_id", ""))
+
+
+def _peer_id_in_read_scope(conflict_result: Any, memory_id: str) -> str:
+    """`memory_id` when the verdict peer it names is inside the read scope,
+    else "". An id that names no peer is shown only to an unbounded read."""
+    peer = next(
+        (
+            p
+            for p in [
+                *list(getattr(conflict_result, "refined_peers", None) or []),
+                *list(getattr(conflict_result, "peers", None) or []),
+            ]
+            if str(getattr(p, "memory_id", "") or "") == memory_id
+        ),
+        None,
+    )
+    return memory_id if memory_id and _peer_in_read_scope(peer) else ""
+
+
 def _set_peers(conflict_result: Any) -> list[Any]:
     """The rows a verdict was reached against, as the wire shape memory.set
     returns: closest first, at most SET_PEERS_MAX, the value
-    clipped to an excerpt. `refines` lists the refined peers ahead of the
-    rest. Pure; never raises on an odd peer."""
+    clipped to an excerpt, only those inside the read scope. `refines` lists
+    the refined peers ahead of the rest. Never raises on an odd peer."""
     seen: set[str] = set()
     ordered: list[Any] = []
     for p in [
@@ -83,7 +119,7 @@ def _set_peers(conflict_result: Any) -> list[Any]:
         *list(getattr(conflict_result, "peers", None) or []),
     ]:
         mid = str(getattr(p, "memory_id", "") or "")
-        if mid in seen:
+        if mid in seen or not _peer_in_read_scope(p):
             continue
         seen.add(mid)
         ordered.append(p)
@@ -182,6 +218,7 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
     Taken for a non-searchable type or a 'high' sensitivity row. A dry run
     answers without writing; otherwise insert, project entities, count.
     """
+    import server.memory.store as memory_repo
     from server.observability import degradations as _degradations
     from server.observability.otel import traced
 
@@ -206,6 +243,14 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
         )
     with traced("ch.insert.memory", table="loom.memory"):
         await insert_memory_versions([memory_row], ch=ch)
+    # The version this replaces may have been embedded (re-set as 'high', or retyped).
+    try:
+        await memory_repo.tombstone_vectors_of(w.existing, version=memory_row["version"], ch=ch)
+    finally:  # the row is in: a failed retire must not also skip the fence
+        if memory_row.get("sensitivity") == "high":
+            await fence_high(
+                [(memory_repo.embedding_key(memory_row), int(memory_row["version"]))], ch=ch
+            )
     await _project_set_entities_fail_open(input)
     # Non-searchable types skip the conflict check entirely, so there is no
     # verdict to map: the insert always happened.
@@ -335,18 +380,18 @@ async def _set_conflict_verdict(
         )
     if conflict_result.verdict == "rejected":
         # Counted at the handler boundary via _WRITE_OUTCOME_BY_ERROR_CODE.
+        # A blocker outside the read scope still blocks but is not named.
+        blocker = _peer_id_in_read_scope(conflict_result, conflict_result.pinned_blocker_id or "")
         raise HTTPException(
             status_code=409,
             detail={
                 "code": "PINNED_CONFLICT",
                 "message": (
-                    "write conflicts with a pinned memory "
-                    f"({conflict_result.pinned_blocker_id!r}); update "
-                    f"the pinned row explicitly via memory.update_by_id "
-                    f"or unpin it first"
+                    f"write conflicts with a pinned memory{f' ({blocker!r})' if blocker else ''}; "
+                    "update the pinned row explicitly via memory.update_by_id or unpin it first"
                 ),
-                "pinned_blocker_id": conflict_result.pinned_blocker_id,
-                "peer_ids": [p.memory_id for p in conflict_result.peers],
+                "pinned_blocker_id": blocker,
+                "peer_ids": [p.memory_id for p in peers_out],
             },
         )
     return _cfg, conflict_result, peers_out, None
@@ -383,7 +428,13 @@ async def _set_merge(
         org=input.org,
         fresh=True,
         strong=True,  # the conflict check just saw it; read the latest head
+        scope=WHOLE_NAMESPACE,
     )
+    # A row outside the caller's read scope (or one a bounded read could not
+    # check) still absorbs the write, but the answer names no id, hash or key of it.
+    merged_into_id = conflict_result.existing_memory_id or ""
+    if not _peer_in_read_scope(existing):
+        existing, merged_into_id = None, ""
     existing_sha = (
         _content_sha256_of_stored(json.dumps(existing.value, default=str))
         if existing is not None and existing.value is not None
@@ -421,7 +472,7 @@ async def _set_merge(
             retyped_from=retyped_from,
             version=0,
             pinned=input.pinned,
-            memory_id=conflict_result.existing_memory_id or "",
+            memory_id=merged_into_id,
             content_sha256=existing_sha,
             namespace=input.namespace,
             memory_key=input.memory_key,
@@ -435,7 +486,8 @@ async def _set_merge(
         )
     # Auto-reinforce: bump evidence_count on the existing row when the
     # namespace policy is "auto_reinforce". Fire-and-forget.
-    await _cf.auto_reinforce_peer(input, conflict_result.existing_memory_id or "", ch=ch, cfg=_cfg)
+    if merged_into_id:  # never a row outside the read scope
+        await _cf.auto_reinforce_peer(input, merged_into_id, ch=ch, cfg=_cfg)
     # Canonical-form match: the caller restated a memory Loom already had.
     # No row was inserted, so this is the outcome that separates "still
     # ingesting" from "only ever hearing the same things again".
@@ -444,7 +496,7 @@ async def _set_merge(
         retyped_from=retyped_from,
         version=version,
         pinned=input.pinned,
-        memory_id=conflict_result.existing_memory_id or "",
+        memory_id=merged_into_id,
         content_sha256=existing_sha,
         namespace=input.namespace,
         memory_key=input.memory_key,
@@ -473,7 +525,7 @@ def _set_dry_run_answer(
         pinned=input.pinned,
         memory_id=memory_id,
         content_sha256=new_sha,
-        duplicate_of=duplicate_of_id,
+        duplicate_of=_peer_id_in_read_scope(conflict_result, duplicate_of_id),
         namespace=input.namespace,
         memory_key=input.memory_key,
         degraded=_degradations.current(),
@@ -541,6 +593,9 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
         # defaulted to `active` while loom.memory holds a `duplicate` verdict, the search
         # pool would keep serving the duplicate.
         status=str(memory_row.get("status") or "active"),
+        # The memory row's version, not one drawn now: a newer write's retire or fence
+        # outranks this vector even when its embedding arrives late.
+        version=int(memory_row["version"]),
         # A revision of unchanged content keeps its attestation; the mirror says so.
         verified=int(
             attests(
@@ -567,6 +622,8 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
 
     with traced("ch.insert.dual_write", concurrent=2):
         await asyncio.gather(_insert_memory(), _insert_embedding())
+    # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
+    await memory_repo.index_late_rows([embedding_row], ch=ch)
     _cd.schedule_settle(input, conflict_result, memory_id=memory_id, cfg=_cfg)
 
     # Post-insert (so the new row's UUID exists for the cross-link): flag
@@ -641,7 +698,7 @@ async def _set_after_write(
         pinned=input.pinned,
         memory_id=memory_id,
         content_sha256=new_sha,
-        duplicate_of=duplicate_of_id,
+        duplicate_of=_peer_id_in_read_scope(conflict_result, duplicate_of_id),
         namespace=input.namespace,
         memory_key=input.memory_key,
         degraded=_degradations.current(),

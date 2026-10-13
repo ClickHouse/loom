@@ -38,6 +38,7 @@ from fastapi import HTTPException
 
 from server.core.datetimes import naive_utc_now
 from server.core.datetimes import to_naive_utc as _naive
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_apply import (
     ApplyDemote,
     ApplyExpire,
@@ -97,7 +98,9 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
     if target.keys:
         rows = []
         for key in dict.fromkeys(target.keys):  # de-dup, keep order
-            row = await memory_repo.get_by_key(identity, key, fresh=True, strong=True)
+            row = await memory_repo.get_by_key(
+                identity, key, fresh=True, strong=True, scope=WHOLE_NAMESPACE
+            )
             if row is not None:
                 rows.append(row)
         return rows, False
@@ -194,7 +197,9 @@ async def resolve(input: Any) -> tuple[list[Any], bool]:
             )
         ):
             continue
-        row = await memory_repo.get_by_key(identity, key, fresh=True, strong=True)
+        row = await memory_repo.get_by_key(
+            identity, key, fresh=True, strong=True, scope=WHOLE_NAMESPACE
+        )
         if row is not None:
             rows.append(row)
     return rows[: int(input.limit)], False
@@ -259,6 +264,8 @@ async def _mirror(row: Any, **overrides: Any) -> None:
     tolerated failure mode."""
     import server.memory.store as memory_repo
 
+    if row.sensitivity == "high":  # a 'high' head keeps no vector
+        return
     try:
         await memory_repo.reemit_embedding_rows_for_key(
             row.org,

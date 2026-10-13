@@ -22,7 +22,7 @@ Delete a session brief by brief_key when the user asks for it to be forgotten.
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
-| `brief_key` | `str` | required | The brief to delete. |
+| `brief_key` | `str` | required | The brief to delete, as session.brief_list shows it. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -63,6 +63,7 @@ Load a brief: by `brief_key`, else the newest brief a given session wrote (`from
 | `head_sha` | `str` | Commit the checkout was at when this revision was saved. |
 | `author` | `str` | Who wrote the revision: `llm`, `deterministic` or `model` (the calling agent). |
 | `trigger` | `str` | What prompted the revision's save (`precompact`, `session_end`, `stop`, `manual` or `model`). |
+| `actor` | `str` | The principal that saved the revision (`human:<subject>` / `process:<subject>`): a namespace-wide writer may save to a user's own `~<user>~` brief. |
 | `source_sessions` | `list[str]` | Session ids that contributed to the brief, oldest first (the last 20). |
 | `updated_at` | `datetime \| None` | When the returned revision was saved. |
 | `age_seconds` | `int` | Seconds since `updated_at`. |

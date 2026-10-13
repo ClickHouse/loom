@@ -19,9 +19,17 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
-from server.tasks.domain.states import BlockedOn, Disclosure, PolicyMode, TaskStatus
+from server.tasks.domain.states import (
+    WEBHOOK_SECRET_PREFIX,
+    BlockedOn,
+    Disclosure,
+    PolicyMode,
+    TaskStatus,
+    webhook_secret_org_prefix,
+    webhook_secret_ref_ok,
+)
 
 # The long-poll ceiling: a pull or an updates read may hold this long.
 MAX_WAIT_SECONDS = 30
@@ -162,14 +170,29 @@ class InboxRegisterInput(_Caller):
     # `triage_escalated` event on it.
     triage_escalate_after_seconds: int = Field(default=14_400, ge=60, le=30 * 86_400)
     # Where signed wake-up notices (event kinds and task ids, never task text) are
-    # POSTed; "" sends none.
-    webhook_url: str = Field(default="", max_length=2048)
+    # POSTed: an http(s) URL on a public host (checked again at each delivery); ""
+    # sends none.
+    webhook_url: str = Field(default="", max_length=2048, pattern=r"^(https?://\S+)?$")
     # Name of the environment variable holding the webhook signing secret (never
-    # stored); without it no notice is sent.
-    webhook_secret_ref: str = Field(default="", max_length=256)
+    # stored): `LOOM_WEBHOOK_SECRET_<ORG>__<NAME>`, ORG the org id with a-z
+    # upper-cased, digits kept and any other byte as `_` and two hex digits
+    # (`acme-corp` → `ACME_2DCORP`), NAME letters and digits. Without it no notice
+    # is sent.
+    webhook_secret_ref: str = Field(
+        default="", max_length=256, pattern=rf"^({WEBHOOK_SECRET_PREFIX}[A-Za-z0-9_]+)?$"
+    )
     # The inbox `version` this edit was based on; a different current version
     # answers 409. None skips the check.
     if_match_version: int | None = None
+
+    @model_validator(mode="after")
+    def _own_secret(self) -> InboxRegisterInput:
+        if self.webhook_secret_ref and not webhook_secret_ref_ok(self.org, self.webhook_secret_ref):
+            raise ValueError(
+                "webhook_secret_ref must be "
+                f"{webhook_secret_org_prefix(self.org)}<letters and digits>"
+            )
+        return self
 
 
 class InboxRegisterOutput(BaseModel):

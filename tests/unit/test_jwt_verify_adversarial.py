@@ -144,8 +144,24 @@ def test_a_wrong_key_or_a_tampered_payload_is_refused() -> None:
         _claims(nbf=int(time.time()) + 3600),
         _claims(iat=None),
         _claims(sub=None),
+        # PyJWT validates a numeric string; Loom read it as "no expiry" and let it
+        # delegate a 90-day child from a parent with minutes left
+        _claims(exp=str(int(time.time()) + 600)),
+        _claims(iat=str(int(time.time()))),
+        _claims(exp=True),
     ],
-    ids=["iss", "aud", "expired", "future-iat", "nbf", "no-iat", "no-sub"],
+    ids=[
+        "iss",
+        "aud",
+        "expired",
+        "future-iat",
+        "nbf",
+        "no-iat",
+        "no-sub",
+        "exp-str",
+        "iat-str",
+        "exp-bool",
+    ],
 )
 def test_the_registered_claims_are_enforced(claims: dict[str, Any]) -> None:
     _refused(_hs(claims))
@@ -161,6 +177,13 @@ def test_the_registered_claims_are_enforced(claims: dict[str, Any]) -> None:
         _claims(roles=["superuser"]),
         _claims(ns_roles=[["shop", "admin"]]),
         _claims(org=["acme"]),
+        # read as namespace-wide, unpinned or a service account, each would widen
+        _claims(read_scope="OWN_USER"),
+        _claims(read_scope=["own_user"]),
+        _claims(read_user_id=0),
+        _claims(read_user_id=False),
+        _claims(sa="false"),
+        _claims(iss=["loom"]),
     ],
     ids=[
         "ns-str",
@@ -170,6 +193,12 @@ def test_the_registered_claims_are_enforced(claims: dict[str, Any]) -> None:
         "roles-unknown",
         "ns_roles-list",
         "org-list",
+        "read_scope-case",
+        "read_scope-list",
+        "read_user_id-int",
+        "read_user_id-bool",
+        "sa-str",
+        "iss-list",
     ],
 )
 def test_a_malformed_loom_claim_is_refused(claims: dict[str, Any]) -> None:
@@ -179,3 +208,17 @@ def test_a_malformed_loom_claim_is_refused(claims: dict[str, Any]) -> None:
 @pytest.mark.parametrize("garbage", ["", "abc", "a.b.c", "e30.e30."])
 def test_garbage_is_a_token_error(garbage: str) -> None:
     _refused(garbage)
+
+
+def test_a_numeric_expiry_bounds_what_the_token_delegates() -> None:
+    """The verified `exp` (an int or a float) is the parent's expires_at, which
+    delegation clips every child to; only an absent `exp` reads as None."""
+    exp = int(time.time()) + 600
+    assert verify_token(_hs(_claims(exp=exp))).expires_at == exp
+    assert verify_token(_hs(_claims(exp=exp + 0.5))).expires_at == exp
+    assert verify_token(_hs(_claims())).expires_at is None
+
+
+def test_a_well_formed_scope_claim_still_verifies() -> None:
+    info = verify_token(_hs(_claims(read_scope="own_user", read_user_id="u1", sa=True)))
+    assert (info.read_scope, info.read_user_id, info.is_service_account) == ("own_user", "u1", True)

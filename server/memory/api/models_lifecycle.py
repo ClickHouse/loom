@@ -347,6 +347,9 @@ class _StackEntry(BaseModel):
     pinned: bool = False
     recall_count: int = 0
     last_recalled_at: datetime | None = None
+    # The memory's writer (`human:<subject>` / `process:<subject>`); "" for the profile
+    # and knowledge entries and for rows with no recorded actor.
+    actor: str = ""
 
 
 class MemoryStackOutput(BaseModel):

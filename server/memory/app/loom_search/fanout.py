@@ -15,6 +15,8 @@ import asyncio
 from typing import Any, Literal
 
 from server.core.errors import LoomServerError
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import ReadFilters
 from server.knowledge.app.repo_docs import knowledge_with_repo_docs
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app.loom_search.answer_first import answer_first
@@ -173,6 +175,17 @@ def drop_flagged_hits(memory: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+async def _conversation_leg(conv_input: Any, scope: ReadFilters) -> Any:
+    """The conversation leg. Its rows carry no user bound the leg could apply,
+    so a read scoped below the namespace gets no conversations."""
+    from server.knowledge.api.models_conversations import ConversationSearchOutput
+    from server.knowledge.app.conversations import handle_conversation_search
+
+    if scope.narrowed:
+        return ConversationSearchOutput(hits=[])
+    return await handle_conversation_search(conv_input)
+
+
 async def search_sections(
     *,
     org: str,
@@ -193,8 +206,9 @@ async def search_sections(
     reads them too); the caller has already authorized `namespace`."""
     from server.knowledge.api.models_conversations import ConversationSearchInput
     from server.knowledge.api.models_knowledge import KnowledgeSearchInput
-    from server.knowledge.app.conversations import handle_conversation_search
     from server.memory.app.search import handle_memory_search
+
+    scope = request_scope()
 
     profile_namespaces = (
         fanout_namespaces if namespace_scope == "all_mine" and fanout_namespaces else [namespace]
@@ -241,9 +255,9 @@ async def search_sections(
         handle_memory_search(mem_input),
         knowledge_with_repo_docs(know_input),  # + the scoped repository's docs
         search_profile(  # By words, then by meaning
-            org, profile_namespaces, query, top_k=top_k, lexical=profile_hit_matches
+            org, profile_namespaces, query, top_k=top_k, lexical=profile_hit_matches, scope=scope
         ),
-        handle_conversation_search(conv_input),
+        _conversation_leg(conv_input, scope),
         tracker_leg(query, top_k=top_k),  # A defect-shaped query under a code scope
         return_exceptions=True,
     )

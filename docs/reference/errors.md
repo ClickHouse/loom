@@ -153,10 +153,6 @@ Each code below is an anchor: `errors.md#<code in lowercase>` is the address an 
 
 Raised in `server/memory/app/profile.py`.
 
-#### `ADMIN_REQUIRED`
-
-Raised in `server/identity/app/claim_release.py`.
-
 #### `AMBIGUOUS_KEY`
 
 Raised in `server/memory/app/update.py`.
@@ -329,6 +325,10 @@ Raised in `server/tracker/app/sources.py`.
 
 Raised in `server/tracker/app/sources.py`.
 
+#### `CROSS_SITE_REQUEST`
+
+Raised in `server/main.py`.
+
 #### `DEDUP_PAIR_NOT_FOUND`
 
 Raised in `server/memory/app/dedup.py`.
@@ -376,6 +376,10 @@ HTTP 409, raised as `server.core.errors.GrantWouldDowngradeError`. 409 — `gran
 #### `HANDLER_HTTP_ERROR`
 
 Raised in `server/transport/http.py`.
+
+#### `HIGH_SENSITIVITY_PROMOTION_REFUSED`
+
+Raised in `server/memory/app/promote.py`.
 
 #### `HOST_REFUSED`
 
@@ -428,6 +432,10 @@ Raised in `server/memory/domain/lock.py`. What to do: [common errors](#common-er
 #### `MAPPING_FAILED`
 
 Raised in `server/tracker/app/sources.py`.
+
+#### `MISDIRECTED_REQUEST`
+
+Raised in `server/main.py`.
 
 #### `MISSING_IDENTITY_FIELD`
 
@@ -499,7 +507,7 @@ Raised in `server/transport/mcp_op.py`.
 
 #### `ORG_MISMATCH`
 
-Raised in `server/identity/app/claim_release.py`, `server/transport/mcp_auth.py`.
+Raised in `server/transport/mcp_auth.py`.
 
 #### `OVERLOADED`
 
@@ -519,7 +527,7 @@ HTTP 409, raised as `server.core.errors.PreconditionFailedError`. 409 — `if_ma
 
 #### `RATE_LIMITED`
 
-Raised in `server/auth/login.py`, `server/auth/self_signup.py`, `server/transport/mcp_call.py`. What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 429, raised as `server.core.errors.RateLimitedError`. 429 — the caller is over one of its admission limits (the org's in-flight requests); `retry_after_s` is the hint the SDK's retry layer honours. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `RECALL_REQUIRES_FILTER`
 
@@ -552,6 +560,10 @@ Raised in `server/code/app/repo_admin.py`.
 #### `ROLE_CEILING`
 
 Raised in `server/identity/app/grants.py`, `server/identity/app/namespace_membership.py`.
+
+#### `SANDBOX_UNAVAILABLE`
+
+Raised in `server/code/app/repo_admin.py`.
 
 #### `SCHEMA_ACTIVE`
 
@@ -644,10 +656,6 @@ Raised in `server/memory/domain/record_values.py`.
 #### `VALIDATION`
 
 Raised in `server/memory/app/apply.py`, `server/memory/app/lock.py`, `server/memory/app/verify.py`.
-
-#### `VALIDATION_ERROR`
-
-Raised in `server/insights/app/admin_routes.py`.
 
 #### `VALIDATION_FAILED`
 

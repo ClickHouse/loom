@@ -452,15 +452,20 @@ async def _existing_keys_named(state: WorkflowState, tokens: set[str]) -> set[st
         return found
     try:
         from server.core.ch import get_client
+        from server.identity.app.request_scope import request_scope
+        from server.identity.domain.read_scope import scope_and
 
+        params: dict[str, Any] = {"org": state.org, "ns": state.namespace, "keys": rest[:64]}
+        # Only keys the caller may read count: another user's key is no echo.
+        in_scope = scope_and(request_scope(), params)
         rows = await get_client().query_all(
-            """
+            f"""
             SELECT DISTINCT memory_key
             FROM loom.memory FINAL
-            WHERE org = {org:String} AND namespace = {ns:String}
-              AND memory_key IN {keys:Array(String)} AND tombstoned_at IS NULL
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND memory_key IN {{keys:Array(String)}} AND tombstoned_at IS NULL{in_scope}
             """,
-            params={"org": state.org, "ns": state.namespace, "keys": rest[:64]},
+            params=params,
         )
         found |= {str(r.get("memory_key") or "") for r in rows or []}
     except Exception as e:  # noqa: BLE001 — fail open: an unknown key is not an echo

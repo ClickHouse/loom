@@ -189,6 +189,9 @@ def plane(monkeypatch: pytest.MonkeyPatch):
         "code_repos_json",
         json.dumps([{"namespace": "code-clickhouse", "repo": "ClickHouse/ClickHouse"}]),
     )
+    from server.code.app.index import sandbox
+
+    monkeypatch.setattr(sandbox, "_available", True)
     monkeypatch.setattr(settings, "code_self_service_enabled", True)
     monkeypatch.setattr(settings, "code_self_service_max_repos", 3)
     monkeypatch.setattr(settings, "jwt_secret", "unit-test-secret")
@@ -328,6 +331,43 @@ async def test_code_repo_add_refusals_are_sentences(plane) -> None:
             CodeRepoAddInput(org=ORG, repo="acme/fourth", branch="main")
         )
     assert ei.value.to_detail()["code"] == "REPO_QUOTA"
+
+
+@pytest.mark.asyncio
+async def test_code_repo_add_is_refused_without_the_sandbox(plane, monkeypatch) -> None:
+    """A self-registered repository's build tiers run its own code, so without the
+    repository-job sandbox nothing is registered and the remote is never asked."""
+    from server.code.app.index import sandbox
+
+    monkeypatch.setattr(sandbox, "_available", False)
+    for call in (
+        admin.handle_code_repo_add(CodeRepoAddInput(org=ORG, repo="acme/widgets", branch="main")),
+        admin.handle_code_repo_remote_branches(CodeRepoAddInput(org=ORG, repo="acme/widgets")),
+    ):
+        with pytest.raises(ValidationError) as ei:
+            await call
+        assert ei.value.to_detail()["code"] == "SANDBOX_UNAVAILABLE"
+    assert plane.ch.inserted == []
+
+
+@pytest.mark.asyncio
+async def test_the_sandbox_probe_runs_off_the_event_loop(plane, monkeypatch) -> None:
+    """The first probe runs bwrap for up to 20 s; on the loop it would stall every
+    request the process serves."""
+    import threading
+
+    from server.code.app.index import sandbox
+
+    threads: list[threading.Thread] = []
+
+    def probe() -> bool:
+        threads.append(threading.current_thread())
+        return False
+
+    monkeypatch.setattr(sandbox, "sandbox_available", probe)
+    with pytest.raises(ValidationError):
+        await admin.handle_code_repo_add(CodeRepoAddInput(org=ORG, repo="acme/w", branch="main"))
+    assert threads and threads[0] is not threading.main_thread()
 
 
 @pytest.mark.asyncio

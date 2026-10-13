@@ -7,9 +7,11 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Request
 
+from server.auth.delegation import Delegated, delegate
+from server.auth.jwt import AuthInfo
 from server.core.datetimes import naive_utc_now_seconds
 from server.identity.app import me_callers, token_grants
-from server.identity.app.me_service_accounts import json_int
+from server.identity.app.me_service_accounts import dev_parent, parse_ttl_days
 from server.settings import settings
 
 router = APIRouter()
@@ -144,9 +146,9 @@ async def _validate_restricted_request(
     org: str, subject: str, raw: object, persist: bool
 ) -> list[str]:
     """Parse `restricted_namespaces` on the Setup mint: each must be classified restricted
-    (422 NOT_RESTRICTED otherwise — a standard namespace needs no naming), the caller must
-    hold a direct grant there (403), and the token must be persisted (422) so the grant has
-    a subject to belong to and a revocation to die with."""
+    (422 NOT_RESTRICTED otherwise — a standard namespace needs no naming) and the token
+    must be persisted (422) so the grant has a subject to belong to and a revocation to die
+    with. `delegate` then refuses (403) one the caller holds no grant on."""
     from server.identity.app.namespace_classification import is_restricted
 
     if not raw:
@@ -181,14 +183,6 @@ async def _validate_restricted_request(
                         f"{ns} is not a restricted namespace; a standard "
                         "namespace is read through your membership"
                     ),
-                },
-            )
-        if await me_callers.caller_role_on(org, ns, subject) is None:
-            raise HTTPException(
-                status_code=403,
-                detail={
-                    "code": "AUTH_INSUFFICIENT",
-                    "message": f"you hold no direct grant on {ns}",
                 },
             )
         names.append(ns)
@@ -231,39 +225,25 @@ def _mcp_token_name(client_label: str, now: datetime, sa_hash: str) -> str:
 
 async def _persist_mcp_token(
     *,
-    org: str,
     subject: str,
     client: str,
-    token_namespaces: list[str],
-    roles: list[str],
-    ttl_seconds: int | None,
+    delegated: Delegated,
     restricted_names: list[str],
 ) -> tuple[str, str]:
     """Track a Setup-page token in `service_accounts` (kind='mcp') so it is revocable from
-    the Tokens list, re-minted under its own `sa:` subject so revocation-by-sub kills this
+    the Tokens list, minted under its own `sa:` subject so revocation-by-sub kills this
     token and not the person's JWT. Restricted namespaces get the token's own direct grant.
     Returns (minted token, sa_subject)."""
     import hashlib
     import time as _time
 
-    from server.auth.jwt import mint_token
-
+    org = delegated.org
     sa_hash = hashlib.sha1(
         f"mcp:{org}:{client}:{subject}:{_time.time_ns()}".encode(),
     ).hexdigest()[:6]
     sa_subject = f"sa:{client}-{sa_hash}"
     now = naive_utc_now_seconds()
-    expires_at = now + timedelta(seconds=ttl_seconds) if ttl_seconds is not None else None
-    # Re-mint under sa_subject so revocation-by-sub kills this token,
-    # not the user's personal JWT (which shares the original subject).
-    minted = mint_token(
-        subject=sa_subject,
-        org=org,
-        namespaces=token_namespaces,
-        roles=roles,
-        ttl_seconds=ttl_seconds,
-        is_service_account=True,
-    )
+    minted = delegated.mint(sa_subject)
     client_label = MCP_SETUP_CLIENT_LABELS.get(client, client)
     token_name = _mcp_token_name(client_label, now, sa_hash)
 
@@ -276,19 +256,19 @@ async def _persist_mcp_token(
                 "org": org,
                 "name": token_name,
                 "sa_subject": sa_subject,
-                "namespaces": token_namespaces,
-                "roles": roles,
-                "ttl_days": int((ttl_seconds or 0) / 86400),
+                "namespaces": delegated.namespaces,
+                "roles": delegated.roles,
+                "ttl_days": delegated.ttl_days,
                 "created_by": subject,
                 "created_at": now,
-                "expires_at": expires_at,
+                "expires_at": now + timedelta(seconds=delegated.ttl_seconds),
                 "revoked_at": None,
                 "revoked_by": "",
                 "version": _time.time_ns(),
                 "kind": "mcp",
                 "client": client,
-                # Inherit the creator's live namespace grants (default-on) so
-                # this MCP token sees namespaces the user joins later.
+                # The token's `creator` claim does the inheriting now; the
+                # flag stays true so the Tokens list reads the same.
                 "inherit_creator_grants": True,
             }
         ],
@@ -303,56 +283,34 @@ async def _persist_mcp_token(
     return minted, sa_subject
 
 
-def _setup_identity(
-    request: Request, payload: dict[str, object]
-) -> tuple[str, str, str, list[str]]:
-    """(subject, org, default namespace, roles) the setup token is minted for."""
+def _setup_parent(request: Request, payload: dict[str, object]) -> AuthInfo:
+    """The token the setup token is delegated from: the caller's bearer, or in dev
+    mode (no auth, no bearer) a flat writer for the body's subject and org."""
     from server.auth.bearer import verify_bearer_header
 
-    # Verify + use the caller's identity if auth is required or a credential
-    # is present; otherwise fall back to body-supplied identity (dev mode).
     info = verify_bearer_header(request.headers.get("Authorization"))
-    if info is None and settings.auth_actually_required():
+    if info is not None:
+        return info
+    if settings.auth_actually_required():
         raise HTTPException(
             status_code=401,
             detail={"code": "AUTH_INVALID", "message": "missing bearer token"},
         )
-    if info is not None:
-        if info.has_ns_roles():
-            # A scoped token has no flat role (roles=[]); minting from it would turn its
-            # per-namespace map into an org-wide `*` token with a flat role.
-            raise HTTPException(
-                status_code=403,
-                detail={
-                    "code": "AUTH_INSUFFICIENT",
-                    "message": "a scoped token cannot mint a setup token; sign in to /me",
-                },
-            )
-        subject = info.subject
-        org = info.org
-        default_ns = info.namespaces[0] if info.namespaces else "default"
-        roles = [r.name.lower() for r in info.roles] or ["writer"]
-    else:
-        # Dev mode — no auth, no Bearer. Accept body-supplied identity.
-        subject = str(payload.get("subject") or "dev")
-        org = str(payload.get("org") or "default")
-        default_ns = "default"
-        roles = ["writer"]
-    return subject, org, default_ns, roles
+    return dev_parent(payload)
 
 
 @router.post("/v1/me/setup/mcp_config")
 async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> dict[str, object]:
     """Generate an MCP-client config block + fresh token for the caller.
 
-    Powers the `/me` Setup tab: mints a Loom JWT scoped to the caller's
-    namespace and returns the config JSON to paste into the MCP client.
+    Powers the `/me` Setup tab: mints a Loom JWT delegated from the caller's
+    (`server.auth.delegation`) and returns the config JSON to paste into the MCP client.
 
     Body:
       {
         client: str,             # a key of MCP_SETUP_CLIENT_LABELS (claude-code, codex, cursor, …)
         namespace?: str,         # defaults to caller's namespace
-        ttl_days?: int | null,   # null = indefinite (default)
+        ttl_days?: int | null,   # null = 90 days (the delegation default)
       }
 
     Returns:
@@ -364,9 +322,8 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
         token: str,              # the minted JWT
       }
     """
-    from server.auth.jwt import mint_token
-
-    subject, org, default_ns, roles = _setup_identity(request, payload)
+    parent = _setup_parent(request, payload)
+    subject, org = parent.subject, parent.org
 
     client = str(payload.get("client") or "")
     allowed_clients = set(MCP_SETUP_CLIENT_LABELS)
@@ -379,48 +336,42 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
             },
         )
 
-    # Default: wildcard-namespace token so the client can target any
-    # namespace the caller can access. Explicit `namespace` scopes it down.
+    # Default: `*`, which reads wherever the caller holds a grant, now and later (or
+    # the caller's own namespaces, under a token narrower than that). An explicit
+    # `namespace` scopes it down. None = the highest role the caller may delegate.
     namespace_payload = payload.get("namespace")
     if namespace_payload:
-        token_namespaces = [str(namespace_payload)]
+        requested: dict[str, str | None] = {str(namespace_payload): None}
         displayed_namespace = str(namespace_payload)
     else:
-        token_namespaces = ["*"]
-        displayed_namespace = default_ns  # for the response only; bearer is wildcard
+        requested = {"*": None}
+        displayed_namespace = next((ns for ns in parent.namespaces if ns != "*"), "default")
     # Restricted namespaces the token should read are named in the claim and, once the token
     # has a subject, granted to it directly.
     persist = bool(payload.get("persist") or False)
+    if parent.is_service_account and not persist:
+        # delegate() refuses it too; this says what to send instead.
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "AUTH_INSUFFICIENT",
+                "message": "a service-account token must pass persist=true, so the "
+                "token it mints is recorded and revocable",
+            },
+        )
     restricted_names = await _validate_restricted_request(
         org, subject, payload.get("restricted_namespaces"), persist
     )
-    token_namespaces = token_namespaces + [n for n in restricted_names if n not in token_namespaces]
+    for ns in restricted_names:
+        requested.setdefault(ns, None)
 
-    ttl_raw = payload.get("ttl_days")
-    ttl_seconds: int | None
-    if ttl_raw is None:
-        ttl_seconds = None
-    else:
-        try:
-            ttl_seconds = json_int(ttl_raw) * 86400
-            if ttl_seconds < 86400:
-                raise ValueError
-        except (TypeError, ValueError) as e:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "VALIDATION_FAILED",
-                    "message": "ttl_days must be a positive int or null",
-                },
-            ) from e
-
-    minted = mint_token(
-        subject=subject,
+    delegated = await delegate(
+        parent,
         org=org,
-        namespaces=token_namespaces,
-        roles=roles,
-        ttl_seconds=ttl_seconds,
-        is_service_account=False,
+        requested=requested,
+        scoped=False,
+        ttl_seconds=parse_ttl_days(payload.get("ttl_days")),
+        is_service_account=persist,
     )
 
     # persist=True tracks the token in service_accounts (kind='mcp') so
@@ -428,18 +379,16 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
     sa_subject = ""
     if persist:
         minted, sa_subject = await _persist_mcp_token(
-            org=org,
             subject=subject,
             client=client,
-            token_namespaces=token_namespaces,
-            roles=roles,
-            ttl_seconds=ttl_seconds,
+            delegated=delegated,
             restricted_names=restricted_names,
         )
+    else:
+        minted = delegated.mint(subject)
+    reads_everywhere = "*" in delegated.namespaces
 
-    # Base URL: LOOM_PUBLIC_BASE_URL when the operator set it, else the
-    # request's forwarded origin (honouring X-Forwarded-Proto, so a TLS-terminating proxy
-    # does not hand every client an http:// address).
+    # Base URL: LOOM_PUBLIC_BASE_URL (required off loopback), else the request's own origin.
     from server.auth.public_url import public_base_url
 
     base_url = public_base_url(request)
@@ -456,11 +405,11 @@ async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> d
         "subject": subject,
         "org": org,
         "namespace": displayed_namespace,
-        "namespace_scope": "all" if token_namespaces == ["*"] else "single",
-        # The namespace above is where the token WRITES. Reads follow the creator's live
-        # grants (service_accounts.inherit_creator_grants, resolved in server/auth/context.py),
-        # so the client sees every namespace the person belongs to, now and later.
-        "read_scope": "inherited_grants",
+        "namespace_scope": "all" if reads_everywhere else "single",
+        # Every read is rechecked against the creator's live grants. Under `*` that is the
+        # whole read set (every namespace the person belongs to, now and later); otherwise
+        # the token reads only the namespaces it names.
+        "read_scope": "inherited_grants" if reads_everywhere else "named_namespaces",
         # Restricted namespaces this token reads by name, each with a direct grant of its own
         # that dies with the token.
         "restricted_namespaces": restricted_names,

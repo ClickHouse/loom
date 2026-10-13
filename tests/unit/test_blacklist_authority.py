@@ -229,6 +229,88 @@ def test_remove_unknown_id_is_a_miss(repo: _Repo) -> None:
     assert out.removed is False and out.removed_at is None
 
 
+# ------------------------------------------------- a token narrowed to one user
+
+
+def _pinned(role: str, user: str) -> AuthInfo:
+    """A token pinned to `user`; its author stamp is `human:<role>@x`."""
+    return AuthInfo(
+        subject=f"{role.lower()}@x",
+        org=ORG,
+        namespaces=(NS,),
+        roles=(Role[role],),
+        is_service_account=False,
+        read_scope="own_user",
+        read_user_id=user,
+    )
+
+
+@pytest.mark.parametrize(
+    "name", ["blacklist.add", "blacklist.list", "blacklist.remove", "blacklist.sweep"]
+)
+def test_a_narrowed_token_cannot_reach_any_blacklist_op(name: str) -> None:
+    """A backend mints one token per end user under one subject, so `created_by`
+    (the subject) cannot tell alice's pattern from bob's: list, remove and sweep
+    would reach the other's patterns, and an add would be a namespace-wide Refuse
+    its author could never list or remove. Even an ADMIN is refused."""
+    from types import SimpleNamespace
+
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import gates
+
+    alice, bob = (
+        AuthInfo(
+            subject="sa:backend",
+            org=ORG,
+            namespaces=(NS,),
+            roles=(Role.ADMIN,),
+            is_service_account=True,
+            read_user_id=user,
+        )
+        for user in ("alice", "bob")
+    )
+    body = SimpleNamespace(user_id="-", session_id="-")
+    for tok in (alice, bob):
+        with pytest.raises(AuthInsufficientError):
+            gates.read_scope(OPERATIONS_BY_NAME[name], tok, body)
+    # A namespace-wide token keeps them.
+    wide = AuthInfo(
+        subject="sa:backend",
+        org=ORG,
+        namespaces=(NS,),
+        roles=(Role.ADMIN,),
+        is_service_account=True,
+    )
+    gates.read_scope(OPERATIONS_BY_NAME[name], wide, body)
+
+
+def test_a_narrowed_writers_refusal_names_no_pattern_id_or_reason(monkeypatch) -> None:
+    """The matching pattern may be another user's: its id and reason are theirs."""
+    import server.memory.app.blacklist_guard as bl
+
+    hit = bl.BlacklistPattern("pid-v", ORG, NS, "x", "substring", "namespace", "V-PRIVATE")
+
+    async def _match(**_):
+        return hit
+
+    async def _hit(_pid):
+        return None
+
+    monkeypatch.setattr(bl, "find_match", _match)
+    monkeypatch.setattr(bl, "note_hit", _hit)
+    bodies = []
+    for auth in (_auth("WRITER"), _pinned("WRITER", "w")):
+        set_current_auth(auth)
+        with pytest.raises(HTTPException) as refused:
+            asyncio.run(bl.enforce_on_insert(org=ORG, namespace=NS, value="x"))
+        assert refused.value.status_code == 422
+        assert refused.value.detail["code"] == "BLACKLISTED"
+        bodies.append(str(refused.value.detail))
+    wide, narrow = bodies
+    assert "pid-v" in wide and "V-PRIVATE" in wide
+    assert "pid-v" not in narrow and "V-PRIVATE" not in narrow
+
+
 # -------------------------------------------------------------- sweep gate
 
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
 from tests.analyzer.cases._common import AGENT, MODEL, NS, ORG, VEC, chunk_cand, rows_by_substring
 from tests.analyzer.cases.search import _q
 from tests.analyzer.corpus import Case, RecordingCH
@@ -261,7 +262,7 @@ async def _memory_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
 
     ident = Identity(org=ORG, namespace=NS, agent=c["agent"], user_id=c["user_id"], session_id="-")
     as_of = _AS_OF if c["as_of"] else None
-    await M.get_many_by_keys(ident, ["k1", "k2"], ch=ch)
+    await M.get_many_by_keys(ident, ["k1", "k2"], ch=ch, scope=WHOLE_NAMESPACE)
     await M.get_by_key(
         ident,
         "k1",
@@ -269,6 +270,7 @@ async def _memory_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
         as_of=as_of,
         include_tombstoned=c["as_of"],
         include_usage_totals=c["as_of"],
+        scope=WHOLE_NAMESPACE,
     )
     await M.get_by_id(
         "00000000-0000-0000-0000-000000000001",
@@ -276,6 +278,7 @@ async def _memory_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
         ch=ch,
         as_of=as_of,
         include_usage_totals=c["as_of"],
+        scope=WHOLE_NAMESPACE,
     )
     await M.list_by_namespace(
         ident,
@@ -289,6 +292,7 @@ async def _memory_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
         exclude_high_sensitivity=c["as_of"],
         ch=ch,
         include_duplicates=c["as_of"],
+        scope=WHOLE_NAMESPACE,
     )
     await M.count_by_namespace(
         ident,
@@ -300,9 +304,10 @@ async def _memory_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
         created_since=as_of,
         ch=ch,
         include_duplicates=c["as_of"],
+        scope=WHOLE_NAMESPACE,
     )
-    await M.list_history(ident, "k1", ch=ch)
-    await M.find_related_by_entities(ident, "k1", ch=ch)
+    await M.list_history(ident, "k1", ch=ch, scope=WHOLE_NAMESPACE)
+    await M.find_related_by_entities(ident, "k1", ch=ch, scope=WHOLE_NAMESPACE)
 
 
 async def _memory_finders(ch: RecordingCH, c: dict[str, Any]) -> None:
@@ -377,8 +382,20 @@ async def _memory_finders(ch: RecordingCH, c: dict[str, Any]) -> None:
     await M.find_duplicate_clusters(ORG, NS, ch=ch)
     await M.find_orphan_duplicates(ORG, NS, ch=ch)
     # The served-duplicate truth read, the canonical read, the collapse worklist
-    await M.status_by_keys(ORG, [NS], ["k1", "k2"], ch=ch)
-    await M.canonical_rows_by_ids(ORG, [NS], ["00000000-0000-0000-0000-000000000001"], ch=ch)
+    # The user_id axis drives both forms: a read bounded to one user and the whole namespace.
+    dup_scope = (
+        ReadFilters(scope="own_user", user_id="u1", session_id=None)
+        if c["user_id"]
+        else WHOLE_NAMESPACE
+    )
+    await M.status_by_keys(ORG, [NS], ["k1", "k2"], scope=dup_scope, ch=ch)
+    await M.canonical_rows_by_ids(
+        ORG, [NS], ["00000000-0000-0000-0000-000000000001"], scope=dup_scope, ch=ch
+    )
+    await M.superseded_successors(ORG, [NS], ["k1"], scope=dup_scope, ch=ch)
+    await M.live_ids_in_scope(
+        ORG, [NS], ["00000000-0000-0000-0000-000000000001"], scope=dup_scope, ch=ch
+    )
     await M.find_duplicate_pairs(ORG, NS, key_prefix="user_" if c["vector"] else "", ch=ch)
     await M.embedding_mirror_for_keys(ORG, NS, ["k1"], ch=ch)
     await M.divergent_namespaces(ORG, since_days=7 if c["vector"] else 0, ch=ch)

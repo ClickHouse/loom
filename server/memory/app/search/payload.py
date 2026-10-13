@@ -9,6 +9,7 @@ import logging
 from typing import Any
 
 from server.core.ch import get_client
+from server.identity.app.request_scope import request_scope
 from server.memory.app.search.request import _apply_explain_default
 from server.memory.app.search.tiers import _reader_user_id
 from server.memory.app.search_tag_filter import read_row_tags as _read_row_tags
@@ -286,6 +287,7 @@ async def _expand_unit_bodies(
                     session_id=sid,
                 ),
                 [str(h.memory_key) for h in group],
+                scope=request_scope(),
             )
         except Exception as e:  # noqa: BLE001 — a body read never fails a search
             log.debug("unit bodies read failed for %s/%s: %s", ns, sid, e)

@@ -10,6 +10,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
+from server.memory.store.embeddings import retire_copies_under_unembedded_heads
 from server.memory.store.inserts import insert_embedding_rows, insert_memory_versions
 from server.memory.store.reads import memory_rows_by_identity_keys
 from server.memory.store.rows import (
@@ -17,6 +18,7 @@ from server.memory.store.rows import (
     build_embedding_row,
     build_memory_version_row,
     next_version,
+    reemit_version,
 )
 from server.memory.store.sql import _IDENTITY_KEY_TUPLE, _identity_key
 
@@ -195,6 +197,11 @@ async def _mirror_rows_for_keys(
     )
 
 
+def _embedded(row: Any) -> bool:
+    """A head that may keep vectors: anything but 'high' (profile rows keep theirs)."""
+    return str(row.sensitivity) != "high"
+
+
 async def apply_entities_batch(
     items: Sequence[Mapping[str, Any]], *, ch: _CHClient | None = None
 ) -> dict[str, int]:
@@ -232,6 +239,8 @@ async def apply_entities_batch(
     if mem_rows:
         await insert_memory_versions(mem_rows, ch=ch)
         written["memory"] = len(mem_rows)
+    # A key whose head keeps no vector ('high', unsearchable) gets no mirror copy.
+    keys = [k for k in keys if k in existing and _embedded(existing[k])]
     emb_rows = await _mirror_rows_for_keys(ch, keys)
     seen = {_identity_key(r) for r in emb_rows}
     missing = [k for k in keys if k in existing and k not in seen]
@@ -239,18 +248,17 @@ async def apply_entities_batch(
         await asyncio.sleep(ENTITY_MIRROR_RETRY_DELAY_S)
         emb_rows.extend(await _mirror_rows_for_keys(ch, missing))
     if emb_rows:
-        await insert_embedding_rows(
-            [
-                build_embedding_row(
-                    **(
-                        {k: v for k, v in r.items() if k in EMBEDDING_PERSISTED_COLS}
-                        | {"entities": list(wanted[_identity_key(r)]), "version": version}
-                    )
+        copies = [
+            build_embedding_row(
+                **(
+                    {k: v for k, v in r.items() if k in EMBEDDING_PERSISTED_COLS}
+                    | {"entities": list(wanted[_identity_key(r)]), "version": reemit_version(r)}
                 )
-                for r in emb_rows
-            ],
-            ch=ch,
-        )
+            )
+            for r in emb_rows
+        ]
+        await insert_embedding_rows(copies, ch=ch)
+        await retire_copies_under_unembedded_heads(copies, ch=ch)
         written["memory_embeddings"] = len(emb_rows)
     return written
 
@@ -263,7 +271,7 @@ async def heal_divergent_entities(*, limit: int = 200, ch: _CHClient | None = No
     gauge counts pairs that disagree and should read 0; a mirror can miss the
     entity update when it is not yet visible to apply_entities_batch (see there).
     This is the self-heal: find the divergent pairs, re-emit
-    each mirror row with memory's entities and a bumped version. Bounded per
+    each mirror row with memory's entities at its version + 1. Bounded per
     pass; idempotent; returns rows re-emitted."""
     ch = ch or _default_client()
     pairs = await ch.query_all(
@@ -273,7 +281,8 @@ async def heal_divergent_entities(*, limit: int = 200, ch: _CHClient | None = No
                m.memory_key AS memory_key, m.entities AS entities
         FROM (SELECT org, namespace, agent, user_id, session_id, memory_key,
                      entities, arraySort(entities) AS ents
-              FROM loom.memory FINAL WHERE tombstoned_at IS NULL) AS m
+              FROM loom.memory FINAL
+              WHERE tombstoned_at IS NULL AND sensitivity != 'high') AS m
         INNER JOIN (SELECT org, namespace, agent, user_id, session_id,
                            memory_key, arraySort(entities) AS ents
                     FROM loom.memory_embeddings FINAL
@@ -290,7 +299,6 @@ async def heal_divergent_entities(*, limit: int = 200, ch: _CHClient | None = No
         return 0
     # One keyed FINAL read for every pair and one insert, not a read and an
     # insert per pair.
-    version = next_version()
     entities_by_key = {_identity_key(pr): list(pr["entities"] or []) for pr in pairs}
     emb_rows = await ch.query_all(
         f"""
@@ -304,16 +312,15 @@ async def heal_divergent_entities(*, limit: int = 200, ch: _CHClient | None = No
     emb_rows = [r for r in emb_rows if _identity_key(r) in entities_by_key]
     if not emb_rows:
         return 0
-    await insert_embedding_rows(
-        [
-            build_embedding_row(
-                **(
-                    {k: v for k, v in r.items() if k in EMBEDDING_PERSISTED_COLS}
-                    | {"entities": entities_by_key[_identity_key(r)], "version": version}
-                )
+    copies = [
+        build_embedding_row(
+            **(
+                {k: v for k, v in r.items() if k in EMBEDDING_PERSISTED_COLS}
+                | {"entities": entities_by_key[_identity_key(r)], "version": reemit_version(r)}
             )
-            for r in emb_rows
-        ],
-        ch=ch,
-    )
+        )
+        for r in emb_rows
+    ]
+    await insert_embedding_rows(copies, ch=ch)
+    await retire_copies_under_unembedded_heads(copies, ch=ch)
     return len(emb_rows)

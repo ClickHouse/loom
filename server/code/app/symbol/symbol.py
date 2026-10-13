@@ -43,6 +43,7 @@ from server.code.app.symbol.resolve import (
 )
 from server.code.app.symbol.uses import _mention_leg, _symbol_uses
 from server.code.store.index import CodeRepo
+from server.identity.app.request_scope import request_narrowed
 from server.observability.budget_shape import note_budget_shape
 from server.settings import settings
 
@@ -274,8 +275,8 @@ async def _enrichment(
 
     async def lessons() -> list[dict[str, Any]]:
         lesson_nss = [s.strip() for s in settings.code_lesson_namespaces.split(",") if s.strip()]
-        if not lesson_nss:
-            return []  # no lesson namespaces, no scan
+        if not lesson_nss or request_narrowed():
+            return []  # no lesson namespaces, or a token that may not read every user's lessons
         return await code_enrich.lessons_for_symbol(
             org,
             lesson_nss,

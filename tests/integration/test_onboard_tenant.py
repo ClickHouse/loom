@@ -28,6 +28,19 @@ def _auth_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {tok}"} if tok else {}
 
 
+def _admin_token() -> str:
+    """A platform_admin bearer: the `/v1/admin/*` steps need one when auth is on."""
+    from server.auth.jwt import mint_token
+
+    return mint_token(
+        subject="onboard-test",
+        org="*",
+        namespaces=["*"],
+        roles=["platform_admin"],
+        ttl_seconds=600,
+    )
+
+
 def _run(*args: str, cwd: Path | None = None, timeout: int = 60) -> subprocess.CompletedProcess:
     cmd = [sys.executable, str(CLI), *args]
     return subprocess.run(
@@ -36,6 +49,7 @@ def _run(*args: str, cwd: Path | None = None, timeout: int = 60) -> subprocess.C
         text=True,
         timeout=timeout,
         cwd=str(cwd) if cwd else None,
+        env={**os.environ, "LOOM_ADMIN_TOKEN": _admin_token()},
     )
 
 
@@ -166,7 +180,9 @@ async def test_onboard_with_budget_override(
     # Verify the override is live in the server's registry by reading back
     # via the admin endpoint shape (we set it again with same value → 200)
     async with httpx.AsyncClient(
-        base_url=control_plane_url, timeout=5.0, headers=_auth_headers()
+        base_url=control_plane_url,
+        timeout=5.0,
+        headers={"Authorization": f"Bearer {_admin_token()}"},
     ) as c:
         r = await c.post("/v1/admin/budget.set", json={"op": "memory.set", "clear": True})
     assert r.status_code == 200

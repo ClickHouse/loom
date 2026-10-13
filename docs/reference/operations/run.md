@@ -48,6 +48,8 @@ Close a run opened with run.begin — call EXACTLY ONCE when the task ends.
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
+| `user_id` | `str` | `'-'` | The run's user and conversation, as run.begin took them: a token narrowed to one session resolves its scope from these, and completes only its own run. |
+| `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
 | `run_id` | `str` | required | The agent run (task scope) the call belongs to; `'-'` for none. |
 | `status` | `Literal['completed', 'failed', 'cancelled']` | required | How the run ended: `completed`, `failed` or `cancelled`; also picks the default `outcome`. |
 | `final_response` | `str` | `''` | The agent's final answer; stored on the run row. |

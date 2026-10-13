@@ -29,7 +29,7 @@ import {
   runHookMain,
   scheduleExit,
 } from "../lib/loom-client.mjs";
-import { lastAssistantText, runIdFor } from "../lib/run-hook.mjs";
+import { lastAssistantText, sessionRunId } from "../lib/run-hook.mjs";
 import { readJsonFile, sessionStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
 import { TAIL_BYTES, parseLines, readHeadTail } from "../lib/transcript.mjs";
 import { firstUser, lastAssistant, readJournal } from "../lib/turn-journal.mjs";
@@ -105,7 +105,7 @@ async function main() {
     const line = turnConclusion(lastText);
     const lfp = line ? crypto.createHash("sha1").update(line).digest("hex") : "";
     if (line && lfp !== lastFp) {
-      postFireAndForget("working_memory.append", scratchpadAppendBody(scope, runIdFor(sessionId), line), post);
+      postFireAndForget("working_memory.append", scratchpadAppendBody(scope, sessionRunId(sessionId), line), post);
       lastFp = lfp;
     }
   }

@@ -23,6 +23,7 @@ from fastapi import HTTPException
 import server.memory.app.handlers as mem_handlers
 import server.memory.app.move as mv
 from server.core.hashing import sha256_value_json
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory import store as memory_repo
 from server.memory.api.models_crud import MemoryGetInput, MemorySetOutput
 from server.memory.api.models_move import MemoryMoveInput
@@ -555,9 +556,13 @@ def test_memory_get_follow_serves_the_new_row_with_resolved_from(
 def test_memory_list_hides_the_redirect_by_default_and_include_duplicates_shows_it() -> None:
     ident = memory_repo.Identity(org="test", namespace="ops-alerts", agent="sre")
     ch = _CH()
-    asyncio.run(memory_repo.list_by_namespace(ident, ch=ch, include_duplicates=False))
+    asyncio.run(
+        memory_repo.list_by_namespace(ident, ch=ch, include_duplicates=False, scope=WHOLE_NAMESPACE)
+    )
     assert "status != 'duplicate'" in ch.query_all_sqls[-1]
-    asyncio.run(memory_repo.list_by_namespace(ident, ch=ch, include_duplicates=True))
+    asyncio.run(
+        memory_repo.list_by_namespace(ident, ch=ch, include_duplicates=True, scope=WHOLE_NAMESPACE)
+    )
     assert "status != 'duplicate'" not in ch.query_all_sqls[-1]
 
 
@@ -573,7 +578,7 @@ def test_memory_history_reads_the_append_only_mirror_the_redirect_lands_in(
 ) -> None:
     ch = _CH()
     ident = memory_repo.Identity(org="test", namespace="ops-alerts", agent="sre")
-    asyncio.run(memory_repo.list_history(ident, _FROM, ch=ch, limit=10))
+    asyncio.run(memory_repo.list_history(ident, _FROM, ch=ch, limit=10, scope=WHOLE_NAMESPACE))
     sql = ch.query_all_sqls[-1]
     assert "loom.memory_versions" in sql
     # the redirect is an INSERT into loom.memory; memory_versions_mv copies

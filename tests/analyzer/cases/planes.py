@@ -18,6 +18,13 @@ import types
 import typing
 from typing import Any
 
+from server.auth.context import current_auth
+from server.identity.domain.read_scope import (
+    WHOLE_NAMESPACE,
+    ReadFilters,
+    read_filters_bound,
+    scope_and,
+)
 from tests.analyzer.cases._common import AGENT, NS, ORG, SMALL_VEC, rows_by_substring
 from tests.analyzer.corpus import Case, RecordingCH, is_drive_defect
 
@@ -403,6 +410,36 @@ _HANDLER_ROWS = rows_by_substring(
 )
 
 
+# A live row for the memory ops that resolve their target first (memory.outcome
+# looks it up in scope before it reads the evidence totals).
+_MEMORY_ROW = {
+    "memory_id": _UUID,
+    "org": ORG,
+    "namespace": NS,
+    "agent": AGENT,
+    "user_id": "-",
+    "session_id": "-",
+    "memory_key": "k1",
+    "memory_type": "fact",
+    "value": '"v"',
+    "value_text": '"v"',
+    "confidence": 0.9,
+    "version": 1,
+    "pinned": False,
+    "created_at": _DT,
+}
+_MEMORY_LOOKUPS = rows_by_substring(
+    {
+        "SELECT org, namespace, created_at, memory_key": [_MEMORY_ROW],
+        "value AS value_text": [_MEMORY_ROW],
+    }
+)
+
+
+def _memory_ops_rows(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+    return _MEMORY_LOOKUPS(sql, params) or _HANDLER_ROWS(sql, params)
+
+
 # --------------------------------------------------------------------------- repos
 
 
@@ -482,7 +519,7 @@ async def _ledgers(ch: RecordingCH, c: dict[str, Any]) -> None:
     await C.allowlist_exists(ORG, NS, "k1", "k2", ch=ch)
     await C.allowlist_list(ORG, NS, ch=ch)
     await C.allowlist_remove(ORG, NS, "k1", "k2", "note", _DT, ch=ch)
-    await C.list_conflicted(ORG, NS, before_version=5 if f else None, ch=ch)
+    await C.list_conflicted(ORG, NS, before_version=5 if f else None, ch=ch, scope=WHOLE_NAMESPACE)
     await C.lookup_keys_for_ids(ORG, [_UUID], ch=ch)
     await C.lookup_target(ORG, _UUID, ch=ch)
     await C.mark_active_by_ids(ORG, [_UUID], ch=ch)
@@ -529,6 +566,7 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
     await EQ.list_status(
         org=ORG,
         namespace=NS,
+        scope=WHOLE_NAMESPACE,
         agent=AGENT if f else None,
         user_id="alice" if f else None,
         session_id="s1" if f else None,
@@ -569,6 +607,16 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
         conflict_candidates._PEER_ROWS_SQL, params={**_peer, "ids": [(AGENT, "-", "-", "k2")]}
     )
     await CF._peer_rows_joined(ch, dict(_peer))
+    # A writer bounded to one user: its peers in its scope, others' pinned rows.
+    one_user = ReadFilters(scope="own_user", user_id="u1", session_id=None)
+    await CF._peer_rows(ch, dict(_peer), one_user)
+    scoped = dict(_peer)
+    await CF._peer_rows_joined(ch, scoped, scope_and(one_user, scoped, "m"))
+    await CF._foreign_pinned_rows(ch, dict(_peer), one_user, [])
+    with read_filters_bound(current_auth(), one_user):  # the narrowed batch and its pinned arm
+        await CF.candidate_rows_many(
+            org=ORG, namespace=NS, items=[("k1", "preference", SMALL_VEC, 0.5)], ch=ch
+        )
     await CF.check_against_shared(
         org=ORG, namespace=NS, target_key="k1", memory_type="preference", embedding=SMALL_VEC
     )
@@ -586,6 +634,7 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
         until=_DT if f else None,
         order="asc" if f else "desc",
         ch=ch,
+        scope=WHOLE_NAMESPACE,
     )
 
 
@@ -623,7 +672,7 @@ def cases() -> list[Case]:
             module,
             _handler_drive(module),
             {"filled": (False,) if name in _FILL_INERT else (False, True)},
-            rows=_HANDLER_ROWS,
+            rows=_memory_ops_rows if name == "_memory_ops" else _HANDLER_ROWS,
         )
         for name, module in HANDLER_MODULES
     ]

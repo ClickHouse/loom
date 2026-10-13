@@ -15,13 +15,16 @@ the moment it was retired (`superseded_at`), read in one keyed statement over
 `loom.memory`. The mirror's own `status` is trusted for the predicate: the
 supersession write re-emits both tables (`supersede_duplicates` in the
 repository), so the `memory_embeddings` rows behind superseded memories carry
-`superseded` and every superseded row names a successor.
+`superseded` and every superseded row names a successor. The successor
+read stays inside the request's read scope, like `served_duplicates`.
 """
 
 from __future__ import annotations
 
 import logging
 from typing import Any, TypedDict
+
+from server.identity.app.request_scope import request_scope
 
 log = logging.getLogger(__name__)
 
@@ -90,6 +93,7 @@ async def annotate_pool_superseded(ctx: Any) -> None:
         return
     ctx.actual_work["superseded_served"] = len(old)
     ns_default = str(input.namespace)
+    scope = request_scope()
     try:
         import server.memory.store as memory_repo
 
@@ -97,6 +101,7 @@ async def annotate_pool_superseded(ctx: Any) -> None:
             input.org,
             sorted({str(getattr(h, "namespace", "") or ns_default) for h in old}),
             [str(h.memory_key) for h in old],
+            scope=scope,
         )
     except Exception as e:  # noqa: BLE001 — naming the successor never fails a search
         log.warning("memory.search: superseded successor read failed: %s", e)
@@ -106,5 +111,25 @@ async def annotate_pool_superseded(ctx: Any) -> None:
         r = by_key.get((str(getattr(h, "namespace", "") or ns_default), str(h.memory_key)))
         if r is None:
             continue
-        h.superseded_by = r.successor_key or r.superseded_by
+        # A bounded read sees the raw id only when the successor resolved inside
+        # its scope; otherwise the id may name another user's row.
+        h.superseded_by = r.successor_key or ("" if scope.narrowed else r.superseded_by)
         h.superseded_at = r.superseded_at
+
+
+async def shown_successors(org: str, namespace: str, rows: list[Any]) -> dict[str, str]:
+    """memory_id -> the `superseded_by` id a read may show for each row. A read bounded
+    to one user or session sees a successor id only when that row resolves inside its
+    scope: otherwise the id may name another user's row, and gone and foreign look alike."""
+    from server.identity.app.request_scope import request_narrowed
+
+    ids = {str(r.memory_id): str(getattr(r, "superseded_by", "") or "") for r in rows}
+    if not request_narrowed() or not any(ids.values()):
+        return ids
+    import server.memory.store as memory_repo
+
+    # Any live status: a successor that is itself superseded is still a row this read sees.
+    seen = await memory_repo.live_ids_in_scope(
+        org, [namespace], [s for s in ids.values() if s], scope=request_scope()
+    )
+    return {mid: (s if s in seen else "") for mid, s in ids.items()}

@@ -465,12 +465,14 @@ def seed(control_plane_url: str, mint_test_token) -> _Seed:
     # (`admin/ratelimit.set`, as test_ratelimit_overrides does). A 429 is the
     # probe's own pace, not a verdict on the read path; the deployment's
     # defaults are untouched and every other namespace pays what it paid.
+    # The override is deployment-wide, so it takes a platform admin.
+    tok_platform = mint_test_token(org="*", roles=["platform_admin"], subject="leak-operator")
     for ns in (s.ns_a, s.ns_b, s.ns_c):
         for op_class in ("default", "memory"):
             r = httpx.post(
                 f"{control_plane_url}/v1/admin/ratelimit.set",
                 json={"namespace": ns, "op_class": op_class, "capacity": 2000, "rate": 200},
-                headers={"Authorization": f"Bearer {tok_a}"},
+                headers={"Authorization": f"Bearer {tok_platform}"},
                 timeout=30.0,
             )
             assert r.status_code == 200, r.text

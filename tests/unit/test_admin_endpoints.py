@@ -23,7 +23,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from server.insights.app.admin_routes import admin_router
+from server.insights.app.admin_routes import admin_router, org_admin_router
 from server.insights.store import admin as admin_repo
 
 
@@ -33,13 +33,14 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkey-patches the admin_repo functions it exercises.
 
     Runs with auth disabled: the whole admin router is gated by a
-    bearer+ADMIN dependency (see tests/unit/test_transport_security.py for
+    bearer+role dependency (see tests/unit/test_admin_authority.py for
     that contract); these tests cover the dispatch path behind the gate."""
     from server import settings as settings_mod
 
     monkeypatch.setattr(settings_mod.settings, "auth_required", False)
     app = FastAPI()
     app.include_router(admin_router)
+    app.include_router(org_admin_router)
     return TestClient(app)
 
 
@@ -291,14 +292,14 @@ def test_namespace_adopt_stays_inside_the_admins_org(monkeypatch: pytest.MonkeyP
             subject="eve",
             org="acme",
             namespaces=("*",),
-            roles=(Role.ADMIN,),
+            roles=(Role.ORG_ADMIN,),
             is_service_account=False,
         )
 
     def no_client() -> object:
         raise AssertionError("refused before any read or write")
 
-    monkeypatch.setattr(admin, "require_admin", other_org_admin)
+    monkeypatch.setattr(admin, "require_org_admin", other_org_admin)
     monkeypatch.setattr("server.core.ch.get_client", no_client)
     inp = admin_models.NamespaceAdoptInput(org="globex", namespace="ops", new_admin="eve")
     with pytest.raises(HTTPException) as err:

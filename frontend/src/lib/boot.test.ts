@@ -1,5 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { claimsFromToken, provisionalNamespace, rememberKinds, rememberedKinds, sameIdentity } from "./boot";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  claimsFromToken,
+  provisionalNamespace,
+  rememberKinds,
+  rememberedKinds,
+  sameIdentity,
+  takeLinkToken,
+} from "./boot";
 import type { MyNamespaceEntry } from "../api";
 import { VIEW_LOADERS } from "../views/registry";
 import { ALL_VIEWS } from "./state";
@@ -106,5 +113,29 @@ describe("view registry", () => {
   it("has a loader for every view", () => {
     for (const v of ALL_VIEWS) expect(typeof VIEW_LOADERS[v]).toBe("function");
     expect(Object.keys(VIEW_LOADERS).sort()).toEqual([...ALL_VIEWS].sort());
+  });
+});
+
+describe("login link token", () => {
+  afterEach(() => history.replaceState(null, "", "/"));
+
+  it("takes a #token= fragment and scrubs it from the address bar", () => {
+    history.replaceState(null, "", "/me/setup?tab=a#token=abc.def%2Eghi");
+    expect(takeLinkToken()).toBe("abc.def.ghi");
+    expect(window.location.pathname + window.location.search + window.location.hash).toBe("/me/setup?tab=a");
+  });
+
+  it("never takes a ?token= query, and removes it anyway", () => {
+    history.replaceState(null, "", "/me?token=leaked.jwt.value&tab=a#memories");
+    expect(takeLinkToken()).toBeNull();
+    expect(window.location.search).toBe("?tab=a");
+    expect(window.location.hash).toBe("#memories");
+    expect(window.location.href).not.toContain("leaked");
+  });
+
+  it("leaves a URL without a token alone", () => {
+    history.replaceState(null, "", "/me/library?q=x#y");
+    expect(takeLinkToken()).toBeNull();
+    expect(window.location.search + window.location.hash).toBe("?q=x#y");
   });
 });

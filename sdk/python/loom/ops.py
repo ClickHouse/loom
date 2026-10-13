@@ -12424,6 +12424,7 @@ class MemorySetFromMessagesOutput(TypedDict, total=False):
     pipeline_errors: NotRequired[list[str]]
     value_updates_linked: NotRequired[int]
     stubbed_fields: NotRequired[list[str]]
+    degraded: NotRequired[list[str]]
     deferred: NotRequired[bool]
     queue_id: NotRequired[str]
     deferred_by: NotRequired[str]
@@ -12487,6 +12488,7 @@ class StackEntry(TypedDict, total=False):
     pinned: NotRequired[bool]
     recall_count: NotRequired[int]
     last_recalled_at: NotRequired[Optional[str]]
+    actor: NotRequired[str]
 
 
 class MemorySweepExpiredInput(TypedDict, total=False):
@@ -14473,6 +14475,7 @@ class ProcedureMatch(TypedDict, total=False):
     goal_similarity: NotRequired[Optional[float]]
     for_agent: NotRequired[dict[str, int]]
     run_stats_by_agent: NotRequired[dict[str, dict[str, int]]]
+    actor: NotRequired[str]
 
 
 class ProcedureRecordRunInput(TypedDict, total=False):
@@ -14748,6 +14751,8 @@ class RunBeginOutput(TypedDict, total=False):
 class RunCompleteInput(TypedDict, total=False):
     org: Required[str]
     namespace: Required[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
     run_id: Required[str]
     status: Required[Literal["completed", "failed", "cancelled"]]
     final_response: NotRequired[str]
@@ -14778,6 +14783,8 @@ class RunReflection(TypedDict, total=False):
 class RunCompleteBody(TypedDict, total=False):
     org: NotRequired[str]
     namespace: NotRequired[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
     run_id: NotRequired[str]
     status: Required[Literal["completed", "failed", "cancelled"]]
     final_response: NotRequired[str]
@@ -15048,6 +15055,7 @@ class SessionBriefGetOutput(TypedDict, total=False):
     head_sha: NotRequired[str]
     author: NotRequired[str]
     trigger: NotRequired[str]
+    actor: NotRequired[str]
     source_sessions: NotRequired[list[str]]
     updated_at: NotRequired[Optional[str]]
     age_seconds: NotRequired[int]
@@ -15137,6 +15145,7 @@ class SessionBriefSummary(TypedDict, total=False):
     goal: NotRequired[str]
     status: NotRequired[str]
     author: NotRequired[str]
+    actor: NotRequired[str]
     updated_at: NotRequired[Optional[str]]
     age_seconds: NotRequired[int]
     brief_chars: NotRequired[int]

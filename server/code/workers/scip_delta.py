@@ -32,12 +32,14 @@ from typing import TYPE_CHECKING
 
 from server.code.app.index.compiler_tier import (
     checkout_fetch_args,
-    communicate_or_kill,
     compiler_target,
     git,
     resolve_checkout,
+    run_harness,
     run_tier,
 )
+from server.code.app.index.gitrepo import git_config_env
+from server.code.app.index.sandbox import tool_mounts
 from server.core.paths import SCIP_HARNESS_DIR
 from server.settings import settings
 
@@ -70,6 +72,7 @@ async def run_pass() -> CodeScipDeltaResult:
         CodeScipDeltaResult(),
         _run_repo,
         entry_locked=True,
+        runs_repo_code=True,
     )
 
 
@@ -104,22 +107,20 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult
     # fetch every pin that changed anywhere in the fetched range, so a single
     # pin the upstream submodule has since rewritten away fatals the whole
     # fetch and stalls the compiler tier. Only `submodule update` below needs
-    # pins, and only
-    # the ones at the target itself.
-    await git(checkout, *checkout_fetch_args(bare, target))
+    # pins, and only the ones at the target itself; it fetches the URLs the
+    # repository's .gitmodules names, so it goes through the egress proxy.
+    await git(checkout, *checkout_fetch_args(bare, target), local_remote=bare)
     await git(checkout, "checkout", "--force", target)
-    await git(checkout, "submodule", "update", "--init", "--recursive", "--quiet")
+    await git(checkout, "submodule", "update", "--init", "--recursive", "--quiet", network=True)
 
     with tempfile.TemporaryDirectory(prefix="scip_delta_") as tmp:
         delta_path = Path(tmp) / "delta.json"
-        proc = await asyncio.create_subprocess_exec(
-            "bash",
-            str(_HARNESS),
-            str(checkout),
-            scip_commit,
-            target,
-            "-",
-            env={
+        returncode, out = await run_harness(
+            _HARNESS,
+            checkout,
+            [scip_commit, target, "-"],
+            {
+                **git_config_env(),
                 "PATH": "/usr/bin:/bin:/usr/local/bin",
                 # converter needs the server's venv (protobuf runtime)
                 "PYTHON": sys.executable,
@@ -128,21 +129,12 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult
                 "MAX_TUS": str(settings.code_scip_delta_max_tus),
                 "HOME": str(Path.home()),
             },
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            start_new_session=True,
+            out_dir=Path(tmp),
+            timeout_s=settings.code_scip_delta_timeout_seconds,
+            readonly=tool_mounts(Path(scip_clang_abs)),
         )
-        try:
-            out = await communicate_or_kill(
-                proc, settings.code_scip_delta_timeout_seconds, group=True
-            )
-        except TimeoutError:
-            raise RuntimeError(
-                f"harness timed out after {settings.code_scip_delta_timeout_seconds}s"
-            ) from None
-        tail = out.decode("utf-8", "replace")[-2000:]
-        if proc.returncode != 0:
-            raise RuntimeError(f"harness exit {proc.returncode}: {tail}")
+        if returncode != 0:
+            raise RuntimeError(f"harness exit {returncode}: {out[-2000:]}")
 
         if not await asyncio.to_thread(delta_path.exists):
             # harness legitimately exits 0 with no delta when no C++ TU changed

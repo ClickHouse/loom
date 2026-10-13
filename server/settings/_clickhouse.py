@@ -52,6 +52,24 @@ class ClickHouseSettings(BaseModel):
     # Max wait, ms, for a pool slot before failing fast with 503 OVERLOADED.
     # 0 = no slot gate.
     ch_pool_wait_ms: int = 500
+    # Ceilings for the reads a caller shapes (code.grep, code.search with a
+    # pattern or globs, memory.aggregate, memory.record.query). A ceiling only
+    # lowers the statement's own value, so no request can widen it; 0 = none.
+    # The shipped loom_reader profile (nlp_user_settings.xml) caps these three at
+    # their defaults, with a floor no statement can go under (time: 0.05 s,
+    # code.grep's statement floor), so none can be set to 0 even in the SQL.
+    # Raising a setting above its cap needs the profile raised too; a 0 sends
+    # no ceiling, so the profile's cap applies (code.grep's deadline is then
+    # clamped to ch_timeout_read_s, which the profile's cap matches).
+    # Seconds one such read may run (the read class default).
+    ch_caller_shaped_max_execution_s: float = 30.0
+    # Bytes of memory one such read may use.
+    ch_caller_shaped_max_memory_bytes: int = 4_000_000_000
+    # Rows one such read may scan; past it the read fails (422), never a partial answer.
+    ch_caller_shaped_max_rows_to_read: int = 500_000_000
+    # ClickHouse user the caller-shaped reads run as, with `ch_password`; the
+    # shipped config defines `loom_reader` (SELECT only). Empty = `ch_user`.
+    ch_reader_user: str = ""
 
     # JSON map {traffic class: ClickHouse settings} applied by
     # `server.core.ch.statement_settings` to every read (an explicit per-call

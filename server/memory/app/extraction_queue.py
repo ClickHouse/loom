@@ -25,6 +25,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from server.core.datetimes import utc_now as _now
+from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, scope_and
 from server.memory.api.models_bulk import MemorySetFromMessagesInput
 from server.memory.store.rows import next_version
 
@@ -67,13 +68,18 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 # for the same reason `observation_date` does: the queue table needs no
 # migration. `rebuild_input` strips it before validation.
 ENQUEUED_BY_KEY = "enqueued_by"
+# The request's resolved read scope, so the replay's lookups stay inside it as
+# the inline call's would. Stamped by the server like `enqueued_by`.
+READ_SCOPE_KEY = "read_filters"
 
 
-def payload_for(input: Any, *, enqueued_by: str | None = None) -> tuple[str, int, int]:
+def payload_for(
+    input: Any, *, scope: ReadFilters, enqueued_by: str | None = None
+) -> tuple[str, int, int]:
     """Serialize a MemorySetFromMessagesInput for storage: the request minus
     `defer` (the replay must run inline), plus the enqueuing principal
-    (`enqueued_by`, else the current request's `writer_actor()`).
-    Returns (json, messages, chars)."""
+    (`enqueued_by`, else the current request's `writer_actor()`) and the
+    request's resolved read `scope`. Returns (json, messages, chars)."""
     from server.memory.app.provenance import writer_actor
 
     data = input.model_dump(mode="json", exclude={"defer"})
@@ -82,6 +88,11 @@ def payload_for(input: Any, *, enqueued_by: str | None = None) -> tuple[str, int
     actor = writer_actor() if enqueued_by is None else str(enqueued_by)
     if actor:
         data[ENQUEUED_BY_KEY] = actor
+    data[READ_SCOPE_KEY] = {
+        "scope": scope.scope,
+        "user_id": scope.user_id,
+        "session_id": scope.session_id,
+    }
     return json.dumps(data, ensure_ascii=False, separators=(",", ":")), len(msgs), chars
 
 
@@ -94,13 +105,13 @@ def enqueued_actor(row: dict[str, Any]) -> str:
         return ""
 
 
-async def enqueue(input: Any, ch: Any | None = None) -> str:
+async def enqueue(input: Any, *, scope: ReadFilters, ch: Any | None = None) -> str:
     """Persist one deferred set_from_messages request. Returns the queue_id
     the caller can poll with `memory.extraction_status`."""
     from server.core.ch import get_client
 
     ch = ch or get_client()
-    payload, n_msgs, chars = payload_for(input)
+    payload, n_msgs, chars = payload_for(input, scope=scope)
     now = _now()
     qid = uuid.uuid4().hex
     row = {
@@ -283,6 +294,7 @@ async def list_status(
     *,
     org: str,
     namespace: str,
+    scope: ReadFilters,
     agent: str | None = None,
     user_id: str | None = None,
     session_id: str | None = None,
@@ -296,23 +308,24 @@ async def list_status(
     from server.core.ch import get_client
 
     ch = ch or get_client()
-    scope = ""
+    where = ""
     params: dict[str, Any] = {"org": org, "ns": namespace, "lim": int(limit)}
     if agent and agent != "*":
-        scope += " AND agent = {agent:String}"
+        where += " AND agent = {agent:String}"
         params["agent"] = agent
     if user_id and user_id != "-":
-        scope += " AND user_id = {uid:String}"
+        where += " AND user_id = {uid:String}"
         params["uid"] = user_id
     if session_id and session_id != "-":
-        scope += " AND session_id = {sid:String}"
+        where += " AND session_id = {sid:String}"
         params["sid"] = session_id
     if queue_id:
-        scope += " AND queue_id = {qid:String}"
+        where += " AND queue_id = {qid:String}"
         params["qid"] = queue_id
     if status:
-        scope += " AND status = {st:String}"
+        where += " AND status = {st:String}"
         params["st"] = status
+    where += scope_and(scope, params)
     rows = await ch.query_all(
         f"""
         SELECT queue_id, agent, user_id, session_id, status, attempts,
@@ -320,7 +333,7 @@ async def list_status(
                enqueued_at, updated_at
         FROM {TABLE} FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
-          {scope}
+          {where}
         ORDER BY enqueued_at DESC
         LIMIT {{lim:UInt32}}
         """,
@@ -332,6 +345,7 @@ async def list_status(
 __all__ = [
     "COLUMNS",
     "ENQUEUED_BY_KEY",
+    "READ_SCOPE_KEY",
     "STATUS_DONE",
     "STATUS_FAILED",
     "STATUS_PENDING",
@@ -352,8 +366,32 @@ def rebuild_input(row: dict[str, Any]) -> Any:
     """The MemorySetFromMessagesInput stored at enqueue time, forced inline."""
     data = json.loads(row["payload"])
     data["defer"] = False
-    data.pop(ENQUEUED_BY_KEY, None)  # server stamp, not a request field
+    data.pop(ENQUEUED_BY_KEY, None)  # server stamps, not request fields
+    data.pop(READ_SCOPE_KEY, None)
     return MemorySetFromMessagesInput.model_validate(data)
+
+
+def replay_scope(row: dict[str, Any]) -> ReadFilters:
+    """The read scope the replay runs under: the one stored at enqueue time.
+    A row queued before scopes were stored replays over the whole namespace, as
+    it always did (no write was scoped then). A stored scope that is not a
+    complete one raises, so the row fails rather than replaying wider."""
+    stored = json.loads(row["payload"]).get(READ_SCOPE_KEY)
+    if stored is None:
+        return WHOLE_NAMESPACE
+    scope = ReadFilters(
+        scope=str(stored.get("scope") or ""),
+        user_id=stored.get("user_id"),
+        session_id=stored.get("session_id"),
+    )
+    complete = (
+        scope.scope == "namespace"
+        or (scope.scope == "own_user" and scope.user_id)
+        or (scope.scope == "own_session" and scope.user_id and scope.session_id)
+    )
+    if not complete:
+        raise ValueError(f"queued read scope is incomplete: {stored!r}")
+    return scope
 
 
 def replay_actor(row: dict[str, Any]) -> str:
@@ -367,10 +405,12 @@ def replay_actor(row: dict[str, Any]) -> str:
 
 async def replay_row(row: dict[str, Any]) -> int:
     """Run one queued request through the inline handler under the enqueuer's
-    principal; returns memories written."""
+    principal and read scope; returns memories written."""
+    from server.identity.domain.read_scope import read_filters_bound
     from server.memory.app.extract.handler import handle_memory_set_from_messages
     from server.memory.domain import provenance as _prov
 
-    with _prov.pipeline_actor(replay_actor(row)):
+    # The worker has no auth bound, so the scope is bound for "no auth".
+    with _prov.pipeline_actor(replay_actor(row)), read_filters_bound(None, replay_scope(row)):
         out = await handle_memory_set_from_messages(rebuild_input(row))
     return len(out.written)

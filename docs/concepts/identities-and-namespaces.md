@@ -191,6 +191,71 @@ scoped read without the `user_id` or `session_id` it binds to is refused with
 `IDENTITY_INCOMPLETE` instead of silently widening. Mint `own_user` tokens for
 multi-user agents.
 
+Both transports resolve the scope once, when they admit the call, and every read of
+memory rows in that call carries it, whichever op made the read: `memory.get`,
+`get_by_id` (another user's id answers `found=false`), `list`, `bulk_get`, `history`,
+`timeline`, `related`, `evidence`, `conflicts.list`, `memory.proposals`, session briefs,
+digests, procedures, working memory and the `loom_search` legs. Under a scope narrower
+than `namespace`:
+
+- `user_id="*"` is refused with `AUTH_INSUFFICIENT`, and so is `session_id="*"` under
+  `own_session`.
+- A token pinned with `read_user_id` acts only as that user, on writes too: a body naming
+  another `user_id` is refused with `AUTH_INSUFFICIENT` on every op, and a body that names
+  none (or `-`) runs as the pinned user.
+- A write's answer names no row outside the scope: a merge into, a duplicate of or a
+  pinned conflict with another user's row reports the verdict without that row's id,
+  hash or key, and `conflicts.list` drops such peers from `conflict_with`. A pinned row
+  still blocks a close write from any user (a namespace-wide invariant): a foreign pinned
+  row within the conflict distance refuses the write, unnamed, however many of the
+  writer's own rows sit closer. The narrowed writer's check reads the namespace's pinned
+  rows (their type taken from the memory row) beside its own scoped read, so it costs at
+  most about twice a namespace-wide writer's. A deferred
+  `memory.set_from_messages` (`defer=true`, or `extraction_defer_agents`) stores the
+  request's scope with it and replays under that scope. `run.begin` with
+  another user's `run_id` starts a new run under a fresh id, and `run.complete` on it
+  answers `NOT_FOUND`. A begin with a caller-supplied id claims it in ClickHouse Keeper
+  (`loom.agent_run_claims`) and releases the claim once its run row is written, so of
+  two users' concurrent begins on one id exactly one keeps it. A begin that fails before
+  its row keeps the claim, so no other user's begin can take the id. A server without
+  a Keeper (or while Keeper fails) only checks the run row, and `/v1/health` lists
+  `run_claims_not_atomic`; there a narrowed token keeps a supplied id only to re-open
+  its own existing run, and a new one gets a server-made id, so a client that makes
+  the id itself must use the returned `run_id`.
+- Session briefs are kept per user (per session under `own_session`): two users saving
+  the same `brief_key` get two briefs, each sees only its own, and a namespace-wide
+  token lists them under keys prefixed `~<user>~` (or `~<user>~<session>~`).
+- `code.search` breaks ties with the scope's own user's recent files, whatever
+  `user_id` the body names.
+- A leg whose rows carry no user (conversations, runs) answers nothing.
+- A blacklist pattern refuses every user's writes but records no user (its
+  `created_by` is the token subject, which every per-user token of one backend
+  shares), so every `blacklist.*` op is refused with `AUTH_INSUFFICIENT`: patterns
+  are added, listed, removed and swept with a namespace-wide token. A pattern still
+  refuses a narrowed token's write, and that 422 names no pattern id or reason.
+- `policy.decisions` lists only the caller's own decisions. `memory.unlock` and
+  `memory.unpin` (admin) reach only the caller's own rows, like `memory.lock`.
+- An op that cannot bound its answer to one user (the entity graph `facts.*`,
+  `conversation.*`, namespace exports, admin and curation ops,
+  `ops.projection_failures.*`, `erasure.*`, `audit.list`, `cost.agent_summary`,
+  `agents.connected`) is refused with
+  `AUTH_INSUFFICIENT`, and so is a write to a table keyed without a user, where it
+  would overwrite another user's row: `memory.record.write`, `decision.record`,
+  `procedure.record_run` and `context.offload`. `memory.set_from_messages` skips its
+  `record_schema` projection into records and says so in `degraded`. A token whose
+  scope does not resolve (an `own_session` ceiling and a body naming no session, or an
+  unpinned `own_user` token and a body naming no user) is refused on every read it
+  scopes and on every write whose body carries a user or session (and `cost.summary`),
+  rather than run as user `-`. Under `own_session`, ops with no session field
+  (`cost.summary`, `memory.outcome`) are therefore always refused. The code-index ops
+  (`code.*`) carry a user for attribution only and are admitted; a memory read inside
+  them is refused. Namespace-wide rules (`policy.set`, `policy.delete`,
+  `memory_schema.register` / `propose` / `approve`, `blacklist.*`) need a
+  namespace-scoped token, and so does `policy.check`, which evaluates the caller's
+  rules over every user's calls. The list is
+  `server/identity/domain/read_scope.py` (`SCOPED_OPS`, `NARROW_SAFE_OPS`), and an op
+  it does not name is refused.
+
 ## Agent-written rows and the shared layer
 
 Inside a namespace, rows in `loom.memory` are keyed by the full tuple: the same

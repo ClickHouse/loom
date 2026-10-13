@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.core.ch import get_client
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import scope_and
 from server.memory.api.models_lifecycle import MemoryStackInput, MemoryStackOutput, _StackEntry
 
 log = logging.getLogger(__name__)
@@ -100,31 +102,34 @@ async def _stack_profile(input: MemoryStackInput, fill: _StackFill) -> None:
 
 async def _stack_pinned(ch: Any, input: MemoryStackInput, fill: _StackFill) -> None:
     """Section 2: pinned memories."""
+    params: dict[str, Any] = {
+        "org": input.org,
+        "ns": input.namespace,
+        "agent": input.agent,
+        "uid": input.user_id or "-",
+        "sid": input.session_id or "-",
+        "lim": int(input.pinned_limit),
+    }
+    scope = scope_and(request_scope(), params)
     pinned_rows = await ch.query_all(
-        """
-        SELECT memory_key, memory_type, value, recall_count, last_recalled_at
+        f"""
+        SELECT memory_key, memory_type, value, recall_count, last_recalled_at, actor
         FROM loom.memory FINAL
-        WHERE org = {org:String}
-          AND namespace = {ns:String}
-          AND agent = {agent:String}
-          AND user_id = {uid:String}
-          AND session_id = {sid:String}
+        WHERE org = {{org:String}}
+          AND namespace = {{ns:String}}
+          AND agent = {{agent:String}}
+          AND user_id = {{uid:String}}
+          AND session_id = {{sid:String}}
           AND pinned = 1
           AND tombstoned_at IS NULL
           AND (expires_at IS NULL OR expires_at > now())
           AND status IN ('active', 'conflicted')
           AND sensitivity != 'high'
+          {scope}
         ORDER BY version DESC
-        LIMIT {lim:UInt32}
+        LIMIT {{lim:UInt32}}
         """,
-        params={
-            "org": input.org,
-            "ns": input.namespace,
-            "agent": input.agent,
-            "uid": input.user_id or "-",
-            "sid": input.session_id or "-",
-            "lim": int(input.pinned_limit),
-        },
+        params=params,
     )
     for r in pinned_rows:
         val = _value_str(r.get("value"))
@@ -141,6 +146,7 @@ async def _stack_pinned(ch: Any, input: MemoryStackInput, fill: _StackFill) -> N
                 pinned=True,
                 recall_count=int(r.get("recall_count") or 0),
                 last_recalled_at=r.get("last_recalled_at"),
+                actor=str(r.get("actor") or ""),
             )
         )
 
@@ -156,36 +162,39 @@ async def _stack_recent(ch: Any, input: MemoryStackInput, fill: _StackFill) -> s
     # Admit `medium` only when this pack's own query asks how to reach
     # someone; `high` never rides the stack.
     medium_ok = recent_recall_admits_medium(str(getattr(input, "seed_query", "") or ""))
+    params: dict[str, Any] = {
+        "org": input.org,
+        "ns": input.namespace,
+        "agent": input.agent,
+        "uid": input.user_id or "-",
+        "sid": input.session_id or "-",
+        "lim": int(input.recent_limit),
+        "medium_ok": 1 if medium_ok else 0,
+    }
+    scope = scope_and(request_scope(), params)
     recent_rows = await ch.query_all(
-        """
+        f"""
         SELECT memory_key, memory_type, value, recall_count,
-               evidence_count, last_recalled_at
+               evidence_count, last_recalled_at, actor
         FROM loom.memory FINAL
-        WHERE org = {org:String}
-          AND namespace = {ns:String}
-          AND agent = {agent:String}
-          AND user_id = {uid:String}
-          AND session_id = {sid:String}
+        WHERE org = {{org:String}}
+          AND namespace = {{ns:String}}
+          AND agent = {{agent:String}}
+          AND user_id = {{uid:String}}
+          AND session_id = {{sid:String}}
           AND tombstoned_at IS NULL
           AND (expires_at IS NULL OR expires_at > now())
           AND status IN ('active', 'conflicted')
           AND sensitivity != 'high'
-          AND (sensitivity != 'medium' OR {medium_ok:UInt8} = 1)
+          AND (sensitivity != 'medium' OR {{medium_ok:UInt8}} = 1)
           AND pinned = 0
           AND recall_count > 0
+          {scope}
         ORDER BY (recall_count + evidence_count * 0.5) DESC,
                  coalesce(last_recalled_at, created_at) DESC
-        LIMIT {lim:UInt32}
+        LIMIT {{lim:UInt32}}
         """,
-        params={
-            "org": input.org,
-            "ns": input.namespace,
-            "agent": input.agent,
-            "uid": input.user_id or "-",
-            "sid": input.session_id or "-",
-            "lim": int(input.recent_limit),
-            "medium_ok": 1 if medium_ok else 0,
-        },
+        params=params,
     )
     most_recent_excerpt = ""
     for r in recent_rows:
@@ -206,6 +215,7 @@ async def _stack_recent(ch: Any, input: MemoryStackInput, fill: _StackFill) -> s
                 tokens=cost,
                 recall_count=int(r.get("recall_count") or 0),
                 last_recalled_at=r.get("last_recalled_at"),
+                actor=str(r.get("actor") or ""),
             )
         )
     return most_recent_excerpt
@@ -217,7 +227,7 @@ async def _stack_procedures(input: MemoryStackInput, fill: _StackFill) -> None:
     procedural matching to be worth the embed + cosine."""
     try:
         from server.memory.api.models_procedure import ProcedureMatchInput
-        from server.memory.app.procedure import handle_procedure_match
+        from server.memory.app.procedure import handle_procedure_match, own_procedures
 
         pm_out = await handle_procedure_match(
             ProcedureMatchInput(
@@ -230,7 +240,7 @@ async def _stack_procedures(input: MemoryStackInput, fill: _StackFill) -> None:
                 top_k=int(input.procedure_limit),
             )
         )
-        for m in pm_out.matches:
+        for m in own_procedures(list(pm_out.matches)):
             steps_text = "\n".join(m.steps) if m.steps else ""
             val = (f"{m.situation}\n{steps_text}").strip()
             if not val:
@@ -245,6 +255,7 @@ async def _stack_procedures(input: MemoryStackInput, fill: _StackFill) -> None:
                     memory_type="procedure",
                     value=val,
                     tokens=cost,
+                    actor=m.actor,
                 )
             )
     except Exception as e:  # noqa: BLE001 — a failed procedure section must not fail the stack

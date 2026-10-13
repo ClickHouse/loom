@@ -39,6 +39,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.code.app.ttl_cache import TtlCache
+from server.core.caller_regex import compile_caller_regex
+from server.core.errors import ValidationError
 
 # Chunk-level pre-filter: a raising or logging statement carries one of these.
 STATEMENT_KEYWORDS: tuple[str, ...] = ("throw", "Exception(", "onError", "ErrorCodes::", "LOG_")
@@ -490,13 +492,14 @@ def regex_shaped(pattern: str) -> bool:
     return bool(_REGEX_SHAPE_RE.search(pattern))
 
 
-def compile_fallback(pattern: str) -> re.Pattern[str] | None:
-    """The pattern as a regex when it is regex-shaped and valid, else None."""
+def compile_fallback(pattern: str, *, case_sensitive: bool = True) -> Any:
+    """The pattern as an RE2 regex (the engine the SQL step uses) when it is regex-shaped
+    and valid, else None."""
     if not regex_shaped(pattern):
         return None
     try:
-        return re.compile(pattern)
-    except re.error:
+        return compile_caller_regex(pattern, case_sensitive=case_sensitive)
+    except ValidationError:
         return None
 
 

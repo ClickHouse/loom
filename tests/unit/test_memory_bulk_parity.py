@@ -340,3 +340,78 @@ async def test_bulk_set_revision_carries_the_live_rows_usage_and_resets_its_verd
     # the attestation rides the revision: over the old bytes, so it reads stale
     assert (rev["verified_by"], rev["verified_sha256"]) == ("human:bob", "0" * 64)
     assert (first["recall_count"], first["evidence_count"], first["verified_by"]) == (0, 1, "")
+
+
+def _vec_state(entries: list[tuple[str, int]], *, lookup_ok: bool = True) -> Any:
+    """A bulk write state of (sensitivity, version) rows on key `k`, each with an
+    embedding row unless it is high (as the row builder does)."""
+    from server.memory.app.bulk_rows import _BulkWriteState
+
+    state = _BulkWriteState(existing_lookup_ok=lookup_ok)
+    ident = {"org": "o", "namespace": "n", "agent": "a", "user_id": "u", "session_id": "s"}
+    for sensitivity, version in entries:
+        row = {**ident, "memory_key": "k", "memory_type": "semantic"}
+        state.memory_rows.append({**row, "sensitivity": sensitivity, "version": version})
+        if sensitivity != "high":
+            state.embedding_rows.append({**row, "content_excerpt": "plain"})
+    return state
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("entries", "lookup_ok", "retired"),
+    [
+        ([("", 1), ("high", 2)], True, True),  # the high row wins: no vector at all
+        ([("high", 1), ("", 2)], True, False),  # the plain row wins: its vector lands
+        ([("high", 1)], True, False),  # a new key, never embedded: nothing to read
+        ([("high", 1)], False, True),  # the lookup failed: retire by identity anyway
+    ],
+)
+async def test_bulk_insert_decides_a_keys_vectors_by_the_row_that_wins(
+    monkeypatch: pytest.MonkeyPatch, entries: Any, lookup_ok: bool, retired: bool
+) -> None:
+    import server.memory.store as memory_repo
+
+    inserted: list[dict[str, Any]] = []
+    retire_calls: list[Any] = []
+
+    async def _noop(rows: Any, *, ch: Any = None) -> None:
+        return None
+
+    async def _emb(rows: list[dict[str, Any]], *, ch: Any = None) -> None:
+        inserted.extend(rows)
+
+    async def _retire(items: Any, *, ch: Any = None) -> int:
+        retire_calls.extend(items)
+        return 0
+
+    monkeypatch.setattr(memory_repo, "insert_memory_versions", _noop)
+    monkeypatch.setattr(memory_repo, "insert_embedding_rows", _emb)
+    fences: list[Any] = []
+
+    async def _fence(items: Any, *, model: str, ch: Any = None) -> int:
+        fences.extend(items)
+        return len(items)
+
+    monkeypatch.setattr(memory_repo, "retire_vectors_for_keys", _retire)
+    monkeypatch.setattr(memory_repo, "fence_vectors", _fence)
+
+    async def _no_chunks(**_k: Any) -> int:
+        return 0
+
+    from server.memory.app import high_fence
+
+    monkeypatch.setattr(high_fence, "tombstone_set_chunks", _no_chunks)
+    await _bulk_set_mod._bulk_insert(object(), _vec_state(entries, lookup_ok=lookup_ok))
+    # a key whose winning row is high is fenced at that row's version, vector or not
+    winner = max(entries, key=lambda e: e[1])
+    if winner[0] == "high":
+        assert fences == [(("o", "n", "a", "u", "s", "k"), winner[1])]
+    else:
+        assert fences == []
+    if retired:
+        assert inserted == []
+        assert retire_calls == [(("o", "n", "a", "u", "s", "k"), max(v for _, v in entries))]
+    else:
+        assert retire_calls == []
+        assert len(inserted) == sum(1 for s, _ in entries if s != "high")

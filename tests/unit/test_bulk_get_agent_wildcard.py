@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.store import Identity, get_many_by_keys
 
 
@@ -32,7 +33,7 @@ def _identity(agent: str) -> Identity:
 @pytest.mark.asyncio
 async def test_wildcard_agent_drops_the_agent_predicate() -> None:
     ch = StubCH()
-    await get_many_by_keys(_identity("*"), ["procedure_x"], ch=ch)
+    await get_many_by_keys(_identity("*"), ["procedure_x"], ch=ch, scope=WHOLE_NAMESPACE)
     sql, params = ch.query_all_calls[0]
     assert "agent = {agent:String}" not in sql
     assert "agent" not in params
@@ -42,7 +43,7 @@ async def test_wildcard_agent_drops_the_agent_predicate() -> None:
 async def test_concrete_agent_keeps_the_agent_predicate() -> None:
     for agent in ("t", "-"):
         ch = StubCH()
-        await get_many_by_keys(_identity(agent), ["procedure_x"], ch=ch)
+        await get_many_by_keys(_identity(agent), ["procedure_x"], ch=ch, scope=WHOLE_NAMESPACE)
         sql, params = ch.query_all_calls[0]
         assert "agent = {agent:String}" in sql
         assert params["agent"] == agent
@@ -59,7 +60,7 @@ async def test_concrete_agent_keeps_the_agent_predicate() -> None:
 @pytest.mark.asyncio
 async def test_wildcard_agent_opens_the_unset_user_and_session_axes() -> None:
     ch = StubCH()
-    await get_many_by_keys(_identity("*"), ["lesson_x"], ch=ch)
+    await get_many_by_keys(_identity("*"), ["lesson_x"], ch=ch, scope=WHOLE_NAMESPACE)
     sql, params = ch.query_all_calls[0]
     assert "user_id = {uid:String}" not in sql and "uid" not in params
     assert "session_id = {sid:String}" not in sql and "sid" not in params
@@ -72,7 +73,7 @@ async def test_wildcard_agent_opens_the_unset_user_and_session_axes() -> None:
 async def test_wildcard_agent_keeps_a_pinned_user_or_session() -> None:
     ch = StubCH()
     ident = Identity(org="o", namespace="ns", agent="*", user_id="alice", session_id="-")
-    await get_many_by_keys(ident, ["lesson_x"], ch=ch)
+    await get_many_by_keys(ident, ["lesson_x"], ch=ch, scope=WHOLE_NAMESPACE)
     sql, params = ch.query_all_calls[0]
     assert "user_id = {uid:String}" in sql and params["uid"] == "alice"
     assert "session_id = {sid:String}" not in sql
@@ -82,7 +83,7 @@ async def test_wildcard_agent_keeps_a_pinned_user_or_session() -> None:
 @pytest.mark.asyncio
 async def test_concrete_agent_still_matches_the_sentinels_literally() -> None:
     ch = StubCH()
-    await get_many_by_keys(_identity("recall-agent"), ["lesson_x"], ch=ch)
+    await get_many_by_keys(_identity("recall-agent"), ["lesson_x"], ch=ch, scope=WHOLE_NAMESPACE)
     sql, params = ch.query_all_calls[0]
     assert "agent = {agent:String}" in sql
     assert "user_id = {uid:String}" in sql and params["uid"] == "-"

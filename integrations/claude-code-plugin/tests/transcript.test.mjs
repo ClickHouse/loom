@@ -101,11 +101,15 @@ const turn = (i) =>
 
 async function withLoom(fn) {
   const appended = [];
+  appended.bodies = [];
   const server = http.createServer((req, res) => {
     let body = "";
     req.on("data", (c) => (body += c));
     req.on("end", () => {
-      if (req.url === "/v1/conversation.append") appended.push(JSON.parse(body).msg_id);
+      if (req.url === "/v1/conversation.append") {
+        appended.push(JSON.parse(body).msg_id);
+        appended.bodies.push(body);
+      }
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ stored: true }));
     });
@@ -124,6 +128,16 @@ function stop(env, payload) {
     child.on("exit", resolve);
     child.stdin.end(JSON.stringify(payload));
   });
+}
+
+// The detached flusher may still be writing its job file here when a test
+// ends, so the temp dir is removed best-effort.
+function removeTmp(dir) {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  } catch {
+    /* left for the OS to clear */
+  }
 }
 
 async function until(pred, ms = 8000) {
@@ -151,7 +165,7 @@ test("a Stop with more than fifty new turns sends fifty and leaves the rest for 
     assert.ok(await until(() => appended.length === 60), `after two Stops: ${appended.length}`);
     assert.deepEqual(new Set(appended).size, 60, "no turn sent twice, none skipped");
   });
-  fs.rmSync(dir, { recursive: true, force: true });
+  removeTmp(dir);
 });
 
 test("a turn still being written when Stop fires is sent by the next Stop", async () => {
@@ -170,5 +184,25 @@ test("a turn still being written when Stop fires is sent by the next Stop", asyn
     await stop(env, payload);
     assert.ok(await until(() => appended.includes("a3")), `sent: ${appended.join(",")}`);
   });
-  fs.rmSync(dir, { recursive: true, force: true });
+  removeTmp(dir);
+});
+
+test("a Stop redacts a secret in each turn it sends, from the transcript and from the event", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-conv-redact-"));
+  const secret = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
+  const transcript = path.join(dir, "t.jsonl");
+  const said = { type: "user", uuid: "u0", message: { content: `my token is ${secret}` } };
+  fs.writeFileSync(transcript, JSON.stringify(said) + "\n");
+  await withLoom(async (url, appended) => {
+    const env = { PATH: process.env.PATH, HOME: dir, TMPDIR: dir, LOOM_BASE_URL: url, LOOM_API_KEY: fakeToken() };
+    env.LOOM_CONV_SETTLE_MS = "0";
+    await stop(env, { session_id: "conv-r1", transcript_path: transcript, cwd: dir });
+    await stop(env, { session_id: "conv-r2", last_assistant_message: `use ${secret} here`, cwd: dir });
+    assert.ok(await until(() => appended.length === 2), `sent ${appended.length}`);
+    for (const body of appended.bodies) {
+      assert.ok(!body.includes(secret.slice(4)), body);
+      assert.ok(body.includes("[redacted]"), body);
+    }
+  });
+  removeTmp(dir);
 });

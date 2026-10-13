@@ -21,14 +21,15 @@ from pydantic import BaseModel, Field
 
 from server.memory.api.models_common import _Identity
 from server.memory.domain.session_brief import (
-    BRIEF_KEY_PATTERN,
+    STORED_KEY_MAX,
+    STORED_KEY_PATTERN,
     BriefEvent,
     BriefSections,
 )
 from server.operations.base import MCP_HIDDEN
 
 MAX_EVENTS = 4000
-_KEY_OR_EMPTY = r"^$|" + BRIEF_KEY_PATTERN
+_KEY_OR_EMPTY = r"^$|" + STORED_KEY_PATTERN
 
 Trigger = Literal["precompact", "session_end", "stop", "manual", "model"]
 
@@ -40,7 +41,7 @@ class SessionBriefSaveInput(_Identity):
     # The brief's address in the namespace. Empty = `auto/<project>/<branch>`
     # (every session on the same line of work revises the same brief), or
     # `session/<session_id>` when neither is known.
-    brief_key: str = Field(default="", max_length=160, pattern=_KEY_OR_EMPTY)
+    brief_key: str = Field(default="", max_length=STORED_KEY_MAX, pattern=_KEY_OR_EMPTY)
     # Project the work belongs to; with `branch` it forms the automatic key.
     # Empty keeps the stored brief's project.
     project: str = Field(default="", max_length=120)
@@ -108,7 +109,8 @@ class SessionBriefGetInput(_Identity):
     wrote (`from_session`), else the newest for `project`."""
 
     # The brief to load; takes precedence over `from_session` and `project`.
-    brief_key: str = Field(default="", max_length=160, pattern=_KEY_OR_EMPTY)
+    # A namespace-wide token may pass a `~<user>~…` key as session.brief_list shows it.
+    brief_key: str = Field(default="", max_length=STORED_KEY_MAX, pattern=_KEY_OR_EMPTY)
     # Load the newest brief this session id contributed to.
     from_session: str = Field(default="", max_length=200)
     # Load the newest brief of this project (used when `brief_key` and
@@ -145,6 +147,9 @@ class SessionBriefGetOutput(BaseModel):
     # What prompted the revision's save (`precompact`, `session_end`, `stop`,
     # `manual` or `model`).
     trigger: str = ""
+    # The principal that saved the revision (`human:<subject>` / `process:<subject>`):
+    # a namespace-wide writer may save to a user's own `~<user>~` brief.
+    actor: str = ""
     # Session ids that contributed to the brief, oldest first (the last 20).
     source_sessions: list[str] = Field(default_factory=list)
     # When the returned revision was saved.
@@ -183,6 +188,8 @@ class SessionBriefSummary(BaseModel):
     goal: str = ""
     status: str = ""
     author: str = ""
+    # The principal that saved the revision, as on session.brief_get.
+    actor: str = ""
     updated_at: datetime | None = None
     age_seconds: int = 0
     brief_chars: int = 0
@@ -196,8 +203,8 @@ class SessionBriefListOutput(BaseModel):
 
 
 class SessionBriefDeleteInput(_Identity):
-    # The brief to delete.
-    brief_key: str = Field(..., min_length=1, max_length=160, pattern=BRIEF_KEY_PATTERN)
+    # The brief to delete, as session.brief_list shows it.
+    brief_key: str = Field(..., min_length=1, max_length=STORED_KEY_MAX, pattern=STORED_KEY_PATTERN)
 
 
 class SessionBriefDeleteOutput(BaseModel):

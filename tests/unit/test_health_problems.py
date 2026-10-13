@@ -40,6 +40,11 @@ def _settings(monkeypatch: pytest.MonkeyPatch, **env: str) -> Settings:
         "LOOM_BACKGROUND_WORKERS",
         "LOOM_DEPLOYMENT",
         "LOOM_IDENTITY_PROVIDER",
+        "LOOM_BIND_HOST",
+        "LOOM_PUBLIC_BASE_URL",
+        "LOOM_ALLOW_INSECURE",
+        "LOOM_TRUSTED_PROXIES",
+        "LOOM_CORS_ORIGINS",
     ):
         monkeypatch.delenv(var, raising=False)
     # Auth off unless a test says otherwise: bare Settings has auth on with
@@ -541,3 +546,65 @@ def test_doctor_cli_accepts_json_flag(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app, "_cmd_doctor", fake_doctor)
     assert cli.main(["doctor", "--json"]) == 0
     assert seen == {"json": True}
+
+
+# --- exposure: a non-loopback bind, forwarded headers, CORS ----------------
+
+_EXPOSURE = {
+    "public_base_url_missing",
+    "insecure_bind_auth_off",
+    "insecure_bind_dev_secret",
+    "trusted_proxies_any",
+    "cors_wildcard",
+}
+
+
+def test_a_loopback_bind_reports_no_exposure(monkeypatch: pytest.MonkeyPatch) -> None:
+    s = _settings(monkeypatch, LOOM_JWT_SECRET=DEV_JWT_SECRET)
+    assert not _EXPOSURE & set(_codes(collect_problems(s, HealthState(env={}))))
+
+
+def test_a_reachable_bind_without_safeguards_reports_each(monkeypatch: pytest.MonkeyPatch) -> None:
+    s = _settings(
+        monkeypatch,
+        LOOM_BIND_HOST="0.0.0.0",
+        LOOM_JWT_SECRET=DEV_JWT_SECRET,
+        LOOM_TRUSTED_PROXIES="*",
+        LOOM_CORS_ORIGINS="*",
+    )
+    problems = collect_problems(s, HealthState(env={}))
+    assert _EXPOSURE <= set(_codes(problems))
+    assert _by_code(problems, "insecure_bind_auth_off").severity == "error"
+    assert _by_code(problems, "trusted_proxies_any").severity == "warn"
+
+
+def test_allow_insecure_downgrades_the_bind_problems_to_warn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    s = _settings(
+        monkeypatch,
+        LOOM_BIND_HOST="0.0.0.0",
+        LOOM_JWT_SECRET=DEV_JWT_SECRET,
+        LOOM_PUBLIC_BASE_URL="https://loom.example",
+        LOOM_ALLOW_INSECURE="1",
+    )
+    problems = collect_problems(s, HealthState(env={}))
+    assert "public_base_url_missing" not in _codes(problems)
+    assert _by_code(problems, "insecure_bind_auth_off").severity == "warn"
+    assert _by_code(problems, "insecure_bind_dev_secret").severity == "warn"
+
+
+def test_run_ids_without_keeper_claims_are_an_info_problem(monkeypatch: pytest.MonkeyPatch) -> None:
+    s = _settings(monkeypatch)
+
+    def codes(atomic: bool | None) -> list[str]:
+        problems = collect_problems(s, HealthState(run_claims_atomic=atomic))
+        return [p.code for p in problems if p.code == "run_claims_not_atomic"]
+
+    assert codes(None) == codes(True) == []
+    found = [
+        p
+        for p in collect_problems(s, HealthState(run_claims_atomic=False))
+        if p.code == "run_claims_not_atomic"
+    ]
+    assert [p.severity for p in found] == ["info"]

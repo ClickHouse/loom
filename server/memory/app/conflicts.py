@@ -19,6 +19,14 @@ from datetime import datetime
 from typing import Any
 
 from server.core.ch import get_client
+from server.core.errors import AuthInsufficientError, IdentityIncompleteError
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import (
+    WHOLE_NAMESPACE,
+    ReadFilters,
+    row_in_read_scope,
+    scope_and,
+)
 from server.memory.domain.conflicts import (
     APPEND_ONLY_POLICY,
     ConflictPeer,
@@ -36,8 +44,11 @@ from server.memory.domain.conflicts import (
 from server.memory.store import conflicts as _conflicts_repo
 from server.memory.store.conflict_candidates import (
     _PEER_ROWS_SQL,
+    PEER_LIMIT,
+    PINNED_PEERS_SQL,
     _peer_candidates_sql,
     candidate_sql_many,
+    pinned_sql_many,
 )
 from server.settings import settings
 
@@ -135,6 +146,9 @@ async def candidate_rows_many(
     import asyncio
 
     ch = ch or get_client()
+    scope = _scope_or_none()
+    if scope is None:
+        return {}  # every fact falls back to the per-fact path, which fails closed
     size = int(batch if batch is not None else settings.memory_write_candidate_batch)
     size = max(size, 1)
     by_dim: dict[int, list[int]] = {}
@@ -153,12 +167,19 @@ async def candidate_rows_many(
             "keys": [items[i][1] for i in idxs],
             "max_dists": [float(items[i][3]) for i in idxs],
         }
-        rows = await ch.query_all(candidate_sql_many(len(idxs)), params=params)
+        rows = await ch.query_all(
+            candidate_sql_many(len(idxs), scope_and(scope, params, "m")), params=params
+        )
+        if scope.narrowed:  # other users' pinned rows still block; the scope hides them
+            pinned = await ch.query_all(pinned_sql_many(len(idxs)), params=params)
+            rows += [r for r in pinned if _foreign_pinned(r, scope)]
         for i in idxs:
             out[i] = []
+        seen: set[tuple[int, str]] = set()
         for r in rows:
             q = int(r.get("qidx") or 0)
-            if 0 <= q < len(idxs):
+            if 0 <= q < len(idxs) and (q, str(r.get("memory_id"))) not in seen:
+                seen.add((q, str(r.get("memory_id"))))
                 out[idxs[q]].append(dict(r))
 
     jobs = [
@@ -197,10 +218,16 @@ async def _policy_before_gate(
         return None
 
 
-async def _peer_rows(ch: Any, params: dict[str, Any]) -> list[dict[str, Any]]:
+_PEER_FIRST_K = 32
+_PEER_MAX_K = 2048
+
+
+async def _peer_rows(
+    ch: Any, params: dict[str, Any], scope: ReadFilters = WHOLE_NAMESPACE
+) -> list[dict[str, Any]]:
     """The gate's peers: this fact's cosine neighbours under the same type,
     excluding its own key (a re-write is LWW by version, not a conflict), at
-    most `_PEER_LIMIT`, nearest first.
+    most `PEER_LIMIT`, nearest first.
 
     Two statements instead of the `memory FINAL JOIN memory_embeddings FINAL` scan.
     Stage A ranks the namespace's vectors alone, in the shape the `Quantized` codec
@@ -209,14 +236,17 @@ async def _peer_rows(ch: Any, params: dict[str, Any]) -> list[dict[str, Any]]:
     decodes the full-precision column and turns codes-first off (read volume roughly 4x
     higher). Stage B reads the candidates' `loom.memory` rows by sort key and applies
     the row-side filters (type, status, tombstone), which is where the two tables can
-    disagree (vectors of non-live rows, live rows whose vector says otherwise), so stage
-    A filters nothing the join did not filter on the vector side. When fewer than
-    `_PEER_LIMIT` survive while stage A's last candidate is still inside `max_dist`,
+    disagree (vectors of non-live rows, live rows whose vector says otherwise). Stage A
+    filters nothing the join did not filter on the vector side. When fewer than
+    `PEER_LIMIT` survive while stage A's last candidate is still inside `max_dist`,
     stage A widens (x4) — the answer is the join's, not an approximation of it. Ties
-    sort by memory_key (the join's order among equal distances is arbitrary)."""
+    sort by memory_key (the join's order among equal distances is arbitrary).
+    Both stages stay inside `scope`, so other users' rows never take the places."""
+    params = dict(params)
+    in_scope = scope_and(scope, params)
     k = _PEER_FIRST_K
     while True:
-        cand = await ch.query_all(_peer_candidates_sql(), params={**params, "k": k})
+        cand = await ch.query_all(_peer_candidates_sql(in_scope), params={**params, "k": k})
         inside = [c for c in cand if float(c["dist"]) <= float(params["max_dist"])]
         live: dict[tuple[str, str, str, str], dict[str, Any]] = {}
         if inside:
@@ -227,18 +257,13 @@ async def _peer_rows(ch: Any, params: dict[str, Any]) -> list[dict[str, Any]]:
             live = {_ident(r): r for r in rows}
         out = [{**live[_ident(c)], "dist": float(c["dist"])} for c in inside if _ident(c) in live]
         exhausted = len(cand) < k or len(inside) < len(cand)
-        if len(out) >= _PEER_LIMIT or exhausted:
+        if len(out) >= PEER_LIMIT or exhausted:
             break
         if k >= _PEER_MAX_K:
-            return await _peer_rows_joined(ch, params)
+            return await _peer_rows_joined(ch, params, scope_and(scope, params, "m"))
         k *= 4
     out.sort(key=lambda r: (r["dist"], str(r.get("memory_key") or "")))
-    return out[:_PEER_LIMIT]
-
-
-_PEER_LIMIT = 10
-_PEER_FIRST_K = 32
-_PEER_MAX_K = 2048
+    return out[:PEER_LIMIT]
 
 
 def _ident(r: dict[str, Any]) -> tuple[str, str, str, str]:
@@ -250,7 +275,9 @@ def _ident(r: dict[str, Any]) -> tuple[str, str, str, str]:
     )
 
 
-async def _peer_rows_joined(ch: Any, params: dict[str, Any]) -> list[dict[str, Any]]:
+async def _peer_rows_joined(
+    ch: Any, params: dict[str, Any], in_scope: str = ""
+) -> list[dict[str, Any]]:
     """The single-statement join: the widening's last resort, once stage A
     has read `_PEER_MAX_K` candidates without enough live peers. Filtered to
     equal-length vectors so cosineDistance never sees mixed embedders
@@ -277,14 +304,65 @@ async def _peer_rows_joined(ch: Any, params: dict[str, Any]) -> list[dict[str, A
           AND m.status IN ('active', 'conflicted')
           AND e.tombstoned_at IS NULL
           AND e.embedding_dim = {dim:UInt16}
-          AND length(e.embedding) = {dim:UInt16}
-        HAVING dist <= {max_dist:Float32}
+          AND length(e.embedding) = {dim:UInt16}"""
+        + in_scope
+        + f"""
+        HAVING dist <= {{max_dist:Float32}}
         ORDER BY dist ASC
-        LIMIT 10
+        LIMIT {PEER_LIMIT}
         """,
         params=params,
     )
     return rows
+
+
+def _scope_or_none() -> ReadFilters | None:
+    """The request's read scope, None when it does not resolve (no peer is inside)."""
+    try:
+        return request_scope()
+    except (AuthInsufficientError, IdentityIncompleteError):
+        return None
+
+
+def _foreign_pinned(r: Mapping[str, Any], scope: ReadFilters | None) -> bool:
+    """A pinned row outside `scope` (every row is outside a scope that did not resolve).
+    The writer's own rows come from its scoped read, with the gate's 10 places."""
+    if not r.get("pinned"):
+        return False
+    return scope is None or not row_in_read_scope(scope, r.get("user_id"), r.get("session_id"))
+
+
+async def _foreign_pinned_rows(
+    ch: Any, params: dict[str, Any], scope: ReadFilters | None, rows: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """The pinned peers the scoped peer query cannot see, for a writer bounded
+    below the namespace: a pinned row of another user still blocks its write.
+    Its own statement (`PINNED_PEERS_SQL`), so the writer's closer rows never hide a
+    pinned one, and the pinned memory rows decide type, not their vectors' metadata."""
+    if scope is not None and not scope.narrowed:
+        return []
+    seen = {str(r.get("memory_id")) for r in rows}
+    pinned = await ch.query_all(PINNED_PEERS_SQL, params=params)
+    return [
+        dict(r) for r in pinned if _foreign_pinned(r, scope) and str(r.get("memory_id")) not in seen
+    ]
+
+
+def _split_by_read_scope(
+    peers: list[ConflictPeer],
+) -> tuple[list[ConflictPeer], list[ConflictPeer]]:
+    """(peers inside the request's read scope, peers outside it). A writer
+    bounded to one user never merges into, reinforces, supersedes or marks
+    another user's row; only a pinned one still blocks it. A scope the
+    request cannot resolve keeps no peer inside."""
+    scope = _scope_or_none()
+    if scope is None:
+        return [], peers
+    inside: list[ConflictPeer] = []
+    outside: list[ConflictPeer] = []
+    for p in peers:
+        (inside if row_in_read_scope(scope, p.user_id, p.session_id) else outside).append(p)
+    return inside, outside
 
 
 def _peer_of(r: dict[str, Any]) -> ConflictPeer:
@@ -430,10 +508,15 @@ async def check_on_commit(
         "max_dist": max_distance,
         "dim": new_dim,
     }
+    scope = _scope_or_none()
     if candidate_rows is not None:
         rows = [dict(r) for r in candidate_rows]
+    elif scope is None:
+        rows = []
     else:
-        rows = await _peer_rows(ch, params)
+        rows = await _peer_rows(ch, params, scope)
+    if candidate_rows is None:  # a bulk caller's rows carry its pinned arm already
+        rows += await _foreign_pinned_rows(ch, params, scope, rows)
     if not rows:
         return ConflictResult(verdict="clear", peers=[])
 
@@ -449,11 +532,13 @@ async def check_on_commit(
         return ConflictResult(verdict="clear", peers=[])
 
     new_canonical = canonical(new_value)
-    all_peers = [_peer_of(r) for r in rows]
+    all_peers, foreign = _split_by_read_scope([_peer_of(r) for r in rows])
     # Flagged peers reach the cosine verdicts below; band peers only the judge.
     peers = [p for p in all_peers if p.similarity >= threshold]
     band_peers = [p for p in all_peers if p.similarity < threshold]
-    if not peers:
+    # A pinned row outside the writer's read scope still blocks it.
+    foreign_blocker = next((p for p in foreign if p.pinned and p.similarity >= threshold), None)
+    if not peers and foreign_blocker is None:
         pj = PendingJudge(
             org,
             namespace,
@@ -475,7 +560,7 @@ async def check_on_commit(
             return merge_or_run_duplicate(p, peers, new_run_id=new_run_id)
 
     # Step 4 (checked before 3 — pinned short-circuit takes priority).
-    pinned_blocker = next((p for p in peers if p.pinned), None)
+    pinned_blocker = next((p for p in peers if p.pinned), None) or foreign_blocker
     if pinned_blocker is not None:
         return ConflictResult(
             verdict="rejected",
@@ -760,7 +845,7 @@ async def apply_refines(
     # A proposal (a fact on trial) retires nothing — whichever
     # path reached this verdict (inline, deferred settle, the sweep, bulk).
     try:
-        new_row = await get_by_id(new_memory_id, org=org, ch=ch)
+        new_row = await get_by_id(new_memory_id, org=org, ch=ch, scope=WHOLE_NAMESPACE)
     except Exception:  # noqa: BLE001 — unreadable: the verdict applies
         new_row = None
     if new_row is not None and str(getattr(new_row, "status", "") or "") == "proposed":

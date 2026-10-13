@@ -20,6 +20,8 @@ from typing import Any
 
 import pytest
 
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
@@ -348,7 +350,7 @@ async def test_bulk_get_and_include_tags_statements_pass_the_analyzer(ch_client)
         Identity(org="o", namespace="n", agent="*", user_id="alice", session_id="-"),
         Identity(org="o", namespace="n", agent="a", user_id="-", session_id="-"),
     ):
-        await get_many_by_keys(ident, ["k1", "k2"], ch=ch)
+        await get_many_by_keys(ident, ["k1", "k2"], ch=ch, scope=WHOLE_NAMESPACE)
     saved = tag_mod.get_client
     tag_mod.get_client = lambda: ch  # type: ignore[assignment]
     try:
@@ -1387,7 +1389,8 @@ async def test_uncounted_table_erasure_statements_pass_the_analyzer(ch_client, m
     class _One(_RecordingCH):
         async def query_one(self, sql, params=None):
             self.calls.append((sql, params or {}))
-            return {"n": 1}
+            # `engine` makes the run-claims step see its KeeperMap table and submit its delete.
+            return {"n": 1, "engine": "KeeperMap"}
 
     mutations: list[tuple[str, str, dict[str, Any]]] = []
 
@@ -1397,6 +1400,7 @@ async def test_uncounted_table_erasure_statements_pass_the_analyzer(ch_client, m
 
     monkeypatch.setattr(erasure_mutations, "run_mutation", _rec)
     monkeypatch.setattr(erasure_mutations, "run_lightweight_delete", _rec)
+    monkeypatch.setattr(erasure_mutations, "run_keeper_delete", _rec)
     ch = _One()
     ns = ["a", "b"]
     for fn in (

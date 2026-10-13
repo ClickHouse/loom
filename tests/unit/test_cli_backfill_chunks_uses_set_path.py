@@ -20,6 +20,17 @@ from server.cli.ops import _cmd_backfill_chunks
 from server.memory.app import set_chunks as sc
 from server.settings import settings
 
+
+@pytest.fixture(autouse=True)
+def _head_is_embedded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests' fake client answers no head read: the key's head stays plain."""
+
+    async def _yes(*_a: Any, **_k: Any) -> bool:
+        return True
+
+    monkeypatch.setattr(sc, "_head_still_embedded", _yes)
+
+
 pytestmark = pytest.mark.usefixtures("stub_model_command")
 
 _VALUE = {"note": "\n\n".join(f"Paragraph {i}: " + "word " * 60 for i in range(30))}

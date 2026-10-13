@@ -1,7 +1,8 @@
-"""`POST /v1/admin/token.mint`: mints inside the caller's org
-only, and mints a restricted namespace only to a caller who holds a direct
-grant there at or above the roles requested; a standard namespace is
-unchanged; every mint leaves a `token.minted` audit row."""
+"""`POST /v1/admin/token.mint`: an org admin mints inside its own org, and the
+token is delegated from the caller's (`server.auth.delegation`): every named
+namespace needs the caller's live grant at or above the role asked for there,
+org-wide roles are never minted, and every mint leaves a `token.minted` audit
+row."""
 
 from __future__ import annotations
 
@@ -12,16 +13,17 @@ from fastapi.testclient import TestClient
 import server.auth.authz as authz
 import server.identity.app.namespace_classification as nc
 from server.auth.jwt import mint_token
+from server.operations.base import Role
 from server.settings import settings
 
 ORG, PRIV = "clickhouse", "code-example-private"
 
 
-def _bearer(roles: list[str], org: str = ORG, subject: str = "ops@x") -> dict[str, str]:
+def _bearer(roles: list[str], org: str = ORG, subject: str = "ops@x", ns=("*",)) -> dict:
     tok = mint_token(
         subject=subject,
         org=org,
-        namespaces=["*"],
+        namespaces=list(ns),
         roles=roles,
         ttl_seconds=300,
         is_service_account=False,
@@ -45,14 +47,14 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(admin_mod.audit, "emit", _emit)
     nc.reset()
     nc._cache[ORG] = (1e12, frozenset({PRIV}))
-    grants: dict = {}
+    grants: dict = {(ORG, "clickgap-public", "ops@x"): Role.ADMIN}
 
     async def _grant(org, ns, subject):
         return grants.get((org, ns, subject))
 
-    monkeypatch.setattr(authz, "_grant_role_for", _grant)
+    monkeypatch.setattr(authz, "grant_role_for", _grant)
     app = FastAPI()
-    app.include_router(admin_mod.admin_router)
+    app.include_router(admin_mod.org_admin_router)
     c = TestClient(app)
     c.grants = grants  # type: ignore[attr-defined]
     c.audit_rows = rows  # type: ignore[attr-defined]
@@ -67,36 +69,46 @@ def _mint(client: TestClient, headers, namespaces, roles=None):
     return client.post("/v1/admin/token.mint", json=body, headers=headers)
 
 
-def test_standard_namespace_mints_as_before(client) -> None:
-    r = _mint(client, _bearer(["admin"]), ["clickgap-public"])
+def test_a_namespace_the_caller_holds_mints(client) -> None:
+    r = _mint(client, _bearer(["org_admin"]), ["clickgap-public"])
     assert r.status_code == 200 and r.json()["token"] == "jwt-minted"
+    assert r.json()["ttl_seconds"] <= 300  # never outlives the caller's token
     assert [e for e, _ in client.audit_rows] == ["token.minted"]
 
 
-def test_restricted_namespace_needs_the_callers_direct_grant(client) -> None:
-    r = _mint(client, _bearer(["admin"]), ["clickgap-public", PRIV])
-    assert r.status_code == 403 and r.json()["detail"]["code"] == "AUTH_INSUFFICIENT"
+def test_a_namespace_the_caller_holds_no_grant_on_is_refused(client) -> None:
+    r = _mint(client, _bearer(["org_admin"]), ["someone-elses"])
+    assert r.status_code == 403 and "someone-elses" in r.json()["detail"]["message"]
     assert client.audit_rows == []
-    from server.operations.base import Role
 
+
+def test_restricted_namespace_needs_the_callers_grant_at_the_role(client) -> None:
+    r = _mint(client, _bearer(["org_admin"]), ["clickgap-public", PRIV])
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "AUTH_INSUFFICIENT"
     client.grants[(ORG, PRIV, "ops@x")] = Role.VIEWER
-    assert _mint(client, _bearer(["admin"]), [PRIV], roles=["writer"]).status_code == 403
-    assert _mint(client, _bearer(["admin"]), [PRIV], roles=["viewer"]).status_code == 200
+    assert _mint(client, _bearer(["org_admin"]), [PRIV], roles=["writer"]).status_code == 403
+    assert _mint(client, _bearer(["org_admin"]), [PRIV], roles=["viewer"]).status_code == 200
 
 
-def test_other_org_is_refused_unless_platform_admin(client) -> None:
-    r = _mint(client, _bearer(["admin"], org="acme"), ["clickgap-public"])
-    assert r.status_code == 403
-    r = _mint(client, _bearer(["platform_admin"], org="acme"), ["clickgap-public"])
-    assert r.status_code == 200
+def test_other_org_is_refused_and_a_platform_admin_mints_only_in_its_own(client) -> None:
+    assert _mint(client, _bearer(["org_admin"], org="acme"), ["clickgap-public"]).status_code == 403
+    # a platform admin passes the gate for any org, but a child never changes org
+    assert (
+        _mint(client, _bearer(["platform_admin"], org="acme"), ["clickgap-public"]).status_code
+        == 403
+    )
+    assert _mint(client, _bearer(["platform_admin"], org="*"), ["clickgap-public"]).status_code == (
+        200
+    )
 
 
-def test_wildcard_namespace_is_not_a_restricted_mint(client) -> None:
-    # a `*` token never reads a restricted namespace, so it needs no grant
-    assert _mint(client, _bearer(["admin"]), ["*"]).status_code == 200
+def test_a_namespace_admin_cannot_reach_token_mint(client) -> None:
+    assert _mint(client, _bearer(["admin"]), ["clickgap-public"]).status_code == 403
 
 
-# ------------------------------------------------------- ns_roles + consumer
+def test_wildcard_from_a_flat_caller_mints_a_dynamic_token(client) -> None:
+    # a `*` child reads only where the caller holds a grant, rechecked per request
+    assert _mint(client, _bearer(["org_admin"]), ["*"], roles=["viewer"]).status_code == 200
 
 
 def test_ns_roles_mints_the_scoped_token_and_checks_each_namespace_on_its_own_role(
@@ -106,21 +118,19 @@ def test_ns_roles_mints_the_scoped_token_and_checks_each_namespace_on_its_own_ro
     restricted code namespace: each namespace is checked against its own
     role, not the flat max ("admin"), so the mint goes through."""
     from server.auth import jwt as jwt_mod
-    from server.operations.base import Role
 
     seen: dict = {}
 
-    def _mint(**kw):
+    def _mint_kw(**kw):
         seen.update(kw)
         return "jwt-scoped"
 
-    monkeypatch.setattr(jwt_mod, "mint_token", _mint)
-    client.grants[(ORG, PRIV, "ops@x")] = (
-        Role.VIEWER
-    )  # the caller holds viewer on the restricted ns
+    monkeypatch.setattr(jwt_mod, "mint_token", _mint_kw)
+    client.grants[(ORG, PRIV, "ops@x")] = Role.VIEWER
+    client.grants[(ORG, "clickgap-private", "ops@x")] = Role.ADMIN
     r = client.post(
         "/v1/admin/token.mint",
-        headers=_bearer(["admin"]),
+        headers=_bearer(["org_admin"]),
         json={
             "subject": "sa:clickgap",
             "org": ORG,
@@ -133,27 +143,18 @@ def test_ns_roles_mints_the_scoped_token_and_checks_each_namespace_on_its_own_ro
     assert body["token"] == "jwt-scoped" and body["consumer"] == "clickgap"
     assert body["ns_roles"] == {"clickgap-private": "admin", PRIV: "viewer"}
     assert body["namespaces"] == ["clickgap-private", PRIV]  # derived from the map, in order
-    assert (
-        seen["ns_roles"] == {"clickgap-private": "admin", PRIV: "viewer"}
-        and seen["consumer"] == "clickgap"
-    )
+    assert seen["ns_roles"] == {"clickgap-private": "admin", PRIV: "viewer"}
+    assert seen["consumer"] == "clickgap" and seen["roles"] == []
+    assert seen["creator"] == "ops@x" and len(seen["parents"]) == 1
     ((evt, kw),) = client.audit_rows
-    assert (
-        evt == "token.minted"
-        and kw["subject"]["ns_roles"][PRIV] == "viewer"
-        and kw["subject"]["consumer"] == "clickgap"
-    )
+    assert evt == "token.minted" and kw["subject"]["ns_roles"][PRIV] == "viewer"
 
 
-def test_ns_roles_asking_more_than_the_callers_grant_on_a_restricted_namespace_is_refused(
-    client,
-) -> None:
-    from server.operations.base import Role
-
+def test_ns_roles_asking_more_than_the_callers_grant_is_refused(client) -> None:
     client.grants[(ORG, PRIV, "ops@x")] = Role.VIEWER
     r = client.post(
         "/v1/admin/token.mint",
-        headers=_bearer(["admin"]),
+        headers=_bearer(["org_admin"]),
         json={"subject": "sa:clickgap", "org": ORG, "ns_roles": {PRIV: "writer"}},
     )
     assert r.status_code == 403 and "writer" in r.json()["detail"]["message"]
@@ -162,54 +163,86 @@ def test_ns_roles_asking_more_than_the_callers_grant_on_a_restricted_namespace_i
 def test_ns_roles_values_are_validated_and_namespaces_are_required_somewhere(client) -> None:
     r = client.post(
         "/v1/admin/token.mint",
-        headers=_bearer(["admin"]),
+        headers=_bearer(["org_admin"]),
         json={"subject": "s", "org": ORG, "ns_roles": {"n": "owner"}},
     )
     assert r.status_code == 422
     r = client.post(
-        "/v1/admin/token.mint", headers=_bearer(["admin"]), json={"subject": "s", "org": ORG}
+        "/v1/admin/token.mint", headers=_bearer(["org_admin"]), json={"subject": "s", "org": ORG}
     )
     assert r.status_code == 422
 
 
-def test_flat_roles_still_mint_as_before(client, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_flat_roles_mint_a_flat_token(client, monkeypatch: pytest.MonkeyPatch) -> None:
     from server.auth import jwt as jwt_mod
 
     seen: dict = {}
     monkeypatch.setattr(jwt_mod, "mint_token", lambda **kw: seen.update(kw) or "jwt-flat")
     r = client.post(
         "/v1/admin/token.mint",
-        headers=_bearer(["admin"]),
-        json={"subject": "s", "org": ORG, "namespaces": ["bench"], "roles": ["writer"]},
+        headers=_bearer(["org_admin"]),
+        json={"subject": "s", "org": ORG, "namespaces": ["clickgap-public"], "roles": ["writer"]},
     )
     assert r.status_code == 200 and r.json()["ns_roles"] is None and r.json()["consumer"] == ""
-    assert seen["ns_roles"] is None and seen["consumer"] is None
+    assert seen["ns_roles"] is None and seen["consumer"] is None and seen["roles"] == ["writer"]
 
 
-def test_a_minted_token_never_outranks_its_minter(client) -> None:
-    admin = _bearer(["admin"])
-    for roles in (["org_admin"], ["platform_admin"], ["viewer", "org_admin"]):
-        r = _mint(client, admin, ["clickgap-public"], roles=roles)
-        assert r.status_code == 403 and r.json()["detail"]["code"] == "AUTH_INSUFFICIENT", roles
-    assert _mint(client, admin, ["clickgap-public"], roles=["nope"]).status_code == 422
-    assert _mint(client, admin, ["clickgap-public"], roles=["admin"]).status_code == 200
-    assert _mint(client, _bearer(["org_admin"]), ["x"], roles=["org_admin"]).status_code == 200
-    assert client.audit_rows and all(e == "token.minted" for e, _ in client.audit_rows)
+def test_org_wide_roles_are_never_minted(client) -> None:
+    for caller in (["org_admin"], ["platform_admin"]):
+        for roles in (["org_admin"], ["platform_admin"], ["viewer", "org_admin"]):
+            r = _mint(client, _bearer(caller), ["clickgap-public"], roles=roles)
+            assert r.status_code == 403, (caller, roles)
+    assert _mint(
+        client, _bearer(["org_admin"]), ["clickgap-public"], roles=["nope"]
+    ).status_code == (422)
+    assert _mint(
+        client, _bearer(["org_admin"]), ["clickgap-public"], roles=["admin"]
+    ).status_code == (200)
 
 
-def test_an_org_wide_read_is_minted_only_by_a_caller_holding_one(client) -> None:
+def test_a_narrow_caller_mints_inside_its_own_claim(client) -> None:
+    """A delegated caller (its own token names only team-a) cannot widen to `*`:
+    the wildcard becomes its own list, and another namespace is refused."""
     narrow = {
         "Authorization": "Bearer "
         + mint_token(
             subject="ops@x",
             org=ORG,
-            namespaces=["team-a"],
-            roles=["admin"],
+            namespaces=["clickgap-public"],
+            roles=["org_admin"],
             ttl_seconds=300,
             is_service_account=False,
+            creator="ops@x",
         )
     }
-    assert _mint(client, narrow, ["*"], roles=["viewer"]).status_code == 403
-    assert _mint(client, narrow, ["team-a"], roles=["viewer"]).status_code == 200
-    assert _mint(client, _bearer(["admin"]), ["*"], roles=["viewer"]).status_code == 200
-    assert _mint(client, _bearer(["org_admin"]), ["*"], roles=["viewer"]).status_code == 200
+    client.grants[(ORG, "team-b", "ops@x")] = Role.ADMIN
+    r = _mint(client, narrow, ["*"], roles=["viewer"])
+    assert r.status_code == 200 and r.json()["namespaces"] == ["clickgap-public"]
+    assert _mint(client, narrow, ["team-b"], roles=["viewer"]).status_code == 403
+
+
+def test_namespaces_beside_ns_roles_are_asked_for_as_viewer(client) -> None:
+    client.grants[(ORG, PRIV, "ops@x")] = Role.VIEWER
+    r = client.post(
+        "/v1/admin/token.mint",
+        headers=_bearer(["org_admin"]),
+        json={
+            "subject": "sa:clickgap",
+            "org": ORG,
+            "namespaces": [PRIV],
+            "ns_roles": {"clickgap-public": "admin"},
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["ns_roles"] == {PRIV: "viewer", "clickgap-public": "admin"}
+
+
+def test_the_audit_row_records_what_was_granted_and_the_jti(client) -> None:
+    r = _mint(client, _bearer(["org_admin"], ns=("clickgap-public",)), ["*"], roles=["admin"])
+    assert r.status_code == 200, r.text
+    ((_evt, kw),) = client.audit_rows
+    audited = kw["subject"]
+    assert audited["jti"] == r.json()["jti"]
+    assert audited["namespaces"] == r.json()["namespaces"]
+    assert audited["roles"] == r.json()["roles"]
+    assert audited["ns_roles"] == r.json()["ns_roles"]

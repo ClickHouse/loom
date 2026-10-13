@@ -41,8 +41,8 @@ const ASK_FIELDS = new Set([
  *  becomes a "[image: …]" placeholder; tool results are skipped unless a tool
  *  returned an image, which leaves one `tool` placeholder turn; system-injected
  *  turns start with "<"), assistant text blocks joined. Sidechains skipped. */
-import { contentText, hookClient, toolImageTurn } from "./loom-client.mjs";
-import { runIdFor } from "./run-hook.mjs";
+import { contentText, hookClient, redactHead, resolveToken, toolImageTurn } from "./loom-client.mjs";
+import { sessionRunId } from "./run-hook.mjs";
 
 export function transcriptTurns(objs) {
   const out = [];
@@ -101,8 +101,10 @@ export function sessionToolEchoes(objs) {
   const values = [];
   const keys = new Set();
   const loomIds = new Set();
+  // Redact before the cut, so a clipped secret cannot slip past its pattern.
+  const token = resolveToken();
   const push = (text) => {
-    const t = String(text || "").trim();
+    const t = redactHead(text, ECHO_MAX_CHARS, token).trim();
     if (t.length >= ECHO_MIN_CHARS) values.push(t.slice(0, ECHO_MAX_CHARS));
   };
   const walkArgs = (v, depth = 0) => {
@@ -188,7 +190,10 @@ export function sessionMemoryBody(scope, payload, turns, opts = {}) {
   if (!tail.some((t) => t.role === "user") || tail.length < MIN_TURNS) return null;
   // Bound the total from the newest turn backwards: drop the oldest turns
   // until the payload fits, never the latest.
-  const clipped = tail.map((t) => ({ ...t, content: clip(t.content, opts.maxMessageChars || MAX_MESSAGE_CHARS) }));
+  // Redact each captured turn (transcript or journal) before it is clipped and sent.
+  const maxChars = opts.maxMessageChars || MAX_MESSAGE_CHARS;
+  const token = resolveToken();
+  const clipped = tail.map((t) => ({ ...t, content: clip(redactHead(t.content, maxChars, token), maxChars) }));
   let total = clipped.reduce((n, t) => n + t.content.length, 0);
   let start = 0;
   while (total > maxTotal && clipped.length - start > MIN_TURNS) {
@@ -208,7 +213,7 @@ export function sessionMemoryBody(scope, payload, turns, opts = {}) {
     namespace: scope.namespace,
     agent: scope.agent,
     session_id: sessionId,
-    run_id: runIdFor(sessionId),
+    run_id: sessionRunId(sessionId),
     messages,
     extra_tags: [`source:${hookClient()}`, ...(scope.tags || [])],
     observation_date: String(endedAt).slice(0, 10),

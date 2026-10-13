@@ -207,15 +207,42 @@ export async function addKnowledge(
   return post<KnowledgeAddResponse>(path, body);
 }
 
-/** Fetch the original uploaded bytes as a same-origin Object URL. The
- *  iframe/<embed> tag can't carry custom headers, so the auth'd fetch
- *  happens here; the caller drops the resulting `blob:` URL into an
- *  iframe src and revokes when done. Returns null when the document has
- *  no preserved blob; throws on auth / 403 / unexpected errors. */
+/** How the Library shows an original file. An uploaded file is
+ *  attacker-chosen bytes under an attacker-chosen type, and a `blob:` URL
+ *  ignores the server's Content-Disposition, so only passive types are
+ *  previewed: text (shown as plain text in an empty-sandbox iframe) and raster
+ *  images (an `<img>`). Everything else downloads: HTML, SVG, XML, PDF,
+ *  unknown. Mirrors the server's allowlist in `download_routes.preview_type`. */
+export type PreviewKind = "text" | "image" | "download";
+
+const PREVIEW_TEXT_TYPES = new Set(["text/plain", "text/markdown", "text/csv", "application/json"]);
+const PREVIEW_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+
+export function previewKind(contentType: string): PreviewKind {
+  const base = contentType.split(";")[0].trim().toLowerCase();
+  if (PREVIEW_TEXT_TYPES.has(base)) return "text";
+  if (PREVIEW_IMAGE_TYPES.has(base)) return "image";
+  return "download";
+}
+
+export interface InlinePreview {
+  kind: PreviewKind;
+  /** A `blob:` URL of the bytes re-typed to the preview's own passive type;
+   *  null for `download`, which never gets a URL. */
+  url: string | null;
+  contentType: string;
+  size: number;
+}
+
+/** Fetch the original uploaded bytes for the preview pane. The iframe/img
+ *  tag can't carry custom headers, so the auth'd fetch happens here; the
+ *  caller revokes `url` when done. The blob's type comes from `previewKind`,
+ *  never from the response. Returns null when the document has no preserved
+ *  blob; throws on auth / 403 / unexpected errors. */
 export async function fetchKnowledgeInlineUrl(
   id: Pick<Identity, "org" | "namespace">,
   sourceUri: string,
-): Promise<{ url: string; contentType: string; size: number } | null> {
+): Promise<InlinePreview | null> {
   const qs = new URLSearchParams({
     org: id.org,
     namespace: id.namespace,
@@ -230,11 +257,12 @@ export async function fetchKnowledgeInlineUrl(
     throw e;
   }
   const blob = await r.blob();
-  return {
-    url: URL.createObjectURL(blob),
-    contentType: r.headers.get("Content-Type") || blob.type || "application/octet-stream",
-    size: blob.size,
-  };
+  const contentType = r.headers.get("Content-Type") || "application/octet-stream";
+  const kind = previewKind(contentType);
+  let url: string | null = null;
+  if (kind === "text") url = URL.createObjectURL(new Blob([blob], { type: "text/plain;charset=utf-8" }));
+  if (kind === "image") url = URL.createObjectURL(new Blob([blob], { type: contentType.split(";")[0].trim() }));
+  return { kind, url, contentType, size: blob.size };
 }
 
 /** The file name a text-only document downloads under when the server
@@ -271,7 +299,8 @@ export async function downloadKnowledge(
   const disposition = r.headers.get("Content-Disposition") || "";
   const match = /filename="([^"]+)"/.exec(disposition);
   const filename = match ? match[1] : fallbackFilename;
-  const blob = await r.blob();
+  // Re-typed so the blob: URL can never render as a page, even opened on its own.
+  const blob = new Blob([await r.blob()], { type: "application/octet-stream" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;

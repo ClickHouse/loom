@@ -94,7 +94,9 @@ def test_admin_route_allows_admin_bearer(
         return []
 
     monkeypatch.setattr(admin_repo, "events_tail", fake)
-    r = admin_client.post("/v1/admin/events.tail", json={}, headers=_bearer(_mint(["admin"])))
+    r = admin_client.post(
+        "/v1/admin/events.tail", json={}, headers=_bearer(_mint(["platform_admin"]))
+    )
     assert r.status_code == 200, r.text
 
 

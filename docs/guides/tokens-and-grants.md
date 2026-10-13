@@ -9,14 +9,15 @@ of the token. This guide holds the procedures;
 
 ## Mint a token
 
-| Path                                               | Who                                  | Produces                                                                                                                                                                                                    |
-| -------------------------------------------------- | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `loom mint-token`                                  | an operator holding the signing key  | any token (the CLI signs locally)                                                                                                                                                                           |
-| `POST /v1/admin/token.mint`                        | an `admin` token                     | a token inside the caller's own org, no role above the caller's and no `*` read the caller lacks; body fields `subject`, `namespaces`, `roles`, `ns_roles`, `consumer`, `ttl_seconds`, `is_service_account` |
-| `POST /v1/me/service_accounts.create`              | any signed-in person (the dashboard) | a scoped service-account token over a subset of the person's own namespaces, each role capped at their live grant                                                                                           |
-| `POST /v1/auth/login`, OAuth                       | a person                             | a user token for their own subject                                                                                                                                                                          |
-| `POST /v1/auth/self-signup`                        | anyone, when `LOOM_SELF_SIGNUP=open` | a writer token on the namespace the caller claims                                                                                                                                                           |
-| `POST /v1/auth/agent-signup` (`loom init --agent`) | a bot, when `LOOM_SELF_SIGNUP=open`  | a service-account writer token on `agent-<slug>` plus a one-time claim code ([headless bots](headless-bots.md))                                                                                             |
+| Path                                               | Who                                              | Produces                                                                                                                                                                                         |
+| -------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `loom mint-token`                                  | an operator holding the signing key              | any token (the CLI signs locally)                                                                                                                                                                |
+| `POST /v1/admin/token.mint`                        | an `org_admin` token                             | a token [delegated](#delegated-tokens) from the caller's, inside the caller's own org; body fields `subject`, `namespaces`, `roles`, `ns_roles`, `consumer`, `ttl_seconds`, `is_service_account` |
+| `POST /v1/me/setup/mcp_config`                     | any signed-in person (the dashboard's Setup tab) | a flat token [delegated](#delegated-tokens) from the person's: `*` (every namespace they hold a grant on, now and later) or the one namespace named                                              |
+| `POST /v1/me/service_accounts.create`              | any signed-in person (the dashboard)             | a scoped service-account token [delegated](#delegated-tokens) from the person's, over a subset of their own namespaces                                                                           |
+| `POST /v1/auth/login`, OAuth                       | a person                                         | a user token for their own subject                                                                                                                                                               |
+| `POST /v1/auth/self-signup`                        | anyone, when `LOOM_SELF_SIGNUP=open`             | a writer token on the namespace the caller claims                                                                                                                                                |
+| `POST /v1/auth/agent-signup` (`loom init --agent`) | a bot, when `LOOM_SELF_SIGNUP=open`              | a service-account writer token on `agent-<slug>` plus a one-time claim code ([headless bots](headless-bots.md))                                                                                  |
 
 ```bash
 loom mint-token --subject my-bot --org acme --namespaces support --roles writer --ttl-days 30 --save
@@ -51,20 +52,21 @@ Without `--save` stdout is the bare token, so `TOKEN=$(loom mint-token …)` wor
 
 ## Read the claims
 
-| Claim                        | Meaning                                                                                                                                                    |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sub`                        | The principal. Service-account subjects created from the dashboard start with `sa:`.                                                                       |
-| `org`                        | The org; `*` reaches every org.                                                                                                                            |
-| `namespaces`                 | The readable set, in order; `["*"]` reads every namespace of the org.                                                                                      |
-| `roles`                      | The flat role list, applied to every readable namespace.                                                                                                   |
-| `ns_roles`                   | Scoped tokens only: namespace → role. Authoritative: it replaces `roles` and the grant lookup for those namespaces.                                        |
-| `ns_write`                   | Optional writable subset of `namespaces`, set through `mint_token(write_namespaces=…)` in `server/auth/jwt.py`; no CLI flag. Absent = writes follow reads. |
-| `read_scope`, `read_user_id` | The read ceiling and the pinned end user.                                                                                                                  |
-| `traffic_class`, `consumer`  | Bound traffic class and consumer tag.                                                                                                                      |
-| `sa`                         | `true` for a service account, `false` for a user token.                                                                                                    |
-| `jti`                        | The token's id: stamped on the audit and exposure ledgers as `token_id`, and the handle `loom revoke-token --jti` takes. Not a secret.                     |
-| `exp`                        | Expiry, when minted with a TTL.                                                                                                                            |
-| `iss`, `aud`, `iat`          | `LOOM_JWT_ISSUER` (`loom`), `LOOM_JWT_AUDIENCE` (`loom-platform`), issued-at.                                                                              |
+| Claim                                                  | Meaning                                                                                                                                                                             |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sub`                                                  | The principal. Service-account subjects created from the dashboard start with `sa:`.                                                                                                |
+| `org`                                                  | The org; `*` reaches every org.                                                                                                                                                     |
+| `namespaces`                                           | The readable set, in order; `["*"]` reads every namespace of the org.                                                                                                               |
+| `roles`                                                | The flat role list, applied to every readable namespace.                                                                                                                            |
+| `ns_roles`                                             | Scoped tokens only: namespace → role. Authoritative: it replaces `roles` and the grant lookup for those namespaces.                                                                 |
+| `ns_write`                                             | Optional writable subset of `namespaces`, set through `mint_token(write_namespaces=…)` in `server/auth/jwt.py`; no CLI flag. Absent = writes follow reads.                          |
+| `read_scope`, `read_user_id`                           | The read ceiling and the pinned end user.                                                                                                                                           |
+| `traffic_class`, `consumer`                            | Bound traffic class and consumer tag.                                                                                                                                               |
+| `sa`                                                   | `true` for a service account, `false` for a user token.                                                                                                                             |
+| `jti`                                                  | The token's id: stamped on the audit and exposure ledgers as `token_id`, and the handle `loom revoke-token --jti` takes. Not a secret.                                              |
+| `parents`, `parent_subjects`, `parent_iats`, `creator` | Delegated tokens only: the ids, `sub`s and `iat`s of every ancestor token, and the person whose live grants the token is rechecked against ([delegated tokens](#delegated-tokens)). |
+| `exp`                                                  | Expiry, when minted with a TTL.                                                                                                                                                     |
+| `iss`, `aud`, `iat`                                    | `LOOM_JWT_ISSUER` (`loom`), `LOOM_JWT_AUDIENCE` (`loom-platform`), issued-at.                                                                                                       |
 
 The JWT header's `kid` names the signing key. `GET /v1/whoami` shows what the server
 verified for a token: the first thing to check when a call is refused.
@@ -111,8 +113,9 @@ A call on `(org, namespace)` is allowed when:
 
 1. the namespace is not restricted (otherwise see
    [restricted namespaces](#restricted-namespaces-classificationrestricted));
-2. for a **scoped** token (`ns_roles`): its role for that namespace reaches the op's role.
-   Nothing else widens it, except that a viewer grant lets it read a code namespace;
+2. for a **scoped** token (`ns_roles`): its role for that namespace reaches the op's role,
+   and a write also needs the namespace in `ns_write` when the token has one. Nothing else
+   widens it, except that a viewer grant lets it read a code namespace;
 3. for a **flat** token: the token covers the namespace (`namespaces` for reads, `ns_write`
    for writes) and a role in `roles` reaches the op's role, or a live grant on the
    namespace does.
@@ -153,7 +156,12 @@ loom mint-token --subject support-bot --org acme --namespaces support --roles wr
 ```
 
 A scoped read without the `user_id` / `session_id` it binds to is 400
-`IDENTITY_INCOMPLETE`, never silently widened.
+`IDENTITY_INCOMPLETE`, never silently widened. A token scoped below the namespace binds
+every op's reads, not only the ones that take `read_scope` in the body: `user_id="*"` is
+refused, a pinned token's write naming another user is refused, another user's
+`memory_id` reads as not found, and an op that cannot bound its
+answer to the user (the entity graph, conversation reads, exports, admin ops) is 403
+`AUTH_INSUFFICIENT` ([read scope inside a namespace](../concepts/identities-and-namespaces.md#read-scope-inside-a-namespace)).
 
 ## Give and take away grants
 
@@ -183,8 +191,43 @@ curl -s "$LOOM_BASE_URL/v1/grants.create" -H "Authorization: Bearer $ADMIN_TOKEN
 - **Service accounts inherit.** An `sa:` subject with no grant of its own on a namespace
   uses its creator's grant there, so a token minted from the dashboard follows the person
   who made it, including into namespaces they join later. Restricted namespaces are the
-  exception.
+  exception. Tokens minted since delegation landed do this through their `creator` claim
+  ([delegated tokens](#delegated-tokens)).
 - **Pending grants do nothing** until approved.
+
+## Delegated tokens
+
+The dashboard's Setup tab, `service_accounts.create` and `admin/token.mint` mint a token
+from the caller's own, through one policy (`server/auth/delegation.py`). The child gets
+what was asked for, cut to what the caller's token allows and to the caller's live grants:
+
+- the caller's org only (an org-wide `*` token names one);
+- `viewer`, `writer` or `admin` only; `org_admin` and `platform_admin` are never delegated;
+- on each named namespace, at most the caller's token role there and the person's live
+  grant; a namespace without one is refused (403 naming it);
+- `*` only from a sign-in token or a delegated `*` token, and it means "wherever the person
+  holds a grant"; from a narrower token it becomes that token's own namespace list;
+- the caller's `read_scope`, `read_user_id` and `ns_write`; a per-namespace child asking for
+  `writer` or `admin` on a namespace outside the caller's `ns_write` is refused, and the
+  inherited `ns_write` binds the child's writes whatever its `ns_roles` say;
+- a service-account caller mints only service-account tokens (on the Setup page: send
+  `persist=true`);
+- an expiry: `ttl_days`/`ttl_seconds`, 90 days when unset, and never past the caller's own
+  token's `exp` (a longer TTL is clipped);
+- `parents` (every ancestor's token id), `parent_subjects` (every ancestor's `sub`),
+  `parent_iats` (every ancestor's `iat`) and `creator` (the person at the root).
+
+On every request the gate rechecks a delegated token: the person's live grant must still
+reach the role, inside the token's own claim (the token subject's own grants do not widen
+it), and the person's account must still be active (a creator who owns namespaces, none of
+them active any more, or who held grants and has none live, as after a claim release,
+stops every token they delegated). An op with no namespace that writes needs the person to
+hold that role on some namespace of the org. Revoking any ancestor's `jti` or `sub` (the
+dashboard revokes a service account by its `sub`) or the person's `sub` kills the token,
+its children and theirs. A revoke with an issued-before cutoff judges each ancestor by its
+own `iat` and the person by the root's, so a child minted after the cutoff from an older
+token dies with it; a delegated token without aligned `parent_iats` is refused. `loom mint-token` signs with
+the key and is not a delegation.
 
 ## Let people join a namespace
 
@@ -247,10 +290,9 @@ exists. If the classification cannot be read, access is denied.
   only the query digest.
 - A restricted namespace cannot be made public; its directory row changes only for a caller
   who passes the four checks at `admin`.
-- `POST /v1/admin/token.mint` mints a restricted namespace only for a caller holding a
-  direct grant there at or above the requested role (pass `ns_roles` for per-namespace
-  roles). It never mints a role above the caller's own, nor `namespaces=["*"]` for a caller
-  without org-wide access (a platform admin is exempt).
+- `POST /v1/admin/token.mint`, like every [delegated](#delegated-tokens) mint, names a
+  restricted namespace only for a caller holding a grant there at or above the requested
+  role (pass `ns_roles` for per-namespace roles).
 - `LOOM_RESTRICTED_SERVE=false` refuses every restricted read while ingest continues.
 
 > **Warning:** `loom mint-token` signs locally and is not checked against grants. Whoever

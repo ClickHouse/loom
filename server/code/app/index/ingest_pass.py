@@ -129,6 +129,7 @@ async def _run(result: CodeIngestResult, org: str = "", namespace: str = "") -> 
     # A deleted directory row means retired — the worker must
     # not keep fetching and indexing it.
     repos = [c for c in selected_repos(org, namespace) if (c.org, c.namespace) not in inactive]
+    repos = _without_unsandboxed(repos, result)
     # Each phase starts at the entry the previous pass cut it
     # at (the cursor that pass left), so the entries after the cut are served
     # before the ones already served; the commit phase leaves the walk its
@@ -280,6 +281,21 @@ async def _post_steps(plan: RepoPass, result: CodeIngestResult) -> None:
         return
     if stage:
         result.note = f"bootstrap {stage}"
+
+
+def _without_unsandboxed(repos: list[Any], result: CodeIngestResult) -> list[Any]:
+    """`repos` less the self-registered entries a host without the sandbox must
+    not clone or fetch (`compiler_tier.unsandboxed_skip`); each one skipped is
+    named on the pass note."""
+    from server.code.app.index.compiler_tier import unsandboxed_skip
+
+    kept: list[Any] = []
+    for cfg in repos:
+        if reason := unsandboxed_skip(cfg, "code_ingest"):
+            result.note = f"{cfg.namespace}: {reason}"
+        else:
+            kept.append(cfg)
+    return kept
 
 
 async def _inactive_namespaces() -> set[tuple[str, str]]:

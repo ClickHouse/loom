@@ -30,6 +30,7 @@ import {
   postBounded,
   postFireAndForget,
   readStdinJson,
+  redactSecrets,
   scheduleExit,
   commandText,
   normalizeToolName,
@@ -351,7 +352,7 @@ async function settleTrackerSearch(repo, { search, sessionId, ctxBase }) {
           {
             org: target.org || "",
             namespace: target.namespace,
-            title: search.query,
+            title: redactSecrets(search.query),
             frames: search.frames || [],
             top_k: 5,
           },

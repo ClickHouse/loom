@@ -29,10 +29,10 @@ def _decode_json_or_b64(raw: str, field: str) -> object:
 
 
 @functools.lru_cache(maxsize=16)
-def kid_map_items(raw: str, field: str, *, non_empty: bool) -> tuple[tuple[str, str], ...]:
-    """A kid → key map setting, decoded once per raw value: signing and
-    verification read it on every token. Keyed on the raw string, so a changed
-    value (a test override) is decoded afresh."""
+def json_map_items(raw: str, field: str, *, non_empty: bool) -> tuple[tuple[str, str], ...]:
+    """A string → string map setting (JWT kid → key, rerank name → URL), decoded once
+    per raw value: signing and verification read it on every token. Keyed on the raw
+    string, so a changed value (a test override) is decoded afresh."""
     parsed = _decode_json_or_b64(raw, field)
     if not isinstance(parsed, dict) or (non_empty and not parsed):
         shape = "a non-empty JSON object" if non_empty else "a JSON object"
@@ -56,7 +56,6 @@ NON_SETTINGS_ENV = frozenset(
         "LOOM_API_KEY_FILE",
         "LOOM_AUTH_DISABLED",
         "LOOM_BASE_URL",
-        "LOOM_BIND_HOST",
         "LOOM_BIND_PORT",
         "LOOM_CH_CAPTURE_STATEMENTS",
         "LOOM_CH_HOST_PORT",

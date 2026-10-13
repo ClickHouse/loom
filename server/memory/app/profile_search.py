@@ -34,6 +34,8 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from server.identity.domain.read_scope import ReadFilters, scope_and
+
 log = logging.getLogger(__name__)
 
 Ident = tuple[str, str, str, str, str]  # namespace, agent, user_id, session_id, memory_key
@@ -44,6 +46,7 @@ PROFILE_LOCATE_SQL = """
 SELECT DISTINCT namespace, agent, user_id, session_id, memory_key
 FROM loom.memory
 PREWHERE org = {org:String} AND namespace IN {ns:Array(String)} AND memory_type = 'profile'
+  {read_scope}
 LIMIT {lim:UInt32}
 """
 
@@ -59,6 +62,8 @@ PREWHERE org = {org:String}
   AND (namespace, agent, user_id, session_id, memory_key)
       IN {keys:Array(Tuple(String, String, String, String, String))}
 WHERE memory_type = 'profile' AND tombstoned_at IS NULL
+  -- a 'high' section is never embedded or ranked: no stub, no vector, no hit
+  AND sensitivity != 'high'
 """
 
 # Step 4: similarity against the stored vectors, and the hash of the text each
@@ -169,10 +174,12 @@ async def search_profile(
     *,
     top_k: int,
     lexical: Callable[[str, str, str], bool],
+    scope: ReadFilters,
     ch: Any = None,
     embedder: Any = None,
 ) -> list[dict[str, Any]]:
-    """The profile leg's hits for `query` over `namespaces`."""
+    """The profile leg's hits for `query` over `namespaces`, inside the read
+    `scope` (the located keys bound every later statement)."""
     from server.settings import settings
 
     if ch is None:
@@ -185,9 +192,9 @@ async def search_profile(
     # (profile rows are a handful per namespace; the consistent read is ~10 ms
     # and runs beside the search's vector legs).
     with own_write_reads():
-        located = await ch.query_all(
-            PROFILE_LOCATE_SQL, params={"org": org, "ns": namespaces, "lim": 200}
-        )
+        params: dict[str, Any] = {"org": org, "ns": namespaces, "lim": 200}
+        locate_sql = PROFILE_LOCATE_SQL.replace("{read_scope}", scope_and(scope, params))
+        located = await ch.query_all(locate_sql, params=params)
         if not located:
             return []  # the common case: no profile, no fetch, no embed
         keys = [_ident(r) for r in located]

@@ -176,3 +176,19 @@ def test_a_non_home_default_is_named_and_home_is_silent() -> None:
     assert mi.default_namespace_note() == {}
     mi.note_default_namespace(False, "team-x", "jdoe")  # explicit namespace
     assert mi.default_namespace_note() == {}
+
+
+def test_a_scoped_writer_outside_its_write_claim_is_not_writable() -> None:
+    from server.auth.jwt import AuthInfo
+
+    token = AuthInfo(
+        subject="sa:bot",
+        org="o",
+        namespaces=("a", "b"),
+        roles=(),
+        is_service_account=True,
+        ns_roles=(("a", "writer"), ("b", "writer")),
+        write_namespaces=("a",),
+    )
+    assert mi.token_can_write(token, "o", "a")
+    assert not mi.token_can_write(token, "o", "b")

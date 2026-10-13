@@ -23,7 +23,7 @@ Ask a QUESTION about this codebase and get a grounded answer with [file:line] ci
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
 | `question` | `str` | required | The question to answer about the indexed code (grounded on a code.search of it). |
 | `synthesize` | `bool` | `True` | False = retrieval-only (agent synthesizes); True = grounded server-side answer with citations, memoized across agents and invalidated when any cited file changes at merge. |
-| `rerank` | `str` | `''` | Reranker for the retrieval: "" = the deployment default (LOOM_CODE_SEARCH_RERANK_DEFAULT), "none" = off for this request, or an explicit endpoint. |
+| `rerank` | `str` | `''` | Reranker for the retrieval: "" = the deployment default (LOOM_CODE_SEARCH_RERANK_DEFAULT), "none" = off for this request, "builtin:openai" / "builtin:cohere", or the name of an endpoint in LOOM_RERANK_ENDPOINTS_JSON (not a URL). |
 | `no_cache` | `bool` | `False` | Skip the cache lookup and synthesize fresh (the fresh answer still refreshes the cache entry). |
 | `token_budget` | `int \| None` | `None` | Retrieval context handed to synthesis, in tokens. |
 
@@ -1420,7 +1420,7 @@ Search the shared code index of this repository (fresh to the last merged PR).
 | `path_prefix` | `str` | `''` | Keep only units whose path starts with this prefix; "" = the whole namespace. |
 | `cursor` | `str` | `''` | Continuation: the `next_cursor` of an earlier response to this query. |
 | `exclude_unit_ids` | `list[str]` | *(computed)* | The caller's seen-set: unit ids not to serve again. |
-| `rerank` | `str` | `''` | Reranker over the fused pool: "" = the deployment default (LOOM_CODE_SEARCH_RERANK_DEFAULT, for prose questions of its kinds), "none" = off for this request, or an explicit endpoint (builtin:openai / builtin:cohere / URL). |
+| `rerank` | `str` | `''` | Reranker over the fused pool: "" = the deployment default (LOOM_CODE_SEARCH_RERANK_DEFAULT, for prose questions of its kinds), "none" = off for this request, "builtin:openai" / "builtin:cohere", or the name of an endpoint in… |
 | `expand` | `bool` | `False` | Vocabulary bridge: one LLM hop proposes codebase identifiers for the lexical leg (natural-language wording often misses the implementing subsystem's vocabulary). |
 | `annotate` | `bool` | `True` | Risk annotations + one-hop callee context per result (churn/amp/tested/ callees on each unit). |
 | `bodies` | `Literal['auto', 'none'] \| None` | `None` | "auto" (default): granularity scales with budget-per-slot — cards when the budget can't fit any body (~<200 tok/slot), whole units in the normal range, and top hits expand toward their WHOLE FILE when the budget is generous. "none": cards… |

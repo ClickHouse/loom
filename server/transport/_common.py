@@ -5,6 +5,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from server.auth.context import current_auth
+from server.core.errors import AuthInsufficientError, IdentityIncompleteError
+from server.identity.domain.read_scope import ReadFilters, request_read_filters
+
 if TYPE_CHECKING:
     from server.core.request_work import RequestWork
 
@@ -26,6 +30,27 @@ def request_identity(args: dict[str, Any]) -> dict[str, str]:
     for k in IDENTITY_FIELDS:
         v = args.get(k)
         out[k] = "-" if v is None else str(v)
+    return out
+
+
+def ledger_identity(args: dict[str, Any]) -> dict[str, str]:
+    """`request_identity` with the identity a narrowed token acts as: the user (and
+    session) its read scope pins, and always its `read_user_id` pin, so a refused
+    call naming another user is logged as the caller, never as that user. A history
+    rule keyed on the user counts the caller's own calls, whatever its body names."""
+    out = request_identity(args)
+    auth = current_auth()
+    if auth is None:
+        return out
+    try:
+        scope: ReadFilters | None = request_read_filters(auth)
+    except (AuthInsufficientError, IdentityIncompleteError):
+        scope = None
+    if scope is not None and scope.narrowed:
+        out["user_id"] = scope.user_id or out["user_id"]
+        out["session_id"] = scope.session_id or out["session_id"]
+    if auth.read_user_id:
+        out["user_id"] = auth.read_user_id
     return out
 
 

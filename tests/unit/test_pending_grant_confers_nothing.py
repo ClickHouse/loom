@@ -123,7 +123,7 @@ def test_the_gate_and_the_list_agree() -> None:
     granted = {
         ns
         for ns in ("mine", "gated", "gone", "theirs")
-        if asyncio.run(authz._grant_role_for("o", ns, "eve")) is not None
+        if asyncio.run(authz.grant_role_for("o", ns, "eve")) is not None
     }
     assert listed == granted
 

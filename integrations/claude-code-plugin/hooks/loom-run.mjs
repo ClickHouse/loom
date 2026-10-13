@@ -2,7 +2,8 @@
 // loom-run — the run ledger hooks.
 //
 //   UserPromptSubmit  → on the FIRST prompt of a session, run.begin with the
-//                       prompt as the goal (run_id = cc-<session_id>).
+//                       prompt as the goal (run_id = cc-<session_id>, or
+//                       the id the server answers instead).
 //   SessionEnd        → run.complete with the transcript's last assistant
 //                       text as final_response. outcome:"none" — the hook
 //                       knows the run ended, not whether it succeeded, and
@@ -14,15 +15,15 @@
 // reflection — arrives through the run.complete MCP tool when it calls it;
 // the server treats a second complete on the same run as a replace.
 //
-// Fire-and-forget, bounded; a viewer-only token gets a 403 and nothing is
+// Bounded; a viewer-only token gets a 403 and nothing is
 // recorded. LOOM_RUN_LEDGER=off disables.
 
-import fs from "node:fs";
 import {
   envSwitch,
   postBounded,
-  postFireAndForget,
+  postBoundedResult,
   readStdinJson,
+  requestTimeoutMs,
   resolveScope,
   resolveServerUrl,
   resolveToken,
@@ -30,8 +31,15 @@ import {
   scheduleExit,
 } from "../lib/loom-client.mjs";
 import { parseLines, readTail } from "../lib/transcript.mjs";
-import { beginBody, completeBody, lastAssistantText, readRecalledStash } from "../lib/run-hook.mjs";
-import { readJsonFile, sessionStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
+import {
+  beginBody,
+  completeBody,
+  lastAssistantText,
+  readRecalledStash,
+  readRunState,
+  writeRunBegun,
+} from "../lib/run-hook.mjs";
+import { sessionStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
 import { appendTurn, lastAssistant, readJournal } from "../lib/turn-journal.mjs";
 
 const ENABLED = envSwitch("LOOM_RUN_LEDGER", true);
@@ -54,7 +62,7 @@ async function main() {
     return;
   }
   const scope = resolveScope(payload.cwd || process.cwd());
-  const opts = { token, serverUrl: resolveServerUrl(), timeoutMs: 1500 };
+  const opts = { token, serverUrl: resolveServerUrl(), timeoutMs: Math.min(1500, requestTimeoutMs()) };
   const sp = sessionStatePath("run", sessionId);
 
   if (event === "UserPromptSubmit") {
@@ -62,18 +70,43 @@ async function main() {
     // Every prompt goes to the turn journal: the consumers
     // read it when the client hands them no parseable transcript.
     appendTurn(sessionId, "user", prompt);
-    if (readJsonFile(sp).begun) {
+    const prior = readRunState(sessionId);
+    if (prior.begun || prior.refused) {
       scheduleExit(0);
       return;
     }
-    postFireAndForget("run.begin", beginBody(scope, payload, prompt), opts);
-    writeJsonFile(sp, { begun: true, at: Date.now() });
+    // Awaited: the server may answer another id than the derived one, and later hooks
+    // use it. A begin may commit before its answer arrives, so every retry re-sends
+    // the first redacted body (the README's hooks table has the retry rules).
+    const body = prior.attempted && prior.body ? prior.body : beginBody(scope, payload, prompt);
+    const res = await postBoundedResult("run.begin", body, opts);
+    const runId = res.status >= 200 && res.status < 300 && res.body ? res.body.run_id : "";
+    // 408, 429 and a 2xx with no usable id may still have opened the run.
+    const transient = res.status === 408 || res.status === 429 || res.status >= 500 || res.status < 300;
+    if (typeof runId === "string" && runId) writeRunBegun(sessionId, runId);
+    else if (transient) writeJsonFile(sp, { attempted: true, body, at: Date.now() });
+    else if (prior.attempted) writeJsonFile(sp, { refused: true, attempted: true, body, at: Date.now() });
+    else writeJsonFile(sp, { refused: true, at: Date.now() });
     scheduleExit(0);
     return;
   }
 
   if (event === "SessionEnd") {
-    if (!readJsonFile(sp).begun) {
+    let state = readRunState(sessionId);
+    let completeOpts = opts;
+    if (!state.begun && state.attempted) {
+      // Asked with no answer: the begin may have opened a run. Asked again, it answers
+      // that run's id (or opens one, which this hook then closes), with the body first sent.
+      // Begin and complete share one deadline inside Codex's one-second SessionEnd budget.
+      const deadline = Date.now() + 900;
+      const beginOpts = { ...opts, timeoutMs: Math.min(opts.timeoutMs, 400) };
+      const res = await postBoundedResult("run.begin", state.body || beginBody(scope, payload, ""), beginOpts);
+      const runId = res.status >= 200 && res.status < 300 && res.body ? res.body.run_id : "";
+      if (typeof runId === "string" && runId) writeRunBegun(sessionId, runId);
+      state = readRunState(sessionId);
+      completeOpts = { ...opts, timeoutMs: Math.max(100, deadline - Date.now()) };
+    }
+    if (!state.begun) {
       scheduleExit(0);
       return;
     } // no run to close
@@ -84,13 +117,13 @@ async function main() {
     // 1.5 s budget by default (hooks.json raises it with `timeout`), and a
     // process that lingers past its own request is reported as "Hook
     // cancelled" even after the row landed.
-    try {
-      fs.unlinkSync(sp);
-    } catch {
-      /* fine */
-    }
     const recalled = readRecalledStash(sessionId);
-    await postBounded("run.complete", completeBody(scope, payload, finalText, process.env, recalled), opts);
+    const body = completeBody(scope, payload, finalText, process.env, recalled);
+    // No longer begun, so a resumed session's next prompt opens a new run. The
+    // id stays for the other SessionEnd hooks, which run beside this one; the
+    // stale-file sweep removes it later.
+    writeJsonFile(sp, { run_id: state.run_id });
+    await postBounded("run.complete", body, completeOpts);
     // The stash is removed by loom-session-memory, the last SessionEnd hook.
     process.exit(0);
   }

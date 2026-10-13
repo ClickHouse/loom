@@ -150,7 +150,10 @@ async def test_restore_mirrors_every_embedding_column(
             "tombstoned_at": tombstoned_at,
             "version": 100,
         },
-        query_all_routes=[("FROM loom.memory_embeddings", [dict(_EMB_TABLE_ROW)])],
+        # restore reads the key dim under its own alias
+        query_all_routes=[
+            ("FROM loom.memory_embeddings", [dict(_EMB_TABLE_ROW) | {"key_embedding_dim": 3}])
+        ],
     )
     monkeypatch.setattr(mem_handlers, "get_client", lambda: ch)
     monkeypatch.setattr(_stack_mod, "get_client", lambda: ch)

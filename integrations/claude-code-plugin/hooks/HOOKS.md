@@ -144,6 +144,9 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
 - **loom-capture.** PostToolUse and PostToolUseFailure record one episodic
   `observe.record` per tool call (zero-token heuristic typing, inputs and
   outputs truncated to 800 characters, the session's run id attached);
+  input, output and error pass through client-side secret redaction first
+  (private keys, AWS/GitHub/Slack tokens, JWTs, bearer headers,
+  `password=`-style assignments: best effort, not a guarantee);
   Loom's own tools and the harness's meta tools are skipped
   (`LOOM_OBSERVE_SKIP_TOOLS` overrides the list), and a read of the same
   file repeated within `LOOM_OBSERVE_DEDUPE_S` (60) seconds is posted once.
@@ -163,7 +166,13 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   agent how to work or answer; top 3, no bodies) and up to 3 unseen pointers,
   only when the index is not abstaining and retrieval_confidence ≥ 0.4.
 - **loom-run.** The run ledger. The first prompt opens a run (goal = the
-  prompt, run_id = cc-<session_id>, cx- for Codex); every prompt is also
+  prompt, run_id = cc-<session_id>, cx- for Codex; when run.begin answers
+  another id, it is kept in the session's run state and every hook uses it;
+  the SessionStart primer and the first prompt's recall run before that answer,
+  so their context.pack exposure rows carry the derived id, or on a resumed
+  session the previous run's id; a begin that timed out or hit a 408, 429 or 5xx is asked
+  again on the next prompt with the same id, and closed at SessionEnd if it was
+  never answered; any other 4xx is final for the session); every prompt is also
   appended to the turn journal, which clients without a parseable
   transcript read. SessionEnd closes the run with the last assistant text,
   `outcome: none` and the recalled keys, awaited and then exited at once;
@@ -211,7 +220,13 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
 - **loom-session-memory.** Hands the session's user prompts and assistant
   text (the last 8 MB of the transcript, else the turn journal) to
   memory.set_from_messages(defer=true) once, through the flusher; the server
-  extracts the facts and the summary.
+  extracts the facts and the summary. It then removes the session's
+  recalled-key stash, whatever it sent (loom-capture removes its code-trace
+  stash). The turn journal stays, because the other SessionEnd hooks run
+  alongside it and read it too; loom-session-start removes this user's tmp
+  state files untouched for 24 hours. Every tmp state file the hooks keep is
+  mode 0600, and none is read or written through a symlink or from a file
+  another user owns.
 
 ## SessionEnd budget
 

@@ -19,8 +19,10 @@ import {
   envSwitch,
   postFireAndForget,
   readStdinJson,
+  redactHead,
   resolveScope,
   resolveServerUrl,
+  resolveToken,
   runHookMain,
   scheduleExit,
   toolImageTurn,
@@ -108,6 +110,7 @@ function fromEvents(payload, sessionId, scope) {
   const cursorFile = journalCursorPath(sessionId);
   const fresh = rowsSince(rows, readJournalCursor(sessionId)).slice(0, MAX_TURNS_PER_RUN);
   if (!fresh.length) return true;
+  const token = resolveToken();
   const appends = fresh.map((r) => ({
     org: scope.org,
     namespace: scope.namespace,
@@ -115,7 +118,8 @@ function fromEvents(payload, sessionId, scope) {
     thread_id: sessionId,
     msg_id: `${sessionId}-j${r.i}`,
     role: r.role,
-    content: truncate(r.content, MAX_CONTENT),
+    // Redact before the cut, so a clipped secret cannot slip past its pattern.
+    content: truncate(redactHead(r.content, MAX_CONTENT, token), MAX_CONTENT),
   }));
   dispatch(appends, cursorFile, fresh[fresh.length - 1].i + 1);
   return true;
@@ -150,6 +154,7 @@ async function main() {
   // more turns than MAX_TURNS_PER_RUN leaves the rest for the next Stop.
   const appends = [];
   let advanceTo = next;
+  const token = resolveToken();
   for (const line of lines) {
     if (appends.length >= MAX_TURNS_PER_RUN) {
       advanceTo = line.start;
@@ -170,7 +175,7 @@ async function main() {
       thread_id: sessionId,
       msg_id: obj.uuid || `${sessionId}-o${line.start}`,
       role: turn.role,
-      content: truncate(turn.content, MAX_CONTENT),
+      content: truncate(redactHead(turn.content, MAX_CONTENT, token), MAX_CONTENT),
     });
   }
 

@@ -192,7 +192,7 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
 
     now = naive_utc_now()
     version_rows: list[dict[str, Any]] = []
-    mirrors: list[tuple[str, Any]] = []  # (action, row) for the embeddings side
+    mirrors: list[tuple[str, Any, int]] = []  # (action, row, version) for the embeddings side
     for row in rows:
         res.scanned += 1
         action = effective_action(row)
@@ -219,12 +219,11 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
             res.anonymized += 1
         if cfg.dry_run:
             continue
-        version_rows.append(
-            memory_repo.build_memory_version_row(
-                row, version=memory_repo.next_version(), **overrides
-            )
-        )
-        mirrors.append((action, row))
+        # One version for the memory row and its vector retire, so a late copy of an
+        # older read (read + 1) stays below the retire.
+        version = memory_repo.next_version()
+        version_rows.append(memory_repo.build_memory_version_row(row, version=version, **overrides))
+        mirrors.append((action, row, version))
 
     if version_rows:
         ch = get_client()
@@ -240,7 +239,7 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
             )
             return res
         try:
-            await _mirror_embeddings_batch(mirrors, now=now, cfg=cfg)
+            await _mirror_embeddings_batch(mirrors, cfg=cfg)
         except Exception as e:  # noqa: BLE001 — the memory rows are authoritative
             # The memory-table rows are authoritative and their read filter
             # already hid them; a stray embedding is the known, tolerated
@@ -260,31 +259,40 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
     return res
 
 
-def _mirror_overrides(action: str, row: Any, *, now: datetime, cfg: ExpiryConfig) -> dict[str, Any]:
-    """What the post-action changes on the key's embedding rows."""
-    if action in ("tombstone", "anonymize"):
-        return {"tombstoned_at": now}
+def _demote_overrides(row: Any, cfg: ExpiryConfig) -> dict[str, Any]:
+    """What demote changes on the key's embedding rows: a metadata copy (read + 1).
+    Tombstone and anonymize retire through `retire_vectors_for_keys` instead."""
     conf = max(cfg.demote_floor, min(1.0, float(row.confidence or 0.0) * cfg.demote_factor))
     return {"expires_at": None, "confidence": round(conf, 4)}
 
 
 async def _mirror_embeddings_batch(
-    mirrors: list[tuple[str, Any]], *, now: datetime, cfg: ExpiryConfig
+    mirrors: list[tuple[str, Any, int]], *, cfg: ExpiryConfig
 ) -> int:
     """Search reads loom.memory_embeddings, so the post-action lands there too:
-    tombstone and anonymize tombstone the keys' embedding rows; demote clears
-    their expiry and lowers confidence. Every mirror is a versioned re-emit of
-    the live rows (an UPDATE would leave a patch part), batched as one keyed
-    read and one insert per 500 keys instead of one of each per key."""
+    tombstone and anonymize retire the keys' vectors (memory_embeddings and
+    entity_vectors, at the memory row's version, so an anonymized key keeps no entity
+    names in search either); demote clears their expiry and lowers confidence.
+    Batched as one keyed read and one insert per 500 keys, never one per key."""
     import server.memory.store as memory_repo
 
     if not mirrors:
         return 0
-    items = [
+    retires = [
+        ((row.org, row.namespace, row.agent, row.user_id, row.session_id, row.memory_key), version)
+        for action, row, version in mirrors
+        if action in ("tombstone", "anonymize")
+    ]
+    copies = [
         (
             (row.org, row.namespace, row.agent, row.user_id, row.session_id, row.memory_key),
-            _mirror_overrides(action, row, now=now, cfg=cfg),
+            _demote_overrides(row, cfg),
         )
-        for action, row in mirrors
+        for action, row, _version in mirrors
+        if action not in ("tombstone", "anonymize")
+        and row.sensitivity != "high"  # a 'high' head keeps no vector
     ]
-    return await memory_repo.reemit_embedding_rows_for_keys(items)
+    n = await memory_repo.retire_vectors_for_keys(retires) if retires else 0
+    if copies:
+        n += await memory_repo.reemit_embedding_rows_for_keys(copies)
+    return n

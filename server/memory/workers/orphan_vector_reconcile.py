@@ -19,7 +19,11 @@ This pass heals the gauge instead of only reading it:
      the ReplacingMergeTree collapses onto a tombstone and the HNSW
      post-filter drops the vector);
   3. re-emit the same keys' `loom.entity_vectors` rows with `tombstoned_at`
-     set, per namespace. That table is `ReplacingMergeTree(created_at)`, so
+     set, per namespace (`memory_repo.tombstone_entity_vectors_for_keys`, with
+     the pass's version as the cutoff: a row created in a later second is
+     kept). That table has no session column, so another session's live write
+     of the same key made before the pass loses its entity vectors (ranking
+     only). It is `ReplacingMergeTree(created_at)`, so
      the re-emit carries `created_at` unchanged: equal versions collapse to
      the last inserted row, and the row stays in its partition. No mutation
      anywhere in this pass (tombstones are never written with ALTER UPDATE).
@@ -39,7 +43,6 @@ from typing import Any
 
 from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient
-from server.memory.store.sweeps import entity_vectors_live_sql
 from server.workers.status import log_pass_errors, record_pass
 
 log = logging.getLogger(__name__)
@@ -91,6 +94,9 @@ async def run_pass(ch: _CHClient | None = None) -> OrphanReconcileResult:
     limit = int(settings.orphan_vector_reconcile_max_keys_per_pass)
     grace = max(0, int(settings.orphan_vector_reconcile_grace_seconds))
     now = naive_utc_now()
+    # Drawn before the scan: the retire must outrank a late copy of a row the scan
+    # saw (read + 1), and a row written after the scan is newer and is kept.
+    version = memory_repo.next_version()
 
     with record_pass("orphan_vector_reconcile") as rec:
         try:
@@ -117,31 +123,25 @@ async def run_pass(ch: _CHClient | None = None) -> OrphanReconcileResult:
             )
             for r in rows
         ]
-        by_ns: dict[tuple[str, str], list[str]] = defaultdict(list)
+        by_ns: dict[tuple[str, str], list[memory_repo.EmbeddingKey]] = defaultdict(list)
         try:
             result.embeddings_healed += await memory_repo.reemit_embedding_rows_for_keys(
-                [(k, {"tombstoned_at": now}) for k in keys], ch=ch
+                [(k, {"tombstoned_at": now, "version": version}) for k in keys], ch=ch
             )
         except Exception as e:  # noqa: BLE001 — the scan repeats next pass; entity vectors wait
             result.errors.append(f"embeddings: {e}")
             keys = []
         for k in keys:
             result.identities_healed += 1
-            by_ns[(k[0], k[1])].append(k[5])
+            by_ns[(k[0], k[1])].append(k)
 
-        for (org, ns), ns_keys in by_ns.items():
+        # entity_vectors rows created in a later second than the pass's version stay.
+        cutoff = memory_repo.version_second(version)
+        for (_org, ns), ns_keys in by_ns.items():
             try:
-                live = await ch.query_all(
-                    entity_vectors_live_sql(),
-                    params={"org": org, "ns": ns, "keys": ns_keys},
+                result.entity_vectors_healed += await memory_repo.tombstone_entity_vectors_for_keys(
+                    ns_keys, ts=now, ch=ch, created_by=dict.fromkeys(ns_keys, cutoff)
                 )
-                if live:
-                    await ch.insert(
-                        "loom.entity_vectors",
-                        [{**row, "tombstoned_at": now} for row in live],
-                        settings={"async_insert": 0, "wait_for_async_insert": 1},
-                    )
-                    result.entity_vectors_healed += len(live)
             except Exception as e:  # noqa: BLE001 — one namespace's failure never stops the rest
                 result.errors.append(f"entity_vectors {ns}: {e}")
 

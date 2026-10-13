@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, field_validator, model_validator
 
-from server.settings._env import DEV_JWT_SECRET, kid_map_items
+from server.settings._env import DEV_JWT_SECRET, json_map_items
 
 
 class AuthSettings(BaseModel):
@@ -169,6 +169,9 @@ class AuthSettings(BaseModel):
     # Seconds the `loom.revoked_tokens` snapshot is cached; verify checks both
     # jti and sub against it, so a revoke takes effect within this TTL.
     jwt_revocation_cache_ttl_seconds: float = 30.0
+    # Oldest revocation snapshot a process still trusts, seconds. Past it
+    # (refreshes keep failing) every bearer is refused with a retryable 503.
+    jwt_revocation_max_stale_seconds: float = 600.0
 
     # Browser self-signup: "off" (endpoint 404s) or "open"
     # (/v1/auth/self-signup mints JWTs scoped to the requested namespace).
@@ -221,7 +224,7 @@ class AuthSettings(BaseModel):
         entry. Accepts raw JSON or base64-encoded JSON."""
         raw = self.jwt_secrets_json.strip()
         if raw:
-            return dict(kid_map_items(raw, "jwt_secrets_json", non_empty=True))
+            return dict(json_map_items(raw, "jwt_secrets_json", non_empty=True))
         return {self.jwt_active_kid: self.jwt_secret}
 
     @model_validator(mode="after")
@@ -242,12 +245,23 @@ class AuthSettings(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _check_revocation_staleness(self) -> AuthSettings:
+        """A snapshot is refreshed every cache TTL, so a stale limit at or under
+        it refuses every bearer between two refreshes."""
+        if self.jwt_revocation_max_stale_seconds <= self.jwt_revocation_cache_ttl_seconds:
+            raise ValueError(
+                "LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be larger than "
+                "LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS"
+            )
+        return self
+
     def jwt_public_key_map(self) -> dict[str, str]:
         """For RS256 verifiers: kid → PEM public key. Empty when none set."""
         raw = self.jwt_public_keys_json.strip()
         if not raw:
             return {}
-        return dict(kid_map_items(raw, "jwt_public_keys_json", non_empty=False))
+        return dict(json_map_items(raw, "jwt_public_keys_json", non_empty=False))
 
     # Kill switch for restricted namespaces. True: served to a principal whose
     # token names the namespace AND who holds a live direct grant. False: every

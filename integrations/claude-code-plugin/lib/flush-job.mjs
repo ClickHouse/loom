@@ -20,6 +20,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { writePrivateFile } from "./tmp-state.mjs";
+
 const FLUSHER = fileURLToPath(new URL("../hooks/loom-flush.mjs", import.meta.url));
 
 export function flushJobPath(tmp = os.tmpdir(), now = Date.now(), pid = process.pid) {
@@ -33,7 +35,8 @@ export function flushJobPath(tmp = os.tmpdir(), now = Date.now(), pid = process.
 export function dispatchFlush(job, { timeoutMs = 15000, spawnImpl = spawn, tmp } = {}) {
   const jobPath = flushJobPath(tmp);
   try {
-    fs.writeFileSync(jobPath, JSON.stringify(job));
+    // The job carries session text: owner-only, like the other tmp state.
+    writePrivateFile(jobPath, JSON.stringify(job));
   } catch {
     return false;
   }

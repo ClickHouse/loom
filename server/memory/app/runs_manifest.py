@@ -23,6 +23,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from server.memory.domain.context_layout import label_part, one_item
+
 log = logging.getLogger(__name__)
 
 _MAX_FILES = 4
@@ -45,6 +47,9 @@ class SessionRow:
     status: str = ""
     duration_ms: int = 0
     digest: str = ""
+    # Who wrote the session's observations, and how many memories its digest compressed.
+    actors: list[str] = field(default_factory=list)
+    digest_sources: int = 0
 
     @property
     def when(self) -> datetime | None:
@@ -80,6 +85,7 @@ def merge_rows(
         r.commands = int(o.get("commands") or 0)
         r.errors = int(o.get("errors") or 0)
         r.files = [str(f) for f in (o.get("files") or []) if str(f).strip()][:_MAX_FILES]
+        r.actors = sorted(str(a) for a in (o.get("actors") or []) if a)
     for run in runs:
         sid = str(run.get("session_id") or "")
         if not sid or sid == "-":
@@ -98,6 +104,7 @@ def merge_rows(
         sid = str(d.get("session_id") or "")
         if sid in by_sid:
             by_sid[sid].digest = " ".join(str(d.get("summary_text") or "").split())[:_DIGEST_CHARS]
+            by_sid[sid].digest_sources = int(d.get("derived_n") or 0)
     rows = sorted(
         by_sid.values(), key=lambda r: (r.when is None, r.when or datetime.min), reverse=True
     )
@@ -112,7 +119,9 @@ def render_manifest(rows: list[SessionRow]) -> str:
     out: list[str] = []
     for r in rows:
         when = r.when.strftime("%Y-%m-%d %H:%M") if r.when else "undated"
-        parts = [f"- {when} session={r.session_id[:24]}"]
+        parts = [f"- {when} session={label_part(r.session_id[:24])}"]
+        if r.actors:
+            parts.append("by=" + ",".join(label_part(a) for a in r.actors))
         if r.run_id or r.status:
             dur = f" {r.duration_ms / 1000:.0f}s" if r.duration_ms else ""
             parts.append(f"run={r.status or 'active'}{dur}")
@@ -132,8 +141,9 @@ def render_manifest(rows: list[SessionRow]) -> str:
         if r.files:
             parts.append("files: " + ", ".join(r.files))
         if r.digest:
-            parts.append(f"digest: {r.digest}")
-        out.append(" · ".join(parts))
+            sources = f" (from {r.digest_sources} memories)" if r.digest_sources else ""
+            parts.append(f"digest{sources}: {r.digest}")
+        out.append(one_item(" · ".join(parts)))
     return "\n".join(out)
 
 
@@ -167,7 +177,8 @@ async def fetch_manifest_rows(
                countIf(has(tags, 'command_run')) AS commands,
                countIf(has(tags, 'error')) AS errors,
                arraySlice(arrayDistinct(arrayFlatten(groupArray(entities))), 1,
-                          {_MAX_FILES}) AS files
+                          {_MAX_FILES}) AS files,
+               arraySlice(groupUniqArrayIf(actor, actor != ''), 1, 3) AS actors
         FROM loom.memory FINAL
         WHERE {scope}
           AND memory_type = 'episodic'
@@ -193,7 +204,8 @@ async def fetch_manifest_rows(
     if sids:
         digests = await ch.query_all(
             f"""
-            SELECT session_id, substring(summary_text, 1, {_DIGEST_CHARS * 2}) AS summary_text
+            SELECT session_id, substring(summary_text, 1, {_DIGEST_CHARS * 2}) AS summary_text,
+                   length(derived_from) AS derived_n
             FROM loom.session_summaries FINAL
             WHERE {scope}
               AND session_id IN {{sids:Array(String)}}

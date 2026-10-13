@@ -70,6 +70,13 @@ services:
   workers:
     <<: *colour-common
     container_name: "loom-${LOOM_COLOUR}-workers"
+    # Listens on loopback only: nothing outside this container calls it.
+    command:
+      [
+        "sh",
+        "-c",
+        "exec uvicorn server.main:app --host 127.0.0.1 --port $$PORT --loop $${LOOM_UVICORN_LOOP:-auto} --timeout-graceful-shutdown $${LOOM_GRACEFUL_SHUTDOWN_S:-10}",
+      ]
     # One process; no `ports:` — /v1/health answers inside the container for
     # the healthcheck and `docker exec loom-<colour>-workers ... ?include=workers`.
     environment:
@@ -86,6 +93,8 @@ services:
       # right for it (the shared table stays the web tier's).
       LOOM_DEPLOYMENT: "1"
       LOOM_INSTANCE_LABEL: "deploy:workers:${LOOM_COLOUR}"
+      # No published port.
+      LOOM_BIND_HOST: "127.0.0.1"
 
   loom:
     <<: *colour-common
@@ -107,6 +116,16 @@ services:
       LOOM_BACKGROUND_WORKERS: "off"
       LOOM_DEPLOYMENT: "1"
       LOOM_INSTANCE_LABEL: "deploy:web:${LOOM_COLOUR}"
+      # The host proxy publishes :7777 on every interface, so this colour is
+      # reachable by others: it needs LOOM_PUBLIC_BASE_URL in .env (and auth
+      # with a real signing secret) or it refuses to start.
+      LOOM_BIND_HOST: "0.0.0.0"
+      # The proxy reaches the colour over loom-net (a Docker private range)
+      # and overwrites X-Forwarded-For with the peer it saw; only loom-net
+      # peers and the host can connect to this port. loom-net's subnet is not
+      # pinned, so the proxy has no fixed address to trust; set this to the
+      # subnet `docker network inspect loom-net` shows to narrow it.
+      LOOM_TRUSTED_PROXIES: "${LOOM_TRUSTED_PROXIES:-127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}"
     ports:
       - "127.0.0.1:${LOOM_COLOUR_PORT}:${LOOM_COLOUR_PORT}"
 

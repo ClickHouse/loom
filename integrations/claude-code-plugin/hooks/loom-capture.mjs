@@ -28,6 +28,7 @@ import {
   normalizeToolName,
   postFireAndForget,
   readStdinJson,
+  redactHead,
   resolveScope,
   resolveServerUrl,
   resolveToken,
@@ -35,8 +36,8 @@ import {
   scheduleExit,
   truncate,
 } from "../lib/loom-client.mjs";
-import { appendRecalledStash, runIdFor, servedMemoryKeys } from "../lib/run-hook.mjs";
-import { readJsonFile, sessionStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
+import { appendRecalledStash, sessionRunId, servedMemoryKeys } from "../lib/run-hook.mjs";
+import { readJsonFile, readPrivateFile, removeFile, sessionStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
 
 const OBSERVE_OP = "observe.record";
 const CRYSTALLIZE_OP = "observe.crystallize";
@@ -115,6 +116,18 @@ function isErrorEvent(event, payload) {
   return false;
 }
 
+/** `value` as text with secrets redacted, then truncated. Each string is
+ *  redacted before JSON escaping can hide a pattern's word boundary, and the
+ *  JSON once more for `"password": "…"` pairs; redacting before the cut keeps
+ *  a truncated key from slipping past its pattern. */
+function scrubbed(value, max, token = resolveToken()) {
+  const text =
+    typeof value === "string"
+      ? value
+      : JSON.stringify(value ?? "", (_, v) => (typeof v === "string" ? redactHead(v, max, token) : v));
+  return truncate(redactHead(text, max, token), max);
+}
+
 export function buildObservation(event, payload, scope) {
   const toolName = payload.tool_name || "unknown";
   const toolInput = payload.tool_input || {};
@@ -129,14 +142,15 @@ export function buildObservation(event, payload, scope) {
     org: scope.org,
     namespace: scope.namespace,
     agent: scope.agent,
-    tool_input: truncate(toolInput, 800),
-    tool_output: truncate(toolResponse, 800),
-    error: isError ? truncate(errText, 600) : null,
+    // Redacted on the client before it leaves the machine (best effort).
+    tool_input: scrubbed(toolInput, 800),
+    tool_output: scrubbed(toolResponse, 800),
+    error: isError ? scrubbed(errText, 600) : null,
     file_paths: files,
     session_id: payload.session_id || "-",
     // The session's run (loom-run.mjs opens it on the first prompt), so the
     // observation joins the run ledger without the agent doing anything.
-    run_id: runIdFor(payload.session_id) || "-",
+    run_id: sessionRunId(payload.session_id) || "-",
     // Heuristic, zero-token. Server defers embedding/extraction.
     memory_type: "episodic",
     action_type: actionType,
@@ -215,7 +229,7 @@ function codeStashPath(sessionId) {
 
 function readCodeStash(sessionId) {
   try {
-    const raw = fs.readFileSync(codeStashPath(sessionId), "utf8");
+    const raw = readPrivateFile(codeStashPath(sessionId));
     const rows = JSON.parse(raw);
     const cutoff = Date.now() - CODE_STASH_TTL_MS;
     return Array.isArray(rows) ? rows.filter((r) => r.ts > cutoff) : [];
@@ -225,11 +239,7 @@ function readCodeStash(sessionId) {
 }
 
 function writeCodeStash(sessionId, rows) {
-  try {
-    fs.writeFileSync(codeStashPath(sessionId), JSON.stringify(rows.slice(-20)));
-  } catch {
-    /* stash is best-effort */
-  }
+  writeJsonFile(codeStashPath(sessionId), rows.slice(-20)); // best-effort
 }
 
 /** The span a Read covered, as CodeOutcomeInput.spans wants it: "start-end"
@@ -329,6 +339,7 @@ async function main() {
   const event = (process.argv[2] || "").trim();
   const payload = await readStdinJson();
   const resolvedEvent = event || payload.hook_event_name || "PostToolUse";
+  if (resolvedEvent === "SessionEnd") removeFile(codeStashPath(payload.session_id));
 
   const token = resolveToken();
   const serverUrl = resolveServerUrl();

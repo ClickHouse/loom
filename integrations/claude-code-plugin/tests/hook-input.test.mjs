@@ -71,6 +71,68 @@ test("diagnostics never carry a bearer token or a JWT", async () => {
   assert.equal(redactSecrets("nothing here", ""), "nothing here");
 });
 
+test("diagnostics never carry Anthropic, OpenAI or GitLab keys, basic auth or URL passwords", async () => {
+  const { redactSecrets } = await import("../lib/loom-client.mjs");
+  // Assembled at run time so the repo's own secret scanner does not flag the fixture.
+  const tail = "abcdefghijklmnopqrstuvwxyz0123";
+  for (const prefix of ["sk-" + "ant-api03-", "sk-" + "proj-", "glpat" + "-"]) {
+    assert.equal(redactSecrets(`key ${prefix}${tail} rejected`, ""), "key [redacted] rejected");
+  }
+  assert.equal(redactSecrets("Authorization: Basic dXNlcjpwYXNz sent", ""), "Authorization: Basic [redacted] sent");
+  assert.equal(redactSecrets('{"authorization": "Basic dXNlcjpwYXNz"}', ""), '{"authorization": "Basic [redacted]"}');
+  assert.equal(
+    redactSecrets("clone https://alice:hunter2@git.example.com/r.git failed", ""),
+    "clone https://[redacted]@git.example.com/r.git failed",
+  );
+  assert.equal(
+    redactSecrets("Basic setup at http://localhost:7777/v1 ok", ""),
+    "Basic setup at http://localhost:7777/v1 ok",
+  );
+});
+
+test("redaction is linear: an 80 KB adversarial output takes well under 200 ms per shape", async () => {
+  const { redactSecrets } = await import("../lib/loom-client.mjs");
+  const n = 80_000;
+  const shapes = {
+    url: "a://" + "x:".repeat(n / 2),
+    dotted: "a.".repeat(n / 2),
+    urlDots: "https://" + "a.b:".repeat(n / 4),
+    jwt: "eyJ-".repeat(n / 4),
+  };
+  for (const [name, text] of Object.entries(shapes)) {
+    const started = performance.now();
+    redactSecrets(text, "");
+    const ms = performance.now() - started;
+    assert.ok(ms < 200, `${name} took ${Math.round(ms)} ms`);
+  }
+});
+
+test("redactHead scans only the head its caller keeps, and a secret on the cut is still matched", async () => {
+  const { redactHead } = await import("../lib/loom-client.mjs");
+  const secret = "ghp_" + "a".repeat(36);
+  const text = "x".repeat(94) + " " + secret + " " + "y".repeat(200_000);
+  const head = redactHead(text, 100, "");
+  assert.ok(head.length < 100 + 17 * 1024);
+  assert.ok(!head.slice(0, 100).includes("ghp_"));
+  assert.ok(head.startsWith("x".repeat(94) + " [redacted] y"));
+});
+
+test("redactHead never keeps a token split by its cut, even after an earlier secret shrinks", async () => {
+  const { redactHead } = await import("../lib/loom-client.mjs");
+  const key = "-----BEGIN " + "PRIVATE KEY-----\n" + "A".repeat(20_000) + "\n-----END PRIVATE KEY-----";
+  const max = 8000;
+  // At max + 16 KiB - 16, 16 of the token's 36 characters sit before the old cut.
+  const tokenAt = (at) => {
+    const filler = "word ".repeat(Math.ceil(at / 5)).slice(0, at - key.length - 2) + " ";
+    return key + " " + filler + "ghp_Z9y8X7w6V5u4T3s2" + "q".repeat(20) + " tail".repeat(20_000);
+  };
+  for (let at = max + 16 * 1024 - 40; at < 90_000; at += at < max + 16 * 1024 ? 1 : 97) {
+    const head = redactHead(tokenAt(at), max, "").slice(0, max);
+    assert.ok(head.startsWith("[redacted private key] word"), `token at ${at}`);
+    assert.ok(!head.includes("ghp_") && !head.includes("Z9y8"), `token at ${at}`);
+  }
+});
+
 /** readStdinJson in a child process fed `input`; resolves the object it read. */
 async function readStdinIn(input) {
   const { spawn } = await import("node:child_process");

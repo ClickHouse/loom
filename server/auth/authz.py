@@ -80,6 +80,9 @@ async def check_authorized(
     if not isinstance(auth, AuthInfo):  # defensive
         raise PermissionError("invalid auth principal")
 
+    if auth.creator:
+        await _check_creator(auth, required_role, org, namespace)
+
     # A scoped token carries its authority in ns_roles keyed by
     # (org, namespace). A request that omits either leaves it unaddressable:
     # answer 400 IDENTITY_INCOMPLETE, not a misleading 403.
@@ -104,6 +107,10 @@ async def check_authorized(
             "(the token's authority is per-namespace and cannot be applied "
             "without knowing which namespace the request targets)"
         )
+
+    if auth.creator and org is not None and namespace is not None:
+        await _check_delegated(auth, required_role, org, namespace, known_grant)
+        return
 
     # A restricted namespace is decided here and nowhere
     # below — none of the widening rules that follow may apply to it.
@@ -137,7 +144,13 @@ async def check_authorized(
     # (org-level) ops fall through to the flat-role check below.
     if auth.has_ns_roles() and org is not None and namespace is not None:
         eff = auth.effective_role(org, namespace)
-        if eff is not None and eff.value >= required_role.value:
+        # An `ns_write` claim (inherited by a delegated child) binds writes too.
+        outside_write_claim = (
+            required_role.value >= Role.WRITER.value
+            and bool(auth.write_namespaces)
+            and not auth.can_write(org, namespace)
+        )
+        if eff is not None and eff.value >= required_role.value and not outside_write_claim:
             return
         # On a repository the join IS the read. A scoped
         # token's map caps what it writes and which memory it reads; a code
@@ -215,6 +228,82 @@ async def check_authorized(
     )
 
 
+async def _check_creator(
+    auth: AuthInfo, required_role: Role, org: str | None, namespace: str | None
+) -> None:
+    """A delegated token stops when its creator's account is disabled. An op
+    with no namespace has no grant to recheck, so a write there needs the
+    creator to hold that role on some namespace of the org."""
+    from server.auth.delegation import creator_account_active, creator_best_grant
+
+    account_org = org or auth.org
+    if not may_act_in_org(auth, account_org):
+        raise PermissionError(
+            f"principal {auth.subject!r} (org {auth.org!r}) cannot act in org {account_org!r}"
+        )
+    if not await creator_account_active(account_org, auth.creator):
+        raise PermissionError(f"the account that created this token is not active in {account_org}")
+    if namespace is None and required_role.value >= Role.WRITER.value:
+        best = await creator_best_grant(account_org, auth.creator)
+        if best is None or best.value < required_role.value:
+            raise PermissionError(
+                f"role {required_role.name} required; the account that created this token "
+                f"holds {best.name if best else 'no grant'} in {account_org}"
+            )
+
+
+async def _check_delegated(
+    auth: AuthInfo,
+    required_role: Role,
+    org: str,
+    namespace: str,
+    known_grant: Role | None | Any = _UNKNOWN_GRANT,
+) -> None:
+    """The namespace gate for a delegated token (it carries `creator`). Its
+    own claim is the ceiling and its creator's live grant must also reach the
+    role, so the token never outlasts or outgrows what the creator holds now.
+    The subject's own grants do not widen it. A restricted namespace also
+    needs its two-factor check; an org-readable code namespace is read by
+    anyone in the org; on any other code namespace the creator's grant alone
+    admits a read (the join is the read). `_check_creator` has checked the
+    org. `known_grant` is the creator's grant when the caller already read it."""
+    from server.auth.delegation import ceiling_role
+
+    refusal = _refused(
+        f"principal {auth.subject!r} cannot access {org}/{namespace}", org, namespace
+    )
+    is_read = required_role.value <= Role.VIEWER.value
+    if await _is_restricted(org, namespace):
+        await _check_restricted(auth, required_role, org, namespace)
+    elif is_read and auth.org == org and await _is_org_readable_code_namespace(org, namespace):
+        return
+    elif not (is_read and _is_code_namespace(org, namespace)):
+        ceiling = ceiling_role(auth, org, namespace, write=not is_read)
+        if ceiling is None or ceiling.value < required_role.value:
+            raise refusal
+    grant = (
+        known_grant
+        if known_grant is not _UNKNOWN_GRANT
+        else await _creator_grant(org, namespace, auth.creator)
+    )
+    if grant is None or grant.value < required_role.value:
+        raise refusal
+
+
+async def _creator_grant(org: str, namespace: str, creator: str) -> Role | None:
+    """`grant_role_for` for a delegated token's creator, read once per request."""
+    from server.auth.context import creator_grant_memo
+
+    memo = creator_grant_memo.get()
+    key = (org, namespace, creator)
+    if memo is not None and key in memo:
+        return memo[key]
+    role = await grant_role_for(org, namespace, creator)
+    if memo is not None:
+        memo[key] = role
+    return role
+
+
 async def _is_restricted(org: str, namespace: str) -> bool:
     """A directory that cannot be read denies: the caller
     treats True as "run the restricted check", and the restricted check
@@ -240,7 +329,8 @@ async def _check_restricted(auth: AuthInfo, required_role: Role, org: str, names
     """The two-factor gate for restricted namespaces. Raises PermissionError unless:
 
     1. the token belongs to `org` (no cross-org wildcard);
-    2. the token names `namespace` (claim or ns_roles; no wildcard);
+    2. the token names `namespace` (claim or ns_roles; no wildcard), and a
+       write also needs it in the token's `ns_write` set when it has one;
     3. the token's own role there — the scoped `ns_roles` entry, else the
        flat `roles` — reaches `required_role`;
     4. a live DIRECT grant for the token's subject reaches `required_role`
@@ -264,12 +354,14 @@ async def _check_restricted(auth: AuthInfo, required_role: Role, org: str, names
         raise refusal
     if not names_namespace(auth, org, namespace):
         raise refusal
+    if required_role.value >= Role.WRITER.value and not auth.can_write(org, namespace):
+        raise refusal
     own = auth.effective_role(org, namespace) if auth.has_ns_roles() else None
     if own is None and not auth.has_ns_roles():
         own = max(auth.roles, default=None)
     if own is None or own.value < required_role.value:
         raise refusal
-    grant = await _grant_role_for(org, namespace, auth.subject)
+    grant = await grant_role_for(org, namespace, auth.subject)
     if grant is None or grant.value < required_role.value:
         raise refusal
 
@@ -284,7 +376,7 @@ async def restricted_allows(auth: AuthInfo, required_role: Role, org: str, names
     return True
 
 
-async def _grant_role_for(org: str, namespace: str, subject: str) -> Role | None:
+async def grant_role_for(org: str, namespace: str, subject: str) -> Role | None:
     """Granted role for exactly (org, namespace, subject), or None. Pending
     grants are excluded: an unapproved writer-request must not elevate."""
     from server.auth.aliases import subject_aliases
@@ -359,13 +451,13 @@ async def _lookup_grant(org: str, namespace: str, subject: str) -> Role | None:
     the rule every namespace listing applies, so the gate admits exactly
     what the listings include.
     """
-    role = await _grant_role_for(org, namespace, subject)
+    role = await grant_role_for(org, namespace, subject)
     if role is None:
         from server.auth.service_accounts import inheriting_creator
 
         creator = await inheriting_creator(org, subject)
         if creator is not None:
-            role = await _grant_role_for(org, namespace, creator)
+            role = await grant_role_for(org, namespace, creator)
     return role
 
 
@@ -401,6 +493,7 @@ __all__ = [
     "check_authorized",
     "grant_rank",
     "grant_role",
+    "grant_role_for",
     "names_namespace",
     "restricted_allows",
     "row_in_scope",

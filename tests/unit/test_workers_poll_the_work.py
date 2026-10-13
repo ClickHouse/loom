@@ -700,10 +700,10 @@ def test_apply_entities_batch_is_five_statements_for_n_rows_and_emits_the_same_r
         ("k2", "private", ["bob", "eve"]),
         ("k2", "shared", ["bob", "eve"]),
     ]
-    versions = {r["version"] for r in ch.inserts[0][1]} | {r["version"] for r in emb}
-    assert len(versions) == 1 and versions.pop() > 1, (
-        "one bumped version for the batch, both tables"
-    )
+    versions = {r["version"] for r in ch.inserts[0][1]}
+    assert len(versions) == 1 and versions.pop() > 1, "one bumped version for the memory batch"
+    # The mirror copy sits one above the row it read, so a later write still wins.
+    assert {r["version"] for r in emb} == {2}
     assert all(set(mr.EMBEDDING_PERSISTED_COLS) <= set(r) for r in emb), (
         "every persisted column mirrored"
     )

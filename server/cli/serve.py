@@ -12,15 +12,22 @@ from typing import Any
 def _cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
+    from server.settings import settings
+
     # Every process outside the compose deployment carries a
     # label; `loom serve` names itself when the operator did not.
     os.environ.setdefault("LOOM_INSTANCE_LABEL", f"cli:serve:{args.port}")
+    # The startup checks read the address actually bound, --host included
+    # (the env var reaches a --reload child).
+    host = args.host or settings.bind_host
+    os.environ["LOOM_BIND_HOST"] = host
+    settings.bind_host = host
     uvicorn.run(
         "server.main:app",
-        host=args.host,
+        host=host,
         port=args.port,
         proxy_headers=True,
-        forwarded_allow_ips="*",
+        forwarded_allow_ips=settings.trusted_proxies,
         log_level=args.log_level,
         reload=args.reload,
     )
@@ -68,7 +75,9 @@ def _cmd_migrate(args: argparse.Namespace) -> int:
 def _add_serve_and_migrate_parsers(sub: Any) -> None:
     """The `serve` and `migrate` subcommands."""
     p_serve = sub.add_parser("serve", help="Boot the control plane (uvicorn).")
-    p_serve.add_argument("--host", default=os.environ.get("LOOM_BIND_HOST", "0.0.0.0"))
+    p_serve.add_argument(
+        "--host", default=None, help="Address to bind (default: LOOM_BIND_HOST, 127.0.0.1)"
+    )
     p_serve.add_argument(
         "--port",
         type=int,

@@ -65,9 +65,9 @@ class ContextFetchInput(_Identity):
     offset: int = Field(default=0, ge=0)
     # At most this many characters of content per call (1-64000).
     limit: int = Field(default=DEFAULT_FETCH_CHARS, ge=1, le=MAX_FETCH_CHARS)
-    # Regex (Python syntax, case-insensitive). When set, the response is the
-    # matching lines as `lineno: text`, up to `limit` characters, and
-    # `offset` is a line offset into the matches instead of a char offset.
+    # Regex (RE2 syntax, case-insensitive; no backreferences or lookaround). When set,
+    # the response is the matching lines as `lineno: text`, up to `limit` characters,
+    # and `offset` is a line offset into the matches instead of a char offset.
     pattern: str = Field(default="", max_length=500)
     # With `pattern`, lines of context shown around each match (0-10); context lines
     # are numbered `lineno-` and matches `lineno:`.

@@ -9,6 +9,7 @@ idle connections) doesn't surface as a hard failure.
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import os
 import re
@@ -29,6 +30,7 @@ from server.core.ch_class_settings import is_read_statement, traffic_class_setti
 from server.core.ch_errors import (
     QUANTIZED_SETTING,
     REPLICA_BOUND_RETRIES,
+    error_code,
     is_replica_bound_error,
     is_transient_network_error,
     is_unknown_quantized_setting,
@@ -78,6 +80,140 @@ def set_query_tag(tag: str) -> None:
 
 def current_query_tag() -> str:
     return query_tag_var.get()
+
+
+# The ClickHouse `quota_key` of the verified caller, `<org>:<subject>`, so a
+# server quota keyed by it gives each tenant its own bucket. Set only by
+# `server.auth.context.set_current_auth` from the verified token, never from a
+# request body; every query of the request carries it.
+quota_key_var: ContextVar[str] = ContextVar("ch_quota_key", default="")
+
+
+def set_quota_key(key: str) -> None:
+    quota_key_var.set(str(key or ""))
+
+
+# Reads a caller shapes (its regex, globs or aggregate over a namespace) run
+# under fixed ceilings on time, memory and rows read. A ceiling only ever
+# lowers the statement's own value, so neither a request nor a per-call setting
+# widens it, and a row cap fails the read rather than truncating it.
+caller_shaped_var: ContextVar[bool] = ContextVar("ch_caller_shaped", default=False)
+
+
+@contextmanager
+def caller_shaped() -> Iterator[None]:
+    """Every read statement in this block runs under the caller-shaped ceilings."""
+    token = caller_shaped_var.set(True)
+    try:
+        yield
+    finally:
+        caller_shaped_var.reset(token)
+
+
+def _caller_shaped_ceilings() -> dict[str, float]:
+    return {
+        "max_execution_time": float(settings.ch_caller_shaped_max_execution_s),
+        "max_memory_usage": float(settings.ch_caller_shaped_max_memory_bytes),
+        "max_rows_to_read": float(settings.ch_caller_shaped_max_rows_to_read),
+    }
+
+
+def _apply_caller_ceilings(out: dict[str, Any], cls: str) -> None:
+    """Lower each limit to its ceiling for a read-class statement inside a
+    `caller_shaped()` block (0 in ClickHouse means unlimited, so an unset or 0
+    value takes the ceiling). Every query-path statement is read-class, the
+    same statements `_reader_auth` sends as the reader user."""
+    if not caller_shaped_var.get() or cls != "read":
+        return
+    for name, ceiling in _caller_shaped_ceilings().items():
+        if ceiling <= 0:
+            continue
+        asked = float(out.get(name) or 0)
+        if asked <= 0 or asked > ceiling:
+            out[name] = int(ceiling) if ceiling.is_integer() else ceiling
+    out["read_overflow_mode"] = "throw"
+
+
+def _reader_auth() -> dict[str, Any]:
+    """Inside a `caller_shaped()` block with LOOM_CH_READER_USER set, the HTTP
+    auth header that sends the read as that read-only user instead of `ch_user`.
+    Only the query path sends it, where every statement is read-class and so
+    carries the caller-shaped ceilings too."""
+    user = settings.ch_reader_user
+    if not caller_shaped_var.get() or not user:
+        return {}
+    token = base64.b64encode(f"{user}:{settings.ch_password}".encode()).decode()
+    return {"transport_settings": {"Authorization": f"Basic {token}"}}
+
+
+# Whether the boot probe could run a read as LOOM_CH_READER_USER: None = not
+# probed (or no reader user set). False means every caller-shaped read fails,
+# and `_reader_user_error` holds ClickHouse's answer.
+_reader_user_ok: bool | None = None
+_reader_user_error = ""
+
+# How ClickHouse answers a read of loom.memory before migrations created it.
+BEFORE_MIGRATIONS_CODES = frozenset({60, 81})  # UNKNOWN_TABLE, UNKNOWN_DATABASE
+
+# Reads a loom table under the caller-shaped caps, so a missing grant or a cap
+# above the reader profile's fails the probe as it would fail the reads.
+READER_PROBE_SQL = (
+    "SELECT currentUser() AS u, count() AS n FROM (SELECT 1 FROM loom.memory LIMIT 0)"
+)
+
+
+async def probe_reader_user(client: Any) -> None:
+    """At boot, run one read as the reader user, so a ClickHouse whose users.d
+    lacks it shows up in the problem list instead of as failing reads later."""
+    global _reader_user_ok, _reader_user_error
+    if not settings.ch_reader_user:
+        return
+    try:
+        with caller_shaped():
+            row = await client.query_one(READER_PROBE_SQL)
+        _reader_user_ok = bool(row) and row["u"] == settings.ch_reader_user
+        _reader_user_error = ""
+    except Exception as e:  # noqa: BLE001 — a failed probe is reported, never fatal to boot
+        if error_code(e) in BEFORE_MIGRATIONS_CODES:
+            return  # no loom.memory yet: migrations have not run, nothing to probe
+        log.warning("LOOM_CH_READER_USER=%s cannot read: %s", settings.ch_reader_user, e)
+        _reader_user_ok = False
+        _reader_user_error = str(e)
+
+
+def reader_user_state() -> bool | None:
+    return _reader_user_ok
+
+
+def reader_user_error() -> str:
+    return _reader_user_error
+
+
+# Caps a caller-shaped read hit: TOO_MANY_ROWS, TOO_MANY_BYTES, TIMEOUT_EXCEEDED.
+_CALLER_CAP_CODES = (158, 307, 159)
+_MEMORY_LIMIT_EXCEEDED = 241
+
+
+def _is_caller_cap(e: BaseException) -> bool:
+    code = error_code(e)
+    if code == _MEMORY_LIMIT_EXCEEDED:
+        # Only the per-query limit is this request's breadth; the server total
+        # or the user's limit is the server or the shared user running short.
+        text = str(e)
+        return "Query memory limit exceeded" in text or "(for query)" in text
+    return code in _CALLER_CAP_CODES
+
+
+def _raise_if_caller_cap(e: BaseException) -> None:
+    """A caller-shaped read that hit its row, time or memory cap is the request's
+    breadth, not a server fault: a 422 that says how to narrow it."""
+    if caller_shaped_var.get() and _is_caller_cap(e):
+        from server.core.errors import ValidationError
+
+        raise ValidationError(
+            "the query needs more rows, time or memory than this deployment allows one "
+            "request; narrow it (a path prefix or globs, a more selective pattern, a filter)"
+        ) from None
 
 
 # Read-your-writes for whole read paths. The point lookups append `SETTINGS
@@ -257,7 +393,8 @@ def statement_settings(
     caller's own `extra` wins on a name it already sets, and neither setting
     changes which rows the statement returns."""
     out = query_settings(extra)
-    _apply_class_timeout(out, cls or statement_class(sql))
+    cls = cls or statement_class(sql)
+    _apply_class_timeout(out, cls)
     if os.environ.get("LOOM_CH_CAPTURE_STATEMENTS"):
         capture_statement(sql)
     if settings.ch_log_comment_statement_digest:
@@ -267,6 +404,7 @@ def statement_settings(
     if tclass and is_read_statement(sql):
         for name, value in traffic_class_settings(tclass).items():
             out.setdefault(name, value)
+    _apply_caller_ceilings(out, cls)
     return _with_request_query_id(out)
 
 
@@ -309,6 +447,10 @@ def query_settings(extra: dict[str, Any] | None = None) -> dict[str, Any]:
             out["log_comment"] = tag
     if sequential_reads_var.get() and "select_sequential_consistency" not in out:
         out["select_sequential_consistency"] = 1
+    # the verified caller's key always wins over anything a call passed
+    key = quota_key_var.get()
+    if key:
+        out["quota_key"] = key
     return out
 
 
@@ -579,6 +721,7 @@ class CHClient:
                         "then restart it with `loom up`.",
                         operation=op_name,
                     ) from retry_error
+            _raise_if_caller_cap(e)
             if not is_replica_bound_error(e):
                 raise
             last: BaseException = e
@@ -621,7 +764,10 @@ class CHClient:
 
         async def _q(text: str) -> Any:
             res = await self.client.query(
-                text, parameters=params or {}, settings=statement_settings(text, cls="read")
+                text,
+                parameters=params or {},
+                settings=statement_settings(text, cls="read"),
+                **_reader_auth(),
             )
             note_result_summary(res)
             return res
