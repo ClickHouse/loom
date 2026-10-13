@@ -247,6 +247,96 @@ async def test_snapshot_sql_and_cursor_on_live_clickhouse(table):
         await client.disconnect()
 
 
+class _EightDimEmbedder:
+    model_name = "rebuild-eight-dim"
+    dim = 8
+
+    async def embed_many(self, texts):
+        return [[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0] for _ in texts]
+
+
+@pytest.mark.asyncio
+async def test_a_populated_coded_source_rebuilds_at_another_width():
+    """Staging must take the new model's width from a coded source table, whose
+    copies ClickHouse would otherwise hold to the source codec's width."""
+    if os.environ.get("LOOM_PROVIDER_STAGING_LIVE_TEST") != "1":
+        pytest.skip("Set LOOM_PROVIDER_STAGING_LIVE_TEST=1 for a disposable migrated database")
+    from server.settings import settings
+
+    client = _default_client()
+    await client.connect()
+    codec = await client.query_one(
+        "SELECT compression_codec FROM system.columns WHERE database='loom' "
+        "AND table='memory_embeddings' AND name='embedding'"
+    )
+    if codec is None or "Quantized" not in str(codec["compression_codec"]):
+        pytest.skip("memory_embeddings is not coded on this server")
+    width = settings.embedding_dim
+    vector = [1.0] + [0.0] * (width - 1)
+    names = StagingNames(uuid4(), "memory_embeddings")
+    owned: dict[str, object] = {}
+    try:
+        await client.insert(
+            "loom.memory_embeddings",
+            [
+                {
+                    "org": "coded-rebuild",
+                    "namespace": names.job_id.hex,
+                    "agent": "a",
+                    "memory_key": "k",
+                    "memory_type": "semantic",
+                    "content_excerpt": "a fact at the old width",
+                    "embedding_model": settings.embedding_model,
+                    "embedding_dim": width,
+                    "embedding": vector,
+                    "memory_key_embedding": vector,
+                }
+            ],
+        )
+        schema = await source_schema(names, ch=client)
+        owned[names.snapshot] = identity = await ensure_snapshot(names, schema, ch=client)
+        owned[names.target] = target = await ensure_target(
+            names, schema, identity, "b" * 64, ch=client
+        )
+        embedder = _EightDimEmbedder()
+        checkpoint = await rebuild_snapshot_page(
+            names, schema, identity, target, "b" * 64, embedder, after=0, ch=client
+        )
+        assert checkpoint.rows_written >= 1
+        await verify_reembedded_target(
+            names, schema, identity, target, "b" * 64, model=embedder.model_name, dimensions=8,
+            ch=client,
+        )  # fmt: skip
+        owned[names.prepared] = await prepare_live_table(
+            names, schema, identity, target, "b" * 64,
+            expected_rows=checkpoint.rows_written, dimensions=8, ch=client,
+        )  # fmt: skip
+        prepared_codec = await client.query_one(
+            "SELECT compression_codec FROM system.columns WHERE database='loom' "
+            "AND table={t:String} AND name='embedding'",
+            {"t": names.prepared},
+        )
+        assert prepared_codec is not None and "8, 0" in str(prepared_codec["compression_codec"])
+        row = await client.query_one(
+            f"SELECT length(embedding) AS width FROM loom.{names.prepared} FINAL "
+            "WHERE org='coded-rebuild' AND namespace={ns:String}",
+            {"ns": names.job_id.hex},
+        )
+        assert row is not None and row["width"] == 8
+    finally:
+        for table, uuid in owned.items():
+            current = await client.query_one(
+                "SELECT uuid FROM system.tables WHERE database='loom' AND name={name:String}",
+                {"name": table},
+            )
+            if current is not None and str(current["uuid"]) == str(uuid):
+                await client.execute(f"DROP TABLE loom.{table} SYNC")
+        await client.execute(
+            "DELETE FROM loom.memory_embeddings WHERE org='coded-rebuild'",
+        )
+        await client.disconnect()
+
+
 @pytest.mark.asyncio
 async def test_cleanup_refuses_a_live_create_query():
     if os.environ.get("LOOM_PROVIDER_STAGING_LIVE_TEST") != "1":
