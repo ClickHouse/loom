@@ -27,7 +27,7 @@ from collections import OrderedDict, defaultdict
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from server.code.app import memory_links as code
 from server.code.domain.anchor import (
@@ -57,7 +57,7 @@ from server.memory.app.code_link_reads import (
 from server.memory.domain import code_change
 from server.memory.domain.code_change import REVISE
 from server.memory.store import code_links as store
-from server.memory.store.code_links import LinkRow, PendingLink
+from server.memory.store.code_links import Former, LinkRow, PendingLink
 from server.memory.store.key_write_lock import KeyWriteLocks, LeaseBusy
 from server.settings import settings
 
@@ -712,8 +712,9 @@ async def _rehashed(a: LinkRow, files: Files) -> dict[str, Any]:
         "anchored_hash": anchored[0] if anchored else "",
         "checked_hash": checked[0] if checked else "",
         "judged_hash": "",
-        "former_hashes": [
-            found[0] if (found := await read_at(*source)) else "" for source in _former_baselines(a)
+        "former": [
+            f | {"hash": found[0] if (found := await read_at(*_baseline_of(f))) else ""}
+            for f in a["former"]
         ],
     }
     # a check that matched the baseline read its text; else the text the baseline was
@@ -744,16 +745,9 @@ def _baseline_source(a: LinkRow) -> tuple[str, str, str]:
     return a["anchored_commit"], a["anchored_path"], a["anchored_name"]
 
 
-def _former_baselines(a: LinkRow) -> list[tuple[str, str, str]]:
-    """The source of each former identity's baseline, oldest first."""
-    return list(
-        zip(
-            a["former_baseline_commits"],
-            a["former_baseline_paths"],
-            a["former_baseline_names"],
-            strict=True,
-        )
-    )
+def _baseline_of(f: Former) -> tuple[str, str, str]:
+    """(commit, path, qualified name) of the text former identity `f`'s baseline hashes."""
+    return f["baseline_commit"], f["baseline_path"], f["baseline_name"]
 
 
 def _owes(a: LinkRow, fields: dict[str, Any]) -> bool:
@@ -1201,39 +1195,22 @@ async def _current_moves(org: str, moves: list[Move]) -> list[Move]:
 _FORMER = 16
 
 
-_FORMER_COLUMNS: tuple[
-    Literal[
-        "former_paths",
-        "former_names",
-        "former_hashes",
-        "former_baseline_commits",
-        "former_baseline_paths",
-        "former_baseline_names",
-    ],
-    ...,
-] = (
-    "former_paths",
-    "former_names",
-    "former_hashes",
-    "former_baseline_commits",
-    "former_baseline_paths",
-    "former_baseline_names",
-)
-
-
-def _former(a: LinkRow, moved_from: bool) -> dict[str, list[str]]:
-    """The identities `a` had before, oldest first, each with the baseline it had there
-    and where that baseline's text is, with the one it leaves when it moves."""
-    out = {c: list(a[c]) for c in _FORMER_COLUMNS}
+def _former(a: LinkRow, moved_from: bool) -> dict[str, list[Former]]:
+    """The identities `a` had before, oldest first, with the one it leaves when it moves."""
+    former = list(a["former"])
     if moved_from:
-        source = _baseline_source(a)
-        for column, value in zip(
-            _FORMER_COLUMNS,
-            (a["path"], a["qualified_name"], a["body_hash"], *source),
-            strict=True,
-        ):
-            out[column].append(value)
-    return {c: v[-_FORMER:] for c, v in out.items()}
+        commit, path, name = _baseline_source(a)
+        former.append(
+            Former(
+                path=a["path"],
+                name=a["qualified_name"],
+                hash=a["body_hash"],
+                baseline_commit=commit,
+                baseline_path=path,
+                baseline_name=name,
+            )
+        )
+    return {"former": former[-_FORMER:]}
 
 
 def _baseline_moved(a: LinkRow, link: Link, head: str) -> dict[str, str]:

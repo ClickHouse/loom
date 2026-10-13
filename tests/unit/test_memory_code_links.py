@@ -1402,7 +1402,7 @@ async def test_a_missing_link_is_rehashed_from_the_commit_it_was_last_read_at(mo
         "checked_hash": "new-c2",
         "body_hash": "new-c2",
         "judged_hash": "",
-        "former_hashes": [],
+        "former": [],
     }
     # a judgement, current under the old rules or not, is dropped: they may have missed a
     # change since it was made

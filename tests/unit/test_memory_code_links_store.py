@@ -106,11 +106,11 @@ async def test_reads_are_scoped_as_their_callers_rely_on() -> None:
     # a link's path, its former ones and its anchor: a read each, narrowed by its own index
     reads = ch.sql[-3:]
     assert [
-        next(c for c in ("anchored_path", "former_paths", "path") if c in sql.split("WHERE")[1])
+        next(c for c in ("anchored_path", "former.path", "path") if c in sql.split("WHERE")[1])
         for sql, _ in reads
     ] == [
         "path",
-        "former_paths",
+        "former.path",
         "anchored_path",
     ]
     assert all(" OR " not in sql for sql, _ in reads)

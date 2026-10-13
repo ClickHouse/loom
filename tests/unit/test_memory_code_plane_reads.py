@@ -163,9 +163,7 @@ def _link(mid: str, *, qn: str = "src.a::Reader::read", state: str = "fresh", **
         "memory_id": mid,
         "qualified_name": qn,
         "path": kw.get("path", "src/a.py"),
-        "former_paths": kw.get("former_paths", []),
-        "former_names": kw.get("former_names", []),
-        "former_hashes": kw.get("former_hashes", []),
+        "former": kw.get("former", []),
         "body_hash": kw.get("body", "h1"),
         "state": state,
         "changed_since": kw.get("since", ""),
@@ -315,9 +313,7 @@ async def test_a_branch_without_the_move_still_gets_the_lesson(
         "m1",
         qn="src.b::Reader::read",
         path="src/b.py",
-        former_paths=["src/a.py"],
-        former_names=["src.a::Reader::read"],
-        former_hashes=["h1"],
+        former=[{"path": "src/a.py", "name": "src.a::Reader::read", "hash": "h1"}],
         state="moved",
     )
     branch = [("src/a.py", "src.a::Reader::read", "h1")]

@@ -1877,12 +1877,13 @@ CREATE TABLE IF NOT EXISTS loom.memory_code_links
     `baseline_path` String DEFAULT '',
     `baseline_name` String DEFAULT '',
     `changed_since` String DEFAULT '',
-    `former_paths` Array(String) DEFAULT [],
-    `former_names` Array(String) DEFAULT [],
-    `former_hashes` Array(String) DEFAULT [],
-    `former_baseline_commits` Array(String) DEFAULT [],
-    `former_baseline_paths` Array(String) DEFAULT [],
-    `former_baseline_names` Array(String) DEFAULT [],
+    `former` Array(Tuple(
+        path String,
+        name String,
+        hash String,
+        baseline_commit String,
+        baseline_path String,
+        baseline_name String)) DEFAULT [],
     `policy_due` UInt8 DEFAULT 0,
     `suggestion` String DEFAULT '',
     `judged_hash` String DEFAULT '',
@@ -1893,7 +1894,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_code_links
     `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9))),
     INDEX idx_memory_code_links_memory_id memory_id TYPE bloom_filter GRANULARITY 1,
     INDEX idx_memory_code_links_memory_key memory_key TYPE bloom_filter GRANULARITY 1,
-    INDEX idx_memory_code_links_former_paths former_paths TYPE bloom_filter GRANULARITY 1,
+    INDEX idx_memory_code_links_former_paths former.path TYPE bloom_filter GRANULARITY 1,
     INDEX idx_memory_code_links_anchored_path anchored_path TYPE bloom_filter GRANULARITY 1
 )
 ENGINE = ReplacingMergeTree(version)

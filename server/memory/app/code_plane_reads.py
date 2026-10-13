@@ -189,10 +189,9 @@ def _former_here(
 ) -> tuple[Definition, str] | None:
     """The definition at the latest former identity of `a` the read found, with the
     baseline the link had there."""
-    former = zip(a["former_paths"], a["former_names"], a["former_hashes"], strict=True)
-    for path, name, baseline in reversed(list(former)):
-        if (d := here.get((path, name))) is not None:
-            return d, baseline
+    for f in reversed(a["former"]):
+        if (d := here.get((f["path"], f["name"]))) is not None:
+            return d, f["hash"]
     return None
 
 

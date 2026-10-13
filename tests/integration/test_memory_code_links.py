@@ -2033,8 +2033,8 @@ async def test_a_branch_at_an_intermediate_rename_stays_fresh_through_new_rules(
     # every hash, the former baselines too, as rules that hashed differently left them
     _as_old_rules(ch_client, body_hash="old", checked_hash="old", anchored_hash="old")
     ch_client.command(
-        "ALTER TABLE loom.memory_code_links UPDATE former_hashes = "
-        "arrayMap(x -> concat('old-', x), former_hashes) "
+        "ALTER TABLE loom.memory_code_links UPDATE former = arrayMap(f -> (f.1, f.2, "
+        "concat('old-', f.3), f.4, f.5, f.6), former) "
         "WHERE org = {o:String} AND namespace = {n:String} SETTINGS mutations_sync = 2",
         parameters={"o": ORG, "n": MEM},
     )
@@ -2061,8 +2061,8 @@ async def test_a_baseline_a_rename_moved_survives_an_edit_and_new_rules(env, ch_
     assert cut == [("rows", "fresh")]
     _as_old_rules(ch_client, body_hash="old", checked_hash="old", anchored_hash="old")
     ch_client.command(
-        "ALTER TABLE loom.memory_code_links UPDATE former_hashes = "
-        "arrayMap(x -> concat('old-', x), former_hashes) "
+        "ALTER TABLE loom.memory_code_links UPDATE former = arrayMap(f -> (f.1, f.2, "
+        "concat('old-', f.3), f.4, f.5, f.6), former) "
         "WHERE org = {o:String} AND namespace = {n:String} SETTINGS mutations_sync = 2",
         parameters={"o": ORG, "n": MEM},
     )

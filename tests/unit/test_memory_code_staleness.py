@@ -42,8 +42,7 @@ def _link(key: str, state: str, **kw: Any) -> dict[str, Any]:
         "state": state,
         "qualified_name": kw.get("qn", "DB::Reader::read"),
         "path": kw.get("path", "src/new.cpp"),
-        "former_paths": [kw["prev"]] if "prev" in kw else [],
-        "former_names": [kw.get("prev_qn", "")] if "prev" in kw else [],
+        "former": [{"path": kw["prev"], "name": kw.get("prev_qn", "")}] if "prev" in kw else [],
     }
 
 
@@ -97,7 +96,7 @@ async def test_names_moved_changed_and_removed_code(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_a_rename_within_its_file_names_the_old_and_the_new_symbol(monkeypatch) -> None:
     renamed = _link("m1", "moved", qn="reader::load_rows", path="reader.py", prev="reader.py")
-    renamed["former_names"] = ["reader::fetch_rows"]
+    renamed["former"][0]["name"] = "reader::fetch_rows"
     _links(monkeypatch, [_head("m1")], [renamed])
     note = await ma._annotate_stale_code_memories([_mem("m1")], _IN)
     assert note is not None
@@ -108,7 +107,7 @@ async def test_a_rename_within_its_file_names_the_old_and_the_new_symbol(monkeyp
 @pytest.mark.asyncio
 async def test_a_file_move_names_the_files_not_a_rename(monkeypatch) -> None:
     moved = _link("m1", "moved", qn="loader::fetch_rows", path="loader.py", prev="reader.py")
-    moved["former_names"] = ["reader::fetch_rows"]  # the module part follows the file
+    moved["former"][0]["name"] = "reader::fetch_rows"  # the module part follows the file
     _links(monkeypatch, [_head("m1")], [moved])
     note = await ma._annotate_stale_code_memories([_mem("m1")], _IN)
     assert note is not None and "it now lives in loader.py" in note.content_excerpt

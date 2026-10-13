@@ -16,6 +16,18 @@ from server.core.repo_base import _CHClient, _default_client, param_slices, quer
 TABLE = "loom.memory_code_links"
 
 
+class Former(TypedDict):
+    """An identity a link had before a move, with its baseline there and where that
+    baseline's text was."""
+
+    path: str
+    name: str
+    hash: str
+    baseline_commit: str
+    baseline_path: str
+    baseline_name: str
+
+
 class LinkRow(TypedDict):
     """A row of loom.memory_code_links, read or to write; `memory_id` as text."""
 
@@ -46,12 +58,7 @@ class LinkRow(TypedDict):
     baseline_path: str
     baseline_name: str
     changed_since: str
-    former_paths: list[str]
-    former_names: list[str]
-    former_hashes: list[str]
-    former_baseline_commits: list[str]
-    former_baseline_paths: list[str]
-    former_baseline_names: list[str]
+    former: list[Former]
     policy_due: int
     suggestion: str
     judged_hash: str
@@ -318,7 +325,9 @@ async def _for_code(
             bound = f"{{{column}:Array(String)}}"
             # an array column holds any of them
             where.append(
-                f"hasAny({column}, {bound})" if column == "former_paths" else f"{column} IN {bound}"
+                f"hasAny(former.path, {bound})"
+                if column == "former_paths"
+                else f"{column} IN {bound}"
             )
             params[column] = list(values)
             if column in ("path", "former_paths", "anchored_path", "checked_commit"):
