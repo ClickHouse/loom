@@ -1,6 +1,17 @@
 """Following a repository's code-memory links from the commit it was last checked at
 to its indexed head: moves, renames, edits and removals, pending names and parse
-failures."""
+failures.
+
+A pass follows the range path by path, recording where it got to, so a pass cut by its
+deadline resumes there. It rechecks the links on the paths the range changed, those
+made since it started, and the lost ones whose name may have come back. Members follow
+their class only within one file; in another file a definition is found only under its
+qualified name or its name inside its module. A small definition renamed and edited is
+followed only when the new name is related to the old (grown or shrunk, a version
+bumped, a word kept). A lost link is weighed against other files for
+`_LOST_SEARCHED_DAYS` and against at most `_MAX_ELSEWHERE` touched files; past that a
+link that was in place reads `unresolved`. Every write is one version above the row it
+read, so a link another writer moved meanwhile keeps its newer state."""
 
 from __future__ import annotations
 

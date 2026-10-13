@@ -259,35 +259,25 @@ Every arrow is a new version; the old one stays in `loom.memory_versions`.
 ## Memories linked to code
 
 A memory about code is linked to the definitions and files it names, and the links
-follow the code. The `memory_code_links` worker reads every new or rewritten memory of a
-repository: one tagged `repo:<id>` (the coding plugins tag their sessions), or written
-in the repository's code namespace (the team's file rules). It links each backticked
-name, `A::b` and `a.b()` call that resolves to exactly one definition of the
-repository's trunk, preferring the memory's `files`, and each indexed file the memory
-names that holds none of those definitions. A bare camelCase or snake_case word of the
-prose (`GitHub`, `max_threads`) links only to a definition in the memory's `files`. A
-name that resolves to several definitions is not linked. A qualified name trunk does not
-define yet is retried for `memory_code_links_pending_days` (14), so a memory about
-unmerged code links once it merges.
+follow the code. The `memory_code_links` worker links each memory tagged `repo:<id>`
+(the coding plugins tag their sessions) or written in a repository's code namespace
+against that repository's trunk:
 
-A link is a tree-sitter `(path, qualified_name)` and a fingerprint of the definition's
-text (all its overloads) when the memory was written: its tokens as the parser nests
-them, so a reformat or a comment changes nothing while a literal's bytes still do. What
-formatters add or remove is left out too: a trailing comma before a closing bracket
-(kept where it makes a one-element tuple, `(a,)` or Python's `x[a,]`, and in a C or C++
-macro's or a Rust macro's arguments), a JavaScript or TypeScript statement's `;`, and
-which quote a Python or JavaScript string is written with (a Python prefix's case and
-`u` too); a template string or a char literal stays its own. The text between the quotes
-is as written, so a quote change that changes the escapes (`'a"b'` to `"a\"b"`) changes
-the fingerprint. A Python block is a node of its own, so moving a statement into or out
-of an `if` changes the fingerprint while a re-indent does not; the spaces inside an
-f-string's `{x = }`, which Python prints, are no token and change nothing. What a file
-defines is read from the file itself at the repository's indexed head, in its bare git
-mirror; the code index only suggests where to look, so a commit still being ingested
-never decides a link. A file the parser fails on is not code that is gone: its links
-keep their state and are rechecked every pass until it parses, while the rest of the
-repository moves on. On every indexed commit the worker follows the commit's renames and
-edits:
+- each backticked name, `A::b` and `a.b()` call that resolves to exactly one definition;
+  the memory's `files` pick between namesakes, and a name defined more than once is not
+  linked;
+- a bare camelCase or snake_case word of the prose only to a definition in the memory's
+  `files`;
+- each file the memory names that holds none of those definitions.
+
+A qualified name trunk does not define yet waits for `memory_code_links_pending_days`
+(14), so a memory about unmerged code links once it merges.
+
+A link records the definition's fingerprint: all its overloads and the conditions that
+select them, as tokens, so whitespace, comments and what formatters change (trailing
+commas, a JavaScript `;`, quote style) leave it as it was, and any other edit does not.
+What a file defines is read from the file at the repository's indexed head in its bare
+git mirror. On every indexed commit the worker follows the commit's renames and edits:
 
 | Link state   | When                                                                                                               |
 | ------------ | ------------------------------------------------------------------------------------------------------------------ |
@@ -297,50 +287,12 @@ edits:
 | `unresolved` | Its name is gone and a new definition in its place may be it, but none certainly is. Served, with a review signal. |
 | `missing`    | The code is gone: nothing new took its place. The link keeps its place, so a revert finds it again.                |
 
-A definition follows to one with the same qualified name; to the same name inside its
-module after a file move; to the one new definition with its text under a new name; or,
-renamed and edited, to the one new definition in its scope close to its old text and in
-its place among the definitions that stayed (read `changed`). A method follows its class
-when the class was renamed and the new class keeps most of its members: `moved` when
-only the class's name changed, else `changed`, since the method's own text cannot show
-what changed around it. A namesake in another class or namespace never inherits a link.
-Members follow their class only within one file: in another file a definition is found
-only under its qualified name or the same name inside its module, so a class renamed and
-moved to another file at once leaves its methods' links lost (`missing`, or `unresolved`
-where its old file has new definitions that may be them) until the memory is rewritten.
-A small definition renamed and edited is followed only when its new name is related to
-the old one: grown or shrunk (`fetch` -> `fetch_all`), a `v` version bumped (`parse_v1`
--> `parse_v2`), or keeping a word past the ones both begin with (`fetch_rows` ->
-`load_rows`, not `fetch_users`). A link already `missing` is found again only when its
-own name comes back, in its own file or, for 30 days after it went missing, in another;
-never by a definition added later. An `unresolved` link is weighed against new
-definitions in other files for those 30 days too, and after them only when its own file
-changes.
-
-Each link records the fingerprint rules its hashes were computed with. After an upgrade
-the worker re-hashes every link from the commits its hashes were taken at, including the
-baselines of its former names, and never compares a hash across rules. A link the new
-rules see as changed reads `changed`; one they see as unchanged reads `fresh` (or
-`moved`). An upgrade drops every judgement: under `revise` a changed link is judged again.
-
-The worker follows a repository from the commit it last checked to its indexed head,
-path by path, recording where it got to: a pass cut by its deadline resumes there. It
-rechecks the links on the paths that range changed, the links made since it started (at
-a head the index reached first), every `unresolved` link (a rival candidate may go
-anywhere) and the `missing` ones whose name came back in a changed file. Each write is
-one version above the row it read, so a link another writer moved meanwhile keeps its
-newer state. `revise` judges a link once per edit, within a per-pass budget shared out
-across repositories; what is left stays due for the next pass. A namespace switched to
-`revise` judges a link at its code's next edit, not the changes it already flagged. The
-judge reads every declaration the fingerprint covers, overload signatures included. A
-memory labelled `high` sensitivity is never judged: its value never goes to the model,
-and its link stays `changed`. The label is read again before each judgement, and a
-judgement that was running when the memory was labelled is dropped. A change it could
-not see is not judged either: a method a renamed and edited class carried drops any
-correction it had and stays `changed` until the memory is rewritten. A lost link is
-weighed only against the files touched since its code was last in its file that define
-its name; past 32 such files a link that was in place reads `unresolved`, and one
-already `missing` stays `missing`.
+A link follows its definition through file moves, renames (with an edit, when the new
+name is related to the old), and its class's rename within the file. A namesake in
+another class or namespace never inherits a link, and a `missing` link comes back only
+when its own name does. A file the parser fails on keeps its links as they were until it
+parses. When the fingerprint rules change, every link is re-hashed from the commits its
+hashes were taken at.
 
 Loom never writes the memory. The namespace's `code_change_policy`
 (`namespace.register`) decides what reads make of a change:
@@ -351,14 +303,17 @@ Loom never writes the memory. The namespace's `code_change_policy`
 | `flag`                     | Flagged.                                                                                                                                                                                                                               | Flagged.                                                                                                                                                              |
 | `revise`                   | As `retire_removed`.                                                                                                                                                                                                                   | The claim is re-checked against the old and new code by the LLM: one that holds is re-anchored, a contradicted one gets a corrected claim as the link's `suggestion`. |
 
-A memory a person pinned, locked or verified, and one naming more code than the link
-cap, is only flagged. Links made for an earlier value of a memory (its text, files,
-repository or user) are ignored by every read until the memory is relinked.
+`revise` judges a changed link once per edit, within a per-pass budget
+(`memory_code_links_revise_per_pass`). A memory labelled `high` sensitivity is never sent
+to the model. A memory a person pinned, locked or verified, and one naming more code
+than the link cap, is only flagged. Links made for an earlier value of a memory (its
+text, files, repository or user) are ignored by every read until it is relinked.
 
-A trunk link that reads `missing` still serves a branch that has the definition: a
-lesson on a release branch compares that branch's own definition. Where the branch's
-files cannot be read (a read replica has no git mirror), a lesson carries trunk's last
-state instead, and a link trunk lost is left out.
+Links are kept against the trunk. On another branch, a lesson compares the branch's own
+definition, under any of the link's last 16 names, with the text the memory was written
+against: a release branch that still has the old text reads `fresh` after trunk changed
+it, and one that has code trunk removed still gets its lesson. Where the branch's files
+cannot be read (a read replica has no git mirror), a lesson carries trunk's last state.
 
 The links are read where the code is:
 
@@ -373,12 +328,6 @@ The links are read where the code is:
   moved, changed or went.
 - `namespace.validate` lists memories whose code changed, was not found again or is
   gone, in the repositories the caller may read.
-
-Links are kept against the trunk. On another branch, a lesson compares the definition in
-the branch's own file at its indexed head with the text the memory was written against:
-a release branch that still has the old text reads `fresh` even after trunk changed it.
-A link keeps the last 16 names and paths trunk renamed or moved it from, so a branch cut
-between two renames still finds its lesson under the name it has.
 
 ## Time
 

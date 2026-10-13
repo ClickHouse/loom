@@ -513,8 +513,9 @@ class Declarations:
 
     def _hashed(self, at: tuple[Any, Any], name: str, own: str) -> str:
         """What a declaration's fingerprint covers: its tokens as the parser nests them,
-        so a reformat or a comment changes nothing while a literal's bytes still do; its
-        own text when its name cannot be found. A Python block is a node, so a statement
+        less what formatters change (`_formatting`, `_quote`), so a reformat or a comment
+        changes nothing while a literal's bytes still do; its own text when its name
+        cannot be found. A Python block is a node, so a statement
         moved into or out of one changes it; the spaces in an f-string's `{x = }`, which
         it prints, are no token and change nothing."""
         found = self._declared(at[1], name)
