@@ -16,6 +16,7 @@ import logging
 import os
 import re
 import signal
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict
@@ -201,21 +202,26 @@ async def _git(
     remote: str = "",
     token: str = "",
     stdin: bytes | None = None,
+    index_file: str = "",
 ) -> str:
     """A git command on the bare clone. With `remote` it talks to that remote, so it
     runs as a repository job (sandbox.run_job): the network only through the egress
-    proxy, the clone the one writable path, `token` for the remote's host."""
+    proxy, the clone the one writable path, `token` for the remote's host. A local
+    command reads and writes `index_file` as its index when given."""
     argv = ["git", *UNQUOTED_PATHS, "--git-dir", git_dir, *args]
     returncode: int | None
     if remote:
         returncode, out, err = await _network_git(argv, git_dir, remote, token, stdin, timeout_s)
     else:
+        env = auth_env()
+        if index_file:
+            env["GIT_INDEX_FILE"] = index_file
         proc = await asyncio.create_subprocess_exec(
             *argv,
             stdin=asyncio.subprocess.PIPE if stdin is not None else None,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=auth_env(),
+            env=env,
         )
         try:
             out, err = await communicate_or_kill(proc, stdin, timeout_s=timeout_s)
@@ -811,24 +817,31 @@ async def diff_files(git_dir: str, base_sha: str, head_sha: str) -> list[DiffEnt
     return parse_name_status_z(out)
 
 
-def parse_name_status_z(out: str) -> list[DiffEntry]:
-    """`diff --name-status -z` records: a status field, then one path, or two for
-    a rename or copy (old, new). A rename is the old path deleted and the new one
-    added; a copy only adds the new one."""
+def name_status_z(out: str) -> list[tuple[str, str, str]]:
+    """(status letter, old path, new path) of each `diff --name-status -z` record;
+    the two paths are equal unless the record is a rename or copy."""
     fields = out.split("\0")
-    entries: list[DiffEntry] = []
+    records: list[tuple[str, str, str]] = []
     i = 0
     while i < len(fields) and fields[i]:
         status = fields[i][:1]
         if status in ("R", "C"):
-            old, new = fields[i + 1], fields[i + 2]
-            if status == "R":
-                entries.append(DiffEntry(status="D", path=old))
-            entries.append(DiffEntry(status="A", path=new))
+            records.append((status, fields[i + 1], fields[i + 2]))
             i += 3
         else:
-            entries.append(DiffEntry(status=status, path=fields[i + 1]))
+            records.append((status, fields[i + 1], fields[i + 1]))
             i += 2
+    return records
+
+
+def parse_name_status_z(out: str) -> list[DiffEntry]:
+    """`diff --name-status -z` records as entries: a rename is its old path deleted
+    and its new one added; a copy only adds the new one."""
+    entries: list[DiffEntry] = []
+    for status, old, new in name_status_z(out):
+        if status == "R":
+            entries.append(DiffEntry(status="D", path=old))
+        entries.append(DiffEntry(status="A" if status in ("R", "C") else status, path=new))
     return entries
 
 
@@ -847,18 +860,7 @@ async def diff_paths_renamed(git_dir: str, base_sha: str, head_sha: str) -> dict
         _rev(base_sha),
         _rev(head_sha),
     )
-    fields = out.split("\0")
-    moved: dict[str, str] = {}
-    i = 0
-    while i < len(fields) and fields[i]:
-        status = fields[i][:1]
-        if status == "R":  # renamed: old path, new path
-            moved[fields[i + 1]] = fields[i + 2]
-            i += 3
-            continue
-        moved[fields[i + 1]] = "" if status == "D" else fields[i + 1]
-        i += 2
-    return moved
+    return {old: "" if status == "D" else new for status, old, new in name_status_z(out)}
 
 
 async def edits_of(
@@ -888,48 +890,49 @@ async def renamed_from(
     git_dir: str, base_sha: str, head_sha: str, paths: list[str]
 ) -> dict[str, str]:
     """path at `head_sha` -> its path at `base_sha` for those of `paths` the range
-    renamed. Only `paths` are weighed against the files the range deleted, so a long
-    range stays cheap and needs no rename limit."""
-    gone = await _git(
+    renamed. Renames are sought only from the files the range deleted to `paths`, so
+    a long range stays cheap and needs no rename limit."""
+    raw = await _git(
         git_dir,
         "diff",
-        "--name-only",
+        "--raw",
+        "--no-abbrev",
         "-z",
         "--no-renames",
-        "--diff-filter=D",
+        "--diff-filter=A",
         "--end-of-options",
         _rev(base_sha),
         _rev(head_sha),
     )
-    try:
+    fields = raw.split("\0")
+    # `:000000 <mode> <null id> <id> A`, path: the null id removes the path from an index
+    added = {path: meta.split()[2] for meta, path in zip(fields[::2], fields[1::2], strict=False)}
+    wanted = added.keys() & set(paths)
+    if not wanted:
+        return {}
+    # The index is `head_sha` less every other added file: a diff of it against
+    # `base_sha` holds the deletions and `wanted` as the only additions.
+    drop = "".join(f"0 {null}\t{path}\0" for path, null in added.items() if path not in wanted)
+    with tempfile.TemporaryDirectory(prefix="loom-renames-") as tmp:
+        index = os.path.join(tmp, "index")
+        await _git(git_dir, "read-tree", _rev(head_sha), index_file=index)
+        if drop:
+            await _git(
+                git_dir, "update-index", "-z", "--index-info", stdin=drop.encode(), index_file=index
+            )
         out = await _git(
             git_dir,
-            "--literal-pathspecs",
             "diff",
+            "--cached",
             "--name-status",
             "-z",
             "-M",
             "-l0",
             "--end-of-options",
             _rev(base_sha),
-            _rev(head_sha),
-            "--",
-            *paths,
-            *filter(None, gone.split("\0")),
+            index_file=index,
         )
-    except OSError as e:  # more deleted paths than an argv holds
-        raise GitError(f"git diff: {e}") from e
-    fields = out.split("\0")
-    wanted, old = set(paths), {}
-    i = 0
-    while i < len(fields) and fields[i]:
-        if fields[i][:1] == "R":
-            if fields[i + 2] in wanted:
-                old[fields[i + 2]] = fields[i + 1]
-            i += 3
-        else:
-            i += 2
-    return old
+    return {new: old for status, old, new in name_status_z(out) if status == "R" and new in wanted}
 
 
 async def commit_subject(git_dir: str, sha: str) -> str:

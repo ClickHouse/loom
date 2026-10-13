@@ -311,6 +311,53 @@ async def test_a_path_renamed_with_an_edit_is_traced_back_past_the_rename_limit(
     assert old == {"pkg_rows.py": ":rows.py"}
 
 
+def test_name_status_records_keep_both_paths_of_a_rename_or_copy_only() -> None:
+    from server.code.app.index.gitrepo import name_status_z
+
+    out = "M\0a.py\0C075\0b.py\0c.py\0T\0l\0R100\0d.py\0e.py\0D\0f.py\0A\0g.py\0"
+    assert name_status_z(out) == [
+        ("M", "a.py", "a.py"),
+        ("C", "b.py", "c.py"),
+        ("T", "l", "l"),
+        ("R", "d.py", "e.py"),
+        ("D", "f.py", "f.py"),
+        ("A", "g.py", "g.py"),
+    ]
+    assert name_status_z("") == []
+
+
+def _rename_beside_a_deleted_tree(root: Path, files: int) -> tuple[str, str]:
+    """(base, head) of a repository at `root` whose head renames rows.py to pkg_rows.py
+    with an edit, adds new.py and deletes `files` vendored files."""
+    git, _ = _repo(root)
+    rows = "\n".join(f"rows line {i}" for i in range(40)) + "\n"
+    (root / "rows.py").write_text(rows)
+    (root / "vendored.c").write_text("int vendored;\n")
+    git("add", "rows.py")
+    blob = git("hash-object", "-w", "vendored.c")
+    vendored = "".join(
+        f"100644 {blob}\tvendor/{i // 1000:03d}/{i:06d}{'x' * 40}.c\0" for i in range(files)
+    )
+    subprocess.run(
+        ["git", "update-index", "-z", "--index-info"], cwd=root, input=vendored.encode(), check=True
+    )
+    base = git("commit-tree", "-m", "one", git("write-tree"))
+    git("read-tree", "--empty")
+    for name, text in (("pkg_rows.py", rows + "more\n"), ("new.py", "x = 1\n")):
+        (root / name).write_text(text)
+        git("add", name)
+    return base, git("commit-tree", "-p", base, "-m", "two", git("write-tree"))
+
+
+@pytest.mark.asyncio
+async def test_a_rename_is_traced_past_more_deleted_files_than_an_argv_holds(tmp_path) -> None:
+    from server.code.app.index.gitrepo import renamed_from
+
+    base, head = _rename_beside_a_deleted_tree(tmp_path, 100_000)
+    old = await renamed_from(str(tmp_path / ".git"), base, head, ["pkg_rows.py", "new.py"])
+    assert old == {"pkg_rows.py": "rows.py"}
+
+
 @pytest.mark.asyncio
 async def test_a_commit_range_maps_each_changed_path_to_where_it_is_now(tmp_path) -> None:
     from server.code.app.index.gitrepo import diff_paths_renamed
