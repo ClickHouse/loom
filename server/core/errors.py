@@ -171,6 +171,20 @@ class OverrideNotSharedError(LoomServerError):
     status_code = 503
 
 
+class CodedWidthMismatchError(LoomServerError):
+    """503 — a vector in the write is not the width its `Quantized` column was
+    created at, so ClickHouse would refuse the insert. Refused before any row of
+    the write lands; `/v1/health` reports `coded_width_mismatch` with the fix."""
+
+    code = "CODED_WIDTH_MISMATCH"
+    status_code = 503
+
+    def __init__(
+        self, message: str = "", *, column: str = "", stored: int = 0, written: int = 0
+    ) -> None:
+        super().__init__(message, column=column, stored=stored, written=written)
+
+
 class SchemaPendingError(LoomServerError):
     """503 — the statement names a table that a migration this build carries
     but the service has not applied would create. Refused

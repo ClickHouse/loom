@@ -434,7 +434,7 @@ def _codec_width(ch: Client) -> int:
     (a model chosen in the dashboard leaves LOOM_EMBEDDING_DIM behind), else
     LOOM_EMBEDDING_DIM on a fresh install."""
     from server.core.schema.vector_codec_ddl import CODED_TABLES, codec_width
-    from server.core.vectors.code_tables import written_by_served_model
+    from server.core.vectors.codes_state import written_by_served_model
     from server.settings import settings
 
     rows = ch.query(

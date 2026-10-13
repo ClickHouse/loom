@@ -544,6 +544,7 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
     schedules the deferred settle, then flags `conflict` peers or applies a
     `refines` supersession — after the insert, so the new id exists.
     """
+    from server.core.vectors import codes_state
     from server.memory.app.conflicts import mark_peers_conflicted
     from server.observability.otel import traced
 
@@ -620,6 +621,8 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
 
             await memory_repo.insert_embedding_rows([embedding_row], ch=ch)
 
+    # Before either insert: a refused vector must not leave the version row behind.
+    codes_state.refuse_other_widths("memory_embeddings", [embedding_row])
     with traced("ch.insert.dual_write", concurrent=2):
         await asyncio.gather(_insert_memory(), _insert_embedding())
     # Its version was drawn when the write began: a slow write indexes its own BM25 stats.

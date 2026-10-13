@@ -864,9 +864,11 @@ class CHClient:
         # to raise code 60 against a table the service does not have yet.
         await guard_pending_schema("insert", "", "write", insert_table=table)
         # A coded vector column needs every row at full length.
+        from server.core.vectors.codes_state import refuse_other_widths
         from server.core.vectors.placeholders import pad_rows as _pad_rows
 
         _pad_rows(table, rows)
+        refuse_other_widths(table, rows)
         columns = list(rows[0].keys())
         if project_onto_table is None:
             project_onto_table = table in PROJECTED_TABLES

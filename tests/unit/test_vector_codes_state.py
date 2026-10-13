@@ -126,10 +126,9 @@ async def test_probe_reads_codecs_then_patch_parts_of_coded_tables_only() -> Non
     # an uncoded table is not asked about
     assert patch_parts.last_reading("loom.code_summaries") is None
     assert len(ch.calls) == 2
-    assert vector_codes_state.coded_widths() == {
-        "loom.chunks.embedding": 1024,
-        "loom.memory_chunks.embedding": 1024,
-    }
+    assert vector_codes_state.stored_widths("chunks") == {1024}
+    assert vector_codes_state.stored_widths("loom.memory_chunks") == {1024}
+    assert vector_codes_state.stored_widths("code_summaries") == set()
 
 
 @pytest.mark.asyncio
@@ -295,7 +294,51 @@ def test_only_the_served_models_coded_columns_count_as_primary(
 
     monkeypatch.setattr(vector_codes_state, "_widths", {"loom.code_chunks_small.embedding": 8})
     monkeypatch.setattr(code_tables, "_mapping", lambda: {"small": ("loom.code_chunks_small", 8)})
-    assert vector_codes_state.primary_widths() == {}
+    assert not vector_codes_state.served_model_writes_coded()
     assert vector_codes_state.width_mismatches(12) == {}
     monkeypatch.setattr(vector_codes_state, "_widths", {"loom.chunks.embedding": 3072})
-    assert vector_codes_state.primary_widths() == {"loom.chunks.embedding": 3072}
+    assert vector_codes_state.served_model_writes_coded()
+
+
+def test_a_vector_its_coded_column_cannot_take_is_refused_by_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.core.errors import CodedWidthMismatchError
+
+    monkeypatch.setattr(
+        vector_codes_state,
+        "_widths",
+        {"loom.memory_embeddings.embedding": 8, "loom.memory_embeddings.memory_key_embedding": 8},
+    )
+    fits = {"embedding": [0.0] * 8, "memory_key_embedding": []}
+    vector_codes_state.refuse_other_widths("memory_embeddings", [fits])
+    vector_codes_state.refuse_other_widths("loom.chunks", [{"embedding": [0.0] * 3}])
+    with pytest.raises(CodedWidthMismatchError) as e:
+        vector_codes_state.refuse_other_widths(
+            "loom.memory_embeddings", [fits, {"embedding": [0.0] * 8, "memory_key_embedding": [1.0]}]
+        )
+    assert e.value.status_code == 503
+    assert e.value.to_detail()["code"] == "CODED_WIDTH_MISMATCH"
+    assert "loom.memory_embeddings.memory_key_embedding stores 8-dim" in str(e.value)
+
+
+@pytest.mark.asyncio
+async def test_a_refused_bulk_write_leaves_no_memory_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    import server.memory.store as memory_repo
+    from server.core.errors import CodedWidthMismatchError
+    from server.memory.app import bulk_set
+
+    written: list[str] = []
+
+    async def _record(rows: list[dict[str, Any]], *, ch: Any) -> None:
+        written.append("rows")
+
+    monkeypatch.setattr(memory_repo, "insert_memory_versions", _record)
+    monkeypatch.setattr(memory_repo, "insert_embedding_rows", _record)
+    monkeypatch.setattr(vector_codes_state, "_widths", {"loom.memory_embeddings.embedding": 8})
+    state = SimpleNamespace(memory_rows=[{"memory_key": "k"}], embedding_rows=[{"embedding": [0.1] * 4}])
+    with pytest.raises(CodedWidthMismatchError):
+        await bulk_set._bulk_insert(object(), state)  # type: ignore[arg-type]
+    assert written == []

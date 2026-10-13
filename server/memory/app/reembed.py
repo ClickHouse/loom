@@ -3,7 +3,9 @@
 Loom does NOT auto-re-embed when LOOM_EMBEDDING_MODEL changes — search filters
 by embedding_model, so rows on the old model become invisible to recall (not
 mixed into the new vector space) until re-embedded. This module is the
-documented re-index path: `loom reembed` after a model change.
+documented re-index path: `loom reembed` after a model change of the same
+width. On coded vector tables a change of width goes through Settings → Models
+& keys, which rebuilds the tables at the new width.
 
 It rewrites every row whose embedding_model differs from the live embedder,
 across the three vector tables, preserving all columns. New-model rows coexist
@@ -362,6 +364,25 @@ async def delete_off_model(
     await ch.execute(f"DELETE FROM loom.{table} WHERE {' AND '.join(where)}", params=params)
 
 
+class CodedWidthError(ValueError):
+    """A table the pass rewrites has a Quantized column created at another width."""
+
+
+def refuse_other_width(dim: int) -> None:
+    """A Quantized codec takes vectors of the width its table was created at
+    only, so every insert of a `dim`-dim row into such a table would fail."""
+    from server.core.vectors import codes_state
+
+    stored = sorted({w for t in _TABLES for w in codes_state.stored_widths(t)} - {dim})
+    if stored:
+        widths = " and ".join(str(w) for w in stored)
+        raise CodedWidthError(
+            f"the vector tables store {widths}-dim vectors and accept no other width; "
+            f"this embedder writes {dim}. Change the model in Settings → Models & keys, "
+            "which rebuilds the tables at the new width."
+        )
+
+
 async def reembed_all(
     ch: Any,
     embedder: Any,
@@ -380,7 +401,10 @@ async def reembed_all(
     embedding provider's endpoint and key; when given, every table is
     re-embedded by `aiEmbed` inside ClickHouse instead of a Python loop.
     `resume`: a token a previous run printed; tables before its table are
-    skipped and its table continues after the row it names."""
+    skipped and its table continues after the row it names.
+    Raises CodedWidthError, before reading any row, when the embedder's width
+    is not the one the coded vector tables were created at."""
+    refuse_other_width(embedder.dim)
     written: dict[str, int] = {}
     resume_table, resume_key = decode_resume(resume) if resume else ("", None)
     tables = list(_TABLES)

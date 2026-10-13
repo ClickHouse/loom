@@ -288,7 +288,10 @@ async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
     """Phase 10: the two core writes — the memory rows and their embedding
     rows — gathered, each a committed insert."""
     import server.memory.store as memory_repo
+    from server.core.vectors import codes_state
 
+    # Before either insert: a refused vector must not leave the memory rows behind.
+    codes_state.refuse_other_widths("memory_embeddings", state.embedding_rows)
     # The two core writes are independent rows of two tables and each is a ~260 ms committed
     # insert on ClickHouse Cloud, so they are gathered, as on the point path (`memory.set`).
     async def _insert_memory_rows() -> None:

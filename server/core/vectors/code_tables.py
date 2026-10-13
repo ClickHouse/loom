@@ -71,16 +71,6 @@ def vector_dim_for_table(table: str) -> int:
     return 0
 
 
-def written_by_served_model(table: str) -> bool:
-    """One of Loom's own coded tables that no label routes elsewhere: the served
-    model writes it, and a model change rebuilds it at the new width."""
-    from server.core.schema.vector_codec_ddl import CODED_TABLES
-
-    if "." not in table:
-        table = f"loom.{table}"
-    return table.split(".", 1)[1] in CODED_TABLES and not vector_dim_for_table(table)
-
-
 def is_chunks_table(table: str) -> bool:
     if "." not in table:
         table = f"loom.{table}"

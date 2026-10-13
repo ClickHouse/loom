@@ -32,8 +32,8 @@ import logging
 import time
 from typing import Any
 
-from server.core.schema.vector_codec_ddl import codec_width
-from server.core.vectors.code_tables import vector_dim_for_table, written_by_served_model
+from server.core.schema.vector_codec_ddl import CODED_TABLES, codec_width
+from server.core.vectors.code_tables import vector_dim_for_table
 
 log = logging.getLogger(__name__)
 
@@ -83,18 +83,28 @@ def coded_columns() -> frozenset[str] | None:
     return _coded
 
 
-def coded_widths() -> dict[str, int]:
-    """Each coded column's vector width (empty: none coded, or never probed)."""
-    return dict(_widths)
-
-
 def _table(column: str) -> str:
     return column.rsplit(".", 1)[0]
 
 
-def primary_widths() -> dict[str, int]:
-    """The coded columns the served model writes."""
-    return {c: w for c, w in _widths.items() if written_by_served_model(_table(c))}
+def written_by_served_model(table: str) -> bool:
+    """One of Loom's own coded tables that no label routes elsewhere: the served
+    model writes it, and a model change rebuilds it at the new width."""
+    table = _qualify(table)
+    return table.split(".", 1)[1] in CODED_TABLES and not vector_dim_for_table(table)
+
+
+def stored_widths(table: str) -> set[int]:
+    """The widths `table`'s coded vector columns were created at (empty: none
+    coded, or never probed)."""
+    prefix = f"{_qualify(table)}."
+    return {w for column, w in _widths.items() if column.startswith(prefix)}
+
+
+def served_model_writes_coded() -> bool:
+    """Whether a coded column takes the served model's writes, so a model change
+    must pick a width the codec can encode."""
+    return any(written_by_served_model(_table(c)) for c in _widths)
 
 
 def width_mismatches(served: int) -> dict[str, tuple[int, int]]:
@@ -109,6 +119,28 @@ def width_mismatches(served: int) -> dict[str, tuple[int, int]]:
         if written and stored != written:
             out[column] = (stored, written)
     return out
+
+
+def refuse_other_widths(table: str, rows: list[dict[str, Any]]) -> None:
+    """Raise CodedWidthMismatchError when a row carries a vector its coded column
+    cannot take; ClickHouse would fail the whole insert with code 190."""
+    prefix = f"{_qualify(table)}."
+    for column, stored in _widths.items():
+        if not column.startswith(prefix):
+            continue
+        name = column[len(prefix) :]
+        for row in rows:
+            vector = row.get(name)
+            if vector is not None and len(vector) and len(vector) != stored:
+                from server.core.errors import CodedWidthMismatchError
+
+                raise CodedWidthMismatchError(
+                    f"{column} stores {stored}-dim vectors and this write carries "
+                    f"{len(vector)}; /v1/health says how to fix it",
+                    column=column,
+                    stored=stored,
+                    written=len(vector),
+                )
 
 
 def is_coded(table: str, column: str) -> bool | None:
@@ -216,12 +248,14 @@ __all__ = [
     "PATCH_PARTS_SQL",
     "codes_apply",
     "coded_columns",
-    "coded_widths",
-    "primary_widths",
+    "served_model_writes_coded",
+    "stored_widths",
     "width_mismatches",
+    "written_by_served_model",
     "ensure_probed",
     "is_coded",
     "probe",
+    "refuse_other_widths",
     "reset",
     "set_coded",
 ]

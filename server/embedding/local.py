@@ -68,10 +68,10 @@ def _resolve_model(spec: str) -> tuple[str, int]:
 
 def onnx_threads() -> int:
     """This process's share of the CPUs: every web worker runs its own session."""
-    from server.core.web_workers import available_cpus
+    from server.core.web_workers import cpu_limit
     from server.settings import settings
 
-    return max(1, available_cpus() // max(1, int(settings.web_workers)))
+    return max(1, cpu_limit() // max(1, int(settings.web_workers)))
 
 
 class LocalEmbedder:

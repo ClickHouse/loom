@@ -136,9 +136,10 @@ def _embedder_problems(settings: Any, state: HealthState) -> list[Problem]:
     model = str(settings.embedding_model)
     provider = _embedder_provider(model)
     fix_real = (
-        "Choose an embedding model in Settings → Models & keys, or set "
-        "LOOM_EMBEDDING_MODEL=text-embedding-3-small with OPENAI_API_KEY (or "
-        "local:bge-small for a keyless CPU embedder) and run `loom reembed`."
+        "Choose an embedding model in Settings → Models & keys, which re-embeds what is "
+        "stored at the model's width. Setting LOOM_EMBEDDING_MODEL=text-embedding-3-small "
+        "with OPENAI_API_KEY (or local:bge-small for a keyless CPU embedder) and running "
+        "`loom reembed` works only on plain vector tables or coded ones of that width."
     )
     if provider == "fake":
         out.append(
@@ -178,9 +179,13 @@ def _embedder_problems(settings: Any, state: HealthState) -> list[Problem]:
             )
         )
     if state.width_mismatches:
+        groups: dict[tuple[int, int], list[str]] = {}
+        for column, widths in sorted(state.width_mismatches.items()):
+            groups.setdefault(widths, []).append(column)
         columns = "; ".join(
-            f"{column} stores {stored}-dim vectors, its writes carry {written}"
-            for column, (stored, written) in sorted(state.width_mismatches.items())
+            f"{stored}-dim columns written at {written}: {', '.join(cols[:3])}"
+            + (f" and {len(cols) - 3} more" if len(cols) > 3 else "")
+            for (stored, written), cols in groups.items()
         )
         out.append(
             Problem(

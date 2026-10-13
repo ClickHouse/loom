@@ -26,6 +26,7 @@ WORKER_MEMORY_BYTES = 1024 * 1024 * 1024
 # past this, more processes add load on a shared host rather than throughput.
 MAX_WORKERS = 8
 _UNLIMITED = 1 << 60
+CGROUP_ROOT = Path("/sys/fs/cgroup")
 
 
 def _read(p: Path) -> str | None:
@@ -109,31 +110,38 @@ def available_cpus() -> int:
     return os.cpu_count() or 1
 
 
+def cpu_limit(
+    *, cpus: int | None = None, proc_cgroup: str | None = None, root: Path = CGROUP_ROOT
+) -> int:
+    """CPUs this process may keep busy: the affinity, lowered by the CPU quota."""
+    if cpus is None:
+        cpus = available_cpus()
+    if proc_cgroup is None:
+        proc_cgroup = _read(Path("/proc/self/cgroup")) or ""
+    quota = min(
+        _min_limit(_cgroup_dirs(proc_cgroup, root, ""), _v2_cpu),
+        _min_limit(_cgroup_dirs(proc_cgroup, root, "cpu"), _v1_cpu),
+    )
+    return max(1, cpus if quota == math.inf else min(cpus, math.ceil(quota)))
+
+
 def default_workers(
     *,
     cpus: int | None = None,
     proc_cgroup: str | None = None,
     meminfo: str | None = None,
-    root: Path = Path("/sys/fs/cgroup"),
+    root: Path = CGROUP_ROOT,
 ) -> int:
-    if cpus is None:
-        cpus = available_cpus()
     if proc_cgroup is None:
         proc_cgroup = _read(Path("/proc/self/cgroup")) or ""
     if meminfo is None:
         meminfo = _read(Path("/proc/meminfo")) or ""
-    v2 = _cgroup_dirs(proc_cgroup, root, "")
-    quota = min(
-        _min_limit(v2, _v2_cpu), _min_limit(_cgroup_dirs(proc_cgroup, root, "cpu"), _v1_cpu)
-    )
     mem = min(
-        _min_limit(v2, _v2_mem),
+        _min_limit(_cgroup_dirs(proc_cgroup, root, ""), _v2_mem),
         _min_limit(_cgroup_dirs(proc_cgroup, root, "memory"), _v1_mem),
         _mem_total(meminfo),
     )
-    n = float(min(cpus, MAX_WORKERS))
-    if quota != math.inf:
-        n = min(n, math.ceil(quota))
+    n = float(min(cpu_limit(cpus=cpus, proc_cgroup=proc_cgroup, root=root), MAX_WORKERS))
     if mem != math.inf:
         n = min(n, mem // WORKER_MEMORY_BYTES)
     return max(1, int(n))

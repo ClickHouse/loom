@@ -105,3 +105,9 @@ def test_cpus_default_to_this_platforms_count(
 ) -> None:
     monkeypatch.setattr(web_workers, "available_cpus", lambda: 3)
     assert default_workers(proc_cgroup="", meminfo=BIG_MEM, root=tmp_path) == 3
+
+
+def test_cpu_limit_is_the_affinity_lowered_by_the_quota(tmp_path: Path) -> None:
+    _w(tmp_path, "/", "cpu.max", "150000 100000")
+    assert web_workers.cpu_limit(cpus=32, proc_cgroup="0::/\n", root=tmp_path) == 2
+    assert web_workers.cpu_limit(cpus=1, proc_cgroup="0::/\n", root=tmp_path) == 1

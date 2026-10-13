@@ -20,8 +20,10 @@ selection + normalization logic is testable offline.
 
 from __future__ import annotations
 
+import functools
 import math
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -362,8 +364,23 @@ def test_each_web_worker_gets_its_share_of_the_cpus_for_onnx(
     from server.core import web_workers
     from server.embedding import local
 
-    monkeypatch.setattr(web_workers, "available_cpus", lambda: 8)
+    monkeypatch.setattr(web_workers, "cpu_limit", lambda: 8)
     monkeypatch.setattr(emb.settings, "web_workers", 4)
     assert local.onnx_threads() == 2
     monkeypatch.setattr(emb.settings, "web_workers", 16)
     assert local.onnx_threads() == 1
+
+
+def test_onnx_threads_stay_within_the_cpu_quota(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from server.core import web_workers
+    from server.embedding import local
+
+    (tmp_path / "cpu.max").write_text("200000 100000\n")
+    limit = functools.partial(
+        web_workers.cpu_limit, cpus=32, proc_cgroup="0::/\n", root=tmp_path
+    )
+    monkeypatch.setattr(web_workers, "cpu_limit", limit)
+    monkeypatch.setattr(emb.settings, "web_workers", 1)
+    assert local.onnx_threads() == 2
