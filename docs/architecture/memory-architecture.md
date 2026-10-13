@@ -210,8 +210,9 @@ never a peer: its stored row is the one the write revises.
   when it was written (`updated_at`, since a revision carries `created_at` forward from
   the key's first version). It is capped at the write time, because a fact dated in the
   future was still stated when it was written. Then come the write time and the id.
-  Times are compared in UTC to the second, within ClickHouse's `DateTime` range. Rows
-  that tie on both times are separated by id, which is arbitrary but fixed.
+  Times are compared in UTC to the second; a valid time outside ClickHouse's `DateTime`
+  range counts as none. Rows that tie on both times are separated by id (as text),
+  which is arbitrary but fixed.
   - **A late old session:** its rows carry their session date, so it doesn't bury a
     later value, whether that value is dated or undated.
   - **An undated late row:** it counts as stated when it was written, so it is the later
@@ -223,8 +224,9 @@ Then by label:
 
 - **`contradiction`.** When the stored row is the later one, the new row lands
   `superseded` behind it (`invalid_at` = the write time, as for any retirement). Its
-  entry's result carries `superseded_by`, and the row leaves the write's conflict marks,
-  refines and value-update linking. Otherwise the stored row retires after the insert.
+  entry's result answers `conflict_verdict: superseded` with `superseded_by` and no
+  peers, and the row leaves the write's conflict marks, refines and value-update
+  linking. Otherwise the stored row retires after the insert.
 - **`elaboration` by the newer row.** The older row retires.
 - **Anything else.** `restatement`, `related`, `unrelated` and a peer the judge left
   unlabelled all keep both rows. The flag path reads an unlabelled peer as a
@@ -233,17 +235,18 @@ Then by label:
 A stored row retires after the insert only if it isn't locked, and wasn't pinned,
 retired or revised since the judge read it (the retirement reads it read-your-writes).
 It also leaves the write's other conflict marks and refines, so no other verdict of the
-write re-emits it. `superseded_by` names the row that was the later statement when the
-retirement happened. That row can itself retire later, so a reader follows the chain. A
-row labelled `sensitivity='high'` is never judged or read as a peer, so its value never
-reaches the LLM. The read is bounded by the writer's read scope, like every same-key
-retirement.
+write re-emits it; an entry left with no peer answers `clear`. `superseded_by` names the
+row that was the later statement when the retirement happened. That row can itself
+retire later, so a reader follows the chain. A row labelled `sensitivity='high'` is
+never judged or read as a peer, so its value never reaches the LLM. The read is bounded
+by the writer's read scope, like every same-key retirement.
 
 This costs one judge call per new row that has such peers, on top of the bulk conflict
 check's own calls. The calls are bounded by the same settings
 (`LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES`, `LOOM_BULK_CONFLICT_CHECK_CONCURRENCY`), and
-they add one LLM round trip to a bulk write that has any. The policy is the namespace's,
-as for the write's conflict verdicts.
+they add at least one LLM round trip to a bulk write that has any (one per
+`LOOM_BULK_CONFLICT_CHECK_CONCURRENCY` rows judged). The policy is the namespace's, as
+for the write's conflict verdicts.
 
 Without this, "User is Asian American" (05-23) and "The user has mixed Irish and Italian
 ethnicity" (05-30) both stayed live under `user_ethnicity`, and a reader shown both

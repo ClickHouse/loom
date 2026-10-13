@@ -225,8 +225,8 @@ def _rank(row: Mapping[str, Any]) -> tuple[datetime, datetime, str]:
     key's first version), capped at when it was written (a fact dated in the future
     is still stated when it was written); then when it was written; then its id, an
     arbitrary but fixed tie-break. The SQL that picks the newest peers orders by the
-    same key. Times in UTC, to the second, within ClickHouse's DateTime range."""
-    written = _utc(row.get("updated_at")) or _utc(row.get("created_at")) or _DT_MIN
+    same key. Times in UTC, to the second."""
+    written = _utc(row.get("updated_at")) or _utc(row.get("created_at")) or datetime.min
     valid = _utc(row.get("valid_at")) or written
     return (min(valid, written), written, str(row.get("memory_id") or ""))
 
@@ -236,26 +236,22 @@ def _older(a: Mapping[str, Any], b: Mapping[str, Any]) -> bool:
     return _rank(a) < _rank(b)
 
 
-_DT_MIN = datetime(1970, 1, 1)
-_DT_MAX = datetime(2106, 1, 1)
-
-
 def _utc(raw: Any) -> datetime | None:
-    """A datetime or ISO string as naive UTC to the second, clamped to ClickHouse's
-    `DateTime` range, so a row ranks the same before and after it is stored (the
-    column holds whole seconds and clamps; a row built in Python has microseconds).
-    None for anything else."""
+    """A datetime or ISO string as naive UTC to the second (ClickHouse `DateTime`
+    holds whole seconds; a row built in Python has microseconds). None for anything
+    else, or outside the `DateTime` range (a row cannot store one: its insert
+    fails), as `parse_iso_dt` treats it."""
     dt: datetime | None = None
     if isinstance(raw, datetime):
-        dt = to_naive_utc(raw)
+        dt = parse_iso_dt(to_naive_utc(raw))
     elif isinstance(raw, str) and raw.strip():
         try:
-            dt = to_naive_utc(datetime.fromisoformat(raw.strip().replace("Z", "+00:00")))
+            dt = parse_iso_dt(
+                to_naive_utc(datetime.fromisoformat(raw.strip().replace("Z", "+00:00")))
+            )
         except ValueError:
             dt = parse_iso_dt(raw)
-    if dt is None:
-        return None
-    return min(max(dt, _DT_MIN), _DT_MAX).replace(microsecond=0)
+    return dt.replace(microsecond=0) if dt is not None else None
 
 
 class _Peer(NamedTuple):
@@ -404,7 +400,7 @@ async def judge_same_key_rows(
               AND NOT (agent = {{own_agent:String}} AND user_id = {{own_user:String}}
                        AND session_id = {{own_session:String}}){in_scope}
             ORDER BY least(coalesce(valid_at, updated_at), updated_at) DESC, updated_at DESC,
-                     memory_id DESC
+                     toString(memory_id) DESC
             LIMIT {{n:UInt32}} BY memory_key, user_id, if(user_id = '-', agent, '')
             SETTINGS select_sequential_consistency = 1
             """,

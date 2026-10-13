@@ -308,7 +308,7 @@ class _BulkSetResult(BaseModel):
     # on, a stored row of the same key and subject (the user; for the anonymous user `-`,
     # the agent) is the later statement it contradicts, such as an old session ingested
     # late. The id of that row; the entry's row is kept for history, recall serves the
-    # later one. Empty otherwise.
+    # later one, and `conflict_verdict` is then `superseded` with no peers. Empty otherwise.
     superseded_by: str = ""
 
 

@@ -325,16 +325,18 @@ async def _bulk_judge_same_key(
         ]
         plan.refines = [r for r in plan.refines if key_of.get(r[0]) not in behind]
         plan.conflicted = [k for k in plan.conflicted if k not in behind]
-        # Each entry's result of the key names the row it landed behind.
-        for res in state.results:
-            res.superseded_by = behind.get(res.memory_key, "")
+        plan.refined = [k for k in plan.refined if k not in behind]
+        _settle_results(state, plan, behind=behind)
     return judged
 
 
 def _drop_retired_peers(plan: BulkVerdictPlan, retired: set[str]) -> None:
     """A stored row the same-key judge retired leaves the peers the settling steps
     write: another key's conflict mark would re-emit it `conflicted`, and its
-    refines would re-point its `superseded_by`."""
+    refines would re-point its `superseded_by`. An entry left with no peer goes: a
+    conflict mark with none would flip the new row to `conflicted` against nothing,
+    and a refines edge would explain a supersession that `apply_refines` did not
+    make."""
     if not retired:
         return
     plan.conflict_marks = [
@@ -347,6 +349,39 @@ def _drop_retired_peers(plan: BulkVerdictPlan, retired: set[str]) -> None:
         for n, k, refined, rel, v in plan.refines
         if (kept := [p for p in refined if str(getattr(p, "memory_id", "")) not in retired])
     ]
+
+
+def _settle_results(
+    state: _BulkWriteState,
+    plan: BulkVerdictPlan,
+    *,
+    behind: dict[str, str] | None = None,
+    retired_peers: set[str] | None = None,
+) -> None:
+    """Make each entry's result say what the same-key judge did. An entry whose
+    key landed superseded (`behind`: key -> the row it landed behind) answers
+    `superseded` with that row's id and no peers or `next`. An entry whose peers
+    the judge retired (`retired_peers`) drops them; a `conflict` or `refines` left
+    with none answers `clear` and leaves the plan's lists, so neither the response
+    nor the audit reports a conflict nothing is marked for."""
+    from server.memory.app.set_commit import _set_next
+
+    behind = behind or {}
+    retired_peers = retired_peers or set()
+    for res in state.results:
+        if res.memory_key in behind:
+            res.superseded_by = behind[res.memory_key]
+            res.conflict_verdict, res.peers, res.next = "superseded", [], ""
+            continue
+        kept = [p for p in res.peers if str(p.memory_id) not in retired_peers]
+        if len(kept) == len(res.peers):
+            continue
+        res.peers = kept
+        if not kept and res.conflict_verdict in ("conflict", "refines"):
+            res.conflict_verdict = "clear"
+            plan.conflicted = [k for k in plan.conflicted if k != res.memory_key]
+            plan.refined = [k for k in plan.refined if k != res.memory_key]
+        res.next = _set_next(res.conflict_verdict, kept)
 
 
 async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
@@ -453,6 +488,7 @@ async def _bulk_post_insert_links(
         # Only the rows that did retire: the triple plane must not close a live row's triples.
         state.judged_follow_pairs += [(v["memory_id"], v["superseded_by"]) for v in _retired]
         _drop_retired_peers(plan, {str(v["memory_id"]) for v in _retired})
+        _settle_results(state, plan, retired_peers={str(v["memory_id"]) for v in _retired})
 
     # Value-update supersession (memory.app.value_updates). Runs after the
     # insert so the new row's id exists for the cross-link; fail-open; off by

@@ -628,10 +628,8 @@ async def test_the_peer_read_orders_by_the_same_key_as_python(monkeypatch) -> No
     seen = _wire_judged(monkeypatch, {})
     await _judge([_row("n1", _d(30))], [], seen)
     sql = " ".join(seen["sql"].split())
-    assert (
-        "ORDER BY least(coalesce(valid_at, updated_at), updated_at) DESC, updated_at DESC, memory_id DESC"
-        in sql
-    )
+    order = "ORDER BY least(coalesce(valid_at, updated_at), updated_at) DESC, updated_at DESC"
+    assert f"{order}, toString(memory_id) DESC" in sql
     assert "version" in seen["sql"].split("FROM")[0]
 
 
@@ -751,12 +749,56 @@ def test_a_future_valid_time_ranks_as_when_it_was_written() -> None:
     assert _pairs(out) == ([], [("f", "c")])
 
 
-def test_a_valid_time_before_1970_ranks_as_clickhouse_stores_it() -> None:
+def test_a_valid_time_outside_the_datetime_range_ranks_as_undated() -> None:
     from server.memory.app.key_supersession import _rank
 
+    # A row cannot store one (its insert fails), and a date outside it is no date.
     built = _row("x", datetime(1955, 4, 18), created_at=datetime(2026, 10, 13))
-    stored = {**built, "valid_at": "1970-01-01 00:00:00"}
-    assert _rank(built) == _rank(stored)
+    assert _rank(built) == _rank({**built, "valid_at": None})
+
+
+def test_results_say_what_the_judge_did() -> None:
+    from server.memory.api.models_bulk import _BulkSetResult
+    from server.memory.api.models_common import MemorySetPeer
+    from server.memory.app.bulk_rows import _BulkWriteState
+    from server.memory.app.bulk_set import _settle_results
+    from server.memory.app.bulk_verdicts import BulkVerdictPlan
+
+    def res(key: str, verdict: str, peers: list[str]) -> _BulkSetResult:
+        return _BulkSetResult(
+            memory_key=key,
+            version=1,
+            conflict_verdict=verdict,
+            peers=[MemorySetPeer(memory_id=p, memory_key="user_city") for p in peers],
+            next="memory.update(...)",
+        )
+
+    state = _BulkWriteState()
+    state.results = [
+        res("user_ethnicity", "conflict", ["q"]),
+        res("user_heritage", "conflict", ["p"]),
+        res("user_home", "conflict", ["p", "r"]),
+        res("user_age", "conflict", ["s"]),
+    ]
+    plan = BulkVerdictPlan()
+    plan.conflicted = ["user_ethnicity", "user_heritage", "user_home", "user_age"]
+    # The new row of user_ethnicity landed behind q.
+    _settle_results(state, plan, behind={"user_ethnicity": "q"})
+    eth = state.results[0]
+    assert (eth.conflict_verdict, eth.superseded_by, eth.peers, eth.next) == (
+        "superseded",
+        "q",
+        [],
+        "",
+    )
+    # Stored p retired: a conflict left with no peer is clear; one with others keeps them.
+    _settle_results(state, plan, retired_peers={"p"})
+    her, home, age = state.results[1:]
+    assert (her.conflict_verdict, her.peers, her.next) == ("clear", [], "")
+    assert home.conflict_verdict == "conflict" and [p.memory_id for p in home.peers] == ["r"]
+    assert "user_city" in home.next
+    assert age.conflict_verdict == "conflict" and age.next == "memory.update(...)"
+    assert plan.conflicted == ["user_ethnicity", "user_home", "user_age"]
 
 
 async def test_newest_wins_still_retires_every_older_same_key_row_unjudged(monkeypatch) -> None:
