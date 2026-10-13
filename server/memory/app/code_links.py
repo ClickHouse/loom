@@ -28,7 +28,7 @@ from server.code.domain.anchor import (
     resolve,
 )
 from server.code.domain.declaration import fingerprint_version
-from server.memory.app import code_link_repo as repo
+from server.memory.app import code_link_pass as link_pass
 from server.memory.app.code_link_reads import (
     SERVED,
     code_namespace_for,
@@ -47,7 +47,7 @@ AWAITING_INDEX = "*"
 
 
 async def link_queued(
-    after: store.QueuePosition | None, limit: int, result: repo.PassResult
+    after: store.QueuePosition | None, limit: int, result: link_pass.PassResult
 ) -> store.QueuePosition | None:
     """Link the memories queued after `after`: a new or rewritten memory gets the links
     its text and files name, a deleted or no longer served one loses them. Returns the
@@ -62,7 +62,7 @@ async def link_queued(
     return positions[-1]
 
 
-async def link_memories(heads: list[dict[str, Any]], result: repo.PassResult) -> None:
+async def link_memories(heads: list[dict[str, Any]], result: link_pass.PassResult) -> None:
     """Link these memory heads, org by org."""
     by_org: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for r in heads:
@@ -72,7 +72,7 @@ async def link_memories(heads: list[dict[str, Any]], result: repo.PassResult) ->
 
 
 async def backfill(
-    after: tuple[str, ...] | None, limit: int, result: repo.PassResult
+    after: tuple[str, ...] | None, limit: int, result: link_pass.PassResult
 ) -> tuple[str, ...] | None:
     """Link a page of the memories the queue did not deliver (the first pass, or a worker
     that fell behind the queue's TTL), and drop the links of memories no longer stored.
@@ -87,7 +87,7 @@ async def backfill(
 
 
 async def _link_org(
-    org: str, rows: list[dict[str, Any]], result: repo.PassResult, *, rereads: int = 2
+    org: str, rows: list[dict[str, Any]], result: link_pass.PassResult, *, rereads: int = 2
 ) -> None:
     """Link one org's memories. A repository that cannot be read parks its memories
     behind the `*` marker, as before its first index: every pass retries them, until the
@@ -115,7 +115,7 @@ async def _link_org(
         served = r["status"] in SERVED
         if served and links and all(a["inputs_hash"] == r["inputs"] for a in links):
             continue  # a status or usage write: the links still hold
-        names_code = bool(r.get("files")) or bool(mentions(repo.text_of(r["value"])))
+        names_code = bool(r.get("files")) or bool(mentions(link_pass.text_of(r["value"])))
         if cns and names_code and served:
             todo[cns].append(r)
         else:
@@ -126,7 +126,7 @@ async def _link_org(
     result.unlinked += len(stale)
     linked: list[str] = []
     for cns, memories in todo.items():
-        files = repo.Files(org, cns)
+        files = link_pass.Files(org, cns)
         try:
             rows_out, gone, unparsed = await link_each(org, cns, memories, existing, files)
         except Exception as e:  # noqa: BLE001 — one repository's failure never stops the pass
@@ -149,7 +149,7 @@ async def _link_org(
 
 
 async def _relink_rewritten(
-    org: str, linked: list[str], read: dict[str, str], result: repo.PassResult, rereads: int
+    org: str, linked: list[str], read: dict[str, str], result: link_pass.PassResult, rereads: int
 ) -> None:
     """Relink those of `linked` rewritten since they were read with inputs `read`: a
     writer of the newer value may have linked it before this one replaced its links."""
@@ -171,7 +171,7 @@ async def link_each(
     cns: str,
     memories: list[dict[str, Any]],
     existing: dict[str, list[LinkRow]],
-    files: repo.Files,
+    files: link_pass.Files,
 ) -> tuple[list[LinkRow], list[LinkRow], list[dict[str, Any]]]:
     """`_link`, and the memories it could not link because a file they name does not
     parse; the others are linked all the same."""
@@ -198,7 +198,7 @@ async def _link(
     cns: str,
     memories: list[dict[str, Any]],
     existing: dict[str, list[LinkRow]],
-    files: repo.Files,
+    files: link_pass.Files,
 ) -> tuple[list[LinkRow], list[LinkRow]]:
     """The link rows of `memories` (one repository's) at its indexed head, and their
     existing links that no longer hold. Before the repository's first index each memory
@@ -209,7 +209,9 @@ async def _link(
         old = [a for r in memories for a in existing.get(r["mid"], [])]
         return markers, [a for a in old if a["qualified_name"] != AWAITING_INDEX]
     # one past the cap: a memory with exactly the cap's mentions is not cut
-    named = {r["mid"]: mentions(repo.text_of(r["value"]), cap=_MAX_MENTIONS + 1) for r in memories}
+    named = {
+        r["mid"]: mentions(link_pass.text_of(r["value"]), cap=_MAX_MENTIONS + 1) for r in memories
+    }
     # a word of the prose links only inside the memory's files
     names = sorted(
         {
@@ -254,7 +256,7 @@ def _awaiting(memory: dict[str, Any], cns: str) -> LinkRow:
     return _link_row(memory, cns, "", AWAITING_INDEX, "", state="pending")
 
 
-async def at_head(files: repo.Files, head: str, d: Definition) -> Definition | None:
+async def at_head(files: link_pass.Files, head: str, d: Definition) -> Definition | None:
     """`d` as the head has it: its first overload, or the file for a file link; None
     when the head has no such definition or file."""
     if d.qualified_name:
@@ -338,7 +340,7 @@ _SWEEP_EVERY_S = 3600
 
 
 async def sweep_erased(
-    cursor: dict[str, Any], limit: int, result: repo.PassResult
+    cursor: dict[str, Any], limit: int, result: link_pass.PassResult
 ) -> dict[str, Any]:
     """Drop the links of gone memories in the next page of the link table, a page a pass,
     a new cycle an hour after the last; the cursor to store."""
@@ -355,4 +357,4 @@ async def sweep_erased(
 
 def queue_lease() -> AbstractAsyncContextManager[None]:
     """The lease on reading the memory queue; LeaseBusy while another host holds it."""
-    return repo.repository_locks.lease("code_links/queue")
+    return link_pass.repository_locks.lease("code_links/queue")

@@ -12,7 +12,7 @@ from server.memory.store.key_write_lock import LeaseBusy, LeaseLost
 from server.workers.status import log_pass_errors, record_pass
 
 if TYPE_CHECKING:
-    from server.memory.app.code_link_repo import PassResult
+    from server.memory.app.code_link_pass import PassResult
 
 log = logging.getLogger(__name__)
 
@@ -22,11 +22,11 @@ _QUEUE_PAGES = 10
 
 async def run_pass() -> dict[str, Any]:
     from server.code.app import memory_links as code
-    from server.memory.app import code_link_recheck, code_link_repo, code_links
+    from server.memory.app import code_link_pass, code_link_recheck, code_links
     from server.settings import settings
 
     batch = int(settings.memory_code_links_batch)
-    result = code_link_repo.PassResult()
+    result = code_link_pass.PassResult()
     with record_pass("memory_code_links") as rec:
         await code.refresh_repos()
         try:
@@ -46,13 +46,13 @@ async def run_pass() -> dict[str, Any]:
 async def _link_writes(batch: int, result: PassResult) -> None:
     """Link the queued writes, the backfill's next page, and sweep erased memories."""
     from server.code.app import memory_links as code
-    from server.memory.app import code_links
+    from server.memory.app import code_link_pass, code_links
     from server.memory.store import code_links as store
 
-    queue_cursor = code.Cursor[list[Any] | None]("queue", None)
-    backfill_cursor = code.Cursor[dict[str, Any]]("backfill", {})
-    repos_cursor = code.Cursor[list[list[str]]]("repos", [])
-    sweep_cursor = code.Cursor[dict[str, Any]]("sweep", {})
+    queue_cursor = code_link_pass.Cursor[list[Any] | None]("queue", None)
+    backfill_cursor = code_link_pass.Cursor[dict[str, Any]]("backfill", {})
+    repos_cursor = code_link_pass.Cursor[list[list[str]]]("repos", [])
+    sweep_cursor = code_link_pass.Cursor[dict[str, Any]]("sweep", {})
     queue = await queue_cursor.read()
     stored = backfill = await backfill_cursor.read()
     if queue is None:

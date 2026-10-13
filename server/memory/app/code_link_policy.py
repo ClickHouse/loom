@@ -7,7 +7,7 @@ from collections import defaultdict
 from typing import Any
 
 from server.memory.app import code_link_judge
-from server.memory.app import code_link_repo as repo
+from server.memory.app import code_link_pass as link_pass
 from server.memory.app.code_link_reads import (
     SERVED,
     inputs_now,
@@ -34,7 +34,12 @@ async def revised_namespaces(links: list[LinkRow]) -> set[tuple[str, str]]:
 
 
 async def apply_policies(
-    org: str, cns: str, head: str, files: repo.Files, budget: repo.Budget, result: repo.PassResult
+    org: str,
+    cns: str,
+    head: str,
+    files: link_pass.Files,
+    budget: link_pass.Budget,
+    result: link_pass.PassResult,
 ) -> None:
     """Run the policy of each memory a change in `cns` left due and clear the marks it
     settled; what fails or is past the judgement budget stays due."""
@@ -85,9 +90,9 @@ async def _revise(
     links: list[LinkRow],
     policy: str,
     head: str,
-    files: repo.Files,
-    budget: repo.Budget,
-    result: repo.PassResult,
+    files: link_pass.Files,
+    budget: link_pass.Budget,
+    result: link_pass.PassResult,
 ) -> _Revised | None:
     """The `revise` policy for one memory: the links it updated and those it left due
     (past the budget), by (path, qualified_name); None when the whole memory is deferred
@@ -97,7 +102,7 @@ async def _revise(
     ]
     if policy != code_change.REVISE or not changed or not _judgeable(row):
         return {}, set()
-    claim = repo.claim_of(row["value"])
+    claim = link_pass.claim_of(row["value"])
     if claim is None:
         return {}, set()
     if budget.judgements <= 0:
@@ -141,7 +146,7 @@ def _judgeable(row: dict[str, Any]) -> bool:
 
 
 async def _judge(
-    files: repo.Files, claim: str, link: LinkRow, head: str, budget: repo.Budget
+    files: link_pass.Files, claim: str, link: LinkRow, head: str, budget: link_pass.Budget
 ) -> LinkRow | None:
     """`link` judged against the code it was written for and the code now, spending one
     of `budget`'s judgements; None when it is not judged: a method its renamed class

@@ -1,4 +1,5 @@
-"""What one pass of the code-link worker reads of a repository, and what it counts."""
+"""What one pass of the code-link worker reads of a repository, what it counts, and the
+cursors it resumes from."""
 
 from __future__ import annotations
 
@@ -191,3 +192,20 @@ def link_of(row: LinkRow) -> Link:
         anchored_name=row["anchored_name"],
         checked_path=row["checked_path"],
     )
+
+
+class Cursor[T]:
+    """One of the link worker's cursors, kept as JSON; `empty` until it is written."""
+
+    def __init__(self, name: str, empty: T) -> None:
+        self.name, self.empty = name, empty
+
+    async def read(self) -> T:
+        raw = await code.link_cursor(self.name)
+        return cast(T, json.loads(raw)) if raw else self.empty
+
+    async def write(self, value: T) -> None:
+        await code.set_link_cursor(self.name, json.dumps(value))
+
+    async def clear(self) -> None:
+        await code.set_link_cursor(self.name, "")

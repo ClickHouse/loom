@@ -17,11 +17,11 @@ import pytest
 from server.code.domain.anchor import Shape
 from server.code.domain.declaration import edit_pattern
 from server.memory.app import (
+    code_link_pass,
     code_link_policy,
     code_link_reads,
     code_link_recheck,
     code_link_rehash,
-    code_link_repo,
     code_links,
 )
 from server.memory.domain import code_change
@@ -40,7 +40,7 @@ def _mirror_holds_every_commit(monkeypatch):
     async def has(self, commit):
         return True
 
-    monkeypatch.setattr(code_link_repo.Files, "has", has)
+    monkeypatch.setattr(code_link_pass.Files, "has", has)
 
 
 def _full(link: dict[str, Any]) -> dict[str, Any]:
@@ -137,11 +137,11 @@ def world(monkeypatch):
     )
 
 
-async def _apply(budget: int = 5) -> code_link_repo.PassResult:
-    result = code_link_repo.PassResult()
-    files = code_link_repo.Files("o", "code-a")
+async def _apply(budget: int = 5) -> code_link_pass.PassResult:
+    result = code_link_pass.PassResult()
+    files = code_link_pass.Files("o", "code-a")
     await code_link_policy.apply_policies(
-        "o", "code-a", "c2", files, code_link_repo.Budget(budget), result
+        "o", "code-a", "c2", files, code_link_pass.Budget(budget), result
     )
     return result
 
@@ -277,10 +277,10 @@ async def test_a_pending_name_is_retried_until_the_pending_days_pass(monkeypatch
     monkeypatch.setattr(code_links.store, "insert", insert)
     monkeypatch.setattr(code_links.store, "memory_heads", heads)
     monkeypatch.setattr(code_links.code, "candidates", candidates)
-    files = code_link_repo.Files("o", "code-a")
+    files = code_link_pass.Files("o", "code-a")
     assert (
         await code_link_recheck._resolve_pending(
-            "o", "code-a", "c2", files, code_link_repo.PassResult()
+            "o", "code-a", "c2", files, code_link_pass.PassResult()
         )
         == []
     )
@@ -492,7 +492,7 @@ async def test_a_repository_that_fails_parks_its_memories_and_the_cursor_moves_o
     monkeypatch.setattr(
         code_links, "code_namespace_for", lambda org, ns, tags: f"code-{tags[0][5:]}"
     )
-    result = code_link_repo.PassResult()
+    result = code_link_pass.PassResult()
     cursor = await code_links.link_queued(None, 100, result)
     # k11's repository failed: it waits behind the `*` marker, retried every pass
     assert cursor == positions[-1] and result.errors
@@ -510,7 +510,7 @@ async def test_an_empty_queue_moves_the_cursor_to_the_reads_cutoff(monkeypatch) 
 
     monkeypatch.setattr(code_links.store, "queued_memories", queued)
     old = (1, 1, "o", "n", "a", "-", "-", "k")
-    assert await code_links.link_queued(old, 100, code_link_repo.PassResult()) == cutoff
+    assert await code_links.link_queued(old, 100, code_link_pass.PassResult()) == cutoff
 
 
 @pytest.mark.asyncio
@@ -860,9 +860,9 @@ async def test_a_repository_another_host_holds_is_skipped(monkeypatch) -> None:
 
     monkeypatch.setattr(code_links.store, "code_namespaces", namespaces)
     monkeypatch.setattr(code_link_recheck, "_recheck_repository", recheck)
-    monkeypatch.setattr(code_link_repo.repository_locks, "lease", lease)
+    monkeypatch.setattr(code_link_pass.repository_locks, "lease", lease)
     monkeypatch.setattr(code_link_recheck, "repo_for_namespace", lambda org, cns: object())
-    result = code_link_repo.PassResult()
+    result = code_link_pass.PassResult()
     await code_link_recheck.recheck_all(result)
     assert ran == ["code-b"] and not result.errors
 
@@ -885,7 +885,7 @@ async def test_links_of_a_repository_no_longer_configured_are_left_alone(monkeyp
         "repo_for_namespace",
         lambda org, cns: object() if cns in configured else None,
     )
-    result = code_link_repo.PassResult()
+    result = code_link_pass.PassResult()
     await code_link_recheck.recheck_all(result)
     assert ran == ["code-a"] and not result.errors
 
@@ -985,15 +985,15 @@ async def test_a_recheck_cut_short_resumes_after_the_last_path_it_wrote(monkeypa
     monkeypatch.setattr(code_link_recheck, "_write_moves", nothing)
     monkeypatch.setattr(code_links.code, "link_cursor", get)
     monkeypatch.setattr(code_links.code, "set_link_cursor", put)
-    files = code_link_repo.Files("o", "code-a")
+    files = code_link_pass.Files("o", "code-a")
     with pytest.raises(TimeoutError):
         await code_link_recheck._follow(
-            "o", "code-a", "c1", "c2", files, code_link_repo.PassResult()
+            "o", "code-a", "c1", "c2", files, code_link_pass.PassResult()
         )
     first = list(seen)
     seen.clear()
     monkeypatch.setattr(code_link_recheck, "_recheck", lambda *a, **_: _record(seen, a[2]))
-    await code_link_recheck._follow("o", "code-a", "c1", "c2", files, code_link_repo.PassResult())
+    await code_link_recheck._follow("o", "code-a", "c1", "c2", files, code_link_pass.PassResult())
     # the first part was written: the next pass starts after it, and ends clean
     assert seen == paths[code_link_recheck._PATHS_PER_WRITE :] and first[0] == paths[0]
     assert cursor["recheck/o/code-a"] == ""
@@ -1015,11 +1015,11 @@ async def test_a_finished_sweep_waits_before_its_next_cycle(monkeypatch) -> None
         return None, 0
 
     monkeypatch.setattr(code_links.store, "sweep_page", sweep_page)
-    done = await code_links.sweep_erased({}, 10, code_link_repo.PassResult())
+    done = await code_links.sweep_erased({}, 10, code_link_pass.PassResult())
     assert pages == [None] and "done_at" in done
-    assert await code_links.sweep_erased(done, 10, code_link_repo.PassResult()) == done
+    assert await code_links.sweep_erased(done, 10, code_link_pass.PassResult()) == done
     stale = {"done_at": time.time() - code_links._SWEEP_EVERY_S - 1}
-    await code_links.sweep_erased(stale, 10, code_link_repo.PassResult())
+    await code_links.sweep_erased(stale, 10, code_link_pass.PassResult())
     assert pages == [None, None]
 
 
@@ -1064,9 +1064,9 @@ async def test_new_fingerprint_rules_rehash_links_from_their_own_commits(monkeyp
 
     monkeypatch.setattr(code_links.store, "stale_fingerprints", stale)
     monkeypatch.setattr(code_links.store, "insert", insert)
-    files = code_link_repo.Files("o", "code-a")
+    files = code_link_pass.Files("o", "code-a")
     monkeypatch.setattr(files, "defs", defs)
-    await code_link_rehash.refingerprint("o", "code-a", files, code_link_repo.PassResult())
+    await code_link_rehash.refingerprint("o", "code-a", files, code_link_pass.PassResult())
     fresh, changed = written
     # an unchanged link's baseline is its checked text; a changed one's its anchored text
     assert (fresh["body_hash"], fresh["checked_hash"]) == ("new-c2", "new-c2")
@@ -1157,9 +1157,9 @@ async def test_a_hash_whose_code_is_gone_is_cleared_and_every_page_is_rehashed(
     monkeypatch.setattr(code_links.store, "stale_fingerprints", stale)
     monkeypatch.setattr(code_links.store, "insert", insert)
     monkeypatch.setattr(code_link_rehash, "_REFINGERPRINT_PAGE", 2)
-    files = code_link_repo.Files("o", "code-a")
+    files = code_link_pass.Files("o", "code-a")
     monkeypatch.setattr(files, "defs", defs)
-    await code_link_rehash.refingerprint("o", "code-a", files, code_link_repo.PassResult())
+    await code_link_rehash.refingerprint("o", "code-a", files, code_link_pass.PassResult())
     # a link that last matched its baseline adopts what the next check finds; one that
     # had changed keeps a baseline no current hash matches, whatever it reads now
     assert {r["memory_id"]: r["body_hash"] for r in written} == {
@@ -1255,7 +1255,7 @@ async def test_a_change_only_new_rules_see_reads_changed(monkeypatch) -> None:
             )
         ]
 
-    files = code_link_repo.Files("o", "code-a")
+    files = code_link_pass.Files("o", "code-a")
     monkeypatch.setattr(files, "defs", defs)
     out = await code_link_rehash._rehashed(a, files)
     assert (out["body_hash"], out["checked_hash"]) == ("new-c1", "new-c2")
@@ -1296,7 +1296,7 @@ async def test_a_rehash_trusts_the_old_match_once_the_anchored_commit_is_gone(mo
     async def has(commit):
         return commit != "rewritten"
 
-    files = code_link_repo.Files("o", "code-a")
+    files = code_link_pass.Files("o", "code-a")
     monkeypatch.setattr(files, "has", has)
     monkeypatch.setattr(files, "defs", _differs_by_commit)
     out = await code_link_rehash._rehashed(a, files)
@@ -1347,11 +1347,11 @@ async def _refingerprinted(monkeypatch, row, policies, defs, has=None) -> dict[s
     monkeypatch.setattr(code_links.store, "stale_fingerprints", stale)
     monkeypatch.setattr(code_links.store, "code_change_policies", policies_of)
     monkeypatch.setattr(code_links.store, "insert", insert)
-    files = code_link_repo.Files("o", "code-a")
+    files = code_link_pass.Files("o", "code-a")
     monkeypatch.setattr(files, "defs", defs)
     if has is not None:
         monkeypatch.setattr(files, "has", has)
-    await code_link_rehash.refingerprint("o", "code-a", files, code_link_repo.PassResult())
+    await code_link_rehash.refingerprint("o", "code-a", files, code_link_pass.PassResult())
     (link,) = written
     return link
 
@@ -1367,7 +1367,7 @@ async def test_a_change_only_old_rules_saw_reads_fresh_again(monkeypatch, change
 
 @pytest.mark.asyncio
 async def test_a_method_its_renamed_class_carried_stays_changed(monkeypatch) -> None:
-    files = code_link_repo.Files("o", "code-a")
+    files = code_link_pass.Files("o", "code-a")
     monkeypatch.setattr(files, "defs", _same_everywhere)
     assert "state" not in await code_link_rehash._rehashed(_changed_link(carried=1), files)
 
@@ -1425,7 +1425,7 @@ async def test_a_missing_link_is_rehashed_from_the_commit_it_was_last_read_at(mo
     async def defs(commit, path, qn):
         return [Definition(path, qn, "f", body_hash=f"new-{commit}", shape=Shape("same", "", ""))]
 
-    files = code_link_repo.Files("o", "code-a")
+    files = code_link_pass.Files("o", "code-a")
     monkeypatch.setattr(files, "defs", defs)
     # a shape the new rules agree on (a rename): rebased on the checked text
     assert await code_link_rehash._rehashed(a, files) == {
@@ -1506,7 +1506,7 @@ async def test_a_missing_link_is_not_handed_to_a_definition_added_later(monkeypa
     c1 = keep + "\n\ndef fetch_rows(n):\n    return n + 1\n"
     c3 = keep + "\n\ndef load_rows(n):\n    return n * 2\n"
     commits = {"c1": c1, "c2": keep, "c3": c3}
-    files = code_link_repo.Files("o", "code-a")
+    files = code_link_pass.Files("o", "code-a")
 
     async def at(commit, path):
         return _file(path, commits[commit])
@@ -1533,7 +1533,7 @@ async def test_a_missing_link_is_not_handed_to_a_definition_added_later(monkeypa
         }
     )
     moves = await code_link_recheck._recheck(
-        "o", "code-a", [row], code_link_repo.Range("c1", {"m.py": "m.py"}), "c3", files
+        "o", "code-a", [row], code_link_pass.Range("c1", {"m.py": "m.py"}), "c3", files
     )
     assert moves == []  # `load_rows`, added later, is not it
 
@@ -1648,7 +1648,7 @@ async def test_a_resumed_recheck_reads_the_links_a_cut_pass_already_moved(monkey
     monkeypatch.setattr(code_links.code, "link_cursor", get)
     monkeypatch.setattr(code_links.code, "set_link_cursor", put)
     await code_link_recheck._follow(
-        "o", "code-a", "c0", "h2", code_link_repo.Files("o", "code-a"), code_link_repo.PassResult()
+        "o", "code-a", "c0", "h2", code_link_pass.Files("o", "code-a"), code_link_pass.PassResult()
     )
     assert read[0] == ["a.py", "b.py", "gone.py"]
 
@@ -1727,7 +1727,7 @@ async def test_a_pass_cut_at_another_head_finishes_there_before_the_next(monkeyp
         },
     )
     await code_link_recheck._recheck_repository(
-        "o", "code-a", code_link_repo.Budget(0), code_link_repo.PassResult()
+        "o", "code-a", code_link_pass.Budget(0), code_link_pass.PassResult()
     )
     # h2 resumes after b.py; then h3 is followed from its start
     assert state["rechecked"] == [("h2", ["c.py"]), ("h3", ["a.py"])]
@@ -1747,9 +1747,9 @@ async def test_a_cut_head_the_mirror_lost_is_dropped_not_followed(monkeypatch) -
     async def has(self, commit):
         return commit != "gone"
 
-    monkeypatch.setattr(code_link_repo.Files, "has", has)
+    monkeypatch.setattr(code_link_pass.Files, "has", has)
     await code_link_recheck._recheck_repository(
-        "o", "code-a", code_link_repo.Budget(0), code_link_repo.PassResult()
+        "o", "code-a", code_link_pass.Budget(0), code_link_pass.PassResult()
     )
     # what that pass wrote is in no diff: every link is read again, as after a force-push
     assert state["read"] == [None] and state["checked"] == "h3"
@@ -1760,10 +1760,10 @@ async def test_a_link_whose_last_read_commit_is_gone_is_unresolved(monkeypatch) 
     async def has(self, commit):
         return False
 
-    monkeypatch.setattr(code_link_repo.Files, "has", has)
-    files = code_link_repo.Files("o", "code-a")
+    monkeypatch.setattr(code_link_pass.Files, "has", has)
+    files = code_link_pass.Files("o", "code-a")
     row = _full({"checked_commit": "gone", "path": "m.py", "qualified_name": "m::f"})
-    found = await code_link_recheck._renamed(files, code_link_repo.link_of(row), row, "m.py", "h3")
+    found = await code_link_recheck._renamed(files, code_link_pass.link_of(row), row, "m.py", "h3")
     assert found.definition is None and found.uncertain
 
 
@@ -1818,8 +1818,8 @@ async def test_a_rehash_from_a_lost_commit_keeps_a_baseline_no_new_hash_matches(
     async def has(self, commit):
         return commit == "c1"  # the anchored commit is still held; the checked one is gone
 
-    monkeypatch.setattr(code_link_repo.Files, "has", has)
-    files = code_link_repo.Files("o", "code-a")
+    monkeypatch.setattr(code_link_pass.Files, "has", has)
+    files = code_link_pass.Files("o", "code-a")
     monkeypatch.setattr(files, "defs", _differs_by_commit)
     link = _full(
         {
@@ -1855,7 +1855,7 @@ def _judged_files(monkeypatch, texts: dict[str, str], path: str = "a.ts"):
         calls.append((before, after))
         return "holds", ""
 
-    files = code_link_repo.Files("o", "code-a")
+    files = code_link_pass.Files("o", "code-a")
     _reads(monkeypatch, files, at)
     monkeypatch.setattr(files, "has", has)
     monkeypatch.setattr(code_link_judge, "judge_claim", judge)
@@ -1883,7 +1883,7 @@ async def test_a_method_its_renamed_class_carried_is_left_changed(monkeypatch) -
     }
     files, calls = _judged_files(monkeypatch, texts)
     link = _judged_link("a::Writer::f") | {"carried": 1}
-    budget = code_link_repo.Budget(judgements=1)
+    budget = code_link_pass.Budget(judgements=1)
     assert await code_link_policy._judge(files, "claim", link, "c2", budget) is None
     assert (calls, budget.judgements) == ([], 1)
 
@@ -1894,7 +1894,7 @@ async def test_the_judge_reads_an_overload_signature_the_index_does_not_list(mon
     body = "export function f(a: any): any {\n  return a;\n}\n"
     texts = {"c1": signatures + body, "c2": signatures.split("\n")[0] + "\n" + body}
     files, calls = _judged_files(monkeypatch, texts)
-    budget = code_link_repo.Budget(judgements=1)
+    budget = code_link_pass.Budget(judgements=1)
     await code_link_policy._judge(files, "claim", _judged_link("a::f"), "c2", budget)
     ((before, after),) = calls
     assert "f(a: string)" in before and "f(a: string)" not in after
@@ -1909,7 +1909,7 @@ async def test_the_same_text_on_both_sides_is_not_judged(monkeypatch) -> None:
 
     files, calls = _judged_files(monkeypatch, {"c1": "", "c2": ""})
     monkeypatch.setattr(files, "defs", defs)
-    budget = code_link_repo.Budget(judgements=1)
+    budget = code_link_pass.Budget(judgements=1)
     assert await code_link_policy._judge(files, "claim", _judged_link("a::f"), "c2", budget) is None
     assert (calls, budget.judgements) == ([], 1)
 
@@ -1919,11 +1919,11 @@ async def test_a_link_the_judge_cannot_read_costs_no_judgement(monkeypatch) -> N
     async def has(self, commit):
         return False
 
-    monkeypatch.setattr(code_link_repo.Files, "has", has)
-    budget = code_link_repo.Budget(judgements=1)
+    monkeypatch.setattr(code_link_pass.Files, "has", has)
+    budget = code_link_pass.Budget(judgements=1)
     link = _full({"path": "a.py", "qualified_name": "a::f", "anchored_commit": "gone"})
     assert (
-        await code_link_policy._judge(code_link_repo.Files("o", "c"), "claim", link, "h", budget)
+        await code_link_policy._judge(code_link_pass.Files("o", "c"), "claim", link, "h", budget)
         is None
     )
     assert budget.judgements == 1
@@ -1950,7 +1950,7 @@ async def test_the_judge_reads_an_overload_that_was_removed(monkeypatch) -> None
         seen.append((before, after))
         return "unsure", ""
 
-    files = code_link_repo.Files("o", "code-a")
+    files = code_link_pass.Files("o", "code-a")
     _reads(monkeypatch, files, at)
     monkeypatch.setattr(files, "has", has)
     monkeypatch.setattr(code_link_judge, "judge_claim", judge)
@@ -1965,7 +1965,7 @@ async def test_the_judge_reads_an_overload_that_was_removed(monkeypatch) -> None
     )
     assert (
         await code_link_policy._judge(
-            files, "claim", link, "c2", code_link_repo.Budget(judgements=1)
+            files, "claim", link, "c2", code_link_pass.Budget(judgements=1)
         )
         is None
     )
@@ -1974,7 +1974,7 @@ async def test_the_judge_reads_an_overload_that_was_removed(monkeypatch) -> None
     )
     assert seen == [(old, "int f(int a) { return a + 1; }")]
     # no such definition where it was written: nothing to judge, no judgement spent
-    budget = code_link_repo.Budget(judgements=1)
+    budget = code_link_pass.Budget(judgements=1)
     assert (
         await code_link_policy._judge(files, "claim", link | {"anchored_name": "g"}, "c2", budget)
         is None
@@ -2016,8 +2016,8 @@ async def test_a_full_recheck_after_a_lost_head_resumes_as_one(monkeypatch) -> N
 
     _stub_reads(monkeypatch, every)
     monkeypatch.setattr(code_link_recheck, "_recheck", recheck)
-    monkeypatch.setattr(code_link_repo.Files, "has", has)
-    budget, result = code_link_repo.Budget(0), code_link_repo.PassResult()
+    monkeypatch.setattr(code_link_pass.Files, "has", has)
+    budget, result = code_link_pass.Budget(0), code_link_pass.PassResult()
     with pytest.raises(TimeoutError):
         await code_link_recheck._recheck_repository("o", "code-a", budget, result)
     state["rechecked"].clear()
@@ -2053,7 +2053,7 @@ async def test_a_function_moved_into_another_module_and_edited(
     keep = "def keep():\n    return 0\n"
     commits = {("c1", "pkg/a.py"): _ROWS + "\n\n" + keep, ("c2", "pkg/a.py"): keep}
     commits |= {("c2", p): src for p, src in moved_to.items()}
-    files = code_link_repo.Files("o", "code-a")
+    files = code_link_pass.Files("o", "code-a")
 
     async def at(commit, path):
         src = commits.get((commit, path))
@@ -2083,7 +2083,7 @@ async def test_a_function_moved_into_another_module_and_edited(
         }
     )
     # the range lists what it added, as git does
-    changed = code_link_repo.Range("c1", {"pkg/a.py": "pkg/a.py"} | {p: p for p in moved_to})
+    changed = code_link_pass.Range("c1", {"pkg/a.py": "pkg/a.py"} | {p: p for p in moved_to})
     moves = await code_link_recheck._recheck("o", "code-a", [row], changed, "c2", files)
     assert [m.after.state for m in moves] == [state]
 
@@ -2108,7 +2108,7 @@ async def test_a_namesake_already_in_another_module_never_takes_a_deleted_functi
         ("c1", "pkg/b.py"): theirs,  # there before the deletion: another definition
         ("c2", "pkg/b.py"): theirs,
     }
-    files = code_link_repo.Files("o", "code-a")
+    files = code_link_pass.Files("o", "code-a")
 
     async def at(commit, path):
         src = commits.get((commit, path))
@@ -2136,14 +2136,14 @@ async def test_a_namesake_already_in_another_module_never_takes_a_deleted_functi
         }
     )
     moves = await code_link_recheck._recheck(
-        "o", "code-a", [row], code_link_repo.Range("c1", {"pkg/a.py": "pkg/a.py"}), "c2", files
+        "o", "code-a", [row], code_link_pass.Range("c1", {"pkg/a.py": "pkg/a.py"}), "c2", files
     )
     assert [(m.after.state, m.after.path) for m in moves] == [("missing", "pkg/a.py")]
     # and once missing, a later edit of b.py hands it nothing either
     gone = row | {"state": "missing", "changed_since": "c2"}
     commits[("c3", "pkg/b.py")] = theirs + "\n\ndef x():\n    return 1\n"
     later = await code_link_recheck._recheck(
-        "o", "code-a", [gone], code_link_repo.Range("c2", {"pkg/b.py": "pkg/b.py"}), "c3", files
+        "o", "code-a", [gone], code_link_pass.Range("c2", {"pkg/b.py": "pkg/b.py"}), "c3", files
     )
     assert later == []
 
@@ -2160,7 +2160,7 @@ async def test_a_namesake_carried_in_by_a_file_rename_is_not_new(monkeypatch) ->
         ("c2", "pkg/a.py"): keep,
         ("c2", "pkg/b.py"): theirs,  # c.py renamed to b.py in the same commit
     }
-    files = code_link_repo.Files("o", "code-a")
+    files = code_link_pass.Files("o", "code-a")
 
     async def at(commit, path):
         src = commits.get((commit, path))
@@ -2189,7 +2189,7 @@ async def test_a_namesake_carried_in_by_a_file_rename_is_not_new(monkeypatch) ->
     )
     kept = {"pkg/a.py": "pkg/a.py", "pkg/c.py": "pkg/b.py"}
     moves = await code_link_recheck._recheck(
-        "o", "code-a", [row], code_link_repo.Range("c1", kept), "c2", files
+        "o", "code-a", [row], code_link_pass.Range("c1", kept), "c2", files
     )
     assert [(m.after.state, m.after.path) for m in moves] == [("missing", "pkg/a.py")]
 
@@ -2210,13 +2210,13 @@ async def _recheck_across(
         return ancestor <= descendant
 
     async def range_from(base, head):
-        return None if renames is None else code_link_repo.Range(base, renames)
+        return None if renames is None else code_link_pass.Range(base, renames)
 
     async def candidates(org, cns, *, names=None, qualified_names=None):
         paths = sorted({p for c, p in commits if c == "c2"} - {"pkg/a.py"})
         return [Definition(p, f"pkg.{p[4]}::fetch_rows", "fetch_rows") for p in paths]
 
-    files = code_link_repo.Files("o", "code-a")
+    files = code_link_pass.Files("o", "code-a")
     _reads(monkeypatch, files, at)
     monkeypatch.setattr(files, "is_ancestor", descends)
     monkeypatch.setattr(files, "range", range_from)
@@ -2238,7 +2238,7 @@ async def _recheck_across(
         }
     )
     kept = {"pkg/a.py": "pkg/a.py", "pkg/b.py": "pkg/b.py"}
-    changed = code_link_repo.Range(since, kept) if since else None
+    changed = code_link_pass.Range(since, kept) if since else None
     moves = await code_link_recheck._recheck("o", "code-a", [row], changed, "c2", files)
     return [(m.after.state, m.after.path) for m in moves]
 
@@ -2431,8 +2431,8 @@ async def test_a_link_made_inside_the_range_follows_its_own_commit(
     monkeypatch.setattr(code_links.code, "set_link_cursor", put)
     monkeypatch.setattr(code_link_recheck, "_write_moves", write)
     monkeypatch.setattr(code_link_recheck, "_current_moves", current)
-    files = code_link_repo.Files("o", "code-a")
-    await code_link_recheck._follow("o", "code-a", base, head, files, code_link_repo.PassResult())
+    files = code_link_pass.Files("o", "code-a")
+    await code_link_recheck._follow("o", "code-a", base, head, files, code_link_pass.PassResult())
     assert [(m.after.state, m.after.path) for m in moves] == [after]
 
 
@@ -2445,8 +2445,8 @@ async def test_a_pass_keeps_only_the_files_it_read_last(monkeypatch) -> None:
         return _file(path, "x = 1\n")
 
     monkeypatch.setattr(code_links.code, "parsed", parsed)
-    monkeypatch.setattr(code_link_repo, "_FILES_CACHED", 2)
-    files = code_link_repo.Files("o", "code-a")
+    monkeypatch.setattr(code_link_pass, "_FILES_CACHED", 2)
+    files = code_link_pass.Files("o", "code-a")
     for path in ("a.py", "b.py", "a.py", "c.py", "a.py", "b.py"):
         await files.at("c1", path)
     assert reads == ["a.py", "b.py", "c.py", "b.py"]  # a.py, read most, stays
@@ -2470,7 +2470,7 @@ async def test_an_unresolved_link_follows_its_renamed_file_on_a_later_pass(monke
         ("c2", "pkg/b.py"): moved,
         ("c2", "pkg/o.py"): "X = 1\n",
     }
-    files = code_link_repo.Files("o", "code-a")
+    files = code_link_pass.Files("o", "code-a")
 
     async def at(commit, path):
         src = commits.get((commit, path))
@@ -2500,13 +2500,13 @@ async def test_an_unresolved_link_follows_its_renamed_file_on_a_later_pass(monke
             "version": 1,
         }
     )
-    renamed = code_link_repo.Range("c0", {"pkg/a.py": "pkg/b.py"})
+    renamed = code_link_pass.Range("c0", {"pkg/a.py": "pkg/b.py"})
     (move,) = await code_link_recheck._recheck("o", "code-a", [row], renamed, "c1", files)
     after = move.after
     assert (after.state, after.path, after.checked_path) == ("unresolved", "pkg/b.py", "pkg/a.py")
     # written as the pass writes it: on b.py, still read at a.py at c0
     row |= {"state": after.state, "path": after.path, "checked_path": after.checked_path}
-    unrelated = code_link_repo.Range("c1", {"pkg/o.py": "pkg/o.py"})
+    unrelated = code_link_pass.Range("c1", {"pkg/o.py": "pkg/o.py"})
     assert await code_link_recheck._recheck("o", "code-a", [row], unrelated, "c2", files) == []
 
 
@@ -2538,7 +2538,7 @@ async def test_a_judged_change_that_only_shifted_lines_is_not_due_again(monkeypa
         suggestion="f now returns two",
         version=5,
     )
-    shifted = replace(code_link_repo.link_of(judged), start_line=5, end_line=6)
+    shifted = replace(code_link_pass.link_of(judged), start_line=5, end_line=6)
     edited = replace(shifted, checked_hash="h3")
     await code_link_recheck._write_moves(
         [code_link_recheck.Move(judged, shifted), code_link_recheck.Move(judged, edited)], "c2"
@@ -2567,7 +2567,7 @@ async def test_a_pending_name_resolves_by_the_files_its_memory_names(monkeypatch
     async def candidates(org, cns, *, names):
         return found
 
-    files = code_link_repo.Files("o", "code-a")
+    files = code_link_pass.Files("o", "code-a")
 
     async def at(commit, path):
         return _file(path, reader)
@@ -2577,7 +2577,7 @@ async def test_a_pending_name_resolves_by_the_files_its_memory_names(monkeypatch
     monkeypatch.setattr(code_links.code, "candidates", candidates)
     _reads(monkeypatch, files, at)
     moves = await code_link_recheck._resolve_pending(
-        "o", "code-a", "c2", files, code_link_repo.PassResult()
+        "o", "code-a", "c2", files, code_link_pass.PassResult()
     )
     assert [m.after.path for m in moves] == ["src/reader.py"]
 
@@ -2608,7 +2608,7 @@ async def test_each_repository_gets_its_share_of_the_judgements(
     monkeypatch.setattr(code_link_recheck, "repo_for_namespace", lambda org, cns: object())
     monkeypatch.setattr(code_link_recheck, "_recheck_repository", recheck)
     monkeypatch.setattr(code_link_recheck, "_passes", iter([0]))
-    await code_link_recheck.recheck_all(code_link_repo.PassResult())
+    await code_link_recheck.recheck_all(code_link_pass.PassResult())
     assert seen == granted and sum(min(g, s) for g, s in zip(seen, spends, strict=True)) <= 20
 
 
@@ -2626,8 +2626,8 @@ async def test_each_pass_starts_the_judgements_one_repository_further(monkeypatc
     monkeypatch.setattr(code_link_recheck, "repo_for_namespace", lambda org, cns: object())
     monkeypatch.setattr(code_link_recheck, "_recheck_repository", recheck)
     monkeypatch.setattr(code_link_recheck, "_passes", iter([0, 1]))
-    await code_link_recheck.recheck_all(code_link_repo.PassResult())
-    await code_link_recheck.recheck_all(code_link_repo.PassResult())
+    await code_link_recheck.recheck_all(code_link_pass.PassResult())
+    await code_link_recheck.recheck_all(code_link_pass.PassResult())
     assert order == ["code-a", "code-b", "code-c", "code-b", "code-c", "code-a"]
 
 
@@ -2640,7 +2640,7 @@ async def test_a_lost_link_whose_file_moved_is_found_in_another_module(
 
     src = "def fetch_rows():\n    return 1\n"
     (d,) = _file("src/w.py", src).defs
-    files = code_link_repo.Files("o", "code-a")
+    files = code_link_pass.Files("o", "code-a")
 
     async def at(commit, path):
         if path == "src/w.py":  # added at c2, with the text the link was read with
@@ -2707,7 +2707,7 @@ async def test_an_identical_copy_there_all_along_never_takes_a_removed_definitio
         commits[("c2", ours)] = keep
     (mine,) = [d for d in _file(ours, src).defs]
     (copy,) = _file(theirs, src).defs
-    files = code_link_repo.Files("o", "code-a")
+    files = code_link_pass.Files("o", "code-a")
 
     async def at(commit, path):
         text = commits.get((commit, path))
@@ -2734,7 +2734,7 @@ async def test_an_identical_copy_there_all_along_never_takes_a_removed_definitio
             "version": 1,
         }
     )
-    changed = code_link_repo.Range("c1", {ours: "" if deleted else ours})
+    changed = code_link_pass.Range("c1", {ours: "" if deleted else ours})
     moves = await code_link_recheck._recheck("o", "code-a", [row], changed, "c2", files)
     assert [(m.after.state, m.after.path) for m in moves] == [("missing", ours)]
 
@@ -2799,7 +2799,7 @@ def _common_name_world(monkeypatch, files, changed_paths, moved_text=None, touch
             "version": 1,
         }
     )
-    return row, code_link_repo.Range("c1", changed_paths), others, read
+    return row, code_link_pass.Range("c1", changed_paths), others, read
 
 
 @pytest.mark.asyncio
@@ -2807,7 +2807,7 @@ def _common_name_world(monkeypatch, files, changed_paths, moved_text=None, touch
 async def test_a_name_many_untouched_files_define_is_followed_as_any_other(
     monkeypatch, moved
 ) -> None:
-    files = code_link_repo.Files("o", "code-a")
+    files = code_link_pass.Files("o", "code-a")
     changed = {"tests/a/test.py": ""} | ({"tests/b/test.py": "tests/b/test.py"} if moved else {})
     text = "def started_cluster():\n    return 1\n" if moved else None
     row, rng, others, read = _common_name_world(monkeypatch, files, changed, text)
@@ -2819,7 +2819,7 @@ async def test_a_name_many_untouched_files_define_is_followed_as_any_other(
 
 @pytest.mark.asyncio
 async def test_a_name_too_many_touched_files_define_is_never_weighed(monkeypatch) -> None:
-    files = code_link_repo.Files("o", "code-a")
+    files = code_link_pass.Files("o", "code-a")
     row, rng, others, read = _common_name_world(
         monkeypatch,
         files,
@@ -2835,8 +2835,8 @@ async def test_a_name_too_many_touched_files_define_is_never_weighed(monkeypatch
 @pytest.mark.parametrize(
     "changed",
     [
-        code_link_repo.Range("c0", {"pkg/a.py": "pkg/a.py", "pkg/b.py": "pkg/b.py"}),  # one pass
-        code_link_repo.Range("c1", {"pkg/a.py": "pkg/a.py"}),  # a pass ran between the commits
+        code_link_pass.Range("c0", {"pkg/a.py": "pkg/a.py", "pkg/b.py": "pkg/b.py"}),  # one pass
+        code_link_pass.Range("c1", {"pkg/a.py": "pkg/a.py"}),  # a pass ran between the commits
     ],
     ids=["one-pass", "two-passes"],
 )
@@ -2855,7 +2855,7 @@ async def test_the_state_a_history_ends_in_does_not_depend_on_when_passes_ran(
         ("c2", "pkg/a.py"): keep,
         ("c2", "pkg/b.py"): _ROWS,
     }
-    files = code_link_repo.Files("o", "code-a")
+    files = code_link_pass.Files("o", "code-a")
 
     async def at(commit, path):
         src = commits.get((commit, path))
@@ -2922,7 +2922,7 @@ async def test_an_earlier_edit_to_the_file_does_not_move_where_its_code_was_last
         ("c3", "pkg/a.py"): kept,
         ("c3", "pkg/b.py"): _ROWS,
     }
-    files = code_link_repo.Files("o", "code-a")
+    files = code_link_pass.Files("o", "code-a")
 
     async def at(commit, path):
         src = commits.get((commit, path))
@@ -2952,7 +2952,7 @@ async def test_an_earlier_edit_to_the_file_does_not_move_where_its_code_was_last
     )
     paths = {"pkg/a.py": "pkg/a.py"} | ({"pkg/b.py": "pkg/b.py"} if base < "c2" else {})
     moves = await code_link_recheck._recheck(
-        "o", "code-a", [row], code_link_repo.Range(base, paths), "c3", files
+        "o", "code-a", [row], code_link_pass.Range(base, paths), "c3", files
     )
     assert [(m.after.state, m.after.path) for m in moves] == [("missing", "pkg/a.py")]
 
@@ -2974,7 +2974,7 @@ async def test_where_its_code_was_last_follows_its_file_through_a_rename(
         ("c3", "pkg/c.py"): keep,
         ("c3", "pkg/b.py"): _ROWS,
     }
-    files = code_link_repo.Files("o", "code-a")
+    files = code_link_pass.Files("o", "code-a")
 
     async def at(commit, path):
         src = commits.get((commit, path))
@@ -2982,7 +2982,7 @@ async def test_where_its_code_was_last_follows_its_file_through_a_rename(
 
     async def range_of(base, head):
         renames = {"pkg/a.py": "pkg/c.py"} if (base, head) == ("c0", "c1") else {}
-        return code_link_repo.Range(base, renames)
+        return code_link_pass.Range(base, renames)
 
     async def candidates(org, cns, *, names=None, qualified_names=None):
         return [Definition("pkg/b.py", "pkg.b::fetch_rows", "fetch_rows")]
@@ -3017,7 +3017,7 @@ async def test_where_its_code_was_last_follows_its_file_through_a_rename(
         {"pkg/c.py": "pkg/c.py"} if separate else {"pkg/a.py": "pkg/c.py", "pkg/b.py": "pkg/b.py"}
     )
     moves = await code_link_recheck._recheck(
-        "o", "code-a", [row], code_link_repo.Range(checked, paths), "c3", files
+        "o", "code-a", [row], code_link_pass.Range(checked, paths), "c3", files
     )
     assert [m.after.state for m in moves] == ["missing"]
 
@@ -3096,7 +3096,7 @@ async def test_code_whose_scope_was_renamed_away_as_it_moved_is_followed(
             "version": 1,
         }
     )
-    files = code_link_repo.Files("o", "c")
+    files = code_link_pass.Files("o", "c")
     changed = await files.range(base, head)
     moves = await code_link_recheck._recheck("o", "c", [row], changed, head, files)
     assert [(m.after.state, m.after.path) for m in moves] == [("moved", new)]
@@ -3111,7 +3111,7 @@ async def test_code_gone_in_a_way_the_edit_filter_missed_is_unsure(monkeypatch) 
         ("c1", "pkg/a.py"): "# nothing defined here now\n",
         ("c1", "pkg/b.py"): _ROWS,
     }
-    files = code_link_repo.Files("o", "code-a")
+    files = code_link_pass.Files("o", "code-a")
 
     async def at(commit, path):
         src = commits.get((commit, path))
@@ -3143,7 +3143,7 @@ async def test_code_gone_in_a_way_the_edit_filter_missed_is_unsure(monkeypatch) 
             "version": 1,
         }
     )
-    changed = code_link_repo.Range("c0", {"pkg/a.py": "pkg/a.py", "pkg/b.py": "pkg/b.py"})
+    changed = code_link_pass.Range("c0", {"pkg/a.py": "pkg/a.py", "pkg/b.py": "pkg/b.py"})
     moves = await code_link_recheck._recheck("o", "code-a", [row], changed, "c1", files)
     assert [m.after.state for m in moves] == ["unresolved"]
 
@@ -3191,7 +3191,7 @@ async def test_a_remembered_anchor_counts_only_in_the_history_it_came_from(monke
     from server.code.domain.anchor import Link
 
     def files_over(commits, history):
-        files = code_link_repo.Files("o", "code-a")
+        files = code_link_pass.Files("o", "code-a")
 
         async def at(commit, path):
             src = commits.get((commit, path))
@@ -3240,7 +3240,7 @@ async def test_where_its_code_was_last_is_unknown_when_it_went_unseen(monkeypatc
         ("c1", "pkg/a.py"): '_ = """\n' + code + '"""\n',
         ("c2", "pkg/a.py"): '_ = """\n' + code + '"""\n# fetch_rows is gone\n',
     }
-    files = code_link_repo.Files("o", "code-a")
+    files = code_link_pass.Files("o", "code-a")
 
     async def at(commit, path):
         src = commits.get((commit, path))
@@ -3323,7 +3323,7 @@ async def test_a_memory_that_links_nothing_is_linked_once(monkeypatch) -> None:
     monkeypatch.setattr(code_links.code, "candidates", lambda *a, **k: record("candidates", []))
     for module in (code_links, code_link_reads):
         monkeypatch.setattr(module, "code_namespace_for", lambda org, ns, tags: "code-r")
-    await code_links._link_org("o", [head], code_link_repo.PassResult())
+    await code_links._link_org("o", [head], code_link_pass.PassResult())
     assert calls == ["links", "head", "insert", "heads"]  # one read back, nothing relinked
 
 

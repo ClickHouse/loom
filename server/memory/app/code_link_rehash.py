@@ -6,8 +6,8 @@ from typing import Any
 
 from server.code.app import memory_links as code
 from server.code.domain.declaration import fingerprint_version
+from server.memory.app import code_link_pass as link_pass
 from server.memory.app import code_link_policy as policy
-from server.memory.app import code_link_repo as repo
 from server.memory.store import code_links as store
 from server.memory.store.code_links import Former, LinkRow
 
@@ -15,7 +15,9 @@ from server.memory.store.code_links import Former, LinkRow
 _REFINGERPRINT_PAGE = 500
 
 
-async def refingerprint(org: str, cns: str, files: repo.Files, result: repo.PassResult) -> None:
+async def refingerprint(
+    org: str, cns: str, files: link_pass.Files, result: link_pass.PassResult
+) -> None:
     """Re-hash the links hashed under other rules or grammars than these, a page at a
     time, each page written as it is done; a link whose code does not parse stays due
     for the next pass."""
@@ -46,7 +48,7 @@ async def refingerprint(org: str, cns: str, files: repo.Files, result: repo.Pass
             break
 
 
-async def _rehashed(a: LinkRow, files: repo.Files) -> dict[str, Any]:
+async def _rehashed(a: LinkRow, files: link_pass.Files) -> dict[str, Any]:
     """A symbol link's hashes, former baselines included, re-hashed under the current
     rules from the commits they were taken at, its judgement dropped, and its state set
     by what these rules see between the checked text and the baseline. No hash is ever
@@ -60,7 +62,7 @@ async def _rehashed(a: LinkRow, files: repo.Files) -> dict[str, Any]:
         found = await files.defs(commit, path, qualified_name)
         return (found[0].body_hash, found[0].shape.exact) if found else ("", "")
 
-    link = repo.link_of(a)
+    link = link_pass.link_of(a)
     anchored = await read_at(a["anchored_commit"], link.anchored_path, link.anchored_name)
     checked = await read_at(a["checked_commit"], link.read_path, link.qualified_name)
     out: dict[str, Any] = {

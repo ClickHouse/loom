@@ -23,9 +23,9 @@ from server.code.domain.anchor import (
 from server.code.domain.index.repos import repo_for_namespace
 from server.code.domain.successor import Side, Successor, close_to, successor
 from server.core.datetimes import naive_utc_now
+from server.memory.app import code_link_pass as link_pass
 from server.memory.app import code_link_policy as policy
 from server.memory.app import code_link_rehash as rehash
-from server.memory.app import code_link_repo as repo
 from server.memory.app import code_links as links
 from server.memory.app.code_link_reads import (
     SERVED,
@@ -47,7 +47,7 @@ class _Read:
     and what is there, and what the search in that file found."""
 
     row: LinkRow
-    range: repo.Range | None
+    range: link_pass.Range | None
     before: Link
     now: str
     defs: list[Definition]
@@ -65,7 +65,7 @@ class Move:
 _LOST_STATES = ("unresolved", "missing")
 
 
-async def recheck_all(result: repo.PassResult) -> None:
+async def recheck_all(result: link_pass.PassResult) -> None:
     """Follow every code namespace's links from the head they were checked at to its
     indexed head, settle its pending names, then run the policy of every memory a change
     left due. A repository that fails is retried from the same head next pass."""
@@ -80,9 +80,9 @@ async def recheck_all(result: repo.PassResult) -> None:
     for i, (org, cns) in enumerate(repositories):
         rest = len(repositories) - i
         granted = (left + rest - 1) // rest
-        budget = repo.Budget(judgements=granted)
+        budget = link_pass.Budget(judgements=granted)
         try:
-            async with repo.repository_locks.lease(_lock_name(org, cns)):
+            async with link_pass.repository_locks.lease(_lock_name(org, cns)):
                 await _recheck_repository(org, cns, budget, result)
         except LeaseBusy:
             pass  # another host is checking this repository
@@ -96,10 +96,10 @@ def _lock_name(org: str, cns: str) -> str:
 
 
 async def _recheck_repository(
-    org: str, cns: str, budget: repo.Budget, result: repo.PassResult
+    org: str, cns: str, budget: link_pass.Budget, result: link_pass.PassResult
 ) -> None:
     """One repository's recheck, settled names and policies, under its lease."""
-    files = repo.Files(org, cns)
+    files = link_pass.Files(org, cns)
     head = await code.indexed_head(org, cns)
     checked = await code.checked_head(org, cns)
     moves = await _resolve_pending(org, cns, head, files, result)
@@ -126,9 +126,9 @@ async def _recheck_repository(
     await policy.apply_policies(org, cns, head, files, budget, result)
 
 
-def _progress(org: str, cns: str) -> code.Cursor[dict[str, str]]:
+def _progress(org: str, cns: str) -> link_pass.Cursor[dict[str, str]]:
     """The cursor a repository's recheck records its head and last path done in."""
-    return code.Cursor(f"recheck/{org}/{cns}", {})
+    return link_pass.Cursor(f"recheck/{org}/{cns}", {})
 
 
 # paths rechecked between two writes: a pass the deadline cuts keeps what it did
@@ -149,11 +149,16 @@ _MAX_EDITS = 32
 
 # (org, repository, start, path, name) -> (the commit that removed its code from its
 # file, the last one it was in), the last 4,096 used
-_anchors: repo.Recent[tuple[str, ...], tuple[str, str]] = repo.Recent(4096)
+_anchors: link_pass.Recent[tuple[str, ...], tuple[str, str]] = link_pass.Recent(4096)
 
 
 async def _follow(
-    org: str, cns: str, checked: str, head: str, files: repo.Files, result: repo.PassResult
+    org: str,
+    cns: str,
+    checked: str,
+    head: str,
+    files: link_pass.Files,
+    result: link_pass.PassResult,
 ) -> None:
     """Recheck, path by path, the links `checked..head` may have changed (all of them
     without a range), writing every `_PATHS_PER_WRITE` paths and recording the last one
@@ -203,9 +208,9 @@ async def _recheck_paths(
     cns: str,
     by_path: dict[str, list[LinkRow]],
     paths: list[str],
-    changed: repo.Range | None,
+    changed: link_pass.Range | None,
     head: str,
-    files: repo.Files,
+    files: link_pass.Files,
     unparsed: set[str],
 ) -> list[Move]:
     """The moves of the links on `paths`. A path whose recheck reads a file that does
@@ -225,7 +230,7 @@ async def _recheck_paths(
 
 
 async def _retry_unparsed(
-    org: str, cns: str, head: str, files: repo.Files, result: repo.PassResult
+    org: str, cns: str, head: str, files: link_pass.Files, result: link_pass.PassResult
 ) -> None:
     """Recheck the links on the paths a pass could not parse, each from the commit it was
     last checked at; a path that still does not parse is retried again next pass."""
@@ -251,11 +256,11 @@ async def _retry_unparsed(
 
 
 async def _unparsed(org: str, cns: str) -> set[str]:
-    return set(await code.Cursor[list[str]](f"unparsed/{org}/{cns}", []).read())
+    return set(await link_pass.Cursor[list[str]](f"unparsed/{org}/{cns}", []).read())
 
 
 async def _set_unparsed(org: str, cns: str, paths: set[str]) -> None:
-    await code.Cursor[list[str]](f"unparsed/{org}/{cns}", []).write(sorted(paths))
+    await link_pass.Cursor[list[str]](f"unparsed/{org}/{cns}", []).write(sorted(paths))
 
 
 async def _lost(org: str, cns: str, paths: set[str]) -> list[LinkRow]:
@@ -276,9 +281,9 @@ async def _recheck(
     org: str,
     cns: str,
     rows: list[LinkRow],
-    changed: repo.Range | None,
+    changed: link_pass.Range | None,
     head: str,
-    files: repo.Files,
+    files: link_pass.Files,
 ) -> list[Move]:
     """The moves of these links rechecked at `head`, each followed over `changed` or
     from its own commit."""
@@ -292,7 +297,7 @@ async def _recheck(
                 if await files.is_ancestor(head, checked):
                     continue  # checked at or after head: nothing to do
                 own = await files.range(checked, head)
-        before = repo.link_of(a)
+        before = link_pass.link_of(a)
         now = own.paths.get(before.path, before.path) if own else before.path
         here = await files.at(head, now) if now else None
         now, defs = (now, here.defs) if here is not None else ("", [])
@@ -343,11 +348,11 @@ async def _recheck(
 
 
 async def _namesakes(
-    files: repo.Files,
+    files: link_pass.Files,
     before: Link,
     a: LinkRow,
     candidates: list[Definition],
-    changed: repo.Range | None,
+    changed: link_pass.Range | None,
     head: str,
 ) -> list[Definition] | None:
     """The namesakes in `candidates` (other files') that appeared after the lost link's
@@ -378,7 +383,7 @@ async def _namesakes(
 
 
 async def _last_in_place(
-    files: repo.Files, before: Link, start: str, head: str, local: str
+    files: link_pass.Files, before: Link, start: str, head: str, local: str
 ) -> str | None:
     """The last commit after `start` whose version of the link's file (followed through
     renames) still defines `local`: `head` when it still does; None when the history
@@ -408,14 +413,14 @@ async def _last_in_place(
             return head if await _defines(files, head, path, local) else None
 
 
-async def _defines(files: repo.Files, commit: str, path: str, local: str) -> bool:
+async def _defines(files: link_pass.Files, commit: str, path: str, local: str) -> bool:
     """`path` at `commit` defines a name that is `local` inside its module."""
     names = await files.names(commit, path)
     return names is not None and any(local_name(qn, path) == local for qn in names)
 
 
 async def _moved_and_edited(
-    files: repo.Files, before: Link, a: LinkRow, new: list[Definition], head: str
+    files: link_pass.Files, before: Link, a: LinkRow, new: list[Definition], head: str
 ) -> Successor:
     """The one definition with its name in another module among `new` (namesakes new
     since the link was in place), edited as it moved: followed as changed when its text
@@ -441,7 +446,9 @@ async def _moved_and_edited(
     return files.successors[key]
 
 
-async def _renamed(files: repo.Files, before: Link, a: LinkRow, now: str, head: str) -> Successor:
+async def _renamed(
+    files: link_pass.Files, before: Link, a: LinkRow, now: str, head: str
+) -> Successor:
     """What the linked definition became at `head` in `now` when its name is gone there
     (`successor.successor`): read against the file as the link was last checked."""
     checked = a["checked_commit"]
@@ -480,7 +487,7 @@ async def _elsewhere(org: str, cns: str, lost: dict[str, str]) -> dict[str, list
 
 
 async def _resolve_pending(
-    org: str, cns: str, head: str, files: repo.Files, result: repo.PassResult
+    org: str, cns: str, head: str, files: link_pass.Files, result: link_pass.PassResult
 ) -> list[Move]:
     """Every pass: drop pending names older than `memory_code_links_pending_days`; once
     the repository is indexed, relink the memories written before its first index and
@@ -533,7 +540,11 @@ async def _resolve_pending(
 
 
 async def _relink(
-    org: str, cns: str, markers: list[PendingLink], files: repo.Files, result: repo.PassResult
+    org: str,
+    cns: str,
+    markers: list[PendingLink],
+    files: link_pass.Files,
+    result: link_pass.PassResult,
 ) -> None:
     """Link the memories waiting behind a `*` marker (written before the repository's
     first index, or while it could not be read), dropping the links of their earlier
