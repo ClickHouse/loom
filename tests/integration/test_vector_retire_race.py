@@ -778,3 +778,116 @@ async def test_a_reindex_lands_above_a_newer_row_of_its_model(ch: Any) -> None:
                 f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
                 params={"o": ORG, "n": ns},
             )
+
+
+async def test_chunks_finishing_after_a_newer_high_write_are_not_served(
+    ch: Any, control_plane_url: str, monkeypatch: Any
+) -> None:
+    """A long memory.set pauses while its chunks embed; a newer write labels the key
+    'high' and retires the chunks there are; the older write's chunks then land. It
+    re-reads the head after its insert and retires them, so search serves nothing."""
+    import httpx
+
+    from server.auth.jwt import mint_token
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import set_chunks, write
+    from server.memory.domain.excerpt import EXCERPT_LIMIT
+
+    ns = f"itest-{uuid.uuid4().hex[:12]}"
+    key = f"late_chunks_{uuid.uuid4().hex[:6]}"
+    ident = {"org": ORG, "namespace": ns, "agent": AGENT}
+    secret = "sk-proj-" + uuid.uuid4().hex + uuid.uuid4().hex[:8]
+    sentence = f"The {key} runbook says the staging vault is rotated every friday. "
+    long_plain = sentence * (EXCERPT_LIMIT // len(sentence) + 4)
+
+    entered, gate = asyncio.Event(), asyncio.Event()
+    real_embed_chunks = set_chunks._embed_chunks
+
+    async def paused_embed_chunks(embedder: Any, chunks: list[str]) -> list[list[float]]:
+        entered.set()
+        await gate.wait()
+        return await real_embed_chunks(embedder, chunks)
+
+    monkeypatch.setattr(set_chunks, "_embed_chunks", paused_embed_chunks)
+
+    async def live_chunks() -> int:
+        row = await ch.query_one(
+            "SELECT count() AS n FROM loom.memory_chunks FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND parent_memory_key = {k:String}"
+            " AND tombstoned_at IS NULL",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        return int(row["n"])
+
+    token = mint_token(
+        subject="late-chunks", org=ORG, namespaces=[ns], roles=["writer"], ttl_seconds=600
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    async with httpx.AsyncClient(base_url=control_plane_url, headers=headers, timeout=30) as http:
+        try:
+            task = asyncio.create_task(
+                write.handle_memory_set(MemorySetInput(**ident, memory_key=key, value=long_plain))
+            )
+            await asyncio.wait_for(entered.wait(), 30)
+            await write.handle_memory_set(
+                MemorySetInput(**ident, memory_key=key, value=f"root token {secret}")
+            )
+            gate.set()
+            await asyncio.wait_for(task, 30)
+            head = await ch.query_one(
+                "SELECT sensitivity FROM loom.memory FINAL WHERE org = {o:String}"
+                " AND namespace = {n:String} AND memory_key = {k:String}",
+                params={"o": ORG, "n": ns, "k": key},
+            )
+            assert head["sensitivity"] == "high"
+            assert await live_chunks() == 0
+            r = await http.post(
+                "/v1/memory.search",
+                json={**ident, "query": "staging vault rotated every friday", "top_k": 5},
+            )
+            assert r.status_code == 200, r.text
+            assert "runbook" not in r.text
+            assert key not in [h.get("memory_key") for h in r.json().get("results", [])]
+        finally:
+            gate.set()
+            for table in ("memory", "memory_embeddings", "entity_vectors", "memory_chunks"):
+                await ch.execute(
+                    f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
+                    params={"o": ORG, "n": ns},
+                )
+
+
+async def test_a_deleted_memory_restores_searchable(ch: Any) -> None:
+    """set, delete, restore: the restored key has a live vector again (the restore's
+    embeddings read once failed on every call with ILLEGAL_AGGREGATION)."""
+    from server.memory.api.models_crud import MemoryDeleteInput, MemoryRestoreInput, MemorySetInput
+    from server.memory.app import handlers, restore, write
+
+    ns = f"itest-{uuid.uuid4().hex[:12]}"
+    key = f"restore_live_{uuid.uuid4().hex[:6]}"
+    ident = {"org": ORG, "namespace": ns, "agent": AGENT}
+
+    async def live_vectors() -> int:
+        row = await ch.query_one(
+            "SELECT count() AS n FROM loom.memory_embeddings FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND memory_key = {k:String}"
+            " AND tombstoned_at IS NULL AND embedding_dim > 0",
+            params={"o": ORG, "n": ns, "k": key},
+        )
+        return int(row["n"])
+
+    try:
+        value = f"the {key} vault is audited each quarter"
+        await write.handle_memory_set(MemorySetInput(**ident, memory_key=key, value=value))
+        assert await live_vectors() == 1
+        out = await handlers.handle_memory_delete(MemoryDeleteInput(**ident, memory_key=key))
+        assert out.tombstoned and await live_vectors() == 0
+        res = await restore.handle_memory_restore(MemoryRestoreInput(**ident, memory_key=key))
+        assert res.restored
+        assert await live_vectors() == 1
+    finally:
+        for table in ("memory", "memory_embeddings", "entity_vectors"):
+            await ch.execute(
+                f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
+                params={"o": ORG, "n": ns},
+            )

@@ -411,7 +411,42 @@ async def write_set_chunks(
         rows,
         settings={"async_insert": 0, "wait_for_async_insert": 1},
     )
+    if not await _head_still_embedded(input, ch=ch):
+        # A newer write made the key 'high' (or unsearchable) or deleted it while these
+        # chunks were embedding. It inserted its row before tombstoning the key's chunks,
+        # so either its tombstone saw these or this strong read sees its row.
+        await tombstone_set_chunks(
+            org=input.org,
+            namespace=input.namespace,
+            memory_key=input.memory_key,
+            user_id=str(getattr(input, "user_id", "") or "-"),
+            ch=ch,
+        )
+        return 0
     return len(rows)
+
+
+async def _head_still_embedded(input: Any, *, ch: Any) -> bool:
+    """The key's live head, read strongly, is a row search may serve."""
+    import server.memory.store as memory_repo
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory.domain.memory_types import is_embedded
+
+    head = await memory_repo.get_by_key(
+        memory_repo.Identity(
+            org=input.org,
+            namespace=input.namespace,
+            agent=getattr(input, "agent", "") or "",
+            user_id=str(getattr(input, "user_id", "") or "-"),
+            session_id=str(getattr(input, "session_id", "") or "-"),
+        ),
+        input.memory_key,
+        fresh=True,
+        strong=True,
+        scope=WHOLE_NAMESPACE,
+        ch=ch,
+    )
+    return head is not None and is_embedded(head.memory_type, head.sensitivity)
 
 
 async def write_set_chunks_fail_open(
