@@ -133,39 +133,29 @@ async def embed_query(
     """The vector for `text` with the corpus spellings of `input.query`'s
     words applied, and those spellings; None when `text` was embedded as
     typed because the lookup did not answer or the respelled embed failed.
-    The embed of `text` as typed always runs, beside the lookup (skipped
-    when its answer is cached): it is the vector when nothing is respelled,
-    and the fallback when the respelled embed fails."""
+    A lookup runs beside the embed of `text` as typed; a cached answer
+    embeds only the text it names, and as typed only if that fails. The
+    search fails only when every embed it tried failed."""
     found = _lookup_key(input, embedding_model)
     if found is None:
         return await embed(text), {}
     q, tokens, key = found
-    known = _cached(key)
-    if known == {}:
-        return await embed(text), {}
-    tasks: list[asyncio.Task[Any]] = []
+    as_typed: asyncio.Task[list[float]] | None = None
     try:
-        as_typed = asyncio.create_task(embed(text))
-        tasks.append(as_typed)
-        spellings = known
+        spellings = _cached(key)
         if spellings is None:
-            lookup = asyncio.create_task(_lookup(q, tokens, key))
-            tasks.append(lookup)
-            # An embed that fails at once fails the search at once, not after the lookup.
-            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-            if as_typed.done():
-                as_typed.result()  # raises the embed's error
-            spellings = await lookup
+            as_typed = asyncio.create_task(embed(text))  # overlaps the lookup
+            spellings = await _lookup(q, tokens, key)
         if not spellings:
-            return await as_typed, spellings
+            return await (as_typed or embed(text)), spellings
         try:
             return await embed(apply_spellings(text, spellings)), spellings
         except Exception as e:  # noqa: BLE001 — the rewrite is a recall aid; the vector as typed serves
             failure = e
-        vec = await as_typed
+        vec = await (as_typed or embed(text))
         log.warning("embedding the respelled query failed, using it as typed: %r", failure)
         return vec, None
     finally:
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        if as_typed is not None:
+            as_typed.cancel()
+            await asyncio.gather(as_typed, return_exceptions=True)

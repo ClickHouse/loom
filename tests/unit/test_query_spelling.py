@@ -22,12 +22,12 @@ def _input(query: str = "datalakecatalog") -> MemorySearchInput:
 
 
 async def _spellings(inp: MemorySearchInput) -> dict[str, str] | None:
-    """What a search with `inp` respells: the cached answer, else a lookup."""
-    found = app._lookup_key(inp, "m")
-    if found is None:
-        return {}
-    cached = app._cached(found[2])
-    return cached if cached is not None else await app._lookup(*found)
+    """What a search with `inp` respells, through `embed_query` itself."""
+
+    async def embed(_text: str) -> list[float]:
+        return [1.0]
+
+    return (await app.embed_query(embed, inp.query, inp, "m"))[1]
 
 
 @pytest.fixture(autouse=True)
@@ -322,6 +322,7 @@ async def test_memory_search_reports_the_spelling_in_retrieval_work(monkeypatch,
     from server.memory.app.search.embed import _embed_search_query
 
     async def lookup(_q, _tokens, _key):
+        await asyncio.sleep(0)  # a real lookup waits on ClickHouse, so the as-typed embed starts
         return spellings
 
     monkeypatch.setattr(app, "_lookup", lookup)
@@ -418,23 +419,6 @@ async def test_a_failed_rewrite_embed_still_counts_both_calls(monkeypatch):
     assert actual_work == {"embedding_calls": 2, "query_spellings_skipped": True}
 
 
-async def test_an_embed_that_fails_at_once_does_not_wait_for_the_lookup(monkeypatch):
-    async def spelling_rows(_ch, _q, _tokens):
-        await asyncio.sleep(5)
-        return {}
-
-    monkeypatch.setattr(app, "spelling_rows", spelling_rows)
-    monkeypatch.setattr(app, "get_client", lambda: None)
-
-    async def embed(_text: str) -> list[float]:
-        raise RuntimeError("401 from the provider")
-
-    t = time.monotonic()
-    with pytest.raises(RuntimeError, match="401"):
-        await app.embed_query(embed, "datalakecatalog", _input(), "m")
-    assert time.monotonic() - t < 0.1
-
-
 def test_a_cache_hit_keeps_the_answer_from_being_evicted_first(monkeypatch):
     _lookup_returns(monkeypatch, {"DataLakeCatalog": 7})
     monkeypatch.setattr(app, "_CACHE_SIZE", 2)
@@ -458,28 +442,9 @@ async def test_a_dead_embedder_fails_the_search_without_claiming_a_fallback(monk
         pytest.raises(RuntimeError, match="401"),
     ):
         await app.embed_query(embed, "datalakecatalog", _input(), "m")
-    # The respelled text was tried, then the as-typed error surfaced, unannounced.
-    assert texts == ["datalakecatalog", "DataLakeCatalog"]
+    # Both texts were tried before the search failed, and no fallback was announced.
+    assert sorted(texts) == ["DataLakeCatalog", "datalakecatalog"]
     assert not caplog.records
-
-
-async def test_an_embed_that_fails_before_the_lookup_answers_is_not_retried_respelled(monkeypatch):
-    async def spelling_rows(_ch, _q, _tokens):
-        await asyncio.sleep(0.05)
-        return {"DataLakeCatalog": 9}
-
-    monkeypatch.setattr(app, "spelling_rows", spelling_rows)
-    monkeypatch.setattr(app, "get_client", lambda: None)
-    texts: list[str] = []
-
-    async def embed(text: str) -> list[float]:
-        texts.append(text)
-        await asyncio.sleep(0.01)
-        raise RuntimeError("401 from the provider")
-
-    with pytest.raises(RuntimeError, match="401"):
-        await app.embed_query(embed, "datalakecatalog", _input(), "m")
-    assert texts == ["datalakecatalog"]
 
 
 async def test_a_cached_answer_skips_the_lookup(monkeypatch):
@@ -518,3 +483,46 @@ async def test_an_outage_serves_the_query_as_typed_cached_or_not(monkeypatch):
 
     for _ in range(2):  # the first call looks the spelling up, the second has it cached
         assert await app.embed_query(embed, "datalakecatalog", _input(), "m") == ([1.0], None)
+
+
+async def test_a_dead_embedder_fails_once_the_lookup_has_answered(monkeypatch):
+    async def spelling_rows(_ch, _q, _tokens):
+        await asyncio.sleep(5)  # past the lookup's deadline
+        return {}
+
+    monkeypatch.setattr(app, "spelling_rows", spelling_rows)
+    monkeypatch.setattr(app, "get_client", lambda: None)
+
+    async def embed(_text: str) -> list[float]:
+        raise RuntimeError("401 from the provider")
+
+    t = time.monotonic()
+    with pytest.raises(RuntimeError, match="401"):
+        await app.embed_query(embed, "datalakecatalog", _input(), "m")
+    assert time.monotonic() - t < app._LOOKUP_BOUND_S + 0.2
+
+
+async def test_a_cached_rewrite_runs_one_embed(monkeypatch):
+    _lookup_returns(monkeypatch, {"DataLakeCatalog": 9})
+    await _spellings(_input())  # warms the cache
+    embed = _Embedder()
+    assert await app.embed_query(embed, "datalakecatalog", _input(), "m") == (
+        [1.0],
+        {"datalakecatalog": "DataLakeCatalog"},
+    )
+    assert embed.texts == ["DataLakeCatalog"]
+
+
+async def test_an_outage_with_only_the_respelled_text_cached_serves_it_cached_or_not(monkeypatch):
+    _lookup_returns(monkeypatch, {"DataLakeCatalog": 9})
+
+    async def embed(text: str) -> list[float]:
+        if text == "DataLakeCatalog":
+            return [2.0]
+        raise RuntimeError("provider down")
+
+    for _ in range(2):  # the first call looks the spelling up, the second has it cached
+        assert await app.embed_query(embed, "datalakecatalog", _input(), "m") == (
+            [2.0],
+            {"datalakecatalog": "DataLakeCatalog"},
+        )
