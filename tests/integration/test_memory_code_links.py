@@ -11,6 +11,7 @@ Handlers run in-process; skips without LOOM_CH_HOST (house rule).
 
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
 from pathlib import Path
@@ -1529,6 +1530,11 @@ async def test_a_change_the_old_rules_missed_is_judged_after_new_ones(
     claim = f"`chosen` returns three ({MEM})"
     mid = await _remember(MEM, "chosen", claim)
     await _pass()
+
+    async def unsure(judged: str, before: str, after: str) -> tuple[str, str]:
+        return "unsure", ""
+
+    monkeypatch.setattr(code_link_judge, "judge_claim", unsure)
     await _relink_once(repo, "src/c.py", src.replace("if True", "if False"))
     # as the old rules left it: blind to the condition, so still fresh and due for nothing
     _as_old_rules(
@@ -3589,3 +3595,33 @@ async def test_a_candidate_elsewhere_that_does_not_parse_leaves_only_its_link_un
         assert not result.errors, result.errors  # its own file parses: nothing to retry
     assert [link["state"] for link in await _links(alpha)] == ["changed"]
     assert [link["state"] for link in await _links(gamma)] == ["unresolved"]
+
+
+async def test_a_memory_whose_judgement_fails_goes_behind_the_others(env, monkeypatch) -> None:
+    from server.memory.app import code_link_judge, code_link_pass, code_link_recheck
+    from server.settings import settings
+
+    repo = env
+    src = "def poison_fn():\n    return 1\n\n\ndef fine_fn():\n    return 1\n"
+    c1 = repo.commit({"src/m.py": src})
+    await _index(TRUNK, repo, c1, ["src/m.py"])
+    await _set_policy(MEM, "revise")
+    await _remember(MEM, "poison", "`poison_fn` returns one")
+    await _remember(MEM, "fine", "`fine_fn` returns one")
+    await _pass()
+    asked: list[str] = []
+
+    async def judge(claim: str, before: str, after: str) -> tuple[str, str]:
+        asked.append(claim)
+        if claim == asked[0]:
+            raise RuntimeError("provider 400")  # the first memory asked always fails
+        return "unsure", ""
+
+    monkeypatch.setattr(code_link_judge, "judge_claim", judge)
+    monkeypatch.setattr(settings, "memory_code_links_revise_per_pass", 1)
+    c2 = repo.commit({"src/m.py": src.replace("return 1", "return 2")})
+    await _index(TRUNK, repo, c2, ["src/m.py"])
+    for _ in range(3):
+        await code_link_recheck.recheck_all(code_link_pass.PassResult())
+        await asyncio.sleep(1.1)  # the failure's stamp is a second later than the rest
+    assert len(set(asked)) == 2, asked

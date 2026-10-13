@@ -4,8 +4,11 @@ asks the judge whether a changed claim still holds."""
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass, field
 from typing import Any
 
+from server.code.domain.anchor import Definition
+from server.core.datetimes import naive_utc_now
 from server.memory.app import code_link_judge
 from server.memory.app import code_link_pass as link_pass
 from server.memory.app.code_link_reads import (
@@ -16,9 +19,6 @@ from server.memory.domain import code_change
 from server.memory.domain.code_change import REVISE
 from server.memory.store import code_links as store
 from server.memory.store.code_links import LinkRow
-
-# The links a policy updated and those it left due, by (path, qualified_name).
-_Revised = tuple[dict[tuple[str, str], LinkRow], set[tuple[str, str]]]
 
 
 async def revised_namespaces(links: list[LinkRow]) -> set[tuple[str, str]]:
@@ -31,6 +31,16 @@ async def revised_namespaces(links: list[LinkRow]) -> set[tuple[str, str]]:
         policies = await store.code_change_policies(org, sorted(nss))
         out |= {(org, ns) for ns in nss if code_change.policy_of(policies.get(ns, "")) == REVISE}
     return out
+
+
+@dataclass
+class _Revised:
+    """What a policy did with one memory's links, by (path, qualified_name): those it
+    updated, those past the budget and those whose judgement failed (both left due)."""
+
+    updated: dict[tuple[str, str], LinkRow] = field(default_factory=dict)
+    due: set[tuple[str, str]] = field(default_factory=set)
+    failed: set[tuple[str, str]] = field(default_factory=set)
 
 
 async def apply_policies(
@@ -55,7 +65,7 @@ async def apply_policies(
     policies = await store.code_change_policies(
         org, sorted({h["namespace"] for h in heads.values()})
     )
-    rows: list[LinkRow] = []
+    rows: list[LinkRow] = []  # settled without a judgement: written once, at the end
     for mid in due:
         try:
             row = heads.get(mid)
@@ -67,21 +77,34 @@ async def apply_policies(
             mine = [
                 a for a in links[mid] if a["inputs_hash"] == want and a["code_namespace"] == cns
             ]
-            out: _Revised | None = {}, set()
+            out: _Revised | None = _Revised()
             if mine:
                 policy = code_change.policy_of(policies.get(str(row["namespace"]), ""))
+                spent = budget.judgements
                 out = await _revise(org, row, mine, policy, head, files, budget, result)
-            if out is None:
-                continue  # deferred: stays due
-            updated, left = out
-            rows += [
-                store.link_row(updated.get(k, a), follows=a["version"], policy_due=int(k in left))
-                for a in mine
-                for k in [(a["path"], a["qualified_name"])]
-            ]
+                if out is not None and budget.judgements < spent:
+                    # paid for: written now, right after the memory was last read
+                    await store.insert(_policy_rows(mine, out))
+                    continue
+            if out is not None:
+                rows += _policy_rows(mine, out)
         except Exception as e:  # noqa: BLE001 — one memory's failure never stops the pass
             result.errors.append(f"policy {org}/{mid}: {e}")
     await store.insert(rows)
+
+
+def _policy_rows(links: list[LinkRow], out: _Revised) -> list[LinkRow]:
+    """The new version of each of `links`. A failed judgement's is stamped as checked
+    now, so the next passes read the memories still due before it."""
+    rows = []
+    for a in links:
+        k = (a["path"], a["qualified_name"])
+        stamp = {"checked_at": naive_utc_now()} if k in out.failed else {}
+        due = int(k in out.due or k in out.failed)
+        rows.append(
+            store.link_row(out.updated.get(k, a), follows=a["version"], policy_due=due, **stamp)
+        )
+    return rows
 
 
 async def _revise(
@@ -94,38 +117,43 @@ async def _revise(
     budget: link_pass.Budget,
     result: link_pass.PassResult,
 ) -> _Revised | None:
-    """The `revise` policy for one memory: the links it updated and those it left due
-    (past the budget), by (path, qualified_name); None when the whole memory is deferred
-    to the next pass. Each changed definition is judged on its own."""
+    """The `revise` policy for one memory; None when the whole memory is deferred to the
+    next pass. Each changed definition is judged on its own."""
     changed = [
         a for a in links if a["state"] == "changed" and a["qualified_name"] and a["policy_due"]
     ]
     if policy != code_change.REVISE or not changed or not _judgeable(row):
-        return {}, set()
+        return _Revised()
     claim = link_pass.claim_of(row["value"])
     if claim is None:
-        return {}, set()
+        return _Revised()
     if budget.judgements <= 0:
         return None
-    # the batch read may be old by now, and every judgement awaits the model: the memory is
-    # read again before the first and after each, and one rewritten, held or labelled
-    # `high` meanwhile is judged no further, what was judged of it dropped
-    if not await _unchanged(org, row):
-        return {}, set()
-    updated: dict[tuple[str, str], LinkRow] = {}
-    due: set[tuple[str, str]] = set()
+    out = _Revised()
     for a in changed:
         key = (a["path"], a["qualified_name"])
         if budget.judgements <= 0:
-            due.add(key)
+            out.due.add(key)
             continue
-        link = await _judge(files, claim, a, head, budget)
+        texts = await _texts(files, claim, a, head)
+        if texts is None:
+            continue
+        # read again right before the judge: one rewritten, held or labelled `high`
+        # since is judged no further, what was judged of it dropped
         if not await _unchanged(org, row):
-            return {}, set()
+            return _Revised()
+        try:
+            link = await _judge(claim, a, texts, head, budget)
+        except Exception as e:  # noqa: BLE001 — a failed judgement leaves its link due
+            result.errors.append(f"judge {org}/{row['mid']}: {e}")
+            out.failed.add(key)
+            continue
         if link is not None:
-            updated[key] = link
+            out.updated[key] = link
             result.suggested += bool(link["suggestion"])
-    return None if len(due) == len(changed) else (updated, due)
+    if out.updated and not await _unchanged(org, row):
+        return _Revised()
+    return None if len(out.due) == len(changed) else out
 
 
 async def _unchanged(org: str, row: dict[str, Any]) -> bool:
@@ -145,13 +173,20 @@ def _judgeable(row: dict[str, Any]) -> bool:
     )
 
 
-async def _judge(
-    files: link_pass.Files, claim: str, link: LinkRow, head: str, budget: link_pass.Budget
-) -> LinkRow | None:
-    """`link` judged against the code it was written for and the code now, spending one
-    of `budget`'s judgements; None when it is not judged: a method its renamed class
-    carried (its text cannot show what changed in the class), either side gone, the same
-    text on both, text past the judge's reach, or an unsure verdict."""
+@dataclass(frozen=True)
+class _Texts:
+    """What the judge reads of a link: its code where the claim was written (`old`) and
+    at the head (`new`, of definition `now`)."""
+
+    old: str
+    new: str
+    now: Definition
+
+
+async def _texts(files: link_pass.Files, claim: str, link: LinkRow, head: str) -> _Texts | None:
+    """The texts the judge would read for `link`; None when it is not judged: a method
+    its renamed class carried (its text cannot show what changed in the class), either
+    side gone, the same text on both, or text past the judge's reach."""
     if link["carried"]:
         return None
     if not await files.has(link["anchored_commit"]):
@@ -162,9 +197,15 @@ async def _judge(
         return None
     # what each side's fingerprint covers, overloads and conditions with it
     old, new = was[0].shown, group[0].shown
-    if old == new:
-        return None  # the change is in nothing the judge would read
-    if not code_link_judge.readable(claim, old, new):
-        return None
-    budget.judgements -= 1  # only a claim the judge reads costs one
-    return await code_link_judge.judge(claim, link, old, new, group[0], head)
+    if old == new or not code_link_judge.readable(claim, old, new):
+        return None  # the change is in nothing the judge would read, or past its reach
+    return _Texts(old, new, group[0])
+
+
+async def _judge(
+    claim: str, link: LinkRow, texts: _Texts, head: str, budget: link_pass.Budget
+) -> LinkRow | None:
+    """`link` judged on `texts`, spending one of `budget`'s judgements; None on an unsure
+    verdict. Raises when the model fails or its reply is malformed."""
+    budget.judgements -= 1
+    return await code_link_judge.judge(claim, link, texts.old, texts.new, texts.now, head)

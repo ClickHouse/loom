@@ -8,13 +8,14 @@ import json
 import re
 import subprocess
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
-from server.code.domain.anchor import Shape
+from server.code.domain.anchor import Definition, Shape
 from server.code.domain.declaration import edit_pattern
 from server.memory.app import (
     code_link_pass,
@@ -26,6 +27,9 @@ from server.memory.app import (
 )
 from server.memory.domain import code_change
 from server.settings import settings
+
+# the policy's own texts and judge, which the `world` fixture stubs
+_TEXTS, _JUDGE = code_link_policy._texts, code_link_policy._judge
 
 
 @pytest.fixture(autouse=True)
@@ -115,7 +119,7 @@ def world(monkeypatch):
     async def insert(out):
         cleared.extend(out)
 
-    async def judge(files, claim, link, head, budget):
+    async def judge(claim, link, texts, head, budget):
         budget.judgements -= 1  # the judge was asked
         judged.append(str(link["memory_id"]))
         return {**link, "suggestion": "the fix"}
@@ -130,7 +134,11 @@ def world(monkeypatch):
     async def checked_head(org, cns):
         return "c2"
 
+    async def texts(files, claim, link, head):
+        return code_link_policy._Texts("old", "new", Definition("a.py", "a.f", "f"))
+
     monkeypatch.setattr(code_link_policy, "_judge", judge)
+    monkeypatch.setattr(code_link_policy, "_texts", texts)
     monkeypatch.setattr(code_links.code, "checked_head", checked_head)
     return SimpleNamespace(
         rows=rows, states=states, stale=stale, policy=policy, judged=judged, cleared=cleared
@@ -214,17 +222,94 @@ async def test_revise_suggests_within_the_budget_and_the_rest_stays_due(world, m
     assert judged["suggestion"] == "the fix"  # the cleared row is the one the policy wrote
 
 
-@pytest.mark.asyncio
-async def test_a_failed_judgement_stays_due(world, monkeypatch) -> None:
-    async def boom(*args):
-        raise RuntimeError("down")
+def _checked_long_ago(monkeypatch) -> datetime:
+    """Every link the world reads last checked at one old time, which it returns."""
+    reads, then = code_links.store.for_memories, datetime(2026, 1, 1)
 
-    monkeypatch.setattr(code_link_policy, "_judge", boom)
+    async def for_memories(org, ids):
+        return [a | {"checked_at": then} for a in await reads(org, ids)]
+
+    monkeypatch.setattr(code_links.store, "for_memories", for_memories)
+    return then
+
+
+@pytest.mark.asyncio
+async def test_a_failed_judgement_stays_due_behind_the_rest(world, monkeypatch) -> None:
+    async def judge(claim, link, texts, head, budget):
+        budget.judgements -= 1
+        if link["qualified_name"] == "a.f0":
+            raise RuntimeError("provider 400")
+        return None
+
+    monkeypatch.setattr(code_link_policy, "_judge", judge)
+    then = _checked_long_ago(monkeypatch)
+    world.rows["a"] = _row("a")
+    world.states["a"] = ["changed", "changed"]
+    world.policy["agent-a"] = code_change.REVISE
+    result = await _apply()
+    assert result.errors
+    # the failed link stays due, stamped now: `policy_due` reads it after older ones
+    rows = {r["qualified_name"]: r for r in world.cleared}
+    assert rows["a.f0"]["policy_due"] == 1 and rows["a.f0"]["checked_at"] > then
+    assert (rows["a.f1"]["policy_due"], rows["a.f1"]["checked_at"]) == (0, then)
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_verdict_stays_due_and_an_unsure_one_does_not(world, monkeypatch) -> None:
+    from server.llm import client as llm_client
+
+    reply = ""
+
+    class _LLM:
+        async def complete(self, *a: Any, **kw: Any) -> Any:
+            return SimpleNamespace(text=reply)
+
+    monkeypatch.setattr(llm_client, "get_llm_client_for_model", lambda model: _LLM())
+    monkeypatch.setattr(code_link_policy, "_judge", _JUDGE)
     world.rows["a"] = _row("a")
     world.states["a"] = ["changed"]
     world.policy["agent-a"] = code_change.REVISE
-    result = await _apply()
-    assert world.cleared == [] and result.errors
+    for reply, due in (("not json", 1), ('{"verdict": "maybe"}', 1), ('{"verdict": "unsure"}', 0)):
+        world.cleared.clear()
+        result = await _apply()
+        assert [r["policy_due"] for r in world.cleared] == [due], reply
+        assert bool(result.errors) == bool(due)
+
+
+@pytest.mark.asyncio
+async def test_a_memory_labelled_high_while_its_code_is_read_never_reaches_the_judge(
+    world, monkeypatch
+) -> None:
+    from server.code.domain.anchor import Definition
+    from server.memory.app import code_link_judge
+
+    async def defs(self, commit, path, qn):
+        world.rows["a"]["sensitivity"] = "high"  # labelled while git reads the code
+        return [Definition(path, qn, "f", body_hash=commit, shown=f"code at {commit}")]
+
+    sent: list[str] = []
+
+    async def judge_claim(claim, before, after):
+        sent.append(claim)
+        return "unsure", ""
+
+    monkeypatch.setattr(code_link_pass.Files, "defs", defs)
+    monkeypatch.setattr(code_link_judge, "judge_claim", judge_claim)
+    monkeypatch.setattr(code_link_policy, "_texts", _TEXTS)
+    monkeypatch.setattr(code_link_policy, "_judge", _JUDGE)
+    world.rows["a"] = _row("a", value='"secret claim"')
+    world.states["a"] = ["changed"]
+    world.policy["agent-a"] = code_change.REVISE
+    budget = code_link_pass.Budget(5)
+    await code_link_policy.apply_policies(
+        "o",
+        "code-a",
+        "c2",
+        code_link_pass.Files("o", "code-a"),
+        budget,
+        code_link_pass.PassResult(),
+    )
+    assert (sent, budget.judgements) == ([], 5)
 
 
 def test_search_hides_only_a_complete_unheld_memory_whose_code_is_all_gone() -> None:
@@ -764,7 +849,7 @@ async def test_revise_judges_every_changed_definition_and_keeps_the_unjudged_due
 ) -> None:
     asked: list[str] = []
 
-    async def judge(files, claim, link, head, budget):
+    async def judge(claim, link, texts, head, budget):
         budget.judgements -= 1  # the judge was asked
         asked.append(link["qualified_name"])
         return None if link["qualified_name"] == "a.f0" else {**link, "suggestion": "fix"}
@@ -803,7 +888,7 @@ async def test_a_policy_write_follows_the_version_it_read(world) -> None:
 
 @pytest.mark.asyncio
 async def test_a_hold_taken_during_judgement_only_flags(world, monkeypatch) -> None:
-    async def judge(files, claim, link, head, budget):
+    async def judge(claim, link, texts, head, budget):
         budget.judgements -= 1  # the judge was asked
         world.rows["m"]["lock_mode"] = "value"  # a person locked it meanwhile
         return {**link, "suggestion": "the fix"}
@@ -820,7 +905,7 @@ async def test_a_hold_taken_during_judgement_only_flags(world, monkeypatch) -> N
 async def test_only_links_still_due_spend_the_budget(world, monkeypatch) -> None:
     asked: list[str] = []
 
-    async def judge(files, claim, link, head, budget):
+    async def judge(claim, link, texts, head, budget):
         budget.judgements -= 1  # the judge was asked
         asked.append(link["qualified_name"])
         return {**link, "suggestion": "fix"}
@@ -1897,6 +1982,12 @@ def _judged_files(monkeypatch, texts: dict[str, str], path: str = "a.ts"):
     return files, calls
 
 
+async def _judged(files, claim, link, head, budget) -> Any:
+    """`link` judged as the policy judges it: its texts read, then the judge asked."""
+    texts = await code_link_policy._texts(files, claim, link, head)
+    return texts and await code_link_policy._judge(claim, link, texts, head, budget)
+
+
 def _judged_link(qn: str, path: str = "a.ts") -> dict[str, Any]:
     return _full(
         {
@@ -1919,7 +2010,7 @@ async def test_a_method_its_renamed_class_carried_is_left_changed(monkeypatch) -
     files, calls = _judged_files(monkeypatch, texts)
     link = _judged_link("a::Writer::f") | {"carried": 1}
     budget = code_link_pass.Budget(judgements=1)
-    assert await code_link_policy._judge(files, "claim", link, "c2", budget) is None
+    assert await _judged(files, "claim", link, "c2", budget) is None
     assert (calls, budget.judgements) == ([], 1)
 
 
@@ -1930,7 +2021,7 @@ async def test_the_judge_reads_an_overload_signature_the_index_does_not_list(mon
     texts = {"c1": signatures + body, "c2": signatures.split("\n")[0] + "\n" + body}
     files, calls = _judged_files(monkeypatch, texts)
     budget = code_link_pass.Budget(judgements=1)
-    await code_link_policy._judge(files, "claim", _judged_link("a::f"), "c2", budget)
+    await _judged(files, "claim", _judged_link("a::f"), "c2", budget)
     ((before, after),) = calls
     assert "f(a: string)" in before and "f(a: string)" not in after
 
@@ -1945,7 +2036,7 @@ async def test_the_same_text_on_both_sides_is_not_judged(monkeypatch) -> None:
     files, calls = _judged_files(monkeypatch, {"c1": "", "c2": ""})
     monkeypatch.setattr(files, "defs", defs)
     budget = code_link_pass.Budget(judgements=1)
-    assert await code_link_policy._judge(files, "claim", _judged_link("a::f"), "c2", budget) is None
+    assert await _judged(files, "claim", _judged_link("a::f"), "c2", budget) is None
     assert (calls, budget.judgements) == ([], 1)
 
 
@@ -1957,10 +2048,7 @@ async def test_a_link_the_judge_cannot_read_costs_no_judgement(monkeypatch) -> N
     monkeypatch.setattr(code_link_pass.Files, "has", has)
     budget = code_link_pass.Budget(judgements=1)
     link = _full({"path": "a.py", "qualified_name": "a::f", "anchored_commit": "gone"})
-    assert (
-        await code_link_policy._judge(code_link_pass.Files("o", "c"), "claim", link, "h", budget)
-        is None
-    )
+    assert await _judged(code_link_pass.Files("o", "c"), "claim", link, "h", budget) is None
     assert budget.judgements == 1
 
 
@@ -1998,22 +2086,14 @@ async def test_the_judge_reads_an_overload_that_was_removed(monkeypatch) -> None
             "anchored_name": "f",
         }
     )
-    assert (
-        await code_link_policy._judge(
-            files, "claim", link, "c2", code_link_pass.Budget(judgements=1)
-        )
-        is None
-    )
+    assert await _judged(files, "claim", link, "c2", code_link_pass.Budget(judgements=1)) is None
     old = (
         "int f(double a) { return 0; }\n\n(selected when: #ifdef FAST)\nint f(int a) { return a; }"
     )
     assert seen == [(old, "int f(int a) { return a + 1; }")]
     # no such definition where it was written: nothing to judge, no judgement spent
     budget = code_link_pass.Budget(judgements=1)
-    assert (
-        await code_link_policy._judge(files, "claim", link | {"anchored_name": "g"}, "c2", budget)
-        is None
-    )
+    assert await _judged(files, "claim", link | {"anchored_name": "g"}, "c2", budget) is None
     assert len(seen) == 1 and budget.judgements == 1
 
 
@@ -3372,3 +3452,4 @@ async def test_the_policy_drops_the_links_of_a_memory_that_is_gone(world) -> Non
         ("erased", True),
         ("deleted", True),
     }
+

@@ -23,9 +23,13 @@ _JUDGE = (
 )
 
 
+class Malformed(ValueError):
+    """The model's reply is not one of the verdicts."""
+
+
 async def judge_claim(claim: str, before: str, after: str) -> tuple[str, str]:
     """(verdict, revised claim) for `claim` once its code went from `before` to `after`;
-    ("unsure", "") when the model's answer is not one of the verdicts."""
+    ("malformed", "") when the model's reply is not one of the verdicts."""
     from server.llm.client import get_llm_client_for_model
     from server.llm.json_text import strip_code_fence
     from server.observability.genai import llm_stage
@@ -41,10 +45,10 @@ async def judge_claim(claim: str, before: str, after: str) -> tuple[str, str]:
     try:
         data = json.loads(strip_code_fence(str(getattr(res, "text", "") or "")))
     except ValueError:
-        return "unsure", ""
+        return "malformed", ""
     verdict = str(data.get("verdict") or "") if isinstance(data, dict) else ""
-    if verdict not in ("holds", "contradicted"):
-        return "unsure", ""
+    if verdict not in ("holds", "contradicted", "unsure"):
+        return "malformed", ""
     return verdict, str(data.get("revised") or "").strip()
 
 
@@ -60,8 +64,10 @@ async def judge(
     """`link` once its claim is judged against the code it was written for (`old`) and
     the code now (`new`, `d` at `head`): a claim that holds re-anchors it; a
     contradicted one keeps it `changed` with the corrected claim as `suggestion`. None
-    on an unsure verdict."""
+    on an unsure verdict; `Malformed` when the reply is no verdict."""
     verdict, revised = await judge_claim(claim, old, new)
+    if verdict == "malformed":
+        raise Malformed("the judge's reply is no verdict")
     if verdict == "contradicted" and revised:
         return {**link, "suggestion": revised, "judged_hash": d.body_hash}
     if verdict != "holds":
