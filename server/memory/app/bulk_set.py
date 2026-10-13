@@ -305,25 +305,29 @@ async def _bulk_judge_same_key(
         ch=ch,
         now=datetime.now(UTC).replace(tzinfo=None),
     )
-    retired = {n for n, _w in judged.new_rows}
     state.judged_follow_pairs = list(judged.new_rows)
-    if retired:
-        plan.conflict_marks = [(n, p) for n, p in plan.conflict_marks if n not in retired]
-        plan.refines = [r for r in plan.refines if r[0] not in retired]
-        live_keys = {
-            str(r.get("memory_key") or "")
-            for r in state.memory_rows
-            if str(r.get("memory_id") or "") not in retired
+    # By key: a key written twice in the batch is two versions of one row, and the one
+    # FINAL keeps (the one judged) is now superseded, so neither version may mark,
+    # refine or report `conflicted` from here. The intra-batch pairs need no filter:
+    # they exist only under `newest_wins`, where the judge does not run.
+    behind = {
+        str(r.get("memory_key") or ""): str(r["superseded_by"])
+        for r in state.memory_rows
+        if str(r.get("memory_id") or "") in {n for n, _w in judged.new_rows}
+    }
+    state.judged_retired_keys = set(behind)
+    if behind:
+        key_of = {
+            str(r.get("memory_id") or ""): str(r.get("memory_key") or "") for r in state.memory_rows
         }
-        plan.conflicted = [k for k in plan.conflicted if k in live_keys]
-        # The entry's result names the row it landed behind.
-        behind = {
-            (str(r.get("memory_key") or ""), int(r.get("version") or 0)): str(r["superseded_by"])
-            for r in state.memory_rows
-            if str(r.get("memory_id") or "") in retired
-        }
+        plan.conflict_marks = [
+            (n, p) for n, p in plan.conflict_marks if key_of.get(n) not in behind
+        ]
+        plan.refines = [r for r in plan.refines if key_of.get(r[0]) not in behind]
+        plan.conflicted = [k for k in plan.conflicted if k not in behind]
+        # Each entry's result of the key names the row it landed behind.
         for res in state.results:
-            res.superseded_by = behind.get((res.memory_key, int(res.version)), "")
+            res.superseded_by = behind.get(res.memory_key, "")
     return judged
 
 
@@ -433,7 +437,12 @@ async def _bulk_post_insert_links(
     # a row that landed superseded must not retire anything behind itself.
     _n_value_links = 0
     _value_links: list[Any] = []
-    _live_rows = [r for r in state.memory_rows if str(r.get("status") or "") != "superseded"]
+    _live_rows = [
+        r
+        for r in state.memory_rows
+        if str(r.get("status") or "") != "superseded"
+        and str(r.get("memory_key") or "") not in state.judged_retired_keys
+    ]
     if _live_rows and value_updates_enabled(input.detect_updates):
         try:
             from server.memory.app.value_updates import link_value_updates

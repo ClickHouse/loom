@@ -245,16 +245,6 @@ def test_valid_times_with_an_offset_compare_in_utc() -> None:
     )
 
 
-def test_two_new_rows_one_retiring_behind_a_peer_the_other_retires() -> None:
-    # n_old (05-20) loses to o1 (05-23); n_new (05-30) retires o1. n_old then points at
-    # n_new, not at the dead o1.
-    n_old, n_new = _row("n_old", _d(20)), _row("n_new", _d(30))
-    o1 = _row("o1", _d(23))
-    labels = {("n_old", "o1"): "contradiction", ("n_new", "o1"): "contradiction"}
-    out = judged_victims([n_old, n_new], {"n_old": [o1], "n_new": [o1]}, labels)
-    assert _pairs(out) == ([("n_old", "n_new")], [("o1", "n_new")])
-
-
 def test_a_retired_new_row_lands_superseded_on_both_rows() -> None:
     rows = [
         _row("n1", _d(20), version=7),
@@ -505,7 +495,13 @@ async def test_bulk_retires_judged_peers_after_the_insert_and_links_only_live_ro
     monkeypatch.setattr(key_supersession, "retire_judged_peers", retire)
     monkeypatch.setattr(value_updates, "link_value_updates", link)
     state = _BulkWriteState()
-    state.memory_rows = [_row("n1", _d(30)), {**_row("n2", _d(20)), "status": "superseded"}]
+    state.memory_rows = [
+        _row("n1", _d(30)),
+        {**_row("n2", _d(20)), "status": "superseded"},
+        # The lower version of a key whose kept row the judge retired.
+        {**_row("n3", _d(20)), "memory_key": "user_hometown"},
+    ]
+    state.judged_retired_keys = {"user_hometown"}
 
     class Input:
         org, namespace, detect_updates = "o", "ns", True
@@ -525,16 +521,6 @@ def test_a_revision_is_ordered_by_when_it_was_written_not_when_the_key_was_creat
     s2 = _row("s2", None, created_at=datetime(2026, 5, 20))
     out = judged_victims([s1], {"s1": [s2]}, {("s1", "s2"): "contradiction"})
     assert _pairs(out) == ([], [("s2", "s1")])
-
-
-def test_valid_time_decides_only_when_both_rows_carry_one() -> None:
-    dated = _row("d", _d(20), created_at=datetime(2026, 10, 13, 9, 0))
-    undated = _row("u", None, created_at=datetime(2026, 10, 13, 8, 0))
-    # One side undated: the later write is the later statement.
-    out = judged_victims([dated], {"d": [undated]}, {("d", "u"): "contradiction"})
-    assert _pairs(out) == ([], [("u", "d")])
-    out = judged_victims([undated], {"u": [dated]}, {("u", "d"): "contradiction"})
-    assert _pairs(out) == ([("u", "d")], [])
 
 
 def test_microseconds_do_not_decide_the_order() -> None:
@@ -574,36 +560,6 @@ async def test_only_the_batch_winner_of_a_key_is_judged(monkeypatch) -> None:
     assert (lower["status"], higher["status"]) == ("active", "superseded")
 
 
-async def test_retire_judged_peers_reports_only_rows_that_retired(monkeypatch) -> None:
-    from server.memory import store
-    from server.memory.app.key_supersession import _victim, retire_judged_peers
-    from server.memory.domain import lock
-
-    victims = [_victim(_row("o1", _d(20)), "n1"), _victim(_row("o2", _d(21)), "n1")]
-
-    def refuses(row) -> bool:
-        return row.memory_id == "o2"
-
-    async def supersede(org, v, *, ch=None, skip=None):
-        return sum(1 for x in v if not skip(type("R", (), {"memory_id": x["memory_id"]})()))
-
-    monkeypatch.setattr(lock, "refuses_retirement", refuses)
-    monkeypatch.setattr(store, "supersede_duplicates", supersede)
-    assert [v["memory_id"] for v in await retire_judged_peers("o", victims, ch=None)] == ["o1"]
-
-    async def short(org, v, *, ch=None, skip=None):
-        return 0  # a row could not be read: which one is unknown
-
-    monkeypatch.setattr(store, "supersede_duplicates", short)
-    assert await retire_judged_peers("o", victims, ch=None) == []
-
-    async def boom(org, v, *, ch=None, skip=None):
-        raise RuntimeError("down")
-
-    monkeypatch.setattr(store, "supersede_duplicates", boom)
-    assert await retire_judged_peers("o", victims, ch=None) == []
-
-
 async def test_the_triple_plane_follows_judged_retirements_first(monkeypatch) -> None:
     from server.memory.app import bulk_set, entity_projections
     from server.memory.app.bulk_verdicts import BulkVerdictPlan
@@ -625,6 +581,137 @@ async def test_the_triple_plane_follows_judged_retirements_first(monkeypatch) ->
         judged_pairs=[("j1", "j2")],
     )
     assert seen == [("j1", "j2"), ("i1", "i2")]
+
+
+def test_a_late_dated_session_does_not_bury_an_undated_current_value() -> None:
+    # "Lives in Berlin", written 2026-09-01 with no valid time; an old 2024 session
+    # ingested today says "Paris", dated 2024-03-01. Berlin is the later statement.
+    cur = _row("cur", None, created_at=datetime(2026, 9, 1))
+    late = _row("late", datetime(2024, 3, 1), created_at=datetime(2026, 10, 13, 9, 0))
+    out = judged_victims([late], {"late": [cur]}, {("late", "cur"): "contradiction"})
+    assert _pairs(out) == ([("late", "cur")], [])
+    # An undated late row ranks by its write time: the later statement.
+    undated = _row("u", None, created_at=datetime(2026, 10, 13, 9, 0))
+    dated = _row("d", datetime(2025, 6, 1), created_at=datetime(2026, 10, 1))
+    out = judged_victims([undated], {"u": [dated]}, {("u", "d"): "contradiction"})
+    assert _pairs(out) == ([], [("d", "u")])
+
+
+def test_peers_sort_the_same_whatever_order_they_arrive_in() -> None:
+    from itertools import permutations
+
+    rows = [
+        _row("a", datetime(2020, 1, 1), created_at=datetime(2026, 3, 1)),
+        _row("b", None, created_at=datetime(2026, 2, 1)),
+        _row("c", datetime(2024, 1, 1), created_at=datetime(2026, 1, 1)),
+    ]
+    new = [_row("n", None, created_at=datetime(2026, 10, 13))]
+    orders = {
+        tuple(p["memory_id"] for p in same_key_peers(new, list(perm))["n"])
+        for perm in permutations(rows)
+    }
+    assert orders == {("b", "c", "a")}
+
+
+async def test_the_peer_read_orders_by_the_same_key_as_python(monkeypatch) -> None:
+    seen = _wire_judged(monkeypatch, {})
+    await _judge([_row("n1", _d(30))], [], seen)
+    assert (
+        "ORDER BY coalesce(valid_at, updated_at) DESC, updated_at DESC, memory_id DESC"
+        in (seen["sql"])
+    )
+    assert "version" in seen["sql"].split("FROM")[0]
+
+
+class _StoredRow:
+    def __init__(self, mid: str, *, pinned=False, status="active", version=1) -> None:
+        self.memory_id, self.pinned, self.status, self.version = mid, pinned, status, version
+
+
+def _fake_store(monkeypatch, stored: dict[str, _StoredRow]) -> list:
+    """`supersede_duplicates` as the store runs it: `skip` is asked only about a row
+    it read, and a row it cannot read is passed over and still counted."""
+    from server.memory import store
+
+    wrote: list = []
+
+    async def supersede(org, victims, *, ch=None, skip=None):
+        for v in victims:
+            row = stored.get(v["memory_id"])
+            if row is not None and not skip(row):
+                wrote.append(v["memory_id"])
+        return len(victims)
+
+    monkeypatch.setattr(store, "supersede_duplicates", supersede)
+    return wrote
+
+
+async def test_retire_judged_peers_reports_only_rows_it_wrote(monkeypatch) -> None:
+    from server.memory.app.key_supersession import _victim, retire_judged_peers
+    from server.memory.domain import lock
+
+    def victim(mid: str) -> dict:
+        return {**_victim(_row(mid, _d(20)), "n1"), "judged_version": 1}
+
+    monkeypatch.setattr(lock, "refuses_retirement", lambda row: row.memory_id == "locked")
+    stored = {
+        "ok": _StoredRow("ok"),
+        "locked": _StoredRow("locked"),
+        "pinned": _StoredRow("pinned", pinned=True),
+        "retired": _StoredRow("retired", status="superseded"),
+        "revised": _StoredRow("revised", version=2),
+    }
+    wrote = _fake_store(monkeypatch, stored)
+    names = ["ok", "locked", "pinned", "retired", "revised", "gone"]
+    out = await retire_judged_peers("o", [victim(m) for m in names], ch=None)
+    assert [v["memory_id"] for v in out] == ["ok"] and wrote == ["ok"]
+
+
+async def test_retire_judged_peers_reports_nothing_on_a_failed_write(monkeypatch) -> None:
+    from server.memory import store
+    from server.memory.app.key_supersession import _victim, retire_judged_peers
+
+    async def boom(org, v, *, ch=None, skip=None):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(store, "supersede_duplicates", boom)
+    assert await retire_judged_peers("o", [_victim(_row("o1", _d(20)), "n1")], ch=None) == []
+
+
+async def test_a_key_written_twice_leaves_the_plan_by_key(monkeypatch) -> None:
+    from server.memory.api.models_bulk import _BulkSetResult
+    from server.memory.app import bulk_set
+    from server.memory.app.bulk_rows import _BulkWriteState
+    from server.memory.app.bulk_verdicts import BulkVerdictPlan
+
+    seen = _wire_judged(monkeypatch, {"o1": "contradiction"})
+    state = _BulkWriteState()
+    # A key new to this identity, twice: two ids, one identity; FINAL keeps n2.
+    state.memory_rows = [_row("n1", _d(10), version=1), _row("n2", _d(11), version=2)]
+    state.results = [
+        _BulkSetResult(memory_key="user_ethnicity", version=1),
+        _BulkSetResult(memory_key="user_ethnicity", version=2),
+    ]
+    plan = BulkVerdictPlan()
+    plan.conflict_marks = [("n1", ["x"]), ("n2", ["y"])]
+    plan.conflicted = ["user_ethnicity"]
+
+    class Input:
+        org, namespace = "o", "ns"
+
+    import server.memory.app.key_supersession as ks
+
+    real = ks.judge_same_key_rows
+
+    async def judge(**kw):
+        return await real(**{**kw, "ch": _CH([_row("o1", _d(23))], seen)})
+
+    monkeypatch.setattr(ks, "judge_same_key_rows", judge)
+    out = await bulk_set._bulk_judge_same_key(None, Input(), state, plan)
+    assert out.new_rows == [("n2", "o1")]
+    assert plan.conflict_marks == [] and plan.conflicted == []
+    assert [r.superseded_by for r in state.results] == ["o1", "o1"]
+    assert state.judged_retired_keys == {"user_ethnicity"}
 
 
 async def test_newest_wins_still_retires_every_older_same_key_row_unjudged(monkeypatch) -> None:

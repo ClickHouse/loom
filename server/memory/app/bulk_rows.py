@@ -105,6 +105,8 @@ class _BulkWriteState:
     # (retired id, the row it retired behind) per same-key retirement the judge decided
     # (`key_supersession.judge_same_key_rows`), for the triple plane's follow step.
     judged_follow_pairs: list[tuple[str, str]] = field(default_factory=list)
+    # Keys whose row FINAL keeps landed superseded by the judge: no version of them links.
+    judged_retired_keys: set[str] = field(default_factory=set)
     memory_rows: list[dict[str, Any]] = field(default_factory=list)
     embedding_rows: list[dict[str, Any]] = field(default_factory=list)
     results: list[_BulkSetResult] = field(default_factory=list)

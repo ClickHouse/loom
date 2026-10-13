@@ -27,7 +27,6 @@ import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from functools import cmp_to_key
 from typing import Any, NamedTuple
 
 from server.core.datetimes import parse_iso_dt, to_naive_utc
@@ -156,7 +155,7 @@ def same_key_peers(
             and not bool(m.get("pinned"))
         ]
         if rid and peers:
-            out[rid] = sorted(peers, key=cmp_to_key(_cmp), reverse=True)
+            out[rid] = sorted(peers, key=_rank, reverse=True)
     return out
 
 
@@ -211,38 +210,27 @@ def judged_victims(
         for peer in peers:
             peer_id = str(peer.get("memory_id") or "")
             if labels.get((new_id, peer_id)) in (CONTRADICTION, ELABORATION) and retires(new, peer):
-                peer_victims.setdefault(peer_id, _victim(peer, new_id))
-    # A new row that retires behind a peer another new row retires points at that
-    # row instead, so no `superseded_by` names a dead row.
-    out.new_rows = [
-        (n, str(peer_victims[w]["superseded_by"]) if w in peer_victims else w)
-        for n, w in out.new_rows
-    ]
+                # The version judged: a peer revised since is not the row the judge read.
+                victim = {**_victim(peer, new_id), "judged_version": peer.get("version")}
+                peer_victims.setdefault(peer_id, victim)
+    # No two new rows share a peer (one row is judged per key, and a bulk has one
+    # identity), so no new row retires behind a peer another one retires.
     out.peers = list(peer_victims.values())
     return out
 
 
+def _rank(row: Mapping[str, Any]) -> tuple[datetime, datetime, str]:
+    """When a row's statement holds, as one total order: its valid time, else when
+    it was written (`updated_at`: a revision carries `created_at` forward from the
+    key's first version), then when it was written, then its id. The SQL that picks
+    the newest peers orders by the same key. Times in UTC, to the second."""
+    written = _utc(row.get("updated_at")) or _utc(row.get("created_at")) or datetime.min
+    return (_utc(row.get("valid_at")) or written, written, str(row.get("memory_id") or ""))
+
+
 def _older(a: Mapping[str, Any], b: Mapping[str, Any]) -> bool:
-    """Whether `a` is the earlier statement of the two. When both carry a valid
-    time and they differ, it decides; otherwise the earlier write is (`updated_at`:
-    a revision carries `created_at` forward from the key's first version), then
-    the smaller id, so exactly one of `_older(a, b)` and `_older(b, a)` holds for two
-    distinct rows. Times in UTC, to the second."""
-    va, vb = _utc(a.get("valid_at")), _utc(b.get("valid_at"))
-    if va is not None and vb is not None and va != vb:
-        return va < vb
-    return (_written(a), str(a.get("memory_id") or "")) < (
-        _written(b),
-        str(b.get("memory_id") or ""),
-    )
-
-
-def _cmp(a: Mapping[str, Any], b: Mapping[str, Any]) -> int:
-    return -1 if _older(a, b) else (1 if _older(b, a) else 0)
-
-
-def _written(row: Mapping[str, Any]) -> datetime:
-    return _utc(row.get("updated_at")) or _utc(row.get("created_at")) or datetime.min
+    """Whether `a` is the earlier statement of the two (`_rank`)."""
+    return _rank(a) < _rank(b)
 
 
 def _utc(raw: Any) -> datetime | None:
@@ -392,14 +380,14 @@ async def judge_same_key_rows(
         live = await ch.query_all(
             f"""
             SELECT toString(memory_id) AS memory_id, namespace, agent, user_id, session_id,
-                   memory_key, value, pinned, valid_at, created_at, updated_at
+                   memory_key, value, pinned, valid_at, created_at, updated_at, version
             FROM loom.memory FINAL
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND memory_key IN {{keys:Array(String)}} AND user_id IN {{users:Array(String)}}
               AND tombstoned_at IS NULL AND pinned = 0 AND sensitivity != 'high'
               AND status IN ('active', 'duplicate', 'conflicted')
               AND toString(memory_id) NOT IN {{ids:Array(String)}}{in_scope}
-            ORDER BY coalesce(valid_at, updated_at) DESC, updated_at DESC
+            ORDER BY coalesce(valid_at, updated_at) DESC, updated_at DESC, memory_id DESC
             LIMIT {{n:UInt32}} BY memory_key, user_id, if(user_id = '-', agent, '')
             SETTINGS select_sequential_consistency = 1
             """,
@@ -432,27 +420,35 @@ async def retire_judged_peers(
     org: str, victims: list[dict[str, Any]], *, ch: Any
 ) -> list[dict[str, Any]]:
     """After the insert: retire the stored rows `judge_same_key_rows` found older
-    than a row of this write. Returns the victims that retired: not one a lock
-    refused, and none when the count does not add up (a row that could not be
-    read) or the write failed, so nothing follows a row that is still live. Best
-    effort."""
+    than a row of this write. A row is left as it is when, since the judge read it,
+    it was locked, pinned, retired or revised (another version). Returns the
+    victims that retired: the rows the write read and passed, none of them on a
+    failed write, so nothing follows a row that is still live. Best effort."""
     if not victims:
         return []
     try:
         from server.memory.domain.lock import refuses_retirement
         from server.memory.store import supersede_duplicates
 
-        refused: set[str] = set()
+        judged_version = {str(v["memory_id"]): v.get("judged_version") for v in victims}
+        written: set[str] = set()
 
         def skip(row: Any) -> bool:
-            if refuses_retirement(row):
-                refused.add(str(row.memory_id))
+            mid = str(row.memory_id)
+            want = judged_version.get(mid)
+            if (
+                refuses_retirement(row)
+                or bool(row.pinned)
+                or str(row.status) not in ("active", "duplicate", "conflicted")
+                or (want is not None and int(row.version) != int(want))
+            ):
                 return True
+            # `write_versions_by_ids` asks only about a row it read, and writes it.
+            written.add(mid)
             return False
 
-        n = await supersede_duplicates(org, victims, ch=ch, skip=skip)
-        retired = [v for v in victims if str(v["memory_id"]) not in refused]
-        return retired if n == len(retired) else []
+        await supersede_duplicates(org, victims, ch=ch, skip=skip)
+        return [v for v in victims if str(v["memory_id"]) in written]
     except Exception as e:  # noqa: BLE001 — the rows are in; retirement is best effort
         log.warning("same-key judged retirement failed (non-fatal): %s", e)
         return []

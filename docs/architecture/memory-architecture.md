@@ -203,14 +203,16 @@ each key it writes for the same subject: the same `user_id`, or for the anonymou
 - **The cap.** At most `LOOM_MEMORY_CONFLICT_JUDGE_MAX_PEERS` (3) stored rows per key
   and subject are read, newest first. An older row past them stays live until a later
   write of the key reaches it.
-- **Which row is older.** Only the older row of a pair ever retires. When both rows
-  carry a valid time and the times differ, the valid time decides. Otherwise the
-  earlier write is older (`updated_at`, since a revision carries `created_at` forward
-  from the key's first version), then the smaller id. Times are compared in UTC to the
-  second. Two writers that judge each other never retire both, because each reads
-  before its own insert. An old session ingested late whose rows carry their session
-  date doesn't bury the current value. An undated late row counts as the later
-  statement.
+- **Which row is older.** Only the older row of a pair ever retires. Rows rank by one
+  total key, in Python and in the SQL that picks the newest peers. The key is the row's
+  valid time, else when it was written (`updated_at`, since a revision carries
+  `created_at` forward from the key's first version), then when it was written, then
+  its id. Times are compared in UTC to the second. Two writers that judge each other
+  never retire both, because each reads before its own insert.
+  - **A late old session:** its rows carry their session date, so it doesn't bury a
+    later value, whether that value is dated or undated.
+  - **An undated late row:** it counts as stated when it was written, so it is the later
+    statement.
 - **Amounts.** The older row retires only if the newer row keeps every amount it states
   (`preserves_quantities`, the guard the flag path's refines and `newest_wins` apply).
 
@@ -225,11 +227,12 @@ Then by label:
   unlabelled all keep both rows. The flag path reads an unlabelled peer as a
   contradiction; a retirement does not.
 
-`superseded_by` names the row that was the later statement when the retirement
-happened. That row can itself retire later, so a reader follows the chain. A row
-labelled `sensitivity='high'` is never judged or read as a peer, so its value never
-reaches the LLM. The read is bounded by the writer's read scope, like every same-key
-retirement.
+A stored row retires after the insert only if, since the judge read it, it wasn't
+locked, pinned, retired or revised. `superseded_by` names the row that was the later
+statement when the retirement happened. That row can itself retire later, so a reader
+follows the chain. A row labelled `sensitivity='high'` is never judged or read as a
+peer, so its value never reaches the LLM. The read is bounded by the writer's read
+scope, like every same-key retirement.
 
 This costs one judge call per new row that has such peers, on top of the bulk conflict
 check's own calls. The calls are bounded by the same settings
