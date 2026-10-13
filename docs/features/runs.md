@@ -94,7 +94,10 @@ call begins one, and `DELETE /mcp` or the `mcp_session_run_sweep` worker closes
 it (see [MCP](../reference/mcp.md)). The sweep closes any active run whose id
 starts with `mcp-` and whose `metadata.implicit` is true once no call of its
 token reached it within `LOOM_MCP_SESSION_RUN_IDLE_SECONDS`, so a run begun by
-hand should not claim to be implicit.
+hand should not claim to be implicit. The run sits in the caller's default
+namespace, so what its readers see stays there: its goal is a label when the
+session's first call worked elsewhere, and `memories_written` lists the writes in
+that namespace only (the others still carry its `run_id`).
 
 ## Operations
 

@@ -25,7 +25,10 @@ from server.core.runtime_files import open_private, server_file
 
 log = logging.getLogger(__name__)
 
-_Version = tuple[int, int, int]  # inode, mtime_ns, size
+# inode, mtime_ns, size. Two versions could look alike only if a disk filesystem
+# reused the inode within one timestamp tick at the same size; the image's
+# tmpfs never reuses one, and overrides are set by hand, seconds apart.
+_Version = tuple[int, int, int]
 # How long `waiting_out_siblings` retries an update a sibling's lock refused; an
 # update holds the lock for one read and one atomic replace.
 LOCK_WAIT_S = 1.0

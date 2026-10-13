@@ -17,6 +17,7 @@ case "$*" in
   "-m server.core.web_workers") echo 4 ;;
   "-m server.core.runtime_files")
     [ "$STUB_RUNTIME_DIR" = none ] && { echo "loom: no private directory" >&2; exit 2; }
+    [ "$STUB_RUNTIME_DIR" = broken ] && { echo "Traceback: settings invalid" >&2; exit 1; }
     echo "${LOOM_RUNTIME_DIR:-$STUB_RUNTIME_DIR}" ;;
   *) exit 99 ;;
 esac
@@ -83,7 +84,22 @@ def test_an_explicit_count_with_nowhere_to_share_refuses_to_start(
     """A pinned LOOM_RUNTIME_DIR is checked before the processes start, too."""
     done = _launch(tmp_path, workers="3", runtime_dir="none", pinned=pinned)
     assert done.returncode == 2 and done.stdout == ""
-    assert "no private directory" in done.stderr
+    assert "no private directory" in done.stderr and "not starting" in done.stderr
+
+
+def test_a_chosen_count_with_a_rejected_pin_starts_one_process_and_keeps_the_pin(
+    tmp_path: Path,
+) -> None:
+    done = _launch(tmp_path, workers="", runtime_dir="none", pinned="/data/rt")
+    assert done.returncode == 0 and _workers(done.stdout) == "1"
+    assert done.stdout.strip().endswith("runtime=/data/rt")
+
+
+def test_a_check_that_breaks_stops_the_launcher_whatever_the_count(tmp_path: Path) -> None:
+    """Only "no directory" (exit 2) falls back; a broken check is not that."""
+    done = _launch(tmp_path, workers="", runtime_dir="broken")
+    assert done.returncode == 1 and done.stdout == ""
+    assert "starting one web process" not in done.stderr
 
 
 def test_a_usable_pinned_directory_is_shared_as_it_is(tmp_path: Path) -> None:

@@ -340,25 +340,24 @@ async def active_runs_by_id(ch: Any, org: str, run_id: str) -> list[RunLedgerRow
 
 
 async def idle_session_runs(
-    ch: Any, *, idle_seconds: int, limit: int, org: str = ""
+    ch: Any, *, idle_seconds: int, horizon_days: int, limit: int, org: str = ""
 ) -> list[RunLedgerRow]:
-    """Up to `limit` active implicit MCP session runs that no request of their
-    token reached within `idle_seconds`, in random order, so runs that keep
-    failing to close cannot hold the front of the queue. `org` narrows it to
-    one org (a test's seam; "" = every org).
+    """Up to `limit` active implicit MCP session runs, last written within
+    `horizon_days`, that no request of their token reached within
+    `idle_seconds`, in random order so runs that fail to close cannot hold the
+    front. `org` narrows it to one org ("" = every org).
 
-    Implicit runs are told by `metadata.implicit` and the `mcp-` prefix rather
-    than the transport's exact id shape, so the runs earlier servers opened as
-    `mcp-<session id>` close too; an explicit run that claims to be implicit
-    under such an id closes like one. The plain read of `candidates` keeps the
-    FINAL read to their rows.
-    `version` is the time of the row's last write (a begin or a re-open), and
-    the begin records the token's subject."""
+    Implicit runs are told by `metadata.implicit` and the `mcp-` prefix, which
+    also covers the `mcp-<session id>` runs of earlier servers. `version` is
+    the time of the row's last write; the begin records the token's subject."""
     rows: list[RunLedgerRow] = await ch.query_all(
         """
         WITH candidates AS (
             SELECT run_id FROM loom.agent_runs
             WHERE status = 'active' AND environment = 'mcp' AND startsWith(run_id, 'mcp-')
+              AND version >= toUInt64(
+                  toUnixTimestamp64Nano(now64(9) - INTERVAL {horizon:UInt32} DAY)
+              )
         )
         SELECT org, namespace, run_id FROM loom.agent_runs FINAL
         WHERE run_id IN candidates AND ({org:String} = '' OR org = {org:String})
@@ -371,7 +370,7 @@ async def idle_session_runs(
         ORDER BY rand()
         LIMIT {lim:UInt32}
         """,
-        params={"org": org, "idle": idle_seconds, "lim": limit},
+        params={"org": org, "idle": idle_seconds, "horizon": horizon_days, "lim": limit},
     )
     return rows
 

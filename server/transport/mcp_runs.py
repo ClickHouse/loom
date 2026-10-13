@@ -1,33 +1,14 @@
 """MCP transport — one implicit run per token and `Mcp-Session-Id`.
 
-Leaf module: an in-process registry of the run each MCP session is bound to.
-`run.begin` / `run.complete` are not listed in `core`, so a default-tier MCP
-client never names a run of its own. The transport mints the run itself:
+The ledger owns the run; this module is each web process's cache of it.
 
-- The first run-scoped tool call of a session begins a run (goal = that
-  call's query or key, `environment="mcp"`, `consumer=<client agent>`,
-  `metadata.implicit=true`), in the caller's org and default namespace, filed
-  under the user and session the call acts as. Its id binds the token's
-  subject (`session_run_id`).
-- Writes get the run stamped into their `run_id` argument (provenance, and
-  the cross-scope `duplicate` rule); reads are labelled through the
-  ledger ContextVar (`server.observability.run_context`) and never filtered.
-- The ledger holds the session's calls (`agent_events` by run id and token
-  subject, in any org and namespace a call named); the run stores no count.
-- The run closes on `DELETE /mcp`, from any web process, or once no call
-  reached the ledger within `mcp_session_run_idle_seconds`: the
-  `mcp_session_run_sweep` worker decides that from the ledger alone
-  (`close_idle_session_runs`). Either way `status="completed"`,
-  `outcome="none"`: the transport knows the session ended, not how it went.
-  A call after the close re-opens the run.
-- Begins and closes run detached from the request: they are the transport's
-  own bookkeeping, the id already proves the run is the token's, and they run
-  before the call's read scope is bound (a DELETE has none at all).
-
-What this module holds is a cache of the ledger, bounded like the
-session→agent cache: at the cap the idlest entry is forgotten, not closed.
-Ledger failures never fail a tool call; a DELETE the ledger did not answer
-leaves the run to the idle sweep.
+- A session's first run-scoped call begins it in the caller's org and default
+  namespace (`metadata.implicit`, the token's subject), under an id that binds
+  the token (`session_run_id`). Writes are stamped with it; reads are labelled.
+- `DELETE /mcp` closes it from any web process, the `mcp_session_run_sweep`
+  worker once it goes idle; a later call re-opens it.
+- Begins and closes run detached from the request, as the transport's own
+  bookkeeping. Ledger failures never fail a tool call.
 """
 
 from __future__ import annotations
@@ -167,13 +148,24 @@ def stamps_run(op: Any) -> bool:
     return not op.read_only
 
 
-def goal_of(arguments: dict[str, Any], fallback: str) -> str:
-    """The run's goal: the first call's query, else its key, else a label."""
+def goal_of(arguments: dict[str, Any], defaults: dict[str, str]) -> str:
+    """The run's goal: the first call's query, else its key, else a label. The
+    label too when the call works outside the run's org and namespace, whose
+    readers may not read where it went."""
+    label = f"mcp session ({defaults['agent']})"[:GOAL_MAX_CHARS]
+    elsewhere = (
+        str(arguments.get("org") or defaults["org"]) != defaults["org"]
+        or str(arguments.get("namespace") or "") != defaults["namespace"]
+        or arguments.get("namespace_scope")
+        or arguments.get("namespaces")
+    )
+    if elsewhere:
+        return label
     for k in ("query", "goal", "memory_key", "text"):
         v = arguments.get(k)
         if isinstance(v, str) and v.strip():
             return v.strip()[:GOAL_MAX_CHARS]
-    return fallback[:GOAL_MAX_CHARS]
+    return label
 
 
 def current(run_id: str) -> SessionRun | None:
@@ -189,8 +181,10 @@ async def ensure(
     now: float | None = None,
 ) -> SessionRun | None:
     """The session's run, begun on first use, in the org and namespace `defaults`
-    name. None when the transport has no session or caller identity, or
-    `run.begin` failed (retried after CHECK_INTERVAL_S, not on every call)."""
+    name, and filed under the first call's user and session: a later call on the
+    session joins it whatever user it acts as. None when the transport has no
+    session or caller identity, or `run.begin` failed (retried after
+    CHECK_INTERVAL_S, not on every call)."""
     if not session_id or not defaults or caller is None:
         return None
     now = time.monotonic() if now is None else now
@@ -246,7 +240,8 @@ async def ensure(
 
 async def _begin(run: SessionRun, *, now: float, first: bool) -> None:
     """`run.begin` for a registered run, unless another web process of this server
-    began it already. A re-opened run keeps the session's first goal. A
+    began it already. A re-opened run keeps the session's first goal (of two
+    first begins racing on two processes, the later one's). A
     `first` begin that fails forgets the run and the session waits
     CHECK_INTERVAL_S before the next attempt; a failed check of a run already
     begun keeps it, and the next check tries again."""

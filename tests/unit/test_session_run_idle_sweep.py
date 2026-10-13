@@ -44,7 +44,7 @@ def _ledger(monkeypatch, *run_ids: str) -> _Ledger:
 async def test_an_idle_run_is_completed_with_outcome_none(monkeypatch) -> None:
     ledger = _ledger(monkeypatch, "a")
     assert await run_handlers.close_idle_session_runs(1800, org="o") == 1
-    assert ledger.params == [{"org": "o", "idle": 1800, "lim": 500}]
+    assert ledger.params == [{"org": "o", "idle": 1800, "horizon": 30, "lim": 500}]
     (c,) = ledger.completes
     assert (c.org, c.namespace, c.run_id) == ("o", "n", "a")
     assert (c.status, c.outcome, c.metadata) == ("completed", "none", {"closed_by": "mcp_idle"})

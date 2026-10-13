@@ -114,10 +114,29 @@ def test_writes_stamp_reads_label_ledger_and_code_never() -> None:
 
 
 def test_goal_is_the_first_query_then_key_then_fallback() -> None:
-    assert mcp_runs.goal_of({"query": "  what broke CI  "}, "x") == "what broke CI"
-    assert mcp_runs.goal_of({"memory_key": "ci:flaky"}, "x") == "ci:flaky"
-    assert mcp_runs.goal_of({"value": 1}, "mcp session (cursor)") == "mcp session (cursor)"
-    assert len(mcp_runs.goal_of({"query": "q" * 5000}, "x")) == mcp_runs.GOAL_MAX_CHARS
+    here = {"org": "clickhouse", "namespace": "ns-a"}
+    assert mcp_runs.goal_of({**here, "query": "  what broke CI  "}, DEFAULTS) == "what broke CI"
+    assert mcp_runs.goal_of({**here, "memory_key": "ci:flaky"}, DEFAULTS) == "ci:flaky"
+    assert mcp_runs.goal_of({**here, "value": 1}, DEFAULTS) == "mcp session (cursor)"
+    long_goal = mcp_runs.goal_of({**here, "query": "q" * 5000}, DEFAULTS)
+    assert len(long_goal) == mcp_runs.GOAL_MAX_CHARS
+
+
+@pytest.mark.parametrize(
+    "elsewhere",
+    [
+        {"org": "clickhouse", "namespace": "ns-b"},
+        {"org": "other", "namespace": "ns-a"},
+        {"org": "clickhouse", "namespace": "ns-a", "namespace_scope": "all"},
+        {"org": "clickhouse", "namespace": "ns-a", "namespaces": ["ns-b"]},
+    ],
+)
+def test_a_call_outside_the_runs_namespace_leaves_its_text_out_of_the_goal(
+    elsewhere: dict[str, Any],
+) -> None:
+    """The run's readers are its namespace's; they may not read where the call went."""
+    goal = mcp_runs.goal_of({**elsewhere, "query": "SECRET in ns-b"}, DEFAULTS)
+    assert goal == "mcp session (cursor)"
 
 
 # ---- ensure: one run per session, begun once ----

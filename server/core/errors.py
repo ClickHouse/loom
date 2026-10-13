@@ -225,7 +225,7 @@ def _with_help_link(headers: dict[str, str] | None, detail: object) -> dict[str,
     return {**(headers or {}), "Link": error_help_link(code)}
 
 
-def json_safe_loads(text: str) -> Any:
+def loads_keeping_non_finite(text: str) -> Any:
     """JSON text parsed with any non-finite number (`Infinity`, `NaN`) kept as a
     string, so the result serialises again: a 422 echoes what a client sent."""
     return json.loads(text, parse_constant=str)
@@ -262,5 +262,5 @@ def register_exception_handler(app: FastAPI) -> None:
     async def _handle_request_validation(_: Request, exc: RequestValidationError) -> JSONResponse:
         # FastAPI's own 422, except that a non-finite input (`1e400`) is echoed as a
         # string: JSON has no inf, and the response would fail as a 500.
-        errors = json_safe_loads(json.dumps(jsonable_encoder(exc.errors())))
+        errors = loads_keeping_non_finite(json.dumps(jsonable_encoder(exc.errors())))
         return JSONResponse(status_code=422, content={"detail": errors})

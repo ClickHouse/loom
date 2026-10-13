@@ -136,7 +136,10 @@ def _refuse(column: str, stored: int, written: int) -> None:
 
 
 def _coded_of(table: str) -> list[tuple[str, str, int]]:
-    """(qualified column, column name, stored width) of `table`'s coded columns."""
+    """(qualified column, column name, stored width) of `table`'s coded columns,
+    as the write guards read them; a stale reading is refreshed in the background,
+    as for reads, so a process that only writes sees a rebuild too."""
+    _maybe_refresh()
     prefix = f"{_qualify(table)}."
     return [(c, c[len(prefix) :], w) for c, w in _widths.items() if c.startswith(prefix)]
 

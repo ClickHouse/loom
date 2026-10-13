@@ -264,7 +264,10 @@ async def close_session_run(org: str, run_id: str, *, reason: str) -> bool:
 
 
 # One idle-sweep pass: how many runs it closes at most, how many at once, and
-# how long it starts new closes for (inside the worker's pass deadline).
+# how long it starts new closes for (inside the worker's pass deadline). It
+# looks at runs written within IDLE_SWEEP_HORIZON_DAYS: an idle close and the
+# next call write a run anew, so an older one went a month without a gap.
+IDLE_SWEEP_HORIZON_DAYS = 30
 IDLE_CLOSE_BATCH = 500
 IDLE_CLOSES_AT_ONCE = 8
 IDLE_CLOSE_BUDGET_S = 120.0
@@ -274,10 +277,15 @@ async def close_idle_session_runs(idle_seconds: int, *, org: str = "") -> int:
     """Complete the implicit session runs no call of their token reached within
     the idle window, from the ledger alone, so a run closes whichever web
     process served it and after any restart; the next pass takes what one pass
-    leaves. Returns how many closed. `org` narrows the sweep to one org."""
+    leaves. Returns how many closed. `org` narrows the sweep to one org for the
+    live tests, which share a database with the rest of the suite."""
     deadline = time.monotonic() + IDLE_CLOSE_BUDGET_S
     stale = await runs_store.idle_session_runs(
-        get_client(), idle_seconds=idle_seconds, limit=IDLE_CLOSE_BATCH, org=org
+        get_client(),
+        idle_seconds=idle_seconds,
+        horizon_days=IDLE_SWEEP_HORIZON_DAYS,
+        limit=IDLE_CLOSE_BATCH,
+        org=org,
     )
     slots = asyncio.Semaphore(IDLE_CLOSES_AT_ONCE)
 

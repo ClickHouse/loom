@@ -159,3 +159,34 @@ async def test_a_delete_right_after_a_call_keeps_every_call_in_the_ledger(
         )
 
     await eventually(_all_ledgered, description="the session's three calls in the ledger")
+
+
+@pytest.mark.asyncio
+async def test_a_runs_goal_never_shows_a_call_in_another_namespace(
+    control_plane_url: str, ch_client: Any
+) -> None:
+    """The run row sits in the caller's default namespace, which other principals
+    read; a first call in another namespace leaves its text out of the goal."""
+    from server.auth.jwt import mint_token
+
+    org, session = unique_org("mcp-goal"), uuid.uuid4().hex
+    token = mint_token(
+        subject=f"sa:mcp-goal-{uuid.uuid4().hex[:6]}",
+        org=org,
+        namespaces=["ns-a", "ns-b"],
+        roles=["writer"],
+        ttl_seconds=900,
+        is_service_account=True,
+    )
+    async with httpx.AsyncClient(base_url=control_plane_url, timeout=30) as c:
+        await _require_auth(c)
+        await _memory_set(c, token, session, "ns-b", "SECRET-ns-b-only")
+        r = await c.delete("/mcp", headers=_headers(token, session))
+        assert r.json()["run_closed"] is True, r.text[:400]
+
+    rows = ch_client.query(
+        "SELECT namespace, goal FROM loom.agent_runs FINAL WHERE org = {org:String}",
+        parameters={"org": org},
+    ).result_rows
+    assert rows and all("SECRET" not in goal for _, goal in rows)
+    assert {namespace for namespace, _ in rows} == {"ns-a"}

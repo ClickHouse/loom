@@ -6,7 +6,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from server.auth.context import current_auth
-from server.core.errors import AuthInsufficientError, IdentityIncompleteError, json_safe_loads
+from server.core.errors import (
+    AuthInsufficientError,
+    IdentityIncompleteError,
+    loads_keeping_non_finite,
+)
 from server.identity.domain.read_scope import ReadFilters, request_read_filters
 
 if TYPE_CHECKING:
@@ -236,6 +240,6 @@ def validation_errors(e: Any) -> list[dict[str, Any]]:
     guarantees; round-tripping through it drops nothing a client can use. A
     non-finite input (`1e400`) comes back as a string: JSON has no inf."""
     try:
-        return list(json_safe_loads(e.json(include_url=False)))
+        return list(loads_keeping_non_finite(e.json(include_url=False)))
     except Exception:  # noqa: BLE001 — never let the error report itself fail
         return [{"type": "validation_error", "msg": str(e)}]
