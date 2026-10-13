@@ -154,7 +154,14 @@ _READS = {
     "ternary_expression",
     "await",
     "await_expression",
+    # `{ NAME }`: a JS / TS object's shorthand value, a Rust struct's
+    "object",
+    "shorthand_field_initializer",
 }
+# a name a destructuring binds without saying so
+_SHORTHAND_BINDINGS = {"shorthand_property_identifier_pattern", "shorthand_field_identifier"}
+# a bare name that can read a variable
+_REFERENCES = {"identifier", "shorthand_property_identifier"}
 # (node, field): an identifier in that field is read, not bound
 _READ_FIELDS = {
     ("assignment", "right"),
@@ -1096,6 +1103,8 @@ def _use(leaf: Any, grammar: str, decl: Any, body: Any, fields: _Fields) -> str 
         prev = fields.prev(leaf)
         if prev is None or prev.type not in _ACCESS:
             return "read"  # the class itself: `-> Reader`, `x: Reader`, `Reader()`
+    if leaf.type in _SHORTHAND_BINDINGS:
+        return "other"  # `const { NAME } = lib`, Rust's `let S { NAME } = s`
     if leaf.type == "type_identifier":  # a type of that name (`using NAME = Box;`, a
         # TypeScript class) may be what a bare call or read means; Java keeps types apart
         prev = fields.prev(leaf)
@@ -1161,7 +1170,7 @@ def _bare_reference(leaf: Any, fields: _Fields) -> bool:
     """An `identifier` no access operator qualifies: not the member in `data.fetch_rows`
     or `data.fetch_rows()`, not the name in `other::fetch_rows`."""
     prev = fields.prev(leaf)
-    return bool(leaf.type == "identifier" and (prev is None or prev.type not in _ACCESS))
+    return bool(leaf.type in _REFERENCES and (prev is None or prev.type not in _ACCESS))
 
 
 def _key(node: Any) -> tuple[int, int, str]:

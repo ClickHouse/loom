@@ -305,6 +305,28 @@ _RENAMES = [
         "  return n ? fetch_rows(1) : 4;\n}\n",
         None,
     ),
+    # a shorthand pattern binds the name; a shorthand value reads it
+    (
+        "m.js",
+        "function NAME(n) {\n  if (n) { const { fetch_rows } = lib; return NAME(n - 1); }\n"
+        "  return 3;\n}\n",
+        "loose",
+    ),
+    (
+        "m.ts",
+        "function NAME(n: number, { fetch_rows }: any): number {\n"
+        "  return n ? NAME(n - 1, lib) : 3;\n}\n",
+        "loose",
+    ),
+    (
+        "m.rs",
+        "fn NAME(n: u32, s: S) -> u32 {\n    let S { fetch_rows } = s;\n"
+        "    if n > 0 { return NAME(n - 1, s); }\n    3\n}\n",
+        "loose",
+    ),
+    ("m.js", "function NAME(n) {\n  return n ? { fetch_rows } : NAME(1);\n}\n", "loose"),
+    ("m.js", "function NAME(n) {\n  return n ? { NAME } : NAME(1);\n}\n", "exact"),
+    ("m.rs", "fn NAME() -> S {\n    S { NAME }\n}\n", "exact"),
 ]
 
 
