@@ -59,6 +59,20 @@ _TWICE = "function fetch_rows() { return 1; }\nfunction fetch_rows() { return 2;
             "=> 4",
             "=> 5",
         ),
+        (
+            "g.cpp",
+            "int fetch_rows(int a = 1);\nint fetch_rows(int a) { return a; }\n",
+            "fetch_rows",
+            "= 1",
+            "= 2",
+        ),
+        (
+            "h.cpp",
+            "const int& fetch_rows(int a = 1);\nconst int& fetch_rows(int a) { return a; }\n",
+            "fetch_rows",
+            "= 1",
+            "= 2",
+        ),
     ],
 )
 def test_an_edit_anywhere_in_the_family_changes_the_fingerprint(

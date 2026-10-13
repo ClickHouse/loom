@@ -105,6 +105,7 @@ _DECLARATIONS = {
 # a name written as more than one token: `~Reader`, `operator()`
 _COMPOSITE_NAMES = {"destructor_name", "operator_name"}
 _FIELDLESS_DECLARATORS = {"reference_declarator"}
+_POINTERS = {"pointer_declarator", "reference_declarator"}
 _QUALIFIED_NAMES = {"qualified_identifier", "scoped_identifier", "nested_name_specifier"}
 _PREPROC_IFS = {"preproc_if", "preproc_ifdef"}
 _PREPROC_BRANCHES = {"preproc_elif", "preproc_elifdef", "preproc_else"}
@@ -687,7 +688,7 @@ class Declarations:
             decl = _inner(c)
             if decl.type in _VARIABLES:
                 names = [d.child_by_field_name("name") for d in decl.named_children]
-            elif decl.type in _DECLARATIONS:
+            elif decl.type in _DECLARATIONS or _prototype(decl):
                 names = [_name_node(decl)]
             elif (assigned := _assigned(decl)) is not None:
                 names = [assigned[1]]
@@ -792,6 +793,16 @@ def _inner(node: Any) -> Any:
             break
         node = inner
     return node
+
+
+def _prototype(node: Any) -> bool:
+    """`node` is a C / C++ function's prototype: `int f(int a = 1);`."""
+    if node.type != "declaration":
+        return False
+    d = node.child_by_field_name("declarator")
+    while d is not None and d.type in _POINTERS:
+        d = d.child_by_field_name("declarator") or (d.named_children or [None])[-1]
+    return d is not None and d.type == "function_declarator"
 
 
 def _assigned(node: Any) -> tuple[Any, Any] | None:
