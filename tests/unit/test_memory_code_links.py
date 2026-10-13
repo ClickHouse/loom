@@ -84,7 +84,7 @@ def world(monkeypatch):
     judged: list[str] = []
     cleared: list[dict[str, Any]] = []
 
-    async def policy_due(org, cns):
+    async def policy_due(org, cns, *, limit):
         return list(states)
 
     async def for_memories(org, ids):

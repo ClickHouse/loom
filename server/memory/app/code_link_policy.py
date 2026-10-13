@@ -10,7 +10,6 @@ from server.memory.app import code_link_judge
 from server.memory.app import code_link_repo as repo
 from server.memory.app.code_link_reads import (
     SERVED,
-    current,
     inputs_now,
 )
 from server.memory.domain import code_change
@@ -39,7 +38,8 @@ async def apply_policies(
 ) -> None:
     """Run the policy of each memory a change in `cns` left due and clear the marks it
     settled; what fails or is past the judgement budget stays due."""
-    due = await store.policy_due(org, cns)
+    # a page a few times the budget: what is left over is read by the next pass
+    due = await store.policy_due(org, cns, limit=4 * budget.judgements + 100)
     if not due:
         return
     links: dict[str, list[LinkRow]] = defaultdict(list)
@@ -69,13 +69,6 @@ async def apply_policies(
             if out is None:
                 continue  # deferred: stays due
             updated, left = out
-            if updated:
-                now = await store.memory_heads(org, [mid])
-                latest = now[0] if now else None
-                if latest is None or len(current(org, latest, mine)) != len(mine):
-                    continue  # rewritten meanwhile: its links are relinked first
-                if not _judgeable(latest):
-                    updated = {}  # held or labelled high while the last judgement ran
             rows += [
                 store.link_row(updated.get(k, a), follows=a["version"], policy_due=int(k in left))
                 for a in mine
@@ -107,6 +100,13 @@ async def _revise(
     claim = repo.claim_of(row["value"])
     if claim is None:
         return {}, set()
+    if budget.judgements <= 0:
+        return None
+    # the batch read may be old by now, and every judgement awaits the model: the memory is
+    # read again before the first and after each, and one rewritten, held or labelled
+    # `high` meanwhile is judged no further, what was judged of it dropped
+    if not await _unchanged(org, row):
+        return {}, set()
     updated: dict[tuple[str, str], LinkRow] = {}
     due: set[tuple[str, str]] = set()
     for a in changed:
@@ -114,15 +114,19 @@ async def _revise(
         if budget.judgements <= 0:
             due.add(key)
             continue
-        # a judgement awaits the model: the memory may have changed since it was read
-        now = await store.memory_heads(org, [str(row["mid"])])
-        if not now or now[0]["sha"] != row["sha"] or not _judgeable(now[0]):
-            return {}, set()
         link = await _judge(files, claim, a, head, budget)
+        if not await _unchanged(org, row):
+            return {}, set()
         if link is not None:
             updated[key] = link
             result.suggested += bool(link["suggestion"])
     return None if len(due) == len(changed) else (updated, due)
+
+
+async def _unchanged(org: str, row: dict[str, Any]) -> bool:
+    """Whether memory `row` is still as read, and the judge may still read it."""
+    now = await store.memory_heads(org, [row["mid"]])
+    return bool(now) and inputs_now(org, now[0]) == inputs_now(org, row) and _judgeable(now[0])
 
 
 def _judgeable(row: dict[str, Any]) -> bool:

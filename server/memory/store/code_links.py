@@ -391,12 +391,14 @@ async def lost(
     return _links(rows)
 
 
-async def policy_due(org: str, code_namespace: str, *, ch: _CHClient | None = None) -> list[str]:
-    """The memories with a link of `code_namespace` whose policy has yet to run."""
+async def policy_due(
+    org: str, code_namespace: str, *, limit: int, ch: _CHClient | None = None
+) -> list[str]:
+    """Up to `limit` memories with a link of `code_namespace` whose policy has yet to run."""
     rows = await (ch or _default_client()).query_all(
         f"SELECT DISTINCT toString(memory_id) AS mid {_LIVE} AND org = {{org:String}} "
-        "AND code_namespace = {cns:String} AND policy_due = 1",
-        params={"org": org, "cns": code_namespace},
+        "AND code_namespace = {cns:String} AND policy_due = 1 LIMIT {lim:UInt32}",
+        params={"org": org, "cns": code_namespace, "lim": int(limit)},
     )
     return [str(r["mid"]) for r in rows]
 
