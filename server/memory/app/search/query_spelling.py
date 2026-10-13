@@ -70,25 +70,13 @@ def _cached(key: tuple[str, tuple[str, ...]]) -> dict[str, str] | None:
     return hit[1]
 
 
-async def corpus_spellings(input: MemorySearchInput, embedding_model: str) -> dict[str, str] | None:
-    """lowercase word of `input.query` -> the spelling the rows `input` may
-    read in the addressed namespace use instead. {} when off
-    (`memory_search_query_spelling_max_words`) or nothing differs; None when
-    the lookup did not answer (it failed or ran past its deadline, now or
-    recently enough that the namespace is backing off)."""
-    found = _lookup_key(input, embedding_model)
-    if found is None:
-        return {}
-    q, tokens, key = found
-    cached = _cached(key)
-    return cached if cached is not None else await _lookup(q, tokens, key)
-
-
 async def _lookup(
     q: SearchQuery, tokens: list[str], key: tuple[str, tuple[str, ...]]
 ) -> dict[str, str] | None:
-    """`corpus_spellings` past the cache: the back-off, the bounded read and
-    the vote, whose answer is cached under `key`."""
+    """lowercase word -> the identifier spelling the rows `q` may read use
+    instead ({} when none does), or None when the lookup did not answer (it
+    failed or ran past its deadline, now or recently enough that the
+    namespace is backing off). The answer is cached under `key`."""
     now = time.monotonic()
     where = (q.org, q.namespace)
     if _failed.get(where, (0, 0.0))[1] > now:
@@ -144,37 +132,39 @@ async def embed_query(
 ) -> tuple[list[float], dict[str, str] | None]:
     """The vector for `text` with the corpus spellings of `input.query`'s
     words applied, and those spellings; None when `text` was embedded as
-    typed because the lookup did not answer or the rewrite's embed failed.
-    An answer already cached costs one embed; otherwise the lookup runs
-    beside the embed of `text` as typed, so only a rewrite costs a second,
-    and that one falls back to the vector as typed."""
+    typed because the lookup did not answer or the respelled embed failed.
+    The embed of `text` as typed always runs, beside the lookup (skipped
+    when its answer is cached): it is the vector when nothing is respelled,
+    and the fallback when the respelled embed fails."""
     found = _lookup_key(input, embedding_model)
     if found is None:
         return await embed(text), {}
     q, tokens, key = found
     known = _cached(key)
-    if known is not None:
-        # The text to embed is known: one embed, whose failure is the search's.
-        return await embed(apply_spellings(text, known)), known
-
-    lookup = asyncio.create_task(_lookup(q, tokens, key))
-    tasks: list[asyncio.Task[Any]] = [lookup]
+    if known == {}:
+        return await embed(text), {}
+    tasks: list[asyncio.Task[Any]] = []
     try:
         as_typed = asyncio.create_task(embed(text))
         tasks.append(as_typed)
-        # An embed that fails at once fails the search at once, not after the lookup.
-        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        if as_typed.done():
-            as_typed.result()  # raises the embed's error
-        spellings = await lookup
+        spellings = known
+        if spellings is None:
+            lookup = asyncio.create_task(_lookup(q, tokens, key))
+            tasks.append(lookup)
+            # An embed that fails at once fails the search at once, not after the lookup.
+            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            if as_typed.done():
+                as_typed.result()  # raises the embed's error
+            spellings = await lookup
         if not spellings:
             return await as_typed, spellings
         try:
             return await embed(apply_spellings(text, spellings)), spellings
         except Exception as e:  # noqa: BLE001 — the rewrite is a recall aid; the vector as typed serves
-            vec = await as_typed
-            log.warning("embedding the respelled query failed, using it as typed: %r", e)
-            return vec, None
+            failure = e
+        vec = await as_typed
+        log.warning("embedding the respelled query failed, using it as typed: %r", failure)
+        return vec, None
     finally:
         for task in tasks:
             task.cancel()

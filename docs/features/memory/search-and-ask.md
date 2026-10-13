@@ -137,11 +137,12 @@ already and is unchanged.
 
 The lookup runs beside the embed of the query as typed, and its answer is cached for a
 minute. A rewrite shows in `retrieval_work.query_spellings` (`memory.search_trace`:
-`query_spellings`); one not already cached costs a second embed, a cached one costs only
-that embed. The query embeds as typed, with `retrieval_work.query_spellings_skipped` set
-(`memory.search_trace`: `query_spellings_skipped`), when the lookup fails or runs past
-0.25 s, when the namespace is backing off after such a failure (a minute, doubling with
-each failure in a row up to an hour), or when an uncached rewrite's embed fails.
+`query_spellings`) and costs a second embed, of the respelled text; the embed as typed
+still runs, as the fallback should that one fail. The query embeds as typed, with
+`retrieval_work.query_spellings_skipped` set (`memory.search_trace`:
+`query_spellings_skipped`), when the lookup fails or runs past 0.25 s, when the namespace
+is backing off after such a failure (a minute, doubling with each failure in a row up to
+an hour), or when the respelled embed fails.
 `retrieval_cost_estimate` is made before the lookup answers, so it counts one embed even
 when a rewrite adds a second. `loom.search_trace_log` keeps the query as typed, so a
 logged query can score differently from a fresh embed of the same text.

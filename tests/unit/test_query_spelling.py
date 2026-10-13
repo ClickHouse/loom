@@ -21,6 +21,15 @@ def _input(query: str = "datalakecatalog") -> MemorySearchInput:
     )
 
 
+async def _spellings(inp: MemorySearchInput) -> dict[str, str] | None:
+    """What a search with `inp` respells: the cached answer, else a lookup."""
+    found = app._lookup_key(inp, "m")
+    if found is None:
+        return {}
+    cached = app._cached(found[2])
+    return cached if cached is not None else await app._lookup(*found)
+
+
 @pytest.fixture(autouse=True)
 def _empty_caches():
     app._cache.clear()
@@ -100,9 +109,7 @@ def test_the_lookup_reads_with_the_callers_bounds(monkeypatch):
 
     monkeypatch.setattr(app, "spelling_rows", spelling_rows)
     monkeypatch.setattr(app, "get_client", lambda: None)
-    assert asyncio.run(app.corpus_spellings(_input(), "m")) == {
-        "datalakecatalog": "DataLakeCatalog"
-    }
+    assert asyncio.run(_spellings(_input())) == {"datalakecatalog": "DataLakeCatalog"}
     assert seen == {"user_id": "u1", "session_id": "s1", "tokens": ["datalakecatalog"]}
 
 
@@ -115,7 +122,7 @@ def test_the_deadline_reaches_clickhouse(monkeypatch):
 
     monkeypatch.setattr(app, "spelling_rows", spelling_rows)
     monkeypatch.setattr(app, "get_client", lambda: None)
-    assert asyncio.run(app.corpus_spellings(_input(), "m")) == {}
+    assert asyncio.run(_spellings(_input())) == {}
 
 
 def test_a_failing_namespace_backs_off_longer_each_time_and_warns_once(monkeypatch, caplog):
@@ -131,9 +138,9 @@ def test_a_failing_namespace_backs_off_longer_each_time_and_warns_once(monkeypat
     monkeypatch.setattr(app.time, "monotonic", lambda: clock[0])
     with caplog.at_level(logging.DEBUG, logger=app.log.name):
         for _ in range(4):
-            assert asyncio.run(app.corpus_spellings(_input(), "m")) is None
+            assert asyncio.run(_spellings(_input())) is None
             # Another query in the namespace waits out the same back-off.
-            assert asyncio.run(app.corpus_spellings(_input("iceberg"), "m")) is None
+            assert asyncio.run(_spellings(_input("iceberg"))) is None
             clock[0] = app._failed[("o", "ns")][1] + 1  # wait out the back-off
     assert [round(b - a) for a, b in zip(calls, calls[1:], strict=False)] == [61, 121, 241]
     assert [r.levelno for r in caplog.records] == [
@@ -146,12 +153,10 @@ def test_a_failing_namespace_backs_off_longer_each_time_and_warns_once(monkeypat
 
 def test_a_success_ends_the_back_off(monkeypatch):
     _lookup_returns(monkeypatch, TimeoutError())
-    asyncio.run(app.corpus_spellings(_input(), "m"))
+    asyncio.run(_spellings(_input()))
     app._failed[("o", "ns")] = (3, 0.0)  # its back-off has run out
     _lookup_returns(monkeypatch, {"DataLakeCatalog": 7})
-    assert asyncio.run(app.corpus_spellings(_input(), "m")) == {
-        "datalakecatalog": "DataLakeCatalog"
-    }
+    assert asyncio.run(_spellings(_input())) == {"datalakecatalog": "DataLakeCatalog"}
     assert ("o", "ns") not in app._failed
 
 
@@ -159,7 +164,7 @@ def test_a_failed_lookup_is_not_a_provider_outage(monkeypatch):
     from server.observability import provider_health
 
     _lookup_returns(monkeypatch, TimeoutError())
-    asyncio.run(app.corpus_spellings(_input(), "m"))
+    asyncio.run(_spellings(_input()))
     assert "query_spelling" not in provider_health.status()["providers"]
 
 
@@ -173,9 +178,9 @@ def test_an_answer_is_reused_for_the_same_bounds_and_words(monkeypatch):
     monkeypatch.setattr(app, "spelling_rows", spelling_rows)
     monkeypatch.setattr(app, "get_client", lambda: None)
     for _ in range(3):
-        asyncio.run(app.corpus_spellings(_input(), "m"))
+        asyncio.run(_spellings(_input()))
     other_user = _input().model_copy(update={"user_id": "u2"})
-    asyncio.run(app.corpus_spellings(other_user, "m"))
+    asyncio.run(_spellings(other_user))
     assert calls == ["u1", "u2"]
 
 
@@ -184,7 +189,7 @@ def test_memory_search_query_spelling_max_words_zero_reads_nothing(monkeypatch):
 
     _lookup_returns(monkeypatch, AssertionError("no lookup when off"))
     monkeypatch.setattr(settings, "memory_search_query_spelling_max_words", 0)
-    assert asyncio.run(app.corpus_spellings(_input(), "m")) == {}
+    assert asyncio.run(_spellings(_input())) == {}
 
 
 class _Embedder:
@@ -289,7 +294,7 @@ async def test_lookups_failing_together_count_and_warn_once(monkeypatch, caplog)
     monkeypatch.setattr(app, "get_client", lambda: None)
     queries = [f"datalakecatalog word{i:04d}" for i in range(20)]
     with caplog.at_level(logging.DEBUG, logger=app.log.name):
-        got = await asyncio.gather(*(app.corpus_spellings(_input(q), "m") for q in queries))
+        got = await asyncio.gather(*(_spellings(_input(q)) for q in queries))
     assert got == [None] * 20
     assert app._failed[("o", "ns")][0] == 1
     assert len(caplog.records) == 1
@@ -363,12 +368,12 @@ def test_the_back_off_map_stays_bounded_and_forgets_ended_streaks(monkeypatch):
     monkeypatch.setattr(app.time, "monotonic", lambda: clock[0])
     _lookup_returns(monkeypatch, TimeoutError())
     for i in range(app._FAILED_SIZE + 100):
-        asyncio.run(app.corpus_spellings(_input().model_copy(update={"namespace": f"ns{i}"}), "m"))
+        asyncio.run(_spellings(_input().model_copy(update={"namespace": f"ns{i}"})))
     assert len(app._failed) == app._FAILED_SIZE
     assert ("o", "ns0") not in app._failed  # the oldest went first
     # An hour after their back-offs end, the next failure clears them all.
     clock[0] += app._CACHE_TTL_S + app._MAX_BACKOFF_S + 1
-    asyncio.run(app.corpus_spellings(_input().model_copy(update={"namespace": "late"}), "m"))
+    asyncio.run(_spellings(_input().model_copy(update={"namespace": "late"})))
     assert list(app._failed) == [("o", "late")]
 
 
@@ -435,7 +440,7 @@ def test_a_cache_hit_keeps_the_answer_from_being_evicted_first(monkeypatch):
     monkeypatch.setattr(app, "_CACHE_SIZE", 2)
     first, second, third = (_input(q) for q in ("datalakecatalog", "iceberg", "parquet"))
     for inp in (first, second, first, third):
-        asyncio.run(app.corpus_spellings(inp, "m"))
+        asyncio.run(_spellings(inp))
     assert [k[1] for k in app._cache] == [("datalakecatalog",), ("parquet",)]
 
 
@@ -477,30 +482,39 @@ async def test_an_embed_that_fails_before_the_lookup_answers_is_not_retried_resp
     assert texts == ["datalakecatalog"]
 
 
-@pytest.mark.parametrize(
-    ("rows", "embedded"),
-    [({"DataLakeCatalog": 9}, ["DataLakeCatalog"]), ({}, ["datalakecatalog"])],
-)
-async def test_a_cached_answer_costs_one_embed(monkeypatch, rows, embedded):
-    _lookup_returns(monkeypatch, rows)
-    await app.corpus_spellings(_input(), "m")  # warms the cache
+async def test_a_cached_answer_skips_the_lookup(monkeypatch):
+    calls = []
+
+    async def spelling_rows(_ch, _q, _tokens):
+        calls.append(1)
+        return {"DataLakeCatalog": 9}
+
+    monkeypatch.setattr(app, "spelling_rows", spelling_rows)
+    monkeypatch.setattr(app, "get_client", lambda: None)
+    for _ in range(3):
+        embed = _Embedder()
+        _vec, spellings = await app.embed_query(embed, "datalakecatalog", _input(), "m")
+        assert spellings == {"datalakecatalog": "DataLakeCatalog"}
+        assert embed.texts[-1] == "DataLakeCatalog"
+    assert calls == [1]
+
+
+async def test_a_cached_no_rewrite_embeds_once(monkeypatch):
+    _lookup_returns(monkeypatch, {})
+    await _spellings(_input())
     embed = _Embedder()
-    await app.embed_query(embed, "datalakecatalog", _input(), "m")
-    assert embed.texts == embedded
+    assert await app.embed_query(embed, "datalakecatalog", _input(), "m") == ([1.0], {})
+    assert embed.texts == ["datalakecatalog"]
 
 
-async def test_a_cached_rewrite_whose_embed_fails_fails_the_search(monkeypatch):
+async def test_an_outage_serves_the_query_as_typed_cached_or_not(monkeypatch):
+    # The embedding cache answers the text it has seen; the provider is down.
     _lookup_returns(monkeypatch, {"DataLakeCatalog": 9})
-    await app.corpus_spellings(_input(), "m")
-    texts: list[str] = []
 
     async def embed(text: str) -> list[float]:
-        texts.append(text)
-        if text == "DataLakeCatalog":
-            raise RuntimeError("provider error")
-        return [1.0]
+        if text == "datalakecatalog":
+            return [1.0]
+        raise RuntimeError("provider down")
 
-    with pytest.raises(RuntimeError, match="provider error"):
-        await app.embed_query(embed, "datalakecatalog", _input(), "m")
-    # No second embed: one bounded attempt, as with any embed.
-    assert texts == ["DataLakeCatalog"]
+    for _ in range(2):  # the first call looks the spelling up, the second has it cached
+        assert await app.embed_query(embed, "datalakecatalog", _input(), "m") == ([1.0], None)
