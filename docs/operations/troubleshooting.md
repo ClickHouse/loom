@@ -115,10 +115,10 @@ each field means is in [monitoring](./monitoring.md#health-checks).
 - **Check:** the server log's `query embed exceeded …s (attempt n/m)` warnings, and
   `loom.agent_events` rows with `error_code = 'EMBED_TIMEOUT'`. A provider that hangs
   sets no health flag; `/v1/health` shows `provider_failing:<name>` only when it also
-  answers errors. The provider's own status page.
-- **Fix:** retry once. If it repeats, the provider is slow or down: wait it out, or raise
-  the bound for a provider that is slow but answering. Each failed search holds the
-  server for up to one bound per attempt.
+  answers errors. Also check the provider's status page.
+- **Fix:** retry once (the SDKs already retry it for idempotent ops). If it repeats, the
+  provider is slow or down: wait it out, or raise the bound for a provider that is slow
+  but answering. Each failed search holds the server for up to one bound per attempt.
 
 ### Search returns arbitrary results, or extraction writes nothing
 

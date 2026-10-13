@@ -22,19 +22,24 @@ from server.memory.store.query_spellings import spelling_rows
 
 log = logging.getLogger(__package__)
 
-# The lookup reads every row of the namespace: 40-180 ms on the largest
-# today (88k rows), so this deadline leaves ~75 ms of headroom there.
-_LOOKUP_BOUND_S = 0.25
+# The lookup reads every row of the namespace it may read: 100-300 ms
+# server-side for 40k rows. On a cache miss it overlaps the embed.
+_LOOKUP_BOUND_S = 0.4
+# After a respelled embed times out, how long the text as typed may take:
+# long enough for an embedding-cache hit, not for a provider call.
+_CACHE_HIT_GRACE_S = 0.25
 # Short queries repeat (an agent re-asks, a reader retypes) and a corpus's
 # spelling changes slowly, so an answer is reused for a minute.
 _CACHE_TTL_S = 60.0
 _CACHE_SIZE = 4096
 _cache: OrderedDict[tuple[str, tuple[str, ...]], tuple[float, dict[str, str]]] = OrderedDict()
-# A namespace whose lookup failed or ran past the deadline is not read again
-# for a while: a minute, doubling with each failure in a row up to an hour.
-# (org, namespace) -> (failures in a row, monotonic time to try again); an
-# entry is dropped an hour after its back-off ends, and the oldest go first
-# past the size bound.
+# A lookup that fails or runs past the deadline skips only its own query. A
+# namespace whose lookups fail _BACKOFF_AFTER times in a row is not read
+# again for a while: a minute, doubling with each further failure up to an
+# hour; a success ends the streak. (org, namespace) -> (failures in a row,
+# monotonic time to try again); an entry is dropped an hour after its
+# back-off ends, and the oldest go first past the size bound.
+_BACKOFF_AFTER = 3
 _MAX_BACKOFF_S = 3600.0
 _MAX_DOUBLINGS = 6  # 60 s doubled six times passes the hour
 _FAILED_SIZE = 4096
@@ -90,22 +95,27 @@ async def _lookup(
             with statement_timeout(_LOOKUP_BOUND_S):
                 rows = await spelling_rows(get_client(), q, tokens)
     except Exception as e:  # noqa: BLE001 — the spelling is a recall aid; the query embeds as typed
-        # Read after the await: a lookup that ran beside this one may have
-        # counted the same failure already.
+        # Read after the await: the namespace may have started backing off
+        # while this lookup ran.
         failures, retry_at = _failed.get(where, (0, 0.0))
         now = time.monotonic()
         if retry_at > now:
             return None
         if retry_at + _MAX_BACKOFF_S < now:
             failures = 0  # the last streak ended over an hour ago: this one is new
-        backoff = min(_CACHE_TTL_S * 2 ** min(failures, _MAX_DOUBLINGS), _MAX_BACKOFF_S)
-        _record_failure(where, failures + 1, now + backoff, now)
-        # One warning per streak; the retries after it log at debug.
-        level = logging.WARNING if failures == 0 else logging.DEBUG
+        failures += 1
+        backoff = 0.0
+        if failures >= _BACKOFF_AFTER:
+            doublings = min(failures - _BACKOFF_AFTER, _MAX_DOUBLINGS)
+            backoff = min(_CACHE_TTL_S * 2**doublings, _MAX_BACKOFF_S)
+        _record_failure(where, failures, now + backoff, now)
+        # One warning per streak, when its back-off starts; the rest log at debug.
+        level = logging.WARNING if failures == _BACKOFF_AFTER else logging.DEBUG
         log.log(
             level,
-            "query spelling lookup in %s failed, retrying in %.0f s: %r",
+            "query spelling lookup in %s failed (%d in a row), retrying in %.0f s: %r",
             q.namespace,
+            failures,
             backoff,
             e,
         )
@@ -161,7 +171,7 @@ async def embed_query(
             # The provider hangs: only an embedding-cache hit can still answer
             # as typed, and one answers well inside the lookup's bound.
             try:
-                async with asyncio.timeout(_LOOKUP_BOUND_S):
+                async with asyncio.timeout(_CACHE_HIT_GRACE_S):
                     return await embed(text), None
             except TimeoutError:
                 raise failure from None

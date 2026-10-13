@@ -137,18 +137,16 @@ def test_a_failing_namespace_backs_off_longer_each_time_and_warns_once(monkeypat
     monkeypatch.setattr(app, "get_client", lambda: None)
     monkeypatch.setattr(app.time, "monotonic", lambda: clock[0])
     with caplog.at_level(logging.DEBUG, logger=app.log.name):
-        for _ in range(4):
+        for _ in range(app._BACKOFF_AFTER + 3):
             assert asyncio.run(_spellings(_input())) is None
-            # Another query in the namespace waits out the same back-off.
-            assert asyncio.run(_spellings(_input("iceberg"))) is None
-            clock[0] = app._failed[("o", "ns")][1] + 1  # wait out the back-off
-    assert [round(b - a) for a, b in zip(calls, calls[1:], strict=False)] == [61, 121, 241]
-    assert [r.levelno for r in caplog.records] == [
-        logging.WARNING,
-        logging.DEBUG,
-        logging.DEBUG,
-        logging.DEBUG,
-    ]
+            # Once backing off, another query in the namespace waits it out too.
+            asyncio.run(_spellings(_input("iceberg")))
+            clock[0] = app._failed[("o", "ns")][1] + 1  # wait out any back-off
+    # Below the threshold every query reads (and fails); from the third, a minute, doubling.
+    gaps = [round(b - a) for a, b in zip(calls, calls[1:], strict=False)]
+    assert gaps == [0, 1, 61, 121, 241, 481]
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1 and "(3 in a row)" in warnings[0]
 
 
 def test_a_success_ends_the_back_off(monkeypatch):
@@ -296,8 +294,9 @@ async def test_lookups_failing_together_count_and_warn_once(monkeypatch, caplog)
     with caplog.at_level(logging.DEBUG, logger=app.log.name):
         got = await asyncio.gather(*(_spellings(_input(q)) for q in queries))
     assert got == [None] * 20
-    assert app._failed[("o", "ns")][0] == 1
-    assert len(caplog.records) == 1
+    # Twenty in a row: the namespace backs off, and warns once.
+    assert app._failed[("o", "ns")][1] > time.monotonic()
+    assert [r.levelno for r in caplog.records].count(logging.WARNING) == 1
 
 
 class _FakeEmbedder:
@@ -602,12 +601,28 @@ def test_a_namespace_failing_for_weeks_stays_at_the_hour_and_never_fails_the_sea
     assert failures == 1100 and retry_at - failed_at == app._MAX_BACKOFF_S
 
 
-def test_a_namespace_whose_streak_ended_long_ago_starts_a_new_one(monkeypatch, caplog):
+def test_a_namespace_whose_streak_ended_long_ago_starts_a_new_one(monkeypatch):
     clock = [1000.0]
     monkeypatch.setattr(app.time, "monotonic", lambda: clock[0])
     _lookup_returns(monkeypatch, TimeoutError())
     app._failed[("o", "ns")] = (4, clock[0] - app._MAX_BACKOFF_S - 1)  # ended over an hour ago
-    with caplog.at_level(logging.WARNING, logger=app.log.name):
-        assert asyncio.run(_spellings(_input())) is None
-    assert app._failed[("o", "ns")] == (1, clock[0] + app._CACHE_TTL_S)
-    assert len(caplog.records) == 1  # a new streak warns again
+    assert asyncio.run(_spellings(_input())) is None
+    # The count restarts: one failure, no back-off yet.
+    assert app._failed[("o", "ns")] == (1, clock[0])
+
+
+def test_one_slow_lookup_skips_only_its_own_query(monkeypatch):
+    results = iter([TimeoutError(), {"DataLakeCatalog": 7}])
+
+    async def spelling_rows(_ch, _q, _tokens):
+        r = next(results)
+        if isinstance(r, BaseException):
+            raise r
+        return r
+
+    monkeypatch.setattr(app, "spelling_rows", spelling_rows)
+    monkeypatch.setattr(app, "get_client", lambda: None)
+    assert asyncio.run(_spellings(_input("iceberg"))) is None
+    # The next query reads at once, and its success ends the streak.
+    assert asyncio.run(_spellings(_input())) == {"datalakecatalog": "DataLakeCatalog"}
+    assert ("o", "ns") not in app._failed

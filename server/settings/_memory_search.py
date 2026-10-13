@@ -158,8 +158,8 @@ class MemorySearchSettings(BaseModel):
     # A query of at most this many words embeds each all-lowercase word of 4+
     # letters in the identifier spelling the caller's rows in the addressed
     # namespace use most ("datalakecatalog" -> "DataLakeCatalog"; never
-    # "what" -> "What"). One read of the namespace beside the embed (40-180 ms
-    # on the largest), reused for a minute; fail-open. 0 = off.
+    # "what" -> "What"). One read of the namespace beside the embed (100-300 ms
+    # for 40k rows), reused for a minute; fail-open. 0 = off.
     memory_search_query_spelling_max_words: int = Field(default=6, ge=0)
     # Body length (chars) for bodies="excerpt" (the MCP search default).
     memory_search_excerpt_chars: int = Field(default=200, ge=1)
