@@ -35,6 +35,7 @@ import re
 import socket
 import sys
 import time
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -428,6 +429,22 @@ def _codec_supported(ch: Client) -> bool:
         return False
 
 
+def _codec_width(ch: Client) -> int:
+    """The width a new coded table takes: what the install's coded tables hold
+    (a model chosen in the dashboard leaves LOOM_EMBEDDING_DIM behind), else
+    LOOM_EMBEDDING_DIM on a fresh install."""
+    from server.core.schema.vector_codec_ddl import CODED_TABLES, codec_width
+    from server.settings import settings
+
+    rows = ch.query(
+        "SELECT compression_codec FROM system.columns WHERE database = 'loom' "
+        "AND table IN {tables:Array(String)} AND compression_codec LIKE '%Quantized(%'",
+        parameters={"tables": sorted(CODED_TABLES)},
+    ).result_rows
+    widths = Counter(w for (codec,) in rows if (w := codec_width(str(codec))) is not None)
+    return widths.most_common(1)[0][0] if widths else int(settings.embedding_dim)
+
+
 DIMENSIONS_SETTING = "allow_dimensions_outside_sorting_key"
 _AGGREGATING_CREATE = re.compile(
     r"^\s*CREATE\s+TABLE\b[^;]*?\bENGINE\s*=\s*(?:Shared|Replicated)?"
@@ -489,6 +506,7 @@ def _apply_file(
     dry: bool,
     nlp_ok: bool = True,
     coded: bool = False,
+    codec_dim: int = 0,
     sync: SyncPolicy = NO_SYNC,
     dims: bool = False,
 ) -> None:
@@ -509,9 +527,8 @@ def _apply_file(
             continue
         if coded:
             from server.core.schema.vector_codec_ddl import rewrite_statement, statement_settings
-            from server.settings import settings as _s
 
-            rewritten = rewrite_statement(stmt, int(_s.embedding_dim))
+            rewritten = rewrite_statement(stmt, codec_dim)
             if rewritten is None:
                 print("    ~ skipped: restates a coded vector column")
                 continue
@@ -619,14 +636,23 @@ def _acquire_lease(ch: Client) -> Lease:
 
 
 def _run_file(
-    ch: Client, f: Path, *, nlp_ok: bool, coded: bool, sync: SyncPolicy, dims: bool = False
+    ch: Client,
+    f: Path,
+    *,
+    nlp_ok: bool,
+    coded: bool,
+    sync: SyncPolicy,
+    dims: bool = False,
+    codec_dim: int = 0,
 ) -> None:
     """Apply one file, then wait for the mutations it started."""
     from server.settings import settings as _s
 
     tables = _mutated_tables(f.read_text())
     before = {(r[0], r[1]) for r in _pending_mutations(ch, tables)} if tables else set()
-    _apply_file(ch, f, dry=False, nlp_ok=nlp_ok, coded=coded, sync=sync, dims=dims)
+    _apply_file(
+        ch, f, dry=False, nlp_ok=nlp_ok, coded=coded, codec_dim=codec_dim, sync=sync, dims=dims
+    )
     if tables:
         _await_mutations(ch, tables, before, wait_s=float(_s.migrate_mutation_wait_s))
 
@@ -642,17 +668,17 @@ def _apply_pending(
     """Apply `to_apply` in order, recording each; 1 on the first failure. A
     file in `baselined` is recorded without running."""
     from server.core.schema.vector_codec_ddl import codable
-    from server.settings import settings
 
     # Probe NLP support once: it decides whether the NLP experimental flag is
     # sent at all (ClickHouse Cloud forbids it).
     nlp_ok = _nlp_available(ch)
     coded = _codec_supported(ch)
-    if coded and not codable(int(settings.embedding_dim)):
+    codec_dim = _codec_width(ch) if coded else 0
+    if coded and not codable(codec_dim):
         coded = False
         print(
-            f"  · vector tables created plain: LOOM_EMBEDDING_DIM={settings.embedding_dim} "
-            "is not a multiple of 8, which the Quantized codec needs"
+            f"  · vector tables created plain: width {codec_dim} is not a multiple of 8, "
+            "which the Quantized codec needs"
         )
     dims = _dimensions_setting_known(ch)
     sync = NO_SYNC if dry else sync_policy(ch)
@@ -675,9 +701,11 @@ def _apply_pending(
             print(f"  → {f.name}")
         try:
             if dry:
-                _apply_file(ch, f, dry=True, nlp_ok=nlp_ok, coded=coded)
+                _apply_file(ch, f, dry=True, nlp_ok=nlp_ok, coded=coded, codec_dim=codec_dim)
             else:
-                _run_file(ch, f, nlp_ok=nlp_ok, coded=coded, sync=sync, dims=dims)
+                _run_file(
+                    ch, f, nlp_ok=nlp_ok, coded=coded, sync=sync, dims=dims, codec_dim=codec_dim
+                )
                 _record(ch, f.name, _checksum(f.read_text()))
                 print(f"  ✓ {f.name}")
         except Exception as e:  # noqa: BLE001 — report any migration failure and stop

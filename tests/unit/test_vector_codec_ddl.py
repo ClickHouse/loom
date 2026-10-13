@@ -116,7 +116,7 @@ def test_codable_widths_are_whole_bytes_of_rabitq_bits() -> None:
 
 @pytest.mark.parametrize(("dim", "coded"), [(3072, True), (1020, False)])
 def test_a_fresh_install_codes_its_vectors_only_at_a_codable_width(
-    settings_override, monkeypatch: pytest.MonkeyPatch, tmp_path, dim: int, coded: bool
+    monkeypatch: pytest.MonkeyPatch, tmp_path, dim: int, coded: bool
 ) -> None:
     from server.core.schema import migrate as mig
     from server.core.schema.journal import sorted_migrations
@@ -124,10 +124,10 @@ def test_a_fresh_install_codes_its_vectors_only_at_a_codable_width(
     (tmp_path / "1999_a.sql").write_text(
         "CREATE TABLE IF NOT EXISTS loom.x (a UInt8) ENGINE = Memory;\n"
     )
-    settings_override(embedding_dim=dim)
     seen: list[bool] = []
     monkeypatch.setattr(mig, "_nlp_available", lambda ch: True)
     monkeypatch.setattr(mig, "_codec_supported", lambda ch: True)
+    monkeypatch.setattr(mig, "_codec_width", lambda ch: dim)
     monkeypatch.setattr(mig, "_dimensions_setting_known", lambda ch: False)
     monkeypatch.setattr(mig, "_sync_settings_accepted", lambda ch: frozenset())
     monkeypatch.setattr(mig, "_run_file", lambda ch, f, **kw: seen.append(kw["coded"]))
@@ -135,3 +135,34 @@ def test_a_fresh_install_codes_its_vectors_only_at_a_codable_width(
     files = sorted_migrations(tmp_path.glob("*.sql"))
     assert mig._apply_pending(object(), files, dry=False, lease=None) == 0  # type: ignore[arg-type]
     assert seen == [coded]
+
+
+@pytest.mark.parametrize(
+    ("codecs", "width"),
+    [
+        (["CODEC(Quantized('rabitq', 16, 0))", "CODEC(Quantized('rabitq', 16, 0), LZ4)"], 16),
+        ([], 3072),
+    ],
+    ids=["stored-width", "fresh-install"],
+)
+def test_new_coded_tables_take_the_width_the_install_stores(
+    settings_override, codecs: list[str], width: int
+) -> None:
+    """A model chosen in the dashboard leaves LOOM_EMBEDDING_DIM at its old value."""
+    from types import SimpleNamespace
+
+    from server.core.schema import migrate as mig
+
+    settings_override(embedding_dim=3072)
+
+    class _CH:
+        def query(self, sql: str, parameters: dict | None = None) -> SimpleNamespace:
+            assert "memory_embeddings" in parameters["tables"]
+            return SimpleNamespace(result_rows=[(c,) for c in codecs])
+
+    assert mig._codec_width(_CH()) == width  # type: ignore[arg-type]
+
+
+def test_codec_width_reads_the_quantized_argument() -> None:
+    assert vcd.codec_width("CODEC(Quantized(\\'rabitq\\', 1024, 0), LZ4)") == 1024
+    assert vcd.codec_width("CODEC(ZSTD(1))") is None
