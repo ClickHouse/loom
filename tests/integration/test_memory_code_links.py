@@ -1123,6 +1123,26 @@ async def test_a_file_that_never_parses_holds_back_no_other_file(env, monkeypatc
     assert [x["state"] for x in await _links(beta)] == ["fresh"]  # as last checked
 
 
+async def test_a_host_that_does_not_know_the_repository_keeps_its_links(env) -> None:
+    from server.code.domain.index.repos import configured_repos, set_registry_repos
+
+    c1 = env.commit({"src/f.py": "def fetch_rows():\n    return 1\n"})
+    await _index(TRUNK, env, c1, ["src/f.py"])
+    mid = await _remember(MEM, "rows", "`fetch_rows` returns one")
+    await _pass()
+    await _relink_once(env, "src/f.py", "def fetch_rows():\n    return 2\n")
+    assert [x["state"] for x in await _links(mid)] == ["changed"]
+    entries = [c for c in configured_repos() if c.source == "registry"]
+    set_registry_repos([])  # a registry not loaded yet, or one that failed to refresh
+    try:
+        await _remember(MEM, "rows", "`fetch_rows` returns one", pinned=True)
+        await _pass()
+    finally:
+        set_registry_repos(entries)
+    await _pass()
+    assert [x["state"] for x in await _links(mid)] == ["changed"]
+
+
 async def test_a_late_link_of_an_older_value_is_relinked_to_the_newest(env) -> None:
     from server.memory.api.models_crud import MemoryGetInput
     from server.memory.app import code_links

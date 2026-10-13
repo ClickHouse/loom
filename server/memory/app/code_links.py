@@ -314,7 +314,10 @@ async def _link_org(
             if links:
                 deleted.add(str(r["mid"]))  # its links go outright, not as tombstones
             continue
-        cns = code_namespace_for(org, str(r["namespace"]), [str(t) for t in r.get("tags") or []])
+        tags = [str(t) for t in r.get("tags") or []]
+        cns = code_namespace_for(org, str(r["namespace"]), tags)
+        if not cns and links and _names_a_repository(r, tags, links):
+            continue  # a repository this host does not know: its links stay as last made
         r["inputs"] = memory_inputs(r, cns)
         served = r["status"] in SERVED
         if served and links and all(a["inputs_hash"] == r["inputs"] for a in links):
@@ -343,6 +346,15 @@ async def _link_org(
     await store.insert(out)
     if linked and rereads:
         await _link_org(org, await store.memory_heads(org, linked), result, rereads=rereads - 1)
+
+
+def _names_a_repository(
+    memory: dict[str, Any], tags: list[str], links: list[dict[str, Any]]
+) -> bool:
+    """Whether `memory` still names a repository: a `repo:` tag, or written in the code
+    namespace its links are in."""
+    in_code = any(a["code_namespace"] == memory["namespace"] for a in links)
+    return in_code or any(t.startswith("repo:") for t in tags)
 
 
 async def _link(
