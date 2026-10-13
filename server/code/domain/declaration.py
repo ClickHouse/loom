@@ -13,7 +13,14 @@ from collections.abc import Iterator, Sequence
 from functools import lru_cache
 from typing import Any, NamedTuple
 
-from server.code.domain.anchor import NO_SHAPE, Shape, fingerprint, unnumbered
+from server.code.domain.anchor import (
+    CPP_EXTENSIONS,
+    NO_SHAPE,
+    Shape,
+    extension,
+    fingerprint,
+    unnumbered,
+)
 from server.code.domain.extract.lang_typescript_nodes import (
     _is_function_like,
     _unwrap,
@@ -23,16 +30,7 @@ from server.code.domain.extract.lang_typescript_nodes import (
 _GRAMMARS = {
     ".py": "python",
     ".pyi": "python",
-    ".c": "cpp",
-    ".cc": "cpp",
-    ".cpp": "cpp",
-    ".cxx": "cpp",
-    ".h": "cpp",
-    ".hh": "cpp",
-    ".hpp": "cpp",
-    ".hxx": "cpp",
-    ".ipp": "cpp",
-    ".inl": "cpp",
+    **dict.fromkeys(CPP_EXTENSIONS, "cpp"),
     ".ts": "typescript",
     ".mts": "typescript",
     ".cts": "typescript",
@@ -237,8 +235,7 @@ _PATHS = {"scoped_identifier", "qualified_identifier", "scoped_type_identifier",
 
 def bound_function(value: Any) -> Any:
     """The function a variable's value is, as the index reads one: through `(…)`, `as`,
-    `satisfies`, `!` and wrapper calls; None when it is not one. Kept out of the
-    extractor modules so it moves no extractor stamp."""
+    `satisfies`, `!` and wrapper calls; None when it is not one."""
     return _unwrap(value) if _is_function_like(value) else _wrapped_function(value)
 
 
@@ -293,8 +290,7 @@ _BINDING_WORDS = {
 
 def _grammar(path: str) -> str | None:
     """The tree-sitter grammar of `path` by its extension; None for one without."""
-    file = path.rsplit("/", 1)[-1]
-    return _GRAMMARS.get(file[file.rfind(".") :].lower()) if "." in file else None
+    return _GRAMMARS.get(extension(path))
 
 
 def edit_pattern(name: str, path: str) -> str | None:

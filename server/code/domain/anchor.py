@@ -190,8 +190,11 @@ def resolve(
     return next(iter(targets.values())) if len(targets) == 1 else None
 
 
-# C and C++ names never carry the path: a namespace named like its file is still a namespace
-_PATHLESS = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".ipp", ".inl"}
+# the C and C++ files, parsed as C++; their names never carry the path: a namespace named
+# like its file is still a namespace
+CPP_EXTENSIONS = frozenset(
+    {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".ipp", ".inl"}
+)
 
 
 _ORDINAL = re.compile(r"(?<=.)#\d+$")
@@ -202,21 +205,22 @@ def unnumbered(name: str) -> str:
     return _ORDINAL.sub("", name)
 
 
-def _ext(path: str) -> str:
+def extension(path: str) -> str:
+    """`path`'s extension, lowercased, with its dot; '' when it has none."""
     file = path.rsplit("/", 1)[-1]
     return file[file.rfind(".") :].lower() if "." in file else ""
 
 
 def _pathless(path: str) -> bool:
-    return _ext(path) in _PATHLESS
+    return extension(path) in CPP_EXTENSIONS
 
 
 def local_name(qualified_name: str, path: str) -> str:
     """`qualified_name` without the part its path makes, dot-separated: the module; for
     Go the package (its directory and name: a file has one package clause, and a move
     may rename it); for Rust the crate and module path; whole for C and C++."""
-    file, ext = path.rsplit("/", 1)[-1], _ext(path)
-    if ext in _PATHLESS:
+    file, ext = path.rsplit("/", 1)[-1], extension(path)
+    if ext in CPP_EXTENSIONS:
         return qualified_name.replace("::", ".")
     if ext == ".go":
         scope = go_dir_scope(path.rsplit("/", 1)[0] if "/" in path else "") + "."

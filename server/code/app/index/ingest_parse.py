@@ -121,6 +121,9 @@ def _parse_for_ingest(path: str, source: bytes) -> tuple[ParsedFile | None, str]
     return ParsedFile(path=path, lang=lang, source=source), ""
 
 
+parse_for_ingest = _parse_for_ingest
+
+
 def parse_for_round(
     path: str, source: bytes, denylist: Denylist | None = None
 ) -> tuple[ParsedFile | None, str] | None:

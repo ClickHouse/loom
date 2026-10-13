@@ -171,9 +171,9 @@ class ParseFailed(Exception):
 def _parse(path: str, source: bytes) -> tuple[list[Any], Any]:
     """The parser's symbols of `path` and its tree-sitter tree (None without one); a
     parse that failed raises `ParseFailed`."""
-    from server.code.app.index.ingest_parse import _parse_for_ingest
+    from server.code.app.index.ingest_parse import parse_for_ingest
 
-    pf, error = _parse_for_ingest(path, source)
+    pf, error = parse_for_ingest(path, source)
     if error:
         raise ParseFailed(path, error)
     return (pf.symbols, pf.tree) if pf is not None else ([], None)
