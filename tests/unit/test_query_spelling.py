@@ -316,10 +316,10 @@ class _FakeEmbedder:
 async def test_memory_search_reports_the_spelling_in_retrieval_work(monkeypatch, spellings, work):
     from server.memory.app.search.embed import _embed_search_query
 
-    async def corpus_spellings(_input, _model):
+    async def lookup(_q, _tokens, _key):
         return spellings
 
-    monkeypatch.setattr(app, "corpus_spellings", corpus_spellings)
+    monkeypatch.setattr(app, "_lookup", lookup)
     actual_work: dict[str, Any] = {"embedding_calls": 0}
     clock = SimpleNamespace(mark=lambda _stage: None)
     no_hyde = _input().model_copy(update={"hyde": False})
@@ -343,13 +343,13 @@ async def test_memory_search_trace_reports_the_spelling(monkeypatch, spellings, 
     from server.memory.api.models_search import MemorySearchTraceInput
     from server.memory.app.search import trace
 
-    async def corpus_spellings(_input, _model):
+    async def lookup(_q, _tokens, _key):
         return spellings
 
     async def no_hits(_q):
         return []
 
-    monkeypatch.setattr(app, "corpus_spellings", corpus_spellings)
+    monkeypatch.setattr(app, "_lookup", lookup)
     monkeypatch.setattr(trace, "get_embedder", lambda: _FakeEmbedder())
     monkeypatch.setattr(retrieval, "vector_search_trace", no_hits)
     out = await trace.handle_memory_search_trace(
@@ -453,6 +453,8 @@ async def test_a_dead_embedder_fails_the_search_without_claiming_a_fallback(monk
         pytest.raises(RuntimeError, match="401"),
     ):
         await app.embed_query(embed, "datalakecatalog", _input(), "m")
+    # The respelled text was tried, then the as-typed error surfaced, unannounced.
+    assert texts == ["datalakecatalog", "DataLakeCatalog"]
     assert not caplog.records
 
 
@@ -487,7 +489,7 @@ async def test_a_cached_answer_costs_one_embed(monkeypatch, rows, embedded):
     assert embed.texts == embedded
 
 
-async def test_a_cached_rewrite_whose_embed_fails_embeds_as_typed(monkeypatch):
+async def test_a_cached_rewrite_whose_embed_fails_fails_the_search(monkeypatch):
     _lookup_returns(monkeypatch, {"DataLakeCatalog": 9})
     await app.corpus_spellings(_input(), "m")
     texts: list[str] = []
@@ -498,5 +500,7 @@ async def test_a_cached_rewrite_whose_embed_fails_embeds_as_typed(monkeypatch):
             raise RuntimeError("provider error")
         return [1.0]
 
-    assert await app.embed_query(embed, "datalakecatalog", _input(), "m") == ([1.0], None)
-    assert texts == ["DataLakeCatalog", "datalakecatalog"]
+    with pytest.raises(RuntimeError, match="provider error"):
+        await app.embed_query(embed, "datalakecatalog", _input(), "m")
+    # No second embed: one bounded attempt, as with any embed.
+    assert texts == ["DataLakeCatalog"]
