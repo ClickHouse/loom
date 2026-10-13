@@ -639,3 +639,23 @@ def test_a_destructor_or_operator_has_a_declaration(name: str) -> None:
     assert decls is not None
     line = 2 if name.startswith("~") else 3
     assert _text(decls, line, name) and _shape(decls, line, name).exact
+
+
+@pytest.mark.parametrize(
+    ("path", "grammar"),
+    [
+        ("m.pyw", "python"),
+        ("m.ipynb", "python"),
+        ("m.c", "cpp"),
+        ("m.tsx", "tsx"),
+        ("m.mjs", "javascript"),
+        ("m.hh", None),  # the index reads it as text
+        ("m.vue", None),
+    ],
+)
+def test_a_grammar_follows_the_language_the_index_parses_a_path_as(
+    path: str, grammar: str | None
+) -> None:
+    from server.code.domain.declaration import _grammar
+
+    assert _grammar(path) == grammar

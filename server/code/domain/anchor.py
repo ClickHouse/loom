@@ -17,8 +17,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import NamedTuple
 
+from server.code.domain.extract.lang_detect import detect_by_extension
 from server.code.domain.extract.lang_go import go_dir_scope
 from server.code.domain.extract.lang_rust import module_scope_rust
+from server.code.domain.extract.treesitter import lang_for_path
 
 _TICKS = re.compile(r"`([^`\n]{3,160})`")
 _IDENT = re.compile(r"~?[A-Za-z_]\w*(?:(?:::|\.)~?[A-Za-z_]\w*)*")
@@ -190,13 +192,6 @@ def resolve(
     return next(iter(targets.values())) if len(targets) == 1 else None
 
 
-# the C and C++ files, parsed as C++; their names never carry the path: a namespace named
-# like its file is still a namespace
-CPP_EXTENSIONS = frozenset(
-    {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".ipp", ".inl"}
-)
-
-
 _ORDINAL = re.compile(r"(?<=.)#\d+$")
 
 
@@ -211,8 +206,16 @@ def extension(path: str) -> str:
     return file[file.rfind(".") :].lower() if "." in file else ""
 
 
+def language(path: str) -> str:
+    """The language the index parses `path` as by its name; '' for one it names by its
+    content or not at all."""
+    return lang_for_path(path) or detect_by_extension(path)
+
+
 def _pathless(path: str) -> bool:
-    return extension(path) in CPP_EXTENSIONS
+    """A C or C++ file: its names never carry the path, so a namespace named like its file
+    is still a namespace."""
+    return language(path) == "cpp"
 
 
 def local_name(qualified_name: str, path: str) -> str:
@@ -220,7 +223,7 @@ def local_name(qualified_name: str, path: str) -> str:
     Go the package (its directory and name: a file has one package clause, and a move
     may rename it); for Rust the crate and module path; whole for C and C++."""
     file, ext = path.rsplit("/", 1)[-1], extension(path)
-    if ext in CPP_EXTENSIONS:
+    if _pathless(path):
         return qualified_name.replace("::", ".")
     if ext == ".go":
         scope = go_dir_scope(path.rsplit("/", 1)[0] if "/" in path else "") + "."

@@ -13,37 +13,22 @@ from collections.abc import Iterator, Sequence
 from functools import lru_cache
 from typing import Any, NamedTuple
 
-from server.code.domain.anchor import (
-    CPP_EXTENSIONS,
-    NO_SHAPE,
-    Shape,
-    extension,
-    fingerprint,
-    unnumbered,
-)
+from server.code.domain.anchor import NO_SHAPE, Shape, extension, fingerprint, language, unnumbered
 from server.code.domain.extract.lang_typescript_nodes import (
     _is_function_like,
     _unwrap,
     _wrapped_function,
 )
 
+# the index's language -> its tree-sitter grammar (a notebook's is its code cells')
 _GRAMMARS = {
-    ".py": "python",
-    ".pyi": "python",
-    ".pyw": "python",
-    ".ipynb": "python",  # the code cells the index reads it as
-    **dict.fromkeys(CPP_EXTENSIONS, "cpp"),
-    ".ts": "typescript",
-    ".mts": "typescript",
-    ".cts": "typescript",
-    ".tsx": "tsx",
-    ".js": "javascript",
-    ".jsx": "javascript",
-    ".mjs": "javascript",
-    ".cjs": "javascript",
-    ".go": "go",
-    ".java": "java",
-    ".rs": "rust",
+    "python": "python",
+    "cpp": "cpp",
+    "typescript": "typescript",
+    "javascript": "javascript",
+    "go": "go",
+    "java": "java",
+    "rust": "rust",
 }
 # a node that holds the declaration with its decorators or template head
 _HOLDERS = {
@@ -301,8 +286,10 @@ _BINDING_WORDS = {
 
 
 def _grammar(path: str) -> str | None:
-    """The tree-sitter grammar of `path` by its extension; None for one without."""
-    return _GRAMMARS.get(extension(path))
+    """The tree-sitter grammar of `path` by the language the index parses it as; None
+    for one without."""
+    grammar = _GRAMMARS.get(language(path))
+    return "tsx" if grammar == "typescript" and extension(path) == ".tsx" else grammar
 
 
 def edit_pattern(name: str, path: str) -> str | None:
@@ -336,9 +323,8 @@ def fingerprint_version() -> str:
     tag: a grammar upgraded, or missing (texts then fall back to lines), changes it."""
     from importlib.metadata import PackageNotFoundError, version
 
-    grammars = {"typescript" if g == "tsx" else g for g in _GRAMMARS.values()}
     installed = []
-    for package in ["tree-sitter", *sorted(f"tree-sitter-{g}" for g in grammars)]:
+    for package in ["tree-sitter", *sorted(f"tree-sitter-{g}" for g in set(_GRAMMARS.values()))]:
         try:
             installed.append(f"{package}={version(package)}")
         except PackageNotFoundError:
