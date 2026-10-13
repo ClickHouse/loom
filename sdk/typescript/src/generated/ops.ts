@@ -5495,6 +5495,7 @@ export interface MemorySearchTraceOutput {
   results: SearchTraceHit[];
   embedding_model: string;
   entity_filter: string[];
+  query_spellings?: Record<string, string>;
 }
 
 export interface MemorySearchTraceLogInput {

@@ -867,6 +867,9 @@ class MemorySearchTraceOutput(BaseModel):
     embedding_model: str
     # The request's `entity_filter`, lowercased as it was matched.
     entity_filter: list[str]
+    # Query words embedded in the corpus's spelling instead of as typed
+    # (`memory_search_corpus_casing_max_words`); {} when none was.
+    query_spellings: dict[str, str] = Field(default_factory=dict)
 
 
 # ============================================================

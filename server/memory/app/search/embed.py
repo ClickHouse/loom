@@ -8,8 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app.search.budget import SearchBudget
-from server.memory.app.search.query_casing import corpus_spellings
-from server.memory.domain.query_casing import apply_spellings
+from server.memory.app.search.query_casing import embed_query
 from server.memory.domain.search_prompts import _HYDE_PROMPT
 from server.observability.genai import llm_stage
 
@@ -139,14 +138,16 @@ async def _embed_search_query(
         except Exception as e:  # noqa: BLE001 — HyDE is optional; the plain query embed still runs
             log.warning("HyDE generation failed (non-fatal): %s", e)
 
-    spellings = await corpus_spellings(input, embedder.model_name)
+    with traced("embed.compute.query", model=embedder.model_name):
+        _clock.mark("plan")
+        query_vec, spellings = await embed_query(
+            lambda text: _bounded_query_embed(embedder, text, actual_work),
+            hyde_query,
+            input,
+            embedder.model_name,
+        )
+        _clock.mark("embed")
+    actual_work["embedding_calls"] = int(actual_work["embedding_calls"]) + (2 if spellings else 1)
     if spellings:
         actual_work["query_spellings"] = spellings
-        hyde_query = apply_spellings(hyde_query, spellings)
-
-    with traced("embed.compute.query", model=embedder.model_name):
-        actual_work["embedding_calls"] = int(actual_work["embedding_calls"]) + 1
-        _clock.mark("plan")
-        query_vec = await _bounded_query_embed(embedder, hyde_query, actual_work)
-        _clock.mark("embed")
     return query_vec

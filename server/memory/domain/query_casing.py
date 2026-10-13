@@ -14,6 +14,8 @@ WORD_PATTERN = r"[A-Za-z0-9_]+"
 _WORD_RE = re.compile(WORD_PATTERN)
 MIN_WORD_LEN = 4
 MAX_CANDIDATES = 8
+MIN_ROWS = 2
+LEAD = 2
 
 
 def casing_candidates(query: str, *, max_words: int) -> list[str]:
@@ -31,17 +33,18 @@ def casing_candidates(query: str, *, max_words: int) -> list[str]:
     return out[:MAX_CANDIDATES]
 
 
-def pick_spellings(tokens: Iterable[str], counts: Mapping[str, int]) -> dict[str, str]:
-    """token -> its most frequent spelling in `counts` (spelling ->
-    occurrences), for the tokens whose most frequent spelling is not the
-    lowercase one. Ties go to the lexicographically first spelling."""
+def pick_spellings(tokens: Iterable[str], rows: Mapping[str, int]) -> dict[str, str]:
+    """token -> the spelling most rows use, when that is not the lowercase
+    spelling and it clearly leads: at least `MIN_ROWS` rows, and `LEAD` times
+    the rows that write the word in lowercase. A closer split keeps the word
+    as typed. `rows` maps each spelling to the rows that use it."""
     out: dict[str, str] = {}
     for tok in tokens:
-        seen = [(n, s) for s, n in counts.items() if s.lower() == tok and n > 0]
+        seen = {s: n for s, n in rows.items() if s.lower() == tok}
         if not seen:
             continue
-        _n, best = min(seen, key=lambda p: (-p[0], p[1]))
-        if best != tok:
+        best, n = max(seen.items(), key=lambda kv: (kv[1], kv[0]))
+        if best != tok and n >= MIN_ROWS and n >= LEAD * seen.get(tok, 0):
             out[tok] = best
     return out
 

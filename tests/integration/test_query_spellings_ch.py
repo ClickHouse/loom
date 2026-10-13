@@ -1,5 +1,5 @@
-"""The query spelling lookup against ClickHouse: it reads only the rows the
-search may read, at their latest version, and samples whole-word matches."""
+"""The query spelling lookup against ClickHouse: it counts the rows the search
+may read, at their latest version, that use each spelling as a whole word."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from server.memory.domain.search_types import SearchQuery
-from server.memory.store.query_spellings import SAMPLE_ROWS, spelling_counts
+from server.memory.store.query_spellings import spelling_rows
 
 MODEL = "fake-casing-test"
 # The stored vector column is quantized at Loom's standard width.
@@ -75,7 +75,7 @@ def _q(ns: str, **kw: Any) -> SearchQuery:
 
 
 def _counts(ch: Any, q: SearchQuery, tokens: list[str]) -> dict[str, int]:
-    return asyncio.run(spelling_counts(_Async(ch), q, tokens))
+    return asyncio.run(spelling_rows(_Async(ch), q, tokens))
 
 
 def test_a_user_pinned_read_never_sees_another_users_spelling(ch_client, ns):
@@ -106,10 +106,30 @@ def test_a_deleted_row_does_not_vote(ch_client, ns):
     assert _counts(ch_client, _q(ns), ["datalakecatalog"]) == {}
 
 
-def test_longer_words_never_fill_the_sample(ch_client, ns):
+def test_only_whole_words_count(ch_client, ns):
     rows = [
         (f"k{i}", "datalakecatalogue datalakecatalog2 x_datalakecatalog", "u", "s", 1)
-        for i in range(SAMPLE_ROWS)
+        for i in range(3)
     ]
     _insert(ch_client, ns, [*rows, ("real", "the DataLakeCatalog engine", "u", "s", 1)])
     assert _counts(ch_client, _q(ns), ["datalakecatalog"]) == {"DataLakeCatalog": 1}
+
+
+def test_a_common_word_does_not_crowd_out_a_rare_one(ch_client, ns):
+    common = [(f"k{i}", "kafka consumer lag", "u", "s", 1) for i in range(300)]
+    rare = [(f"r{i}", "the DataLakeCatalog engine", "u", "s", 1) for i in range(5)]
+    _insert(ch_client, ns, [*common, *rare])
+    got = _counts(ch_client, _q(ns), ["kafka", "datalakecatalog"])
+    assert got == {"kafka": 300, "DataLakeCatalog": 5}
+
+
+def test_a_row_votes_once_per_spelling(ch_client, ns):
+    _insert(
+        ch_client,
+        ns,
+        [
+            ("k1", "Search Search Search Search: results", "u", "s", 1),
+            *[(f"k{i}", "we search the index", "u", "s", 1) for i in range(2, 5)],
+        ],
+    )
+    assert _counts(ch_client, _q(ns), ["search"]) == {"Search": 1, "search": 3}

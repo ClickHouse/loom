@@ -8,40 +8,28 @@ from server.memory.domain.query_casing import WORD_PATTERN
 from server.memory.domain.search_sql import _build_where
 from server.memory.domain.search_types import SearchQuery
 
-# Rows sampled per lookup: the spelling is a majority vote.
-SAMPLE_ROWS = 200
 
-
-async def spelling_counts(ch: Any, q: SearchQuery, tokens: list[str]) -> dict[str, int]:
-    """spelling -> occurrences of each word in `tokens`, matched as a whole
-    word (`WORD_PATTERN`) case-insensitively, over up to `SAMPLE_ROWS` of the
-    rows `q`'s fact leg may read (its full WHERE: identity bounds, scope,
-    status, TTL) at their latest version that contain one."""
+async def spelling_rows(ch: Any, q: SearchQuery, tokens: list[str]) -> dict[str, int]:
+    """spelling -> how many rows use it, for each word in `tokens` written in
+    any case as a whole word (`WORD_PATTERN`), over the latest version of the
+    rows `q`'s fact leg may read. A row counts once per spelling."""
     if not tokens:
         return {}
     where, params = _build_where(q)
-    params.update({"tokens": tokens, "word_re": WORD_PATTERN, "lim": SAMPLE_ROWS})
-    # The substring test is a cheap prefilter; the word test decides, before the LIMIT, so
-    # rows holding only a longer word never fill the sample.
+    # A cheap substring test first; the word split below decides.
     where.append("multiSearchAnyCaseInsensitive(e.content_excerpt, {tokens:Array(String)})")
-    where.append(
-        "arrayExists(w -> lower(w) IN {tokens:Array(String)}, "
-        "extractAll(e.content_excerpt, {word_re:String}))"
-    )
+    params.update({"tokens": tokens, "word_re": WORD_PATTERN})
     rows = await ch.query_all(
         f"""
-        SELECT w AS spelling, count() AS n
+        SELECT spelling, count() AS n
         FROM (
-            SELECT arrayJoin(arrayFilter(w -> lower(w) IN {{tokens:Array(String)}},
-                                         extractAll(content_excerpt, {{word_re:String}}))) AS w
-            FROM (
-                SELECT e.content_excerpt AS content_excerpt
-                FROM loom.memory_embeddings AS e FINAL
-                WHERE {" AND ".join(where)}
-                LIMIT {{lim:UInt32}}
-            )
+            SELECT arrayJoin(arrayDistinct(arrayFilter(
+                       w -> lower(w) IN {{tokens:Array(String)}},
+                       extractAll(e.content_excerpt, {{word_re:String}})))) AS spelling
+            FROM loom.memory_embeddings AS e FINAL
+            WHERE {" AND ".join(where)}
         )
-        GROUP BY w
+        GROUP BY spelling
         """,
         params=params,
     )

@@ -6,64 +6,67 @@ rows that spell an identifier in CamelCase."""
 from __future__ import annotations
 
 import asyncio
-import logging
-from typing import Any
+from collections.abc import Awaitable, Callable
 
 from server.core.ch import get_client, statement_timeout
-from server.memory.app.served_superseded import served_flags as _served
-from server.memory.domain.query_casing import casing_candidates, pick_spellings
+from server.memory.api.models_search import MemorySearchInput
+from server.memory.app.search.filters import read_filters
+from server.memory.domain.query_casing import apply_spellings, casing_candidates, pick_spellings
 from server.memory.domain.search_types import SearchQuery
-from server.memory.store.query_spellings import spelling_counts
+from server.memory.store.query_spellings import spelling_rows
+from server.observability import degradations
 
-log = logging.getLogger(__package__)
-
-# Deadline for the lookup, client- and server-side; past it the query embeds as typed.
-_LOOKUP_BOUND_S = 0.5
-
-
-def _read_bounds(input: Any, embedding_model: str) -> SearchQuery:
-    """The fact leg's read filters for a pinned search input, without a vector."""
-    return SearchQuery(
-        org=input.org,
-        namespace=input.namespace,
-        scope=input.scope,
-        agent=input.agent,
-        **_served(input),
-        embedding_model=embedding_model,
-        query_vec=[],
-        top_k=0,
-        memory_type=input.memory_type or None,
-        user_id=input.user_id,
-        session_ids=list(getattr(input, "session_ids", []) or []),
-        session_id=getattr(input, "session_id", None),
-        run_id=input.run_id,
-        tags=list(getattr(input, "tags", []) or []),
-        tags_soft=bool(getattr(input, "tags_soft", False)),
-        as_of=input.as_of,
-        as_of_basis=getattr(input, "as_of_basis", "valid_time"),
-    )
+# The lookup's deadline, enforced by ClickHouse. It reads every row of the
+# namespace (40-180 ms on the largest) and runs beside the embed (~120 ms).
+_LOOKUP_BOUND_S = 0.25
 
 
-async def corpus_spellings(input: Any, embedding_model: str) -> dict[str, str]:
+async def corpus_spellings(input: MemorySearchInput, embedding_model: str) -> dict[str, str]:
     """lowercase word of `input.query` -> the spelling the rows `input` may
-    read use most, for the words whose spelling differs. `input` is a search
-    input whose read filters are already pinned to the caller. {} when off
-    (`memory_search_corpus_casing_max_words`), nothing differs or the read
-    fails or runs past its deadline."""
+    read in its namespace use instead; {} when off
+    (`memory_search_corpus_casing_max_words`), when no word qualifies, or when
+    the read fails (noted as a degradation)."""
     from server.settings import settings
 
     tokens = casing_candidates(
         input.query, max_words=settings.memory_search_corpus_casing_max_words
     )
-    if not tokens or not input.org or not input.namespace:
+    if not tokens:
         return {}
+    q = SearchQuery(
+        org=input.org,
+        namespace=input.namespace,
+        **read_filters(input),
+        embedding_model=embedding_model,
+        query_vec=[],
+        top_k=0,
+    )
     try:
         with statement_timeout(_LOOKUP_BOUND_S):
-            counts = await asyncio.wait_for(
-                spelling_counts(get_client(), _read_bounds(input, embedding_model), tokens),
-                timeout=_LOOKUP_BOUND_S,
-            )
+            rows = await spelling_rows(get_client(), q, tokens)
     except Exception as e:  # noqa: BLE001 — the spelling is a recall aid; the query embeds as typed
-        log.debug("query spelling lookup failed (non-fatal): %s", e)
+        degradations.note("query_spelling", "embedded_as_typed", e)
         return {}
-    return pick_spellings(tokens, counts)
+    return pick_spellings(tokens, rows)
+
+
+async def embed_query(
+    embed: Callable[[str], Awaitable[list[float]]],
+    text: str,
+    input: MemorySearchInput,
+    embedding_model: str,
+) -> tuple[list[float], dict[str, str]]:
+    """The vector for `text` with the corpus spellings of `input.query`'s
+    words applied, and those spellings. The lookup runs beside the embed of
+    `text` as typed, so only a rewrite costs a second embed."""
+    lookup = asyncio.ensure_future(corpus_spellings(input, embedding_model))
+    as_typed = asyncio.ensure_future(embed(text))
+    try:
+        spellings = await lookup
+        if not spellings:
+            return await as_typed, {}
+        return await embed(apply_spellings(text, spellings)), spellings
+    finally:
+        lookup.cancel()
+        as_typed.cancel()
+        await asyncio.gather(lookup, as_typed, return_exceptions=True)

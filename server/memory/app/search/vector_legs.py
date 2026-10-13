@@ -10,6 +10,7 @@ from typing import Any
 
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app.search.context import SearchContext
+from server.memory.app.search.filters import read_filters
 from server.memory.app.search.graph import _graph_via_path
 from server.memory.app.search.knobs import (
     _recency_pool_weight,
@@ -22,7 +23,6 @@ from server.memory.app.search.knobs import (
 )
 from server.memory.app.search_tag_filter import stamp_row_tags as _stamp_row_tags
 from server.memory.app.search_tag_filter import tagged_row_hit as _tagged_row_hit
-from server.memory.app.served_superseded import served_flags as _served
 from server.memory.domain.search_types import hit_sort_key
 from server.observability import degradations as _degradations
 
@@ -47,20 +47,12 @@ def _search_query_for(ctx: SearchContext, ns: str) -> Any:
     return SearchQuery(
         org=input.org,
         namespace=ns,
-        scope=input.scope,
-        agent=input.agent,
-        **_served(input),
+        **read_filters(input),
         embedding_model=ctx.embedder.model_name,
         query_vec=ctx.query_vec,
         top_k=ctx.pool_top_k,
         key_axis=getattr(input, "key_axis", None),
-        memory_type=input.memory_type or None,
-        user_id=input.user_id,
-        session_ids=list(getattr(input, "session_ids", []) or []),
-        session_id=getattr(input, "session_id", None),
-        run_id=input.run_id,
         entity_filter=ctx.effective_entity_filter,
-        tags=list(input.tags or []),
         query_text=input.query,
         search_mode=input.search_mode,
         alpha=input.alpha,
@@ -70,14 +62,9 @@ def _search_query_for(ctx: SearchContext, ns: str) -> Any:
         triple_matched_keys=ctx.triple_matched_by_ns.get(ns, []),
         query_anchor_iso=ctx.query_anchor_iso,
         preference_attribute=ctx.preference_attribute,
-        as_of=input.as_of,
-        as_of_basis=getattr(input, "as_of_basis", "valid_time"),
         recency_intent=ctx.recency_intent,
         chronological_intent=ctx.chronological_intent,
-        category=getattr(input, "category", "") or "",
-        tags_soft=bool(getattr(input, "tags_soft", False)),
         tag_boost=float(getattr(input, "tag_boost", 0.3)),
-        category_soft=bool(getattr(input, "category_soft", False)),
         category_boost=float(getattr(input, "category_boost", 0.3)),
         confidence_weight=float(getattr(input, "confidence_weight", 0.1)),
         prior_cap=_resolve_prior_cap(input),
