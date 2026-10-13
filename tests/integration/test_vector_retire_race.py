@@ -64,6 +64,14 @@ def _memory_row(ns: str, version: int, value: str, sensitivity: str) -> dict[str
     )
 
 
+def _wide(head: list[float]) -> list[float]:
+    """`head` zero-padded to the configured width: a coded vector column takes
+    vectors of exactly that length."""
+    from server.settings import settings
+
+    return head + [0.0] * (settings.embedding_dim - len(head))
+
+
 async def _embedded_write(ch: Any, ns: str, value: str, entity: str) -> None:
     """One embedded generation: its memory row, then its vector and entity vector,
     stamped the way memory.set / bulk_set stamp them."""
@@ -81,8 +89,8 @@ async def _embedded_write(ch: Any, ns: str, value: str, entity: str) -> None:
         scope="private",
         content_excerpt=value,
         embedding_model="fake",
-        embedding_dim=3,
-        embedding=[0.1, 0.2, 0.3],
+        embedding_dim=len(_wide([])),
+        embedding=_wide([0.1, 0.2, 0.3]),
         created_at=datetime.now(UTC).replace(tzinfo=None),
     )
     await M.insert_embedding_rows([emb], ch=ch)
@@ -95,9 +103,9 @@ async def _embedded_write(ch: Any, ns: str, value: str, entity: str) -> None:
                 "agent": AGENT,
                 "user_id": USER,
                 "entity_text": entity,
-                "entity_embedding": [0.1, 0.2, 0.3],
+                "entity_embedding": _wide([0.1, 0.2, 0.3]),
                 "embedding_model": "fake",
-                "embedding_dim": 3,
+                "embedding_dim": len(_wide([])),
                 "memory_key": KEY,
                 "tombstoned_at": None,
                 "created_at": datetime.now(UTC).replace(tzinfo=None),

@@ -17,12 +17,20 @@ pytestmark = pytest.mark.usefixtures("ch_target_required")
 
 _USERS = 20
 _ROWS_PER_USER = 500
-_DIM = 3072
 _NS = "cost"
 
 
+def _dim() -> int:
+    """The configured width: a coded vector column takes vectors of exactly it."""
+    from server.settings import settings
+
+    return int(settings.embedding_dim)
+
+
 def _vec(seed: str) -> str:
-    return f"arrayMap(j -> toFloat32((cityHash64({seed}, j) % 2000) / 1000.0 - 1.0), range({_DIM}))"
+    return (
+        f"arrayMap(j -> toFloat32((cityHash64({seed}, j) % 2000) / 1000.0 - 1.0), range({_dim()}))"
+    )
 
 
 # All semantic, or a quarter semantic (number % 4 = 3: row 47 and every u3 row are).
@@ -52,9 +60,10 @@ async def _seed(ch: Any, org: str, types: str) -> None:
         f"""
         INSERT INTO loom.memory_embeddings
             (org, namespace, agent, user_id, session_id, memory_key, memory_type, scope,
-             content_excerpt, embedding_model, embedding_dim, embedding)
+             content_excerpt, embedding_model, embedding_dim, embedding, memory_key_embedding)
         SELECT '{org}', '{_NS}', 'bot', {user}, '-', {key}, {mt}, 'private',
-               concat('fact ', toString(number)), 'fake', {_DIM}, {_vec("number")}
+               concat('fact ', toString(number)), 'fake', {_dim()}, {_vec("number")},
+               arrayWithConstant({_dim()}, 0)
         FROM numbers({_USERS * _ROWS_PER_USER})
         """
     )
@@ -110,7 +119,7 @@ async def test_a_narrowed_writers_conflict_reads_cost_at_most_two_namespace_read
         "self_key": "new",
         "emb": emb,
         "max_dist": 2.0,
-        "dim": _DIM,
+        "dim": _dim(),
     }
     items = [("semantic", f"new{i}", emb, 2.0) for i in range(4)]
     run = secrets.token_hex(4)
@@ -177,8 +186,9 @@ async def test_a_narrowed_writers_conflict_reads_cost_at_most_two_namespace_read
 
 
 def _small(i: int) -> str:
-    """A 4-dim vector at angle i/1000 from [1, 0, 0, 0]: a larger i is farther."""
-    return f"[cos({i} / 1000), sin({i} / 1000), 0, 0]"
+    """A vector at angle i/1000 from [1, 0, ...] in its first two axes: a larger i
+    is farther. Zero-padded to the configured width."""
+    return f"arrayResize([cos({i} / 1000), sin({i} / 1000)], {_dim()}, 0)"
 
 
 async def _seed_close_rows(ch: Any, org: str, own_rows: int, vector_type: str) -> None:
@@ -201,9 +211,9 @@ async def _seed_close_rows(ch: Any, org: str, own_rows: int, vector_type: str) -
             f"""
             INSERT INTO loom.memory_embeddings
                 (org, namespace, agent, user_id, session_id, memory_key, memory_type, scope,
-                 content_excerpt, embedding_model, embedding_dim, embedding)
+                 content_excerpt, embedding_model, embedding_dim, embedding, memory_key_embedding)
             VALUES ('{org}', '{_NS}', 'bot', '{user}', '-', '{key}', '{vtype}', 'private',
-                    '{value}', 'fake', 4, {_small(angle)})
+                    '{value}', 'fake', {_dim()}, {_small(angle)}, arrayWithConstant({_dim()}, 0))
             """
         )
 
@@ -219,7 +229,7 @@ async def test_a_foreign_pinned_row_blocks_a_narrowed_write_single_and_bulk(
     org = unique_org("conflict-pinned")
     await _seed_close_rows(ch, org, own_rows, vector_type)
     monkeypatch.setattr(conflicts, "get_client", lambda: ch)
-    emb = [1.0, 0.0, 0.0, 0.0]
+    emb = [1.0] + [0.0] * (_dim() - 1)
 
     def check(candidate_rows: Any) -> Any:
         return conflicts.check_on_commit(
