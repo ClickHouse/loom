@@ -130,7 +130,7 @@ def test_ensure_mints_one_run_per_session_and_reuses_it(ledger: _Ledger) -> None
         r3 = await mcp_runs.ensure("sess-2", DEFAULTS, CALLER, goal="other session", now=102.0)
         assert r1 is not None and r2 is r1 and r1.run_id == rid("sess-1")
         assert r3 is not None and r3.run_id == rid("sess-2")
-        assert r1.last_seen == 101.0
+        assert list(mcp_runs._RUNS) == [rid("sess-1"), rid("sess-2")]  # least recent first
         await mcp_runs.drain_ledger_writes()  # run.begin lands off the call's path
         b = ledger.begins[0]
         assert b.run_id == rid("sess-1")
@@ -142,7 +142,7 @@ def test_ensure_mints_one_run_per_session_and_reuses_it(ledger: _Ledger) -> None
         )
         assert b.goal == "what broke CI" and b.environment == "mcp" and b.consumer == "cursor"
         assert b.metadata == {"implicit": True, "transport": "mcp", "subject": ""}
-        assert mcp_runs.live_count() == 2
+        assert mcp_runs.cached_count() == 2
 
     asyncio.run(_run())
 
@@ -229,7 +229,7 @@ def test_close_session_completes_with_outcome_none(ledger: _Ledger) -> None:
         assert c.status == "completed" and c.outcome == "none" and c.memories_used == []
         assert c.duration_ms == 0  # from the run's start, which every process shares
         assert c.metadata == {"closed_by": "mcp_session_end"}  # the ledger holds the calls
-        assert mcp_runs.live_count() == 0
+        assert mcp_runs.cached_count() == 0
 
     asyncio.run(_run())
 
@@ -244,7 +244,7 @@ def test_the_cap_forgets_the_idlest_run_without_closing_it(ledger: _Ledger, monk
         await mcp_runs.ensure("b", DEFAULTS, CALLER, goal="g", now=5.0)
         await mcp_runs.ensure("a", DEFAULTS, CALLER, goal="g", now=10.0)  # a is now the fresher one
         await mcp_runs.ensure("c", DEFAULTS, CALLER, goal="g", now=20.0)
-        assert mcp_runs.live_count() == 2 and mcp_runs.current(rid("b")) is None
+        assert mcp_runs.cached_count() == 2 and mcp_runs.current(rid("b")) is None
         await mcp_runs.ensure("b", DEFAULTS, CALLER, goal="g", now=30.0)
         await mcp_runs.drain_ledger_writes()
         assert ledger.completes == [] and len(ledger.begins) == 3  # b joined, not begun again

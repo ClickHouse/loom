@@ -126,7 +126,8 @@ connect by browser sign-in instead of a pasted token (`server/auth/oauth.py`):
   caller's default namespace; writes carry its `run_id`, and reads are labelled
   with it but not filtered. The run closes on `DELETE /mcp`, or when the
   `mcp_session_run_sweep` worker finds no call of the token under it for
-  `LOOM_MCP_SESSION_RUN_IDLE_SECONDS` (default 1800). The run stores no call
+  `LOOM_MCP_SESSION_RUN_IDLE_SECONDS` (default 1800); a deployment that runs
+  no background workers anywhere keeps idle runs open. The run stores no call
   count: its calls are the `agent_events` rows with its `run_id`. See
   [Runs](../features/runs.md).
 

@@ -18,7 +18,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 from server.core.ch import get_client, sequential_reads
@@ -261,23 +261,16 @@ async def close_session_run(org: str, run_id: str, *, reason: str) -> bool:
     return bool(active)
 
 
-async def close_idle_session_runs(idle_seconds: float, *, limit: int = 500) -> int:
+async def close_idle_session_runs(idle_seconds: int, *, limit: int = 50, org: str = "") -> int:
     """Complete the implicit session runs no call of their token reached within
     the idle window, from the ledger alone, so a run closes whichever web
-    process served it and after any restart. Returns how many closed."""
-    ch = get_client()
-    cutoff = _now() - timedelta(seconds=idle_seconds)
-    stale = await runs_store.stale_session_runs(ch, written_before=cutoff, limit=limit)
-    if not stale:
-        return 0
-    since = min(r["started_at"] for r in stale)
-    last = await runs_store.last_calls(ch, [str(r["run_id"]) for r in stale], since)
+    process served it and after any restart. At most `limit` per call, sized to
+    a worker pass; returns how many closed."""
+    stale = await runs_store.idle_session_runs(
+        get_client(), idle_seconds=idle_seconds, limit=limit, org=org
+    )
     closed = 0
     for row in stale:
-        subject = str(json.loads(row["metadata"] or "{}").get("subject") or "")
-        seen = last.get((str(row["run_id"]), subject))
-        if seen is not None and seen >= cutoff:
-            continue
         try:
             await _complete_session_run(row, reason="idle")
             closed += 1

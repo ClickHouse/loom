@@ -22,21 +22,39 @@ from server.observability.budgets import BudgetOverrides
 ROOT = Path(__file__).resolve().parents[2]
 WRITERS, UPDATES = 4, 10
 
-_BUDGET_WRITER = """
+# A writer retries OVERLOADED (a sibling held the lock past the wait) as a client does.
+_RETRY = """
 import sys
+from server.core.errors import OverloadedError
+
+def retried(update):
+    while True:
+        try:
+            return update()
+        except OverloadedError:
+            pass
+"""
+
+_BUDGET_WRITER = (
+    _RETRY
+    + """
 from server.observability.budgets import BudgetOverrides
 o = BudgetOverrides(sys.argv[1])
 for i in range(int(sys.argv[3])):
-    o.set(f"op.{sys.argv[2]}.{i}", i)
+    retried(lambda: o.set(f"op.{sys.argv[2]}.{i}", i))
 """
+)
 
-_LIMIT_WRITER = """
-import sys
+_LIMIT_WRITER = (
+    _RETRY
+    + """
 from server.core.ratelimit import Limit, Limiter
 lim = Limiter()
 for i in range(int(sys.argv[3])):
-    lim.set_namespace_limit(f"ns{sys.argv[2]}_{i}", "memory", Limit(capacity=i + 1, rate=1.0))
+    limit = Limit(capacity=i + 1, rate=1.0)
+    retried(lambda: lim.set_namespace_limit(f"ns{sys.argv[2]}_{i}", "memory", limit))
 """
+)
 
 
 @pytest.fixture(autouse=True)
@@ -365,8 +383,9 @@ def test_an_integer_too_large_for_a_float_is_refused_and_never_breaks_a_read(
     a, b, path = _budgets(tmp_path)
     with pytest.raises(ValueError):
         a.set_for_consumer("c1", "*", huge)
-    with pytest.raises(ValueError):
-        a.set("memory.set", huge)
+    for unusable in (huge, 1.5, -1):
+        with pytest.raises(ValueError):
+            a.set("memory.set", unusable)
     a.set_for_consumer("c1", "*", 4)
     path.write_text(json.dumps({"ops": {}, "consumer": [["c1", "*", huge]]}))
     assert b.get_for_consumer("c1", "*") is None  # corrupt: not adopted, not raised

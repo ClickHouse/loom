@@ -19,7 +19,6 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   `scripts/serve.sh` chooses it once and exports it; set it for another launcher that starts
   several workers.
 - `LOOM_LISTEN_HOST`: the address `scripts/serve.sh` binds, every interface by default.
-- A 422 echoes a number JSON cannot carry (`1e400`) as a string instead of failing as a 500.
 - Migration `026` adds `run_id` skip indexes to `agent_events` and `agent_runs`.
 
 ### Changed
@@ -50,7 +49,16 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   shape (`mcp-` and 40 hex digits) is answered with an id of its own. Its close no longer
   writes `metadata.calls`: count the `agent_events` rows with its `run_id`. The new
   `mcp_session_run_sweep` worker closes an idle one from the ledger, so it closes after a
-  restart too; a web process no longer sweeps on the request path.
+  restart too, and so do the implicit runs an earlier server left open. **Operators:** a web
+  process no longer closes idle runs itself, so a deployment that runs no background workers
+  anywhere (`LOOM_BACKGROUND_WORKERS=off` on every process) keeps them open.
+
+### Fixed
+
+- A request whose body holds a number JSON cannot carry back (`1e400` parses to infinity) gets
+  a 422 that echoes it as the string `"Infinity"`, instead of a 500.
+- `admin/budget.set` refuses an integer too large for a float with a 422; it was stored, and
+  the server's other web processes then ignored every budget override.
 
 ## [1.0.0] - 2026-10-16
 

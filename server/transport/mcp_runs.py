@@ -35,6 +35,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -44,8 +45,8 @@ from server.tasks.domain.session_runs import ledger_subject, session_run_id
 
 log = logging.getLogger(__name__)
 
-# One run per live MCP session; sessions are short-lived, so a churning
-# process still stays bounded (same cap as the session→agent cache).
+# Cached runs per process (the session→agent cache's cap); past it the least
+# recently used is forgotten.
 SESSION_RUN_CAP = 4096
 # A cached run is checked with the ledger at most this often.
 CHECK_INTERVAL_S = 60.0
@@ -119,15 +120,15 @@ class SessionRun:
     # Wall clock when this process registered it: a new row starts here, before
     # the first call's ledger row.
     started_at: datetime
-    last_seen: float
     # When this process last asked the ledger whether the run is still open.
     checked_at: float
     begin_task: asyncio.Task[None] | None = None
     begin_failed: bool = False
 
 
-# Keyed by run id: two callers sending one session id hold two runs.
-_RUNS: dict[str, SessionRun] = {}
+# Keyed by run id (two callers sending one session id hold two runs), least
+# recently used first.
+_RUNS: OrderedDict[str, SessionRun] = OrderedDict()
 # Run id -> when its first begin failed, oldest first; capped like _RUNS.
 _BEGIN_FAILED_AT: dict[str, float] = {}
 _PENDING = TaskSet()  # in-flight begins and checks
@@ -204,7 +205,7 @@ async def ensure(
     run_id = session_run_id(org, caller.subject, session_id)
     run = _RUNS.get(run_id)
     if run is not None:
-        run.last_seen = now
+        _RUNS.move_to_end(run_id)
         if now - run.checked_at >= CHECK_INTERVAL_S:
             # The idle sweep or a DELETE on another web process may have closed
             # it since: ask the ledger, off the call's path, and re-open it if so.
@@ -218,7 +219,7 @@ async def ensure(
         return None
     if len(_RUNS) >= SESSION_RUN_CAP:
         # A cap, not a sign the session ended: its next call here joins the run.
-        _RUNS.pop(min(_RUNS.values(), key=lambda r: r.last_seen).run_id)
+        _RUNS.popitem(last=False)
     from server.core.datetimes import naive_utc_now
 
     # The run is registered now, under a deterministic id, and its begin lands
@@ -234,7 +235,6 @@ async def ensure(
         row_session_id=caller.session_id if caller.session_id != "-" else session_id,
         goal=goal,
         started_at=naive_utc_now(),
-        last_seen=now,
         checked_at=now,
     )
     _RUNS[run_id] = run
@@ -320,7 +320,7 @@ async def _close(org: str, run_id: str, begin: asyncio.Task[None] | None) -> boo
         return False
 
 
-def live_count() -> int:
+def cached_count() -> int:
     return len(_RUNS)
 
 
@@ -331,12 +331,12 @@ __all__ = [
     "Caller",
     "SessionRun",
     "close_session",
+    "cached_count",
     "current",
     "drain_ledger_writes",
     "ensure",
     "goal_of",
     "idle_seconds",
-    "live_count",
     "reset",
     "stamps_run",
     "subject_of",

@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -65,7 +64,7 @@ def _parse_value(raw: Any) -> int | float | None:
             number = float(text.removesuffix("x"))
         except ValueError:
             return None
-        if not math.isfinite(number) or number < 0:
+        if not finite_non_negative(number):
             return None
         return number if text.endswith("x") else int(number)
     return None
@@ -85,9 +84,9 @@ class _Budgets:
 
 
 def _stored_ms(raw: Any) -> int:
-    """An op budget as `set` stores it; anything else makes the document corrupt."""
+    """An op budget as `set` stores it: whole milliseconds, finite and >= 0."""
     if not isinstance(raw, int) or not finite_non_negative(raw):
-        raise ValueError(f"not a budget: {raw!r}")
+        raise ValueError(f"budget_ms must be a whole number of ms >= 0, not {raw!r}")
     return raw
 
 
@@ -160,9 +159,8 @@ class BudgetOverrides:
     # -- per op (unchanged API) -------------------------------------------
 
     def set(self, op_name: str, budget_ms: int) -> None:
-        if not finite_non_negative(budget_ms):
-            raise ValueError("budget_ms must be a finite number >= 0")
-        self._change(lambda b: replace(b, ops={**b.ops, op_name: budget_ms}))
+        stored = _stored_ms(budget_ms)  # what every sibling's read takes back
+        self._change(lambda b: replace(b, ops={**b.ops, op_name: stored}))
 
     def get(self, op_name: str) -> int | None:
         with self._lock:

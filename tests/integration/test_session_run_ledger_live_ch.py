@@ -35,12 +35,14 @@ async def ch() -> Any:
     await c.disconnect()
 
 
-async def _ledger_call(ch: Any, namespace: str, run_id: str, subject: str = "") -> None:
+async def _ledger_call(
+    ch: Any, namespace: str, run_id: str, subject: str = "", org: str = ORG
+) -> None:
     await ch.insert(
         "loom.agent_events",
         [
             {
-                "org": ORG,
+                "org": org,
                 "namespace": namespace,
                 "agent": AGENT,
                 "user_id": "-",
@@ -59,39 +61,50 @@ async def _ledger_call(ch: Any, namespace: str, run_id: str, subject: str = "") 
 
 @pytest.mark.asyncio
 async def test_the_idle_sweep_closes_a_run_its_own_calls_did_not_keep_busy(ch: Any) -> None:
+    """More busy runs than one pass closes do not hide a quiet one behind them, and
+    a run an earlier server opened under `mcp-<session id>` closes too."""
     from server.tasks.api.models_run import RunBeginInput
     from server.tasks.app.run import active_session_runs, begin_session_run, close_idle_session_runs
 
+    org = f"itest-sweep-{uuid.uuid4().hex[:8]}"
     namespace, elsewhere = (f"itest-{uuid.uuid4().hex[:12]}" for _ in range(2))
-    busy, quiet = (session_run_id(ORG, "sa:a", uuid.uuid4().hex) for _ in range(2))
+    busy = [session_run_id(org, "sa:a", uuid.uuid4().hex) for _ in range(3)]
+    quiet, borrowed = (session_run_id(org, "sa:a", uuid.uuid4().hex) for _ in range(2))
     explicit = f"itest-run-{uuid.uuid4().hex[:12]}"
+    legacy = f"mcp-{uuid.uuid4().hex}"
     try:
-        for run_id in (busy, quiet, explicit):
+        for run_id in [*busy, quiet, borrowed, explicit, legacy]:
             await begin_session_run(
                 RunBeginInput(
-                    org=ORG,
+                    org=org,
                     namespace=namespace,
                     agent=AGENT,
                     run_id=run_id,
                     goal="g",
                     environment="mcp",
-                    metadata={"subject": "sa:a"},
+                    metadata=(
+                        {"implicit": True, "transport": "mcp"}  # no subject recorded
+                        if run_id == legacy
+                        else {"implicit": run_id != explicit, "subject": "sa:a"}
+                    ),
                 ),
                 started_at=naive_utc_now(),
             )
-        await asyncio.sleep(1.5)
-        await _ledger_call(ch, elsewhere, busy, subject="sa:a")  # a call in another namespace
-        await _ledger_call(ch, namespace, quiet, subject="sa:eve")  # another token's label
-        await close_idle_session_runs(1.0)
-        assert [r["run_id"] for r in await active_session_runs(ORG, busy)] == [busy]
-        assert await active_session_runs(ORG, quiet) == []
-        assert len(await active_session_runs(ORG, explicit)) == 1  # not a session run
+        await asyncio.sleep(2)
+        for run_id in busy:  # calls in another namespace
+            await _ledger_call(ch, elsewhere, run_id, subject="sa:a", org=org)
+        await _ledger_call(ch, namespace, borrowed, subject="sa:eve", org=org)  # another token
+        assert await close_idle_session_runs(1, limit=2, org=org) == 2
+        assert await close_idle_session_runs(1, limit=2, org=org) == 1
+        assert all([await active_session_runs(org, run_id) for run_id in busy])
+        assert await active_session_runs(org, quiet) == []
+        assert await active_session_runs(org, borrowed) == []
+        assert await active_session_runs(org, legacy) == []
+        assert await active_session_runs(org, explicit) != []  # not an implicit run
     finally:
         for table in ("agent_runs", "agent_events"):
             await ch.execute(
-                f"DELETE FROM loom.{table} WHERE org = {{org:String}} "
-                "AND namespace IN {ns:Array(String)}",
-                params={"org": ORG, "ns": [namespace, elsewhere]},
+                f"DELETE FROM loom.{table} WHERE org = {{org:String}}", params={"org": org}
             )
 
 

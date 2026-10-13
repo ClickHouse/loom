@@ -13,14 +13,12 @@ import enum
 import json
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any
 
 from server.core.ch import sequential_reads
 from server.core.schema.migrate_lease import RUN_CLAIMS_TABLE_SQL, is_keeper_table, key_exists
 from server.identity.domain.read_scope import ReadFilters, scope_and
 from server.observability import degradations, provider_health
-from server.tasks.domain.session_runs import SESSION_RUN_ID_PATTERN
 from server.tasks.store.rows import RunLedgerRow
 
 log = logging.getLogger(__name__)
@@ -341,45 +339,36 @@ async def active_runs_by_id(ch: Any, org: str, run_id: str) -> list[RunLedgerRow
     return rows
 
 
-async def stale_session_runs(
-    ch: Any, *, written_before: datetime, limit: int
+async def idle_session_runs(
+    ch: Any, *, idle_seconds: int, limit: int, org: str = ""
 ) -> list[RunLedgerRow]:
-    """Active MCP session runs last begun or re-opened before `written_before`
-    (naive UTC), in every org, oldest first."""
+    """Active implicit MCP session runs that no request of their token reached
+    within `idle_seconds`, in `org` ("" = every org), oldest first.
+
+    `version` is the time of the row's last write (a begin or a re-open) on
+    ClickHouse's clock, and the begin records the token's subject. The plain read
+    picks the candidates so the FINAL read touches only their rows."""
     rows: list[RunLedgerRow] = await ch.query_all(
-        f"""
-        SELECT {_RUN_SELECT}
-        FROM loom.agent_runs FINAL
-        WHERE status = 'active' AND environment = 'mcp'
-          AND version < {{before_ns:UInt64}}
-          AND match(run_id, {{pattern:String}})
+        """
+        WITH candidates AS (
+            SELECT DISTINCT run_id FROM loom.agent_runs
+            WHERE status = 'active' AND environment = 'mcp' AND startsWith(run_id, 'mcp-')
+              AND ({org:String} = '' OR org = {org:String})
+        )
+        SELECT org, namespace, run_id FROM loom.agent_runs FINAL
+        WHERE run_id IN candidates AND status = 'active'
+          AND JSONExtractBool(metadata, 'implicit')
+          AND version < toUInt64(toUnixTimestamp64Nano(now64(9) - INTERVAL {idle:UInt32} SECOND))
+          AND (run_id, JSONExtractString(metadata, 'subject')) NOT IN (
+              SELECT run_id, subject FROM loom.agent_events
+              WHERE ts >= now64(3) - INTERVAL {idle:UInt32} SECOND AND run_id IN candidates
+          )
         ORDER BY started_at
-        LIMIT {{lim:UInt32}}
+        LIMIT {lim:UInt32}
         """,
-        params={
-            "before_ns": int(written_before.replace(tzinfo=UTC).timestamp() * 1e9),
-            "pattern": f"^{SESSION_RUN_ID_PATTERN}$",
-            "lim": limit,
-        },
+        params={"org": org, "idle": idle_seconds, "lim": limit},
     )
     return rows
-
-
-async def last_calls(
-    ch: Any, run_ids: list[str], since: datetime
-) -> dict[tuple[str, str], datetime]:
-    """(run id, token subject) -> the time of its last request since `since`, in
-    any org or namespace. A request labels itself with a run id; only its
-    subject is the server's."""
-    rows = await ch.query_all(
-        """
-        SELECT run_id, subject, max(ts) AS last FROM loom.agent_events
-        WHERE ts >= {since:DateTime64(3)} AND run_id IN {rids:Array(String)}
-        GROUP BY run_id, subject
-        """,
-        params={"rids": run_ids, "since": since},
-    )
-    return {(str(r["run_id"]), str(r["subject"])): r["last"].replace(tzinfo=None) for r in rows}
 
 
 async def traced_recall_keys(ch: Any, org: str, ns: str, run_id: str) -> list[str]:

@@ -7,8 +7,7 @@ import hashlib
 import json
 import re
 
-SESSION_RUN_ID_PATTERN = "mcp-[0-9a-f]{40}"
-_SESSION_RUN_ID = re.compile(SESSION_RUN_ID_PATTERN)
+_SESSION_RUN_ID = re.compile(r"mcp-[0-9a-f]{40}")
 
 
 def session_run_id(org: str, subject: str, session_id: str) -> str:

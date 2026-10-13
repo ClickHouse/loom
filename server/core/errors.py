@@ -220,8 +220,9 @@ def _with_help_link(headers: dict[str, str] | None, detail: object) -> dict[str,
 
 
 def register_exception_handler(app: FastAPI) -> None:
-    """Turn any LoomServerError into `{"detail": {"code", "message", ...}}`, and give every
-    coded HTTP error a `Link: <catalogue#code>; rel="help"` header."""
+    """Turn any LoomServerError into `{"detail": {"code", "message", ...}}`, give every
+    coded HTTP error a `Link: <catalogue#code>; rel="help"` header, and keep a
+    request body's 422 JSON-safe."""
     from fastapi import Request
     from fastapi.encoders import jsonable_encoder
     from fastapi.exception_handlers import http_exception_handler
