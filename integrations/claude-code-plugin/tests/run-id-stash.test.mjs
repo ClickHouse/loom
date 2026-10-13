@@ -45,7 +45,11 @@ async function withServer(
       raw += c;
     });
     req.on("end", () => {
-      seen.push({ url: req.url, body: raw ? JSON.parse(raw) : {} });
+      const entry = { url: req.url, body: raw ? JSON.parse(raw) : {}, at: Date.now() };
+      seen.push(entry);
+      res.on("close", () => {
+        entry.closedAt = Date.now();
+      });
       const answer = req.url.endsWith("/run.begin") ? { run_id: beginRunId } : {};
       const first = req.url.endsWith("/run.begin") && begins++ === 0;
       setTimeout(
@@ -211,11 +215,14 @@ test("a re-sent begin and the close fit Codex's one-second SessionEnd budget", a
     await runHook("UserPromptSubmit", { session_id: "s11", cwd: tmp, prompt: "p" }, { tmp, url });
   });
   await withServer({ beginRunId: "r5ess1on", delayMs: 350, completeDelayMs: 1100 }, async (url, seen) => {
-    const started = Date.now();
     await runHook("SessionEnd", { session_id: "s11", cwd: tmp, reason: "exit" }, { tmp, url });
-    assert.ok(seen.some((r) => r.url.endsWith("/run.complete")), "the close was sent");
-    // The node start-up is outside the hook's own deadline; allow for it.
-    assert.ok(Date.now() - started < 1400, `SessionEnd took ${Date.now() - started} ms`);
+    const begin = seen.find((r) => r.url.endsWith("/run.begin"));
+    const close = seen.find((r) => r.url.endsWith("/run.complete"));
+    assert.ok(close, "the close was sent");
+    // From the begin's arrival to the hook dropping the close: the hook's own time,
+    // without node's start-up. The server would answer the close at 1800 ms.
+    const spent = close.closedAt - begin.at;
+    assert.ok(spent < 1000, `begin and close took ${spent} ms`);
   });
 });
 

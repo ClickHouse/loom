@@ -427,11 +427,11 @@ def _emit_mcp_event(
     # Shared with the HTTP transport. MCP passes no memory_key /
     # impersonated_by; they default to "" — preserves the MCP event shape.
     from server.observability.ledger import emit_agent_event
-    from server.transport._common import request_identity
+    from server.transport._common import ledger_identity
 
     emit_agent_event(
         op_name=op_name,
-        identity=request_identity(raw_args),
+        identity=ledger_identity(raw_args),
         request_id=request_id,
         latency_ms=latency_ms,
         success=success,

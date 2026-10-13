@@ -283,10 +283,6 @@ _ACTS_AS_A_USER = [
 ]
 
 
-def _identity_ops() -> list[str]:
-    return _ACTS_AS_A_USER
-
-
 def test_the_ops_refused_under_an_unresolved_scope_are_the_listed_ones() -> None:
     from server.identity.domain.read_scope import honours_read_scope
 
@@ -298,7 +294,7 @@ def test_the_ops_refused_under_an_unresolved_scope_are_the_listed_ones() -> None
     assert refused == set(_ACTS_AS_A_USER)
 
 
-@pytest.mark.parametrize("name", _identity_ops())
+@pytest.mark.parametrize("name", _ACTS_AS_A_USER)
 def test_a_session_ceiling_with_no_session_in_the_body_is_refused(name: str) -> None:
     """A token pinned to a user with an own_session ceiling and a body naming no
     session does not resolve; an op that would write or count as user '-' is refused
@@ -848,7 +844,7 @@ def test_a_narrowed_namespace_admin_cannot_start_an_erasure(
 
 def test_the_identity_sweep_covers_the_writes_that_reached_user_nobody() -> None:
     assert {"memory.bulk_set", "observe.record", "run.begin", "cost.summary"} <= set(
-        _identity_ops()
+        _ACTS_AS_A_USER
     )
 
 

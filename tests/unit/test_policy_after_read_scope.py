@@ -92,3 +92,36 @@ def test_mcp_evaluates_rules_for_the_pinned_user(evaluated: list, monkeypatch) -
     refusal, call = _mcp(_body("-"))
     assert refusal is None and call.input_obj.user_id == "u1"
     assert [i["user_id"] for i in evaluated] == ["u1"]
+
+
+@pytest.fixture
+def logged(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, str]]:
+    from server.observability import ledger
+
+    seen: list[dict[str, str]] = []
+
+    def capture(**kw: Any) -> None:
+        seen.append(kw["identity"])
+
+    monkeypatch.setattr(ledger, "emit_agent_event", capture)
+    monkeypatch.setattr(http, "emit_agent_event", capture)
+    return seen
+
+
+@pytest.mark.parametrize("transport", ["http", "mcp"])
+def test_a_pinned_call_is_logged_as_the_user_its_rules_are_keyed_on(
+    transport: str, evaluated: list, logged: list
+) -> None:
+    """A rule keyed on the user counts the caller's own logged calls: a body
+    omitting user_id is logged as the pinned user, as the policy evaluates it."""
+    from server.transport import mcp_tools
+
+    raw = {"org": "o", "namespace": "n", "agent": "a", "memory_key": "k", "value": "v"}
+    if transport == "http":
+        _http(_body("-"))
+        http._emit_event(OP, "r", raw, 0, success=True, error_code="")
+    else:
+        _mcp(_body("-"))
+        mcp_tools._emit_mcp_event(OP.name, raw, 0, True, "", "r")
+    assert [i["user_id"] for i in logged] == ["u1"]
+    assert [i["user_id"] for i in evaluated] == ["u1"]

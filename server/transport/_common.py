@@ -29,6 +29,29 @@ def request_identity(args: dict[str, Any]) -> dict[str, str]:
     return out
 
 
+def ledger_identity(args: dict[str, Any]) -> dict[str, str]:
+    """`request_identity` with the user (and session) a narrowed read scope pins:
+    a pinned token's calls are logged as the user it acts as, which is what a
+    history rule keyed on that user counts, whatever its body names."""
+    from server.auth.context import current_auth
+    from server.core.errors import AuthInsufficientError, IdentityIncompleteError
+    from server.identity.domain.read_scope import request_read_filters
+
+    out = request_identity(args)
+    auth = current_auth()
+    if auth is None:
+        return out
+    try:
+        scope = request_read_filters(auth)
+    except (AuthInsufficientError, IdentityIncompleteError):
+        return out
+    if scope.narrowed and scope.user_id:
+        out["user_id"] = scope.user_id
+    if scope.narrowed and scope.session_id:
+        out["session_id"] = scope.session_id
+    return out
+
+
 def bind_request(op_name: str, request_id: str) -> None:
     """Attribute the rest of this request to `request_id`: its log lines
     (`request_id_var`) and its ClickHouse queries (`<op> <request_id>` as

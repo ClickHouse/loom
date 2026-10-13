@@ -50,6 +50,7 @@ from server.transport import gates
 from server.transport._common import (
     ANONYMOUS_ACTOR,
     bind_request,
+    ledger_identity,
     request_identity,
     validation_errors,
     validation_note,
@@ -693,7 +694,7 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
         call.identity = request_identity(raw_body)
 
         # The shared admission sequence (server/transport/gates.py):
-        # authorization target, authorization, policy, then the limiter.
+        # authorization target, authorization, read scope, policy, then the limiter.
         call.target = target = await _authorize(op, response, call, payload)
         payload = await _bind_context_and_policy(op, request, call, target, payload)
         _rate_limit(op, response, call, target)
@@ -772,7 +773,7 @@ def _emit_event(
     result: Any = None,
     error: BaseException | None = None,
 ) -> None:
-    identity = request_identity(raw_body)
+    identity = ledger_identity(raw_body)
     # memory_key (memory.* family) lets cost.summary roll up per key; empty
     # for ops without one.
     raw_memory_key = raw_body.get("memory_key", "")
