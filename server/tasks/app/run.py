@@ -224,12 +224,27 @@ def _user_of(input: RunBeginInput) -> str:
 # ------------------------------------------------------------------- handlers
 
 
-async def run_is_active(org: str, namespace: str, run_id: str) -> bool:
-    existing = await runs_store.fetch_run(get_client(), org, namespace, run_id)
-    return existing is not None and existing.get("status") == "active"
+async def idle_session_run(
+    org: str, namespace: str, agent: str, run_id: str, *, idle_s: float | None
+) -> int | None:
+    """The calls of an implicit session run that no web process still serves, or
+    None when it is not active or a call reached the ledger in the last `idle_s`
+    seconds (None: closed by the client, so no wait)."""
+    ch = get_client()
+    with sequential_reads():
+        existing = await runs_store.fetch_run(ch, org, namespace, run_id)
+    if existing is None or existing.get("status") != "active":
+        return None
+    calls, last = await runs_store.ledgered_calls(
+        ch, org, namespace, agent, run_id, since=existing["started_at"]
+    )
+    if idle_s is not None and last is not None:
+        if (_now() - last.replace(tzinfo=None)).total_seconds() < idle_s:
+            return None
+    return calls
 
 
-async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:
+async def handle_run_begin(input: RunBeginInput, *, keep_active: bool = False) -> RunBeginOutput:
     """Open a run. A caller-supplied run_id is claimed in Keeper, then checked
     against its row, then written, then released. A begin that finds the claim
     held by another user goes to a fresh id. A begin that takes the claim after
@@ -238,7 +253,9 @@ async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:
     once the row is written; a begin that fails first keeps it, so no other
     user's begin can take the id before a row holds it. Without a claim (no
     Keeper, or Keeper failed) a narrowed caller keeps a supplied id only for a
-    run of its own that already exists; a new one gets a server-made id."""
+    run of its own that already exists; a new one gets a server-made id.
+    `keep_active`: a run already active under the id is left as it is (the implicit
+    run of an MCP session that another web process began)."""
     ch = get_client()
     supplied = (input.run_id or "").strip()
     if not supplied:
@@ -248,7 +265,10 @@ async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:
         ch, input.org, input.namespace, supplied, _user_of(input), input.session_id or "-"
     )
     run_id, existing = await _target_run(ch, input, supplied, claim)
-    opened = await _open_run(ch, input, run_id, existing)
+    if keep_active and existing is not None and existing.get("status") == "active":
+        opened = RunBeginOutput(run_id=run_id, started_at=_iso(existing["started_at"]))
+    else:
+        opened = await _open_run(ch, input, run_id, existing)
     if isinstance(claim, runs_store.RunClaim) and claim.won:
         await runs_store.delete_claim(ch, input.org, input.namespace, supplied)
     return opened

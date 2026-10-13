@@ -36,7 +36,7 @@ def test_ensure_returns_before_run_begin_lands_and_close_waits_for_it(monkeypatc
     gate = asyncio.Event()
     order: list[str] = []
 
-    async def slow_begin(inp: Any) -> Any:
+    async def slow_begin(inp: Any, *, keep_active: bool = False) -> Any:
         await gate.wait()
         order.append(f"begin:{inp.run_id}")
         from server.tasks.api.models_run import RunBeginOutput
@@ -51,13 +51,13 @@ def test_ensure_returns_before_run_begin_lands_and_close_waits_for_it(monkeypatc
 
     monkeypatch.setattr(h, "handle_run_begin", slow_begin)
     monkeypatch.setattr(h, "handle_run_complete", complete)
-    monkeypatch.setattr(h, "run_is_active", AsyncMock(return_value=False))
+    monkeypatch.setattr(h, "idle_session_run", AsyncMock(return_value=1))
 
     async def _run() -> None:
         run = await asyncio.wait_for(mcp_runs.ensure("sess-9", DEFAULTS, goal="g", now=1.0), 0.5)
         assert run is not None and run.run_id == "mcp-sess-9", "the call has its id at once"
         assert order == [], "run.begin has not landed and the call did not wait for it"
-        closer = asyncio.create_task(mcp_runs.close_session("sess-9", now=2.0))
+        closer = asyncio.create_task(mcp_runs.close_session("sess-9"))
         await asyncio.sleep(0)
         assert order == [], "close waits for the begin"
         gate.set()

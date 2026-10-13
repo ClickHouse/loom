@@ -11,9 +11,10 @@ client never names a run of its own. The transport mints the run itself:
   the cross-scope `duplicate` rule); reads are labelled through the
   ledger ContextVar (`server.observability.run_context`) and never filtered.
 - The run closes on `DELETE /mcp` or after `mcp_session_run_idle_seconds`
-  without a call — `status="completed"`, `outcome="none"` (the transport
-  knows the session ended, not how it went, and never guesses). The sweep
-  is request-driven (once a minute at most) so it needs no worker.
+  without a call to any web process of the server (the ledger says which) —
+  `status="completed"`, `outcome="none"` (the transport knows the session
+  ended, not how it went, and never guesses). The sweep is request-driven
+  (once a minute at most) so it needs no worker.
 
 Bounded like the session→agent cache: at the cap the idlest run is closed
 and evicted. Ledger failures never fail a tool call.
@@ -60,7 +61,6 @@ class SessionRun:
     namespace: str
     agent: str
     session_id: str
-    started: float
     last_seen: float
     goal: str = ""
     calls: int = 0
@@ -159,7 +159,7 @@ async def ensure(
         return None
     if len(_RUNS) >= SESSION_RUN_CAP:
         idlest = min(_RUNS.values(), key=lambda r: r.last_seen)
-        await _close(idlest, reason="evicted", now=now)
+        await _close(idlest, reason="evicted")
         _RUNS.pop(idlest.session_id, None)
     org = str(defaults.get("org") or "")
     namespace = str(defaults.get("namespace") or "")
@@ -176,7 +176,6 @@ async def ensure(
         namespace=namespace,
         agent=agent,
         session_id=session_id,
-        started=now,
         last_seen=now,
         goal=goal,
         calls=1,
@@ -196,16 +195,13 @@ def run_id_for(session_id: str) -> str:
 
 
 async def _begin(run: SessionRun, *, goal: str, now: float) -> None:
-    """`run.begin` for a registered run, unless it is already active: another
-    web process of this server began it for the same session, with the goal of
-    the session's first call. On failure the run is forgotten and the session
-    waits out the idle window before the next attempt."""
+    """`run.begin` for a registered run. A run already active is kept: another
+    web process of this server began it for the same session. On failure the run
+    is forgotten and the session waits out the idle window before the next attempt."""
     try:
         from server.tasks.api.models_run import RunBeginInput
-        from server.tasks.app.run import handle_run_begin, run_is_active
+        from server.tasks.app.run import handle_run_begin
 
-        if await run_is_active(run.org, run.namespace, run.run_id):
-            return
         await handle_run_begin(
             RunBeginInput(
                 org=run.org,
@@ -217,7 +213,8 @@ async def _begin(run: SessionRun, *, goal: str, now: float) -> None:
                 environment="mcp",
                 consumer=run.agent[:64],
                 metadata={"implicit": True, "transport": "mcp"},
-            )
+            ),
+            keep_active=True,
         )
     except Exception as e:  # noqa: BLE001 — the ledger never fails a tool call
         if _RUNS.get(run.session_id) is run:
@@ -232,7 +229,7 @@ async def drain_begins() -> None:
         await asyncio.gather(*_PENDING_BEGINS, return_exceptions=True)
 
 
-async def _close(run: SessionRun, *, reason: str, now: float) -> bool:
+async def _close(run: SessionRun, *, reason: str) -> bool:
     begin_task = run.extra.get("begin_task")
     if isinstance(begin_task, asyncio.Task) and not begin_task.done():
         await asyncio.gather(begin_task, return_exceptions=True)  # complete after begin
@@ -240,8 +237,19 @@ async def _close(run: SessionRun, *, reason: str, now: float) -> bool:
         return False  # begin never landed; there is no run to complete
     try:
         from server.tasks.api.models_run import RunCompleteInput
-        from server.tasks.app.run import handle_run_complete
+        from server.tasks.app.run import handle_run_complete, idle_session_run
 
+        # The ledger, not this process, says whether the session is over: a
+        # sibling web process may still serve it, or have closed it already.
+        calls = await idle_session_run(
+            run.org,
+            run.namespace,
+            run.agent,
+            run.run_id,
+            idle_s=idle_seconds() if reason == "idle" else None,
+        )
+        if calls is None:
+            return False
         await handle_run_complete(
             RunCompleteInput(
                 org=run.org,
@@ -251,8 +259,9 @@ async def _close(run: SessionRun, *, reason: str, now: float) -> bool:
                 # The transport saw the session end; it cannot say how the
                 # work went, and `none` writes no evidence or harm.
                 outcome="none",
-                duration_ms=max(0, int((now - run.started) * 1000)),
-                metadata={"closed_by": f"mcp_{reason}", "calls": run.calls},
+                # 0: from the run's start, which every web process shares.
+                duration_ms=0,
+                metadata={"closed_by": f"mcp_{reason}", "calls": calls},
             )
         )
         return True
@@ -261,14 +270,14 @@ async def _close(run: SessionRun, *, reason: str, now: float) -> bool:
         return False
 
 
-async def close_session(session_id: str | None, *, now: float | None = None) -> bool:
+async def close_session(session_id: str | None) -> bool:
     """`DELETE /mcp`: the client ended the session; close its run."""
     if not session_id:
         return False
     run = _RUNS.pop(session_id, None)
     if run is None:
         return False
-    return await _close(run, reason="session_end", now=time.monotonic() if now is None else now)
+    return await _close(run, reason="session_end")
 
 
 async def sweep_idle(*, now: float | None = None, force: bool = False) -> int:
@@ -284,7 +293,7 @@ async def sweep_idle(*, now: float | None = None, force: bool = False) -> int:
     closed = 0
     for run in stale:
         _RUNS.pop(run.session_id, None)
-        if await _close(run, reason="idle", now=now):
+        if await _close(run, reason="idle"):
             closed += 1
     for sid, t in list(_BEGIN_FAILED_AT.items()):
         if now - t >= idle:

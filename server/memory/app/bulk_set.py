@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from server.core.ch import get_client
 from server.core.hashing import hash_text
 from server.core.hashing import sha256_value as _content_sha256
+from server.core.vectors import codes_state
 from server.embedding import get_embedder
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
@@ -288,10 +289,6 @@ async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
     """Phase 10: the two core writes — the memory rows and their embedding
     rows — gathered, each a committed insert."""
     import server.memory.store as memory_repo
-    from server.core.vectors import codes_state
-
-    # Before either insert: a refused vector must not leave the memory rows behind.
-    codes_state.refuse_other_widths("memory_embeddings", state.embedding_rows)
 
     # The two core writes are independent rows of two tables and each is a ~260 ms committed
     # insert on ClickHouse Cloud, so they are gathered, as on the point path (`memory.set`).
@@ -628,6 +625,8 @@ async def handle_memory_bulk_set(
     each unique (nanosecond) to preserve LWW semantics."""
     ch = get_client()
     embedder = get_embedder()
+    # Before any work it pays for: a vector the coded table cannot take fails the write.
+    codes_state.refuse_width("memory_embeddings", embedder.dim)
     now_utc = datetime.now(UTC)
     # The write names its phases on the response.
     from server.memory.app.search.clock import StageClock

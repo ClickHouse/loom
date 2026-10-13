@@ -86,17 +86,22 @@ class _Budgets:
     by_consumer: dict[tuple[str, str], int | float]
 
 
-def _stored(raw: Any) -> int | float:
-    """A value as `set_for_consumer` stores it: int ms or a float multiplier."""
-    if isinstance(raw, bool) or not isinstance(raw, int | float) or raw < 0:
+def _stored_ms(raw: Any) -> int:
+    """An op budget as `set` stores it; anything else makes the document corrupt."""
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
         raise ValueError(f"not a budget: {raw!r}")
     return raw
 
 
+def _stored_budget(raw: Any) -> int | float:
+    """A consumer budget as `set_for_consumer` stores it: ms, or a float multiplier."""
+    return raw if isinstance(raw, float) and raw >= 0 else _stored_ms(raw)
+
+
 def _decode(data: Any) -> _Budgets:
     return _Budgets(
-        ops={str(k): int(v) for k, v in data["ops"].items()},
-        by_consumer={(str(c), str(o)): _stored(v) for c, o, v in data["consumer"]},
+        ops={str(k): _stored_ms(v) for k, v in data["ops"].items()},
+        by_consumer={(str(c), str(o)): _stored_budget(v) for c, o, v in data["consumer"]},
     )
 
 

@@ -10,6 +10,15 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
+# `local:<alias>` embedding models: alias -> (Hugging Face id, the width it emits).
+# `local` alone is DEFAULT_LOCAL_EMBEDDING_MODEL.
+LOCAL_EMBEDDING_MODELS: dict[str, tuple[str, int]] = {
+    "bge-small": ("BAAI/bge-small-en-v1.5", 384),
+    "bge-base": ("BAAI/bge-base-en-v1.5", 768),
+    "minilm": ("sentence-transformers/all-MiniLM-L6-v2", 384),
+}
+DEFAULT_LOCAL_EMBEDDING_MODEL = "bge-small"
+
 
 class ModelSettings(BaseModel):
     # --- defaults ---------------------------------------------------------------

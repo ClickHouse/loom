@@ -311,11 +311,23 @@ def test_a_worker_that_starts_after_the_runtime_dir_turns_read_only_still_shares
         shared.chmod(0o700)
 
 
-def test_a_consumer_budget_that_is_not_a_number_makes_the_file_corrupt(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "corrupt",
+    [
+        {"ops": {}, "consumer": [["c1", "*", "abc"]]},
+        {"ops": {"memory.get": "5"}, "consumer": []},
+        {"ops": {"memory.get": 2.7}, "consumer": []},
+        {"ops": {"memory.get": True}, "consumer": []},
+        {"ops": {"memory.get": -5}, "consumer": []},
+    ],
+)
+def test_a_budget_that_is_not_one_makes_the_file_corrupt(
+    tmp_path: Path, corrupt: dict[str, object]
+) -> None:
     a, b, path = _budgets(tmp_path)
     a.set_for_consumer("c1", "*", "3x")
     assert b.get_for_consumer("c1", "*") == 3.0
-    path.write_text(json.dumps({"ops": {}, "consumer": [["c1", "*", "abc"]]}))
+    path.write_text(json.dumps(corrupt))
     assert b.get_for_consumer("c1", "*") == 3.0  # the corrupt version is not adopted
     b.set_for_consumer("c2", "*", 7)
     assert json.loads(path.read_text())["consumer"] == [["c1", "*", 3.0], ["c2", "*", 7]]

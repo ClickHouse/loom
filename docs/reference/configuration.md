@@ -1032,7 +1032,7 @@ Source: `server/settings/_providers.py`
 
 | Variable | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `LOOM_EMBEDDING_DIM` | `int` | `3072` | Inherits ModelSettings for `llm_model`, which the provider resolution below reads and fills. Vector width the embedder is asked for and the schema is sized from; the width probed from the embedder at boot wins when they differ. Change it together with `embedding_model`. |
+| `LOOM_EMBEDDING_DIM` | `int` | `3072` | Inherits ModelSettings for `llm_model`, which the provider resolution below reads and fills. Vector width the embedder is asked for and the schema is sized from; the width probed from the embedder at boot wins when they differ. Change it together with `embedding_model`. Unset with a `local:*` model, it is that model's own width. |
 | `LOOM_EMBEDDING_PROVIDER` | `'' \| 'openai' \| 'gemini' \| 'compatible' \| 'local' \| 'fake'` | `''` | "" = infer from `embedding_model` (fake-ngram-* → fake, text-embedding-* → openai, gemini* → gemini, local/local:* → local CPU embedder); or pin "openai", "gemini", "local", "fake". Switching providers changes the embedding space: a full re-embed is required. |
 | `LOOM_EMBEDDING_BASE_URL` | `str` | `''` | API root for an explicitly selected OpenAI-compatible embedding service, e.g. https://provider.example/v1. Empty is invalid for compatible providers. |
 | `LOOM_EMBEDDING_SEND_DIMENSIONS` | `bool` | `False` | Send the optional dimensions request parameter to a compatible endpoint. False uses its native output width; responses must still match embedding_dim. |

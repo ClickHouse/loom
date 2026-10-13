@@ -109,6 +109,14 @@ def test_default_path_prefers_the_runtime_dir_and_falls_back_to_tmp(
     monkeypatch.setattr(rs, "RUN_DIR", str(tmp_path / "run" / "loom"))
     assert runtime_dir() == str(tmp_path / "run" / "loom")
     assert stat.S_IMODE((tmp_path / "run" / "loom").stat().st_mode) == 0o700
+    # a stale XDG_RUNTIME_DIR (the directory is gone) falls through
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "logged-out" / "1000"))
+    (tmp_path / "logged-out").mkdir(mode=0o500)
+    try:
+        if os.geteuid() != 0:
+            assert runtime_dir() == str(tmp_path / "run" / "loom")
+    finally:
+        (tmp_path / "logged-out").chmod(0o700)
 
 
 def test_the_limiter_uses_the_hardened_open(tmp_path: Path, settings_override) -> None:

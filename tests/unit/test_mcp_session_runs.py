@@ -41,16 +41,27 @@ class _Ledger:
         self.completes: list[Any] = []
         self.fail_begin = False
         self.active: set[str] = set()
+        # Runs a sibling web process called within the idle window.
+        self.served_elsewhere: set[str] = set()
 
-    async def is_active(self, org: str, namespace: str, run_id: str) -> bool:
-        return run_id in self.active
+    async def idle(
+        self, org: str, namespace: str, agent: str, run_id: str, *, idle_s: float | None
+    ) -> int | None:
+        if run_id not in self.active:
+            return None
+        if idle_s is not None and run_id in self.served_elsewhere:
+            return None
+        return 7  # the ledger's count, whichever process closes the run
 
-    async def begin(self, inp: Any) -> Any:
+    async def begin(self, inp: Any, *, keep_active: bool = False) -> Any:
         if self.fail_begin:
             raise RuntimeError("ledger down")
+        from server.tasks.api.models_run import RunBeginOutput
+
+        if keep_active and inp.run_id in self.active:
+            return RunBeginOutput(run_id=inp.run_id, started_at="t0")
         self.begins.append(inp)
         self.active.add(inp.run_id)
-        from server.tasks.api.models_run import RunBeginOutput
 
         return RunBeginOutput(run_id=f"run-{len(self.begins)}", started_at="t0")
 
@@ -69,7 +80,7 @@ def ledger(monkeypatch) -> _Ledger:
     led = _Ledger()
     monkeypatch.setattr(h, "handle_run_begin", led.begin)
     monkeypatch.setattr(h, "handle_run_complete", led.complete)
-    monkeypatch.setattr(h, "run_is_active", led.is_active)
+    monkeypatch.setattr(h, "idle_session_run", led.idle)
     return led
 
 
@@ -149,7 +160,7 @@ def test_a_sibling_worker_does_not_begin_the_sessions_run_again(ledger: _Ledger)
         await mcp_runs.ensure("sess-1", DEFAULTS, goal="third call", now=101.0)
         await mcp_runs.drain_begins()
         assert [b.goal for b in ledger.begins] == ["first call"]
-        await mcp_runs.close_session("sess-1", now=102.0)
+        await mcp_runs.close_session("sess-1")
         await mcp_runs.ensure("sess-1", DEFAULTS, goal="after close", now=103.0)
         await mcp_runs.drain_begins()
         assert [b.goal for b in ledger.begins] == ["first call", "after close"]
@@ -214,15 +225,31 @@ def test_failed_begins_are_forgotten_while_no_run_is_live(ledger: _Ledger) -> No
 def test_close_session_completes_with_outcome_none(ledger: _Ledger) -> None:
     async def _run() -> None:
         await mcp_runs.ensure("s", DEFAULTS, goal="g", now=100.0)
-        assert await mcp_runs.close_session("s", now=160.0) is True
+        assert await mcp_runs.close_session("s") is True
         assert await mcp_runs.close_session("s") is False  # already gone
         assert await mcp_runs.close_session("never-seen") is False
         c = ledger.completes[0]
         assert (c.org, c.namespace, c.run_id) == ("clickhouse", "ns-a", "mcp-s")
         assert c.status == "completed" and c.outcome == "none" and c.memories_used == []
-        assert c.duration_ms == 60_000
-        assert c.metadata == {"closed_by": "mcp_session_end", "calls": 1}
+        assert c.duration_ms == 0  # from the run's start, which every process shares
+        assert c.metadata == {"closed_by": "mcp_session_end", "calls": 7}
         assert mcp_runs.live_count() == 0
+
+    asyncio.run(_run())
+
+
+def test_a_run_a_sibling_still_serves_or_closed_is_not_completed(ledger: _Ledger) -> None:
+    async def _run() -> None:
+        await mcp_runs.ensure("busy", DEFAULTS, goal="g", now=0.0)
+        await mcp_runs.ensure("done", DEFAULTS, goal="g", now=0.0)
+        await mcp_runs.drain_begins()
+        ledger.served_elsewhere.add("mcp-busy")
+        ledger.active.discard("mcp-done")  # a sibling's DELETE /mcp closed it
+        assert await mcp_runs.sweep_idle(now=mcp_runs.idle_seconds() + 1.0, force=True) == 0
+        assert ledger.completes == [] and mcp_runs.live_count() == 0
+        # the client's own DELETE does not wait for the idle window
+        await mcp_runs.ensure("busy", DEFAULTS, goal="g", now=5000.0)
+        assert await mcp_runs.close_session("busy") is True
 
     asyncio.run(_run())
 

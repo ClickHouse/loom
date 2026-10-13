@@ -323,6 +323,22 @@ async def observation_count(ch: Any, org: str, ns: str, run_id: str, *, scope: R
     return int((row or {}).get("n") or 0)
 
 
+async def ledgered_calls(
+    ch: Any, org: str, ns: str, agent: str, run_id: str, since: Any
+) -> tuple[int, Any]:
+    """How many requests the ledger labels with `run_id` since `since`, and the
+    time of the last one (None when there is none)."""
+    row = await ch.query_one(
+        """
+        SELECT count() AS n, if(n = 0, NULL, max(ts)) AS last FROM loom.agent_events
+        WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agent:String}
+          AND ts >= {since:DateTime64(3)} AND run_id = {rid:String}
+        """,
+        params={"org": org, "ns": ns, "agent": agent, "rid": run_id, "since": since},
+    )
+    return int((row or {}).get("n") or 0), (row or {}).get("last")
+
+
 async def traced_recall_keys(ch: Any, org: str, ns: str, run_id: str) -> list[str]:
     """Distinct keys memory.search returned under the run, from the trace log."""
     rows = await ch.query_all(

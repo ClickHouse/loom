@@ -138,29 +138,64 @@ def test_a_fresh_install_codes_its_vectors_only_at_a_codable_width(
 
 
 @pytest.mark.parametrize(
-    ("codecs", "width"),
+    ("columns", "model", "width"),
     [
-        (["CODEC(Quantized('rabitq', 16, 0))", "CODEC(Quantized('rabitq', 16, 0), LZ4)"], 16),
-        ([], 3072),
+        (
+            [
+                ("memory_embeddings", "embedding", "CODEC(Quantized('rabitq', 16, 0))"),
+                ("entity_vectors", "entity_embedding", "CODEC(Quantized('rabitq', 16, 0), LZ4)"),
+                ("memory_embeddings", "memory_key_embedding", "CODEC(NONE)"),  # mid-rebuild
+            ],
+            "fake-ngram-3072",
+            16,
+        ),
+        ([("memory_embeddings", "embedding", "CODEC(NONE)")], "fake-ngram-3072", None),
+        ([("memory_embeddings", "org", "")], "fake-ngram-3072", 3072),  # no vector column yet
+        ([], "fake-ngram-3072", 3072),
     ],
-    ids=["stored-width", "fresh-install"],
+    ids=["stored-width", "plain-install", "not-a-vector", "fresh-install"],
 )
 def test_new_coded_tables_take_the_width_the_install_stores(
-    settings_override, codecs: list[str], width: int
+    settings_override, columns: list[tuple[str, str, str]], model: str, width: int | None
 ) -> None:
     """A model chosen in the dashboard leaves LOOM_EMBEDDING_DIM at its old value."""
     from types import SimpleNamespace
 
     from server.core.schema import migrate as mig
 
-    settings_override(embedding_dim=3072)
+    settings_override(embedding_dim=3072, embedding_model=model)
 
     class _CH:
         def query(self, sql: str, parameters: dict | None = None) -> SimpleNamespace:
             assert "memory_embeddings" in parameters["tables"]
-            return SimpleNamespace(result_rows=[("memory_embeddings", c) for c in codecs])
+            return SimpleNamespace(result_rows=columns)
 
     assert mig._codec_width(_CH()) == width  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(("width", "coded"), [(None, False), (384, True)])
+def test_an_install_with_plain_vector_tables_creates_new_ones_plain(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, width: int | None, coded: bool
+) -> None:
+    from server.core.schema import migrate as mig
+    from server.core.schema.journal import sorted_migrations
+
+    (tmp_path / "1999_a.sql").write_text(
+        "CREATE TABLE IF NOT EXISTS loom.x (a UInt8) ENGINE = Memory;\n"
+    )
+    seen: list[tuple[bool, int]] = []
+    monkeypatch.setattr(mig, "_nlp_available", lambda ch: True)
+    monkeypatch.setattr(mig, "_codec_supported", lambda ch: True)
+    monkeypatch.setattr(mig, "_codec_width", lambda ch: width)
+    monkeypatch.setattr(mig, "_dimensions_setting_known", lambda ch: False)
+    monkeypatch.setattr(mig, "_sync_settings_accepted", lambda ch: frozenset())
+    monkeypatch.setattr(
+        mig, "_run_file", lambda ch, f, **kw: seen.append((kw["coded"], kw["codec_dim"]))
+    )
+    monkeypatch.setattr(mig, "_record", lambda ch, name, cs: None)
+    files = sorted_migrations(tmp_path.glob("*.sql"))
+    assert mig._apply_pending(object(), files, dry=False, lease=None) == 0  # type: ignore[arg-type]
+    assert seen == [(coded, width or 0)]
 
 
 def test_codec_width_reads_the_quantized_argument() -> None:

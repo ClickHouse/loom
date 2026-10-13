@@ -382,3 +382,31 @@ def test_onnx_threads_stay_within_the_cpu_quota(
     monkeypatch.setattr(web_workers, "cpu_limit", limit)
     monkeypatch.setattr(emb.settings, "web_workers", 1)
     assert local.onnx_threads() == 2
+
+
+@pytest.mark.parametrize(
+    ("env", "dim"),
+    [
+        ({"LOOM_EMBEDDING_MODEL": "local:bge-base"}, 768),
+        ({"LOOM_EMBEDDING_MODEL": "local"}, 384),
+        ({"LOOM_EMBEDDING_MODEL": "x", "LOOM_EMBEDDING_PROVIDER": "local"}, 384),
+        ({"LOOM_EMBEDDING_MODEL": "local:bge-base", "LOOM_EMBEDDING_DIM": "512"}, 512),
+        ({"LOOM_EMBEDDING_MODEL": "fake-ngram-3072"}, 3072),
+        ({"LOOM_EMBEDDING_MODEL": "local:nope"}, 3072),  # refused when built
+    ],
+)
+def test_an_unset_width_is_the_local_models_own(
+    monkeypatch: pytest.MonkeyPatch, env: dict[str, str], dim: int
+) -> None:
+    """The schema is sized from `embedding_dim`, so a coded table created at the
+    default 3072 would refuse every vector a 384-dim local model writes. An
+    inferred width is not the env's choice: a read-replica takes the main Loom's."""
+    from server.settings import Settings
+
+    for var in ("LOOM_EMBEDDING_MODEL", "LOOM_EMBEDDING_DIM", "LOOM_EMBEDDING_PROVIDER"):
+        monkeypatch.delenv(var, raising=False)
+    for var, value in env.items():
+        monkeypatch.setenv(var, value)
+    s = Settings(_env_file=None)
+    assert s.embedding_dim == dim
+    assert ("embedding_dim" in s.env_fields_set()) is ("LOOM_EMBEDDING_DIM" in env)

@@ -429,25 +429,34 @@ def _codec_supported(ch: Client) -> bool:
         return False
 
 
-def _codec_width(ch: Client) -> int:
-    """The width a new coded table takes: what the install's coded tables hold
-    (a model chosen in the dashboard leaves LOOM_EMBEDDING_DIM behind), else
-    LOOM_EMBEDDING_DIM on a fresh install."""
+def _codec_width(ch: Client) -> int | None:
+    """The width a new coded table takes, or None to create it plain: the width
+    the install's coded tables hold (a model chosen in the dashboard leaves
+    LOOM_EMBEDDING_DIM behind); None when its vector tables are plain, so one
+    install never mixes the layouts (`scripts/ops/vector_codec_rebuild.py`
+    moves it); on a fresh install, LOOM_EMBEDDING_DIM."""
     from server.core.schema.vector_codec_ddl import CODED_TABLES, codec_width
     from server.core.vectors.codes_state import written_by_served_model
     from server.settings import settings
 
     rows = ch.query(
-        "SELECT table, compression_codec FROM system.columns WHERE database = 'loom' "
-        "AND table IN {tables:Array(String)} AND compression_codec LIKE '%Quantized(%'",
+        "SELECT table, name, compression_codec FROM system.columns WHERE database = 'loom' "
+        "AND table IN {tables:Array(String)}",
         parameters={"tables": sorted(CODED_TABLES)},
     ).result_rows
-    widths = Counter(
-        w
-        for table, codec in rows
-        if written_by_served_model(str(table)) and (w := codec_width(str(codec))) is not None
-    )
-    return widths.most_common(1)[0][0] if widths else int(settings.embedding_dim)
+    widths: Counter[int] = Counter()
+    plain = False
+    for table, name, codec in rows:
+        if name not in CODED_TABLES[str(table)][0] or not written_by_served_model(str(table)):
+            continue
+        width = codec_width(str(codec))
+        if width is None:
+            plain = True
+        else:
+            widths[width] += 1
+    if widths:
+        return widths.most_common(1)[0][0]
+    return None if plain else int(settings.embedding_dim)
 
 
 DIMENSIONS_SETTING = "allow_dimensions_outside_sorting_key"
@@ -678,13 +687,17 @@ def _apply_pending(
     # sent at all (ClickHouse Cloud forbids it).
     nlp_ok = _nlp_available(ch)
     coded = _codec_supported(ch)
-    codec_dim = _codec_width(ch) if coded else 0
-    if coded and not codable(codec_dim):
+    width = _codec_width(ch) if coded else 0
+    if coded and width is None:
+        coded = False
+        print("  · vector tables created plain, as the install's existing ones are")
+    elif coded and not codable(width or 0):
         coded = False
         print(
-            f"  · vector tables created plain: width {codec_dim} is not a multiple of 8, "
+            f"  · vector tables created plain: width {width} is not a multiple of 8, "
             "which the Quantized codec needs"
         )
+    codec_dim = width or 0
     dims = _dimensions_setting_known(ch)
     sync = NO_SYNC if dry else sync_policy(ch)
     if sync.accepted:

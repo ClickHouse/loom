@@ -15,6 +15,8 @@ from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value as _content_sha256
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
+from server.core.vectors import codes_state
+from server.embedding import get_embedder
 from server.identity.app.request_scope import request_scope
 from server.memory.api.models_crud import (
     MemorySetInput,
@@ -617,6 +619,8 @@ async def _memory_set_phases(input: MemorySetInput) -> MemorySetOutput:
     The shared request state is `w` (_SetWrite). Early returns: a lock/pin
     refusal, the non-embedded path, a dry-run 'rejected', a merge, a dry run.
     """
+    # Before any work it pays for: a vector the coded table cannot take fails the write.
+    codes_state.refuse_width("memory_embeddings", get_embedder().dim)
     ch = get_client()
     version = next_version()
 

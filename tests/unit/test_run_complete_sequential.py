@@ -68,3 +68,49 @@ async def test_begin_with_a_client_run_id_labels_that_id(monkeypatch):
     )
     assert out.run_id == "client-chosen"
     assert current_ledger_run() == "client-chosen"
+
+
+@pytest.mark.asyncio
+async def test_a_begin_that_keeps_an_active_run_reads_it_sequentially(monkeypatch):
+    client = _Client()
+    monkeypatch.setattr(run_handlers, "get_client", lambda: client)
+    await run_handlers.handle_run_begin(
+        RunBeginInput(org="o", namespace="n", agent="a", goal="g", run_id="mcp-s"),
+        keep_active=True,
+    )
+    assert client.sequential_reads == [True]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "last_call_s_ago", "idle_s", "expected"),
+    [
+        ("active", 600.0, 300.0, 4),  # nobody called within the window
+        ("active", 10.0, 300.0, None),  # a sibling web process still serves it
+        ("active", 10.0, None, 4),  # the client ended the session: no wait
+        ("completed", 600.0, 300.0, None),  # a sibling already closed it
+    ],
+)
+async def test_an_implicit_run_closes_on_what_the_ledger_says(
+    monkeypatch, status, last_call_s_ago, idle_s, expected
+):
+    from datetime import timedelta
+
+    from server.core.datetimes import naive_utc_now
+
+    now = naive_utc_now()
+
+    class _Ledger(_Client):
+        async def query_one(self, sql: str, params=None):
+            await super().query_one(sql, params)
+            if "agent_events" in sql:
+                assert params["since"] == now - timedelta(hours=1)
+                return {"n": 4, "last": now - timedelta(seconds=last_call_s_ago)}
+            return {"status": status, "started_at": now - timedelta(hours=1)}
+
+    client = _Ledger()
+    monkeypatch.setattr(run_handlers, "get_client", lambda: client)
+    monkeypatch.setattr(run_handlers, "_now", lambda: now)
+    got = await run_handlers.idle_session_run("o", "n", "a", "mcp-s", idle_s=idle_s)
+    assert got == expected
+    assert client.sequential_reads[0] is True
