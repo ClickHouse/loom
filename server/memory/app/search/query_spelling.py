@@ -33,12 +33,15 @@ _CACHE_HIT_GRACE_S = 0.25
 _CACHE_TTL_S = 60.0
 _CACHE_SIZE = 4096
 _cache: OrderedDict[tuple[str, tuple[str, ...]], tuple[float, dict[str, str]]] = OrderedDict()
-# A lookup that fails or runs past the deadline skips only its own query. A
-# namespace whose lookups fail _BACKOFF_AFTER times in a row is not read
+# A lookup that fails or runs past the deadline skips only its own query.
+# Failures that overlap (one recorded while another lookup ran) count once.
+# A namespace whose lookups fail _BACKOFF_AFTER times in a row is not read
 # again for a while: a minute, doubling with each further failure up to an
 # hour; a success ends the streak. (org, namespace) -> (failures in a row,
-# monotonic time to try again); an entry is dropped an hour after its
-# back-off ends, and the oldest go first past the size bound.
+# retry_at): until the back-off starts, retry_at is the last failure's time,
+# which is what the overlap check compares; after, the time to try again.
+# An entry is dropped an hour after its back-off ends, and the oldest go
+# first past the size bound.
 _BACKOFF_AFTER = 3
 _MAX_BACKOFF_S = 3600.0
 _MAX_DOUBLINGS = 6  # 60 s doubled six times passes the hour

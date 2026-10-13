@@ -116,9 +116,10 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   `loom.agent_events` rows with `error_code = 'EMBED_TIMEOUT'`. A provider that hangs
   sets no health flag; `/v1/health` shows `provider_failing:<name>` only when it also
   answers errors. Also check the provider's status page.
-- **Fix:** retry once (the SDKs already retry it for idempotent ops). If it repeats, the
-  provider is slow or down: wait it out, or raise the bound for a provider that is slow
-  but answering. Each failed search holds the server for up to one bound per attempt.
+- **Fix:** a raw HTTP or MCP caller retries once; an SDK caller has already retried, so it
+  backs off. If it repeats, the provider is slow or down: wait it out, or raise the bound
+  for a provider that is slow but answering. Each failed search holds the server for up to
+  one bound per attempt.
 
 ### Search returns arbitrary results, or extraction writes nothing
 

@@ -646,3 +646,21 @@ async def test_one_stall_that_catches_several_lookups_does_not_switch_the_namesp
     assert await asyncio.gather(*(_spellings(_input(w)) for w in words)) == [None] * 3
     stalled = False
     assert await _spellings(_input()) == {"datalakecatalog": "DataLakeCatalog"}
+
+
+async def test_a_stall_that_outlasts_several_deadlines_backs_off_under_load(monkeypatch):
+    async def spelling_rows(_ch, _q, _tokens):
+        await asyncio.sleep(5)  # ClickHouse stalls for the whole test
+
+    monkeypatch.setattr(app, "spelling_rows", spelling_rows)
+    monkeypatch.setattr(app, "get_client", lambda: None)
+    monkeypatch.setattr(app, "_LOOKUP_BOUND_S", 0.02)
+    lookups = []
+    for i in range(40):  # four lookups start in each deadline
+        word = "word" + chr(97 + i // 26) + chr(97 + i % 26)
+        lookups.append(asyncio.create_task(_spellings(_input(word))))
+        await asyncio.sleep(0.005)
+    await asyncio.gather(*lookups)
+    # Overlapping failures count once per deadline, so the streak still reaches the back-off.
+    failures, retry_at = app._failed[("o", "ns")]
+    assert failures == app._BACKOFF_AFTER and retry_at > time.monotonic()
