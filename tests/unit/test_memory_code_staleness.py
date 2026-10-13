@@ -42,7 +42,8 @@ def _link(key: str, state: str, **kw: Any) -> dict[str, Any]:
         "state": state,
         "qualified_name": kw.get("qn", "DB::Reader::read"),
         "path": kw.get("path", "src/new.cpp"),
-        "former": [{"path": kw["prev"], "name": kw.get("prev_qn", "")}] if "prev" in kw else [],
+        "anchored_path": kw.get("prev", kw.get("path", "src/new.cpp")),
+        "anchored_name": kw.get("prev_qn", kw.get("qn", "DB::Reader::read")),
     }
 
 
@@ -96,7 +97,7 @@ async def test_names_moved_changed_and_removed_code(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_a_rename_within_its_file_names_the_old_and_the_new_symbol(monkeypatch) -> None:
     renamed = _link("m1", "moved", qn="reader::load_rows", path="reader.py", prev="reader.py")
-    renamed["former"][0]["name"] = "reader::fetch_rows"
+    renamed["anchored_name"] = "reader::fetch_rows"
     _links(monkeypatch, [_head("m1")], [renamed])
     note = await ma._annotate_stale_code_memories([_mem("m1")], _IN)
     assert note is not None
@@ -105,9 +106,26 @@ async def test_a_rename_within_its_file_names_the_old_and_the_new_symbol(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_two_renames_name_what_the_memory_was_written_against(monkeypatch) -> None:
+    renamed = _link("m1", "moved", qn="n::retrieve_rows", path="src/n.py", prev="src/m.py")
+    renamed["anchored_name"] = "n::fetch_rows"
+    renamed["former"] = [
+        {"path": "src/m.py", "name": "n::fetch_rows"},
+        {"path": "src/l.py", "name": "n::load_rows"},
+    ]
+    _links(monkeypatch, [_head("m1")], [renamed])
+    note = await ma._annotate_stale_code_memories([_mem("m1")], _IN)
+    assert note is not None
+    text = note.content_excerpt
+    assert "names n::fetch_rows; it is now n::retrieve_rows" in text
+    assert "places n::retrieve_rows in src/m.py; it now lives in src/n.py" in text
+    assert "load_rows" not in text and "src/l.py" not in text
+
+
+@pytest.mark.asyncio
 async def test_a_file_move_names_the_files_not_a_rename(monkeypatch) -> None:
     moved = _link("m1", "moved", qn="loader::fetch_rows", path="loader.py", prev="reader.py")
-    moved["former"][0]["name"] = "reader::fetch_rows"  # the module part follows the file
+    moved["anchored_name"] = "reader::fetch_rows"  # the module part follows the file
     _links(monkeypatch, [_head("m1")], [moved])
     note = await ma._annotate_stale_code_memories([_mem("m1")], _IN)
     assert note is not None and "it now lives in loader.py" in note.content_excerpt

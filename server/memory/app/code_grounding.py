@@ -620,10 +620,9 @@ async def _annotate_stale_code_memories(memories: list[Any], search_input: Any) 
 
 
 def _moved_note(a: LinkRow, what: str) -> str:
-    """What a moved link's memory has wrong: the name (inside its module), the file, or
-    both; '' when it names neither."""
-    last = a["former"][-1] if a["former"] else {"path": "", "name": ""}
-    old_name, old_path = last["name"], last["path"]
+    """What a moved link's memory has wrong against where it was written (its anchor):
+    the name (inside its module), the file, or both; '' when it names neither."""
+    old_name, old_path = a["anchored_name"], a["anchored_path"]
     new_name, new_path = a["qualified_name"], a["path"]
     renamed = bool(old_name) and local_name(old_name, old_path or new_path) != local_name(
         new_name, new_path
