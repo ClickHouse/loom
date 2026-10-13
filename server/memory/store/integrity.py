@@ -159,7 +159,11 @@ async def repair_dim0_rows(
         )
     if dry_run or not out:
         return len(out)
-    await insert_embedding_rows(out, ch=ch or _default_client())
+    ch = ch or _default_client()
+    await insert_embedding_rows(out, ch=ch)
+    from server.memory.store.embeddings import retire_copies_under_unembedded_heads
+
+    await retire_copies_under_unembedded_heads(out, ch=ch)
     return len(out)
 
 

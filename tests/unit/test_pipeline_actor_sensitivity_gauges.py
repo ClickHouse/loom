@@ -554,3 +554,29 @@ async def test_a_high_relabel_retires_the_keys_chunks_again_after_the_label(
     res = await sweep.apply([cand], ch=_CH())
     assert not res.errors
     assert order == ["retire", "fence", "chunks", "relabel", "chunks", "retire"]
+
+
+@pytest.mark.asyncio
+async def test_the_medium_tag_copy_rechecks_its_head(monkeypatch) -> None:
+    """The medium tag re-emit is a vector copy like touch and verify: after its insert
+    it runs the post-copy head re-check, which retires it under a head made 'high'."""
+    from server.memory import store as memory_repo
+
+    checked: list[list[dict[str, Any]]] = []
+
+    async def _live(ch, **ident):
+        return [{**ident, "tags": ["t"], "embedding": [0.1], "embedding_dim": 1, "version": 3}]
+
+    async def _ins(rows, *, ch=None):
+        return None
+
+    async def _check(rows, *, ch=None):
+        checked.append(rows)
+        return 0
+
+    monkeypatch.setattr(memory_repo, "live_embedding_rows_for_key", _live)
+    monkeypatch.setattr(memory_repo, "insert_embedding_rows", _ins)
+    monkeypatch.setattr(memory_repo, "retire_copies_under_unembedded_heads", _check)
+    cand = sweep.SweepCandidate("2", "o", "n", "a", "-", "-", "k", "medium", ("email",))
+    assert await sweep._tag_embeddings(cand, ch=_CH()) == 1
+    assert len(checked) == 1 and checked[0][0]["memory_key"] == "k"

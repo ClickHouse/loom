@@ -204,6 +204,7 @@ async def _tag_embeddings(c: SweepCandidate, *, ch: _CHClient) -> int:
         insert_embedding_rows,
         live_embedding_rows_for_key,
         reemit_version,
+        retire_copies_under_unembedded_heads,
     )
 
     rows = await live_embedding_rows_for_key(
@@ -231,6 +232,7 @@ async def _tag_embeddings(c: SweepCandidate, *, ch: _CHClient) -> int:
         )
     if out:
         await insert_embedding_rows(out, ch=ch)
+        await retire_copies_under_unembedded_heads(out, ch=ch)
     return len(out)
 
 

@@ -9,6 +9,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client
 from server.memory.domain.temporal_sql import SERVED_STATUSES
 from server.memory.store.inserts import insert_embedding_rows
@@ -393,36 +394,76 @@ async def retire_copies_under_unembedded_heads(
     written: list[dict[str, Any]], *, ch: _CHClient | None = None
 ) -> int:
     """After a copy of live vector rows (a touch, a verify, a tag, a status mirror),
-    re-read the keys' heads strongly; a key whose head keeps no vector ('high',
-    unsearchable, deleted) has the copy retired one above it. A copy that read its
-    head before a 'high' write landed would otherwise carry the vector up past that
-    write's retire, and copies chain: each one checks after its own insert, so the
-    last to land retires above itself. Tombstones and shared-scope rows (no head of
-    their own) are not checked. Returns the rows retired."""
-    from server.memory.domain.memory_types import is_embedded
-    from server.memory.store.reads import memory_rows_by_identity_keys
+    re-read the keys' heads; a key whose head is 'high' or deleted has each copied
+    row tombstoned one above itself. A copy that read its head before a 'high' write
+    landed would otherwise carry the vector up past that write's retire, and copies
+    chain: each one checks after its own insert, so the last to land retires above
+    itself. Tombstones, dim-0 rows and shared-scope rows (no head of their own) are
+    not checked. A missing head counts only on a sequentially consistent read (a
+    lagging replica can miss a fresh key). Never raises: the copy already landed, and
+    a failed check is logged (the orphan reconcile is the backstop for a deleted
+    head). Returns the rows tombstoned."""
     from server.memory.store.sql import read_your_writes_enabled
 
-    newest: dict[EmbeddingKey, int] = {}
-    for r in written:
-        if r.get("tombstoned_at") is not None or str(r.get("scope") or "") == "shared":
-            continue
-        if not int(r.get("embedding_dim") or 0):
-            continue
-        key = embedding_key(r)
-        newest[key] = max(newest.get(key, 0), int(r["version"]))
-    if not newest:
+    copies = [
+        r
+        for r in written
+        if r.get("tombstoned_at") is None
+        and str(r.get("scope") or "") != "shared"
+        and int(r.get("embedding_dim") or 0) > 0
+    ]
+    if not copies:
         return 0
     ch = ch or _default_client()
-    heads = await memory_rows_by_identity_keys(
-        list(newest), ch=ch, sequential=read_your_writes_enabled()
+    sequential = read_your_writes_enabled()
+    try:
+        keys = sorted({embedding_key(r) for r in copies})
+        heads: dict[EmbeddingKey, str] = {}
+        for start in range(0, len(keys), _HEAD_READ_BATCH):
+            heads |= await _head_sensitivity(ch, keys[start : start + _HEAD_READ_BATCH], sequential)
+        stale = {k for k in keys if heads.get(k) == "high" or (sequential and k not in heads)}
+        if not stale:
+            return 0
+        now = naive_utc_now()
+        tombstones = [
+            build_embedding_row(
+                **(
+                    {c: v for c, v in r.items() if c in EMBEDDING_PERSISTED_COLS}
+                    | {"tombstoned_at": now, "version": int(r["version"]) + 1}
+                )
+            )
+            for r in copies
+            if embedding_key(r) in stale
+        ]
+        await insert_embedding_rows(tombstones, ch=ch)
+        return len(tombstones)
+    except Exception as e:  # noqa: BLE001 — the copy landed; a missed check is logged, not raised
+        _log.warning("vector copy: head re-check failed for %d rows: %s", len(copies), e)
+        return 0
+
+
+_HEAD_READ_BATCH = 500
+
+
+async def _head_sensitivity(
+    ch: _CHClient, keys: list[EmbeddingKey], sequential: bool
+) -> dict[EmbeddingKey, str]:
+    """The live head's sensitivity per identity key (absent when there is none): the
+    narrow keyed read the post-copy check needs."""
+    from server.memory.store.sql import _SEQUENTIAL
+
+    rows = await ch.query_all(
+        f"""
+        SELECT org, namespace, agent, user_id, session_id, memory_key, sensitivity
+        FROM loom.memory FINAL
+        PREWHERE (org, namespace, agent, user_id, session_id, memory_key)
+                 IN {{keys:Array(Tuple(String, String, String, String, String, String))}}
+        WHERE tombstoned_at IS NULL
+        {_SEQUENTIAL if sequential else ""}
+        """,
+        params={"keys": [tuple(k) for k in keys]},
     )
-    stale = [
-        (key, version + 1)
-        for key, version in newest.items()
-        if (head := heads.get(key)) is None or not is_embedded(head.memory_type, head.sensitivity)
-    ]
-    return await retire_vectors_for_keys(stale, ch=ch) if stale else 0
+    return {embedding_key(r): str(r.get("sensitivity") or "") for r in rows}
 
 
 _EMB_SHARED_PREWHERE = (

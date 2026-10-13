@@ -341,6 +341,7 @@ async def _recheck_reindexed_heads(
             )
     if out:
         await memory_repo.insert_embedding_rows(out, ch=ch)
+        await memory_repo.retire_copies_under_unembedded_heads(out, ch=ch)
 
 
 async def handle_memory_reindex(input: MemoryReindexInput) -> MemoryReindexOutput:

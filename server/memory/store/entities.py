@@ -198,9 +198,8 @@ async def _mirror_rows_for_keys(
 
 
 def _embedded(row: Any) -> bool:
-    from server.memory.domain.memory_types import is_embedded
-
-    return is_embedded(row.memory_type, row.sensitivity)
+    """A head that may keep vectors: anything but 'high' (profile rows keep theirs)."""
+    return str(row.sensitivity) != "high"
 
 
 async def apply_entities_batch(

@@ -714,41 +714,47 @@ async def test_a_copy_under_a_head_that_is_no_longer_embedded_is_retired_above_i
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A copy that read its head before a 'high' write landed re-reads the head after
-    its insert and retires one above itself; copies under embedded heads, tombstones
+    its insert and tombstones each copied row one above itself; a deleted head counts
+    on a sequential read. Copies under a plain or profile head, tombstones, dim-0 rows
     and shared-scope rows are left alone."""
-    from types import SimpleNamespace
+    inserted: list[dict[str, Any]] = []
 
-    retired: list[tuple[Any, int]] = []
+    async def _heads(ch: Any, keys: Any, sequential: bool) -> dict[Any, str]:
+        return {k: ("high" if k[5] == "hi" else "") for k in keys if k[5] != "gone"}
 
-    async def _heads(keys: Any, **_k: Any) -> dict[Any, Any]:
-        return {
-            k: SimpleNamespace(memory_type="semantic", sensitivity="high" if k[5] == "hi" else "")
-            for k in keys
-            if k[5] != "gone"
-        }
+    async def _insert(rows: Any, **_k: Any) -> None:
+        inserted.extend(rows)
 
-    async def _retire(items: Any, **_k: Any) -> int:
-        retired.extend(items)
-        return len(items)
-
-    monkeypatch.setattr("server.memory.store.reads.memory_rows_by_identity_keys", _heads)
-    monkeypatch.setattr(M.embeddings, "retire_vectors_for_keys", _retire)
+    monkeypatch.setattr(M.embeddings, "_head_sensitivity", _heads)
+    monkeypatch.setattr(M.embeddings, "insert_embedding_rows", _insert)
+    monkeypatch.setattr("server.memory.store.sql.read_your_writes_enabled", lambda: True)
     base = {"org": "o", "namespace": "n", "agent": "a", "user_id": "u", "session_id": "s"}
+    live = {"embedding_dim": 3, "scope": "private"}
     rows = [
-        {**base, "memory_key": "hi", "version": 10, "embedding_dim": 3, "scope": "private"},
-        {**base, "memory_key": "hi", "version": 12, "embedding_dim": 3, "scope": "private"},
-        {**base, "memory_key": "plain", "version": 10, "embedding_dim": 3, "scope": "private"},
-        {**base, "memory_key": "gone", "version": 7, "embedding_dim": 3, "scope": "private"},
+        {**base, **live, "memory_key": "hi", "version": 10},
+        {**base, **live, "memory_key": "hi", "version": 12},
+        {**base, **live, "memory_key": "plain", "version": 10},
+        {**base, **live, "memory_key": "gone", "version": 7},
         {**base, "memory_key": "stub", "version": 7, "embedding_dim": 0, "scope": "private"},
         {**base, "memory_key": "sh", "version": 7, "embedding_dim": 3, "scope": "shared"},
-        {
-            **base,
-            "memory_key": "tomb",
-            "version": 7,
-            "embedding_dim": 3,
-            "scope": "private",
-            "tombstoned_at": datetime(2026, 1, 1),
-        },
+        {**base, **live, "memory_key": "tomb", "version": 7, "tombstoned_at": datetime(2026, 1, 1)},
     ]
-    await M.retire_copies_under_unembedded_heads(rows, ch=object())
-    assert sorted((k[5], v) for k, v in retired) == [("gone", 8), ("hi", 13)]
+    assert await M.retire_copies_under_unembedded_heads(rows, ch=object()) == 3
+    assert sorted((r["memory_key"], r["version"]) for r in inserted) == [
+        ("gone", 8),
+        ("hi", 11),
+        ("hi", 13),
+    ]
+    assert all(r["tombstoned_at"] is not None for r in inserted)
+
+
+@pytest.mark.copy_head_check
+@pytest.mark.asyncio
+async def test_a_failed_head_recheck_is_logged_not_raised(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _boom(*_a: Any, **_k: Any) -> dict[Any, str]:
+        raise RuntimeError("replica down")
+
+    monkeypatch.setattr(M.embeddings, "_head_sensitivity", _boom)
+    row = {"org": "o", "namespace": "n", "agent": "a", "user_id": "u", "session_id": "s"}
+    row |= {"memory_key": "k", "version": 1, "embedding_dim": 3, "scope": "private"}
+    assert await M.retire_copies_under_unembedded_heads([row], ch=object()) == 0
