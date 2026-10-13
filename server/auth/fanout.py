@@ -2,7 +2,9 @@
 
 The namespace the call addressed, first, and up to
 `memory_search_fanout_max_namespaces` more of the caller's own namespaces
-(`resolve_my_namespaces`, narrowed to the kinds a fan-out sweeps). Code and QA
+(`resolve_my_namespaces`, narrowed to the kinds a fan-out sweeps). The transport
+authorized the addressed namespace and a fan-out only widens a search, so
+nothing read before it may end the search without it. Code and QA
 indexes are readable namespaces too, but they are reached by name or by their
 own tools, never swept for a personal fact.
 """
@@ -31,11 +33,9 @@ class Fanout:
     public: frozenset[str] = frozenset()
 
     def reads(self, namespace: str) -> tuple[list[str], list[str]]:
-        """(read, skipped) for a search addressed to `namespace`: it first,
-        then up to `cap` of the others in their order; skipped are the others
-        the cap left out. The transport authorized `namespace`, and a fan-out
-        only widens a search, so nothing read before it may end the search
-        without it."""
+        """(read, skipped) for a search addressed to `namespace`: it first, then
+        up to `cap` of the others, private ones before public, each kept in its
+        order; skipped are the others the cap left out."""
         others = [ns for ns in self.namespaces if ns != namespace]
         keep = set(sorted(others, key=lambda ns: ns in self.public)[: self.cap])
         read = [ns for ns in others if ns in keep]

@@ -86,7 +86,7 @@
     "bodies": "excerpt",
     "page": "",
     "explain": false,
-    "fanout_namespaces": [
+    "namespaces": [
      "alice",
      "team"
     ]
@@ -178,7 +178,7 @@
     "bodies": "excerpt",
     "page": "",
     "explain": false,
-    "fanout_namespaces": [
+    "namespaces": [
      "alice",
      "team"
     ]
@@ -272,7 +272,7 @@
     "bodies": "excerpt",
     "page": "",
     "explain": false,
-    "fanout_namespaces": [
+    "namespaces": [
      "alice",
      "team"
     ]
@@ -368,7 +368,7 @@
     "bodies": "excerpt",
     "page": "",
     "explain": true,
-    "fanout_namespaces": [
+    "namespaces": [
      "alice",
      "team"
     ]
@@ -463,7 +463,7 @@
     "bodies": "none",
     "page": "",
     "explain": false,
-    "fanout_namespaces": [
+    "namespaces": [
      "team"
     ]
    }
@@ -556,7 +556,7 @@
     "bodies": "excerpt",
     "page": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
     "explain": false,
-    "fanout_namespaces": [
+    "namespaces": [
      "alice",
      "team"
     ]
@@ -652,7 +652,7 @@
     "bodies": "excerpt",
     "page": "h",
     "explain": false,
-    "fanout_namespaces": [
+    "namespaces": [
      "alice",
      "team"
     ]
@@ -765,7 +765,7 @@
     "bodies": "excerpt",
     "page": "",
     "explain": false,
-    "fanout_namespaces": [
+    "namespaces": [
      "alice",
      "team"
     ]
@@ -808,7 +808,7 @@
     "bodies": "excerpt",
     "page": "",
     "explain": false,
-    "fanout_namespaces": [
+    "namespaces": [
      "alice",
      "team"
     ]
@@ -883,7 +883,7 @@
     "bodies": "excerpt",
     "page": "",
     "explain": false,
-    "fanout_namespaces": [
+    "namespaces": [
      "alice",
      "team"
     ]
@@ -977,7 +977,7 @@
     "bodies": "excerpt",
     "page": "",
     "explain": false,
-    "fanout_namespaces": [
+    "namespaces": [
      "alice",
      "team"
     ]

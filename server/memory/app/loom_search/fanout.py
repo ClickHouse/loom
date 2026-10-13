@@ -198,19 +198,18 @@ async def search_sections(
     bodies: Literal["full", "excerpt", "none", "unit"],
     page: str,
     explain: bool,
-    fanout_namespaces: list[str],
+    namespaces: list[str],
 ) -> dict[str, Any]:
     """The assembled loom_search payload for `query` addressed to
-    (`org`, `namespace`). `fanout_namespaces` are the namespaces a
-    `namespace_scope="all_mine"` search reads, `namespace` first (the profile
-    leg reads them too); the caller has already authorized `namespace`."""
+    (`org`, `namespace`). `namespaces` are the ones the search reads,
+    `namespace` first; the profile leg reads them as given, and the other legs
+    resolve the same list from the request's fan-out. The caller has already
+    authorized `namespace`."""
     from server.knowledge.api.models_conversations import ConversationSearchInput
     from server.knowledge.api.models_knowledge import KnowledgeSearchInput
     from server.memory.app.search import handle_memory_search
 
     scope = request_scope()
-
-    profile_namespaces = fanout_namespaces if namespace_scope == "all_mine" else [namespace]
 
     mem_input = MemorySearchInput(
         org=org,
@@ -253,7 +252,7 @@ async def search_sections(
         handle_memory_search(mem_input),
         knowledge_with_repo_docs(know_input),  # + the scoped repository's docs
         search_profile(  # By words, then by meaning
-            org, profile_namespaces, query, top_k=top_k, lexical=profile_hit_matches, scope=scope
+            org, namespaces, query, top_k=top_k, lexical=profile_hit_matches, scope=scope
         ),
         _conversation_leg(conv_input, scope),
         tracker_leg(query, top_k=top_k),  # A defect-shaped query under a code scope

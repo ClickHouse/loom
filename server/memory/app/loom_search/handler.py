@@ -27,8 +27,8 @@ async def handle_search(input: SearchInput) -> SearchOutput:
             read, _skipped = (await resolve_fanout(input.org)).reads(input.namespace)
         except Exception as e:  # noqa: BLE001 — no fan-out namespaces narrows the search, never widens
             log.warning("search namespace resolution failed (non-fatal): %s", e)
-            # Every leg, not only this one, reads the addressed namespace alone:
-            # consent was narrowed over it, so no leg may read wider.
+            # Consent was narrowed over the addressed namespace alone, so every
+            # leg reads only it.
             namespace_scope = "this"
     await narrow_to(input.org, read)
     payload = await search_sections(
@@ -42,6 +42,6 @@ async def handle_search(input: SearchInput) -> SearchOutput:
         bodies=input.bodies,
         page=input.page.strip(),
         explain=input.explain,
-        fanout_namespaces=read,
+        namespaces=read,
     )
     return SearchOutput.model_validate(payload)
