@@ -63,7 +63,7 @@ async def link_queued(
     its text and files name, a deleted or no longer served one loses them. Returns the
     cursor: the last position read, or the read's cutoff when nothing was queued."""
     heads, positions, cutoff = await store.queued_memories(
-        after, limit, lag_s=int(settings.memory_code_links_settle_seconds)
+        after, limit, code.code_namespaces(), lag_s=int(settings.memory_code_links_settle_seconds)
     )
     if not positions:
         return cutoff

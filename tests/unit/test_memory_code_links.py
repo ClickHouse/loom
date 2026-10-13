@@ -465,7 +465,7 @@ async def test_a_repository_that_fails_parks_its_memories_and_the_cursor_moves_o
     # one bulk write: three entries with one queue time, ordered by version
     positions = [(5, v, "o", "agent-a", "a", "-", "-", f"k{v}") for v in (10, 11, 12)]
 
-    async def queued(after, limit, *, lag_s):
+    async def queued(after, limit, code_namespaces, *, lag_s):
         return heads, positions, (9, 0, "", "", "", "", "", "")
 
     async def for_memories(org, ids):
@@ -505,7 +505,7 @@ async def test_a_repository_that_fails_parks_its_memories_and_the_cursor_moves_o
 async def test_an_empty_queue_moves_the_cursor_to_the_reads_cutoff(monkeypatch) -> None:
     cutoff = (9, 0, "", "", "", "", "", "")
 
-    async def queued(after, limit, *, lag_s):
+    async def queued(after, limit, code_namespaces, *, lag_s):
         return [], [], cutoff
 
     monkeypatch.setattr(code_links.store, "queued_memories", queued)

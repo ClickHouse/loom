@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from server.memory.store.key_write_lock import LeaseBusy
+from server.memory.store.key_write_lock import LeaseBusy, LeaseLost
 from server.workers.status import log_pass_errors, record_pass
 
 if TYPE_CHECKING:
@@ -35,6 +35,8 @@ async def run_pass() -> dict[str, Any]:
                 await _link_writes(batch, result)
         except LeaseBusy:
             pass  # another host is linking them
+        except LeaseLost as e:  # another host took them over: their cursors are written
+            result.errors.append(f"link: {e!r}")
         await code_link_recheck.recheck_all(result)
         rec.outcome = result.as_dict()
         log_pass_errors(log, "memory_code_links", result.errors)
@@ -68,18 +70,20 @@ async def _link_writes(batch: int, result: PassResult) -> None:
         # after either still owes it
         await backfill_cursor.write(backfill)
     await repos_cursor.write(configured)
-    position = tuple(queue) or None
-    for _ in range(_QUEUE_PAGES):
-        read = result.queued
-        position = await code_links.link_queued(position, batch, result)
-        await queue_cursor.write(list(position or []))
-        if result.queued - read < batch:
-            break
-    if not backfill.get("done"):
-        nxt = await code_links.backfill(tuple(backfill.get("after") or ()) or None, batch, result)
-        stall = {"stall": True} if backfill.get("stall") else {}
-        backfill = {"done": True} if nxt is None else {"after": list(nxt), **stall}
-    await backfill_cursor.write(backfill)
+    if configured:  # with no repository nothing links; one configured restarts the backfill
+        position = tuple(queue) or None
+        for _ in range(_QUEUE_PAGES):
+            read = result.queued
+            position = await code_links.link_queued(position, batch, result)
+            await queue_cursor.write(list(position or []))
+            if result.queued - read < batch:
+                break
+        if not backfill.get("done"):
+            after = tuple(backfill.get("after") or ()) or None
+            nxt = await code_links.backfill(after, batch, result)
+            stall = {"stall": True} if backfill.get("stall") else {}
+            backfill = {"done": True} if nxt is None else {"after": list(nxt), **stall}
+        await backfill_cursor.write(backfill)
     swept = await code_links.sweep_erased(await sweep_cursor.read(), batch, result)
     await sweep_cursor.write(swept)
 

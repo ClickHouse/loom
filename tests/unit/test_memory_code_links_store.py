@@ -155,11 +155,14 @@ async def test_the_queue_is_read_after_the_cursor_up_to_the_cutoff() -> None:
         }
     )
     heads, positions, cutoff = await store.queued_memories(
-        (1, 0, "", "", "", "", "", ""), 10, lag_s=2, ch=ch
+        (1, 0, "", "", "", "", "", ""), 10, ["code-a"], lag_s=2, ch=ch
     )
     assert (positions, cutoff[0], heads[0]["pos"]) == ([pos], 100, pos)
     sql, params = ch.sql[1]
     assert "> {after:" in sql and params["cut"] == 100
+    # only the heads of memories that may name code: a repo: tag, a code namespace, a link
+    read, params = ch.sql[2]
+    assert "startsWith(t, 'repo:')" in read and params["cns"] == ["code-a"]
 
 
 @pytest.mark.asyncio

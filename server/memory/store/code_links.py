@@ -464,13 +464,20 @@ QUEUE_TTL_DAYS = 7
 
 
 async def queued_memories(
-    after: QueuePosition | None, limit: int, *, lag_s: int, ch: _CHClient | None = None
+    after: QueuePosition | None,
+    limit: int,
+    code_namespaces: Sequence[str],
+    *,
+    lag_s: int,
+    ch: _CHClient | None = None,
 ) -> tuple[list[dict[str, Any]], list[QueuePosition], QueuePosition]:
     """(head rows, queue positions, cutoff) of the memory writes queued after `after`,
-    in insert order. A position is (queue time µs, version, identity): unique per write,
-    so a page boundary never splits a bulk write that shares one queue time. `lag_s`
-    leaves concurrent inserts time to become visible; `cutoff` is the position every
-    write visible to this read precedes. Each head carries `pos`, its latest."""
+    in insert order; the heads only of memories that may name code (tagged `repo:`,
+    written in one of `code_namespaces`, or linked). A position is (queue time µs,
+    version, identity): unique per write, so a page boundary never splits a bulk write
+    that shares one queue time. `lag_s` leaves concurrent inserts time to become
+    visible; `cutoff` is the position every write visible to this read precedes. Each
+    head carries `pos`, its latest."""
     ch = ch or _default_client()
     now = await ch.query_one(
         "SELECT toUnixTimestamp64Micro(now64(6) - toIntervalSecond({lag:UInt32})) AS t",
@@ -497,7 +504,7 @@ async def queued_memories(
     newest: dict[tuple[str, ...], QueuePosition] = {}
     for p in positions:
         newest[tuple(str(v) for v in p[2:])] = p
-    heads = await _heads(ch, list(newest))
+    heads = await _heads(ch, list(newest), code_namespaces)
     for h in heads:
         h["pos"] = newest[tuple(str(h[c]) for c in IDENTITY)]
     return heads, positions, cutoff
@@ -590,14 +597,27 @@ async def for_identities(
     return _links(rows)
 
 
-async def _heads(ch: _CHClient, idents: list[tuple[str, ...]]) -> list[dict[str, Any]]:
+async def _heads(
+    ch: _CHClient, idents: list[tuple[str, ...]], code_namespaces: Sequence[str] | None = None
+) -> list[dict[str, Any]]:
+    """The head rows of `idents`; with `code_namespaces`, only of those that may name code:
+    tagged `repo:`, written in one of them, or linked (an untagged one loses its links)."""
     if not idents:
         return []
+    may_name_code = ""
+    params: dict[str, Any] = {"ident": idents}
+    if code_namespaces is not None:
+        may_name_code = (
+            " AND (arrayExists(t -> startsWith(t, 'repo:'), tags) "
+            "OR namespace IN {cns:Array(String)} "
+            f"OR memory_id IN (SELECT memory_id FROM {TABLE} WHERE org IN {{orgs:Array(String)}}))"
+        )
+        params |= {"cns": list(code_namespaces), "orgs": sorted({i[0] for i in idents})}
     return await query_all_sliced(
         ch,
         _HEADS + "WHERE (org, namespace, agent, user_id, session_id, memory_key) "
-        "IN {ident:Array(Tuple(String, String, String, String, String, String))}",
-        {"ident": idents},
+        "IN {ident:Array(Tuple(String, String, String, String, String, String))}" + may_name_code,
+        params,
         "ident",
     )
 
