@@ -103,6 +103,30 @@ class FilesMixin(CodeRepoBase):
         )
         return [str(r["path"]) for r in rows]
 
+    async def live_paths_by_basename(
+        self, org: str, ns: str, names: list[str]
+    ) -> dict[str, list[str]]:
+        """basename -> at most two live paths with it, for each of `names` (at most 500)
+        that has one: two say the basename is ambiguous."""
+        wanted = sorted({str(n) for n in names if n})[:500]
+        if not wanted:
+            return {}
+        rows = await self._ch.query_all(
+            """
+            SELECT base, groupArray(2)(path) AS paths
+            FROM (
+                SELECT path, splitByChar('/', path)[-1] AS base
+                FROM loom.code_files FINAL
+                WHERE org = {org:String} AND namespace = {ns:String}
+                  AND tombstoned_at IS NULL
+            )
+            WHERE base IN {names:Array(String)}
+            GROUP BY base
+            """,
+            {"org": org, "ns": ns, "names": wanted},
+        )
+        return {str(r["base"]): [str(p) for p in r["paths"]] for r in rows}
+
     async def live_paths_under(self, org: str, ns: str, prefix: str, limit: int = 64) -> list[str]:
         """The live file paths under one directory prefix (a Go package whose
         files carry no conventional name), sorted, capped."""

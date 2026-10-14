@@ -242,6 +242,14 @@ _WORKERS: tuple[_Worker, ...] = (
         idle_interval="entity_extract_idle_interval_seconds",
     ),
     _Worker(
+        "memory_code_links",
+        "server.memory.workers.code_links",
+        "memory_code_links_enabled",
+        "memory_code_links_interval_seconds",
+        # a recheck of a big range writes as it goes and resumes; this bounds one pass
+        max_pass_seconds=600.0,
+    ),
+    _Worker(
         "memory_expiry_sweep",
         "server.memory.workers.expiry_sweep",
         "memory_expiry_sweep_enabled",

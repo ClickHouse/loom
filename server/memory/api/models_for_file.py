@@ -6,10 +6,11 @@ allocate() here", "this file is generated — edit the template") is only
 useful if it arrives BEFORE the edit, without the agent remembering to
 search. The plugin's PreToolUse hook on Edit/Write calls this op with the
 target path and injects the rendered block as additional context. Memories
-reach a file through the `files[]` facet the extractor fills; a match accepts
-a repo-relative path or a bare filename, because stored rows use both shapes.
+reach a file through the `files[]` facet the extractor fills (a match accepts
+a repo-relative path or a bare filename, because stored rows use both shapes)
+or through a link to code in it (`server.memory.app.code_links`).
 
-Read-only, VIEWER, one query. Rows tagged `constraint` sort first, then
+Read-only, VIEWER. Rows tagged `constraint` sort first, then
 pinned, then confidence. `rendered` is cut at `token_budget` so the hook
 never pays more than it asked for. `extra_namespaces` (a repository's primary code
 namespace, where its team file rules live) runs the same query per readable namespace,
@@ -19,8 +20,11 @@ merged in the same order, team rows marked with their author.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
+
+from server.memory.domain.code_change import CodeState
 
 
 class MemoryForFileInput(BaseModel):
@@ -70,6 +74,10 @@ class _MemoryForFileHit(BaseModel):
     supersedes_key: str = ""
     supersedes: str = ""
     matched_files: list[str] = Field(default_factory=list)
+    # The worst state of the row's links to code in the file ('' when it only names the
+    # file in `files`): `fresh`, `moved`, `changed` (that code changed since the row was
+    # written), `unresolved` (renamed or removed and not followed) or `missing` (gone).
+    code_state: CodeState | Literal[""] = ""
 
 
 class MemoryForFileOutput(BaseModel):

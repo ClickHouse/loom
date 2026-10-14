@@ -56,6 +56,13 @@ async def _drop_excluded_and_duplicates(ctx: SearchContext) -> None:
     )
     # No anchor row of another agent's private scope either.
     ctx.all_hits = _enforce_agent_scope(ctx.all_hits, ctx.input, ctx.actual_work)
+    # Nor a memory about code that is gone: the window and the verdict see what is served.
+    from server.memory.app.code_link_reads import annotate_hits
+
+    pooled = len(ctx.all_hits)
+    await annotate_hits(ctx.input, ctx.all_hits)
+    if pooled != len(ctx.all_hits):
+        ctx.actual_work["code_removed_dropped"] = pooled - len(ctx.all_hits)
 
 
 def _ledger_key_axis(ctx: Any, input: Any, settings_obj: Any) -> None:

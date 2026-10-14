@@ -16,6 +16,7 @@ import logging
 import os
 import re
 import signal
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict
@@ -201,21 +202,26 @@ async def _git(
     remote: str = "",
     token: str = "",
     stdin: bytes | None = None,
+    index_file: str = "",
 ) -> str:
     """A git command on the bare clone. With `remote` it talks to that remote, so it
     runs as a repository job (sandbox.run_job): the network only through the egress
-    proxy, the clone the one writable path, `token` for the remote's host."""
+    proxy, the clone the one writable path, `token` for the remote's host. A local
+    command reads and writes `index_file` as its index when given."""
     argv = ["git", *UNQUOTED_PATHS, "--git-dir", git_dir, *args]
     returncode: int | None
     if remote:
         returncode, out, err = await _network_git(argv, git_dir, remote, token, stdin, timeout_s)
     else:
+        env = auth_env()
+        if index_file:
+            env["GIT_INDEX_FILE"] = index_file
         proc = await asyncio.create_subprocess_exec(
             *argv,
             stdin=asyncio.subprocess.PIPE if stdin is not None else None,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=auth_env(),
+            env=env,
         )
         try:
             out, err = await communicate_or_kill(proc, stdin, timeout_s=timeout_s)
@@ -384,6 +390,12 @@ async def is_ancestor(
     if proc.returncode == 1:
         return False
     return None
+
+
+async def has_commit(git_dir: str, sha: str) -> bool:
+    """Whether the mirror holds `sha` (an old commit is gone after a history rewrite and
+    a re-clone). A mirror git cannot read raises GitError: that is not a lost commit."""
+    return bool(_SHA40.fullmatch(sha.strip().lower())) and not await missing_commits(git_dir, [sha])
 
 
 async def release_containing(git_dir: str, sha: str, *, timeout_s: float = 3.0) -> str:
@@ -805,25 +817,127 @@ async def diff_files(git_dir: str, base_sha: str, head_sha: str) -> list[DiffEnt
     return parse_name_status_z(out)
 
 
-def parse_name_status_z(out: str) -> list[DiffEntry]:
-    """`diff --name-status -z` records: a status field, then one path, or two for
-    a rename or copy (old, new). A rename is the old path deleted and the new one
-    added; a copy only adds the new one."""
+def name_status_z(out: str) -> list[tuple[str, str, str]]:
+    """(status letter, old path, new path) of each `diff --name-status -z` record;
+    the two paths are equal unless the record is a rename or copy."""
     fields = out.split("\0")
-    entries: list[DiffEntry] = []
+    records: list[tuple[str, str, str]] = []
     i = 0
     while i < len(fields) and fields[i]:
         status = fields[i][:1]
         if status in ("R", "C"):
-            old, new = fields[i + 1], fields[i + 2]
-            if status == "R":
-                entries.append(DiffEntry(status="D", path=old))
-            entries.append(DiffEntry(status="A", path=new))
+            records.append((status, fields[i + 1], fields[i + 2]))
             i += 3
         else:
-            entries.append(DiffEntry(status=status, path=fields[i + 1]))
+            records.append((status, fields[i + 1], fields[i + 1]))
             i += 2
+    return records
+
+
+def parse_name_status_z(out: str) -> list[DiffEntry]:
+    """`diff --name-status -z` records as entries: a rename is its old path deleted
+    and its new one added; a copy only adds the new one."""
+    entries: list[DiffEntry] = []
+    for status, old, new in name_status_z(out):
+        if status == "R":
+            entries.append(DiffEntry(status="D", path=old))
+        entries.append(DiffEntry(status="A" if status in ("R", "C") else status, path=new))
     return entries
+
+
+# files on either side of a range past which renames with edits are not looked for
+_RENAME_LIMIT = 2000
+
+
+async def diff_paths_renamed(git_dir: str, base_sha: str, head_sha: str) -> dict[str, str]:
+    """old path -> path at `head_sha` for every path the range changed: itself when
+    added or modified, the new path when renamed (`-M`), '' when deleted. Past
+    `_RENAME_LIMIT` files on a side git looks for exact renames only, so a range that
+    moves a whole tree stays bounded."""
+    out = await _git(
+        git_dir,
+        "diff",
+        "--name-status",
+        "-z",
+        "-M",
+        f"-l{_RENAME_LIMIT}",
+        "--end-of-options",
+        _rev(base_sha),
+        _rev(head_sha),
+    )
+    return {old: "" if status == "D" else new for status, old, new in name_status_z(out)}
+
+
+async def edits_of(
+    git_dir: str, base_sha: str, head_sha: str, path: str, pattern: str | None
+) -> list[tuple[str, str]]:
+    """(commit, its first parent) of each first-parent commit of `base_sha..head_sha`
+    that changed a line of `path` matching `pattern` (`git log -G`; every commit that
+    touched `path` without one), oldest first."""
+    lines = ["-G", pattern] if pattern else []
+    out = await _git(
+        git_dir,
+        "--literal-pathspecs",
+        "log",
+        "--first-parent",
+        "--reverse",
+        "--format=%H %P",
+        *lines,
+        "--end-of-options",
+        f"{_rev(base_sha)}..{_rev(head_sha)}",
+        "--",
+        path,
+    )
+    return [(f[0], f[1]) for f in (line.split() for line in out.splitlines()) if len(f) > 1]
+
+
+async def renamed_from(
+    git_dir: str, base_sha: str, head_sha: str, paths: list[str]
+) -> dict[str, str]:
+    """path at `head_sha` -> its path at `base_sha` for those of `paths` the range
+    renamed. Renames are sought only from the files the range deleted to `paths`, so
+    a long range stays cheap and needs no rename limit."""
+    raw = await _git(
+        git_dir,
+        "diff",
+        "--raw",
+        "--no-abbrev",
+        "-z",
+        "--no-renames",
+        "--diff-filter=A",
+        "--end-of-options",
+        _rev(base_sha),
+        _rev(head_sha),
+    )
+    fields = raw.split("\0")
+    # `:000000 <mode> <null id> <id> A`, path: the null id removes the path from an index
+    added = {path: meta.split()[2] for meta, path in zip(fields[::2], fields[1::2], strict=False)}
+    wanted = added.keys() & set(paths)
+    if not wanted:
+        return {}
+    # The index is `head_sha` less every other added file: a diff of it against
+    # `base_sha` holds the deletions and `wanted` as the only additions.
+    drop = "".join(f"0 {null}\t{path}\0" for path, null in added.items() if path not in wanted)
+    with tempfile.TemporaryDirectory(prefix="loom-renames-") as tmp:
+        index = os.path.join(tmp, "index")
+        await _git(git_dir, "read-tree", _rev(head_sha), index_file=index)
+        if drop:
+            await _git(
+                git_dir, "update-index", "-z", "--index-info", stdin=drop.encode(), index_file=index
+            )
+        out = await _git(
+            git_dir,
+            "diff",
+            "--cached",
+            "--name-status",
+            "-z",
+            "-M",
+            "-l0",
+            "--end-of-options",
+            _rev(base_sha),
+            index_file=index,
+        )
+    return {new: old for status, old, new in name_status_z(out) if status == "R" and new in wanted}
 
 
 async def commit_subject(git_dir: str, sha: str) -> str:
@@ -874,15 +988,16 @@ async def commit_meta_many(git_dir: str, shas: list[str]) -> dict[str, tuple[str
 
 
 async def show_file(git_dir: str, sha: str, path: str) -> bytes | None:
-    """File contents at a commit; None when the path doesn't exist there (or
-    `sha` is not a revision)."""
+    """File contents at a commit; None when the path is no file there (absent, a
+    directory, a submodule) or `sha` is not a revision."""
     if not _is_rev(sha):
         return None
     proc = await asyncio.create_subprocess_exec(
         "git",
         "--git-dir",
         git_dir,
-        "show",
+        "cat-file",
+        "blob",
         f"{sha}:{path}",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -891,10 +1006,23 @@ async def show_file(git_dir: str, sha: str, path: str) -> bytes | None:
     try:
         out, _err = await communicate_or_kill(proc, timeout_s=_GIT_TIMEOUT_S)
     except TimeoutError:
-        raise GitError(f"git show {path} timed out") from None
+        raise GitError(f"git cat-file {path} timed out") from None
     if proc.returncode != 0:
         return None
     return out
+
+
+async def file_at(git_dir: str, sha: str, path: str) -> bytes | None:
+    """`path` at `sha`; None only when that commit has no such file (a directory or a
+    submodule there is none). A mirror git cannot read, or a commit it does not have,
+    raises GitError."""
+    data = await show_file(git_dir, sha, path)
+    if data is not None:
+        return data
+    listed = await _git(git_dir, "ls-tree", _rev(sha), "--", path)
+    if any(line.split(" ", 2)[1:2] == ["blob"] for line in listed.splitlines()):
+        raise GitError(f"git cat-file {path} failed at {sha}")
+    return None
 
 
 def blob_sha(data: bytes) -> str:

@@ -7,6 +7,7 @@ cycle.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
@@ -207,6 +208,9 @@ class SearchQuery:
     chronological_intent: str = ""
 
 
+RowIdentity = tuple[str, str, str]
+
+
 @dataclass(frozen=True)
 class SearchHit:
     """One result row. The handler turns these into the wire Pydantic
@@ -285,6 +289,17 @@ class SearchHit:
     # rows and uses their text to mask the sentences that restate them.
     status: str = ""
     version: int = 0
+    # The stored memory's (agent, user_id, session_id) for a fact row; None for every
+    # other plane. Not on the wire.
+    identity: RowIdentity | None = None
+
+
+def row_identity(row: Mapping[str, Any]) -> RowIdentity | None:
+    """The (agent, user_id, session_id) of the memory row a leg read; None when the leg
+    did not read them."""
+    if any(c not in row for c in ("agent", "user_id", "session_id")):
+        return None
+    return str(row["agent"]), str(row["user_id"]), str(row["session_id"])
 
 
 @dataclass(frozen=True)

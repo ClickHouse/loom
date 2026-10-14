@@ -66,6 +66,10 @@ file rules" in `reference.md` for removing a wrong one.
   both rows; `status: conflicted` names a row to revise instead.
 - `abstain` and `below_threshold` are answers; `verified: false` or a stale
   `valid_at` means say so; a moved key answers with `canonical_key`.
+- `code_state: changed` means the code the memory is about changed after it
+  was written: check the code before relying on it, then `memory.update` it.
+  `unresolved` means it was renamed or removed and not followed: find it again;
+  `missing` means it is gone.
 - Before you report done: one pass over what should outlive the session.
 
 The full shape rules, the receipt table, the end-of-task review and the

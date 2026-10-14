@@ -451,6 +451,9 @@ async def _bind_caller_identity(
         for k, v in defaults.items():
             if k in field_names and not arguments.get(k):
                 arguments[k] = v
+    if defaults and "lesson_namespaces" in op.input_model.model_fields:
+        # a code read's lessons include the caller's own memories, from its memory home
+        arguments.setdefault("lesson_namespaces", [defaults["namespace"]])
     note_default_namespace(
         filled_ns, str(arguments.get("namespace") or ""), getattr(auth, "subject", "") or ""
     )

@@ -76,11 +76,11 @@ def _substitute(h: Any, row: CanonicalRow, ns: str) -> Any:
     if getattr(h, "tags", None) is not None:
         update["tags"] = list(row.tags)
     out = h.model_copy(update=update)
-    # The canonical entered the pool through no leg's WHERE, so
-    # the hard tag belt judges it on ITS tags — `model_copy` would otherwise
-    # carry the duplicate's private `_row_tags` onto a row they describe not.
+    # the canonical entered the pool through no leg's WHERE: give it its own tags and
+    # identity, not the duplicate's that `model_copy` carried over
     try:
         out._row_tags = row.tags
+        out._row_identity = (row.agent, row.user_id, row.session_id)
     except Exception:  # noqa: BLE001 — a foreign hit type stays as it is
         pass
     return out

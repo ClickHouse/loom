@@ -18,6 +18,7 @@ from server.memory.app.search.sql import (
     key_match_sql,
 )
 from server.memory.app.search_tag_filter import stamp_row_tags as _stamp_row_tags
+from server.memory.domain.search_types import row_identity
 
 log = logging.getLogger(__package__)
 
@@ -366,6 +367,7 @@ async def _run_key_match_pool(ctx: SearchContext) -> None:
                     score_components={"key_match": strength},
                 )
                 _stamp_row_tags(hit, row.get("tags"))
+                hit._row_identity = row_identity(row)
                 seen[(ns, mk)] = [hit]
                 ctx.all_hits.append(hit)
                 added += 1

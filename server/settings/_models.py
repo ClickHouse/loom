@@ -57,6 +57,9 @@ class ModelSettings(BaseModel):
     profile_consolidation_model: str = ""
     # Reflection distillation: the outcome labeller and the contrast writer.
     reflection_distill_model: str = ""
+    # The code-link `revise` judge: does a memory's claim still hold for its code's
+    # new text.
+    code_link_revise_model: str = ""
     # Session briefs; without its provider's key the deployment's LLM writes them.
     session_brief_llm_model: str = "gpt-6-luna"
 

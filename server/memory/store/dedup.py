@@ -138,6 +138,7 @@ class CanonicalRow:
     source_class: str
     created_at: str
     valid_at: str
+    agent: str = ""
 
     @classmethod
     def from_row(cls, r: Mapping[str, Any]) -> CanonicalRow:
@@ -154,6 +155,7 @@ class CanonicalRow:
             source_class=_s(r, "source_class"),
             created_at=_s(r, "created_at"),
             valid_at=_s(r, "valid_at"),
+            agent=_s(r, "agent"),
         )
 
 
@@ -463,7 +465,7 @@ async def canonical_rows_by_ids(
     rows = await ch.query_all(
         f"""
         SELECT namespace, toString(memory_id) AS canonical_id, memory_key, memory_type,
-               value, tags, version, session_id, user_id, source_class,
+               value, tags, version, agent, session_id, user_id, source_class,
                toString(created_at) AS created_at,
                toString(coalesce(valid_at, toDateTime(0))) AS valid_at
         FROM loom.memory FINAL

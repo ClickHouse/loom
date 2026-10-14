@@ -21,6 +21,10 @@ the text of a version, and what this module scrubs:
     has no live head (it was deleted first, as a redaction of the newest text
     requires), all of them. The rows serving the live head are never
     touched.
+  loom.memory_code_links, the key's links to code: a link made from another
+    value of the key (a superseded or deleted row, or one the worker has not
+    relinked yet) may hold `suggestion`, a rewrite of that value's text; it is
+    blanked. The links made from the live head's value keep theirs.
 
 Out of scope, with the reason:
   `tags`, `files`: caller-supplied labels, not the value's text.
@@ -60,6 +64,7 @@ _VERSIONS_SCRUB = """ALTER TABLE loom.memory_versions UPDATE
 # part's next merge).
 _EMBEDDINGS_PURGE = "DELETE FROM loom.memory_embeddings"
 _CHUNKS_PURGE = "DELETE FROM loom.memory_chunks"
+_LINKS_SCRUB = "ALTER TABLE loom.memory_code_links UPDATE suggestion = '', judged_hash = ''"
 _MARK_REDACTED = ", redacted_at = {ts:DateTime}, redaction_reason = {rb:String}"
 _ONE_VERSION = "org = {org:String} AND memory_id = {mid:UUID} AND version = {v:UInt64}"
 
@@ -200,10 +205,13 @@ async def key_derivative_scrubs(
     memory_key: str,
     *,
     head_live: bool,
+    live_link_inputs: str = "",
     ch: _CHClient | None = None,
 ) -> list[Scrub]:
     """Purges of the embedding and chunk rows of one key that hold text the
-    live head does not (every row of the key when `head_live` is False)."""
+    live head does not (every row of the key when `head_live` is False), and the
+    suggestions of its code links not made from the live head's value
+    (`live_link_inputs`, their inputs hash)."""
     ch = ch or _default_client()
     live_excerpts: list[str] = []
     live_chunks: list[str] = []
@@ -228,6 +236,14 @@ async def key_derivative_scrubs(
             "AND user_id = {u:String} AND parent_memory_key = {k:String} "
             "AND content_sha256 NOT IN {live:Array(FixedString(64))}",
             {**ident, "live": live_chunks},
+        ),
+        Scrub(
+            "loom.memory_code_links",
+            _LINKS_SCRUB,
+            "org = {org:String} AND namespace = {ns:String} AND agent = {a:String} "
+            "AND user_id = {u:String} AND session_id = {s:String} AND memory_key = {k:String} "
+            "AND suggestion != '' AND inputs_hash != {live:String}",
+            {**ident, "s": session_id, "live": live_link_inputs},
         ),
     ]
 

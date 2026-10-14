@@ -111,6 +111,36 @@ describe("MemoryInspector reads what is open", () => {
     }
   });
 
+  it("shows the code the memory is linked to and whether it still matches", async () => {
+    vi.mocked(getMemory).mockResolvedValueOnce({
+      found: true,
+      value: "hello",
+      memory_type: "semantic",
+      confidence: 1,
+      pinned: false,
+      tags: [],
+      created_at: new Date().toISOString(),
+      version: 1,
+      code: [
+        {
+          code_namespace: "code-a",
+          path: "src/a.py",
+          symbol: "a::Reader::read",
+          state: "changed",
+          changed_since: "abc1234def",
+          suggestion: "Reader.read returns bytes now",
+        },
+        { code_namespace: "code-a", path: "docs/b.md", symbol: "", state: "fresh", changed_since: "" },
+      ],
+    } as MemoryDetail);
+    open();
+    await screen.findByText("Linked code");
+    expect(screen.getByText("a::Reader::read")).toBeInTheDocument();
+    expect(screen.getByText("Code changed since abc1234")).toBeInTheDocument();
+    expect(screen.getByText("Suggested: Reader.read returns bytes now")).toBeInTheDocument();
+    expect(screen.getByText("docs/b.md")).toBeInTheDocument();
+  });
+
   it("opening History reads it once and shows the versions; a second open reads nothing", async () => {
     open();
     await screen.findByText("hello");

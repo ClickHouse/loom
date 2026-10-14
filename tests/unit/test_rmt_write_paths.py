@@ -46,6 +46,7 @@ WRITE_PATHS: dict[str, tuple[str, str]] = {
     "code_chunks_prefix": ("gap", "code"),
     "code_context_packs": ("gap", "code"),
     "code_coverage_files": ("builder", "test_repository_column_sets_match_schema.py"),
+    "memory_code_links": ("builder", "test_repository_column_sets_match_schema.py"),
     "code_coverage_watches": ("builder", "test_repository_column_sets_match_schema.py"),
     "code_doc_stats": ("view", "code_doc_stats_mv"),
     "code_edges": ("gap", "code"),

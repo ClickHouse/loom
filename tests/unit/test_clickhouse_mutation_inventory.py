@@ -47,6 +47,8 @@ _EXPECTED_MUTATIONS = Counter(
         # memory_versions_mv).
         ("server/memory/store/redaction.py", "memory", "UPDATE"): 1,
         ("server/memory/store/redaction.py", "memory_versions", "UPDATE"): 1,
+        # a deleted code link's suggestion, a rewrite of the redacted text
+        ("server/memory/store/redaction.py", "memory_code_links", "UPDATE"): 1,
         # Expiry sweep `demote`: clears expires_at and lowers
         # confidence on the key's embedding rows in place — the same mirror
         # memory.touch performs; the memory-table side is a version row.

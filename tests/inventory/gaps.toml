@@ -78,7 +78,6 @@
 "setting:code_ingest_live_paths_ttl_s" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_ingest_max_commits_per_pass" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_ingest_slice_share" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
-"setting:code_lesson_corpus_max_rows" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_pr_backfill_months" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_pr_check_closed_days" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_pr_history_interval_seconds" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }

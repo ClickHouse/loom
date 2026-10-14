@@ -7,6 +7,7 @@ session-scoped and not embedded.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import UTC, datetime, timedelta
@@ -22,6 +23,7 @@ from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.embedding import get_embedder
 from server.identity.app.request_scope import request_narrowed, request_scope
 from server.memory.api.models_crud import (
+    CodeLink,
     MemoryClearInput,
     MemoryClearOutput,
     MemoryDeleteInput,
@@ -456,11 +458,20 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
 
     canonical = await _canonical_keys_for_rows(input.org, input.namespace, [row])
     duplicate_of = _duplicate_of_shown(row, canonical.get(input.memory_key))
+    from server.memory.app.code_link_reads import head_of, links_of
     from server.memory.app.served_superseded import shown_successors
 
-    successors = await shown_successors(input.org, input.namespace, [row])
+    wants_code = not input.fields or "code" in input.fields
+
+    async def code() -> list[CodeLink]:
+        return await links_of(input.org, head_of(row)) if wants_code else []
+
+    successors, links = await asyncio.gather(
+        shown_successors(input.org, input.namespace, [row]), code()
+    )
     return MemoryGetOutput(
         found=True,
+        code=links,
         canonical_key=(
             str(row.memory_key) if resolved_from is not None else canonical.get(input.memory_key)
         ),

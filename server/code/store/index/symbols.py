@@ -19,6 +19,7 @@ from server.code.store.index.symbol_rank import (
     demote_noise_paths,
     return_type_from_signature,
 )
+from server.core.repo_base import param_slices
 
 
 class SymbolsMixin(CodeRepoBase):
@@ -689,6 +690,50 @@ class SymbolsMixin(CodeRepoBase):
             {"org": org, "ns": ns, "qns": qualified_names[:8], "limit": int(limit)},
         )
         return _prefer_scip(rows)
+
+    async def parser_definitions(
+        self,
+        org: str,
+        ns: str,
+        *,
+        names: list[str] | None = None,
+        qualified_names: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Live tree-sitter definitions with a bare name in `names` or a qualified name in
+        `qualified_names`. Tree-sitter rows only: their qualified name is the identity a
+        memory's code link keys on (the compiler tier names some differently)."""
+        if not names and not qualified_names:
+            return []
+        # a long list is read a slice at a time, names and qualified names apart
+        found = []
+        for part in param_slices(sorted(set(names or ()))):
+            found += await self._parser_definitions(org, ns, part, [])
+        for part in param_slices(sorted(set(qualified_names or ()))):
+            found += await self._parser_definitions(org, ns, [], part)
+        return list({(r["qualified_name"], r["symbol_id"], r["path"]): r for r in found}.values())
+
+    async def _parser_definitions(
+        self, org: str, ns: str, names: list[str], qualified_names: list[str]
+    ) -> list[dict[str, Any]]:
+        return await self._ch.query_all(
+            """
+            SELECT qualified_name, symbol_id, name, kind, path, start_line, end_line
+            FROM loom.code_symbols FINAL
+            WHERE org = {org:String} AND namespace = {ns:String} AND tier = 'treesitter'
+              AND (qualified_name IN {qns:Array(String)}
+                   OR (qualified_name, symbol_id) IN (
+                       SELECT qualified_name, symbol_id FROM loom.code_symbol_names
+                       WHERE org = {org:String} AND namespace = {ns:String}
+                         AND tier = 'treesitter' AND name IN {names:Array(String)}))
+              AND tombstoned_at IS NULL
+            """,
+            {
+                "org": org,
+                "ns": ns,
+                "names": names,
+                "qns": qualified_names,
+            },
+        )
 
     async def symbols_by_ids(
         self, org: str, ns: str, symbol_ids: list[str]

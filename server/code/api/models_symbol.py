@@ -50,9 +50,16 @@ class CodeSymbolInput(_CodeIdentity):
     include_history: bool = True
     # Attach `examples` (call sites that use the symbol) to the first definition.
     include_examples: bool = True
-    # Attach `lessons` (memories naming the symbol or its paths, read from the
-    # `code_lesson_namespaces` setting) to the first definition; none when that setting is empty.
+    # Attach `lessons` to the first definition: the memories linked to the symbol from
+    # `lesson_namespaces` (over MCP the caller's memory home by default) and the
+    # repository's team namespace, each with its `code_state` (`fresh`, `moved`, or
+    # `changed` when this branch's body differs from the one the memory was written
+    # against).
     include_lessons: bool = True
+    # The memory namespaces whose linked memories `lessons` reads besides the repository's
+    # team rules (over MCP the caller's memory home by default); one the caller cannot
+    # read is skipped.
+    lesson_namespaces: list[str] = Field(default_factory=list, max_length=4)
     # Estimated-token budget for the answer; definitions past it are served elided
     # (signature, doc, pointer), and the `uses_brief` block is paid out of it first.
     token_budget: int = Field(default=2500, ge=200, le=12000)

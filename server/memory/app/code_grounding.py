@@ -22,6 +22,9 @@ import logging
 import re
 from typing import Any
 
+from server.code.domain.anchor import local_name
+from server.memory.store.code_links import LinkRow
+
 logger = logging.getLogger(__name__)
 
 # The consumer tag every code-plane read this module makes carries: memory.ask's
@@ -566,119 +569,71 @@ async def _gate_future_prs(
     return kept
 
 
-async def _annotate_stale_code_memories(
-    memories: list[Any],
-    search_input: Any,
-    settings: Any,
-    *,
-    code_target: tuple[str, str] | None = None,
-) -> Any | None:
-    """One grounding note flagging memories whose code LOCATION has gone stale.
+async def _annotate_stale_code_memories(memories: list[Any], search_input: Any) -> Any | None:
+    """One grounding note for the strongest memories whose linked code has moved,
+    changed or gone since they were written, read from their code links
+    (`server.memory.app.code_links`); synthesis then prefers the current code. None
+    when no such memory is in the pool. Fail-open."""
+    from server.memory.api.models_search import _MemorySearchHit
+    from server.memory.app.code_link_reads import hit_memories, readable_namespaces
 
-    For the top memories, lift (symbol, file) claims by proximity and resolve
-    each against the live index (code.symbol). code_anchor.resolve_anchor only
-    yields an anchor when the symbol is UNAMBIGUOUS — a homonym that matches no
-    claimed file is skipped, never flagged (0 false positives, measured). When
-    the resolved anchor's file disagrees with what the memory claimed
-    (claim_matched is False), the memory's location is stale: the symbol lives
-    elsewhere now. We emit ONE note listing those corrections; synthesis then
-    prefers the current site. Returns None when nothing is bound/stale.
-    Bounded (few memories, few lookups) and fail-open."""
-    code_org, code_ns = code_target or await _authorized_code_target(search_input, settings)
-    if not code_ns:
-        return None
-    try:
-        from server.code.api.models_symbol import CodeSymbolInput
-        from server.code.app.symbol import handle_code_symbol
-        from server.code.domain.anchor import extract_claims, resolve_anchor
-        from server.memory.api.models_search import _MemorySearchHit
-    except Exception:  # noqa: BLE001 — code plane / anchor absent: skip
-        return None
-
-    resolved: dict[str, list[dict[str, Any]]] = {}
-
-    async def _defs(sym: str) -> list[dict[str, Any]]:
-        if sym not in resolved:
-            try:
-                out = await handle_code_symbol(
-                    CodeSymbolInput(
-                        org=code_org,
-                        namespace=code_ns,
-                        name=sym,
-                        include_body=False,
-                        include_history=False,
-                        include_examples=False,
-                        include_lessons=False,
-                        token_budget=300,
-                    )
-                )
-                resolved[sym] = [
-                    {
-                        "symbol_id": getattr(u, "symbol_id", "") or getattr(u, "unit_id", ""),
-                        "path": getattr(u, "path", ""),
-                        "start_line": getattr(u, "start_line", 0),
-                        "content_hash": getattr(u, "body_hash", "") or "",
-                    }
-                    for u in (getattr(out, "definitions", None) or [])
-                ]
-            except Exception:  # noqa: BLE001 — additive, never fatal
-                resolved[sym] = []
-        return resolved[sym]
-
-    async def _prefetch(symbols: list[str]) -> None:
-        # One concurrent round for every symbol this note will
-        # classify, instead of one awaited lookup per claim.
-        todo = [s for s in dict.fromkeys(symbols) if s and s not in resolved]
-        if todo:
-            await asyncio.gather(*(_defs(s) for s in todo))
-
-    stale: list[str] = []
-    claims: list[tuple[str, Any]] = []  # (memory_key, CodeClaim)
-    seen: set[tuple[str, str]] = set()
-    for m in memories[:8]:  # bound: only the strongest grounding memories
-        if str(getattr(m, "memory_type", "")) == "code":
-            continue  # skip our own injected code facts
-        key = str(getattr(m, "memory_key", "") or "")
-        for c in extract_claims(getattr(m, "content_excerpt", "") or "", max_claims=4):
-            sig = (c.symbol, c.claimed_path)
-            if sig in seen:
-                continue
-            seen.add(sig)
-            claims.append((key, c))
-            if len(claims) >= 8:  # bound total index lookups
-                break
-        if len(claims) >= 8:
-            break
-    # Resolve each claim now; claim_matched is False when the symbol's unique
-    # definition is not the file the memory named.
-    await _prefetch([claim.symbol for _k, claim in claims])
-    for mkey, claim in claims:
-        anchor = resolve_anchor(claim, await _defs(claim.symbol))
-        if anchor is not None and not anchor.claim_matched:
-            claimed = claim.claimed_path.rsplit("/", 1)[-1]
-            stale.append(
-                f"{anchor.symbol}: memory [{mkey}] places it in {claimed}, "
-                f"but the code index now defines it in {anchor.path}"
-            )
-    if not stale:
+    pool = [m for m in memories[:8] if str(getattr(m, "memory_type", "")) != "code"]
+    # the search read most hits' links: read only the rest's
+    by_hit: list[list[LinkRow] | None] = [getattr(m, "_code_links", None) for m in pool]
+    unread = [i for i, v in enumerate(by_hit) if v is None]
+    if unread:
+        try:
+            heads = await hit_memories(search_input, [pool[i] for i in unread])
+            read: list[list[LinkRow]] = [(m or {}).get("links", []) for m in heads]
+            cns = {a["code_namespace"] for v in read for a in v}
+            seen = await readable_namespaces(str(search_input.org), cns)
+        except Exception as e:  # noqa: BLE001 — grounding is advisory
+            _warn_once("code staleness: links unreadable: %s", e)
+            return None
+        for i, v in zip(unread, read, strict=True):
+            by_hit[i] = [a for a in v if a["code_namespace"] in seen]
+    links = [a for v in by_hit for a in v or []]
+    notes: list[str] = []
+    for a in links:
+        what, key = a["qualified_name"] or a["path"], f"memory [{a['memory_key']}]"
+        if a["state"] == "missing":
+            notes.append(f"{key} is about {what}, which the code index no longer has")
+        elif a["state"] == "changed":
+            notes.append(f"{key} is about {what}, which changed after it was written")
+        elif a["state"] == "unresolved":
+            notes.append(f"{key} is about {what}, which was renamed or removed: find it again")
+        elif a["state"] == "moved" and (moved := _moved_note(a, what)):
+            notes.append(f"{key} {moved}")
+    if not notes:
         return None
     body = (
-        "[code index — STALENESS] These memories reference a code location "
-        "that has since moved; prefer the current location: " + "; ".join(stale[:8])
+        "[code index — STALENESS] These memories describe code that has since moved or "
+        "changed; prefer the current code:\n- " + "\n- ".join(notes[:8])
     )
-    try:
-        return _MemorySearchHit(
-            memory_key="code:staleness",
-            memory_type="code",
-            content_excerpt=body,
-            distance=0.0,
-            similarity=1.0,
-            rank_score=1.0,
-            valid_at="",
-            source="code_index",
-        )
-    except Exception:  # noqa: BLE001 — grounding is advisory: no annotation
-        return None
+    return _MemorySearchHit(
+        memory_key="code:staleness",
+        memory_type="code",
+        content_excerpt=body,
+        distance=0.0,
+        similarity=1.0,
+        rank_score=1.0,
+        valid_at="",
+        source="code_index",
+    )
+
+
+def _moved_note(a: LinkRow, what: str) -> str:
+    """What a moved link's memory has wrong against where it was written (its anchor):
+    the name (inside its module), the file, or both; '' when it names neither."""
+    old_name, old_path = a["anchored_name"], a["anchored_path"]
+    new_name, new_path = a["qualified_name"], a["path"]
+    renamed = bool(old_name) and local_name(old_name, old_path or new_path) != local_name(
+        new_name, new_path
+    )
+    parts = [f"names {old_name}; it is now {new_name}"] if renamed else []
+    if old_path and old_path != new_path:
+        parts.append(f"places {what} in {old_path}; it now lives in {new_path}")
+    return ", and ".join(parts)
 
 
 _WARNED: set[str] = set()
@@ -704,7 +659,8 @@ async def apply_code_grounding(
       1. PR-temporal gate — drop memories citing a PR opened after `as_of`;
       2. code enrichment  — append authoritative file:line / symbol facts;
       3. PR-fact grounding — prepend authoritative PR author/merge records;
-      4. staleness oracle  — prepend a correction note for moved code locations.
+      4. staleness oracle  — prepend a note for memories whose linked code moved,
+         changed or is gone.
     Each step keeps its own setting gate and is a no-op without a bound code
     index, so this is a complete no-op for a non-code deployment.
     """
@@ -748,7 +704,7 @@ async def apply_code_grounding(
         _inject_pr_facts(query, synth_pool, search_input, settings, code_target=target)
         if settings.memory_ask_pr_grounding
         else _noop_hits(),
-        _annotate_stale_code_memories(synth_pool, search_input, settings, code_target=target)
+        _annotate_stale_code_memories(synth_pool, search_input)
         if settings.memory_ask_code_staleness
         else _noop_note(),
     )
