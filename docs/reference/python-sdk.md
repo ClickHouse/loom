@@ -190,21 +190,25 @@ whole `detail` object: a 422's `errors`, a `SCHEMA_PENDING`'s `table` and
 body has no code (`loom.errors.from_response`); a 429 is always `RateLimited`
 and a 5xx always a `BackendUnavailable`.
 
-| Class                | Code(s)                                                     | Notes                                                                                                                                          |
-| -------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ValidationError`    | `VALIDATION_FAILED`; status 400, 422                        |                                                                                                                                                |
-| `AuthInvalid`        | `AUTH_INVALID`; status 401                                  |                                                                                                                                                |
-| `AuthInsufficient`   | `AUTH_INSUFFICIENT`; status 403                             |                                                                                                                                                |
-| `NotFound`           | `RESOURCE_NOT_FOUND`; status 404                            |                                                                                                                                                |
-| `PreconditionFailed` | `PRECONDITION_FAILED`; status 409, 412 without a known code | `.current_sha256`: retry without re-reading                                                                                                    |
-| `IdempotentConflict` | `IDEMPOTENT_CONFLICT`                                       |                                                                                                                                                |
-| `BackendUnavailable` | `BACKEND_UNAVAILABLE`, any 5xx, and `NETWORK` (no response) | `cannot reach <base_url>: …`, or `response from <base_url> cut off: …`                                                                         |
-| `RateLimited`        | `RATE_LIMITED`; status 429                                  | subclass of `BackendUnavailable`; `.retry_after_s`                                                                                             |
-| `Overloaded`         | `OVERLOADED`                                                | subclass of `BackendUnavailable`; `.retry_after_s`                                                                                             |
-| `BackendTimeout`     | `BACKEND_TIMEOUT`                                           | subclass of `BackendUnavailable`                                                                                                               |
-| `SchemaPending`      | `SCHEMA_PENDING`                                            | subclass of `BackendUnavailable`                                                                                                               |
-| `LoomError`          | any other code on any other status (423 `LOCKED`, …)        | match on `.code`; a 409 `PINNED_CONFLICT`, `GRANT_WOULD_DOWNGRADE` or `TOO_MANY_SPELLINGS` is a `PreconditionFailed` with no `.current_sha256` |
-| `LoomError`          | `INVALID_RESPONSE`                                          | a 2xx body that is not a JSON object                                                                                                           |
+| Class                | Code(s)                                                     | Notes                                                                  |
+| -------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `ValidationError`    | `VALIDATION_FAILED`; status 400, 422                        |                                                                        |
+| `AuthInvalid`        | `AUTH_INVALID`; status 401                                  |                                                                        |
+| `AuthInsufficient`   | `AUTH_INSUFFICIENT`; status 403                             |                                                                        |
+| `NotFound`           | `RESOURCE_NOT_FOUND`; status 404                            |                                                                        |
+| `PreconditionFailed` | `PRECONDITION_FAILED`; status 409, 412 without a known code | `.current_sha256`: retry without re-reading                            |
+| `IdempotentConflict` | `IDEMPOTENT_CONFLICT`                                       |                                                                        |
+| `BackendUnavailable` | `BACKEND_UNAVAILABLE`, any 5xx, and `NETWORK` (no response) | `cannot reach <base_url>: …`, or `response from <base_url> cut off: …` |
+| `RateLimited`        | `RATE_LIMITED`; status 429                                  | subclass of `BackendUnavailable`; `.retry_after_s`                     |
+| `Overloaded`         | `OVERLOADED`                                                | subclass of `BackendUnavailable`; `.retry_after_s`                     |
+| `BackendTimeout`     | `BACKEND_TIMEOUT`                                           | subclass of `BackendUnavailable`                                       |
+| `SchemaPending`      | `SCHEMA_PENDING`                                            | subclass of `BackendUnavailable`                                       |
+| `LoomError`          | any other code on any other status (423 `LOCKED`, …)        | match on `.code`; a 409 `PINNED_CONFLICT` is a `PreconditionFailed`    |
+| `LoomError`          | `INVALID_RESPONSE`                                          | a 2xx body that is not a JSON object                                   |
+
+Only `PRECONDITION_FAILED` carries `.current_sha256`. The other 409s that land in
+`PreconditionFailed` (`PINNED_CONFLICT`, `GRANT_WOULD_DOWNGRADE`,
+`TOO_MANY_SPELLINGS`) are not fixed by resending; match on `.code`.
 
 `loom` re-exports `LoomError`, `ValidationError`, `AuthInvalid`,
 `AuthInsufficient`, `NotFound`, `PreconditionFailed`, `IdempotentConflict`,

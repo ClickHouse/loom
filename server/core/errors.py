@@ -95,6 +95,15 @@ class GrantWouldDowngradeError(LoomServerError):
         super().__init__(message, current_role=current_role, requested_role=requested_role)
 
 
+class TooManySpellingsError(LoomServerError):
+    """More accounts tie spellings to a subject than a grant cutoff may read
+    (`server.auth.aliases`). No retry fixes it: an operator releases the
+    extra accounts."""
+
+    code = "TOO_MANY_SPELLINGS"
+    status_code = 409
+
+
 class OverloadedError(LoomServerError):
     """503 — too busy, retry: every pooled ClickHouse connection was busy past
     `ch_pool_wait_ms`, or a sibling held an override's lock past its wait.

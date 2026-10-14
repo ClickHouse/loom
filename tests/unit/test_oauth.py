@@ -1027,7 +1027,7 @@ def test_too_many_spellings_refuses_the_exchange_for_good(
     Under a claim, where a failure would be a 503, the code is used up and
     the claim released."""
     from server.auth import oauth_claims, revocation
-    from server.auth.aliases import TooManySpellings
+    from server.core.errors import TooManySpellingsError
 
     released: list[str] = []
 
@@ -1038,7 +1038,7 @@ def test_too_many_spellings_refuses_the_exchange_for_good(
         released.append(key)
 
     async def _too_many(*_a: object, **_k: object) -> set[str]:
-        raise TooManySpellings("too many accounts")
+        raise TooManySpellingsError("too many accounts")
 
     monkeypatch.setattr(oauth_claims, "claim", _claim)
     monkeypatch.setattr(oauth_claims, "release", _release)
@@ -1055,13 +1055,13 @@ def test_too_many_spellings_refuses_the_exchange_for_good(
 def test_a_password_sign_in_no_retry_fixes_is_refused_in_the_oauth_envelope(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from server.auth.aliases import TooManySpellings
+    from server.core.errors import TooManySpellingsError
 
     async def _valid(*_a: object) -> None:
         return None
 
     async def _too_many(*_a: object, **_k: object) -> login.Identity:
-        raise TooManySpellings("too many accounts")
+        raise TooManySpellingsError("too many accounts")
 
     monkeypatch.setattr(oauth, "_validate_authorize_params", _valid)
     monkeypatch.setattr(login, "resolve_user_credentials", _too_many)

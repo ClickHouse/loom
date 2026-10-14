@@ -27,7 +27,7 @@ import logging
 import time
 from typing import Any
 
-from server.core.errors import LoomServerError
+from server.core.errors import TooManySpellingsError
 
 log = logging.getLogger("loom.auth.aliases")
 
@@ -38,14 +38,6 @@ _CACHE_MAX = 10_000
 # rather than cut short when even that is not all of them.
 _LOOKUP_SPELLINGS = 8
 _CUTOFF_SPELLINGS = 1000
-
-
-class TooManySpellings(LoomServerError):
-    """409 — more accounts tie spellings to a subject than a grant cutoff may
-    read. No retry fixes it: an operator releases the extra accounts."""
-
-    code = "TOO_MANY_SPELLINGS"
-    status_code = 409
 
 
 def _is_human_subject(subject: str) -> bool:
@@ -129,7 +121,7 @@ async def _read_spellings(
             org,
             org,
         )
-        raise TooManySpellings(
+        raise TooManySpellingsError(
             f"too many accounts name {subject!r} in {org!r}; ask your Loom operator"
         )
     out, seen = [subject], {subject.lower()}

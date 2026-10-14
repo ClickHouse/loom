@@ -131,7 +131,6 @@ _SERVER_CODE_CLASSES: dict[str, type[LoomError]] = {
 
 
 def test_every_server_error_maps_to_its_documented_sdk_class() -> None:
-    import server.auth.aliases  # defines TOO_MANY_SPELLINGS
     import server.identity.app.policy_gate  # noqa: F401 — defines POLICY_FORBIDDEN
 
     def subclasses(cls: type[LoomServerError]) -> list[type[LoomServerError]]:

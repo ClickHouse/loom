@@ -24,11 +24,11 @@ from typing import Annotated, Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from server.auth.aliases import TooManySpellings
 from server.auth.attempts import Attempts, client_address
 from server.auth.jwt import mint_token
 from server.auth.passwords import hash_password, verify_password_off_loop
 from server.core.ch import get_client
+from server.core.errors import TooManySpellingsError
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -168,7 +168,7 @@ async def _without_cut_namespaces(subject: str, org: str, namespaces: list[str])
 
     try:
         ended = await read_grant_cutoffs(org, subject, namespaces, issued_at=None)
-    except TooManySpellings:
+    except TooManySpellingsError:
         raise  # permanent: an operator's fix, not a retry
     except Exception as e:
         log.warning("login: grant cutoff read failed for %r in %r: %s", subject, org, e)

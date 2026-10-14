@@ -171,11 +171,11 @@ async def test_too_many_spellings_is_no_retryable_sign_in_failure(
 ) -> None:
     # No retry fixes it, so it is not turned into a 503 to retry forever.
     import server.auth.revocation as revocation
-    from server.auth.aliases import TooManySpellings
+    from server.core.errors import TooManySpellingsError
 
     async def _too_many(*_a: Any, **_k: Any) -> set[str]:
-        raise TooManySpellings("more than 1000 accounts")
+        raise TooManySpellingsError("more than 1000 accounts")
 
     monkeypatch.setattr(revocation, "read_grant_cutoffs", _too_many)
-    with pytest.raises(TooManySpellings):
+    with pytest.raises(TooManySpellingsError):
         await login._without_cut_namespaces("jdoe", "clickhouse", ["home"])

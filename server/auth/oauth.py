@@ -35,8 +35,8 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from server.auth.aliases import TooManySpellings
 from server.auth.jwt import mint_token
+from server.core.errors import TooManySpellingsError
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -527,7 +527,7 @@ async def authorize_submit(request: Request) -> RedirectResponse:
         ) from e
     except SignInUnavailable as e:
         raise _logged_unavailable("sign-in", e) from e
-    except TooManySpellings as e:
+    except TooManySpellingsError as e:
         raise _access_denied(e) from e
     if resolved is None:
         # Bounce back to the form with an error (don't leak which field).
@@ -634,7 +634,7 @@ async def oidc_callback(request: Request) -> RedirectResponse:
             resolved = await jit_provision_for_email(email)
     except SignInUnavailable as e:
         raise _logged_unavailable("sign-in", e) from e
-    except TooManySpellings as e:
+    except TooManySpellingsError as e:
         raise _access_denied(e) from e
     if resolved is None:
         raise HTTPException(
@@ -835,7 +835,7 @@ async def _exchange_unclaimed(
     try:
         async with asyncio.timeout(oauth_claims.EXCHANGE_TIMEOUT_S):
             return await _decide_and_issue(grant, decide, issued_at)
-    except Exception as e:  # a decision or issue that did not finish
+    except Exception as e:  # a refusal goes out as it is; any other failure burnt the credential
         if isinstance(e, HTTPException) and e.status_code != 503:
             raise
         log.warning("oauth: exchange failed after its credential was used up: %s", e)
@@ -920,7 +920,7 @@ def _logged_unavailable(
     return _unavailable()
 
 
-def _access_denied(refusal: TooManySpellings) -> HTTPException:
+def _access_denied(refusal: TooManySpellingsError) -> HTTPException:
     """A sign-in refused until an operator acts, in the OAuth envelope."""
     return HTTPException(
         status_code=403,
@@ -956,7 +956,7 @@ async def _mint_namespaces(grant: dict[str, Any], issued_at: int) -> list[str]:
             ended -= set(await restricted_grant_namespaces(subject, org, strict=True))
     except HTTPException:
         raise
-    except TooManySpellings as e:  # permanent: no retry mints past it
+    except TooManySpellingsError as e:  # permanent: no retry mints past it
         detail = {"error": "invalid_grant", "error_description": e.message}
         raise HTTPException(status_code=400, detail=detail) from e
     except Exception as e:  # no token is minted past a revocation it could not read

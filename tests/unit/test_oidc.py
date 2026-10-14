@@ -532,15 +532,21 @@ async def test_a_jit_read_that_fails_is_a_retryable_sign_in_failure(monkeypatch)
 
 
 async def test_a_jit_sign_up_no_retry_fixes_is_not_turned_into_a_retry(monkeypatch) -> None:
-    from server.auth.aliases import TooManySpellings
+    # The person's account another sign-in just wrote resolves past the
+    # spelling bound: the refusal is not turned into a 503 to retry forever.
+    from server.core.errors import TooManySpellingsError
 
     _jit_on(monkeypatch)
 
-    async def too_many(org: str, ident: str) -> list[dict[str, Any]]:
-        raise TooManySpellings("too many accounts")
+    async def theirs(org: str, ident: str) -> list[dict[str, Any]]:
+        return [{"namespace": "u-bob", "owner": "u-bob", "active": True, "tags": []}]
 
-    monkeypatch.setattr(jit, "_accounts_naming", too_many)
-    with pytest.raises(TooManySpellings):
+    async def too_many(email: str) -> login.Identity:
+        raise TooManySpellingsError("too many accounts")
+
+    monkeypatch.setattr(jit, "_accounts_naming", theirs)
+    monkeypatch.setattr(login, "resolve_identity_for_email", too_many)
+    with pytest.raises(TooManySpellingsError):
         await jit.jit_provision_for_email("bob@acme.com")
 
 
@@ -549,7 +555,7 @@ async def test_an_oidc_sign_in_no_retry_fixes_is_refused_in_the_oauth_envelope(
 ) -> None:
     from fastapi import HTTPException
 
-    from server.auth.aliases import TooManySpellings
+    from server.core.errors import TooManySpellingsError
 
     store = MemoryOAuthStore()
     await store.save_pending(
@@ -564,7 +570,7 @@ async def test_an_oidc_sign_in_no_retry_fixes_is_refused_in_the_oauth_envelope(
         return {"email": "alice@acme.io", "email_verified": True}
 
     async def too_many(email: str) -> login.Identity:
-        raise TooManySpellings("too many accounts")
+        raise TooManySpellingsError("too many accounts")
 
     class _Req:
         query_params = {"code": "c", "state": "s"}
@@ -572,7 +578,6 @@ async def test_an_oidc_sign_in_no_retry_fixes_is_refused_in_the_oauth_envelope(
     monkeypatch.setattr(oauth, "_store", store)
     monkeypatch.setattr(oidc, "exchange_code", exchange)
     monkeypatch.setattr(oidc, "verify_id_token", claims)
-    monkeypatch.setattr(oidc, "verified_email", lambda claims: "alice@acme.io")
     monkeypatch.setattr(login, "resolve_identity_for_email", too_many)
     with pytest.raises(HTTPException) as refused:
         await oauth.oidc_callback(_Req())  # type: ignore[arg-type]
