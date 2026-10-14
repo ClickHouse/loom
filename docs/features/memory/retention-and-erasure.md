@@ -114,6 +114,9 @@ flowchart TD
   `steps_completed`. The `erasure_recovery` worker resumes a saga stranded
   `in_progress` or `failed` from its checkpoint. A step waits up to
   `LOOM_ERASURE_MUTATION_WAIT_S` for its mutation, then fails naming it.
+- **Code links wait for the link worker.** `code_links.delete` takes the code-link
+  worker's queue lease, so no pass publishes a cursor it read before the erasure. While a
+  pass holds it the step fails with `LeaseBusy` and the worker retries it.
 - **Tombstone or purge.** By default the soft-delete tables (memory, embeddings, chunks,
   summaries, links) are tombstoned, and `memory.restore` can still revive them inside the
   window; `erasure.list` reports such revivals as `reversals_count`. `purge=true` deletes

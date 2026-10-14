@@ -17,6 +17,7 @@ from server.erasure.store import census as erasure_census
 from server.erasure.store import steps_graph as graph_steps
 from server.erasure.store import steps_ledgers as ledger_steps
 from server.erasure.store import steps_memory as memory_steps
+from server.memory.app.code_links import queue_lease
 
 log = logging.getLogger(__name__)
 
@@ -72,6 +73,21 @@ async def _step_purge_code_index_by_ns(org: str, namespace: _NS) -> int:
         code_tables=code_tables_keyed_by_namespace,
         refresh_views=refresh_code_views,
     )
+
+
+# A memory's code links leave under the link worker's queue lease, which its every cursor
+# write is under: no pass can then publish a cursor it read before the erasure. While a
+# pass holds it the step fails with LeaseBusy, and the recovery worker retries it.
+
+
+async def _step_delete_code_links_by_user(org: str, user_id: str) -> int:
+    async with queue_lease():
+        return await memory_steps.delete_code_links_by_user(org, user_id)
+
+
+async def _step_delete_code_links_by_ns(org: str, namespace: _NS) -> int:
+    async with queue_lease():
+        return await memory_steps.delete_code_links_by_namespace(org, namespace)
 
 
 async def _step_tombstone_documents_by_ns(org: str, namespace: _NS) -> int:
@@ -147,7 +163,7 @@ USER_STEPS: tuple[UserStep, ...] = (
     ("memory.tombstone", memory_steps.tombstone_memory_by_user),
     ("memory_embeddings.tombstone", memory_steps.tombstone_embeddings_by_user),
     ("memory_versions.delete", memory_steps.delete_memory_versions_by_user),
-    ("code_links.delete", memory_steps.delete_code_links_by_user),
+    ("code_links.delete", _step_delete_code_links_by_user),
     ("working_memory.tombstone", memory_steps.tombstone_working_memory_by_user),
     ("shared.tombstone", memory_steps.tombstone_shared_by_user),
     ("shared_embeddings.tombstone", memory_steps.tombstone_shared_embeddings_by_user),
@@ -181,7 +197,7 @@ NAMESPACE_STEPS: tuple[NamespaceStep, ...] = (
     ("memory.tombstone", memory_steps.tombstone_memory_by_namespace),
     ("memory_embeddings.tombstone", memory_steps.tombstone_embeddings_by_namespace),
     ("memory_versions.delete", memory_steps.delete_memory_versions_by_namespace),
-    ("code_links.delete", memory_steps.delete_code_links_by_namespace),
+    ("code_links.delete", _step_delete_code_links_by_ns),
     ("working_memory.tombstone", memory_steps.tombstone_working_memory_by_namespace),
     (
         "entity_canonical_map.tombstone",

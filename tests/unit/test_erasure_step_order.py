@@ -23,6 +23,7 @@ from server.erasure.api.erasure import ErasureRequestInput
 from server.erasure.app import saga
 from server.erasure.store import census as erasure_census
 from server.erasure.store import ledger as erasure_ledger
+from server.memory.app import code_link_pass
 
 _STEP: contextvars.ContextVar[str] = contextvars.ContextVar("step", default="")
 _ALTER = re.compile(r"ALTER TABLE\s+(\S+)\s+(UPDATE|DELETE)\b")
@@ -83,6 +84,7 @@ def run(monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setattr("server.observability.audit.emit", _noop)
     monkeypatch.setattr("server.core.namespace_write_marks.bump", _noop)
     monkeypatch.setattr(erasure_census, "residue_census", _clean)
+    monkeypatch.setattr(code_link_pass.repository_locks, "_keeper", None)  # the fake's
 
     real_do_step = saga._do_step
 
@@ -129,11 +131,19 @@ NS_BACKENDS = [
 # census (patched clean) issue no statements.
 _SILENT: tuple[tuple[str, str], ...] = ()
 
+# under the link worker's queue lease: taken first, released last
+_CODE_LINKS = (
+    ("OTHER", "INSERT"),
+    (D, "loom.memory_code_links"),
+    (D, "loom.memory_code_link_queue"),
+    (D, "loom._migration_lock"),
+)
+
 USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("memory.tombstone", ((U, "loom.memory"),)),
     ("memory_embeddings.tombstone", ((U, "loom.memory_embeddings"),)),
     ("memory_versions.delete", ((D, "loom.memory_versions"),)),
-    ("code_links.delete", ((D, "loom.memory_code_links"), (D, "loom.memory_code_link_queue"))),
+    ("code_links.delete", _CODE_LINKS),
     ("working_memory.tombstone", ((U, "loom.working_memory"),)),
     ("shared.tombstone", ((U, "loom.shared"),)),
     ("shared_embeddings.tombstone", ((U, "loom.memory_embeddings"),)),
@@ -189,7 +199,7 @@ NS_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("memory.tombstone", ((U, "loom.memory"),)),
     ("memory_embeddings.tombstone", ((U, "loom.memory_embeddings"),)),
     ("memory_versions.delete", ((D, "loom.memory_versions"),)),
-    ("code_links.delete", ((D, "loom.memory_code_links"), (D, "loom.memory_code_link_queue"))),
+    ("code_links.delete", _CODE_LINKS),
     ("working_memory.tombstone", ((U, "loom.working_memory"),)),
     ("entity_canonical_map.tombstone", ((U, "loom.entity_canonical_map"),)),
     ("derived_facts.delete", ((D, "loom.derived_facts"),)),
@@ -267,7 +277,7 @@ NS_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("memory.tombstone", ((D, "loom.memory"),)),
     ("memory_embeddings.tombstone", ((L, "loom.memory_embeddings"),)),
     ("memory_versions.delete", ((D, "loom.memory_versions"),)),
-    ("code_links.delete", ((D, "loom.memory_code_links"), (D, "loom.memory_code_link_queue"))),
+    ("code_links.delete", _CODE_LINKS),
     ("working_memory.tombstone", ((D, "loom.working_memory"),)),
     ("entity_canonical_map.tombstone", ((D, "loom.entity_canonical_map"),)),
     ("derived_facts.delete", ((D, "loom.derived_facts"),)),

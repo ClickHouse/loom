@@ -12,6 +12,7 @@ Handlers run in-process; skips without LOOM_CH_HOST (house rule).
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -3839,3 +3840,64 @@ async def test_only_links_under_these_rules_are_due_for_policy(env) -> None:
     now, old = link("now"), link("0-old")
     await get_client().insert(store.TABLE, [now, old])
     assert await store.policy_due(ORG, cns, "now", limit=10) == [now["memory_id"]]
+
+
+async def test_a_user_erasure_waits_out_a_pass_about_to_publish_its_cursor(
+    env, ch_client, monkeypatch
+) -> None:
+    from server.code.app import memory_links
+    from server.erasure.api.erasure import ErasureRequestInput
+    from server.erasure.app.handlers import handle_erasure_request
+    from server.erasure.app.saga import request_row_template, run_saga
+    from server.memory.store import code_links as store
+    from server.memory.workers.code_links import run_pass
+    from server.settings import settings
+
+    repo = env
+    user = f"erased-{os.urandom(3).hex()}"
+    c1 = repo.commit({"src/u.py": "def user_value():\n    return 1\n"})
+    await _index(TRUNK, repo, c1, ["src/u.py"])
+    monkeypatch.setattr(settings, "memory_code_links_batch", 1)  # the one write below
+    await memory_links.set_link_cursor("queue", json.dumps(list(await store.queue_tail() or [])))
+    await _remember(MEM, "u", "`user_value` is one", user_id=user)
+
+    publishing, resume = asyncio.Event(), asyncio.Event()
+    write = memory_links.set_link_cursor
+
+    async def paused(name: str, value: str) -> None:
+        if name == "queue" and not resume.is_set():
+            publishing.set()
+            await resume.wait()  # read the user's write; erased before it is published
+        await write(name, value)
+
+    monkeypatch.setattr(memory_links, "set_link_cursor", paused)
+    worker = asyncio.create_task(run_pass())
+    await asyncio.wait_for(publishing.wait(), 30)
+    request = ErasureRequestInput(
+        org=ORG, scope_type="user_id", scope_value=user, requester="it@example.com"
+    )
+    first = await handle_erasure_request(request)
+    resume.set()
+    await worker
+    out = first
+    if first.status != "completed":  # as the recovery worker resumes it
+        out = await run_saga(
+            input=request,
+            row=request_row_template(
+                erasure_id=first.erasure_id,
+                input=request,
+                requested_at=first.requested_at,
+                attempts=2,
+            ),
+            erasure_id=first.erasure_id,
+            requested_at=first.requested_at,
+            previously_completed=set(first.steps_completed),
+        )
+    cursors = ch_client.query(
+        "SELECT state_value FROM loom.code_index_state "
+        "WHERE org = '' AND namespace = 'memory_code_links'"
+    ).result_rows
+    assert out.status == "completed"
+    assert not [v for (v,) in cursors if user in v]
+    # the pass held the queue: the erasure failed and was retried, never ran beside it
+    assert first.status == "failed" and "LeaseBusy" in first.failure_reason
