@@ -7,6 +7,7 @@ matched as a rename."""
 from __future__ import annotations
 
 import hashlib
+import inspect
 import re
 from collections import Counter, defaultdict
 from collections.abc import Iterator, Sequence
@@ -30,6 +31,8 @@ _GRAMMARS = {
     "java": "java",
     "rust": "rust",
 }
+
+# Declarations: where one starts, what it names, the conditions that select it.
 # a node that holds the declaration with its decorators or template head
 _HOLDERS = {
     "decorated_definition",
@@ -124,6 +127,9 @@ _HEADS = _PREFIXES | {
     "template_parameter_list",
     "requires_clause",
 }
+_ECMA = {"typescript", "tsx", "javascript"}
+
+# Rename shapes (`_use`): how an occurrence of the declared name is used.
 _ACCESS = {".", "::", "->", "?."}
 # the nodes an import declares names in
 _IMPORTS = {
@@ -227,9 +233,10 @@ _FUNCTIONS = {
 # an import of one name that may carry an alias: the field each part is in
 _ALIASED = {"aliased_import": "alias", "import_specifier": "alias", "use_as_clause": "alias"}
 _PATHS = {"scoped_identifier", "qualified_identifier", "scoped_type_identifier", "dotted_name"}
-_ECMA = {"typescript", "tsx", "javascript"}
+
+# Fingerprints (`_leaves`): the tokens hashed and what a formatter changes.
 _CLOSERS = {")", "]", "}"}
-# a string's text, whose bytes beside its escapes and interpolations are hashed as written
+# a string's text, hashed as written in runs between its escapes and interpolations
 _TEXTS = {"string_content", "format_specifier"}
 # where a trailing comma's one element is a tuple (`(a,)`, Rust's `(T,)` type, Python's
 # `x[a,]` index): it stays there unless another comma is in the node
@@ -243,6 +250,30 @@ _MEMBER_LISTS = {"class_body", "interface_body", "object_type"}
 _FORS = {"for_statement", "for_in_statement"}
 # where an empty JS / TS statement is a statement of its own, not a loop's or an `if`'s body
 _STATEMENT_LISTS = {"program", "statement_block", "class_body", "switch_case", "switch_default"}
+# a JS / TS type's members, whose `,` and `;` separators are alike
+_TYPE_MEMBERS = {"interface_body", "object_type"}
+# a Python tuple in parentheses reads as the bare one it can be written as: `return (a, b)`
+_BARE_TUPLES = {"tuple": "expression_list", "tuple_pattern": "pattern_list"}
+# number literals, whose letters' case means nothing: `0XFF` is `0xff`, `1E5` is `1e5`
+_NUMBERS = {
+    "integer",
+    "float",
+    "number",
+    "number_literal",
+    "integer_literal",
+    "float_literal",
+    "int_literal",
+    "imaginary_literal",
+    "decimal_integer_literal",
+    "hex_integer_literal",
+    "octal_integer_literal",
+    "binary_integer_literal",
+    "decimal_floating_point_literal",
+    "hex_floating_point_literal",
+}
+_QUOTE_ESCAPES = {b"\\'", b'\\"'}
+# what a Python docstring documents, beside a module
+_DOCUMENTED = {"function_definition", "class_definition"}
 
 
 def _bound_function(value: Any) -> Any:
@@ -287,7 +318,7 @@ class Prints(NamedTuple):
 
 # Bump when fingerprints or shapes change for the same code: links hashed under another
 # `fingerprint_version` are re-hashed.
-_RULES = 1
+_RULES = 2
 
 
 # the words that open a scope, its name after them (`class DLL_EXPORT Foo`, a template
@@ -394,9 +425,9 @@ class Declarations:
             return None
 
     def _at(self, line: int, name: str | None = None) -> tuple[Any, Any] | None:
-        """(first node, declaration node) of the definition starting at `line`, with its
-        decorators, attributes and template head; with `name`, the one there declaring
-        it. None when none or several do."""
+        """The definition that starts at `line`, as (its first node, its declaration):
+        the first node is where its decorators, attributes or template head begin. With
+        `name`, the one on that line declaring `name`. None when none or several do."""
         if not 0 < line <= len(self.lines):
             return None
         text = self.lines[line - 1]
@@ -428,8 +459,8 @@ class Declarations:
         return _prefixed(node, self.grammar)
 
     def _sole_on(self, line: int, name: str, node: Any) -> Any:
-        """The one declaration on `line` naming `name`, one nested in another counted once;
-        None for none or several."""
+        """The declaration on `line` that declares `name`; None when none or several do (one
+        nested in another counts once)."""
         first = self._declared(node, name)
         by_token = {_key(t): d for d, t in self._named_on(line - 1).get(name, [])}
         if first is not None:
@@ -541,7 +572,10 @@ class Declarations:
         fields = _Fields()
         kept = None if (cut := self._cut(decl)) is None else (decl.parent, cut.kept(decl))
         leaves, marks = _leaves(*at, fields, self.source, self.grammar, kept)
-        texts = [_quote(x, self._text(x), self.grammar) for x in leaves]
+        texts = [
+            x.text if isinstance(x, _Gap) else _quote(x, self._text(x), self.grammar)
+            for x in leaves
+        ]
         return _Tokens(leaves, marks, texts, fields)
 
     def _own_text(self, at: tuple[Any, Any], found: tuple[Any, Any, Any] | None) -> str:
@@ -736,8 +770,8 @@ class _Tokens(NamedTuple):
 
 
 def _hashed(tokens: _Tokens) -> str:
-    """Its tokens as the parser nests them, less comments and what formatters change.
-    Ignored: the spaces of an f-string's `{x = }`; kept: parentheses in C++, Go, Rust, Java."""
+    """Its tokens as the parser nests them, less comments and what formatters change;
+    parentheses are kept in C++, Go, Rust and Java."""
     _, marks, texts, _ = tokens
     return "\n".join([*(f"{m} {t}" for m, t in zip(marks, texts, strict=False)), marks[-1]])
 
@@ -878,8 +912,8 @@ def _spelled(named: Any) -> str:
 
 
 def _comments_within(first: Any, node: Any) -> list[Any]:
-    """The comments from `first` up to the declaration's own first token, past its
-    decorators, attributes and template head."""
+    """The comments among a declaration's decorators, attributes and template head: from
+    `first` up to the first token of `node` itself."""
     out = []
     # (node, inside a head, among `first`'s siblings): children are read only as reached
     stack = [(first, False, True)]
@@ -912,9 +946,8 @@ _CUT_TYPES = {"variable_declarator", "comment"}
 
 
 class _Cut:
-    """The declarators of `const a = …, b = …`, the commas between them and the comments
-    beside each (what lies between two commas goes with the declarator there): what `b`
-    is says nothing about `a`, so each reads alone."""
+    """Splits `const a = …, b = …` so each declarator reads alone, as if declared on its
+    own: what lies between two commas, comments too, goes with the declarator there."""
 
     def __init__(self, parent: Any) -> None:
         self.children = parent.children
@@ -972,36 +1005,91 @@ class _Cut:
 
 
 class _Gap(NamedTuple):
-    """Text inside a node that none of its children covers: a Python string's text beside
-    an escape, an f-string's format spec."""
+    """Text hashed as a token of its own: what no child of a node covers (a Python
+    string's text beside an escape, an f-string's format spec), a string's run of text,
+    a docstring. It stands in for a tree-sitter leaf, with the fields of one that
+    `_leaves` and `_use` read."""
 
     start_byte: int
     end_byte: int
+    text: str
     type: str = "gap"
     child_count: int = 0
     parent: Any = None
     prev_sibling: Any = None
 
 
-def _gaps(node: Any, source: bytes) -> list[Any]:
-    """`node`'s children in order with the text between them that none covers: as written
-    in a string's text, else trimmed and only when not blank."""
-    verbatim = node.type in _TEXTS
+def _gaps(node: Any, source: bytes, grammar: str) -> list[Any]:
+    """`node`'s children in order with the text between them that none covers, trimmed
+    and only when not blank; a string's text as `_runs` reads it, a docstring as
+    `_docstring` does."""
+    if grammar == "python" and (doc := _docstring(node, source)) is not None:
+        return doc
+    if node.type in _TEXTS or grammar in _ECMA and node.type == "string":
+        return _runs(node, source)
     out: list[Any] = []
     pos = node.start_byte
     for c in [*node.children, None]:
         end = node.end_byte if c is None else c.start_byte
-        if end > pos:
-            gap = source[pos:end]
-            if verbatim:
-                out.append(_Gap(pos, end))
-            elif gap.strip():
-                lead = len(gap) - len(gap.lstrip())
-                out.append(_Gap(pos + lead, pos + len(gap.rstrip())))
+        gap = source[pos:end]
+        if text := gap.strip():
+            lead = len(gap) - len(gap.lstrip())
+            out.append(_Gap(pos + lead, pos + lead + len(text), _decoded(text)))
+        if c is not None:
+            pos = c.end_byte
+            if c.type == "=" and node.type == "interpolation":
+                # `{x + 1 = }` prints its expression and the spaces around `=` as written
+                after = c.next_sibling.start_byte if c.next_sibling else c.end_byte
+                c = _Gap(c.start_byte, c.end_byte, _decoded(source[node.start_byte + 1 : after]))
+            out.append(c)
+    return out
+
+
+def _runs(node: Any, source: bytes) -> list[Any]:
+    """A string's children with each run of its text as one token, as written but for a
+    quote's escape, which reads as the quote: `'it\\'s'` is `"it's"`."""
+    out: list[Any] = []
+    run: list[bytes] = []
+    start = pos = node.start_byte
+    for c in [*node.children, None]:
+        end = node.end_byte if c is None else c.start_byte
+        run.append(source[pos:end])
+        text = source[c.start_byte : c.end_byte] if c is not None else b""
+        if text in _QUOTE_ESCAPES or c is not None and c.type == "string_fragment":
+            run.append(text[-1:] if text in _QUOTE_ESCAPES else text)
+            pos = c.end_byte
+            continue
+        if joined := b"".join(run):
+            out.append(_Gap(start, end, _decoded(joined)))
+        run = []
         if c is not None:
             out.append(c)
-            pos = c.end_byte
+            start = pos = c.end_byte
     return out
+
+
+def _docstring(node: Any, source: bytes) -> list[Any] | None:
+    """A Python docstring's quotes and its text as `inspect.cleandoc` reads it, each line's
+    trailing spaces dropped: re-indented or moved, it reads the same. None for any other
+    node."""
+    stmt = node.parent
+    if node.type != "string" or stmt is None or stmt.type != "expression_statement":
+        return None
+    body = stmt.parent
+    owner = body.parent.type if body.parent is not None else None
+    if not (body.type == "module" or body.type == "block" and owner in _DOCUMENTED):
+        return None
+    first = next((c for c in body.named_children if c.type not in _COMMENTS), None)
+    opener, *inner, closer = node.children
+    if not _same(first, stmt) or any(c.type == "interpolation" for c in inner):
+        return None
+    text = inspect.cleandoc(_decoded(source[opener.end_byte : closer.start_byte]))
+    cleaned = "\n".join(line.rstrip() for line in text.splitlines())
+    return [opener, _Gap(opener.end_byte, closer.start_byte, cleaned), closer]
+
+
+def _decoded(text: bytes) -> str:
+    return text.decode("utf-8", "replace")
 
 
 def _leaves(
@@ -1014,8 +1102,9 @@ def _leaves(
 ) -> tuple[list[Any], list[str]]:
     """The tokens from `first` to `last` but the layout (comments, Python's `\\` line
     continuations) and those a formatter adds or removes (`_formatting`), with the text no
-    token covers (`_gaps`), each with the nodes opened and closed before it (so the same
-    tokens nested differently differ); records each node's parent and previous sibling in
+    token covers or that reads other than as written (`_gaps`, each a `_Gap` standing in
+    for a leaf), each with the nodes opened and closed before it (so the same tokens
+    nested differently differ); records each node's parent and previous sibling in
     `fields`. `kept` is (a node, the children of it read): `_Cut.kept`."""
     out: list[Any] = []
     marks: list[str] = []
@@ -1029,18 +1118,19 @@ def _leaves(
                 continue
             if closing:
                 pending.append(")")
-            elif n.child_count == 0:
+            elif n.child_count == 0 and n.type not in _TEXTS:  # a text reads as its runs
                 out.append(n)
                 marks.append("".join(pending) + ('"' if _js_quote(n, grammar) else n.type))
                 pending.clear()
             else:
-                pending.append("(" + n.type)
+                bare = grammar == "python" and n.type in _BARE_TUPLES
+                pending.append("(" + (_BARE_TUPLES[n.type] if bare else n.type))
                 stack.append((n, True))
                 cut = kept[1] if kept is not None and _same(n, kept[0]) else None
                 children = n.children if cut is None else cut
                 for i, c in enumerate(children):
                     fields.around[_key(c)] = (n, children[i - 1] if i else None)
-                within = _gaps(n, source) if cut is None else cut
+                within = _gaps(n, source, grammar) if cut is None else cut
                 stack.extend((_unparenthesized(c, grammar), False) for c in reversed(within))
         if node == last:
             break
@@ -1050,9 +1140,9 @@ def _leaves(
 
 
 def _unparenthesized(node: Any, grammar: str) -> Any:
-    """`node` without the parentheses a formatter adds or removes: around one Python, JS
-    or TS expression (not one that ends an optional chain, `(a?.b).c`), around an arrow's
-    one untyped parameter."""
+    """`node` without what a formatter adds or removes around it: parentheses around one
+    Python, JS or TS expression (not one that ends an optional chain, `(a?.b).c`) or an
+    arrow's one untyped parameter, a TS union's leading `|`."""
     while True:
         inner = None
         if node.type == "parenthesized_expression" and grammar in _UNPARENTHESIZED:
@@ -1068,6 +1158,9 @@ def _unparenthesized(node: Any, grammar: str) -> Any:
                 inner = _sole_child(inner)
             if inner is not None and inner.type != "identifier":
                 inner = None
+        elif node.type in ("union_type", "intersection_type") and grammar in _ECMA:
+            # `type U =\n  | A\n  | B` nests its leading `| A` as a union of one
+            inner = _sole_child(node) if node.children[0].type in ("|", "&") else None
         if inner is None:
             return node
         node = inner
@@ -1095,14 +1188,16 @@ def _directive(comment: Any, grammar: str) -> bool:
 
 
 def _formatting(node: Any, grammar: str) -> bool:
-    """A trailing comma, a JS / TS statement's `;` or an empty statement: what a
-    formatter adds or removes without changing the parse."""
-    if node.type == ",":
-        return node.parent is not None and _trailing_comma(node, node.parent, grammar)
-    if grammar not in _ECMA or node.type not in (";", "empty_statement"):
-        return False
+    """A trailing comma, a JS / TS statement's `;` or an empty statement, or `_optional`:
+    what a formatter adds or removes without changing the parse."""
     parent = node.parent
     if parent is None:
+        return False
+    if _optional(node, parent, grammar):
+        return True
+    if node.type == ",":
+        return _trailing_comma(node, parent, grammar)
+    if grammar not in _ECMA or node.type not in (";", "empty_statement"):
         return False
     if node.type == "empty_statement":
         return parent.type in _STATEMENT_LISTS
@@ -1114,6 +1209,18 @@ def _formatting(node: Any, grammar: str) -> bool:
     in_for_head = up is not None and up.type in _FORS
     in_for_head = in_for_head and not _same(up.child_by_field_name("body"), parent)
     return node.next_sibling is None and not in_for_head
+
+
+def _optional(node: Any, parent: Any, grammar: str) -> bool:
+    """A Python tuple's or `with`'s parentheses, a JS / TS type member's `,`, the empty
+    `()` of `new A()`, Rust's comma after a match arm (needed only between two)."""
+    if grammar == "python":
+        return node.type in ("(", ")") and parent.type in {*_BARE_TUPLES, "with_clause"}
+    if grammar == "rust":
+        return (node.type, parent.type) == (",", "match_arm")
+    if grammar in _ECMA and node.type == "arguments":
+        return parent.type == "new_expression" and not node.named_children
+    return grammar in _ECMA and node.type == "," and parent.type in _TYPE_MEMBERS
 
 
 def _trailing_comma(comma: Any, parent: Any, grammar: str) -> bool:
@@ -1136,7 +1243,9 @@ def _trailing_comma(comma: Any, parent: Any, grammar: str) -> bool:
 def _quote(token: Any, text: str, grammar: str) -> str:
     """A token's `text`, a string's quotes as `"`: a Python string's (its prefix lowercased
     without `u`) and a JS / TS string's; a template, a char literal or any other token as
-    it is."""
+    it is; a number's letters lowercased."""
+    if token.type in _NUMBERS:
+        return text.lower()
     if grammar == "python" and token.type in ("string_start", "string_end"):
         prefix = text.rstrip("'\"")
         quotes = text[len(prefix) :].replace("'", '"')
@@ -1219,7 +1328,7 @@ def _kind(leaf: Any, grammar: str, decl: Any, body: Any, fields: _Fields) -> str
         return "call"
     if parent.type in _READS or (parent.type, field) in _READ_FIELDS:
         return "read"
-    if parent.type == "expression_list" and parent.parent is not None:  # Go
+    if parent.type in ("expression_list", "tuple") and parent.parent is not None:
         outer = (parent.parent.type, fields.of(parent.parent, parent))
         if outer[0] == "return_statement" or outer in {
             ("short_var_declaration", "right"),

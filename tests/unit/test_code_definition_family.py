@@ -535,7 +535,7 @@ def test_a_fingerprint_changes_only_with_its_rules(
     from server.code.domain.declaration import fingerprint_version
 
     (d,) = [d for d in file_definitions(path, src.encode()) if d.name == "value"]
-    pinned = ("1", body, shape)
+    pinned = ("2", body, shape)
     assert (fingerprint_version().split("-")[0], d.body_hash[:16], d.shape.exact[:16]) == pinned, (
         "fingerprints changed: bump _RULES (a grammar upgrade alone needs none) and re-pin"
     )
@@ -708,6 +708,62 @@ def test_a_literal_or_a_python_block_change_still_changes_it(
             "int value() { return g({1, 2}); }\n",
             "int value() { return g({1, 2,}); }\n",
         ),
+        (
+            "a.py",
+            "def value(a):\n    return a, 1\n",
+            "def value(a):\n    return (\n        a,\n        1,\n    )\n",
+        ),
+        ("a.py", "def value(a):\n    return a,\n", "def value(a):\n    return (a,)\n"),
+        (
+            "a.py",
+            "def value(x, y):\n    for k, v in x, y:\n        pass\n",
+            "def value(x, y):\n    for (k, v) in (\n        x,\n        y,\n    ):\n        pass\n",
+        ),
+        (
+            "a.py",
+            "def value(a, b):\n    with open(a) as f, open(b) as g:\n        pass\n",
+            "def value(a, b):\n    with (\n        open(a) as f,\n        open(b) as g,\n    ):\n        pass\n",
+        ),
+        (
+            "a.py",
+            "class C:\n  def value(self):\n    '''Doc\n    two.'''\n",
+            'class C:\n    def value(self):\n        """Doc\n        two."""\n',
+        ),
+        (
+            "a.py",
+            'class C:\n    def value(self):\n        """Doc\n        two."""\n',
+            'class B:\n    class C:\n        def value(self):\n            """Doc\n            two."""\n',
+        ),
+        (
+            "a.py",
+            'def value():\n    """  Doc.   \n\n      More.\n    """\n',
+            'def value():\n    """Doc.\n\n    More.\n    """\n',
+        ),
+        (
+            "a.py",
+            "def value():\n    return 0XAB, 1E5, 10J\n",
+            "def value():\n    return 0xAB, 1e5, 10j\n",
+        ),
+        (
+            "a.py",
+            "def value():\n    return 'it\\'s', \"a\\\"b\"\n",
+            "def value():\n    return \"it's\", 'a\"b'\n",
+        ),
+        ("a.ts", "function value() { return 'it\\'s' }\n", 'function value() { return "it\'s" }\n'),
+        ("a.ts", "function value() { return 0XFF }\n", "function value() { return 0xff }\n"),
+        (
+            "a.ts",
+            "interface value { a: number, b: string }\n",
+            "interface value {\n  a: number;\n  b: string;\n}\n",
+        ),
+        ("a.ts", "type value = 'a' | 'b'\n", "type value =\n  | 'a'\n  | 'b';\n"),
+        ("a.ts", "function value() { return new A }\n", "function value() { return new A() }\n"),
+        (
+            "a.rs",
+            "fn value(x: u8) -> u8 { match x { 1 => { 2 }, _ => 3 } }\n",
+            "fn value(x: u8) -> u8 {\n    match x {\n        1 => {\n            2\n        }\n"
+            "        _ => 3,\n    }\n}\n",
+        ),
     ],
     ids=[
         "ts-semicolon",
@@ -722,6 +778,21 @@ def test_a_literal_or_a_python_block_change_still_changes_it(
         "go-commas",
         "java-comma",
         "cpp-comma",
+        "py-wrapped-tuple",
+        "py-one-tuple",
+        "py-for-tuples",
+        "py-with-parentheses",
+        "py-docstring-indent",
+        "py-docstring-depth",
+        "py-docstring-cleanup",
+        "py-number-case",
+        "py-quote-escapes",
+        "ts-quote-escape",
+        "ts-number-case",
+        "ts-interface-separators",
+        "ts-union-leading-bar",
+        "ts-new-parentheses",
+        "rust-match-arm-comma",
     ],
 )
 def test_a_formatters_quotes_commas_and_semicolons_keep_the_fingerprint(
@@ -781,6 +852,35 @@ def test_a_formatters_quotes_commas_and_semicolons_keep_the_fingerprint(
             "def value():\n    return b'\\x00abc'\n",
             "def value():\n    return b'\\x00xyz'\n",
         ),
+        (
+            "a.py",
+            "def value(a, b):\n    return g((a, b))\n",
+            "def value(a, b):\n    return g(a, b)\n",
+        ),
+        ("a.py", "def value():\n    return ()\n", "def value():\n    return\n"),
+        (
+            "a.py",
+            'def value():\n    """Doc.\n\n    a\n      b\n    """\n',
+            'def value():\n    """Doc.\n\n    a\n    b\n    """\n',
+        ),
+        ("a.py", "def value():\n    return 0xAB\n", "def value():\n    return 0xAC\n"),
+        ("a.py", "def value():\n    return r'a\\'b'\n", 'def value():\n    return r"a\'b"\n'),
+        ("a.py", "def value(x):\n    return f'{x=}'\n", "def value(x):\n    return f'{x = }'\n"),
+        (
+            "a.py",
+            "def value(x):\n    return f'{x+1=}'\n",
+            "def value(x):\n    return f'{x + 1=}'\n",
+        ),
+        (
+            "a.ts",
+            "function value() { return new A().b }\n",
+            "function value() { return new A.b }\n",
+        ),
+        (
+            "a.ts",
+            "function value() { return new (a()) }\n",
+            "function value() { return new a() }\n",
+        ),
     ],
     ids=[
         "py-literal",
@@ -803,6 +903,15 @@ def test_a_formatters_quotes_commas_and_semicolons_keep_the_fingerprint(
         "py-format-fill",
         "py-fstring-beside-escape",
         "py-bytes-beside-escape",
+        "py-tuple-argument",
+        "py-empty-tuple",
+        "py-docstring-relative-indent",
+        "py-number",
+        "py-raw-escape",
+        "py-fstring-debug-spaces",
+        "py-fstring-debug-expression",
+        "ts-new-member",
+        "ts-new-call",
     ],
 )
 def test_a_comma_quote_or_semicolon_that_means_something_changes_it(
@@ -811,10 +920,10 @@ def test_a_comma_quote_or_semicolon_that_means_something_changes_it(
     assert _value(path, before) != _value(path, after)
 
 
-def test_a_quote_change_that_changes_the_escapes_changes_it() -> None:
-    # the text between the quotes is hashed as written, not as the string it makes
-    before = "def value():\n    return 'a\"b'\n"
-    after = 'def value():\n    return "a\\"b"\n'
+def test_an_escape_other_than_a_quotes_changes_it() -> None:
+    # beside a quote's escape, the text between the quotes is hashed as written
+    before = "def value():\n    return 'a\\tb'\n"
+    after = "def value():\n    return 'a\tb'\n"
     assert _value("a.py", before) != _value("a.py", after)
 
 
