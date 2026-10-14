@@ -269,3 +269,27 @@ async def test_a_page_of_the_addressed_namespace_alone_reads_no_fan_out(monkeypa
     )
     out = await h.handle_memory_search(page)
     assert [r.memory_key for r in out.results] == ["b", "c"]
+
+
+@pytest.mark.asyncio
+async def test_a_page_whose_fan_out_cannot_be_read_serves_the_addressed_namespace(
+    monkeypatch,
+) -> None:
+    """Fails closed: the other namespaces' hits wait for a read that works."""
+    import server.auth.fanout as fanout
+    from server.memory.api.models_search import MemorySearchInput
+    from server.memory.app import search as h
+
+    content = _encode(1, 2, [_hit("b", 0.8, ns="n"), _hit("c", 0.7, ns="team")])
+    key = sp.page_blob_key(content)
+    patch_handler_name(monkeypatch, "get_client", lambda: _CH(content))
+
+    async def _down(org: str) -> fanout.Fanout:
+        raise RuntimeError("grants unreadable")
+
+    monkeypatch.setattr(fanout, "resolve_fanout", _down)
+    page = MemorySearchInput(
+        org="o", namespace="n", agent="*", query="q", top_k=2, page=sp.make_handle(key, 0)
+    )
+    out = await h.handle_memory_search(page)
+    assert [r.memory_key for r in out.results] == ["b"]

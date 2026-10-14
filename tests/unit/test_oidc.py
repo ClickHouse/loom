@@ -291,7 +291,7 @@ async def test_jit_refuses_a_person_whose_account_was_revoked(monkeypatch) -> No
         return "bob" in subjects
 
     monkeypatch.setattr(login, "_accounts_naming", accounts)
-    monkeypatch.setattr(revocation, "any_subject_revoked", revoked)
+    monkeypatch.setattr(revocation, "subjects_revoked", revoked)
     assert await login.jit_provision_for_email("bob@acme.com") is None
     assert provisioned == {}
     assert asked == [["bob", "u-bob-1234abcd-9f3e"]]
@@ -311,7 +311,7 @@ async def test_a_deleted_account_alone_is_no_offboarding(monkeypatch) -> None:
         return {"active": False} if namespace.count("-") == 2 else None
 
     monkeypatch.setattr(login, "_accounts_naming", accounts)
-    monkeypatch.setattr(revocation, "any_subject_revoked", not_revoked)
+    monkeypatch.setattr(revocation, "subjects_revoked", not_revoked)
     monkeypatch.setattr(login, "_registry_row", registry_row)
     assert await login.jit_provision_for_email("bob@acme.com") is not None
     assert provisioned["namespace"].endswith("-2")

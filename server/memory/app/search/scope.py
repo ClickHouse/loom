@@ -115,7 +115,7 @@ async def _settle_namespaces(
     run.namespaces = [input.namespace]
     if run.fanout_task is not None:
         fanout = await run.fanout_task
-        run.namespaces, run.namespaces_skipped = fanout.reads(input.namespace)
+        run.namespaces, run.namespaces_skipped = fanout.split(input.namespace)
         run.order_authoritative = fanout.ordered
     actual_work["namespace_count"] = len(run.namespaces)
 

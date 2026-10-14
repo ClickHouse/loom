@@ -100,18 +100,3 @@ async def visibility_map(org: str, namespaces: list[str]) -> dict[str, str]:
         _cache[(org, ns)] = (expires, vis)
         out[ns] = vis
     return out
-
-
-async def private_first_passes(
-    org: str, namespace: str, namespaces: list[str]
-) -> tuple[list[str], list[str]]:
-    """The two passes of a private-first search over `namespaces`: the
-    addressed `namespace` and the private ones, then the public ones. Both are
-    empty when the lookup answers nothing or names no private namespace: read
-    them all at once. A namespace without an answer counts as private."""
-    visibility = await visibility_map(org, namespaces)
-    private = {ns for ns in namespaces if visibility.get(ns, "private") == "private"}
-    if not visibility or not private:
-        return [], []
-    first = [ns for ns in namespaces if ns in private or ns == namespace]
-    return first, [ns for ns in namespaces if ns not in first]

@@ -152,25 +152,25 @@ operation's role, or a live grant does.
   ```
 
 - **Grants** (`loom.namespace_grants`, one row per `(org, namespace, subject)`) add a role
-  on one namespace above what the token carries. Taking one away or lowering it
-  (`grants.revoke`, `grants.create` with `replace=true`, `namespace.leave`, a released
-  claim, a restore that lowers it, a maintainer leaving a repository's branches) also ends
-  what the subject's older tokens claim there, a namespace an operator named at mint
-  included: a token minted before it reaches the namespace only through the grant the
-  subject holds now, and a scoped token must be minted again, from the next second on (the
-  cutoff covers the whole second of the change). A grant made later does not restore the
-  old claim. Signing in again, an OAuth code exchange and an OAuth refresh leave the
-  namespace out of the token they mint (they read the cutoffs from ClickHouse, not the
-  server's snapshot), so whatever grant the person holds there now is what applies; a
-  later grant, an admin one included, gives access back through itself and never brings
-  the claim back. Each mint is issued at the time before it read the cutoffs, and a cutoff
-  is written again once its first write returned, so a token minted while the cutoff was
-  in flight is cut too. Approving a request never lowers a grant. A namespace the subject
-  never held a grant on keeps its claim; revoke the token to take that away. The server
-  that took the grant away applies it at once, every other within
-  `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` (default 30 s). A service account with no grant of its own on a namespace uses its creator's grant there, so a
-  token minted from the dashboard follows the person who made it, except on a restricted
-  namespace.
+  on one namespace above what the token carries.
+  - **What ends a claim.** Taking a grant away or lowering it (`grants.revoke`,
+    `grants.create` with `replace=true`, `namespace.leave`, a released claim, a restore that
+    lowers it, a maintainer leaving a repository's branches) writes a cutoff. A token
+    minted before it reaches the namespace only through the grant the subject holds now,
+    even when an operator also named the namespace at mint. A scoped token must be minted
+    again, from the next second on: the cutoff covers the whole second of the change.
+  - **What minting does.** Signing in, an OAuth code exchange and an OAuth refresh leave a
+    cut namespace out of the token they mint, for good. A later grant, an admin one
+    included, gives access back through itself and never brings the claim back. Each mint
+    takes its issue time before it reads the cutoffs, and a cutoff is written again once
+    its first write returned, so a token minted while one was in flight is cut too.
+  - **What is not touched.** A namespace the subject never held a grant on keeps its
+    claim; revoke the token to take that away. Approving a request never lowers a grant.
+  - **When it applies.** The server that took the grant away applies it at once, every
+    other within `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` (default 30 s).
+- **Service accounts inherit.** A service account with no grant of its own on a namespace
+  uses its creator's grant there, so a token minted from the dashboard follows the person
+  who made it, except on a restricted namespace.
 - **Operations addressed by an org-wide id** (`memory.get_by_id`, `memory.update_by_id`,
   `memory.redact`) check the fetched row's namespace after the read and answer
   `found=false` on refusal, so a refusal never confirms that the id exists.

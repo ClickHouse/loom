@@ -468,14 +468,12 @@ async def handle_namespace_list_mine(
         for r in grant_rows
     ]
 
-    from server.auth.authz import withdrawn_claims
+    from server.auth.authz import live_claims
     from server.auth.context import current_auth
 
     auth = current_auth()
     if auth is not None:
-        jwt_only = [ns for ns in auth.namespaces if ns != "*" and ns not in seen]
-        withdrawn = withdrawn_claims(auth, input.org, jwt_only)
-        jwt_only = [ns for ns in jwt_only if ns not in withdrawn]
+        jwt_only = live_claims(auth, input.org, [ns for ns in auth.namespaces if ns not in seen])
         # Claim-only namespaces have no grant row to JOIN through, so look up
         # kind/visibility directly — otherwise a code namespace named in a
         # token's claim would masquerade as a memory namespace and the header

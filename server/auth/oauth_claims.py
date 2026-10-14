@@ -34,14 +34,9 @@ from server.core.schema.migrate_lease import (
 
 log = logging.getLogger(__name__)
 
-# A claim older than this was left by an exchange that died. A live one is done
-# well within it, wall clock from the moment its claim lands, each phase under
-# an `asyncio.timeout` that counts retries, reconnects and pool waits: the
-# acquisition (`CLAIM_TIMEOUT_S`, which is all a claim can age before the
-# exchange holds it, since the insert stamps `claimed_at`), the find, the
-# decision and the tokens it issues (`EXCHANGE_TIMEOUT_S`), then the consume
-# (`CONSUME_TIMEOUT_S`). 80 s at worst; the rest is margin for the clocks of
-# the replicas that stamp and judge `claimed_at`.
+# A claim older than STALE_S was left by an exchange that died. A live one is
+# done in 80 s at most: each phase below is a wall-clock bound, retries and
+# pool waits included. The rest is margin for the replicas' clocks.
 STALE_S = 120
 CLAIM_TIMEOUT_S = 10
 EXCHANGE_TIMEOUT_S = 60
@@ -75,7 +70,8 @@ _RELEASE = (
 _releases = TaskSet()
 
 # Whether loom.oauth_claims exists here: None until the boot probe or the
-# first exchange asks.
+# first exchange asks, then fixed for the process (a table created later is
+# used after a restart, as the health hint says).
 _atomic: bool | None = None
 
 

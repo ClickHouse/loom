@@ -139,16 +139,19 @@ async def test_a_login_leaves_out_an_owned_namespace_whose_grant_was_taken_away(
 
 
 @pytest.mark.asyncio
-async def test_an_unreadable_cutoff_store_leaves_every_owned_namespace_out(
+async def test_an_unreadable_cutoff_store_refuses_the_sign_in(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # As an OAuth exchange answers 503: a token minted without the cutoffs
+    # would miss the person's own namespaces for its whole life.
     import server.auth.revocation as revocation
 
     async def _down(*_a: Any, **_k: Any) -> set[str]:
         raise RuntimeError("replica away")
 
     monkeypatch.setattr(revocation, "ended_claims", _down)
-    assert await login._without_taken_away("jdoe", "clickhouse", ["home", "team"]) == []
+    with pytest.raises(login.SignInUnavailable):
+        await login._without_taken_away("jdoe", "clickhouse", ["home", "team"])
 
 
 @pytest.mark.asyncio

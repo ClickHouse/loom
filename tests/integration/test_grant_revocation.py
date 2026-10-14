@@ -47,6 +47,12 @@ def base(control_plane_url: str) -> Iterator[str]:
         yield url
 
 
+def _past_the_cutoff_second() -> None:
+    """A cutoff covers the whole second of the change, so a token minted in it
+    is cut too: wait into the next second before minting one that should not be."""
+    time.sleep(1.1)
+
+
 def _token(sub: str, namespaces: list[str], **claims: Any) -> str:
     now = int(time.time())
     payload: dict[str, Any] = {
@@ -104,8 +110,7 @@ def _namespace(base: str, join_policy: str, *, alice: str | None = "writer") -> 
     if alice:
         grant = _call(base, "grants.create", _admin(), namespace=ns, subject="alice", role=alice)
         assert grant.status_code == 200, grant.text
-    # A token minted in the same second as a later cutoff is cut with it.
-    time.sleep(1.1)
+    _past_the_cutoff_second()
     return ns
 
 
@@ -196,7 +201,7 @@ def test_leaving_ends_the_claim_and_a_later_token_is_untouched(base: str) -> Non
     old = _token("alice", [ns])
     assert _call(base, "namespace.leave", old, namespace=ns).json()["left"]
     assert _writes(base, old, ns) == 403
-    time.sleep(1.1)
+    _past_the_cutoff_second()
     assert _writes(base, _token("alice", [ns]), ns) == 200
 
 
@@ -233,7 +238,7 @@ def test_signing_in_again_does_not_bring_back_a_revoked_owner(base: str) -> None
         base, "grants.create", _admin(), namespace=ns, subject=owner, role="viewer", replace=True
     )
     assert lowered.status_code == 200, lowered.text
-    time.sleep(1.1)
+    _past_the_cutoff_second()
     token = _login()
     assert _writes(base, token, ns) == 403
     assert _reads(base, token, ns) == 200

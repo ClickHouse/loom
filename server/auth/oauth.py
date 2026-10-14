@@ -506,7 +506,7 @@ async def authorize_submit(request: Request) -> RedirectResponse:
     state = f.get("state", "")
     await _validate_authorize_params(client_id, redirect_uri, code_challenge, code_challenge_method)
     from server.auth.attempts import client_address
-    from server.auth.login import LoginThrottled, resolve_user_credentials
+    from server.auth.login import LoginThrottled, SignInUnavailable, resolve_user_credentials
 
     # The code's issue time is taken before the grant cutoffs are read, so a
     # cutoff landing after the read postdates it (`end_grant_claims`). Its
@@ -522,6 +522,8 @@ async def authorize_submit(request: Request) -> RedirectResponse:
             detail={"error": "temporarily_unavailable"},
             headers={"Retry-After": "900"},
         ) from e
+    except SignInUnavailable as e:
+        raise _unavailable("sign-in", e) from e
     if resolved is None:
         # Bounce back to the form with an error (don't leak which field).
         raise HTTPException(status_code=401, detail={"error": "access_denied"})
@@ -589,7 +591,11 @@ async def _start_oidc_login(
 @router.get("/oauth/callback")
 async def oidc_callback(request: Request) -> RedirectResponse:
     from server.auth import oidc
-    from server.auth.login import jit_provision_for_email, resolve_identity_for_email
+    from server.auth.login import (
+        SignInUnavailable,
+        jit_provision_for_email,
+        resolve_identity_for_email,
+    )
 
     code = request.query_params.get("code", "")
     state = request.query_params.get("state", "")
@@ -618,10 +624,13 @@ async def oidc_callback(request: Request) -> RedirectResponse:
     # Before the cutoff read, as in authorize_submit; the code's lifetime counts
     # from here, so the account lookup (and a JIT provisioning) comes out of it.
     issued_at = int(time.time())
-    resolved = await resolve_identity_for_email(email)
-    if resolved is None:
-        # No account — auto-provision one if JIT is on (else stay fail-closed).
-        resolved = await jit_provision_for_email(email)
+    try:
+        resolved = await resolve_identity_for_email(email)
+        if resolved is None:
+            # No account — auto-provision one if JIT is on (else stay fail-closed).
+            resolved = await jit_provision_for_email(email)
+    except SignInUnavailable as e:
+        raise _unavailable("sign-in", e) from e
     if resolved is None:
         raise HTTPException(
             status_code=403,
@@ -703,9 +712,8 @@ async def token(request: Request) -> JSONResponse:
         issued = await _exchange(
             "code",
             code,
-            find=lambda: _store.find_code(code),
+            client_id=client_id,
             decide=lambda grant: _decide_code(grant, client_id, redirect_uri, code_verifier),
-            consume=lambda grant: _store.consume_code(code, grant),
         )
         return JSONResponse(issued)
 
@@ -719,100 +727,114 @@ async def token(request: Request) -> JSONResponse:
                 detail={"error": "invalid_request", "error_description": "client_id required"},
             )
         issued = await _exchange(
-            "refresh",
-            refresh_token,
-            find=lambda: _store.find_refresh(refresh_token, client_id),
-            decide=_decide_refresh,
-            consume=lambda grant: _store.consume_refresh(refresh_token, grant),
+            "refresh", refresh_token, client_id=client_id, decide=_decide_refresh
         )
         return JSONResponse(issued)
 
     raise HTTPException(status_code=400, detail={"error": "unsupported_grant_type"})
 
 
-async def _exchange(
-    record_type: str,
-    credential: str,
-    *,
-    find: Callable[[], Awaitable[dict[str, Any] | None]],
-    decide: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]],
-    consume: Callable[[dict[str, Any]], Awaitable[None]],
-) -> dict[str, Any]:
-    """One exchange of a code or refresh token, under the credential's Keeper
-    claim (`oauth_claims`). A concurrent exchange of it is told to retry, not
-    that the credential is used: it may be the owner retrying after a reply
-    that never arrived.
+_Decide = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
-    The find, the decision and the issue share one deadline, the consume has
-    its own, and together they end well before the claim goes stale, so no
-    taker runs beside a live exchange. A refusal uses the credential up; a
-    failure before the consume leaves it (503) for the client's retry. A
-    consume that did not finish, or was cancelled, may still land, so the
-    claim is kept until it goes stale: a refusal still answers, an issue
-    answers 503, and its tokens, which the client never receives, are the
-    worst it leaves."""
+
+async def _exchange(
+    kind: str, credential: str, *, client_id: str, decide: _Decide
+) -> dict[str, Any]:
+    """Exchange a code or refresh token for tokens, once.
+
+    Claimed in Keeper (`oauth_claims`), the credential is used up after the
+    decision, so a failure before that leaves it for the client's retry, and
+    a concurrent presenter is told to retry. Without a Keeper it is used up
+    first, as before the claim existed: two presenters are then kept apart by
+    one round trip, not by the whole decision."""
     from server.auth import oauth_claims
     from server.core.ch import get_client
 
     ch = get_client()
-    key = f"{record_type}:{_token_id(credential)}"
+    key = f"{kind}:{_token_id(credential)}"
     try:
-        outcome, holder = await oauth_claims.claim(ch, key)
+        claim, holder = await oauth_claims.claim(ch, key)
     except Exception as e:  # an exchange Keeper could not keep apart does not run
         raise _unavailable("exchange claim", e) from e
-    if outcome is oauth_claims.Claim.TAKEN:
+    if claim is oauth_claims.Claim.TAKEN:
         raise _unavailable("exchange claim", RuntimeError("another exchange holds it"))
-    keep_claim = False
-    grant: dict[str, Any] | None = None
-    # Before the decision reads the grant cutoffs: one landing after that read
-    # postdates the tokens, so it still cuts them (`end_grant_claims`).
-    issued_at = int(time.time())
+    claimed = claim is oauth_claims.Claim.HELD
+    issued_at = int(time.time())  # before the decision reads the grant cutoffs
+    release = claimed
     try:
-        try:
-            async with asyncio.timeout(oauth_claims.EXCHANGE_TIMEOUT_S):
-                grant = await find()
-                if grant is None:
-                    raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
-                decided = await decide(grant)
-                issued = await _issue_tokens(decided, decided["client_id"], issued_at)
-        except HTTPException as e:
-            if grant is not None and e.status_code != 503:
-                # Kept until the consume is acknowledged: a cancelled one may still land.
-                keep_claim = True
-                if await _used_up(consume, grant):
-                    keep_claim = False
-            raise
-        except Exception as e:  # a find, decision or issue that did not finish uses nothing up
-            raise _unavailable("exchange", e, grant) from e
-        keep_claim = True  # as above, until the consume is acknowledged
-        if await _used_up(consume, grant):
-            keep_claim = False
-        else:
-            # Wait out the kept claim: a retry before it goes stale finds it
-            # held and, like any presenter beside a live exchange, is told to
-            # retry in 5 s. A code is likely expired by then, and starts over.
-            raise _unavailable(
-                "consume", RuntimeError("did not finish"), grant, retry_after=oauth_claims.STALE_S
-            )
-        return issued
+        grant, answer = await _settle(
+            kind, credential, client_id, decide, issued_at, consume_first=not claimed
+        )
+        if claimed and grant is not None:
+            # Kept until the consume is acknowledged: a cancelled one may still
+            # land, and the claim keeps a retry off the credential meanwhile.
+            release = False
+            release = await _used_up(kind, credential, grant)
+            if not release and isinstance(answer, dict):
+                raise _unavailable(
+                    "consume",
+                    RuntimeError("did not finish"),
+                    grant,
+                    retry_after=oauth_claims.STALE_S,
+                )
     finally:
-        if outcome is oauth_claims.Claim.HELD and not keep_claim:
-            # Shielded: an exchange cancelled before its consume used nothing
-            # up, and a claim left behind would lock the credential out.
+        if release:
             await oauth_claims.release_shielded(ch, key, holder)
+    if isinstance(answer, HTTPException):
+        raise answer
+    return answer
 
 
-async def _used_up(
-    consume: Callable[[dict[str, Any]], Awaitable[None]], grant: dict[str, Any]
-) -> bool:
-    """Whether the consume finished within its bound (`CONSUME_TIMEOUT_S`)."""
+async def _settle(
+    kind: str,
+    credential: str,
+    client_id: str,
+    decide: _Decide,
+    issued_at: int,
+    *,
+    consume_first: bool,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | HTTPException]:
+    """Find the credential and decide on it within `EXCHANGE_TIMEOUT_S`.
+    Returns its grant (None when nothing was found) and the answer: the
+    tokens, or the refusal to raise. A failure is a retryable 503."""
+    from server.auth.oauth_claims import EXCHANGE_TIMEOUT_S
+
+    try:
+        async with asyncio.timeout(EXCHANGE_TIMEOUT_S):
+            if kind == "code":
+                grant = await _store.find_code(credential)
+            else:
+                grant = await _store.find_refresh(credential, client_id)
+            if grant is None:
+                return None, HTTPException(status_code=400, detail={"error": "invalid_grant"})
+            if consume_first and not await _used_up(kind, credential, grant):
+                raise RuntimeError("consume did not finish")
+            try:
+                decided = await decide(grant)
+            except HTTPException as e:
+                if e.status_code == 503:
+                    raise
+                return grant, e
+            return grant, await _issue_tokens(decided, decided["client_id"], issued_at)
+    except HTTPException:
+        raise
+    except Exception as e:  # a find, decision or issue that did not finish
+        raise _unavailable("exchange", e) from e
+
+
+async def _used_up(kind: str, credential: str, grant: dict[str, Any]) -> bool:
+    """Mark the credential consumed; False when that did not finish within
+    `CONSUME_TIMEOUT_S` (it may still land)."""
     from server.auth.oauth_claims import CONSUME_TIMEOUT_S
 
     try:
         async with asyncio.timeout(CONSUME_TIMEOUT_S):
-            await consume(grant)
+            if kind == "code":
+                await _store.consume_code(credential, grant)
+            else:
+                await _store.consume_refresh(credential, grant)
         return True
-    except Exception as e:  # noqa: BLE001 — the exchange is decided; the kept claim holds off a retry
+    except Exception as e:  # noqa: BLE001 — the answer is decided; the caller keeps the claim
         log.warning("oauth: consume failed for %r in %r: %s", grant["subject"], grant["org"], e)
         return False
 
@@ -872,12 +894,12 @@ async def _mint_namespaces(grant: dict[str, Any], issued_at: int) -> list[str]:
     it, and the live grant is checked on every call). Read from ClickHouse:
     a token minted past a revocation this process has not seen keeps it."""
     from server.auth.login import widen_with_restricted_grants
-    from server.auth.revocation import ended_claims, subject_revoked
+    from server.auth.revocation import ended_claims, subjects_revoked
 
     org, subject = grant["org"], grant["subject"]
     namespaces = list(grant["namespaces"])
     try:
-        if await subject_revoked(subject, issued_at=issued_at):
+        if await subjects_revoked([subject], issued_at=issued_at):
             raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
         ended = await ended_claims(org, subject, namespaces, issued_at=issued_at)
         if ended:

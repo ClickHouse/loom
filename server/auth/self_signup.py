@@ -160,7 +160,7 @@ async def self_signup(input: SelfSignupInput, request: Request) -> SelfSignupOut
     # wait on each other's second lock. The email lock makes EMAIL_IN_USE's
     # check-then-insert exclusive within this process too.
     email_key = "email:" + (input.email or "").strip().lower()
-    async with _claim_lock(org, namespace), _claim_lock(org, email_key):
+    async with claim_lock(org, namespace), claim_lock(org, email_key):
         return await _claim_account(input, org, namespace)
 
 
@@ -325,8 +325,8 @@ _MAX_TRACKED = 10_000
 # keeper_map_strict_mode, as the migration lock uses) is the upgrade. Password
 # sign-in picks the row the password verifies, so a raced duplicate email
 # cannot sign one account into the other. OIDC JIT sign-up takes the same
-# per-email key (`login.jit_provision_for_email`), per process too; across
-# processes its name walk finds the account another just wrote.
+# per-email key (`login.jit_provision_for_email`); self-signup is closed when
+# OIDC is the login provider, so the two never race for a name.
 _claim_locks: dict[tuple[str, str], asyncio.Lock] = defaultdict(asyncio.Lock)
 
 
@@ -340,7 +340,7 @@ def agent_namespace(name: str) -> str | None:
     return f"{AGENT_NAMESPACE_PREFIX}{slug}"
 
 
-def _claim_lock(org: str, namespace: str) -> asyncio.Lock:
+def claim_lock(org: str, namespace: str) -> asyncio.Lock:
     """The lock a claim of (org, namespace) holds from its existence check to
     its insert. Idle locks are dropped once many names are tracked; a held or
     awaited lock is never replaced, or a later caller would skip the queue."""
@@ -406,7 +406,7 @@ async def agent_signup(input: AgentSignupInput, request: Request) -> AgentSignup
             },
         )
     org = signup_org(input.org)
-    async with _claim_lock(org, namespace):
+    async with claim_lock(org, namespace):
         return await _provision_agent(input, request, org, namespace)
 
 

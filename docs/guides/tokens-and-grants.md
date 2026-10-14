@@ -185,7 +185,7 @@ curl -s "$LOOM_BASE_URL/v1/grants.create" -H "Authorization: Bearer $ADMIN_TOKEN
 
 - **Taking a grant away ends older tokens' claims.** `grants.revoke`, a `replace: true`
   lowering, `namespace.leave`, `loom claim-release` and a restore that lowers a grant each
-  write a cutoff (`grant:<org>/<namespace>/<subject>` in `loom.revoked_tokens`, one per
+  write a cutoff (`grant:<org>/<namespace>/<sha256 of the subject>` in `loom.revoked_tokens`, one per
   spelling of the subject, kept ten years). A flat or scoped token minted before it reaches
   the namespace only through the subject's current grant, and every token minted later
   (sign-in, an OAuth exchange or refresh) leaves the namespace out of its claim for good:
@@ -197,10 +197,11 @@ curl -s "$LOOM_BASE_URL/v1/grants.create" -H "Authorization: Bearer $ADMIN_TOKEN
 - **Registering is owning.** `namespace.register` makes the caller the namespace's `admin`.
   With self-signup (`LOOM_IDENTITY_PROVIDER=trust-network`) the first principal to claim a
   name owns it; `loom claim-release --org <org> --namespace <ns>` revokes its grants (and
-  ends their tokens' claims), clears the owner and deactivates it.
-  `namespace.restore` into an existing namespace needs an admin of it. The name stays reserved (its memories are kept, and
-  whoever claimed it next would own them); erasing the namespace removes the data but not
-  the reservation.
+  ends their tokens' claims), clears the owner and deactivates it. The name stays reserved
+  (its memories are kept, and whoever claimed it next would own them); erasing the
+  namespace removes the data but not the reservation.
+- **Restoring into a namespace needs its admin.** `namespace.restore` into an existing
+  namespace, active or soft-deleted, needs an admin of it.
 - **Service accounts inherit.** An `sa:` subject with no grant of its own on a namespace
   uses its creator's grant there, so a token minted from the dashboard follows the person
   who made it, including into namespaces they join later. Restricted namespaces are the

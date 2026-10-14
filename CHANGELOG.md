@@ -59,42 +59,27 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   and a namespace's `rerank_endpoint` take a name, not a URL: `none`, `builtin:openai[:model]`,
   `builtin:cohere[:model]`, or an endpoint the operator names in `LOOM_RERANK_ENDPOINTS_JSON`.
   A URL or an unknown name is a 422. A namespace that still stores a URL is no longer reranked.
-- **Security:** revoking or lowering a grant now ends what the subject's older tokens claim
-  on that namespace. A flat or scoped token minted before it reaches the namespace only
-  through the subject's current grant, and a grant made later does not restore the claim.
-  Signing in again, an OAuth code exchange and an OAuth refresh leave the namespace out of
-  the token they mint, for good: a later grant, an admin one included, gives access back
-  through itself, not the old claim (a restricted namespace, read only by a token naming
-  it, is named again while a live grant covers the person). A token minted while the cutoff was being written is
-  cut as well (each mint is issued at the time before its cutoff read, and the cutoff is
-  written again once its first write returned). A refresh token saved before this release
-  carries the time after its read, so a cutoff that landed in that window rides its chain
-  until it expires. The cutoff is a
-  `loom.revoked_tokens` row (`grant:<org>/<namespace>/<subject>`);
+- **Security:** revoking or lowering a grant ends what the subject's older tokens claim on
+  that namespace: they reach it only through the subject's current grant. Tokens minted
+  later (sign-in, an OAuth code exchange or refresh) leave it out for good; a later grant
+  gives access back through itself, not through the old claim. A restricted namespace,
+  read only by a token naming it, is named again while a live grant covers the person. The
+  cutoff is a `loom.revoked_tokens` row keyed `grant:<org>/<namespace>/<subject hash>`;
   `loom revoke-token --list --grants` shows them. A namespace never granted to the subject
-  (named by an operator at mint) keeps its claim.
-- **Security:** `/oauth/token` runs one exchange per code or refresh token: a KeeperMap
-  claim (`loom.oauth_claims`, migration `027_oauth_claims.sql`) tells a concurrent
-  presenter to retry, where two could both mint before. When a read the exchange needs fails it
-  answers a retryable 503 `temporarily_unavailable` and leaves the credential usable,
-  where a failed account read on refresh used to answer 500 and burn the token. The
-  exchange is bounded well inside the age its claim is taken over at. Without a
-  Keeper, `/v1/health` reports `oauth_claims_not_atomic`.
-- **Security:** OIDC just-in-time provisioning no longer rebuilds an existing account: the
-  person's next sign-in recreated a released or deleted one, or one another account
-  registered under the derived name, with default settings and an admin grant, its data
-  included. A released, deleted or foreign name is skipped for the next free one
-  (`<name>-2`, ..., then a random suffix); a person with an active account in the org is
-  signed in to it, never given another; and a person with an account revoked outright
-  (`loom revoke-token --subject`) is refused, until that account is released.
-- **Security:** `namespace.restore` into an existing namespace needs an admin of it. The
-  owner a first write auto-registered, who holds no grant there, could restore a payload
-  whose grants made them, or anyone, admin.
+  (named by an operator at mint) keeps its claim. A refresh token saved before this
+  release can carry a cutoff that landed while it was minted until it expires.
+- **Security:** with a Keeper, `/oauth/token` runs one exchange per code or refresh token
+  (a KeeperMap claim, `loom.oauth_claims`, migration `027_oauth_claims.sql`); a concurrent
+  presenter is told to retry. A failed read answers a retryable 503
+  `temporarily_unavailable` and leaves the credential usable, where a failed account read
+  on refresh used to answer 500 and burn the token. Without a Keeper the credential is
+  used up before the decision, as before, and `/v1/health` reports
+  `oauth_claims_not_atomic`.
 - **Security:** `context.fetch` no longer serves, and `context.offload` refuses to write,
   `page/` blobs: a parked `memory.search` page holds hits from every namespace its search
   fanned out over, and only `memory.search(page=...)` serves it, re-checking each of them.
-- **Security:** a second `namespace.join` request on an approval namespace no longer turns
-  the first, still pending, request into an active grant; it replaces the request.
+- Sign-in answers 503 when it cannot read the grant cutoffs, as an OAuth exchange does,
+  instead of a token without the person's own namespaces.
 - `grants.approve` refuses (409 `GRANT_WOULD_DOWNGRADE`) to approve a request below the
   subject's current grant; lower a grant with `grants.create replace=true`.
 - With auth off, an `all_mine` search also reads every namespace the single user registered,
@@ -107,30 +92,17 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 
 ### Fixed
 
-- Choosing a new embedding model in **Settings → Models & keys** failed with
-  `source_text_missing` on a freshly indexed repository: the rebuild took the zero vector
-  that pads a text-less row (a file's structural summary card before its summary is
-  written) for a real one, and its verification did too. Such rows now rebuild as
-  placeholders.
-- The quickstart told released-stack users to add repositories from the dashboard, which
-  that stack refuses with `SANDBOX_UNAVAILABLE`, since it runs without the repository-job
-  sandbox. It now shows how to index one through `LOOM_CODE_REPOS_JSON`, `loom code init`
-  and `loom code backfill`, with no `scip_producer` or working tree to set up. The refusal
-  names that route where it works, the `repo_jobs_unsandboxed` fix in `loom doctor` and
-  `/v1/health` matches it, and the sandbox docs say which hosts can load the AppArmor
-  profile: AppArmor 4.0 or later, tested on Ubuntu 24.04.
-- On a host whose time zone is not UTC, a timestamp written through the driver's insert path
-  was shifted by the host's offset (seven or eight hours on the US west coast): the driver
-  reads a naive datetime as local time. Those writes now carry the UTC instant. Conversation
-  threads, which wrote local time to make up for it, now write UTC, so `conversation.create`
-  and `conversation.update` answer UTC times, as `conversation.get` does. Other rows written
-  before the upgrade keep their shift. The images default to UTC, so a container that sets no
-  `TZ` was not affected; a server run on a laptop was. A spend-ledger turn time with an offset
-  is now converted to UTC, not truncated.
-- A request whose body holds a number JSON cannot carry back (`1e400` parses to infinity) gets
-  a 422 that echoes it as the string `"Infinity"`, instead of a 500.
-- `admin/budget.set` refuses an integer too large for a float with a 422; it was stored, and
-  the server's other web processes then ignored every budget override.
+- **Security:** OIDC just-in-time provisioning no longer rebuilds an existing account. A
+  person's next sign-in recreated a released or deleted account, or one another account
+  registered under the derived name, with default settings and an admin grant, its data
+  included. Now a person with an active account in the org is signed in to it, one with an
+  account revoked outright (`loom revoke-token --subject`) is refused, and anyone else
+  gets the next free name (`<name>-2`, ..., then a random suffix).
+- **Security:** `namespace.restore` into an existing namespace needs an admin of it. The
+  owner a first write auto-registered, who holds no grant there, could restore a payload
+  whose grants made them, or anyone, admin.
+- **Security:** a second `namespace.join` request on an approval namespace no longer turns
+  the first, still pending, request into an active grant; it replaces the request.
 - `loom code scip-full` moves its checkout and runs its harness (the repository's CMake)
   as repository jobs, in the sandbox like the delta worker, instead of as plain processes.
   The checkout fetch now names the bare clone and the submodule update gets the network,

@@ -73,7 +73,7 @@ def test_http_serves_the_sections(calls: list[dict[str, Any]]) -> None:
     body = r.json()
     assert body["memory"]["results"][0]["memory_key"] == "k"
     assert "tracker" not in body and "withheld" not in body
-    assert calls[0]["namespaces"] == ["n", "team"] and calls[0]["top_k"] == 3
+    assert calls[0]["namespace_scope"] == "all_mine" and calls[0]["top_k"] == 3
 
 
 def test_http_and_mcp_run_the_same_fan_out(calls: list[dict[str, Any]]) -> None:
@@ -167,7 +167,6 @@ def test_an_unresolvable_fan_out_searches_every_leg_as_this(
     monkeypatch.setattr("server.observability.capture_consent.resolve", _resolve)
     asyncio.run(handle_search(SearchInput(org="o", namespace="n", query="q")))
     assert calls[-1]["namespace_scope"] == "this"
-    assert calls[-1]["namespaces"] == ["n"]
 
 
 def test_unresolvable_consent_or_fan_out_never_widens_capture(

@@ -275,11 +275,11 @@ def test_a_later_grant_does_not_end_a_cutoff_at_mint(ch: _CH) -> None:
 def test_a_subject_revocation_is_read_from_clickhouse(ch: _CH) -> None:
     now = int(datetime.now(UTC).timestamp())
     ch.revoked["alice"] = {"jti": "alice", "issued_before": now}
-    assert asyncio.run(rev.subject_revoked("alice", issued_at=now - 10))
-    assert not asyncio.run(rev.subject_revoked("alice", issued_at=now + 10))
+    assert asyncio.run(rev.subjects_revoked(["alice"], issued_at=now - 10))
+    assert not asyncio.run(rev.subjects_revoked(["alice"], issued_at=now + 10))
     ch.revoked["alice"] = {"jti": "alice", "issued_before": None}
-    assert asyncio.run(rev.subject_revoked("alice", issued_at=now + 10)), "revoked outright"
-    assert not asyncio.run(rev.subject_revoked("bob", issued_at=now))
+    assert asyncio.run(rev.subjects_revoked(["alice"], issued_at=now + 10)), "revoked outright"
+    assert not asyncio.run(rev.subjects_revoked(["bob"], issued_at=now))
 
 
 def test_the_mint_time_reads_are_sequentially_consistent(
@@ -300,7 +300,7 @@ def test_the_mint_time_reads_are_sequentially_consistent(
 
     monkeypatch.setattr(ch, "query_all", _recording)
     asyncio.run(rev.ended_claims(ORG, "alice", ["team"], issued_at=None))
-    asyncio.run(rev.subject_revoked("alice", issued_at=BEFORE))
+    asyncio.run(rev.subjects_revoked(["alice"], issued_at=BEFORE))
     assert consistent == [True, True], "the cutoffs, the subject"
 
 
@@ -312,7 +312,7 @@ def test_a_failed_mint_time_read_propagates(ch: _CH, monkeypatch: pytest.MonkeyP
     with pytest.raises(RuntimeError):
         asyncio.run(rev.ended_claims(ORG, "alice", ["team"], issued_at=None))
     with pytest.raises(RuntimeError):
-        asyncio.run(rev.subject_revoked("alice", issued_at=BEFORE))
+        asyncio.run(rev.subjects_revoked(["alice"], issued_at=BEFORE))
 
 
 def test_several_subjects_are_checked_for_a_revocation_in_one_read(ch: _CH) -> None:
@@ -326,7 +326,7 @@ def test_several_subjects_are_checked_for_a_revocation_in_one_read(ch: _CH) -> N
     ch.query_all = _counting  # type: ignore[method-assign]
     now = int(datetime.now(UTC).timestamp())
     ch.revoked["bob"] = {"jti": "bob", "issued_before": None}
-    assert asyncio.run(rev.any_subject_revoked(["u-bob", "bob", "u-bob"], issued_at=now))
-    assert not asyncio.run(rev.any_subject_revoked(["u-bob"], issued_at=now))
-    assert not asyncio.run(rev.any_subject_revoked([], issued_at=now))
+    assert asyncio.run(rev.subjects_revoked(["u-bob", "bob", "u-bob"], issued_at=now))
+    assert not asyncio.run(rev.subjects_revoked(["u-bob"], issued_at=now))
+    assert not asyncio.run(rev.subjects_revoked([], issued_at=now))
     assert reads == [["bob", "u-bob"], ["u-bob"]]

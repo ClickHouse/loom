@@ -12,11 +12,19 @@ reached by name or by their own tools, never swept for a personal fact.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import NamedTuple
 
 from server.auth import context
 from server.auth.default_namespace import auth_off_subject
 from server.auth.directory import directory
 from server.settings import settings
+
+
+class Split(NamedTuple):
+    """What a search addressed to one namespace reads, and what the cap cut."""
+
+    read: list[str]
+    skipped: list[str]
 
 
 @dataclass(frozen=True)
@@ -32,31 +40,28 @@ class Fanout:
     # the order is a priority or every namespace fits under the cap.
     public: frozenset[str] = frozenset()
 
-    def reads(self, namespace: str) -> tuple[list[str], list[str]]:
-        """(read, skipped) for a search addressed to `namespace`: it first, then
-        up to `cap` of the others, read in their own order. When the cap cuts,
-        it drops public namespaces before private ones; skipped are the ones
-        left out."""
+    def split(self, namespace: str) -> Split:
+        """A search addressed to `namespace` reads it first, then up to `cap`
+        of the others in their own order. When the cap cuts, it drops public
+        namespaces before private ones."""
         others = [ns for ns in self.namespaces if ns != namespace]
         keep = set(sorted(others, key=lambda ns: ns in self.public)[: self.cap])
         read = [ns for ns in others if ns in keep]
-        return [namespace, *read], [ns for ns in others if ns not in keep]
+        return Split([namespace, *read], [ns for ns in others if ns not in keep])
 
 
-async def namespaces_to_search(
-    org: str, namespace: str, namespace_scope: str | None
-) -> tuple[list[str], list[str]]:
-    """(read, skipped) for one search leg: the addressed `namespace`, and
-    under `all_mine` the caller's fan-out besides."""
+async def namespaces_to_search(org: str, namespace: str, namespace_scope: str | None) -> Split:
+    """What one search leg reads: the addressed `namespace`, and under
+    `all_mine` the caller's fan-out besides."""
     if namespace_scope != "all_mine":
-        return [namespace], []
-    return (await resolve_fanout(org)).reads(namespace)
+        return Split([namespace], [])
+    return (await resolve_fanout(org)).split(namespace)
 
 
 async def resolve_fanout(org: str) -> Fanout:
     """The caller's namespaces of the fan-out kinds, in their order, which is a
-    priority only when `ordered` (a scoped token). Memoised per bound principal
-    and org."""
+    priority only when `ordered` (a scoped token). Memoised per org for the
+    request: binding a principal clears the memo."""
     cached = context.fanout_memo.get()
     if cached is not None and cached.org == org:
         return cached
@@ -79,3 +84,17 @@ async def resolve_fanout(org: str) -> Fanout:
     )
     context.fanout_memo.set(fanout)
     return fanout
+
+
+def private_first_passes(
+    namespace: str, namespaces: list[str], visibility: dict[str, str]
+) -> tuple[list[str], list[str]]:
+    """The two passes of a private-first search over `namespaces`: the
+    addressed `namespace` and the private ones, then the public ones. Both are
+    empty when `visibility` is empty or names no private namespace: read them
+    all at once. A namespace without an answer counts as private."""
+    private = {ns for ns in namespaces if visibility.get(ns, "private") == "private"}
+    if not visibility or not private:
+        return [], []
+    first = [ns for ns in namespaces if ns in private or ns == namespace]
+    return first, [ns for ns in namespaces if ns not in first]

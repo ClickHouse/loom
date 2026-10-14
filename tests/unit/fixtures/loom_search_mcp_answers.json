@@ -85,11 +85,7 @@
     "recipe": "",
     "bodies": "excerpt",
     "page": "",
-    "explain": false,
-    "namespaces": [
-     "alice",
-     "team"
-    ]
+    "explain": false
    }
   },
   {
@@ -177,11 +173,7 @@
     "recipe": "",
     "bodies": "excerpt",
     "page": "",
-    "explain": false,
-    "namespaces": [
-     "alice",
-     "team"
-    ]
+    "explain": false
    }
   }
  ],
@@ -271,11 +263,7 @@
     "recipe": "",
     "bodies": "excerpt",
     "page": "",
-    "explain": false,
-    "namespaces": [
-     "alice",
-     "team"
-    ]
+    "explain": false
    }
   }
  ],
@@ -367,11 +355,7 @@
     "recipe": "",
     "bodies": "excerpt",
     "page": "",
-    "explain": true,
-    "namespaces": [
-     "alice",
-     "team"
-    ]
+    "explain": true
    }
   }
  ],
@@ -462,10 +446,7 @@
     "recipe": "",
     "bodies": "none",
     "page": "",
-    "explain": false,
-    "namespaces": [
-     "team"
-    ]
+    "explain": false
    }
   }
  ],
@@ -555,11 +536,7 @@
     "recipe": "",
     "bodies": "excerpt",
     "page": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
-    "explain": false,
-    "namespaces": [
-     "alice",
-     "team"
-    ]
+    "explain": false
    }
   }
  ],
@@ -651,11 +628,7 @@
     "recipe": "fast",
     "bodies": "excerpt",
     "page": "h",
-    "explain": false,
-    "namespaces": [
-     "alice",
-     "team"
-    ]
+    "explain": false
    }
   }
  ],
@@ -764,11 +737,7 @@
     "recipe": "",
     "bodies": "excerpt",
     "page": "",
-    "explain": false,
-    "namespaces": [
-     "alice",
-     "team"
-    ]
+    "explain": false
    }
   }
  ],
@@ -807,11 +776,7 @@
     "recipe": "",
     "bodies": "excerpt",
     "page": "",
-    "explain": false,
-    "namespaces": [
-     "alice",
-     "team"
-    ]
+    "explain": false
    }
   }
  ],
@@ -882,11 +847,7 @@
     "recipe": "",
     "bodies": "excerpt",
     "page": "",
-    "explain": false,
-    "namespaces": [
-     "alice",
-     "team"
-    ]
+    "explain": false
    }
   }
  ],
@@ -976,11 +937,7 @@
     "recipe": "",
     "bodies": "excerpt",
     "page": "",
-    "explain": false,
-    "namespaces": [
-     "alice",
-     "team"
-    ]
+    "explain": false
    }
   }
  ]

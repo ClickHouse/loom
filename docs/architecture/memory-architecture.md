@@ -353,9 +353,9 @@ is in `server/erasure/store/census.py`:
 | `STEP_ONLY_TABLES`  | Tables a step clears that the census does not count (shared and consolidated tombstones, term aggregates, session outcomes, the code index purge, …). |
 | `NO_MEMORY_CONTENT` | Every other table, each with the reason it holds no content in scope.                                                                                 |
 
-`loom.revoked_tokens` is in `NO_MEMORY_CONTENT`, though the grant cutoffs it holds
-name each spelling of a subject (an email among them) for 10 years: an erasure leaves
-them, since dropping one would give a token minted before it back the namespace it lost.
+`loom.revoked_tokens` is in `NO_MEMORY_CONTENT`: the grant cutoffs it keeps for 10 years
+name a subject only by a hash of each spelling, and an erasure leaves them, since dropping
+one would give a token minted before it back the namespace it lost.
 
 The terminal row carries `residue_count`, `residue` (per table) and `verified_at`. A
 resumed saga re-runs the owning step of any table the last census found rows in.

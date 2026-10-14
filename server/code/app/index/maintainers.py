@@ -12,8 +12,10 @@ across the configured branch namespaces of one repository:
   row is not re-added. Called after an admin grant is created or approved
   on a code namespace, when a branch is added, and once per process per
   namespace by the registrar (so environment-registered branches inherit).
-* ``revoke_repo_maintainer`` — a revoked admin leaves every branch, except a
-  branch where they are the only active admin (the handler's own guard).
+* ``plan_revoke`` / ``write_revokes`` — a revoked admin leaves every branch,
+  except a branch where they are the only active admin (the handler's own
+  guard). ``grants.revoke`` plans first, writes the cutoffs for every branch
+  in one call, then writes the grant rows.
 
 Readers stay per branch: the approval fan-out already turns a person's branch requests
 into one decision. Restricted branches also need the token to name them — a person's
@@ -27,7 +29,6 @@ import time
 from datetime import datetime
 from typing import Any
 
-from server.auth.revocation import end_grant_claims
 from server.core.datetimes import naive_utc_now
 
 log = logging.getLogger(__name__)
@@ -138,14 +139,29 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
     return len(inserts)
 
 
-async def plan_maintainer_revoke(
+async def plan_revoke(
     org: str, namespace: str, subject: str, *, ch: Any | None = None
 ) -> list[dict[str, Any]]:
     """The revoke rows that take `subject`'s active admin grant off every
-    other branch of the repository, written nowhere yet; a branch where they
-    are the only active admin keeps them (the same guard `grants.revoke`
-    applies). `grants.revoke` plans first, so one cutoff write covers the
-    branch it was asked for and these, before any grant row lands."""
+    other branch of the repository, not written yet. A failed read plans
+    none: the revoke that asked goes on, and the sibling grants stay for an
+    operator to revoke, each with its own cutoff."""
+    try:
+        return await _plan_revoke(org, namespace, subject, ch=ch)
+    except Exception:  # the fan-out never fails the revoke that caused it
+        log.warning(
+            "repo maintainers: revoke plan failed for %s/%s/%s",
+            org,
+            namespace,
+            subject,
+            exc_info=True,
+        )
+        return []
+
+
+async def _plan_revoke(
+    org: str, namespace: str, subject: str, *, ch: Any | None = None
+) -> list[dict[str, Any]]:
     branches = [b for b in branch_namespaces(org, namespace) if b != namespace]
     if not branches:
         return []
@@ -184,78 +200,17 @@ async def plan_maintainer_revoke(
     return out
 
 
-async def apply_maintainer_revoke(
-    org: str, namespace: str, subject: str, rows: list[dict[str, Any]], *, ch: Any | None = None
-) -> int:
-    """Write the planned revoke rows; their cutoffs are the caller's, written
-    first. Returns rows written."""
-    if not rows:
-        return 0
-    from server.core.ch import get_client
-
-    await _insert(ch or get_client(), rows)
-    log.info(
-        "repo maintainers: %s/%s — %r revoked on %d sibling branch(es)",
-        org,
-        namespace,
-        subject,
-        len(rows),
-    )
-    return len(rows)
-
-
-async def revoke_repo_maintainer(
-    org: str, namespace: str, subject: str, *, actor: str, ch: Any | None = None
-) -> int:
-    """Plan, end the claims on the planned branches, then write the revokes:
-    a failed cutoff write writes nothing, so the call can be retried."""
-    rows = await plan_maintainer_revoke(org, namespace, subject, ch=ch)
-    if rows:
-        await end_grant_claims(
-            org,
-            [row["namespace"] for row in rows],
-            [subject],
-            reason="maintainer revoked",
-            revoked_by=actor,
-        )
-    return await apply_maintainer_revoke(org, namespace, subject, rows, ch=ch)
-
-
-async def sync_quietly(org: str, namespace: str, *, ch: Any | None = None) -> None:
-    """The fan-out is a consequence, never a reason for the grant op to fail."""
-    try:
-        await sync_repo_maintainers(org, namespace, ch=ch)
-    except Exception:  # the fan-out never fails the op that caused it
-        log.warning("repo maintainers: sync failed for %s/%s", org, namespace, exc_info=True)
-
-
-async def plan_quietly(
-    org: str, namespace: str, subject: str, *, ch: Any | None = None
-) -> list[dict[str, Any]]:
-    """`plan_maintainer_revoke`, or no rows when the read fails: the revoke
-    that asked goes on, and the sibling grants stay for an operator to revoke
-    (each with its own cutoff), as a failed fan-out always left them."""
-    try:
-        return await plan_maintainer_revoke(org, namespace, subject, ch=ch)
-    except Exception:  # the fan-out never fails the revoke that caused it
-        log.warning(
-            "repo maintainers: revoke fan-out plan failed for %s/%s/%s",
-            org,
-            namespace,
-            subject,
-            exc_info=True,
-        )
-        return []
-
-
-async def apply_quietly(
+async def write_revokes(
     org: str, namespace: str, subject: str, rows: list[dict[str, Any]], *, ch: Any | None = None
 ) -> None:
-    """`apply_maintainer_revoke`, logged on failure: the cutoffs have landed,
-    so the sibling grants left standing still reach no older token's claim,
-    and an operator's revoke of each writes its row."""
+    """Write the planned revoke rows; the caller wrote their cutoffs first, so
+    a failure here leaves grants that reach no older token's claim."""
+    if not rows:
+        return
+    from server.core.ch import get_client
+
     try:
-        await apply_maintainer_revoke(org, namespace, subject, rows, ch=ch)
+        await _insert(ch or get_client(), rows)
     except Exception:  # the fan-out never fails the revoke that caused it
         log.warning(
             "repo maintainers: revoke fan-out failed for %s/%s/%s",
@@ -264,3 +219,19 @@ async def apply_quietly(
             subject,
             exc_info=True,
         )
+        return
+    log.info(
+        "repo maintainers: %s/%s — %r revoked on %d sibling branch(es)",
+        org,
+        namespace,
+        subject,
+        len(rows),
+    )
+
+
+async def sync_quietly(org: str, namespace: str, *, ch: Any | None = None) -> None:
+    """The fan-out is a consequence, never a reason for the grant op to fail."""
+    try:
+        await sync_repo_maintainers(org, namespace, ch=ch)
+    except Exception:  # the fan-out never fails the op that caused it
+        log.warning("repo maintainers: sync failed for %s/%s", org, namespace, exc_info=True)

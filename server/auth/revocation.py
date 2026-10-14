@@ -16,12 +16,11 @@ The table is ReplacingMergeTree ORDER BY jti: the newest row per key governs.
 - Taking a grant away (`end_grant_claims`) writes a cutoff row keyed by
   `grant_claim_key`: tokens of that subject minted before it no longer reach
   the namespace through their own claim (`authz.withdrawn_claims`).
-- The snapshot therefore grows with every grant ever taken away: one row
-  per namespace and spelling of the subject, kept `NEVER_EXPIRES_DAYS` (a
-  sign-in mints past any cutoff, so none may lapse while the owner row
-  stands). Each is a short key and an int, and every refresh re-reads them
-  all; past `SNAPSHOT_WARN_ROWS` a process logs one warning so an operator
-  sees the read and the memory grow before they matter.
+- A cutoff is kept `NEVER_EXPIRES_DAYS` (a sign-in mints past any cutoff,
+  so none may lapse while the owner row stands). Its key is per namespace
+  and subject spelling, and a later cutoff replaces it, so the table holds
+  at most one row per pair that ever lost a grant, however often. Past
+  `SNAPSHOT_WARN_ROWS` a process logs one warning.
 
 Failure semantics: until the first successful read `loaded()` is False and
 `verify_token` refuses every token (503, retryable) — an empty set would let
@@ -34,6 +33,7 @@ token is refused again (503) until a refresh lands.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import math
 import time
@@ -228,8 +228,10 @@ _GRANT_CLAIM_PREFIX = "grant:"
 
 def grant_claim_key(org: str, namespace: str, subject: str) -> str:
     """The revocation key that withdraws (org, namespace) from `subject`'s
-    token claims. Never a jti (a hex id) or a subject verify checks."""
-    return f"{_GRANT_CLAIM_PREFIX}{org}/{namespace}/{subject}"
+    token claims. The subject is hashed: the key outlives the account, and
+    an email has no business in it. Never a jti or a subject verify checks."""
+    digest = hashlib.sha256(subject.encode()).hexdigest()[:32]
+    return f"{_GRANT_CLAIM_PREFIX}{org}/{namespace}/{digest}"
 
 
 def is_grant_claim_key(key: str) -> bool:
@@ -245,19 +247,11 @@ def claim_ended(org: str, namespace: str, subject: str, issued_at: int) -> bool:
 async def end_grant_claims(
     org: str, namespaces: list[str], subjects: list[str], *, reason: str, revoked_by: str
 ) -> None:
-    """Withdraw each of `namespaces` from the claims of every token `subjects`
-    hold that was minted before now, under each spelling of each subject.
+    """Withdraw `namespaces` from the claims of every token `subjects` hold
+    that was minted before now, under each spelling of each subject.
 
-    Called before a grant is revoked or lowered: a grant row is replaced by
-    the subject's next one (a join request, a self-join), so only a row of
-    its own keeps the revocation. A later grant does not lift it. The cutoff
-    is the next whole second, so a token minted in the second of the
-    revocation is cut too, and it is written again once the first write has
-    returned: a mint whose read ran before the row landed took its issue
-    time before that read (`mint_token(issued_at=...)`), so the second
-    cutoff postdates it, and its token is cut at verify and its refresh at
-    the next exchange. Raises on a ClickHouse failure, so the caller's grant
-    write does not land without it."""
+    Callers write this before the grant row it is about, and a failure here
+    fails their change. Raises on a ClickHouse failure."""
     from server.auth.aliases import subject_aliases
     from server.core.ch import get_client
 
@@ -272,23 +266,32 @@ async def end_grant_claims(
     )
     if not keys:
         return
-    for _ in ("written", "landed"):
-        now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
-        rows = [
-            {
-                "jti": key,
-                "revoked_at": now,
-                "expires_at": revocation_expiry(None, now),
-                "reason": reason,
-                "revoked_by": revoked_by,
-                "issued_before": now + timedelta(seconds=1),
-                "version": time.time_ns(),
-            }
-            for key in keys
-        ]
-        await get_client().insert("loom.revoked_tokens", rows)
+    ch = get_client()
+    await ch.insert("loom.revoked_tokens", _cutoff_rows(keys, reason, revoked_by))
+    # Again, stamped after the first write landed: a mint that read the
+    # cutoffs before it did took its issue time before that read, so only
+    # this second cutoff is sure to postdate its token.
+    rows = _cutoff_rows(keys, reason, revoked_by)
+    await ch.insert("loom.revoked_tokens", rows)
     await refresh()
-    _apply_locally(keys, _cutoff_seconds(now + timedelta(seconds=1)))
+    _apply_locally(keys, _cutoff_seconds(rows[0]["issued_before"]))
+
+
+def _cutoff_rows(keys: list[str], reason: str, revoked_by: str) -> list[dict[str, Any]]:
+    """One cutoff per key at the next whole second, so a token minted in the
+    second of the change is cut too."""
+    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    return [
+        {
+            "jti": key,
+            "revoked_at": now,
+            "expires_at": revocation_expiry(None, now),
+            "reason": reason,
+            "revoked_by": revoked_by,
+            "issued_before": now + timedelta(seconds=1),
+        }
+        for key in keys
+    ]
 
 
 async def ended_claims(
@@ -297,15 +300,9 @@ async def ended_claims(
     """The `namespaces` a grant of `subject`'s was taken away on after
     `issued_at` (unix seconds; None: at any time), read from ClickHouse.
 
-    For the paths that mint a token (sign-in, OAuth code exchange, refresh):
-    the token's iat is past every cutoff, so a cutoff this process's snapshot
-    has not caught up with yet would never apply to it.
-
-    A later grant there, an admin one included, does not end a cutoff: the
-    live grant decides what the person may do there, and leaving the
-    namespace out of the claims minted on takes nothing that grant gives. An
-    exemption for some grant would rest on every path that can write one,
-    and each new such path would be a way back past the cutoff."""
+    For the paths that mint a token: its iat is past every cutoff, so one
+    this process's snapshot has not caught up with would never apply to it.
+    No later grant ends a cutoff; the live grant decides access instead."""
     from server.auth.aliases import subject_aliases
 
     spellings = await subject_aliases(org, subject, strict=True)
@@ -321,21 +318,13 @@ async def ended_claims(
     return ended
 
 
-async def any_subject_revoked(subjects: list[str], *, issued_at: int) -> bool:
-    """`subject_revoked` for several subjects in one read."""
+async def subjects_revoked(subjects: list[str], *, issued_at: int) -> bool:
+    """`is_revoked` for any of `subjects`, read from ClickHouse in one query:
+    a token minting path cannot wait for this process's snapshot to see a
+    `revoke-token`."""
     if not subjects:
         return False
     for r in await _read_revocations(sorted(set(subjects))):
-        cutoff = _cutoff_seconds(r.get("issued_before"))
-        if cutoff is None or issued_at < cutoff:
-            return True
-    return False
-
-
-async def subject_revoked(subject: str, *, issued_at: int) -> bool:
-    """`is_revoked` for a subject, read from ClickHouse: a token minting path
-    cannot wait for this process's snapshot to see a `revoke-token`."""
-    for r in await _read_revocations([subject]):
         cutoff = _cutoff_seconds(r.get("issued_before"))
         if cutoff is None or issued_at < cutoff:
             return True

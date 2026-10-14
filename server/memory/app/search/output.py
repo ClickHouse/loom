@@ -84,7 +84,8 @@ async def _serve_parked_page(input: MemorySearchInput) -> MemorySearchOutput:
         return empty
     readable = await _readable_namespaces(input.org, input.namespace, payload)
     hits, nxt = _readable_slice(payload, offset, int(input.top_k), readable)
-    # Hits from a namespace the caller lost are neither served nor counted.
+    # Hits from a namespace the caller lost are neither served nor counted; the
+    # count is over the whole parked list, so every page reports the same total.
     withheld = sum(1 for h in payload.get("hits") or [] if h.get("namespace", "") not in readable)
     total = max(0, int(payload.get("candidates_total") or 0) - withheld)
     # A parked page was serialised without tags unless the first call asked; fill on this
@@ -128,7 +129,11 @@ async def _readable_namespaces(org: str, namespace: str, payload: dict[str, Any]
     }
     if named <= authorized:
         return authorized
-    mine = (await resolve_fanout(org)).namespaces
+    try:
+        mine = (await resolve_fanout(org)).namespaces
+    except Exception as e:  # noqa: BLE001 — unresolved, the page narrows to the addressed namespace
+        log.warning("parked page: fan-out unresolved for %s/%s: %s", org, namespace, e)
+        return authorized
     return (named & set(mine)) | authorized
 
 

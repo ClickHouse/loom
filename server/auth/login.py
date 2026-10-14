@@ -64,6 +64,10 @@ class LoginThrottled(Exception):
     """Too many failed sign-ins for this identifier or address; retry later."""
 
 
+class SignInUnavailable(Exception):
+    """The grant cutoffs a sign-in reads could not be read; retry later."""
+
+
 @functools.cache
 def _unknown_account_hash() -> str:
     """A real argon2id hash of a random secret, verified against when no
@@ -159,14 +163,16 @@ async def _without_taken_away(subject: str, org: str, namespaces: list[str]) -> 
     away on. Owning the registry row is not access once a co-admin revoked or
     lowered it: whatever grant the person holds there now still applies, and
     the namespace does not come back into the claim (the cutoff outlives any
-    token a sign-in mints). A failed read leaves every owned one out."""
+    token a sign-in mints). Raises `SignInUnavailable` when they cannot be read,
+    as an OAuth exchange answers 503: a token without them would miss the
+    person's own namespaces for its whole life."""
     from server.auth.revocation import ended_claims
 
     try:
         ended = await ended_claims(org, subject, namespaces, issued_at=None)
-    except Exception as e:  # noqa: BLE001 — a sign-in goes on through the live grants
+    except Exception as e:
         log.warning("login: grant cutoff read failed for %r in %r: %s", subject, org, e)
-        return []
+        raise SignInUnavailable from e
     return [ns for ns in namespaces if ns not in ended]
 
 
@@ -365,7 +371,7 @@ async def jit_provision_for_email(
     """
     import hashlib
 
-    from server.auth.self_signup import _claim_lock
+    from server.auth.self_signup import claim_lock
     from server.settings import settings as _settings
 
     if not _settings.oidc_jit_provision:
@@ -385,7 +391,7 @@ async def jit_provision_for_email(
     org = _settings.oidc_jit_org
     # One sign-up per email at a time in this process, as self-signup does:
     # a second sign-in waits and finds the account the first wrote.
-    async with _claim_lock(org, "email:" + ident):
+    async with claim_lock(org, "email:" + ident):
         return await _provision_jit(org, ident, base)
 
 
@@ -393,23 +399,18 @@ async def _provision_jit(
     org: str, ident: str, base: str
 ) -> tuple[str, str, list[str], list[str]] | None:
     """`jit_provision_for_email` past its gates, under the email's lock."""
-    from server.auth.revocation import any_subject_revoked
+    from server.auth.revocation import subjects_revoked
     from server.auth.self_signup import provision_account
     from server.core.ch import own_write_reads
 
     accounts = await _accounts_naming(org, ident)
     if any(bool(a.get("active")) for a in accounts):
-        # The person has an account here, whatever its name (a random suffix,
-        # one a concurrent first sign-in just wrote, one a lagging replica hid
-        # from the first read): resolve it as written, never provision another.
-        # If it still does not resolve (the cross-org guard), the sign-in fails.
+        # Their account, whatever its name: sign in to it or fail, never add one.
         with own_write_reads():
             return await resolve_identity_for_email(ident)
     gone = [s for a in accounts for s in (str(a["namespace"]), str(a.get("owner") or "")) if s]
-    if await any_subject_revoked(gone, issued_at=int(time.time())):
-        # Offboarding is `revoke-token --subject` of an account of theirs (or
-        # the IdP): a fresh name would be a new subject past it. Deleting an
-        # account is not offboarding; its owner may have done it.
+    if await subjects_revoked(gone, issued_at=int(time.time())):
+        # Offboarded: a fresh name would be a new subject past the revoke.
         log.info("oidc jit: an account of %r in %s is revoked; not provisioning", ident, org)
         return None
     for ns in [base, *(f"{base}-{n}" for n in range(2, _JIT_NAME_TRIES + 2))]:
@@ -417,16 +418,13 @@ async def _provision_jit(
         if row is None:
             break
         if bool(row.get("active")) and str(row.get("contact_email") or "") == ident:
-            # This person's, written since the read above by a first sign-in
-            # on another process: sign in to it, never provision another.
+            # Written since the read above by a first sign-in on another process.
             with own_write_reads():
                 return await resolve_identity_for_email(ident)
-        # Deleted, released or another's: never rebuilt, which would hand back
-        # its data and an admin grant.
+        # Never rebuilt: that would hand back its data and an admin grant.
         log.info("oidc jit: %s/%s is taken; next", org, ns)
     else:
-        # Every predictable name is taken, perhaps on purpose: a random one
-        # cannot be registered ahead of this sign-in.
+        # Every predictable name is taken, perhaps on purpose; a random one is not.
         for _ in range(_JIT_NAME_TRIES):
             ns = f"{base}-{secrets.token_hex(4)}"
             if await _registry_row(org, ns) is None:
@@ -442,10 +440,8 @@ async def _provision_jit(
         password_hash="",  # SSO-only account
         description="Auto-provisioned via OIDC SSO.",
     )
-    # Re-resolve through the normal mapping (applies admin-promotion + the
-    # cross-org guard), as of the row just written. Two first sign-ins on two
-    # processes that both found the name free write the same (org, namespace)
-    # row — ReplacingMergeTree collapses it.
+    # Resolved like any account, as of the row just written. Two processes that
+    # both found the name free write the same row; ReplacingMergeTree keeps one.
     with own_write_reads():
         return await resolve_identity_for_email(ident)
 
@@ -466,6 +462,12 @@ async def login(input: LoginInput, request: Request) -> LoginOutput:
                 "message": "Too many failed sign-ins; try again later.",
             },
             headers={"Retry-After": "900"},
+        ) from e
+    except SignInUnavailable as e:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "UNAVAILABLE", "message": "Sign-in is unavailable; try again."},
+            headers={"Retry-After": "5"},
         ) from e
     if resolved is None:
         raise HTTPException(status_code=401, detail=_BAD_CREDS)

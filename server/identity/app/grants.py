@@ -167,10 +167,7 @@ async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
     # granted_by is who issued the grant — the authenticated caller, as
     # grants.approve records the approver. The body's value is honoured only
     # with auth off, where there is no caller to stamp.
-    from server.auth.context import current_auth
-
-    auth = current_auth()
-    granted_by = auth.subject if auth is not None and auth.subject else input.granted_by or "admin"
+    granted_by = _actor() or input.granted_by or "admin"
     await grants_repo.insert_row(
         {
             "org": input.org,
@@ -281,7 +278,11 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
     """Mark a grant revoked (revoking a pending request = reject). Idempotent.
 
     Refuses to revoke a namespace's last active admin — that would leave it
-    ownerless; promote a replacement first.
+    ownerless; promote a replacement first. The cutoffs that end older tokens'
+    claims (here and on a maintainer's sibling branches) are written before
+    any grant row: a failure there fails the revoke with nothing written, and
+    a failure after them leaves the grant standing but no longer reachable
+    through an older token's claim, which a retry finishes.
     """
 
     subject, row = await _live_grant_row(input.org, input.namespace, input.subject)
@@ -305,7 +306,7 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
     if row.role == "admin" and (row.status or "active") == "active":
         # A revoked maintainer leaves every branch of the repository: planned
         # first, so one cutoff write covers them all before any grant row lands.
-        siblings = await maintainers.plan_quietly(input.org, input.namespace, subject)
+        siblings = await maintainers.plan_revoke(input.org, input.namespace, subject)
     if (row.status or "active") == "active":
         # A pending request granted nothing, so revoking it (a reject) ends no claim.
         await end_grant_claims(
@@ -330,7 +331,7 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
         }
     )
     if siblings:
-        await maintainers.apply_quietly(input.org, input.namespace, subject, siblings)
+        await maintainers.write_revokes(input.org, input.namespace, subject, siblings)
     # The tokens this person minted lose their own grants here. Best-effort like the
     # maintainer fan-out above: the person's revoke has landed; a failed cascade is logged,
     # never a 500.

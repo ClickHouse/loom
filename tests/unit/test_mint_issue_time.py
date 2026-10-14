@@ -115,3 +115,16 @@ async def test_an_oidc_callback_issues_its_code_before_its_cutoff_read(
     assert r.status_code == 302
     (code,) = store.codes.values()
     assert int(code["exp"]) - oauth._CODE_TTL == before
+
+
+def test_a_sign_in_that_cannot_read_the_cutoffs_answers_503(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _unavailable(*_a: Any, **_k: Any) -> Any:
+        raise login.SignInUnavailable
+
+    monkeypatch.setattr(login, "resolve_user_credentials", _unavailable)
+    app = FastAPI()
+    app.include_router(login.router)
+    r = TestClient(app).post("/v1/auth/login", json={"identifier": "alice", "password": "pw"})
+    assert r.status_code == 503 and r.headers["retry-after"] == "5"

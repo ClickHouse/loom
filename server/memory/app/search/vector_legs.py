@@ -8,7 +8,8 @@ import asyncio
 import logging
 from typing import Any
 
-from server.identity.app.namespace_visibility import private_first_passes
+from server.auth.fanout import private_first_passes
+from server.identity.app import namespace_visibility
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app.search.context import SearchContext
 from server.memory.app.search.filters import read_filters
@@ -195,9 +196,9 @@ async def _run_vector_legs(
             # `loom.namespaces FINAL` round trip. With no private namespace (or no answer)
             # both passes are empty and the search is the flat fan-out below: common in
             # practice, well over a third of searches in one measured namespace.
-            first_pass, second_pass = await private_first_passes(
-                input.org, input.namespace, list(ctx.namespaces)
-            )
+            namespaces = list(ctx.namespaces)
+            visibility = await namespace_visibility.visibility_map(input.org, namespaces)
+            first_pass, second_pass = private_first_passes(input.namespace, namespaces, visibility)
 
         if first_pass:
             with traced(

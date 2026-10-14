@@ -662,7 +662,6 @@ def scalar_code_repo(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 def grant_cutoffs(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, list[str]]]:
     """Record the `end_grant_claims` calls the grant handlers make instead of
     writing cutoff rows: (org, namespace, subjects) per namespace cut."""
-    import server.code.app.index.maintainers as maintainers
     import server.identity.app.claim_release as claim_release
     import server.identity.app.grants as grants
     import server.identity.app.namespace_membership as membership
@@ -675,7 +674,7 @@ def grant_cutoffs(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, list[
     ) -> None:
         calls.extend((org, ns, list(subjects)) for ns in namespaces)
 
-    for module in (maintainers, claim_release, grants, membership, snapshot):
+    for module in (claim_release, grants, membership, snapshot):
         monkeypatch.setattr(module, "end_grant_claims", _record)
     return calls
 
@@ -699,9 +698,9 @@ def ended_grant_claims(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
             if ns in cutoffs and (issued_at is None or issued_at < cutoffs[ns])
         }
 
-    async def _not_revoked(subject: str, *, issued_at: int) -> bool:
+    async def _not_revoked(subjects: list[str], *, issued_at: int) -> bool:
         return False
 
     monkeypatch.setattr(revocation, "ended_claims", _ended)
-    monkeypatch.setattr(revocation, "subject_revoked", _not_revoked)
+    monkeypatch.setattr(revocation, "subjects_revoked", _not_revoked)
     return cutoffs

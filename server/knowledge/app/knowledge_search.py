@@ -9,9 +9,9 @@ import dataclasses
 import logging
 from typing import TYPE_CHECKING
 
-from server.auth.fanout import namespaces_to_search
+from server.auth.fanout import namespaces_to_search, private_first_passes
 from server.embedding import get_embedder
-from server.identity.app.namespace_visibility import private_first_passes
+from server.identity.app import namespace_visibility
 from server.knowledge.api.models_knowledge import (
     KnowledgeSearchInput,
     KnowledgeSearchOutput,
@@ -118,7 +118,8 @@ async def _search_private_first(
     first_pass: list[str] = []
     second_pass: list[str] = []
     if input.namespace_scope == "all_mine" and len(namespaces) > 1:
-        first_pass, second_pass = await private_first_passes(input.org, input.namespace, namespaces)
+        visibility = await namespace_visibility.visibility_map(input.org, namespaces)
+        first_pass, second_pass = private_first_passes(input.namespace, namespaces, visibility)
     if first_pass:
         with traced(
             "ch.query.chunks",

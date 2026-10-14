@@ -17,9 +17,11 @@ BOTH a token that names the namespace AND a live direct grant.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 from server.auth.directory import ClassificationUnavailable, directory
+from server.auth.revocation import claim_ended
 from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT
 
 # Re-export from operations.base so there's one canonical Role definition.
@@ -334,8 +336,6 @@ def withdrawn_claims(auth: AuthInfo, org: str, namespaces: list[str]) -> set[str
     was minted (`revocation.end_grant_claims`). A namespace the subject never
     held a grant on (an operator's `loom mint-token`) and a token minted after
     the revocation keep their claim. No I/O: the revocation snapshot."""
-    from server.auth.revocation import claim_ended
-
     if not namespaces or auth.issued_at is None:
         return set()
     issued_at = auth.issued_at
@@ -344,6 +344,13 @@ def withdrawn_claims(auth: AuthInfo, org: str, namespaces: list[str]) -> set[str
         for ns in namespaces
         if names_namespace(auth, org, ns) and claim_ended(org, ns, auth.subject, issued_at)
     }
+
+
+def live_claims(auth: AuthInfo, org: str, namespaces: Iterable[str]) -> list[str]:
+    """The named `namespaces` (no `*`) whose claim still stands, in order."""
+    named = [ns for ns in namespaces if ns and ns != "*"]
+    withdrawn = withdrawn_claims(auth, org, named)
+    return [ns for ns in named if ns not in withdrawn]
 
 
 async def _check_restricted(auth: AuthInfo, required_role: Role, org: str, namespace: str) -> None:

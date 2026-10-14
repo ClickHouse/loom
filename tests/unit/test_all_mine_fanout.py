@@ -15,7 +15,7 @@ import server.auth.context as ctx
 import server.auth.fanout as fanout_mod
 import server.identity.app.namespace_kinds as nk
 import server.identity.app.namespace_visibility as nv
-from server.auth.fanout import Fanout, namespaces_to_search
+from server.auth.fanout import Fanout, namespaces_to_search, private_first_passes
 from server.auth.jwt import AuthInfo
 from server.knowledge.api.models_knowledge import KnowledgeSearchInput
 from server.knowledge.app import knowledge_search
@@ -90,9 +90,9 @@ def test_the_cap_keeps_private_namespaces_and_names_the_rest(
     monkeypatch.setattr(settings, "memory_search_fanout_max_namespaces", 2)
     ctx.set_current_auth(_flat("a-team", "alice", "b-team", "notes"))
     fanout = _fanout()
-    assert fanout.reads("zed") == (["zed", "alice", "notes"], ["a-team", "b-team"])
+    assert fanout.split("zed") == (["zed", "alice", "notes"], ["a-team", "b-team"])
     # The addressed namespace takes no slot: the cap bounds the others.
-    assert fanout.reads("alice") == (["alice", "a-team", "notes"], ["b-team"])
+    assert fanout.split("alice") == (["alice", "a-team", "notes"], ["b-team"])
 
 
 def test_a_failed_visibility_lookup_cuts_in_plain_order(
@@ -104,7 +104,7 @@ def test_a_failed_visibility_lookup_cuts_in_plain_order(
     monkeypatch.setattr(nv, "visibility_map", _unreadable)
     monkeypatch.setattr(settings, "memory_search_fanout_max_namespaces", 2)
     ctx.set_current_auth(_flat("a-team", "alice", "b-team"))
-    assert _fanout().reads("zed") == (["zed", "a-team", "alice"], ["b-team"])
+    assert _fanout().split("zed") == (["zed", "a-team", "alice"], ["b-team"])
 
 
 def test_auth_off_applies_the_cap_too(
@@ -117,7 +117,7 @@ def test_auth_off_applies_the_cap_too(
     monkeypatch.setattr(settings, "auth_required", False)
     monkeypatch.setattr(settings, "memory_search_fanout_max_namespaces", 1)
     grants["you"] = ["alpha-team", "local", "work"]
-    assert _fanout().reads("work") == (["work", "local"], ["alpha-team"])
+    assert _fanout().split("work") == (["work", "local"], ["alpha-team"])
 
 
 def test_a_namespace_a_claim_repeats_is_read_once(
@@ -133,7 +133,7 @@ def test_a_namespace_a_claim_repeats_is_read_once(
         ns_roles=(("team", "viewer"), ("alice", "writer"), ("wiki", "viewer")),
     )
     ctx.set_current_auth(scoped)
-    assert _fanout().reads("zed") == (["zed", "team", "alice"], ["wiki"])
+    assert _fanout().split("zed") == (["zed", "team", "alice"], ["wiki"])
 
 
 def test_the_cap_keeps_a_scoped_tokens_own_order(
@@ -151,25 +151,19 @@ def test_the_cap_keeps_a_scoped_tokens_own_order(
     ctx.set_current_auth(scoped)
     fanout = _fanout()
     assert fanout.ordered
-    assert fanout.reads("zed") == (["zed", "team"], ["alice"])
+    assert fanout.split("zed") == (["zed", "team"], ["alice"])
 
 
 def test_the_addressed_namespace_always_leads() -> None:
     fanout = Fanout(org=ORG, namespaces=("team", "mine", "wiki"), cap=32)
-    assert fanout.reads("mine") == (["mine", "team", "wiki"], [])
-    assert fanout.reads("other") == (["other", "team", "mine", "wiki"], [])
-    assert Fanout(org=ORG, namespaces=(), cap=32).reads("mine") == (["mine"], [])
+    assert fanout.split("mine") == (["mine", "team", "wiki"], [])
+    assert fanout.split("other") == (["other", "team", "mine", "wiki"], [])
+    assert Fanout(org=ORG, namespaces=(), cap=32).split("mine") == (["mine"], [])
 
 
-def test_private_first_passes_put_the_addressed_namespace_first(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_private_first_passes_put_the_addressed_namespace_first() -> None:
     def _passes(namespace: str, answer: dict[str, str]) -> tuple[list[str], list[str]]:
-        async def _visibility(org: str, namespaces: list[str]) -> dict[str, str]:
-            return answer
-
-        monkeypatch.setattr(nv, "visibility_map", _visibility)
-        return asyncio.run(nv.private_first_passes(ORG, namespace, ["team", "home", "wiki"]))
+        return private_first_passes(namespace, ["team", "home", "wiki"], answer)
 
     visibility = {"home": "private", "team": "public", "wiki": "public"}
     assert _passes("team", visibility) == (["team", "home"], ["wiki"])
