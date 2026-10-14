@@ -33,7 +33,9 @@ Provider selection itself (`LOOM_EMBEDDING_MODEL`, `LOOM_LLM_PROVIDER`,
 
 ## Container image and uvicorn
 
-Read by `scripts/serve.sh`, the image's command, which starts uvicorn:
+Read by `scripts/serve.sh`, the image's command, which starts uvicorn. It takes
+them from its environment only, not from `.env` or `LOOM_ENV_FILE` (compose's
+`env_file:` sets them in the environment):
 
 | Variable                   | Default              | Meaning                                                                                                                                                                                                            |
 | -------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |

@@ -3,7 +3,8 @@
 # process per CPU this container may use, bounded by its memory and at most 8
 # (server/core/web_workers.py). The count is exported so the server's rate
 # limiter divides by the same number. One of the processes takes the supervisor
-# lock and runs the background workers.
+# lock and runs the background workers. This script reads its variables from
+# the environment only, never from an env file (compose's env_file sets them).
 set -eu
 
 chosen=""
@@ -12,12 +13,8 @@ if [ -z "${LOOM_WEB_WORKERS:-}" ]; then
   LOOM_WEB_WORKERS=$(python -m server.core.web_workers)
   chosen=1
 fi
-positive=""
-case "$LOOM_WEB_WORKERS" in
-  '' | *[!0-9]*) ;;
-  *) [ "$LOOM_WEB_WORKERS" -ge 1 ] && positive=1 ;;
-esac
-if [ -z "$positive" ]; then
+# A word, a sign or a number past the shell's range fails the test as well.
+if ! [ "$LOOM_WEB_WORKERS" -ge 1 ] 2>/dev/null; then
   echo "loom: LOOM_WEB_WORKERS=$LOOM_WEB_WORKERS is not a positive whole number" >&2
   exit 2
 fi

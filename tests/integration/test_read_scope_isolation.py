@@ -602,20 +602,28 @@ def test_a_narrowed_token_cannot_reach_any_blacklist_op(
     # A namespace-wide token still sees it.
     r = _post(control_plane_url, tokens["namespace"], "blacklist.list", w)
     assert r.status_code == 200 and seed.pattern_id_v in r.text, r.text[:300]
-    r = _post(
-        control_plane_url,
-        tokens["pinned_w"],
-        "memory.set",
-        {
-            **w,
-            "agent": "a",
-            "user_id": W,
-            "memory_key": "probe/blacklisted",
-            "value": f"a note holding {seed.pattern_v}",
-        },
-    )
-    assert r.status_code == 422 and "BLACKLISTED" in r.text, f"{r.status_code} {r.text[:300]}"
-    assert seed.nonce_v not in r.text and seed.pattern_id_v not in r.text, r.text[:300]
+
+    def _refused() -> httpx.Response | None:
+        r = _post(
+            control_plane_url,
+            tokens["pinned_w"],
+            "memory.set",
+            {
+                **w,
+                "agent": "a",
+                "user_id": W,
+                "memory_key": "probe/blacklisted",
+                "value": f"a note holding {seed.pattern_v}",
+            },
+        )
+        return r if r.status_code == 422 else None
+
+    # Another web process takes the pattern up within its version-check interval.
+    refused = wait_until(_refused, max_wait=10.0, interval=0.5, description="W to be refused")
+    assert "BLACKLISTED" in refused.text, refused.text[:300]
+    assert seed.nonce_v not in refused.text and seed.pattern_id_v not in refused.text, refused.text[
+        :300
+    ]
 
 
 def test_pinned_users_keep_their_own_brief_under_one_key(

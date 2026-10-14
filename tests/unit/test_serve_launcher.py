@@ -136,7 +136,7 @@ def test_the_launchers_check_refuses_a_pinned_directory_it_cannot_write(
         pinned.chmod(0o700)
 
 
-@pytest.mark.parametrize("workers", ["auto", "0", "00", "-1"])
+@pytest.mark.parametrize("workers", ["auto", "0", "00", "-1", "4x", "99999999999999999999"])
 def test_a_worker_count_that_is_not_a_positive_number_is_refused_by_name(
     tmp_path: Path, workers: str
 ) -> None:

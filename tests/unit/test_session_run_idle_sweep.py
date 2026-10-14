@@ -27,6 +27,10 @@ class _Ledger:
         self.params.append(params)
         return self.rows[: params["lim"]]
 
+    async def active(self, org: str, run_id: str) -> list[dict[str, Any]]:
+        done = {c.run_id for c in self.completes}
+        return [r for r in self.rows if r["run_id"] == run_id and run_id not in done]
+
     async def complete(self, inp: Any) -> None:
         if inp.run_id.startswith("broken"):
             raise ValueError("the row is gone")
@@ -37,6 +41,7 @@ def _ledger(monkeypatch, *run_ids: str) -> _Ledger:
     ledger = _Ledger(*run_ids)
     monkeypatch.setattr(run_handlers, "get_client", lambda: ledger)
     monkeypatch.setattr(run_handlers, "handle_run_complete", ledger.complete)
+    monkeypatch.setattr(run_handlers, "active_session_runs", ledger.active)
     return ledger
 
 
@@ -115,3 +120,16 @@ def test_the_pass_deadline_leaves_room_for_the_close_budget() -> None:
     (row,) = [w for w in _WORKERS if w.name == "mcp_session_run_sweep"]
     assert row.max_pass_seconds is not None
     assert row.max_pass_seconds >= 2 * run_handlers.IDLE_CLOSE_BUDGET_S
+
+
+@pytest.mark.asyncio
+async def test_a_run_another_close_completed_first_is_left_alone(monkeypatch) -> None:
+    """Two sweeps, or a sweep and a DELETE, racing on one run complete it once,
+    so its memories get the retain mode once."""
+    ledger = _ledger(monkeypatch, "a")
+    first, second = await asyncio.gather(
+        run_handlers.close_idle_session_runs(1800),
+        run_handlers.close_session_run("o", "a", reason="session_end"),
+    )
+    assert [c.run_id for c in ledger.completes] == ["a"]
+    assert (first, second) in ((1, False), (0, True))

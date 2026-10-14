@@ -256,10 +256,11 @@ async def active_session_runs(org: str, run_id: str) -> list[RunLedgerRow]:
 
 async def close_session_run(org: str, run_id: str, *, reason: str) -> bool:
     """Complete every active row of an implicit session run; False when none is."""
-    active = await active_session_runs(org, run_id)
-    for row in active:
+    closed = [
         await _complete_session_run(row, reason=reason)
-    return bool(active)
+        for row in await active_session_runs(org, run_id)
+    ]
+    return any(closed)
 
 
 # One idle-sweep pass: how many runs it closes at most, how many at once, and
@@ -286,21 +287,26 @@ async def close_idle_session_runs(idle_seconds: int, *, org: str = "") -> int:
             if time.monotonic() >= deadline:
                 return False
             try:
-                await _complete_session_run(row, reason="idle")
+                return await _complete_session_run(row, reason="idle")
             except Exception as e:  # noqa: BLE001 — one run's close must not hold up the rest
                 log.warning("session run %s: idle close failed: %s", row["run_id"], e)
                 return False
-            return True
 
     return sum(await asyncio.gather(*(close(row) for row in stale)))
 
 
-async def _complete_session_run(row: RunLedgerRow, *, reason: str) -> None:
+async def _complete_session_run(row: RunLedgerRow, *, reason: str) -> bool:
+    """Complete one row, unless another close (the sweep on another host, a
+    DELETE) completed it first: a second completion would apply the retain
+    mode to the run's memories again. False when it was already closed."""
+    org, namespace, run_id = str(row["org"]), str(row["namespace"]), str(row["run_id"])
+    if namespace not in {str(r["namespace"]) for r in await active_session_runs(org, run_id)}:
+        return False
     await handle_run_complete(
         RunCompleteInput(
-            org=str(row["org"]),
-            namespace=str(row["namespace"]),
-            run_id=str(row["run_id"]),
+            org=org,
+            namespace=namespace,
+            run_id=run_id,
             status="completed",
             # The transport saw the session end; it cannot say how the work
             # went, and `none` writes no evidence or harm.
@@ -310,6 +316,7 @@ async def _complete_session_run(row: RunLedgerRow, *, reason: str) -> None:
             metadata={"closed_by": f"mcp_{reason}"},
         )
     )
+    return True
 
 
 async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:
