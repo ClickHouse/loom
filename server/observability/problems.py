@@ -518,7 +518,8 @@ def _layout_problems(state: HealthState) -> list[Problem]:
 _SANDBOX_FIX = (
     "Address the 'sandbox probe failed' warning in the server log (printed at the top of "
     "`loom doctor`). In a container on a host with AppArmor 4.0 or later, load the "
-    "loom-repo-sandbox profile and copy the security_opt of dev/docker-compose.colour.yml."
+    "loom-repo-sandbox profile and copy the security_opt and pids_limit of "
+    "dev/docker-compose.colour.yml."
 )
 _SANDBOX_DOCS = "'Repository-job sandbox' in docs/operations/code-index-operations.md"
 
