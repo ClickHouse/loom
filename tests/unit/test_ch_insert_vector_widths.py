@@ -156,3 +156,35 @@ async def test_an_older_probe_answering_after_the_refusal_keeps_the_new_width(
     old_answer.set()
     await older
     assert codes_state.stored_width("memory_embeddings", "embedding") == 1024
+
+
+def _rebuilt_mid_insert(table: _Table) -> None:
+    """The first attempt meets a background probe that reads the old width after
+    the insert began, then the rebuild, then ClickHouse's refusal."""
+    real_insert = table.insert
+
+    async def insert(t: str, data: Any, **kw: Any) -> None:
+        if table.attempts == 0:
+            table.width = 3072
+            await codes_state._start_refresh(since=0.0)
+            table.width = 1024
+        await real_insert(t, data, **kw)
+
+    table.insert = insert  # type: ignore[method-assign]
+
+
+@pytest.mark.asyncio
+async def test_a_probe_from_before_the_refusal_does_not_explain_it(table, monkeypatch) -> None:
+    _rebuilt_mid_insert(table)
+    with pytest.raises(CodedWidthMismatchError, match="stores 1024-dim vectors"):
+        await _client(table, monkeypatch).insert("loom.memory_embeddings", [_full(3072)])
+    assert table.attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_placeholders_are_sized_from_a_probe_after_the_refusal(table, monkeypatch) -> None:
+    _rebuilt_mid_insert(table)
+    rows = [{"embedding": [], "memory_key_embedding": []}]
+    await _client(table, monkeypatch).insert("loom.memory_embeddings", rows)
+    assert table.attempts == 2
+    assert [len(rows[0][c]) for c in COLUMNS] == [1024, 1024]
