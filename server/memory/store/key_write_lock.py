@@ -85,9 +85,9 @@ class KeyWriteLocks:
         memory_key: str,
     ) -> AsyncIterator[None]:
         name = lock_name(org, namespace, agent, user_id, session_id, memory_key)
-        me = default_holder()
-        async with self._process_lock(name, self._wait_s):
-            if not await self._keeper_acquire(name, me):
+        me, until = default_holder(), time.monotonic() + self._wait_s
+        async with self._process_lock(name, until):
+            if not await self._keeper_acquire(name, me, until):
                 yield
                 return
             try:
@@ -98,17 +98,18 @@ class KeyWriteLocks:
     @asynccontextmanager
     async def lease(self, name: str, *, wait_s: float | None = None) -> AsyncIterator[None]:
         """Hold `name` across hosts while the body runs, renewed every third of the TTL.
-        LeaseBusy when another holder keeps it past `wait_s` (the instance's wait by
-        default) or Keeper fails; LeaseLost, from the body, once the lease cannot be
-        confirmed ours before it expires. Without Keeper it is held in this process."""
+        LeaseBusy when it is held, in this process or by another host, past `wait_s` (the
+        instance's wait by default) or Keeper fails; LeaseLost, from the body, once the
+        lease cannot be confirmed ours before it expires. Without Keeper it is held in
+        this process."""
         me, lost = default_holder(), asyncio.Event()
         body = asyncio.current_task()
-        wait = self._wait_s if wait_s is None else wait_s
+        until = time.monotonic() + (self._wait_s if wait_s is None else wait_s)
         async with AsyncExitStack() as stack:
             try:
-                await stack.enter_async_context(self._process_lock(name, wait))
+                await stack.enter_async_context(self._process_lock(name, until))
                 started = time.monotonic()
-                held = await self._acquire(name, me, wait)
+                held = await self._acquire(name, me, until)
             except PreconditionFailedError:
                 raise LeaseBusy(name) from None
             except Exception as e:  # a lease Keeper cannot confirm is not held
@@ -157,12 +158,12 @@ class KeyWriteLocks:
         return await self._holder(name) == (me, False)
 
     @asynccontextmanager
-    async def _process_lock(self, name: str, wait_s: float) -> AsyncIterator[None]:
+    async def _process_lock(self, name: str, until: float) -> AsyncIterator[None]:
         lock, users = self._local.get(name, (asyncio.Lock(), 0))
         self._local[name] = (lock, users + 1)
         try:
             try:
-                await asyncio.wait_for(lock.acquire(), timeout=wait_s)
+                await asyncio.wait_for(lock.acquire(), timeout=until - time.monotonic())
             except TimeoutError:
                 raise _busy() from None
             try:
@@ -176,25 +177,24 @@ class KeyWriteLocks:
             else:
                 self._local[name] = (lock, users - 1)
 
-    async def _keeper_acquire(self, name: str, me: str) -> bool:
+    async def _keeper_acquire(self, name: str, me: str, until: float) -> bool:
         """True once held; False without a usable Keeper."""
         try:
-            return await self._acquire(name, me, self._wait_s)
+            return await self._acquire(name, me, until)
         except PreconditionFailedError:
             raise
         except Exception as e:  # noqa: BLE001 — Keeper trouble must not fail the write
             degradations.note("memory_key_lock", "process_lock_only", e)
             return False
 
-    async def _acquire(self, name: str, me: str, wait_s: float) -> bool:
+    async def _acquire(self, name: str, me: str, until: float) -> bool:
         """True once held; False when the server has no Keeper. Raises
-        PreconditionFailedError once `wait_s` is over, and what a Keeper read raises."""
-        deadline = time.monotonic() + wait_s
+        PreconditionFailedError at `until` (monotonic), and what a Keeper read raises."""
         poll = self._poll_s
         if not await self._has_keeper():
             return False
         while not await self._attempt(name, me):
-            if time.monotonic() >= deadline:
+            if time.monotonic() >= until:
                 raise _busy()
             await asyncio.sleep(poll)
             poll = min(poll * 1.5, 0.5)

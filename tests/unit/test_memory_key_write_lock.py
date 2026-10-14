@@ -321,3 +321,27 @@ async def test_a_lease_waits_as_long_as_its_caller_asks(monkeypatch: pytest.Monk
     async with locks.lease("job", wait_s=3):
         assert ch.rows["job"]["holder"] != "other"
     await releasing
+
+
+async def test_a_lease_waits_once_for_this_process_and_another_host_together(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ch = FakeKeeper()
+    locks = _locks(ch, monkeypatch)
+    entered = asyncio.Event()
+
+    async def local_pass() -> None:
+        async with locks.lease("job"):
+            entered.set()
+            await asyncio.sleep(0.6)
+            ch.rows["job"] = {"holder": "other", "stale": False}  # another host takes it next
+
+    passing = asyncio.create_task(local_pass())
+    await entered.wait()
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    with pytest.raises(kl.LeaseBusy):
+        async with locks.lease("job", wait_s=1.0):
+            pytest.fail("entered a held lease")
+    assert loop.time() - started < 1.4  # one wait of 1 s for both holders, not two
+    await passing

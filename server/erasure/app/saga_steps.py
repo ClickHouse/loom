@@ -18,6 +18,7 @@ from server.erasure.store import steps_graph as graph_steps
 from server.erasure.store import steps_ledgers as ledger_steps
 from server.erasure.store import steps_memory as memory_steps
 from server.memory.app.code_links import queue_lease
+from server.workers.registry import DEADLINE_CAP_SECONDS
 
 log = logging.getLogger(__name__)
 
@@ -75,8 +76,9 @@ async def _step_purge_code_index_by_ns(org: str, namespace: _NS) -> int:
     )
 
 
-# how long a code-link erasure waits for a linking pass to give up the queue lease
-_LINK_PASS_WAIT_S = 900.0
+# how long a code-link erasure waits for a linking pass to give up the queue lease: longer
+# than the link worker's pass deadline (a test holds it so)
+_LINK_PASS_WAIT_S = DEADLINE_CAP_SECONDS
 
 
 async def _step_delete_code_links_by_user(org: str, user_id: str) -> int:

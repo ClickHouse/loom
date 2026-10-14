@@ -401,3 +401,11 @@ async def test_unconfigured_backends_are_noted_as_stubs(run: Any) -> None:
     notes = {s.step: s.notes for s in run.last["out"].steps}
     assert {b: notes[b] for b in NS_BACKENDS} == dict.fromkeys(NS_BACKENDS, "stub: not configured")
     assert notes["memory.tombstone"] == ""
+
+
+def test_a_code_link_erasure_waits_longer_than_a_linking_pass_runs() -> None:
+    from server.erasure.app import saga_steps
+    from server.workers.registry import _WORKERS, _spec_for
+
+    (row,) = [w for w in _WORKERS if w.name == "memory_code_links"]
+    assert _spec_for(row).deadline_seconds() < saga_steps._LINK_PASS_WAIT_S
