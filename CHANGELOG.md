@@ -8,12 +8,52 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 
 ## [Unreleased]
 
+### Added
+
+- The blue/green colours (`dev/docker-compose.colour.yml`) run the bubblewrap
+  repository-job sandbox, so `/v1/health` no longer reports `repo_jobs_unsandboxed` there.
+  They use narrow profiles instead of `unconfined`: `dev/seccomp/loom-repo-sandbox.json`
+  (Docker's default plus one rule allowing `clone`, `unshare`, `mount`, `umount2` and
+  `pivot_root` to every process; the default allows the first four only with
+  `CAP_SYS_ADMIN`, and `pivot_root` never), the AppArmor profile
+  `deploy/apparmor/loom-repo-sandbox` (`docker-default` for every process, and a child
+  profile adding `userns, mount, pivot_root` for whatever execs `bwrap` and what it runs)
+  and `systempaths=unconfined`, plus `pids_limit: 8192` per container as a backstop.
+  Load the AppArmor profile on the host before the next redeploy; `redeploy.sh` (through
+  `dev/apparmor_check.sh`) stops when it is missing or the host has no AppArmor, and
+  (through `dev/sandbox_probe.sh`) removes the new colour instead of swapping to it when
+  the sandbox probe fails, or cannot run, in either of its containers. A CI job
+  (`sandbox-profile` in `docker-smoke.yml`) runs the probe and the hostile suite under the
+  shipped profile. The other Compose stacks are unchanged. See "Repository-job sandbox" in
+  docs/operations/code-index-operations.md.
+
+- `LOOM_CODE_SANDBOX_REQUIRED` (default off; the colours set it): where the sandbox
+  cannot run, no repository job runs as a plain process. The ingest pass and the
+  compiler tiers skip every entry with a note, `loom code scip-full` exits 1, and
+  `/v1/health` reports `repo_jobs_unsandboxed` as an error. `loom code init`'s first bare
+  clone stays a plain `git clone`.
+
 ### Changed
 
 - **Breaking:** `rerank` (`memory.search`, `memory.search_trace`, `code.search`, `code.ask`)
   and a namespace's `rerank_endpoint` take a name, not a URL: `none`, `builtin:openai[:model]`,
   `builtin:cohere[:model]`, or an endpoint the operator names in `LOOM_RERANK_ENDPOINTS_JSON`.
   A URL or an unknown name is a 422. A namespace that still stores a URL is no longer reranked.
+
+### Fixed
+
+- `loom code scip-full` moves its checkout and runs its harness (the repository's CMake)
+  as repository jobs, in the sandbox like the delta worker, instead of as plain processes.
+  The checkout fetch now names the bare clone and the submodule update gets the network,
+  without which neither worked under the sandbox. The last MiB of the harness output is
+  printed when it ends, and a harness past its 6 h bound (inside the cron's 8 h) is
+  reported as a timeout, exit 124.
+- `LOOM_CODE_SANDBOX_MAX_PIDS` bounds each repository job: it is set inside the job's
+  user namespace, so on Linux 5.14 and later it no longer counts every task of the
+  server's uid on the host.
+- Where an AppArmor profile refuses the sysctl write of bwrap's `--disable-userns`, the
+  sandbox probe retries without the flag instead of reporting the sandbox unavailable;
+  Loom's seccomp filter still refuses jobs new user namespaces.
 
 ## [1.0.0] - 2026-10-16
 

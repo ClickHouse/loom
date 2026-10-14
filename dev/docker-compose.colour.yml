@@ -44,6 +44,21 @@ x-colour-common: &colour-common
     nofile:
       soft: 65536
       hard: 65536
+  # The repository-job sandbox (bubblewrap) needs user namespaces, mounts and a
+  # fresh /proc, which Docker's defaults refuse. Narrow profiles, not
+  # `unconfined`: the seccomp file is Docker's default plus one rule, and the
+  # AppArmor profile is docker-default with a child profile that only bwrap
+  # enters, which allows `userns, mount, pivot_root`. No `no-new-privileges`:
+  # it would stop bwrap entering that child profile. Load
+  # deploy/apparmor/loom-repo-sandbox on the host first (redeploy.sh checks).
+  # See "Repository-job sandbox" in docs/operations/code-index-operations.md.
+  security_opt:
+    - seccomp=./seccomp/loom-repo-sandbox.json
+    - apparmor=loom-repo-sandbox
+    - systempaths=unconfined
+  # Backstop for the whole container, server and jobs together. Each job has
+  # its own bound too (LOOM_CODE_SANDBOX_MAX_PIDS, 2048 by default).
+  pids_limit: 8192
   env_file:
     - ../.env
   networks:
@@ -82,6 +97,9 @@ services:
     environment:
       PORT: "${LOOM_COLOUR_PORT:?set LOOM_COLOUR_PORT=7781|7782}"
       LOOM_BLOB_DIR: /app/var/blobs
+      # This stack ships the sandbox profiles: refuse repository jobs rather
+      # than run them unsandboxed if the sandbox cannot run.
+      LOOM_CODE_SANDBOX_REQUIRED: "true"
       LOOM_BACKGROUND_WORKERS: "auto"
       LOOM_WEB_WORKERS: "1"
       LOOM_SUPERVISOR_LOCK_PATH: /app/var/shared/supervisor.lock
@@ -104,6 +122,9 @@ services:
     environment:
       PORT: "${LOOM_COLOUR_PORT:?set LOOM_COLOUR_PORT=7781|7782}"
       LOOM_BLOB_DIR: /app/var/blobs
+      # This stack ships the sandbox profiles: refuse repository jobs rather
+      # than run them unsandboxed if the sandbox cannot run.
+      LOOM_CODE_SANDBOX_REQUIRED: "true"
       LOOM_RATELIMIT_SHARED_PATH: /app/var/shared/ratelimit.buckets
       LOOM_SUPERVISOR_LOCK_PATH: /app/var/shared/supervisor.lock
       LOOM_BOOT_MIGRATE_LOCK_PATH: /app/var/shared/migrate.lock

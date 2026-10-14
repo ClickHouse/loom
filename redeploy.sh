@@ -290,6 +290,12 @@ if [[ "$behind" -gt 0 ]]; then
   git rebase --autostash origin/main
 fi
 
+# ---- AppArmor profile --------------------------------------------------------
+# The colour compose names an AppArmor profile for the repository-job sandbox;
+# Docker refuses to start a container whose profile the kernel has not loaded.
+# A host check, so it runs before the preflight's slower ones.
+dev/apparmor_check.sh "$COLOUR_COMPOSE" || exit 1
+
 # ---- preflight ---------------------------------------------------------------
 # Health-sha through the proxy, who holds :7777 (docker-proxy for loom-proxy,
 # which answers health — fine), migrate dry-run --strict. Exit 3 = the running
@@ -356,6 +362,11 @@ wait_ready "$idle" || {
 }
 wait_workers "$idle" || {
   echo "!!! loom-$idle-workers is not healthy; not swapping. Inspect: docker logs loom-$idle-workers"
+  exit 1
+}
+# The new colour must run the repository-job sandbox before it takes traffic.
+dev/sandbox_probe.sh "$idle" || {
+  echo "    The proxy still points at loom-${active:-nothing}."
   exit 1
 }
 

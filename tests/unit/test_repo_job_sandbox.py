@@ -8,6 +8,7 @@ import contextlib
 import os
 import signal
 import struct
+import subprocess
 import sys
 from pathlib import Path
 
@@ -229,7 +230,7 @@ def test_the_probe_says_no_without_bwrap(monkeypatch) -> None:
     assert sandbox._probe() is False
 
 
-def test_prlimit_sets_the_rlimits_in_front_of_bwrap(monkeypatch) -> None:
+def test_prlimit_sets_the_rlimits_in_front_of_bwrap_and_nproc_inside(monkeypatch) -> None:
     """No Python runs between fork and exec (preexec_fn can deadlock a threaded
     server). Memory is RLIMIT_DATA: node reserves far more address space than
     RLIMIT_AS would allow."""
@@ -244,10 +245,51 @@ def test_prlimit_sets_the_rlimits_in_front_of_bwrap(monkeypatch) -> None:
         "/usr/bin/prlimit",
         "--cpu=60:60",
         "--data=1048576:1048576",
-        "--nproc=64:64",
         "--fsize=2097152:2097152",
         "--",
     ]
+    # RLIMIT_NPROC inside bwrap's user namespace: there it counts only the job's tasks.
+    argv = sandbox._bwrap_argv(["true"], scratch="/tmp/s", binds=[], fd=7)
+    assert argv[-5:] == ["--", "/usr/bin/prlimit", "--nproc=64:64", "--", "true"]
+
+
+_SYSCTL_REFUSED = b"bwrap: sysctl user.max_user_namespaces = 1: Permission denied"
+
+
+@pytest.mark.parametrize(
+    ("help_text", "stderr", "available", "tried"),
+    [
+        # An AppArmor profile may refuse the sysctl write --disable-userns makes;
+        # the seccomp filter still refuses the job new user namespaces.
+        ("--disable-userns", {True: _SYSCTL_REFUSED}, True, [True, False]),
+        ("--disable-userns", {}, True, [True]),
+        ("--disable-userns", {True: _SYSCTL_REFUSED, False: b"bwrap: x"}, False, [True, False]),
+        # any other failure is not the flag's: no retry
+        ("--disable-userns", {True: b"bwrap: mount: Permission denied"}, False, [True]),
+        ("--unshare-user", {}, True, [False]),
+    ],
+)
+def test_the_probe_retries_without_disable_userns_when_the_sysctl_is_refused(
+    monkeypatch, help_text: str, stderr: dict[bool, bytes], available: bool, tried: list[bool]
+) -> None:
+    monkeypatch.setattr(sandbox.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(sandbox.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(
+        sandbox.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout=f"  {help_text}  ..."),
+    )
+    runs = []
+
+    def job():
+        runs.append(sandbox._disable_userns)
+        err = stderr.get(sandbox._disable_userns, b"")
+        return subprocess.CompletedProcess([], int(bool(err)), b"", err)
+
+    monkeypatch.setattr(sandbox, "_probe_job", job)
+    monkeypatch.setattr(sandbox, "_disable_userns", False)
+    assert sandbox._probe() is available
+    assert runs == tried and sandbox._disable_userns is tried[-1]
 
 
 def test_the_probe_says_no_without_prlimit(monkeypatch) -> None:
@@ -291,6 +333,61 @@ def test_without_the_sandbox_the_ingest_pass_skips_self_registered_network_entri
     assert result.note == f"self-ssh: {compiler_tier.UNSANDBOXED_NETWORK_SKIP}"
     monkeypatch.setattr(sandbox, "_available", True)
     assert ingest_pass._without_unsandboxed(entries, CodeIngestResult()) == entries
+
+
+async def test_a_required_sandbox_skips_every_entry_before_any_fetch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Two entries sharing a mirror would be fetched once in prefetch_mirrors;
+    with the sandbox required and missing, the pass skips them first instead of
+    the fetch's SandboxRequiredError ending the pass."""
+    from server.code.app.index import compiler_tier, gitrepo, ingest_pass, pass_fetch
+    from server.code.app.index.pass_budget import CodeIngestResult
+    from server.settings import settings
+    from tests.unit.code_fixtures import repo_config
+
+    mirror = tmp_path / "shared.git"
+    mirror.mkdir()
+    entries = [
+        repo_config(
+            namespace=ns,
+            git_dir=str(mirror),
+            git_remote="https://github.com/a/b.git",
+            git_branch=branch,
+        )
+        for ns, branch in [("code-main", "main"), ("code-rel", "release")]
+    ]
+    monkeypatch.setattr(sandbox, "_available", False)
+    monkeypatch.setattr(settings, "code_sandbox_required", True)
+    fetched = []
+
+    async def fetch_many(*a, **k):
+        fetched.append(a)
+
+    monkeypatch.setattr(gitrepo, "fetch_many", fetch_many)
+    result = CodeIngestResult()
+    kept = ingest_pass._without_unsandboxed(entries, result)
+    assert kept == [] and result.note.endswith(compiler_tier.SANDBOX_REQUIRED_SKIP)
+    assert await pass_fetch.prefetch_mirrors(kept, result) == 0 and fetched == []
+    # the operator entries are skipped too, not only self-registered ones
+    assert compiler_tier.unsandboxed_skip(entries[0], "code_scip_delta", runs_repo_code=True)
+
+
+async def test_a_refused_clone_records_an_error_stage(tmp_path: Path, monkeypatch) -> None:
+    from unittest.mock import AsyncMock
+
+    from server.code.app.index import bootstrap
+    from server.settings import settings
+    from tests.unit.code_fixtures import repo_config
+
+    monkeypatch.setattr(sandbox, "_available", False)
+    monkeypatch.setattr(settings, "code_sandbox_required", True)
+    cfg = repo_config(git_dir=str(tmp_path / "m.git"), git_remote=str(tmp_path / "src.git"))
+    repo = AsyncMock()
+    assert await bootstrap.clone_if_missing(cfg, repo) is False
+    stage = repo.set_state.await_args_list[-1]
+    assert stage.args[2:4] == (bootstrap.STAGE_KEY, "error")
+    assert "LOOM_CODE_SANDBOX_REQUIRED" in stage.kwargs["detail"]
 
 
 async def test_a_parsed_stdout_past_its_limit_kills_the_job(monkeypatch) -> None:
@@ -477,3 +574,148 @@ def test_the_layout_check_and_the_mount_refusal_read_one_list(tmp_path: Path, mo
     assert "inside Loom's data" in sandbox.layout_refusal()
     with pytest.raises(PermissionError):
         sandbox._readonly_paths({"PATH": "/usr/bin"}, [])
+
+
+async def test_a_required_sandbox_refuses_the_job_instead_of_running_it_plain(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(sandbox, "_available", False)
+    marker = tmp_path / "ran"
+    argv = ["sh", "-c", f"touch {marker}"]
+    env = {"PATH": "/usr/bin:/bin"}
+    monkeypatch.setattr(settings, "code_sandbox_required", True)
+    with pytest.raises(sandbox.SandboxRequiredError, match="LOOM_CODE_SANDBOX_REQUIRED"):
+        await sandbox.run_job(argv, env=env, timeout_s=10)
+    assert not marker.exists()
+    monkeypatch.setattr(settings, "code_sandbox_required", False)
+    assert (await sandbox.run_job(argv, env=env, timeout_s=10)).returncode == 0
+    assert marker.exists()
+
+
+@pytest.mark.parametrize(("required", "severity"), [(True, "error"), (False, "warn")])
+def test_a_missing_sandbox_is_an_error_only_when_required(
+    monkeypatch, required: bool, severity: str
+) -> None:
+    from server.observability.problems import HealthState, collect_problems
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_ingest_enabled", True)
+    monkeypatch.setattr(settings, "code_sandbox_required", required)
+    problems = collect_problems(settings, HealthState(repo_sandbox=False))
+    assert [(p.code, p.severity) for p in problems if p.code == "repo_jobs_unsandboxed"] == [
+        ("repo_jobs_unsandboxed", severity)
+    ]
+
+
+@pytest.mark.parametrize(("required", "rc", "ran"), [(True, 1, False), (False, 1, True)])
+async def test_scip_full_runs_its_harness_as_a_gated_repository_job(
+    tmp_path: Path, monkeypatch, required: bool, rc: int, ran: bool
+) -> None:
+    """The weekly full pass runs the repository's CMake: through run_harness
+    (the sandbox), and not at all where the sandbox is required and missing."""
+    import argparse
+    from unittest.mock import AsyncMock
+
+    from server.cli import code_scip
+    from server.code.app.index import compiler_tier
+    from server.code.store import index as store_index
+    from server.settings import settings
+    from tests.unit.code_fixtures import repo_config
+
+    for d in ("checkout", "bare.git"):
+        (tmp_path / d).mkdir()
+    (tmp_path / "scip-clang").touch()
+    monkeypatch.setattr(settings, "code_scip_clang_path", str(tmp_path / "scip-clang"))
+    monkeypatch.setattr(settings, "code_sandbox_required", required)
+    monkeypatch.setattr(sandbox, "_available", False)
+    repo = AsyncMock()
+    repo.get_state.return_value = "a" * 40
+    monkeypatch.setattr(store_index, "CodeRepo", lambda: repo)
+    monkeypatch.setattr(code_scip, "_scip_move_checkout", AsyncMock())
+    harness = AsyncMock(return_value=(1, "harness output\n"))
+    monkeypatch.setattr(compiler_tier, "run_harness", harness)
+    cfg = repo_config(
+        git_dir=str(tmp_path / "bare.git"), scip_checkout_dir=str(tmp_path / "checkout")
+    )
+    args = argparse.Namespace(checkout="", jobs=0, apply_delta="", keep_delta="")
+    assert await code_scip._scip_full_locked(args, "o", "code-x", cfg) == rc
+    assert harness.await_count == int(ran)
+    if ran:
+        assert harness.await_args.args[2] == ["--full", "", "-"]
+
+
+@pytest.mark.asyncio
+async def test_scip_full_moves_its_checkout_as_sandboxed_jobs(tmp_path: Path, monkeypatch) -> None:
+    """The fetch reads the bare clone, which the sandbox mounts only when named,
+    and the submodule pins come from the network."""
+    from server.cli import code_scip
+    from server.code.app.index import compiler_tier
+
+    calls: list[tuple[tuple[str, ...], dict]] = []
+
+    async def _git(cwd: Path, *args: str, **kw: object) -> None:
+        calls.append((args, kw))
+
+    monkeypatch.setattr(compiler_tier, "git", _git)
+    bare = tmp_path / "bare.git"
+    await code_scip._scip_move_checkout(tmp_path / "checkout", bare, "a" * 40)
+    fetch, _checkout, submodules = calls
+    assert fetch[0][0] == "fetch" and fetch[1]["local_remote"] == bare
+    assert submodules[0][0] == "submodule" and submodules[1]["network"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_scip_full_harness_timeout_is_reported_as_one(tmp_path: Path, monkeypatch) -> None:
+    import argparse
+
+    from server.cli import code_scip
+    from server.code.app.index import compiler_tier
+
+    async def _timed_out(*_a: object, **_k: object) -> tuple[int, str]:
+        raise RuntimeError("harness timed out after 21600s")
+
+    monkeypatch.setattr(compiler_tier, "run_harness", _timed_out)
+    args = argparse.Namespace(jobs=0)
+    rc = await code_scip._run_full_harness(
+        args, tmp_path / "h.sh", tmp_path, tmp_path / "scip-clang", tmp_path / "delta.json"
+    )
+    assert rc == 124
+
+
+@pytest.mark.asyncio
+async def test_scip_full_hands_the_sandbox_an_absolute_checkout(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A relative --checkout names a directory from the caller's working
+    directory, which bwrap leaves: every path the job gets is absolute."""
+    import argparse
+    from unittest.mock import AsyncMock
+
+    from server.cli import code_scip
+    from server.code.app.index import compiler_tier
+    from server.code.store import index as store_index
+    from server.settings import settings
+    from tests.unit.code_fixtures import repo_config
+
+    for d in ("checkout", "bare.git", "elsewhere"):
+        (tmp_path / d).mkdir()
+    (tmp_path / "scip-clang").touch()
+    monkeypatch.chdir(tmp_path / "elsewhere")
+    monkeypatch.setattr(settings, "code_scip_clang_path", str(tmp_path / "scip-clang"))
+    monkeypatch.setattr(settings, "code_sandbox_required", False)
+    monkeypatch.setattr(sandbox, "_available", False)
+    repo = AsyncMock()
+    repo.get_state.return_value = "a" * 40
+    monkeypatch.setattr(store_index, "CodeRepo", lambda: repo)
+    move = AsyncMock()
+    monkeypatch.setattr(code_scip, "_scip_move_checkout", move)
+    harness = AsyncMock(return_value=(1, ""))
+    monkeypatch.setattr(compiler_tier, "run_harness", harness)
+    cfg = repo_config(git_dir=str(tmp_path / "bare.git"), scip_checkout_dir="")
+    args = argparse.Namespace(checkout="../checkout", jobs=0, apply_delta="", keep_delta="")
+    await code_scip._scip_full_locked(args, "o", "code-x", cfg)
+    checkout = (tmp_path / "checkout").resolve()
+    assert move.await_args.args[0] == checkout
+    assert harness.await_args.args[1] == checkout

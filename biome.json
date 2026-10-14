@@ -16,6 +16,7 @@
       "!bench",
       "!var",
       "!scripts/**/*.json",
+      "!dev/seccomp",
       "!scripts/scip_harness/vendor",
       "!**/package-lock.json",
       "!skills-lock.json"

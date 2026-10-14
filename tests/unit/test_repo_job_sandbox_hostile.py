@@ -240,20 +240,32 @@ async def test_a_raw_clone_into_a_new_user_namespace_is_refused(monkeypatch) -> 
     assert b"ESCAPED" not in done.stdout and b"refused" in done.stdout, done.stdout
 
 
-async def test_a_fork_bomb_is_bounded_and_nothing_survives(monkeypatch) -> None:
+async def test_a_fork_bomb_is_bounded_per_job_and_nothing_survives(monkeypatch) -> None:
+    """Two jobs at once, each forking until the kernel says no: each stops at
+    its own limit, whatever else the uid runs on the host."""
     monkeypatch.setattr(sandbox.settings, "code_sandbox_max_pids", 64)
     marker = "bomb-31337"
     bomb = f"""
         # {marker}
-        import os, time
+        import errno, os, time
+        forks = 0
         while True:
             try:
-                os.fork()
-            except OSError:
-                time.sleep(0.01)
+                if os.fork() == 0:
+                    time.sleep(60)
+                    os._exit(0)
+                forks += 1
+            except OSError as e:
+                print(forks, e.errno == errno.EAGAIN, flush=True)
+                break
         """
-    with pytest.raises(TimeoutError):
-        await _python(bomb, timeout_s=5)
+    results = await asyncio.gather(_python(bomb, timeout_s=20), _python(bomb, timeout_s=20))
+    for done in results:
+        forks, eagain = done.stdout.split()
+        assert eagain == b"True", done.stdout
+        # Each job gets the whole limit, less its python and the sandbox's init:
+        # a budget the two shared would leave one of them near half.
+        assert 60 <= int(forks) <= 62, done.stdout
     await asyncio.sleep(0.5)
     assert _running(marker) == []
 
