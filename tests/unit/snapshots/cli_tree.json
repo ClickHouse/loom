@@ -7142,7 +7142,7 @@
        "nargs": 0,
        "type": null,
        "required": false,
-       "help": "With --list, also print the cutoffs revoked and lowered grants leave (grant:<org>/<namespace>/<subject>).",
+       "help": "With --list, also print the cutoffs revoked and lowered grants leave (grant:<org>/<namespace>/<subject hash>).",
        "metavar": null
       },
       {

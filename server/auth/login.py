@@ -466,7 +466,7 @@ async def login(input: LoginInput, request: Request) -> LoginOutput:
     except SignInUnavailable as e:
         raise HTTPException(
             status_code=503,
-            detail={"code": "UNAVAILABLE", "message": "Sign-in is unavailable; try again."},
+            detail={"code": "AUTH_UNAVAILABLE", "message": "Sign-in is unavailable; try again."},
             headers={"Retry-After": "5"},
         ) from e
     if resolved is None:
