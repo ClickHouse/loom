@@ -128,6 +128,15 @@ def test_a_checkout_another_worker_moves_is_never_touched(repos, producer: str) 
     assert _git(Path(str(repos["checkout"])), "rev-parse", "HEAD") == repos["c1"]
 
 
+def test_a_tree_without_a_python_build_file_gets_no_python_pass(repos) -> None:
+    out, calls = _run(
+        repos, wm=str(repos["c1"]), head=str(repos["c2"]), bare=str(repos["bare"]), owner="none"
+    )
+    assert "no python tier" in out
+    assert calls == ""
+    assert _git(Path(str(repos["checkout"])), "rev-parse", "HEAD") == repos["c1"]
+
+
 def test_an_unseeded_git_head_indexes_nothing(repos) -> None:
     out, calls = _run(repos, wm="-", head="-", bare=str(repos["bare"]))
     assert "git_head not seeded" in out
@@ -157,21 +166,30 @@ def _ident_snippet() -> str:
     return text[start : text.index("\nPYEOF", start)]
 
 
-def test_an_entry_whose_tree_calls_for_go_is_left_to_the_go_worker(monkeypatch, capsys) -> None:
-    """An entry naming no producer is owned by what its tree calls for, the same test the
-    workers apply: a Go module gets no cron Python pass."""
+@pytest.mark.parametrize(
+    ("tree", "owner"),
+    [(["go.mod"], "none"), (["go.mod", "pyproject.toml"], "cron")],
+    ids=["go-only", "go-and-python"],
+)
+def test_an_entry_naming_no_producer_gets_the_cron_python_pass_its_tree_calls_for(
+    monkeypatch, capsys, tree, owner
+) -> None:
+    """With the Python worker off, the cron indexes Python wherever the tree has a Python
+    build file; the Go worker works in its own tree, so it never stands in the way."""
     from unittest.mock import AsyncMock
 
     from server.code.domain.index import repos
     from server.code.store import index as store_index
     from server.core import ch
+    from server.settings import settings
     from tests.unit.code_fixtures import repo_config
 
     repo = AsyncMock()
     repo.get_state.return_value = ""
-    repo.live_paths_present.return_value = ["go.mod"]
+    repo.live_paths_present.return_value = tree
     monkeypatch.setattr(store_index, "CodeRepo", lambda: repo)
     monkeypatch.setattr(ch, "get_client", lambda: AsyncMock())
+    monkeypatch.setattr(settings, "code_scip_py_delta_enabled", False)
     cfg = repo_config(org="org", namespace="code-x", scip_producer="")
     monkeypatch.setattr(repos, "configured_repos", lambda: [cfg])
     monkeypatch.setenv("ORG_ARG", "org")
@@ -179,4 +197,4 @@ def test_an_entry_whose_tree_calls_for_go_is_left_to_the_go_worker(monkeypatch, 
 
     exec(_ident_snippet(), {})
 
-    assert capsys.readouterr().out.split()[-1] == "go"
+    assert capsys.readouterr().out.split()[-1] == owner

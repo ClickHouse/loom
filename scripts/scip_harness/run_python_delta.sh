@@ -74,11 +74,13 @@ async def m():
     head = await repo.get_state(org, ns, "git_head")
     cfg = next((r for r in configured_repos() if r.org == org and r.namespace == ns), None)
     bare = os.path.abspath(cfg.git_dir or settings.code_git_dir) if cfg else ""
-    others = [p for p in ("go", "typescript") if cfg and await worker_owns(repo, cfg, p)]
+    producer = cfg.scip_producer if cfg else ""
     if cfg and settings.code_scip_py_delta_enabled and await worker_owns(repo, cfg, "python"):
         owner = "worker"
-    elif others:
-        owner = others[0]  # its in-process worker owns this entry, outside the cron lock
+    elif producer in ("go", "typescript"):
+        owner = producer  # its in-process worker moves this checkout, outside the cron lock
+    elif cfg and not producer and not await worker_owns(repo, cfg, "python"):
+        owner = "none"  # the tree calls for no Python tier
     else:
         owner = "cron"
     print(org, ns, wm or "-", head or "-", bare or "-", owner)
@@ -90,6 +92,10 @@ PYEOF
   [[ "$BASE" == "-" ]] && BASE=""
   if [[ "$OWNER" == "worker" ]]; then
     echo ">> $NS: the code_scip_py_delta worker owns the python tier — skipping"
+    exit 0
+  fi
+  if [[ "$OWNER" == "none" ]]; then
+    echo ">> $NS: the tree has no Python build file — no python tier"
     exit 0
   fi
   if [[ "$OWNER" != "cron" ]]; then

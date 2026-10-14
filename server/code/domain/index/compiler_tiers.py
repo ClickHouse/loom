@@ -41,7 +41,7 @@ TIERS: tuple[TierSpec, ...] = (
         "TypeScript / JavaScript",
         "scip_commit_ts",
         ("code_scip_ts_delta",),
-        "Per-merge delta on the configured checkout; JavaScript is read via the tsconfig.",
+        "Per-merge delta in the tier's working tree; JavaScript is read via the tsconfig.",
     ),
     TierSpec(
         "go",
@@ -49,7 +49,7 @@ TIERS: tuple[TierSpec, ...] = (
         "Go",
         "scip_commit_go",
         ("code_scip_go_delta",),
-        "Per-merge delta on the configured checkout, one build per module.",
+        "Per-merge delta in the tier's working tree, one build per module.",
     ),
     TierSpec(
         "python",
@@ -57,7 +57,7 @@ TIERS: tuple[TierSpec, ...] = (
         "Python",
         "scip_commit_py",
         ("code_scip_py_delta", "code_scip_apply"),
-        "Per-merge delta on the configured checkout; the host cron covers the rest.",
+        "Per-merge delta in the tier's working tree; the host cron covers the rest.",
     ),
 )
 WATERMARK_KEYS: tuple[str, ...] = tuple(t.watermark_key for t in TIERS)

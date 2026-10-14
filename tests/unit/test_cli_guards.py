@@ -42,6 +42,16 @@ def test_repo_cfg_refuses_an_unconfigured_explicit_namespace(
     assert "not a configured code repo entry" in str(ex.value)
 
 
+def test_repo_cfg_names_why_an_entry_was_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.cli import code_run
+
+    entries = [{"namespace": "code-a"}, {"namespace": "code-a.python"}]
+    monkeypatch.setattr(settings, "code_repos_json", json.dumps(entries))
+    with pytest.raises(SystemExit) as ex:
+        code_run._repo_cfg(_args("code-a.python"))
+    assert "code repo code-a.python skipped: a namespace has no '.' or '/'" in str(ex.value)
+
+
 def test_no_default_code_namespace_is_a_clear_refusal(monkeypatch: pytest.MonkeyPatch) -> None:
     """With no scalar default the CLI and every code.* handler name what is missing
     instead of reading namespace ''."""

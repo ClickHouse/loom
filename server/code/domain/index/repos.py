@@ -40,7 +40,6 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from server.core.naming import validate_namespace_name
 from server.settings import settings
 
 logger = logging.getLogger("loom.code_index.repos")
@@ -212,7 +211,7 @@ def checkout_for(cfg: RepoConfig, producer: str) -> str:
     producer it names, a sibling `<checkout>.<producer>` for any other, so two tiers
     never move one tree. An entry that names none keeps its checkout for scip-clang,
     which needs it to be a configured build tree. The dot keeps a sibling from being
-    another entry's `checkout-<namespace>`: namespaces have no dots."""
+    another entry's `checkout-<namespace>`: an entry's namespace has no dots."""
     base = cfg.scip_checkout_dir or settings.code_scip_checkout_dir
     if producer == (cfg.scip_producer or "clang"):
         return base
@@ -255,6 +254,12 @@ def _publish_config_errors(errors: dict[str, str]) -> None:
     _config_errors.clear()
     _config_errors.update(errors)
     _config_evaluated = True
+
+
+def config_errors() -> list[str]:
+    """What this process could not use in the repository configuration, as of its last
+    `configured_repos()` call."""
+    return list(_config_errors.values())
 
 
 def config_error_count() -> int | None:
@@ -364,10 +369,10 @@ def _configured_from_env() -> list[RepoConfig]:
         if not isinstance(e, dict) or not e.get("namespace"):
             errors[f"entry:{i}"] = f"code repo entry missing 'namespace', skipped: {e!r}"
             continue
-        try:
-            ns = validate_namespace_name(str(e["namespace"]))
-        except ValueError as err:
-            errors[f"namespace:{i}"] = f"code repo entry {i} skipped: {err}"
+        ns = str(e["namespace"])
+        if "." in ns or "/" in ns:
+            # a tier's working tree is `<checkout>.<producer>`
+            errors[f"namespace:{ns}"] = f"code repo {ns} skipped: a namespace has no '.' or '/'"
             continue
         if ns in seen:
             errors[f"duplicate:{ns}"] = f"duplicate code repo namespace {ns} skipped"
