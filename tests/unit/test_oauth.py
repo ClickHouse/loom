@@ -724,3 +724,26 @@ def test_an_exchange_past_its_bound_is_told_to_retry(monkeypatch: pytest.MonkeyP
         slow.setattr(revocation, "subject_revoked", _slow)
         assert _exchange(c, code, verifier).status_code == 503
     assert _exchange(c, code, verifier).status_code == 200
+
+
+def test_a_slow_consume_that_landed_is_never_answered_with_a_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The consume is the commit: only the decision is bounded, so a consume
+    that wrote its row and replied late still answers with the tokens."""
+    import asyncio
+
+    from server.auth import oauth_claims
+
+    store = oauth._store
+    consume = store.consume_code
+
+    async def _slow(code: str, grant: dict) -> None:
+        await consume(code, grant)
+        await asyncio.sleep(0.3)
+
+    monkeypatch.setattr(oauth_claims, "EXCHANGE_TIMEOUT_S", 0.2)
+    monkeypatch.setattr(store, "consume_code", _slow)
+    c = _client()
+    code, verifier = _seed_code()
+    assert _exchange(c, code, verifier).status_code == 200

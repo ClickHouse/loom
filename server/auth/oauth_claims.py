@@ -31,9 +31,9 @@ from server.core.schema.migrate_lease import (
 
 log = logging.getLogger(__name__)
 
-# A claim older than this was left by an exchange that died. Above the bound
-# /oauth/token puts on one exchange (`EXCHANGE_TIMEOUT_S`), so a live one is
-# never taken over.
+# A claim older than this was left by an exchange that died. A live one is done
+# well within it: the claim (5 s), the credential read (30 s), the decision
+# (`EXCHANGE_TIMEOUT_S`), the consume (5 s) and the release (5 s).
 STALE_S = 120
 EXCHANGE_TIMEOUT_S = 60
 
@@ -87,21 +87,23 @@ async def claim(ch: Any, key: str) -> tuple[Claim, str]:
         return Claim.UNCLAIMED, ""
     me = uuid.uuid4().hex
     params = {"k": key, "me": me, "stale": STALE_S}
-    try:
-        await ch.execute(_INSERT, params=params)
-        return Claim.HELD, me
-    except Exception as e:
-        if not key_exists(e):
-            raise
-    # Held: by this call when a retried insert found its own first one, else
-    # by an exchange that is running, or by one that died and is taken over.
-    if await _holder(ch, key) != me:
+    with statement_timeout(5):
         try:
-            await ch.execute(_TAKE_OVER, params=params)
+            await ch.execute(_INSERT, params=params)
+            return Claim.HELD, me
         except Exception as e:
-            if not lost_race(e):
+            if not key_exists(e):
                 raise
-    return (Claim.HELD, me) if await _holder(ch, key) == me else (Claim.TAKEN, "")
+        # Held: by this call when a retried insert found its own first one, else
+        # by an exchange that is running, or by one that died and is taken over.
+        if await _holder(ch, key) != me:
+            try:
+                await ch.execute(_TAKE_OVER, params=params)
+            except Exception as e:
+                if not lost_race(e):
+                    raise
+        held = await _holder(ch, key) == me
+    return (Claim.HELD, me) if held else (Claim.TAKEN, "")
 
 
 async def release(ch: Any, key: str, holder: str) -> None:

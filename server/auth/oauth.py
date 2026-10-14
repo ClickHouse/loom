@@ -726,9 +726,9 @@ async def token(request: Request) -> JSONResponse:
 @asynccontextmanager
 async def _one_exchange(record_type: str, credential: str) -> AsyncIterator[None]:
     """Hold the credential's Keeper claim while its exchange runs
-    (`oauth_claims`), bounded below the age a claim is taken over at. A
-    concurrent exchange of it is told to retry, not that the credential is
-    used: it may be the owner retrying after a reply that never arrived."""
+    (`oauth_claims`). A concurrent exchange of it is told to retry, not that
+    the credential is used: it may be the owner retrying after a reply that
+    never arrived."""
     from server.auth import oauth_claims
     from server.core.ch import get_client
 
@@ -741,10 +741,7 @@ async def _one_exchange(record_type: str, credential: str) -> AsyncIterator[None
     if outcome is oauth_claims.Claim.TAKEN:
         raise _unavailable("exchange claim", RuntimeError("another exchange holds it"))
     try:
-        async with asyncio.timeout(oauth_claims.EXCHANGE_TIMEOUT_S):
-            yield
-    except TimeoutError as e:
-        raise _unavailable("exchange", e) from e
+        yield
     finally:
         if outcome is oauth_claims.Claim.HELD:
             await oauth_claims.release(ch, key, holder)
@@ -754,14 +751,24 @@ async def _used_up_unless_retryable(
     decided: Awaitable[dict[str, Any]], consume: Callable[[], Awaitable[None]]
 ) -> dict[str, Any]:
     """Await the exchange's decision, then use the code or refresh token up.
-    A refusal uses it up too; a 503 leaves it, so the client's retry works."""
+    A refusal uses it up too; a 503 leaves it, so the client's retry works.
+    Only the decision is bounded (`oauth_claims.EXCHANGE_TIMEOUT_S`): the
+    consume is the commit, and a cancelled one may still land."""
+    from server.auth.oauth_claims import EXCHANGE_TIMEOUT_S
+    from server.core.ch import statement_timeout
+
     try:
-        grant = await decided
+        async with asyncio.timeout(EXCHANGE_TIMEOUT_S):
+            grant = await decided
+    except TimeoutError as e:
+        raise _unavailable("exchange", e) from e
     except HTTPException as e:
         if e.status_code != 503:
-            await consume()
+            with statement_timeout(5):
+                await consume()
         raise
-    await consume()
+    with statement_timeout(5):
+        await consume()
     return grant
 
 

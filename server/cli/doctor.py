@@ -240,6 +240,7 @@ def _doctor_problems() -> list[Any]:
                 ch_reader_ok={"ok": True, "failing": False}.get(status),
                 ch_reader_error=detail if status == "failing" else "",
                 run_claims_atomic=_doctor_keeper_table(settings, RUN_CLAIMS_TABLE_SQL),
+                # Only with OAuth on, the one place the answer is used: no query otherwise.
                 oauth_claims_atomic=(
                     _doctor_keeper_table(settings, OAUTH_CLAIMS_TABLE_SQL)
                     if settings.oauth_enabled

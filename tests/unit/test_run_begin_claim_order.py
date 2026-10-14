@@ -424,20 +424,25 @@ def test_a_failed_boot_probe_leaves_it_to_the_first_begin(monkeypatch) -> None:
     assert runs_store.claims_atomic() is None
 
 
+@pytest.mark.parametrize("table", ["agent_run_claims", "oauth_claims"])
 @pytest.mark.parametrize(
     ("rows", "atomic"), [([{"engine": "KeeperMap"}], True), ([], False), (None, None)]
 )
-def test_the_doctor_reads_the_same_claims_check(monkeypatch, rows, atomic) -> None:
+def test_the_doctor_reads_the_same_claims_check(monkeypatch, rows, atomic, table) -> None:
     from server.cli import doctor
+    from server.core.schema import migrate_lease
     from server.settings import settings
 
+    table_sql = {
+        "agent_run_claims": migrate_lease.RUN_CLAIMS_TABLE_SQL,
+        "oauth_claims": migrate_lease.OAUTH_CLAIMS_TABLE_SQL,
+    }[table]
+
     def query(_settings, sql, params):
-        assert "agent_run_claims" in sql
+        assert f"'{table}'" in sql
         if rows is None:
             raise RuntimeError("connection refused")
         return rows
 
-    from server.core.schema.migrate_lease import RUN_CLAIMS_TABLE_SQL
-
     monkeypatch.setattr(doctor, "_doctor_ch_query", query)
-    assert doctor._doctor_keeper_table(settings, RUN_CLAIMS_TABLE_SQL) is atomic
+    assert doctor._doctor_keeper_table(settings, table_sql) is atomic
