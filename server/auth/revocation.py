@@ -182,24 +182,25 @@ async def revoke(
     }
     await get_client().insert("loom.revoked_tokens", [row])
     await refresh()
-    _apply_locally(token_id, _cutoff_seconds(issued_before))
+    _apply_locally([token_id], _cutoff_seconds(issued_before))
     return row
 
 
-def _apply_locally(key: str, cutoff: int | None) -> None:
-    """Fold a revocation this process just wrote into its snapshot. The
-    re-read in `revoke` can fail, or land on a replica the insert has not
-    reached; either way the old snapshot would keep admitting the token
-    here until the next refresh. The written row is the newest for its key,
-    so it replaces any earlier state of that key. `loaded()` is left as it
-    is: one known row is not a snapshot."""
+def _apply_locally(keys: list[str], cutoff: int | None) -> None:
+    """Fold revocations this process just wrote into its snapshot. The
+    re-read after the insert can fail, or land on a replica the insert has
+    not reached; either way the old snapshot would keep admitting the token
+    here until the next refresh. The written rows are the newest for their
+    keys, so they replace any earlier state of those keys. `loaded()` is left
+    as it is: rows this process wrote are not a snapshot."""
     global _revoked_jtis, _revoked_before
-    before = {k: v for k, v in _revoked_before.items() if k != key}
+    written = set(keys)
+    before = {k: v for k, v in _revoked_before.items() if k not in written}
     if cutoff is None:
-        _revoked_jtis = _revoked_jtis | {key}
+        _revoked_jtis = _revoked_jtis | written
     else:
-        _revoked_jtis = _revoked_jtis - {key}
-        before[key] = cutoff
+        _revoked_jtis = _revoked_jtis - written
+        before.update(dict.fromkeys(written, cutoff))
     _revoked_before = before
 
 
@@ -212,49 +213,65 @@ def grant_claim_key(org: str, namespace: str, subject: str) -> str:
     return f"{_GRANT_CLAIM_PREFIX}{org}/{namespace}/{subject}"
 
 
-async def end_grant_claims(org: str, namespace: str, subjects: list[str], *, reason: str) -> None:
-    """Withdraw (org, namespace) from the claims of every token `subjects`
+def is_grant_claim_key(key: str) -> bool:
+    return key.startswith(_GRANT_CLAIM_PREFIX)
+
+
+def claim_ended(org: str, namespace: str, subject: str, issued_at: int) -> bool:
+    """True if `subject`'s grant on (org, namespace) was taken away after a
+    token issued at `issued_at` (unix seconds) claimed it. Sync, no I/O."""
+    return is_revoked(grant_claim_key(org, namespace, subject), issued_at=issued_at)
+
+
+async def end_grant_claims(
+    org: str, namespaces: list[str], subjects: list[str], *, reason: str, revoked_by: str
+) -> None:
+    """Withdraw each of `namespaces` from the claims of every token `subjects`
     hold that was minted before now, under each spelling of each subject.
 
     Called before a grant is revoked or lowered: a grant row is replaced by
     the subject's next one (a join request, a self-join), so only a row of
-    its own keeps the revocation. A later grant does not lift it; a token
-    minted afterwards is not touched. Raises on a ClickHouse failure, so the
-    caller's grant write does not land without it."""
+    its own keeps the revocation. A later grant does not lift it. The cutoff
+    is the next whole second, so a token minted in the second of the
+    revocation is cut too. Raises on a ClickHouse failure, so the caller's
+    grant write does not land without it."""
     from server.auth.aliases import subject_aliases
-    from server.auth.context import current_auth
     from server.core.ch import get_client
 
-    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
-    keys = {
-        grant_claim_key(org, namespace, alias)
-        for subject in subjects
-        for alias in await subject_aliases(org, subject)
-    }
+    spellings = await asyncio.gather(*(subject_aliases(org, s, strict=True) for s in subjects))
+    keys = sorted(
+        {
+            grant_claim_key(org, ns, alias)
+            for ns in namespaces
+            for group in spellings
+            for alias in group
+        }
+    )
     if not keys:
         return
-    auth = current_auth()
+    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    cutoff = now + timedelta(seconds=1)
     rows = [
         {
             "jti": key,
             "revoked_at": now,
             "expires_at": revocation_expiry(None, now),
             "reason": reason,
-            "revoked_by": auth.subject if auth is not None else "",
-            "issued_before": now,
+            "revoked_by": revoked_by,
+            "issued_before": cutoff,
         }
-        for key in sorted(keys)
+        for key in keys
     ]
     await get_client().insert("loom.revoked_tokens", rows)
     await refresh()
-    for key in keys:
-        _apply_locally(key, _cutoff_seconds(now))
+    _apply_locally(keys, _cutoff_seconds(cutoff))
 
 
 async def list_active() -> list[dict[str, Any]]:
     """The unexpired revocations, newest first — the same rows the refresh
     worker reads every `jwt_revocation_cache_ttl_seconds`, so this read is
-    already paid for at that cadence (the table holds well under 1000 rows)."""
+    already paid for at that cadence. Most rows are grant cutoffs, one per
+    namespace and spelling of each subject a grant was taken from."""
     from server.core.ch import get_client
 
     rows = await get_client().query_all(

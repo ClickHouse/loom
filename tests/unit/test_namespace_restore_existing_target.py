@@ -217,3 +217,29 @@ async def test_a_non_admin_learns_nothing_from_the_idempotency_probe(wire) -> No
     with pytest.raises(AuthInsufficientError):
         await namespace_snapshot.handle_namespace_restore(_restore_input())
     assert probed == []
+
+
+@pytest.mark.asyncio
+async def test_a_restore_that_lowers_a_grant_ends_the_older_claims(
+    monkeypatch: pytest.MonkeyPatch, grant_cutoffs: list[tuple[str, str, list[str]]]
+) -> None:
+    from types import SimpleNamespace
+
+    from server.identity.app import namespace_snapshot
+    from server.identity.domain.grants import GrantState
+    from server.identity.store import grants as grants_repo
+
+    live = {"alice": "writer", "bob": "viewer"}
+
+    async def _active(org: str, namespace: str, subject: str, **_k: object) -> GrantState | None:
+        role = live.get(subject)
+        return GrantState.from_row({"role": role, "status": "active"}) if role else None
+
+    monkeypatch.setattr(grants_repo, "find_active_grant", _active)
+    restored = [
+        SimpleNamespace(subject="alice", role="viewer"),  # lowered
+        SimpleNamespace(subject="bob", role="writer"),  # raised
+        SimpleNamespace(subject="carol", role="viewer"),  # new
+    ]
+    await namespace_snapshot._end_lowered_claims("o", "ns", restored, "boss", ch=None)
+    assert grant_cutoffs == [("o", "ns", ["alice"])]

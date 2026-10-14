@@ -501,3 +501,34 @@ def test_a_non_utf8_form_body_is_a_400_not_a_500(path: str) -> None:
     )
     assert r.status_code == 400
     assert r.json()["detail"]["error"] == "invalid_request"
+
+
+def test_refresh_drops_a_namespace_whose_grant_ended_for_good(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refresh mints with a fresh iat, past the cutoff a revoked grant left;
+    the namespace leaves the sign-in snapshot, so no later refresh brings it back."""
+    from server.auth import revocation
+    from server.auth.jwt import verify_token
+
+    c = _client()
+    code, verifier = _seed_code()
+    oauth._store.codes[oauth._token_id(code)]["namespaces"] = ["alice-ns", "team"]
+    rt = c.post(
+        "/oauth/token",
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": "http://127.0.0.1:9999/cb",
+            "client_id": "loom-test",
+            "code_verifier": verifier,
+        },
+    ).json()["refresh_token"]
+    key = revocation.grant_claim_key("test-org", "team", "alice@example.com")
+    monkeypatch.setattr(revocation, "_revoked_before", {key: int(time.time()) + 5})
+    first = _refresh(c, rt).json()
+    assert verify_token(first["access_token"]).namespaces == ("alice-ns",)
+    # The rotated grant is newer than the cutoff now; only the snapshot keeps it out.
+    monkeypatch.setattr(revocation, "_revoked_before", {key: int(time.time()) - 3600})
+    second = _refresh(c, first["refresh_token"]).json()
+    assert verify_token(second["access_token"]).namespaces == ("alice-ns",)

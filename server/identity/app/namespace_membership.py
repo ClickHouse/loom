@@ -126,10 +126,11 @@ async def handle_namespace_join(
             )
 
     if gated:
-        # No existing grant → status='pending' row (zero access until an
-        # admin flips it active). Existing grant → keep the active base
-        # role and record the elevation as pending_role.
-        if existing is None:
+        # No active grant → status='pending' row (zero access until an
+        # admin flips it active); a second request replaces the first, it
+        # never becomes a base role. Active grant → keep that base role and
+        # record the elevation as pending_role.
+        if existing is None or existing.status == "pending":
             await grants_repo.insert_row(
                 {
                     "org": input.org,
@@ -250,7 +251,9 @@ async def handle_namespace_leave(
                 f"another member to admin (grants.create) before leaving"
             )
 
-    await end_grant_claims(input.org, input.namespace, [caller], reason="namespace.leave")
+    await end_grant_claims(
+        input.org, [input.namespace], [caller], reason="namespace.leave", revoked_by=caller
+    )
     now = datetime.now(UTC).replace(tzinfo=None)
     await grants_repo.insert_row(
         {

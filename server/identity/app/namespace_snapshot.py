@@ -3,9 +3,11 @@ audit rows as one payload, and that payload written back into a namespace."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import asyncio
+from collections.abc import Mapping, Sequence
 from typing import Any
 
+from server.auth.revocation import end_grant_claims
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.grant_sql import LIVE_GRANT
@@ -20,9 +22,11 @@ from server.identity.api.models import (
     _SnapshotTypeRow,
 )
 from server.identity.app import namespace as _registry
+from server.identity.store import grants as grants_repo
 from server.identity.store import namespaces as namespaces_repo
 from server.memory.app import snapshot_rows as memory_snapshot
 from server.memory.app.provenance import writer_actor
+from server.operations.base import grant_rank
 
 
 def snapshot_memory_row(r: Mapping[str, Any]) -> _SnapshotMemoryRow:
@@ -260,6 +264,7 @@ async def handle_namespace_restore(
     # Grants. granted_by = caller so the restore is traceable; the
     # original granted_by stays in the snapshot payload.
     if payload.grants:
+        await _end_lowered_claims(input.org, input.target_namespace, payload.grants, caller, ch)
         await ch.insert(
             "loom.namespace_grants",
             [
@@ -309,3 +314,22 @@ async def handle_namespace_restore(
             "grants": payload.grant_count,
         },
     )
+
+
+async def _end_lowered_claims(
+    org: str, namespace: str, grants: Sequence[Any], caller: str, ch: Any
+) -> None:
+    """A restore writes its grants over the live ones. A subject it lowers
+    loses the claims of older tokens there, as any other downgrade does."""
+    live = await asyncio.gather(
+        *(grants_repo.find_active_grant(org, namespace, g.subject, ch=ch) for g in grants)
+    )
+    lowered = [
+        g.subject
+        for g, current in zip(grants, live, strict=True)
+        if current is not None and grant_rank(current.role) > grant_rank(g.role)
+    ]
+    if lowered:
+        await end_grant_claims(
+            org, [namespace], lowered, reason="namespace.restore", revoked_by=caller
+        )

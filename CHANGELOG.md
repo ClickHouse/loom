@@ -62,9 +62,14 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 - **Security:** revoking or lowering a grant now ends what the subject's older tokens claim
   on that namespace. A flat or scoped token minted before it reaches the namespace only
   through the subject's current grant, and a grant made later does not restore the claim.
-  The cutoff is a `loom.revoked_tokens` row (`grant:<org>/<namespace>/<subject>`), so
-  `loom revoke-token --list` shows it. A namespace never granted to the subject (named by an
-  operator at mint) keeps its claim.
+  An OAuth refresh drops the namespace from the session. The cutoff is a
+  `loom.revoked_tokens` row (`grant:<org>/<namespace>/<subject>`);
+  `loom revoke-token --list --grants` shows them. A namespace never granted to the subject
+  (named by an operator at mint) keeps its claim.
+- **Security:** a second `namespace.join` request on an approval namespace no longer turns
+  the first, still pending, request into an active grant; it replaces the request.
+- `grants.approve` refuses (409 `GRANT_WOULD_DOWNGRADE`) to approve a request below the
+  subject's current grant; lower a grant with `grants.create replace=true`.
 - With auth off, an `all_mine` search also reads every namespace the single user registered,
   not only the addressed one.
 - The addressed namespace is always searched first. A scoped token's other namespaces follow

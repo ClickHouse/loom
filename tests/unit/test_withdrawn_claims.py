@@ -93,7 +93,7 @@ def _admits(auth: AuthInfo, namespace: str, role: Role = Role.VIEWER) -> bool:
 
 
 def _end(namespace: str) -> None:
-    asyncio.run(rev.end_grant_claims(ORG, namespace, ["alice"], reason="test"))
+    asyncio.run(rev.end_grant_claims(ORG, [namespace], ["alice"], reason="test", revoked_by="boss"))
 
 
 def test_ending_a_grant_withdraws_the_claim_of_older_tokens(ch: _CH) -> None:
@@ -117,8 +117,26 @@ def test_the_cutoff_lands_in_this_process_without_waiting_for_a_refresh(
 
 def test_a_token_minted_after_the_cutoff_keeps_its_claim(ch: _CH) -> None:
     _end("team")
-    later = int(datetime.now(UTC).timestamp()) + 1
+    later = int(datetime.now(UTC).timestamp()) + 2
     assert _admits(_flat("team", issued_at=later), "team")
+
+
+def test_a_token_minted_in_the_second_of_the_cutoff_is_cut(ch: _CH) -> None:
+    now = int(datetime.now(UTC).timestamp())
+    _end("team")
+    assert not _admits(_flat("team", issued_at=now), "team")
+
+
+def test_an_unreadable_directory_fails_the_cutoff(ch: _CH, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A spelling the cutoff could not reach would keep its claim, so the grant
+    # change fails instead of landing half-done.
+    async def _down(*_a: Any, **_k: Any) -> list[str]:
+        raise RuntimeError("replica away")
+
+    monkeypatch.setattr("server.auth.aliases.subject_aliases", _down)
+    with pytest.raises(RuntimeError):
+        _end("team")
+    assert ch.revoked == {}
 
 
 def test_a_later_grant_does_not_restore_the_old_claim(ch: _CH) -> None:

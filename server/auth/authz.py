@@ -334,15 +334,15 @@ def withdrawn_claims(auth: AuthInfo, org: str, namespaces: list[str]) -> set[str
     was minted (`revocation.end_grant_claims`). A namespace the subject never
     held a grant on (an operator's `loom mint-token`) and a token minted after
     the revocation keep their claim. No I/O: the revocation snapshot."""
-    from server.auth.revocation import grant_claim_key, is_revoked
+    from server.auth.revocation import claim_ended
 
     if not namespaces or auth.issued_at is None:
         return set()
+    issued_at = auth.issued_at
     return {
         ns
         for ns in namespaces
-        if names_namespace(auth, org, ns)
-        and is_revoked(grant_claim_key(org, ns, auth.subject), issued_at=auth.issued_at)
+        if names_namespace(auth, org, ns) and claim_ended(org, ns, auth.subject, issued_at)
     }
 
 

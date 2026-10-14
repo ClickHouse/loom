@@ -661,17 +661,20 @@ def scalar_code_repo(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 @pytest.fixture
 def grant_cutoffs(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, list[str]]]:
     """Record the `end_grant_claims` calls the grant handlers make instead of
-    writing cutoff rows: (org, namespace, subjects) per call."""
+    writing cutoff rows: (org, namespace, subjects) per namespace cut."""
     import server.code.app.index.maintainers as maintainers
     import server.identity.app.claim_release as claim_release
     import server.identity.app.grants as grants
     import server.identity.app.namespace_membership as membership
+    import server.identity.app.namespace_snapshot as snapshot
 
     calls: list[tuple[str, str, list[str]]] = []
 
-    async def _record(org: str, namespace: str, subjects: list[str], *, reason: str) -> None:
-        calls.append((org, namespace, list(subjects)))
+    async def _record(
+        org: str, namespaces: list[str], subjects: list[str], *, reason: str, revoked_by: str
+    ) -> None:
+        calls.extend((org, ns, list(subjects)) for ns in namespaces)
 
-    for module in (maintainers, claim_release, grants, membership):
+    for module in (maintainers, claim_release, grants, membership, snapshot):
         monkeypatch.setattr(module, "end_grant_claims", _record)
     return calls

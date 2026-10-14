@@ -139,7 +139,7 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
 
 
 async def revoke_repo_maintainer(
-    org: str, namespace: str, subject: str, *, ch: Any | None = None
+    org: str, namespace: str, subject: str, *, actor: str = "", ch: Any | None = None
 ) -> int:
     """Revoke `subject`'s active admin grant on every other branch of the
     repository; a branch where they are the only active admin keeps them
@@ -180,8 +180,13 @@ async def revoke_repo_maintainer(
             )
         )
     if out:
-        for row in out:
-            await end_grant_claims(org, row["namespace"], [subject], reason="maintainer revoked")
+        await end_grant_claims(
+            org,
+            [row["namespace"] for row in out],
+            [subject],
+            reason="maintainer revoked",
+            revoked_by=actor,
+        )
         await _insert(client, out)
         log.info(
             "repo maintainers: %s/%s — %r revoked on %d sibling branch(es)",
@@ -201,9 +206,11 @@ async def sync_quietly(org: str, namespace: str, *, ch: Any | None = None) -> No
         log.warning("repo maintainers: sync failed for %s/%s", org, namespace, exc_info=True)
 
 
-async def revoke_quietly(org: str, namespace: str, subject: str, *, ch: Any | None = None) -> None:
+async def revoke_quietly(
+    org: str, namespace: str, subject: str, *, actor: str = "", ch: Any | None = None
+) -> None:
     try:
-        await revoke_repo_maintainer(org, namespace, subject, ch=ch)
+        await revoke_repo_maintainer(org, namespace, subject, actor=actor, ch=ch)
     except Exception:  # the fan-out never fails the revoke that caused it
         log.warning(
             "repo maintainers: revoke fan-out failed for %s/%s/%s",

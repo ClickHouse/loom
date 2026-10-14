@@ -277,7 +277,8 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
     principal. Other replicas see the row on their next refresh tick.
     `--subject S --issued-before T` retires only the tokens
     minted for S before T, so a token re-minted after the leak keeps working.
-    `--list` prints the unexpired revocations."""
+    `--list` prints the unexpired revocations; `--grants` adds the cutoffs a
+    revoked or lowered grant leaves, one per namespace and spelling."""
     import getpass
 
     from server.auth import revocation
@@ -299,7 +300,10 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
 
     async def _run(ch: Any) -> int:
         if args.list:
-            return _print_revocations(await revocation.list_active(), as_json=args.json)
+            rows = await revocation.list_active()
+            if not args.grants:
+                rows = [r for r in rows if not revocation.is_grant_claim_key(str(r["jti"]))]
+            return _print_revocations(rows, as_json=args.json)
         token_id = args.jti or args.subject
         by = f"cli:{getpass.getuser()}"
         row = await revocation.revoke(
@@ -396,6 +400,12 @@ def _add_revoke_token_parser(sub: Any) -> None:
         "with --issued-before.",
     )
     which.add_argument("--list", action="store_true", help="Print the unexpired revocations.")
+    p_revoke.add_argument(
+        "--grants",
+        action="store_true",
+        help="With --list, also print the cutoffs revoked and lowered grants leave "
+        "(grant:<org>/<namespace>/<subject>).",
+    )
     p_revoke.add_argument(
         "--issued-before",
         default=None,

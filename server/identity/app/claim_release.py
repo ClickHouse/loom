@@ -117,7 +117,9 @@ async def release_claim(
     grants_count = len({g["subject"] for g in grants})
     if grants:
         subjects = sorted({str(g["subject"]) for g in grants if g.get("status") == "active"})
-        await end_grant_claims(org, namespace, subjects, reason="claim released")
+        await end_grant_claims(
+            org, [namespace], subjects, reason="claim released", revoked_by=actor_subject
+        )
         tombstones = [
             {
                 "org": org,

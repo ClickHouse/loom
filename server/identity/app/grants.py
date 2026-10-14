@@ -33,6 +33,14 @@ def _version() -> int:
     return time.time_ns()
 
 
+def _actor() -> str:
+    """Who is changing a grant: the authenticated caller; '' with auth off."""
+    from server.auth.context import current_auth
+
+    auth = current_auth()
+    return auth.subject if auth is not None else ""
+
+
 async def adopt_namespace(
     org: str, namespace: str, new_admin: str, *, actor: str
 ) -> datetime | None:
@@ -111,6 +119,23 @@ async def _refuse_accidental_downgrade(input: GrantsCreateInput, subject: str) -
     return existing
 
 
+def _refuse_approval_below(current: str, target: str, input: GrantsApproveInput) -> None:
+    """Approving an elevation never lowers the base grant: lowering ends the
+    claims of the person's older tokens, which `grants.create replace=true`
+    does on purpose and an approval must not do on the side."""
+    if grant_rank(target) >= grant_rank(current):
+        return
+    from server.core.errors import GrantWouldDowngradeError
+
+    raise GrantWouldDowngradeError(
+        f"{input.subject!r} is currently {current} on {input.namespace!r}; approving their "
+        f"request as {target} would lower them. Approve at {current} or above, or lower "
+        f"them with grants.create replace=true.",
+        current_role=current,
+        requested_role=target,
+    )
+
+
 async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
     """Insert or raise a grant; lower one only on `replace=true`. Admin-issued grants are
     always active (the admin is the approver),
@@ -131,7 +156,11 @@ async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
     if existing is not None and grant_rank(existing.role) > grant_rank(input.role):
         # Older tokens claim the role being taken away; they fall back to the new grant.
         await end_grant_claims(
-            input.org, input.namespace, [subject], reason="grants.create lowered"
+            input.org,
+            [input.namespace],
+            [subject],
+            reason="grants.create lowered",
+            revoked_by=_actor(),
         )
     now = datetime.now(UTC).replace(tzinfo=None)
     # granted_by is who issued the grant — the authenticated caller, as
@@ -271,7 +300,9 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
 
     if (row.status or "active") == "active":
         # A pending request granted nothing, so revoking it (a reject) ends no claim.
-        await end_grant_claims(input.org, input.namespace, [subject], reason="grants.revoke")
+        await end_grant_claims(
+            input.org, [input.namespace], [subject], reason="grants.revoke", revoked_by=_actor()
+        )
     now = datetime.now(UTC).replace(tzinfo=None)
     await grants_repo.insert_row(
         {
@@ -290,7 +321,7 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
         # A revoked maintainer leaves every branch of the repository.
         from server.code.app.index import maintainers
 
-        await maintainers.revoke_quietly(input.org, input.namespace, subject)
+        await maintainers.revoke_quietly(input.org, input.namespace, subject, actor=_actor())
     # The tokens this person minted lose their own grants here. Best-effort like the
     # maintainer fan-out above: the person's revoke has landed; a failed cascade is logged,
     # never a 500.
@@ -340,6 +371,8 @@ async def handle_grants_approve(input: GrantsApproveInput) -> GrantsApproveOutpu
     # approved as reader"): `input.role` overrides what was asked; absent, the request is
     # approved as asked.
     target_role = input.role or pending_role or row.role
+    if input.decision == "approve" and not no_base_access:
+        _refuse_approval_below(row.role, str(target_role), input)
     await _enforce_code_ceiling(input.org, input.namespace, str(target_role))
     # granted_by on the new row is the approver, not the requester — the
     # audit trail and the "approved by …" notification need the right person.
