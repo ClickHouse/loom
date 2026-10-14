@@ -515,6 +515,14 @@ def _layout_problems(state: HealthState) -> list[Problem]:
     return [Problem("repo_sandbox_layout_refused", "warn", message, fix, source="runtime")]
 
 
+_SANDBOX_FIX = (
+    "Address the 'sandbox probe failed' warning in the server log (printed at the top of "
+    "`loom doctor`). In a container on an AppArmor 4.0 host, load the loom-repo-sandbox "
+    "profile and copy the security_opt of dev/docker-compose.colour.yml."
+)
+_SANDBOX_DOCS = "'Repository-job sandbox' in docs/operations/code-index-operations.md"
+
+
 def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
     """Repository jobs run without the sandbox: an operator's repositories still
     get their build-based tiers, which execute the repository's code on this
@@ -533,12 +541,9 @@ def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
                 "error",
                 "Repository jobs (clone, fetch, dependency installs, compiler tiers) are "
                 "refused: LOOM_CODE_SANDBOX_REQUIRED is set and the sandbox cannot run here.",
-                "Address the 'sandbox probe failed' warning in the server log (printed at the "
-                "top of `loom doctor`). In a container on an AppArmor 4.0 host, load the "
-                "loom-repo-sandbox profile and copy the security_opt of "
-                "dev/docker-compose.colour.yml. Or unset LOOM_CODE_SANDBOX_REQUIRED and list "
-                "repositories in LOOM_CODE_REPOS_JSON — 'Repository-job sandbox' in "
-                "docs/operations/code-index-operations.md.",
+                f"{_SANDBOX_FIX} Or, for repositories you trust to run unsandboxed, unset "
+                "LOOM_CODE_SANDBOX_REQUIRED and list them in LOOM_CODE_REPOS_JSON — "
+                f"{_SANDBOX_DOCS}.",
                 source="runtime",
             ),
         ]
@@ -552,12 +557,8 @@ def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
             "this host; self-registered repositories get no build tier, those with a "
             "network remote are not cloned or fetched, and adding one from the page is "
             "refused.",
-            "Address the 'sandbox probe failed' warning in the server log (printed at the "
-            "top of `loom doctor`). In a container on an AppArmor 4.0 host, load the "
-            "loom-repo-sandbox profile and copy the security_opt of "
-            "dev/docker-compose.colour.yml. Where the sandbox cannot run, list repositories "
-            "in LOOM_CODE_REPOS_JSON — 'Repository-job sandbox' in "
-            "docs/operations/code-index-operations.md.",
+            f"{_SANDBOX_FIX} Where the sandbox cannot run, list the repositories you trust "
+            f"in LOOM_CODE_REPOS_JSON — {_SANDBOX_DOCS}.",
             source="runtime",
         ),
     ]

@@ -389,8 +389,7 @@ secret and provider keys.
 
 `LOOM_CODE_REPOS_JSON` is one line holding every repository as a JSON array
 ([Configure the entry](../operations/code-index-operations.md#configure-the-entry)).
-In `~/.loom/.env`, uncomment the `LOOM_CODE_REPOS_JSON` line (add it if your `.env`
-predates it) and edit it.
+In `~/.loom/.env`, uncomment that line (add it if your `.env` predates it) and edit it.
 `dev` is the org a single-user stack runs as; in multi-user mode use your account's org,
 here and in `--org` below:
 
@@ -404,9 +403,9 @@ LOOM_CODE_REPOS_JSON=[{"org":"dev","namespace":"code-myrepo","repo":"acme/myrepo
   TypeScript or Go repository gets only the parser tier.
 - The indexer runs in a working tree, `/app/var/code_repos/checkout-<namespace>` unless
   the entry sets `scip_checkout_dir`. Loom creates it only for repositories added from
-  the dashboard, so create it yourself (below). For `typescript`, `python`
-  and `go` an empty Git repository is enough: the tier fetches each commit into it from
-  Loom's own clone.
+  the dashboard, so create it yourself (below). For `typescript`, `python` and `go` an
+  empty Git repository is enough: the tier fetches each commit into it from Loom's own
+  clone.
 - For a private repository, add a GitHub token (`LOOM_CODE_GITHUB_TOKEN` in `.env`, or
   `github_token` on the entry) and drop `"public":true`: it is for repositories public on
   their host, and lets anyone in the org read the index at once.

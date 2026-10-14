@@ -334,7 +334,7 @@ async def test_code_repo_add_refusals_are_sentences(plane) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("required", [False, True])
+@pytest.mark.parametrize("required", [False, True], ids=["sandbox-optional", "sandbox-required"])
 async def test_code_repo_add_is_refused_without_the_sandbox(plane, monkeypatch, required) -> None:
     """A self-registered repository's build tiers run its own code, so without the
     repository-job sandbox nothing is registered and the remote is never asked. The
@@ -352,7 +352,7 @@ async def test_code_repo_add_is_refused_without_the_sandbox(plane, monkeypatch, 
             await call
         detail = ei.value.to_detail()
         assert detail["code"] == "SANDBOX_UNAVAILABLE"
-        assert ("LOOM_CODE_REPOS_JSON" in detail["message"]) is not required
+        assert ("LOOM_CODE_REPOS_JSON" in detail["message"]) == (not required)
     assert plane.ch.inserted == []
 
 
