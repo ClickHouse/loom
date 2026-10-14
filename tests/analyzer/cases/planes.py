@@ -665,6 +665,14 @@ async def _list_score(ch: RecordingCH, c: dict[str, Any]) -> None:
     )
 
 
+async def _session_runs(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """The MCP session-run ledger reads: the run under an id, and the idle sweep."""
+    from server.tasks.store import runs
+
+    await runs.active_runs_by_id(ch, ORG, "mcp-" + "0" * 40)
+    await runs.idle_session_runs(ch, idle_seconds=1800, limit=500)
+
+
 def cases() -> list[Case]:
     out = [
         Case(
@@ -676,6 +684,7 @@ def cases() -> list[Case]:
         )
         for name, module in HANDLER_MODULES
     ]
+    out.append(Case("session_runs.ledger", "server.tasks.store.runs", _session_runs, {}))
     out.append(
         Case(
             "memory_list_score",

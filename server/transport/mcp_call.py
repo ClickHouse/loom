@@ -349,8 +349,7 @@ async def _bind_session_run(
             # The run row lives in the caller's org and default namespace, whatever
             # namespace a call names, so every web process files it under one key.
             caller = _mcp_runs.Caller.of_call(current_auth(), arguments)
-            goal = _mcp_runs.goal_of(op, arguments, defaults)
-            run = await _mcp_runs.ensure(mcp_session_id, defaults, caller, goal=goal)
+            run = await _mcp_runs.ensure(mcp_session_id, defaults, caller)
             if run is not None:
                 session_run_id = run.run_id
                 if _mcp_runs.stamps_run(op) and str(arguments.get("run_id") or "") in ("", "-"):

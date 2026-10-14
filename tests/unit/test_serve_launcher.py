@@ -134,3 +134,9 @@ def test_the_launchers_check_refuses_a_pinned_directory_it_cannot_write(
         assert done.returncode == 2 and "not writable" in done.stderr
     finally:
         pinned.chmod(0o700)
+
+
+def test_a_worker_count_that_is_not_a_number_is_refused_by_name(tmp_path: Path) -> None:
+    done = _launch(tmp_path, workers="auto", runtime_dir="/run/loom")
+    assert done.returncode == 2 and done.stdout == ""
+    assert "LOOM_WEB_WORKERS=auto is not a whole number" in done.stderr

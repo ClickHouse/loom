@@ -162,14 +162,14 @@ async def test_a_delete_right_after_a_call_keeps_every_call_in_the_ledger(
 
 
 @pytest.mark.asyncio
-async def test_a_runs_goal_never_shows_a_call_in_another_namespace(
+async def test_a_runs_goal_never_shows_what_a_call_sent(
     control_plane_url: str, ch_client: Any
 ) -> None:
     """The run row sits in the caller's default namespace, which other principals
-    read; a first call in another namespace leaves its text out of the goal."""
+    read; whatever the session's first call is, the goal is a label."""
     from server.auth.jwt import mint_token
 
-    org, session = unique_org("mcp-goal"), uuid.uuid4().hex
+    org = unique_org("mcp-goal")
     token = mint_token(
         subject=f"sa:mcp-goal-{uuid.uuid4().hex[:6]}",
         org=org,
@@ -178,26 +178,6 @@ async def test_a_runs_goal_never_shows_a_call_in_another_namespace(
         ttl_seconds=900,
         is_service_account=True,
     )
-    async with httpx.AsyncClient(base_url=control_plane_url, timeout=30) as c:
-        await _require_auth(c)
-        await _memory_set(c, token, session, "ns-b", "SECRET-ns-b-only")
-        r = await c.delete("/mcp", headers=_headers(token, session))
-        assert r.json()["run_closed"] is True, r.text[:400]
-
-    rows = ch_client.query(
-        "SELECT namespace, goal FROM loom.agent_runs FINAL WHERE org = {org:String}",
-        parameters={"org": org},
-    ).result_rows
-    assert rows and all("SECRET" not in goal for _, goal in rows)
-    assert {namespace for namespace, _ in rows} == {"ns-a"}
-
-
-@pytest.mark.asyncio
-async def test_a_write_in_the_runs_namespace_names_its_goal_and_a_search_never_does(
-    control_plane_url: str, ch_client: Any
-) -> None:
-    org, ns = unique_org("mcp-goal-here"), "ns"
-    token = _mint(org, ns)
     search = {
         "jsonrpc": "2.0",
         "id": 1,
@@ -207,22 +187,20 @@ async def test_a_write_in_the_runs_namespace_names_its_goal_and_a_search_never_d
             "arguments": {"query": "SECRET question", "namespace_scope": "this"},
         },
     }
-    writing, searching = uuid.uuid4().hex, uuid.uuid4().hex
+    sessions = [uuid.uuid4().hex for _ in range(3)]
     async with httpx.AsyncClient(base_url=control_plane_url, timeout=30) as c:
         await _require_auth(c)
-        await _memory_set(c, token, writing, ns, "rv/fact/goal")
-        r = await c.post("/mcp", json=search, headers=_headers(token, searching))
+        await _memory_set(c, token, sessions[0], "ns-b", "SECRET-ns-b-only")
+        await _memory_set(c, token, sessions[1], "ns-a", "SECRET-ns-a-key")
+        r = await c.post("/mcp", json=search, headers=_headers(token, sessions[2]))
         assert r.status_code == 200 and "error" not in r.json(), r.text[:400]
-        for session in (writing, searching):
+        for session in sessions:
             r = await c.delete("/mcp", headers=_headers(token, session))
             assert r.json()["run_closed"] is True, r.text[:400]
 
-    goals = {
-        goal
-        for (goal,) in ch_client.query(
-            "SELECT goal FROM loom.agent_runs FINAL WHERE org = {org:String}",
-            parameters={"org": org},
-        ).result_rows
-    }
-    assert "rv/fact/goal" in goals and len(goals) == 2
-    assert not any("SECRET" in goal for goal in goals)
+    rows = ch_client.query(
+        "SELECT namespace, goal FROM loom.agent_runs FINAL WHERE org = {org:String}",
+        parameters={"org": org},
+    ).result_rows
+    assert len(rows) == 3 and {namespace for namespace, _ in rows} == {"ns-a"}
+    assert all(goal.startswith("mcp session (") for _, goal in rows), rows

@@ -96,10 +96,10 @@ starts with `mcp-` and whose `metadata.implicit` is true once no call of its
 token (of anyone, for a run that records no token) reached it within
 `LOOM_MCP_SESSION_RUN_IDLE_SECONDS`, so a run begun by
 hand should not claim to be implicit. The run sits in the caller's default
-namespace, so what its readers see stays there: its goal is the key of the
-session's first call when that is a write into the namespace, else a label (a
-read's query may reach any namespace the caller reads), and `memories_written`
-lists the writes in that namespace only (the others still carry its `run_id`).
+namespace, so what its readers see stays there: its goal is the label
+`mcp session (<agent>)`, never a call's text (a read's query may reach any
+namespace the caller reads), and `memories_written` lists the writes in that
+namespace only (the others still carry its `run_id`).
 
 ## Operations
 

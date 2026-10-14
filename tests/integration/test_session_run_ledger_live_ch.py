@@ -250,7 +250,7 @@ async def test_a_scoped_callers_session_run_is_its_own(ch: Any) -> None:
         assert caller is not None
         assert (caller.subject, caller.user_id) == ("sa:bot", "review-user")
         defaults = {"org": ORG, "namespace": namespace, "agent": AGENT}
-        run = await mcp_runs.ensure(session, defaults, caller, goal="first call")
+        run = await mcp_runs.ensure(session, defaults, caller)
         await mcp_runs.drain_ledger_writes()
         assert run is not None and run.run_id == session_run_id(ORG, caller.subject, session)
         got = await handle_run_get(RunGetInput(org=ORG, namespace=namespace, run_id=run.run_id))
@@ -284,7 +284,7 @@ async def test_two_callers_sending_one_session_id_keep_their_own_runs(ch: Any) -
         for who, namespace in (("alice", first), ("bob", other)):
             defaults = {"org": ORG, "namespace": namespace, "agent": AGENT}
             caller = mcp_runs.Caller(subject=who)
-            runs[who] = await mcp_runs.ensure(session, defaults, caller, goal=f"{who}'s call")
+            runs[who] = await mcp_runs.ensure(session, defaults, caller)
         await mcp_runs.drain_ledger_writes()
         assert runs["alice"] is not None and runs["bob"] is not None
         assert runs["alice"].run_id != runs["bob"].run_id
@@ -314,7 +314,7 @@ async def test_a_session_run_starts_before_a_call_that_lands_before_its_begin(ch
     mcp_runs.reset()
     try:
         defaults = {"org": ORG, "namespace": namespace, "agent": AGENT}
-        run = await mcp_runs.ensure(uuid.uuid4().hex, defaults, mcp_runs.Caller(), goal="g")
+        run = await mcp_runs.ensure(uuid.uuid4().hex, defaults, mcp_runs.Caller())
         assert run is not None
         await _ledger_call(ch, namespace, run.run_id)  # before the begin lands
         await mcp_runs.drain_ledger_writes()

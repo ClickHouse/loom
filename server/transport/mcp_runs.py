@@ -33,7 +33,6 @@ SESSION_RUN_CAP = 4096
 # A cached run is checked with the ledger at most this often, and a failed first
 # begin tried again.
 CHECK_INTERVAL_S = 60.0
-GOAL_MAX_CHARS = 2000
 
 # Ops that never take the session run: the ledger's own verbs (an explicit
 # `run.begin` must mint its own id; a `run.complete` without an id must not
@@ -99,7 +98,6 @@ class SessionRun:
     caller: Caller
     # The session its row is filed under: the one the token pins, else the MCP session.
     row_session_id: str
-    goal: str
     # Wall clock when this process registered it: a new row starts here, before
     # the first call's ledger row.
     started_at: datetime
@@ -148,22 +146,6 @@ def stamps_run(op: Any) -> bool:
     return not op.read_only
 
 
-def goal_of(op: Any, arguments: dict[str, Any], defaults: dict[str, str]) -> str:
-    """The run's goal: a label, or the first call's key or text when it is a
-    write into the run's own org and namespace. A read's query may reach any
-    namespace the caller reads, and the run's readers are its namespace's."""
-    label = f"mcp session ({defaults.get('agent', '')})"[:GOAL_MAX_CHARS]
-    same_org = str(arguments.get("org") or defaults.get("org")) == defaults.get("org")
-    same_namespace = str(arguments.get("namespace") or "") == defaults.get("namespace")
-    if not (stamps_run(op) and same_org and same_namespace):
-        return label
-    for k in ("memory_key", "text"):
-        v = arguments.get(k)
-        if isinstance(v, str) and v.strip():
-            return v.strip()[:GOAL_MAX_CHARS]
-    return label
-
-
 def current(run_id: str) -> SessionRun | None:
     return _RUNS.get(run_id)
 
@@ -173,7 +155,6 @@ async def ensure(
     defaults: dict[str, str] | None,
     caller: Caller | None,
     *,
-    goal: str,
     now: float | None = None,
 ) -> SessionRun | None:
     """The session's run, begun on first use, in the org and namespace `defaults`
@@ -221,7 +202,6 @@ async def ensure(
         agent=agent,
         caller=caller,
         row_session_id=caller.session_id if caller.session_id != "-" else session_id,
-        goal=goal,
         started_at=naive_utc_now(),
         checked_at=now,
         quota_key=quota_key_var.get(),
@@ -236,9 +216,7 @@ async def ensure(
 
 async def _begin(run: SessionRun, *, now: float, first: bool) -> None:
     """`run.begin` for a registered run, unless another web process of this server
-    began it already. A re-opened run keeps the session's first goal (of two
-    first begins racing on two processes, the later one's). A
-    `first` begin that fails forgets the run and the session waits
+    began it already. A that fails forgets the run and the session waits
     CHECK_INTERVAL_S before the next attempt; a failed check of a run already
     begun keeps it, and the next check tries again."""
     _attribute(run.quota_key)
@@ -256,7 +234,9 @@ async def _begin(run: SessionRun, *, now: float, first: bool) -> None:
                 run_id=run.run_id,
                 user_id=run.caller.user_id,
                 session_id=run.row_session_id,
-                goal=run.goal or "mcp session",
+                # The calls' text stays out: a read's query may reach any
+                # namespace the caller reads, and the run's readers are this one's.
+                goal=f"mcp session ({run.agent})",
                 environment="mcp",
                 consumer=run.agent[:64],
                 # The idle sweep counts only this token's calls as the session's.
@@ -321,7 +301,6 @@ async def _close(org: str, run_id: str, begin: asyncio.Task[None] | None, quota_
 
 __all__ = [
     "CHECK_INTERVAL_S",
-    "GOAL_MAX_CHARS",
     "SESSION_RUN_CAP",
     "Caller",
     "SessionRun",
@@ -329,7 +308,6 @@ __all__ = [
     "current",
     "drain_ledger_writes",
     "ensure",
-    "goal_of",
     "reset",
     "stamps_run",
     "subject_of",

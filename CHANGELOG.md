@@ -51,7 +51,9 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   width in Settings → Models & keys, which rebuilds the tables.
 - An MCP session's implicit run is shared by every web process of the server, filed in the
   caller's default namespace under the user and session the call acts as. Its id binds the
-  token's subject and is no longer `mcp-<Mcp-Session-Id>`; a `run.begin` naming an id of its
+  token's subject and is no longer `mcp-<Mcp-Session-Id>`, and its goal is the label
+  `mcp session (<agent>)`, not the first call's query, which may reach namespaces the run's
+  readers cannot; a `run.begin` naming an id of its
   shape (`mcp-` and 40 hex digits) is answered with an id of its own. Its close no longer
   writes `metadata.calls`: count the `agent_events` rows with its `run_id`. The new
   `mcp_session_run_sweep` worker closes an idle one from the ledger, so it closes after a

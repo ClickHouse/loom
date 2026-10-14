@@ -350,8 +350,9 @@ async def idle_session_runs(
     also covers the `mcp-<session id>` runs of earlier servers. `version` is
     the time of the row's last write. The begin records the token's subject,
     and only that token's calls keep the run busy; a run with none recorded (an
-    earlier server's, or no auth) stays busy while any call reaches it. The
-    `recent` set is read twice for that, which costs less than doubling it."""
+    earlier server's, or no auth) stays busy while any call reaches it.
+    `recent` is scanned twice (the CTE is inlined): once by (run, subject), once
+    by run for the runs with no subject recorded."""
     rows: list[RunLedgerRow] = await ch.query_all(
         """
         WITH candidates AS (
