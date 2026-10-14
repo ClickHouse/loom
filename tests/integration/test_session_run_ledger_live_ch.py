@@ -8,7 +8,6 @@ Skips cleanly when LOOM_CH_HOST is unset.
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import time
 import uuid
@@ -84,16 +83,24 @@ async def _ledger_call(
 async def test_the_idle_sweep_closes_a_run_its_own_calls_did_not_keep_busy(
     ch: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """More busy runs than a pass closes do not hide a quiet one behind them, and
-    a run an earlier server opened under `mcp-<session id>` closes too."""
+    """More busy runs than a pass closes do not hide a quiet one behind them, a
+    run an earlier server opened under `mcp-<session id>` closes too, and a run
+    begun by hand under the prefix stays open whatever its metadata says."""
     from server.tasks.app.run import active_session_runs, close_idle_session_runs
+    from server.tasks.store.runs import fetch_run
 
     org = f"itest-sweep-{uuid.uuid4().hex[:8]}"
     namespace, elsewhere = (f"itest-{uuid.uuid4().hex[:12]}" for _ in range(2))
     busy = [session_run_id(org, "sa:a", uuid.uuid4().hex) for _ in range(3)]
     quiet, borrowed = (session_run_id(org, "sa:a", uuid.uuid4().hex) for _ in range(2))
     explicit = f"mcp-{uuid.uuid4().hex[:12]}"  # the prefix, but begun by hand
+    handmade = f"mcp-nightly-{uuid.uuid4().hex[:8]}"  # by hand, and claims to be implicit
     legacy = f"mcp-{uuid.uuid4().hex}"
+    metadata = {
+        legacy: '{"implicit":true,"transport":"mcp"}',  # no subject recorded
+        explicit: '{"implicit":false,"subject":"sa:a"}',
+        handmade: '{"implicit":true}',
+    }
     long_ago = time.time_ns() - 7200 * 10**9
     _sweep_only(monkeypatch, org)
     try:
@@ -107,15 +114,11 @@ async def test_the_idle_sweep_closes_a_run_its_own_calls_did_not_keep_busy(
                     "run_id": run_id,
                     "goal": "g",
                     "environment": "mcp",
-                    "metadata": (
-                        '{"implicit":true,"transport":"mcp"}'  # no subject recorded
-                        if run_id == legacy
-                        else json.dumps({"implicit": run_id != explicit, "subject": "sa:a"})
-                    ),
+                    "metadata": metadata.get(run_id, '{"implicit":true,"subject":"sa:a"}'),
                     "version": long_ago,
                     "started_at": _at(long_ago),
                 }
-                for run_id in [*busy, quiet, borrowed, explicit, legacy]
+                for run_id in [*busy, quiet, borrowed, explicit, handmade, legacy]
             ],
             settings={"async_insert": 0},
         )
@@ -128,8 +131,9 @@ async def test_the_idle_sweep_closes_a_run_its_own_calls_did_not_keep_busy(
         assert all([await active_session_runs(org, run_id) for run_id in busy])
         assert await active_session_runs(org, quiet) == []
         assert await active_session_runs(org, borrowed) == []
-        assert await active_session_runs(org, legacy) == []
-        assert await active_session_runs(org, explicit) != []  # not an implicit run
+        for run_id, status in ((legacy, "completed"), (explicit, "active"), (handmade, "active")):
+            row = await fetch_run(ch, org, namespace, run_id)
+            assert row is not None and row["status"] == status, run_id
     finally:
         for table in ("agent_runs", "agent_events"):
             await ch.execute(
@@ -218,7 +222,8 @@ async def test_a_run_that_records_no_subject_stays_open_while_it_is_called(
     ch: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An earlier server's run: its calls carry a subject it never recorded."""
-    from server.tasks.app.run import active_session_runs, close_idle_session_runs
+    from server.tasks.app.run import close_idle_session_runs
+    from server.tasks.store.runs import fetch_run
 
     org = f"itest-nosub-{uuid.uuid4().hex[:8]}"
     busy, quiet = f"mcp-{uuid.uuid4().hex}", f"mcp-{uuid.uuid4().hex}"
@@ -245,8 +250,8 @@ async def test_a_run_that_records_no_subject_stays_open_while_it_is_called(
         )
         await _ledger_call(ch, "ns", busy, subject="sa:still-working", org=org)
         assert await close_idle_session_runs(1800) == 1
-        assert await active_session_runs(org, busy) != []
-        assert await active_session_runs(org, quiet) == []
+        assert (await fetch_run(ch, org, "ns", busy) or {}).get("status") == "active"
+        assert (await fetch_run(ch, org, "ns", quiet) or {}).get("status") == "completed"
     finally:
         for table in ("agent_runs", "agent_events"):
             await ch.execute(

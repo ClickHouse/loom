@@ -334,7 +334,7 @@ async def active_runs_by_id(ch: Any, org: str, run_id: str) -> list[RunLedgerRow
         SELECT {_RUN_SELECT}
         FROM loom.agent_runs FINAL
         WHERE org = {{org:String}} AND run_id = {{rid:String}} AND status = 'active'
-          AND environment = 'mcp'
+          AND environment = 'mcp' AND match(run_id, '^mcp-[0-9a-f]{{40}}$')
         ORDER BY started_at, namespace
         """,
         params={"org": org, "rid": run_id},
@@ -350,7 +350,17 @@ async def idle_session_runs(ch: Any, *, idle_seconds: int, limit: int) -> list[R
         """
         WITH candidates AS (
             SELECT run_id FROM loom.agent_runs
-            WHERE status = 'active' AND environment = 'mcp' AND startsWith(run_id, 'mcp-')
+            WHERE status = 'active' AND environment = 'mcp'
+              AND (
+                  -- Only the transport writes this shape (run.begin remaps it).
+                  match(run_id, '^mcp-[0-9a-f]{40}$')
+                  -- An earlier server's `mcp-<session id>`, which records no subject.
+                  OR (
+                      startsWith(run_id, 'mcp-')
+                      AND JSONExtractString(metadata, 'transport') = 'mcp'
+                      AND NOT JSONHas(metadata, 'subject')
+                  )
+              )
         ),
         -- Calls by run and token; a run that records no subject (an earlier
         -- server's, or no auth) stays busy while any call reaches it.
