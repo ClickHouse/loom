@@ -173,8 +173,17 @@ async def _first_pass(ch: RecordingCH, c: dict[str, Any]) -> None:
         await fp.held_namespaces(owned, [(ORG, NS)], ch=ch)
 
 
+async def _session_runs(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """The MCP session-run ledger reads: the run under an id, and the idle sweep."""
+    from server.tasks.store import runs
+
+    await runs.active_runs_by_id(ch, ORG, "mcp-" + "0" * 40)
+    await runs.idle_session_runs(ch, idle_seconds=1800, limit=500)
+
+
 def cases() -> list[Case]:
     return [
+        Case("session_runs.ledger", "server.tasks.store.runs", _session_runs, {}),
         Case("workers.first_pass", "server.workers.first_pass", _first_pass, {}),
         Case(
             "builders.pure",

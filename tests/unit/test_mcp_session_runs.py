@@ -23,7 +23,7 @@ DEFAULTS = {"org": "clickhouse", "namespace": "ns-a", "agent": "cursor"}
 
 
 CALLER = mcp_runs.Caller()
-SET, SEARCH = OPERATIONS_BY_NAME["memory.set"], OPERATIONS_BY_NAME["search.query"]
+SET = OPERATIONS_BY_NAME["memory.set"]
 
 
 def rid(session_id: str) -> str:
@@ -114,65 +114,33 @@ def test_writes_stamp_reads_label_ledger_and_code_never() -> None:
     assert code and not any(mcp_runs.takes_run(o) for o in code)
 
 
-def test_goal_is_the_first_query_then_key_then_fallback() -> None:
+def test_goal_is_a_writes_key_in_the_runs_namespace_else_a_label() -> None:
     here = {"org": "clickhouse", "namespace": "ns-a"}
-    assert (
-        mcp_runs.goal_of(SET, {**here, "query": "  what broke CI  "}, DEFAULTS) == "what broke CI"
-    )
-    assert mcp_runs.goal_of(SET, {**here, "memory_key": "ci:flaky"}, DEFAULTS) == "ci:flaky"
+    assert mcp_runs.goal_of(SET, {**here, "memory_key": " ci:flaky "}, DEFAULTS) == "ci:flaky"
     assert mcp_runs.goal_of(SET, {**here, "value": 1}, DEFAULTS) == "mcp session (cursor)"
-    long_goal = mcp_runs.goal_of(SET, {**here, "query": "q" * 5000}, DEFAULTS)
+    long_goal = mcp_runs.goal_of(SET, {**here, "memory_key": "k" * 5000}, DEFAULTS)
     assert len(long_goal) == mcp_runs.GOAL_MAX_CHARS
 
 
 @pytest.mark.parametrize(
     "elsewhere",
-    [
-        {"org": "clickhouse", "namespace": "ns-b"},
-        {"org": "other", "namespace": "ns-a"},
-        {"org": "clickhouse", "namespace": "ns-a", "namespace_scope": "all_mine"},
-        {"org": "clickhouse", "namespace": "ns-a", "namespaces": ["ns-b"]},
-    ],
+    [{"org": "clickhouse", "namespace": "ns-b"}, {"org": "other", "namespace": "ns-a"}],
 )
-def test_a_call_outside_the_runs_namespace_leaves_its_text_out_of_the_goal(
+def test_a_write_outside_the_runs_namespace_leaves_its_key_out_of_the_goal(
     elsewhere: dict[str, Any],
 ) -> None:
     """The run's readers are its namespace's; they may not read where the call went."""
-    goal = mcp_runs.goal_of(SEARCH, {**elsewhere, "query": "SECRET in ns-b"}, DEFAULTS)
+    goal = mcp_runs.goal_of(SET, {**elsewhere, "memory_key": "SECRET in ns-b"}, DEFAULTS)
     assert goal == "mcp session (cursor)"
 
 
-def test_a_search_kept_to_the_runs_namespace_gives_its_query() -> None:
-    """`loom_search` as the transport hands it on: its arguments are coerced
-    first, and a search scoped to this namespace stays in it."""
-    from server.transport.mcp_defaults import coerce_search_arguments
-
-    arguments = {"org": "clickhouse", "namespace": "ns-a", "query": "why is CI red"}
-    this = {**arguments, "namespace_scope": "this"}
-    coerce_search_arguments(this)
-    assert mcp_runs.goal_of(SEARCH, this, DEFAULTS) == "why is CI red"
-    every = {**arguments}
-    coerce_search_arguments(every)  # unscoped: every namespace the caller reads
-    assert mcp_runs.goal_of(SEARCH, every, DEFAULTS) == "mcp session (cursor)"
-
-
-def test_a_context_pack_leaves_its_query_out_of_the_goal() -> None:
-    """Its knowledge and conversation legs search every namespace the caller reads."""
-    pack = OPERATIONS_BY_NAME["context.pack"]
+@pytest.mark.parametrize(
+    "read", ["search.query", "memory.search", "memory.ask", "memory.brief", "context.pack"]
+)
+def test_a_read_never_names_the_goal(read: str) -> None:
+    """A read's query may reach any namespace the caller reads, whatever it names."""
     call = {"org": "clickhouse", "namespace": "ns-a", "query": "SECRET question"}
-    assert mcp_runs.goal_of(pack, call, DEFAULTS) == "mcp session (cursor)"
-
-
-def test_an_unscoped_call_takes_the_scope_the_op_would_search_with(
-    settings_override,
-) -> None:
-    """`memory.ask` leaves a missing scope to the deployment's default."""
-    ask = OPERATIONS_BY_NAME["memory.ask"]
-    call = {"org": "clickhouse", "namespace": "ns-a", "query": "who owns the release?"}
-    settings_override(memory_search_default_namespace_scope="this")
-    assert mcp_runs.goal_of(ask, call, DEFAULTS) == "who owns the release?"
-    settings_override(memory_search_default_namespace_scope="all_mine")
-    assert mcp_runs.goal_of(ask, call, DEFAULTS) == "mcp session (cursor)"
+    assert mcp_runs.goal_of(OPERATIONS_BY_NAME[read], call, DEFAULTS) == "mcp session (cursor)"
 
 
 # ---- ensure: one run per session, begun once ----

@@ -93,12 +93,13 @@ An MCP session gets an implicit run without asking: its first run-scoped tool
 call begins one, and `DELETE /mcp` or the `mcp_session_run_sweep` worker closes
 it (see [MCP](../reference/mcp.md)). The sweep closes any active run whose id
 starts with `mcp-` and whose `metadata.implicit` is true once no call of its
-token reached it within `LOOM_MCP_SESSION_RUN_IDLE_SECONDS`, so a run begun by
+token (of anyone, for a run that records no token) reached it within
+`LOOM_MCP_SESSION_RUN_IDLE_SECONDS`, so a run begun by
 hand should not claim to be implicit. The run sits in the caller's default
-namespace, so what its readers see stays there: its goal is a label when the
-session's first call worked elsewhere (a search across every namespace the
-caller reads counts), and `memories_written` lists the writes in
-that namespace only (the others still carry its `run_id`).
+namespace, so what its readers see stays there: its goal is the key of the
+session's first call when that is a write into the namespace, else a label (a
+read's query may reach any namespace the caller reads), and `memories_written`
+lists the writes in that namespace only (the others still carry its `run_id`).
 
 ## Operations
 

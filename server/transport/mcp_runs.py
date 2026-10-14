@@ -45,9 +45,6 @@ _NEVER_STAMPED_PREFIXES = ("run.", "code.")
 # run scope, where no other connection, the primer, or a later `replace`
 # addressed without it ever reads it. They stay labelled on the ledger.
 _RUN_SCOPED_PREFIXES = ("working_memory.",)
-# Ops that search every namespace the caller reads whatever they are sent:
-# `context.pack`'s knowledge and conversation legs.
-_SEARCH_EVERY_NAMESPACE = frozenset({"context.pack"})
 # Reads the session run labels although their input carries no `run_id`:
 # `search.query` (the `loom_search` tool) is the read agents call most.
 _LABELLED_READS = frozenset({"search.query"})
@@ -152,39 +149,19 @@ def stamps_run(op: Any) -> bool:
 
 
 def goal_of(op: Any, arguments: dict[str, Any], defaults: dict[str, str]) -> str:
-    """The run's goal: the first call's query, else its key, else a label. The
-    label too when the call works outside the run's org and namespace, whose
-    readers may not read where it went: another namespace, or a search across
-    every namespace the caller reads (`namespace_scope="all_mine"`)."""
+    """The run's goal: a label, or the first call's key or text when it is a
+    write into the run's own org and namespace. A read's query may reach any
+    namespace the caller reads, and the run's readers are its namespace's."""
     label = f"mcp session ({defaults.get('agent', '')})"[:GOAL_MAX_CHARS]
-    elsewhere = (
-        str(arguments.get("org") or defaults.get("org")) != defaults.get("org")
-        or str(arguments.get("namespace") or "") != defaults.get("namespace")
-        or op.name in _SEARCH_EVERY_NAMESPACE
-        or _scope_of(op, arguments) == "all_mine"
-        or arguments.get("namespaces")
-    )
-    if elsewhere:
+    same_org = str(arguments.get("org") or defaults.get("org")) == defaults.get("org")
+    same_namespace = str(arguments.get("namespace") or "") == defaults.get("namespace")
+    if not (stamps_run(op) and same_org and same_namespace):
         return label
-    for k in ("query", "goal", "memory_key", "text"):
+    for k in ("memory_key", "text"):
         v = arguments.get(k)
         if isinstance(v, str) and v.strip():
             return v.strip()[:GOAL_MAX_CHARS]
     return label
-
-
-def _scope_of(op: Any, arguments: dict[str, Any]) -> str | None:
-    """The `namespace_scope` the op will search with: the call's, else the
-    field's default, which None leaves to the deployment's."""
-    fields = op.input_model.model_fields
-    if "namespace_scope" not in fields:
-        return None
-    scope = arguments.get("namespace_scope", fields["namespace_scope"].default)
-    if scope is None:
-        from server.settings import settings
-
-        scope = settings.memory_search_default_namespace_scope
-    return str(scope)
 
 
 def current(run_id: str) -> SessionRun | None:

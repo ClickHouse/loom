@@ -545,8 +545,9 @@ reports as `build_commit`.
 The web processes share small files (rate-limit table, runtime overrides, graph marks) in
 `/run/loom`, which the compose files mount as a tmpfs owned by the image's user. With a
 plain `docker run`, mount it the same way, `--tmpfs /run/loom:uid=999,gid=999,mode=0700`:
-a bare `--tmpfs /run/loom` belongs to root, which the server's user cannot use. Without
-the tmpfs the files land in the container's writable layer, and a restarted container
+a bare `--tmpfs /run/loom` is root's and open to everyone, so the server passes it over
+for `/tmp/loom-<uid>` in the container's writable layer. There, as without a tmpfs, the
+files stay in the writable layer, and a restarted container
 does not remove an earlier one's; remove the container (`docker run --rm`) rather than
 restarting it. With a read-only root filesystem and no tmpfs, several web processes have
 nowhere to share: with `LOOM_WEB_WORKERS` unset `scripts/serve.sh` starts one and says

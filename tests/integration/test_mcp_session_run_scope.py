@@ -193,29 +193,36 @@ async def test_a_runs_goal_never_shows_a_call_in_another_namespace(
 
 
 @pytest.mark.asyncio
-async def test_a_search_in_the_runs_namespace_names_the_runs_goal(
+async def test_a_write_in_the_runs_namespace_names_its_goal_and_a_search_never_does(
     control_plane_url: str, ch_client: Any
 ) -> None:
-    org, ns, session = unique_org("mcp-goal-here"), "ns", uuid.uuid4().hex
+    org, ns = unique_org("mcp-goal-here"), "ns"
     token = _mint(org, ns)
-    body = {
+    search = {
         "jsonrpc": "2.0",
         "id": 1,
         "method": "tools/call",
         "params": {
             "name": "loom_search",
-            "arguments": {"query": "why is CI red", "namespace_scope": "this"},
+            "arguments": {"query": "SECRET question", "namespace_scope": "this"},
         },
     }
+    writing, searching = uuid.uuid4().hex, uuid.uuid4().hex
     async with httpx.AsyncClient(base_url=control_plane_url, timeout=30) as c:
         await _require_auth(c)
-        r = await c.post("/mcp", json=body, headers=_headers(token, session))
+        await _memory_set(c, token, writing, ns, "rv/fact/goal")
+        r = await c.post("/mcp", json=search, headers=_headers(token, searching))
         assert r.status_code == 200 and "error" not in r.json(), r.text[:400]
-        r = await c.delete("/mcp", headers=_headers(token, session))
-        assert r.json()["run_closed"] is True, r.text[:400]
+        for session in (writing, searching):
+            r = await c.delete("/mcp", headers=_headers(token, session))
+            assert r.json()["run_closed"] is True, r.text[:400]
 
-    rows = ch_client.query(
-        "SELECT goal FROM loom.agent_runs FINAL WHERE org = {org:String}",
-        parameters={"org": org},
-    ).result_rows
-    assert rows == [("why is CI red",)]
+    goals = {
+        goal
+        for (goal,) in ch_client.query(
+            "SELECT goal FROM loom.agent_runs FINAL WHERE org = {org:String}",
+            parameters={"org": org},
+        ).result_rows
+    }
+    assert "rv/fact/goal" in goals and len(goals) == 2
+    assert not any("SECRET" in goal for goal in goals)

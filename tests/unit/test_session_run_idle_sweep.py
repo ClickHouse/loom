@@ -114,4 +114,4 @@ def test_the_pass_deadline_leaves_room_for_the_close_budget() -> None:
 
     (row,) = [w for w in _WORKERS if w.name == "mcp_session_run_sweep"]
     assert row.max_pass_seconds is not None
-    assert row.max_pass_seconds > run_handlers.IDLE_CLOSE_BUDGET_S
+    assert row.max_pass_seconds >= 2 * run_handlers.IDLE_CLOSE_BUDGET_S
