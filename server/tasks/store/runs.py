@@ -26,7 +26,6 @@ log = logging.getLogger(__name__)
 # Cap on the keys a derived read returns.
 DERIVED_LIMIT = 500
 
-
 RUN_COLUMNS = (
     "org",
     "namespace",
