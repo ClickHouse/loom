@@ -244,6 +244,24 @@ async def test_a_vector_at_the_old_width_beside_a_placeholder_is_refused(
 
 
 @pytest.mark.asyncio
+async def test_full_vectors_at_the_old_width_are_refused_by_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No placeholder in the batch: the write still re-reads a stale reading."""
+    from server.core.errors import CodedWidthMismatchError
+    from server.core.vectors.placeholders import fit_vectors
+
+    columns = [("memory_embeddings", "embedding"), ("memory_embeddings", "memory_key_embedding")]
+    ch = _FakeCH(coded=columns, patches={}, width=3072)
+    await vector_codes_state.probe(ch)
+    ch.width = 1024  # rebuilt outside Loom
+    _age_reading(monkeypatch)
+    row = {"embedding": [0.1] * 3072, "memory_key_embedding": [0.1] * 3072}
+    with pytest.raises(CodedWidthMismatchError):
+        await fit_vectors("memory_embeddings", [row])
+
+
+@pytest.mark.asyncio
 async def test_a_batch_of_stubs_is_padded_from_a_recent_reading(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

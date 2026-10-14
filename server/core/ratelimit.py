@@ -350,7 +350,6 @@ class Limiter:
         self._shared: SharedBucketStore | None = None
         self._shared_key: tuple[object, ...] | None = None
         self._shared_reason: str = "not resolved yet"
-        self._shared_active: bool = False
         # With several web workers the admin overrides live in a host file, so
         # one set through any worker binds them all.
         self._overrides_doc: SharedDocument[_Overrides] | None = None
@@ -381,7 +380,6 @@ class Limiter:
             self._shared_reason = (
                 "off by LOOM_RATELIMIT_SHARED" if mode == "off" else "single web worker"
             )
-            self._shared_active = False
             return None
         from server.core.ratelimit_shared import SharedBucketStore as _Store
         from server.core.ratelimit_shared import default_path
@@ -393,11 +391,9 @@ class Limiter:
             self._shared_reason = (
                 f"shared table unavailable ({type(e).__name__}: {e}); per-process buckets"
             )
-            self._shared_active = False
             log.warning("rate limiter: %s", self._shared_reason)
             return None
         self._shared_reason = f"shared table {target}"
-        self._shared_active = True
         return self._shared
 
     # -- overrides shared through the table's directory --------------------
@@ -467,8 +463,7 @@ class Limiter:
     @property
     def shared_active(self) -> bool:
         """True when this process's buckets live in the host-shared table."""
-        self._store()
-        return self._shared_active
+        return self._store() is not None
 
     def backend_status(self) -> dict[str, object]:
         """For /v1/health: which backend holds the buckets and what one cap is divided by."""

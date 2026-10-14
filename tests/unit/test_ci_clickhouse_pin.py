@@ -57,3 +57,18 @@ def test_the_release_bundle_and_its_smoke_take_the_checked_release() -> None:
     for name in ("build", "docker-smoke"):
         assert "clickhouse" in _needs(jobs[name]), name
         assert RESOLVED in _env(jobs[name]).values(), name
+
+
+def test_a_failed_lookup_fails_its_step() -> None:
+    """`echo "image=$(…)"` exits 0 when the lookup fails; an assignment does not."""
+    for name in ("ci.yml", "release.yml"):
+        for line in (WORKFLOWS / name).read_text().splitlines():
+            if '>> "$GITHUB_OUTPUT"' in line:
+                assert "$(" not in line, (name, line)
+
+
+def test_the_release_checks_its_clickhouse_before_pinning_it() -> None:
+    job = _jobs("release.yml")["clickhouse"]
+    script = "\n".join(step.get("run", "") for step in job["steps"])
+    assert "server.core.schema.migrate" in script and "make schema-check" in script
+    assert "clickhouse" in _needs(_jobs("release.yml")["verify"])

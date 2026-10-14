@@ -86,7 +86,8 @@ A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not mov
    `clickhouse/clickhouse-server:latest` names now (`dev/clickhouse_release.sh`), or, on a
    re-run, the one this version's published bundle already names, so rerunning the
    installer for a version never moves ClickHouse. It migrates a fresh server of that
-   release and runs `make schema-check` before `build` may pin it;
+   release and runs `make schema-check` before `build` may pin it. Each tag resolves
+   its own, so a final release can name a newer ClickHouse than its release candidates;
 3. `build` writes the version into the Python and TypeScript SDK sources and builds the
    Python SDK wheel and sdist, the npm tarball (after the TypeScript SDK's `check:dist`),
    and zips of the two plugins (`loom-claude-code-plugin-vX.Y.Z.zip`,

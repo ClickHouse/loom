@@ -109,6 +109,9 @@ instead; container recreation preserves the existing data volumes.
 
 ### Contributor path: build a checkout
 
+Prerequisite: Docker Compose 2.34 or later, which the checkout's compose file needs to
+pull ClickHouse daily.
+
 ```bash
 git clone https://github.com/ClickHouse/loom && cd loom
 python3 -m venv .venv && . .venv/bin/activate

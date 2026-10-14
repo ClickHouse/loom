@@ -138,7 +138,7 @@ jobs:
       # integration job's server.
       - name: Install the clickhouse binary
         run: |
-          id=$(docker create --pull always "$LOOM_CLICKHOUSE_IMAGE")
+          id=$(docker create "$LOOM_CLICKHOUSE_IMAGE")
           sudo docker cp -L "$id:/usr/bin/clickhouse" /usr/local/bin/clickhouse
           docker rm "$id" >/dev/null
           sudo ln -sf clickhouse /usr/local/bin/clickhouse-format

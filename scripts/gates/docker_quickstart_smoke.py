@@ -84,6 +84,14 @@ def provider_fixture(image: str, root: Path) -> Path:
     return override
 
 
+def latest_release() -> str:
+    """The exact image `clickhouse/clickhouse-server:latest` names now."""
+    script = ROOT / "dev" / "clickhouse_release.sh"
+    return subprocess.run(
+        ["bash", str(script)], check=True, stdout=subprocess.PIPE, text=True
+    ).stdout.strip()
+
+
 def smoke(image: str, clickhouse_image: str) -> None:
     with tempfile.TemporaryDirectory(prefix="loom-docker-smoke-") as temp:
         root = Path(temp)
@@ -183,13 +191,4 @@ if __name__ == "__main__":
         "--clickhouse-image", help="the release the bundle names; default: the latest, resolved now"
     )
     args = parser.parse_args()
-    clickhouse_image = (
-        args.clickhouse_image
-        or subprocess.run(
-            ["bash", str(ROOT / "dev" / "clickhouse_release.sh")],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-    )
-    smoke(args.image, clickhouse_image)
+    smoke(args.image, args.clickhouse_image or latest_release())

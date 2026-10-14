@@ -45,10 +45,13 @@ def pinned_image(archive: Path) -> str:
     with tarfile.open(archive) as bundle:
         member = bundle.extractfile("loom-stack/compose.yaml")
         compose = member.read().decode() if member else ""
-    found = EXACT_CLICKHOUSE.search(compose)
+    default = (
+        re.escape("${LOOM_CLICKHOUSE_IMAGE:-") + f"({EXACT_CLICKHOUSE.pattern})" + re.escape("}")
+    )
+    found = re.search(default, compose)
     if not found:
         raise ValueError(f"{archive} names no exact ClickHouse release")
-    return found.group(0)
+    return found.group(1)
 
 
 def build(version: str, output_dir: Path, clickhouse_image: str) -> tuple[Path, Path]:

@@ -122,16 +122,25 @@ jobs:
           uv sync --locked --python "${{ steps.python.outputs.python-path }}"
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       # A re-run keeps the release a published bundle of this version names, so
-      # rerunning the installer for it never moves ClickHouse.
+      # rerunning the installer for it never moves ClickHouse. Only "release not
+      # found" means unpublished; any other failure stops the run.
       - id: resolve
         env:
           VERSION: ${{ needs.version.outputs.version }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release download "v$VERSION" --pattern loom-stack.tar.gz --dir published; then
+          if assets=$(gh release view "v$VERSION" --json assets -q '.assets[].name' 2>gh.err); then
+            if ! grep -qx loom-stack.tar.gz <<<"$assets"; then
+              echo "::error::v$VERSION is published without loom-stack.tar.gz"
+              exit 1
+            fi
+            gh release download "v$VERSION" --pattern loom-stack.tar.gz --dir published
             image=$(python scripts/release/build_stack_bundle.py --pinned-in published/loom-stack.tar.gz)
-          else
+          elif grep -q "release not found" gh.err; then
             image=$(bash dev/clickhouse_release.sh)
+          else
+            cat gh.err >&2
+            exit 1
           fi
           echo "image=$image" >> "$GITHUB_OUTPUT"
       - name: Migrate a fresh server of that release and check schema.sql
@@ -218,11 +227,12 @@ jobs:
 
   verify:
     name: Verify the release files
-    needs: [version, build]
+    needs: [version, clickhouse, build]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -241,8 +251,11 @@ jobs:
         run: |
           pip install packaging==26.3
           python - <<'PY'
-          import json, os, pathlib, re, subprocess, sys, tarfile, zipfile
+          import json, os, pathlib, subprocess, sys, tarfile, zipfile
           from packaging.version import Version
+
+          sys.path.insert(0, os.getcwd())
+          from scripts.release.build_stack_bundle import pinned_image
 
           version = os.environ["VERSION"]
           pyv = str(Version(version))
@@ -330,9 +343,9 @@ jobs:
                   if missing:
                       errors.append(f"stack bundle is missing {sorted(missing)}")
                   release_version = t.extractfile("loom-stack/VERSION").read().decode().strip()
-                  compose = t.extractfile("loom-stack/compose.yaml").read().decode()
-                  if not re.search(r"clickhouse/clickhouse-server:\d+(\.\d+){3}\}", compose):
-                      errors.append("stack bundle names no exact ClickHouse release")
+                  pinned = pinned_image(archive)
+                  if pinned != os.environ["CLICKHOUSE_IMAGE"]:
+                      errors.append(f"stack bundle names {pinned}, not the checked release")
                   if release_version != version:
                       errors.append(f"stack bundle version {release_version}, expected {version}")
 

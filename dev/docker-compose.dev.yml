@@ -20,7 +20,8 @@
 services:
   clickhouse:
     # The latest release, as CI runs (dev/ci_start_clickhouse.sh), pulled again
-    # on the first `up` of a day so a cached image does not hold an older one.
+    # on the first `up` of a day (Compose 2.34 or later) so a cached image does
+    # not hold an older one.
     # LOOM_CLICKHOUSE_IMAGE pins another, e.g. clickhouse/clickhouse-server:head
     # for a master build.
     image: ${LOOM_CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:latest}
