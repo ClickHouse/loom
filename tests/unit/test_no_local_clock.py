@@ -5,10 +5,12 @@ and query parameters reach ClickHouse as UTC wall time. A local reading lands
 shifted by the host's offset on any host not in UTC. Use `naive_utc_now()` or
 `datetime.now(UTC)`.
 
-The check is by call shape, whatever the receiver is named: `.now()` and
-`.today()` with no zone, `.fromtimestamp(x)` with none, and the calls that are
-local or deprecated outright. It cannot see `naive.timestamp()`, which reads a
-naive value as local; use `time.time_ns()` for a version.
+The check is by call shape, whatever the receiver is named: `.now()`,
+`.today()` and `.astimezone()` with no zone, `.fromtimestamp(x)` with none, and
+the calls that are local or deprecated outright. It cannot see
+`naive.timestamp()`, which reads a naive value as local (use `time.time_ns()`
+for a version), nor `time.ctime()` / `asctime()` / `strftime(fmt)`, whose
+names a datetime's own methods share.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from pathlib import Path
 
 SERVER = Path(__file__).resolve().parents[2] / "server"
 BANNED = {"utcnow", "utcfromtimestamp", "localtime", "mktime"}
-TZ_POSITION = {"now": 0, "today": 0, "fromtimestamp": 1}  # where the zone goes, by position
+TZ_POSITION = {"now": 0, "today": 0, "fromtimestamp": 1, "astimezone": 0}  # the zone, by position
 
 
 def _reads_local_clock(call: ast.Call) -> bool:
@@ -57,6 +59,7 @@ def test_the_check_tells_local_readings_from_utc_ones() -> None:
         "datetime.now(tz=None)",
         "date.today()",
         "datetime.fromtimestamp(t)",
+        "x.astimezone()",
         "datetime.utcnow()",
         "time.localtime()",
         "time.mktime(t)",
@@ -66,6 +69,7 @@ def test_the_check_tells_local_readings_from_utc_ones() -> None:
         "datetime.now(tz=UTC)",
         "datetime.fromtimestamp(t, UTC)",
         "datetime.fromtimestamp(t, tz=UTC)",
+        "x.astimezone(UTC)",
         "naive_utc_now()",
         "time.time_ns()",
     ]
