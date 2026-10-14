@@ -79,6 +79,10 @@ class _State:
     # the latest probe task, and when it started
     refresh: asyncio.Task[Any] | None = None
     refresh_started: float | None = None
+    # the probe a code-190 refusal started, and that refusal's time; later
+    # refusals share it while it runs
+    refusal_probe: asyncio.Task[Any] | None = None
+    refusal_probe_started: float = 0.0
 
 
 _state = _State()
@@ -189,10 +193,16 @@ async def refuse_width(table: str, dim: int) -> None:
 
 async def refuse_on_fresh_widths(table: str, rows: list[dict[str, Any]], since: float) -> None:
     """After ClickHouse refused `rows` with code 190 at monotonic `since`: read
-    the widths with a probe started after the refusal (one that started earlier
+    the widths with a probe started after a refusal (one that started earlier
     may predate the rebuild), and refuse by name a vector the table no longer
-    takes. Each refused insert reads at most once; the inserts after it are
-    judged by that reading before they reach ClickHouse."""
+    takes. Refusals that arrive while another refusal's probe runs share it, so
+    a burst of them costs one probe; the inserts after it are judged by that
+    reading before they reach ClickHouse."""
+    shared = _state.refusal_probe
+    if shared is not None and not shared.done():
+        since = min(since, _state.refusal_probe_started)
+    elif _state.ch is not None:
+        _state.refusal_probe, _state.refusal_probe_started = _start_refresh(since=since), since
     if await _reading_since(since) and (found := _row_mismatch(table, rows)) is not None:
         _refuse(*found)
 

@@ -586,3 +586,37 @@ async def test_a_model_change_rereads_widths_an_older_probe_published(
     monkeypatch.setattr(provider_runtime.settings, "adaptive_thresholds", False)
     await provider_runtime._refresh_calibration()
     assert vector_codes_state.stored_width("chunks", "embedding") == 1024
+
+
+@pytest.mark.asyncio
+async def test_a_burst_of_refused_inserts_shares_one_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each refusal comes after the one before; while the first one's probe runs,
+    the rest wait on it and are still refused by name."""
+    from server.core.errors import CodedWidthMismatchError
+
+    now = [100.0]
+    monkeypatch.setattr(vector_codes_state.time, "monotonic", lambda: now[0])
+    ch = _FakeCH(coded=[("chunks", "embedding")], patches={}, width=3072)
+    await vector_codes_state.probe(ch)
+    ch.width = 1024  # rebuilt outside Loom
+    gate = asyncio.Event()
+    read = ch.query_all
+
+    async def held(sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        if "system.columns" in sql:
+            await gate.wait()
+        return await read(sql, params)
+
+    ch.query_all = held  # type: ignore[method-assign]
+    row = {"embedding": [0.1] * 3072}
+    refusals = []
+    for _ in range(40):
+        now[0] += 0.01  # each refusal after the last, and after the first probe began
+        refusals.append(
+            asyncio.create_task(vector_codes_state.refuse_on_fresh_widths("chunks", [row], now[0]))
+        )
+        await asyncio.sleep(0)
+    gate.set()
+    results = await asyncio.gather(*refusals, return_exceptions=True)
+    assert all(isinstance(r, CodedWidthMismatchError) for r in results)
+    assert sum("system.columns" in sql for sql in ch.calls) == 2  # the setup's probe and the one the refusals share
