@@ -31,6 +31,11 @@ def _doc(path: Path) -> SharedDocument[dict[str, Any]]:
 NONE: dict[str, Any] = {"none": True}
 
 
+@pytest.fixture(autouse=True)
+def _poll_every_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(shared_document, "POLL_INTERVAL_S", 0.0)
+
+
 def test_poll_returns_a_document_once_per_version(tmp_path: Path) -> None:
     a, b = _doc(tmp_path / "d.json"), _doc(tmp_path / "d.json")
     assert b.poll() is None  # no file yet
@@ -40,6 +45,44 @@ def test_poll_returns_a_document_once_per_version(tmp_path: Path) -> None:
     assert b.poll() == {"x": 1}
     assert b.poll() is None  # unchanged
     assert a.poll() is None  # its own edit is already adopted
+
+
+def test_a_version_that_looks_unchanged_to_stat_is_still_adopted(tmp_path: Path) -> None:
+    """Same inode, size and mtime (an inode reused within a timestamp tick): the
+    generation tells the versions apart."""
+    path = tmp_path / "d.json"
+    a, b = _doc(path), _doc(path)
+    a.update(lambda _: {"x": 1}, NONE)
+    assert b.poll() == {"x": 1}
+    before = os.stat(path)
+    raw = json.loads(path.read_text())
+    raw["generation"] ^= 1  # another generation of the same length
+    raw["document"] = {"v": {"x": 2}}
+    with open(path, "r+") as fh:  # in place, the same length
+        fh.write(json.dumps(raw))
+    os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+    after = os.stat(path)
+    assert (after.st_ino, after.st_size, after.st_mtime_ns) == (
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+    )
+    assert b.poll() == {"x": 2}
+
+
+def test_a_poll_reads_at_most_once_an_interval(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now = [100.0]
+    monkeypatch.setattr(shared_document.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(shared_document, "POLL_INTERVAL_S", 1.0)
+    path = tmp_path / "d.json"
+    a, b = _doc(path), _doc(path)
+    assert b.poll() is None
+    a.update(lambda _: {"x": 1}, NONE)
+    assert b.poll() is None  # inside the interval: not read
+    now[0] += 1.0
+    assert b.poll() == {"x": 1}
 
 
 def test_an_edit_starts_from_the_latest_version(tmp_path: Path) -> None:
@@ -63,7 +106,7 @@ def test_a_corrupt_document_is_warned_once_and_replaced_by_the_next_edit(
         assert doc.poll() is None
     assert sum("is corrupt" in r.getMessage() for r in caplog.records) == 1
     assert doc.update(lambda latest: {"x": 1} if latest is NONE else latest, NONE) == {"x": 1}
-    assert json.loads(path.read_text()) == {"v": {"x": 1}}
+    assert json.loads(path.read_text())["document"] == {"v": {"x": 1}}
 
 
 def test_an_edit_refuses_a_document_it_cannot_read(
@@ -90,7 +133,7 @@ def test_an_edit_refuses_a_document_it_cannot_read(
 
 def test_a_symlinked_document_is_refused(tmp_path: Path) -> None:
     planted = tmp_path / "planted.json"
-    planted.write_text(json.dumps({"v": {"x": 9}}))
+    planted.write_text(json.dumps({"generation": 1, "document": {"v": {"x": 9}}}))
     (tmp_path / "d.json").symlink_to(planted)
     doc = _doc(tmp_path / "d.json")
     assert doc.poll() is None
@@ -153,7 +196,8 @@ def test_a_lasting_read_failure_warns_once_and_recovers(
 
 def test_a_document_of_the_wrong_shape_is_corrupt_and_replaced(tmp_path: Path) -> None:
     path = tmp_path / "d.json"
-    path.write_text(json.dumps({"v": []}))  # decoding calls .items() on a list
+    # decoding calls .items() on a list
+    path.write_text(json.dumps({"generation": 1, "document": {"v": []}}))
     os.chmod(path, 0o600)
     doc = SharedDocument(str(path), lambda data: dict(data["v"].items()), _encode)
     assert doc.poll() is None

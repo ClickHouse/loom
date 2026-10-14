@@ -39,8 +39,12 @@ class FakeClock:
 
 
 @pytest.fixture
-def shared_on(settings_override, tmp_path: Path):
-    """A Limiter whose buckets live in a fresh shared table at `tmp_path`."""
+def shared_on(settings_override, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A Limiter whose buckets live in a fresh shared table at `tmp_path`; a
+    sibling's override is read on the next check, not up to a second later."""
+    from server.core import shared_document
+
+    monkeypatch.setattr(shared_document, "POLL_INTERVAL_S", 0.0)
     path = str(tmp_path / "rl.buckets")
     settings_override(ratelimit_shared="on", ratelimit_shared_path=path, ratelimit_shared_slots=256)
     return path

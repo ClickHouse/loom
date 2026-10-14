@@ -12,7 +12,10 @@ def _pair(tmp_path: Path) -> tuple[BudgetOverrides, BudgetOverrides]:
     return BudgetOverrides(path), BudgetOverrides(path)
 
 
-def test_a_set_through_one_process_binds_the_other(tmp_path: Path) -> None:
+def test_a_set_through_one_process_binds_the_other(tmp_path: Path, monkeypatch) -> None:
+    from server.core import shared_document
+
+    monkeypatch.setattr(shared_document, "POLL_INTERVAL_S", 0.0)  # read on the next call
     a, b = _pair(tmp_path)
     a.set("memory.set", 0)
     assert b.effective("memory.set", 30) == 0

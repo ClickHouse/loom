@@ -206,8 +206,8 @@ and the `LOOM_OIDC_*` settings ([auth settings](../reference/configuration.md#au
 | `LOOM_LATENCY_BUDGET_MULTIPLIER` | `1.0`                       | ClickHouse is across a WAN: about `20`, or every call reports a budget violation.                                                                                                                                                                                                                                                                                                                                                                   |
 | `LOOM_LOG_FORMAT`                | `text`                      | `json` for a log pipeline.                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
-Runtime overrides set through one web process bind every process of that server on its
-next request. Budget overrides (`admin/budget.set`) stay within the server: for several
+Runtime overrides set through one web process bind every process of that server within a
+second. Budget overrides (`admin/budget.set`) stay within the server: for several
 web replicas, set budgets with `LOOM_LATENCY_BUDGET_MULTIPLIER` and
 `LOOM_LATENCY_BUDGET_OVERRIDES_BY_CONSUMER`. Rate-limit overrides (`admin/ratelimit.set`)
 follow `LOOM_RATELIMIT_SHARED_PATH`: every server sharing that bucket table shares them.

@@ -1,9 +1,10 @@
 """A small JSON document the web processes of one server share.
 
 Runtime overrides set through one worker must bind its siblings. Each keeps its
-own copy and `poll`s the file, which costs one `lstat` when nothing changed;
-`update` re-reads the latest version under an exclusive lock and replaces the
-file atomically, so concurrent updates never drop each other's change.
+own copy and `poll`s the file, reading it at most every POLL_INTERVAL_S; `update`
+re-reads the latest version under an exclusive lock, bumps the document's
+generation and replaces the file atomically, so concurrent updates never drop
+each other's change. A sibling adopts a version whose generation it has not seen.
 """
 
 from __future__ import annotations
@@ -25,20 +26,15 @@ from server.core.runtime_files import open_private, server_file
 
 log = logging.getLogger(__name__)
 
-# inode, mtime_ns, size. Two versions could look alike only if a disk filesystem
-# reused the inode within one timestamp tick at the same size; the image's
-# tmpfs never reuses one, and overrides are set by hand, seconds apart.
-_Version = tuple[int, int, int]
+# How often a poll reads the document; every request polls, and an override
+# binds the siblings within this.
+POLL_INTERVAL_S = 1.0
 # How long `waiting_out_siblings` retries an update a sibling's lock refused; an
 # update holds the lock for one read and one atomic replace.
 LOCK_WAIT_S = 1.0
 # How often a poll asks again for a path that would not resolve; an update asks
 # every time.
 RESOLVE_RETRY_S = 5.0
-
-
-def _version(st: os.stat_result) -> _Version:
-    return (st.st_ino, st.st_mtime_ns, st.st_size)
 
 
 class LockBusy(OSError):
@@ -65,8 +61,9 @@ class SharedDocument[T]:
         self._where = where if callable(where) else lambda: where
         self._retry_at, self._unresolved = 0.0, ""
         self._decode, self._encode = decode, encode
-        # The version last adopted, published or found corrupt.
-        self._seen: _Version | None = None
+        # The generation last adopted or published; None when none was.
+        self._seen: int | None = None
+        self._poll_at = 0.0
         # The last read failure warned about, so a lasting one is logged once.
         self._warned = ""
 
@@ -87,6 +84,10 @@ class SharedDocument[T]:
     def poll(self) -> T | None:
         """The document if it changed since the last poll or update, else None.
         A version that cannot be read is skipped with a warning."""
+        now = time.monotonic()
+        if now < self._poll_at:
+            return None
+        self._poll_at = now + POLL_INTERVAL_S
         try:
             return self._read_changed()
         except OSError as e:
@@ -108,7 +109,11 @@ class SharedDocument[T]:
             try:
                 latest = self._read_changed()
                 new = change(default if latest is None else latest)
-                self._seen = _publish(path, self._encode(new))
+                # A new or replaced corrupt document starts at the clock, a
+                # generation no sibling can have seen.
+                generation = time.time_ns() if self._seen is None else self._seen + 1
+                _publish(path, {"generation": generation, "document": self._encode(new)})
+                self._seen = generation
             except BaseException:
                 self._seen = None  # the caller kept its state, so the next poll adopts `latest`
                 raise
@@ -117,31 +122,35 @@ class SharedDocument[T]:
             os.close(lock)
 
     def _read_changed(self) -> T | None:
+        """The document when its generation is not the one last seen, else None.
+        Missing or corrupt, it leaves no generation seen."""
         path = self._file(now=False)
-        try:
-            version = _version(os.lstat(path))
-        except FileNotFoundError:
-            return None
-        if version == self._seen:
-            return None
         try:
             fd = open_private(path, os.O_RDONLY)
         except FileNotFoundError:
+            self._seen = None
             return None
         try:
             fh = os.fdopen(fd, encoding="utf-8")
         except BaseException:
             os.close(fd)
             raise
-        with fh:
-            version = _version(os.fstat(fh.fileno()))
-            try:
-                state = self._decode(json.load(fh))
-            except (ValueError, LookupError, TypeError, AttributeError, RecursionError) as e:
+        try:
+            with fh:
+                raw = json.load(fh)  # an OSError here is not corruption: tried again
+            generation = raw["generation"]
+            if not isinstance(generation, int) or isinstance(generation, bool):
+                raise TypeError(f"generation {generation!r} is not a whole number")
+            if generation == self._seen:
+                return None
+            state = self._decode(raw["document"])
+        except (ValueError, LookupError, TypeError, AttributeError, RecursionError) as e:
+            if f"corrupt: {e}" != self._warned:
+                self._warned = f"corrupt: {e}"
                 log.warning("%s is corrupt (%s); ignored until it is replaced", path, e)
-                state = None
-        # Seen once read or found corrupt; a read that failed is tried again.
-        self._seen = version
+            self._seen = None
+            return None
+        self._seen = generation
         return state
 
 
@@ -199,9 +208,8 @@ def _try_lock(fd: int, path: str) -> None:
         raise LockBusy(errno.EWOULDBLOCK, f"{path}.lock is held by another process") from None
 
 
-def _publish(path: str, data: object) -> _Version:
-    """Replace `path` atomically. The version comes from the written file before
-    the rename (which keeps it), so nothing can fail once the rename commits."""
+def _publish(path: str, data: object) -> None:
+    """Replace `path` atomically."""
     # Named after the document, so a file left by a killed worker is pruned with it.
     fd, tmp = tempfile.mkstemp(
         dir=os.path.dirname(path) or ".", prefix=f"{os.path.basename(path)}.tmp-"
@@ -209,11 +217,8 @@ def _publish(path: str, data: object) -> _Version:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(data, fh)
-            fh.flush()
-            version = _version(os.fstat(fh.fileno()))
         os.replace(tmp, path)
     except BaseException:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
         raise
-    return version

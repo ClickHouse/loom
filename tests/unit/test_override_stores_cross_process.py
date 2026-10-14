@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import textwrap
+import time
 from pathlib import Path
 
 import pytest
@@ -58,6 +59,22 @@ for i in range(int(sys.argv[3])):
 
 
 @pytest.fixture(autouse=True)
+def _poll_every_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A sibling's update is read on the next request, not up to a second later."""
+    monkeypatch.setattr(shared_document, "POLL_INTERVAL_S", 0.0)
+
+
+def _document(path: Path | str) -> dict[str, object]:
+    """The overrides a published file holds."""
+    return json.loads(Path(path).read_text())["document"]
+
+
+def _sibling_publishes(path: Path, document: object) -> None:
+    """A sibling's update, as `SharedDocument.update` writes it."""
+    path.write_text(json.dumps({"generation": time.time_ns(), "document": document}))
+
+
+@pytest.fixture(autouse=True)
 def _own_runtime_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Per-server files land in this test's directory, never the user's real one."""
     from server.core import runtime_files
@@ -81,7 +98,7 @@ def _race(code: str, path: str, env: dict[str, str]) -> None:
 def test_concurrent_budget_writers_all_survive(tmp_path: Path) -> None:
     path = str(tmp_path / "budgets.json")
     _race(_BUDGET_WRITER, path, {})
-    ops = json.loads(Path(path).read_text())["ops"]
+    ops = _document(path)["ops"]
     assert len(ops) == WRITERS * UPDATES
 
 
@@ -89,7 +106,7 @@ def test_concurrent_rate_limit_writers_all_survive(tmp_path: Path) -> None:
     table = str(tmp_path / "rl.buckets")
     env = {"LOOM_RATELIMIT_SHARED": "on", "LOOM_RATELIMIT_SHARED_PATH": table}
     _race(_LIMIT_WRITER, table, env)
-    ns = json.loads(Path(table + ".overrides.json").read_text())["ns"]
+    ns = _document(table + ".overrides.json")["ns"]
     assert len(ns) == WRITERS * UPDATES
 
 
@@ -357,10 +374,10 @@ def test_a_budget_that_is_not_one_makes_the_file_corrupt(
     a, b, path = _budgets(tmp_path)
     a.set_for_consumer("c1", "*", "3x")
     assert b.get_for_consumer("c1", "*") == 3.0
-    path.write_text(json.dumps(corrupt))
+    _sibling_publishes(path, corrupt)
     assert b.get_for_consumer("c1", "*") == 3.0  # the corrupt version is not adopted
     b.set_for_consumer("c2", "*", 7)
-    assert json.loads(path.read_text())["consumer"] == [["c1", "*", 3.0], ["c2", "*", 7]]
+    assert _document(path)["consumer"] == [["c1", "*", 3.0], ["c2", "*", 7]]
 
 
 @pytest.mark.parametrize("bad", ["5", "nan", True, -1, float("inf")])
@@ -371,7 +388,7 @@ def test_a_rate_limit_that_is_not_one_makes_the_file_corrupt(
     a.set_namespace_limit("ns1", "memory", Limit(capacity=1, rate=0.0))
     b.check("ns0", "memory.set", org="o")
     assert b._ns_overrides == {("ns1", "memory"): Limit(capacity=1, rate=0.0)}
-    overrides.write_text(json.dumps({"ns": [["ns1", "memory", bad, 0.0]], "org": [], "actor": []}))
+    _sibling_publishes(overrides, {"ns": [["ns1", "memory", bad, 0.0]], "org": [], "actor": []})
     b.check("ns0", "memory.set", org="o")
     assert b._ns_overrides == {("ns1", "memory"): Limit(capacity=1, rate=0.0)}  # not adopted
     a.reset_all()
@@ -397,11 +414,11 @@ def test_an_integer_too_large_for_a_float_is_refused_and_never_breaks_a_read(
         with pytest.raises(ValueError):
             a.set("memory.set", unusable)
     a.set_for_consumer("c1", "*", 4)
-    path.write_text(json.dumps({"ops": {}, "consumer": [["c1", "*", huge]]}))
+    _sibling_publishes(path, {"ops": {}, "consumer": [["c1", "*", huge]]})
     assert b.get_for_consumer("c1", "*") is None  # corrupt: not adopted, not raised
     la, lb, overrides = limiters
     la.set_namespace_limit("ns1", "memory", Limit(capacity=1, rate=0.0))
-    overrides.write_text(json.dumps({"ns": [["ns1", "memory", huge, 0]], "org": [], "actor": []}))
+    _sibling_publishes(overrides, {"ns": [["ns1", "memory", huge, 0]], "org": [], "actor": []})
     assert lb.check("ns0", "memory.set", org="o").allowed
     la.reset_all()
     lb.reset_all()
