@@ -61,6 +61,22 @@ def pinned_image(archive: Path) -> str:
     return found.group(1)
 
 
+def release_number(image: str) -> tuple[int, ...]:
+    """`clickhouse/clickhouse-server:26.9.18.11` as (26, 9, 18, 11)."""
+    if not EXACT_CLICKHOUSE.fullmatch(image):
+        raise ValueError(f"not one ClickHouse release: {image!r}")
+    return tuple(int(part) for part in image.rsplit(":", 1)[1].split("."))
+
+
+def refuse_older(image: str, published: Path) -> None:
+    """Raise when `image` is an older release than the bundle at `published`
+    names: an install upgrading to it would start an older ClickHouse on data a
+    newer one wrote, which it may not open."""
+    last = pinned_image(published)
+    if release_number(image) < release_number(last):
+        raise ValueError(f"{image} is older than {last}, which the last published bundle names")
+
+
 def build(version: str, output_dir: Path, clickhouse_image: str) -> tuple[Path, Path]:
     if not EXACT_CLICKHOUSE.fullmatch(clickhouse_image):
         raise ValueError(f"not one ClickHouse release: {clickhouse_image!r}")
@@ -98,9 +114,19 @@ def main() -> None:
     bundle.add_argument("--output-dir", type=Path, default=Path("release/stack"))
     read = commands.add_parser("pinned-in", help="print the ClickHouse image a bundle names")
     read.add_argument("archive", type=Path)
+    newer = commands.add_parser(
+        "not-older", help="fail when an image is older than the one a bundle names"
+    )
+    newer.add_argument("image")
+    newer.add_argument("archive", type=Path)
     args = parser.parse_args()
     if args.command == "pinned-in":
         print(pinned_image(args.archive))
+    elif args.command == "not-older":
+        try:
+            refuse_older(args.image, args.archive)
+        except ValueError as e:
+            raise SystemExit(f"::error::{e}") from None
     else:
         build(args.version, args.output_dir, args.clickhouse_image)
 

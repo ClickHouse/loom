@@ -17,20 +17,22 @@ SCRIPT = ROOT / "scripts" / "release" / "published_bundle.sh"
 # `gh api` answers as STUB_RELEASE says; `gh release download` writes the bundle.
 STUB_GH = """#!/usr/bin/env bash
 if [ "$1" = api ]; then
+  echo "$2" > "$STUB_LOG"
   case "$STUB_RELEASE" in
     missing) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
     denied) echo "gh: Bad credentials (HTTP 401)" >&2; exit 1 ;;
-    unbundled) echo install.sh ;;
-    bundled) printf 'install.sh\\nloom-stack.tar.gz\\n' ;;
+    unbundled) printf 'v1.2.3\\ninstall.sh\\n' ;;
+    bundled) printf 'v1.2.3\\ninstall.sh\\nloom-stack.tar.gz\\n' ;;
   esac
   exit 0
 fi
+echo "$3" >> "$STUB_LOG"
 while [ $# -gt 0 ]; do [ "$1" = --dir ] && dir=$2; shift; done
 echo bundle > "$dir/loom-stack.tar.gz"
 """
 
 
-def _run(tmp_path: Path, release: str) -> subprocess.CompletedProcess[str]:
+def _run(tmp_path: Path, release: str, version: str = "1.2.3") -> subprocess.CompletedProcess[str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     gh = bin_dir / "gh"
@@ -41,11 +43,12 @@ def _run(tmp_path: Path, release: str) -> subprocess.CompletedProcess[str]:
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "STUB_RELEASE": release,
         "GITHUB_REPOSITORY": "o/r",
+        "STUB_LOG": str(tmp_path / "gh.log"),
     }
     out = tmp_path / "published"
     out.mkdir(exist_ok=True)
     return subprocess.run(
-        ["bash", str(SCRIPT), "1.2.3", str(out)], env=env, capture_output=True, text=True
+        ["bash", str(SCRIPT), version, str(out)], env=env, capture_output=True, text=True
     )
 
 
@@ -56,6 +59,13 @@ def test_only_an_unpublished_bundle_is_exit_3(tmp_path: Path, release: str, stat
 
 def test_a_published_bundle_is_downloaded(tmp_path: Path) -> None:
     assert _run(tmp_path, "bundled").returncode == 0
+    assert (tmp_path / "published" / "loom-stack.tar.gz").read_text() == "bundle\n"
+
+
+def test_latest_downloads_the_latest_releases_bundle(tmp_path: Path) -> None:
+    """What the release compares a new bundle's ClickHouse with."""
+    assert _run(tmp_path, "bundled", version="latest").returncode == 0
+    assert (tmp_path / "gh.log").read_text().split() == ["repos/o/r/releases/latest", "v1.2.3"]
     assert (tmp_path / "published" / "loom-stack.tar.gz").read_text() == "bundle\n"
 
 

@@ -31,6 +31,14 @@ on:
           clickhouse/clickhouse-server:26.9.18.11), when `latest` names a bad one
         required: false
         default: ""
+      allow_clickhouse_downgrade:
+        description: >-
+          Publish a bundle whose ClickHouse release is older than the one the
+          latest published bundle names (installs that upgrade then run an
+          older server on data a newer one wrote)
+        type: boolean
+        required: false
+        default: false
 
 # One release run per tag at a time; a second run waits instead of cancelling
 # a publish halfway.
@@ -131,12 +139,14 @@ jobs:
       # A re-run keeps the release this version's published bundle names, so
       # rerunning the installer for it never moves ClickHouse.
       # A dispatch may name the release in place of `latest`; a published
-      # bundle keeps its own either way.
+      # bundle keeps its own either way. A new bundle never names an older
+      # release than the latest published one, unless the dispatch allows it.
       - id: resolve
         env:
           VERSION: ${{ needs.version.outputs.version }}
           GH_TOKEN: ${{ github.token }}
           CLICKHOUSE_IMAGE: ${{ inputs.clickhouse_image }}
+          ALLOW_DOWNGRADE: ${{ inputs.allow_clickhouse_downgrade }}
         run: |
           if [ -n "$CLICKHOUSE_IMAGE" ]; then
             python - <<'PY'
@@ -151,12 +161,24 @@ jobs:
           status=0
           bash scripts/release/published_bundle.sh "$VERSION" published || status=$?
           case $status in
-            0) image=$(python scripts/release/build_stack_bundle.py pinned-in published/loom-stack.tar.gz) ;;
+            0)
+              image=$(python scripts/release/build_stack_bundle.py pinned-in published/loom-stack.tar.gz)
+              if [ -n "$CLICKHOUSE_IMAGE" ] && [ "$CLICKHOUSE_IMAGE" != "$image" ]; then
+                echo "::warning::clickhouse_image=$CLICKHOUSE_IMAGE ignored: v$VERSION's published bundle names $image"
+              fi
+              ;;
             3)
               if [ -n "$CLICKHOUSE_IMAGE" ]; then
                 image=$CLICKHOUSE_IMAGE
               else
                 image=$(bash dev/clickhouse_release.sh)
+              fi
+              last=0
+              bash scripts/release/published_bundle.sh latest last-published || last=$?
+              if [ "$last" -eq 0 ] && [ "$ALLOW_DOWNGRADE" != true ]; then
+                python scripts/release/build_stack_bundle.py not-older "$image" last-published/loom-stack.tar.gz
+              elif [ "$last" -ne 0 ] && [ "$last" -ne 3 ]; then
+                exit "$last"
               fi
               ;;
             *) exit "$status" ;;

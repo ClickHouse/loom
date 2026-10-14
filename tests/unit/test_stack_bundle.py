@@ -109,3 +109,37 @@ def test_the_pin_pattern_reads_what_build_writes() -> None:
     module = _module()
     written = module._image_default("clickhouse/clickhouse-server:26.9.18.11")
     assert module._PINNED.fullmatch(written).group(1) == "clickhouse/clickhouse-server:26.9.18.11"
+
+
+@pytest.mark.parametrize(
+    ("image", "older"),
+    [
+        ("clickhouse/clickhouse-server:26.9.18.11", False),  # a re-pin of the same release
+        ("clickhouse/clickhouse-server:26.10.1.5", False),  # 10 > 9, not "1" < "9"
+        ("clickhouse/clickhouse-server:26.9.17.30", True),
+        ("clickhouse/clickhouse-server:25.12.4.2", True),
+    ],
+)
+def test_a_new_bundle_never_names_an_older_clickhouse_than_the_last(
+    tmp_path: Path, image: str, older: bool
+) -> None:
+    """An upgrading install would start an older server on data a newer one wrote."""
+    module = _module()
+    published, _ = module.build("1.2.3", tmp_path, "clickhouse/clickhouse-server:26.9.18.11")
+    if older:
+        with pytest.raises(ValueError, match="older than clickhouse/clickhouse-server:26.9.18.11"):
+            module.refuse_older(image, published)
+    else:
+        module.refuse_older(image, published)
+
+
+def test_the_release_checks_a_new_bundle_against_the_latest_published_one() -> None:
+    import yaml
+
+    workflow = yaml.safe_load(
+        (Path(__file__).parents[2] / ".github" / "workflows" / "release.yml").read_text()
+    )
+    (resolve,) = [s for s in workflow["jobs"]["clickhouse"]["steps"] if s.get("id") == "resolve"]
+    assert "published_bundle.sh latest" in resolve["run"]
+    assert "build_stack_bundle.py not-older" in resolve["run"]
+    assert "::warning::clickhouse_image=" in resolve["run"]
