@@ -619,4 +619,37 @@ async def test_a_burst_of_refused_inserts_shares_one_probe(monkeypatch: pytest.M
     gate.set()
     results = await asyncio.gather(*refusals, return_exceptions=True)
     assert all(isinstance(r, CodedWidthMismatchError) for r in results)
-    assert sum("system.columns" in sql for sql in ch.calls) == 2  # the setup's probe and the one the refusals share
+    # the setup's probe and the one the refusals share
+    assert sum("system.columns" in sql for sql in ch.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_steady_writer_finds_the_next_reading_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A write past REFRESH_AHEAD_S starts the read in the background and goes on
+    with the reading it has; the write after it does not wait."""
+    now = [100.0]
+    monkeypatch.setattr(vector_codes_state.time, "monotonic", lambda: now[0])
+    ch = _FakeCH(coded=[("chunks", "embedding")], patches={}, width=1024)
+    await vector_codes_state.probe(ch)
+    gate = asyncio.Event()
+    read = ch.query_all
+
+    async def held(sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        if "system.columns" in sql:
+            await gate.wait()
+        return await read(sql, params)
+
+    ch.query_all = held  # type: ignore[method-assign]
+    now[0] += vector_codes_state.REFRESH_AHEAD_S + 0.5
+    await asyncio.wait_for(vector_codes_state.refuse_width("chunks", 1024), timeout=1)
+    started = vector_codes_state._state.refresh
+    assert started is not None and not started.done()  # reading, not waited on
+    await vector_codes_state.refuse_width("chunks", 1024)
+    assert vector_codes_state._state.refresh is started  # one read for both
+    gate.set()
+    await started
+    now[0] += 1.0  # past FRESH_READING_S of the first reading, not of the new one
+    await asyncio.wait_for(vector_codes_state.refuse_width("chunks", 1024), timeout=1)
+    assert vector_codes_state._state.refresh is started

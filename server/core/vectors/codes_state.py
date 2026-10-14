@@ -21,8 +21,9 @@ This module holds both facts per table, read from `system.columns` and
 The same read records the width each coded column was created at, which the
 write guards check (`refuse_width`, `refuse_other_widths`): ClickHouse refuses
 a whole insert that carries a vector of another width. A write that embeds
-reads again first when the reading is older than FRESH_READING_S, and a
-write is refused only on a reading under REFUSAL_READING_S old.
+reads again first when the reading is older than FRESH_READING_S (refreshed
+in the background from REFRESH_AHEAD_S, so a steady writer rarely waits), and
+a write is refused only on a reading under REFUSAL_READING_S old.
 
 A failed probe keeps the previous reading. A table never read (never probed,
 or every probe failed) answers "apply": the flag is right on every coded,
@@ -171,6 +172,9 @@ def _coded_of(table: str) -> list[tuple[str, str, int]]:
 # A write that embeds reads again first when the reading is older than this,
 # apart from the background probe interval, which only refreshes reads' facts.
 FRESH_READING_S = 5.0
+# Past this age a write that embeds starts that read in the background, so a
+# steady writer finds the next reading ready instead of waiting for it.
+REFRESH_AHEAD_S = 4.0
 # A write is refused only on a reading at most this old when it is judged.
 REFUSAL_READING_S = 1.0
 
@@ -187,8 +191,18 @@ async def refuse_width(table: str, dim: int) -> None:
     That narrows, not closes, the window in which a table rebuilt outside Loom
     takes half a write: its version row lands and its vectors are refused."""
     if _state.codec_available is not False:
+        _refresh_ahead()
         await _reading_since(time.monotonic() - FRESH_READING_S)
     await _refuse_if(lambda: _width_mismatch(table, dim))
+
+
+def _refresh_ahead() -> None:
+    """Start a background probe once the reading is REFRESH_AHEAD_S old, unless
+    one started since then (in flight, or failed: retried no more often)."""
+    probed_at = _state.probed_at
+    if _state.ch is not None and probed_at is not None:
+        if time.monotonic() - probed_at >= REFRESH_AHEAD_S:
+            _start_refresh(since=probed_at + REFRESH_AHEAD_S)
 
 
 async def refuse_on_fresh_widths(table: str, rows: list[dict[str, Any]], since: float) -> None:
