@@ -58,11 +58,11 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   a C/C++ build tree, so move it from `<scip_checkout_dir>-clang` to
   `<scip_checkout_dir>.clang` and delete its `build/compile_commands.json`, which records
   the old absolute paths; the next C/C++ run configures it again with the harness's own
-  CMake options. For a build with options of its own, delete
-  `build/compile_commands.json`, `build/CMakeCache.txt` and `build/CMakeFiles`, and
-  configure it again yourself with those options and `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`.
-  `loom code scip-full` now runs in the C/C++ tier's own tree and moves the C/C++
-  watermark where `clang` is an extra producer. A `LOOM_CODE_REPOS_JSON` entry whose
+  CMake options. For a build with options of its own, configure it again yourself with
+  `cmake --fresh` (CMake 3.24 or later), those options and
+  `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`; `--fresh` drops whatever cache a C/C++ run wrote
+  in between. `loom code scip-full` now runs in the C/C++ tier's own tree and moves the
+  C/C++ watermark where `clang` is an extra producer. A `LOOM_CODE_REPOS_JSON` entry whose
   namespace contains `.` or `/` is skipped and counted in `loom.code.repos_config_errors`;
   rename it, which indexes it again under the new name.
 - The server probes the repository-job sandbox at boot, so `/v1/health` reports
