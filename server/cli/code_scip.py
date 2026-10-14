@@ -141,8 +141,9 @@ async def _scip_full_locked(args: argparse.Namespace, org: str, ns: str, cfg: An
 
     def _paths() -> tuple[Path, Path, Path, Path, list[str]]:
         # Per-repo: each branch indexes in its own working tree and every
-        # branch of one repo shares the bare clone.
-        checkout = Path(args.checkout or cfg.scip_checkout_dir)
+        # branch of one repo shares the bare clone. Absolute, as every path
+        # the sandbox mounts must be: bwrap runs the job in another directory.
+        checkout = Path(args.checkout or cfg.scip_checkout_dir).resolve()
         bare = Path(cfg.git_dir).resolve()
         scip_clang = Path(settings.code_scip_clang_path).resolve()
         missing = [str(p) for p in (checkout, bare, scip_clang) if not p.exists()]

@@ -421,6 +421,11 @@ that still reaches the runner fails with `SandboxRequiredError`. `/v1/health` re
 operator's first bare clone of an entry they configured, runs `git clone` as a plain
 process (it runs no repository code; the remote is the operator's own).
 
+**Turning it off.** To run the colours without the sandbox again, remove both the
+`security_opt` block and `LOOM_CODE_SANDBOX_REQUIRED` from both services in
+`dev/docker-compose.colour.yml`, then redeploy. Removing only `security_opt` leaves
+every repository job refused and `/v1/health` degraded.
+
 No `no-new-privileges`: under it the kernel refuses the exec transition into the child
 profile, and bwrap would not start. The image's setuid binaries (`su`, `mount`,
 `passwd` and the like) therefore still work in the container, as under Docker's

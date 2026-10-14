@@ -682,3 +682,40 @@ async def test_a_scip_full_harness_timeout_is_reported_as_one(tmp_path: Path, mo
         args, tmp_path / "h.sh", tmp_path, tmp_path / "scip-clang", tmp_path / "delta.json"
     )
     assert rc == 124
+
+
+@pytest.mark.asyncio
+async def test_scip_full_hands_the_sandbox_an_absolute_checkout(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A relative --checkout names a directory from the caller's working
+    directory, which bwrap leaves: every path the job gets is absolute."""
+    import argparse
+    from unittest.mock import AsyncMock
+
+    from server.cli import code_scip
+    from server.code.app.index import compiler_tier
+    from server.code.store import index as store_index
+    from server.settings import settings
+    from tests.unit.code_fixtures import repo_config
+
+    for d in ("checkout", "bare.git", "elsewhere"):
+        (tmp_path / d).mkdir()
+    (tmp_path / "scip-clang").touch()
+    monkeypatch.chdir(tmp_path / "elsewhere")
+    monkeypatch.setattr(settings, "code_scip_clang_path", str(tmp_path / "scip-clang"))
+    monkeypatch.setattr(settings, "code_sandbox_required", False)
+    monkeypatch.setattr(sandbox, "_available", False)
+    repo = AsyncMock()
+    repo.get_state.return_value = "a" * 40
+    monkeypatch.setattr(store_index, "CodeRepo", lambda: repo)
+    move = AsyncMock()
+    monkeypatch.setattr(code_scip, "_scip_move_checkout", move)
+    harness = AsyncMock(return_value=(1, ""))
+    monkeypatch.setattr(compiler_tier, "run_harness", harness)
+    cfg = repo_config(git_dir=str(tmp_path / "bare.git"), scip_checkout_dir="")
+    args = argparse.Namespace(checkout="../checkout", jobs=0, apply_delta="", keep_delta="")
+    await code_scip._scip_full_locked(args, "o", "code-x", cfg)
+    checkout = (tmp_path / "checkout").resolve()
+    assert move.await_args.args[0] == checkout
+    assert harness.await_args.args[1] == checkout
