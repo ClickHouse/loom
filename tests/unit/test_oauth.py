@@ -924,3 +924,48 @@ async def test_a_cancelled_consume_keeps_the_claim(held_claims: list[str], outco
     with pytest.raises(asyncio.CancelledError):
         await task
     assert held_claims == []
+
+
+async def test_an_exchange_cancelled_before_its_consume_still_releases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nothing was used up, so the claim goes; the release runs to its end
+    though the request is cancelled again while it waits (anyio repeats it)."""
+    import asyncio
+
+    from server.auth import oauth_claims
+
+    released: list[str] = []
+    releasing = asyncio.Event()
+    finding = asyncio.Event()
+
+    async def _held(ch: object, key: str) -> tuple[oauth_claims.Claim, str]:
+        return oauth_claims.Claim.HELD, "me"
+
+    async def _release(ch: object, key: str, holder: str) -> None:
+        releasing.set()
+        await asyncio.sleep(0.05)
+        released.append(key)
+
+    monkeypatch.setattr(oauth_claims, "claim", _held)
+    monkeypatch.setattr(oauth_claims, "release", _release)
+
+    async def find() -> dict | None:
+        finding.set()
+        await asyncio.sleep(30)
+        return None
+
+    async def unused(*_a: object) -> dict:
+        raise AssertionError
+
+    task = asyncio.create_task(
+        oauth._exchange("code", "c", find=find, decide=unused, consume=unused)
+    )
+    await finding.wait()
+    task.cancel()
+    await releasing.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.sleep(0.1)
+    assert released == ["code:" + oauth._token_id("c")]

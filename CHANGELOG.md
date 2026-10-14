@@ -84,8 +84,9 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   person's next sign-in recreated a released or deleted one, or one another account
   registered under the derived name, with default settings and an admin grant, its data
   included. A released, deleted or foreign name is skipped for the next free one
-  (`<name>-2`, ..., then a random suffix), and a person with an account revoked outright
-  (`loom revoke-token --subject`) is refused.
+  (`<name>-2`, ..., then a random suffix); a person with an active account in the org is
+  signed in to it, never given another; and a person with an account revoked outright
+  (`loom revoke-token --subject`) is refused, until that account is released.
 - **Security:** `namespace.restore` into an existing namespace needs an admin of it. The
   owner a first write auto-registered, who holds no grant there, could restore a payload
   whose grants made them, or anyone, admin.

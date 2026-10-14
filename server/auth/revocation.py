@@ -321,6 +321,17 @@ async def ended_claims(
     return ended
 
 
+async def any_subject_revoked(subjects: list[str], *, issued_at: int) -> bool:
+    """`subject_revoked` for several subjects in one read."""
+    if not subjects:
+        return False
+    for r in await _read_revocations(sorted(set(subjects))):
+        cutoff = _cutoff_seconds(r.get("issued_before"))
+        if cutoff is None or issued_at < cutoff:
+            return True
+    return False
+
+
 async def subject_revoked(subject: str, *, issued_at: int) -> bool:
     """`is_revoked` for a subject, read from ClickHouse: a token minting path
     cannot wait for this process's snapshot to see a `revoke-token`."""

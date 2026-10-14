@@ -136,7 +136,7 @@ async def claim(ch: Any, key: str) -> tuple[Claim, str]:
         # credential out until it went stale. Shielded, so a cancellation of
         # this request does not cancel the release too.
         if attempted:
-            await asyncio.shield(_releases.spawn(release(ch, key, me), name="oauth_claims.release"))
+            await release_shielded(ch, key, me)
         raise
     return (Claim.HELD, me) if held else (Claim.TAKEN, "")
 
@@ -169,6 +169,13 @@ async def release(ch: Any, key: str, holder: str) -> None:
                 await ch.execute(_RELEASE, params={"k": key, "me": holder})
     except Exception as e:  # noqa: BLE001 — the exchange is decided; a kept claim goes stale
         log.warning("oauth claims: release of %s failed: %s", key, e)
+
+
+async def release_shielded(ch: Any, key: str, holder: str) -> None:
+    """`release`, run to its end even when the request awaiting it is
+    cancelled, again and again (anyio repeats a cancellation): the task is
+    held in `_releases` and the wait for it is shielded."""
+    await asyncio.shield(_releases.spawn(release(ch, key, holder), name="oauth_claims.release"))
 
 
 async def _holder(ch: Any, key: str) -> str:

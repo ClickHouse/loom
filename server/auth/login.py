@@ -330,28 +330,22 @@ async def _registry_row(org: str, namespace: str) -> dict[str, Any] | None:
     return None if row is None else dict(row)
 
 
-async def _revoked_account(org: str, ident: str) -> bool:
-    """Whether an inactive account in `org` still naming `ident` (deleted;
-    a released one has its contact cleared) has its subject revoked outright,
-    read as of every write that landed."""
-    from server.auth.revocation import subject_revoked
+async def _accounts_naming(org: str, ident: str) -> list[dict[str, Any]]:
+    """Every registry row in `org` whose contact is `ident`, active or not
+    (deleted ones keep it; a released one has it cleared), read as of every
+    write that landed."""
     from server.core.ch import own_write_reads
 
     with own_write_reads():
         rows = await get_client().query_all(
             """
-            SELECT namespace, toString(owner_email) AS owner
+            SELECT namespace, toString(owner_email) AS owner, active
             FROM loom.namespaces FINAL
-            WHERE org = {org:String} AND contact_email = {ident:String} AND active = 0
+            WHERE org = {org:String} AND contact_email = {ident:String}
             """,
             params={"org": org, "ident": ident},
         )
-    now = int(time.time())
-    for r in rows:
-        for subject in {str(r["namespace"]), str(r.get("owner") or "")} - {""}:
-            if await subject_revoked(subject, issued_at=now):
-                return True
-    return False
+    return [dict(r) for r in rows]
 
 
 # How many suffixed names (`<name>-2`, ...) a JIT sign-up tries past the first.
@@ -386,23 +380,27 @@ async def jit_provision_for_email(
     slug = "".join(c if c.isalnum() else "-" for c in local).strip("-")[:40] or "user"
     base = f"u-{slug}-{hashlib.sha256(ident.encode()).hexdigest()[:8]}"
     org = _settings.oidc_jit_org
+    from server.auth.revocation import any_subject_revoked
     from server.core.ch import own_write_reads
 
-    if await _revoked_account(org, ident):
+    accounts = await _accounts_naming(org, ident)
+    if any(bool(a.get("active")) for a in accounts):
+        # The person has an account here, whatever its name (a random suffix,
+        # one a concurrent first sign-in just wrote, one a lagging replica hid
+        # from the first read): resolve it as written, never provision another.
+        # If it still does not resolve (the cross-org guard), the sign-in fails.
+        with own_write_reads():
+            return await resolve_identity_for_email(ident)
+    gone = [s for a in accounts for s in (str(a["namespace"]), str(a.get("owner") or "")) if s]
+    if await any_subject_revoked(gone, issued_at=int(time.time())):
         # Offboarding is `revoke-token --subject` of an account of theirs (or
         # the IdP): a fresh name would be a new subject past it. Deleting an
         # account is not offboarding; its owner may have done it.
         log.info("oidc jit: an account of %r in %s is revoked; not provisioning", ident, org)
         return None
     for ns in [base, *(f"{base}-{n}" for n in range(2, _JIT_NAME_TRIES + 2))]:
-        row = await _registry_row(org, ns)
-        if row is None:
+        if await _registry_row(org, ns) is None:
             break
-        if bool(row.get("active")) and str(row.get("contact_email") or "") == ident:
-            # This person's, written by a concurrent first sign-in or missed by
-            # a replica the first read reached: resolve it as written.
-            with own_write_reads():
-                return await resolve_identity_for_email(ident)
         # Deleted, released or another's: never rebuilt, which would hand back
         # its data and an admin grant.
         log.info("oidc jit: %s/%s is taken; next", org, ns)

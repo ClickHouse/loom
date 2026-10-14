@@ -213,10 +213,10 @@ async def test_jit_provisions_when_enabled(monkeypatch) -> None:
     monkeypatch.setattr(login, "resolve_identity_for_email", fake_resolve)
     monkeypatch.setattr(login, "_registry_row", none_registered)
 
-    async def not_revoked(org: str, ident: str) -> bool:
-        return False
+    async def no_accounts(org: str, ident: str) -> list[dict[str, Any]]:
+        return []
 
-    monkeypatch.setattr(login, "_revoked_account", not_revoked)
+    monkeypatch.setattr(login, "_accounts_naming", no_accounts)
 
     out = await login.jit_provision_for_email("Bob@Acme.com")
     assert out == ("u-bob-xxxx", "acme", ["u-bob-xxxx"], ["writer"])
@@ -237,12 +237,12 @@ def _jit_on(monkeypatch) -> dict[str, Any]:
     async def fake_resolve(email: str) -> tuple[str, str, list[str], list[str]]:
         return ("someone", "acme", ["someone"], ["admin"])
 
-    async def not_revoked(org: str, ident: str) -> bool:
-        return False
+    async def no_accounts(org: str, ident: str) -> list[dict[str, Any]]:
+        return []
 
     monkeypatch.setattr(self_signup, "provision_account", fake_provision)
     monkeypatch.setattr(login, "resolve_identity_for_email", fake_resolve)
-    monkeypatch.setattr(login, "_revoked_account", not_revoked)
+    monkeypatch.setattr(login, "_accounts_naming", no_accounts)
     return provisioned
 
 
@@ -275,35 +275,46 @@ async def test_jit_never_rebuilds_a_taken_name_and_takes_the_next(
 
 async def test_jit_refuses_a_person_whose_account_was_revoked(monkeypatch) -> None:
     # Offboarding is a revoke-token of the subject: a fresh name would be a
-    # new subject past it.
+    # new subject past it. Every inactive account naming the email counts,
+    # whatever its name, in one read.
     provisioned = _jit_on(monkeypatch)
+    asked: list[list[str]] = []
 
-    async def revoked(org: str, ident: str) -> bool:
-        return True
+    async def accounts(org: str, ident: str) -> list[dict[str, Any]]:
+        return [
+            {"namespace": "u-bob-1234abcd-9f3e", "owner": "u-bob-1234abcd-9f3e", "active": False},
+            {"namespace": "bob", "owner": "bob", "active": False},
+        ]
 
-    monkeypatch.setattr(login, "_revoked_account", revoked)
+    async def revoked(subjects: list[str], *, issued_at: int) -> bool:
+        asked.append(sorted(set(subjects)))
+        return "bob" in subjects
+
+    monkeypatch.setattr(login, "_accounts_naming", accounts)
+    monkeypatch.setattr(revocation, "any_subject_revoked", revoked)
     assert await login.jit_provision_for_email("bob@acme.com") is None
     assert provisioned == {}
+    assert asked == [["bob", "u-bob-1234abcd-9f3e"]]
 
 
-async def test_a_revoked_account_is_any_inactive_row_naming_the_email(monkeypatch) -> None:
-    # Whatever its name (a random JIT suffix, a password sign-up's), read by
-    # contact; a released row has its contact cleared and is no one's.
-    queries: list[dict[str, Any]] = []
+async def test_a_deleted_account_alone_is_no_offboarding(monkeypatch) -> None:
+    # Its owner may have deleted it: the person gets a fresh name.
+    provisioned = _jit_on(monkeypatch)
 
-    class _CH:
-        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
-            assert "active = 0" in sql and "contact_email = {ident:String}" in sql
-            queries.append(params)
-            return [{"namespace": "u-bob-1234abcd-9f3e", "owner": "u-bob-1234abcd-9f3e"}]
+    async def accounts(org: str, ident: str) -> list[dict[str, Any]]:
+        return [{"namespace": "u-bob-1234abcd", "owner": "u-bob-1234abcd", "active": False}]
 
-    async def revoked(subject: str, *, issued_at: int) -> bool:
-        return subject == "u-bob-1234abcd-9f3e"
+    async def not_revoked(subjects: list[str], *, issued_at: int) -> bool:
+        return False
 
-    monkeypatch.setattr(login, "get_client", lambda: _CH())
-    monkeypatch.setattr(revocation, "subject_revoked", revoked)
-    assert await login._revoked_account("acme", "bob@acme.com")
-    assert queries == [{"org": "acme", "ident": "bob@acme.com"}]
+    async def registry_row(org: str, namespace: str) -> dict[str, Any] | None:
+        return {"active": False} if namespace.count("-") == 2 else None
+
+    monkeypatch.setattr(login, "_accounts_naming", accounts)
+    monkeypatch.setattr(revocation, "any_subject_revoked", not_revoked)
+    monkeypatch.setattr(login, "_registry_row", registry_row)
+    assert await login.jit_provision_for_email("bob@acme.com") is not None
+    assert provisioned["namespace"].endswith("-2")
 
 
 async def test_jit_takes_a_random_name_once_the_predictable_ones_are_taken(
@@ -327,19 +338,31 @@ async def test_jit_takes_a_random_name_once_the_predictable_ones_are_taken(
     assert name.startswith(tried[0] + "-") and name not in tried[:-1]
 
 
-async def test_jit_resolves_a_name_a_concurrent_first_sign_in_wrote(monkeypatch) -> None:
+@pytest.mark.parametrize("resolves", [True, False])
+async def test_an_active_account_of_the_person_is_resolved_never_provisioned_again(
+    monkeypatch, resolves: bool
+) -> None:
+    # Whatever its name (a random suffix, one a concurrent first sign-in just
+    # wrote): a sign-in that still does not resolve (the cross-org guard)
+    # fails rather than write another account on every attempt.
     provisioned = _jit_on(monkeypatch)
 
-    async def registry_row(org: str, namespace: str) -> dict[str, Any] | None:
-        return {"active": True, "contact_email": "bob@acme.com"}
+    async def accounts(org: str, ident: str) -> list[dict[str, Any]]:
+        return [
+            {"namespace": "u-bob-1234abcd-9f3e", "owner": "u-bob-1234abcd-9f3e", "active": True}
+        ]
 
-    monkeypatch.setattr(login, "_registry_row", registry_row)
-    assert await login.jit_provision_for_email("Bob@acme.com") == (
-        "someone",
-        "acme",
-        ["someone"],
-        ["admin"],
-    )
+    async def resolve(email: str) -> tuple[str, str, list[str], list[str]] | None:
+        return (
+            ("u-bob-1234abcd-9f3e", "acme", ["u-bob-1234abcd-9f3e"], ["admin"])
+            if resolves
+            else None
+        )
+
+    monkeypatch.setattr(login, "_accounts_naming", accounts)
+    monkeypatch.setattr(login, "resolve_identity_for_email", resolve)
+    out = await login.jit_provision_for_email("Bob@acme.com")
+    assert (out is not None) is resolves
     assert provisioned == {}
 
 

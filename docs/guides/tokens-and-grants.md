@@ -390,13 +390,20 @@ sign-in to an external IdP (`LOOM_OIDC_ISSUER`, `LOOM_OIDC_CLIENT_ID`,
 `LOOM_OIDC_CLIENT_SECRET`); Loom maps the verified email to an account and still mints its
 own token. `LOOM_OIDC_JIT_PROVISION=true` creates a personal namespace in `LOOM_OIDC_JIT_ORG`
 for a first sign-in with no account (`LOOM_OIDC_JIT_EMAIL_DOMAINS` restricts it); off, such
-a sign-in is refused. JIT never rebuilds an existing name: a released, deleted or another
-account's one is skipped for the next free name, `<name>-2` and on, then a random suffix.
-Deleting an account is not offboarding (its owner can do it). To offboard a JIT user, revoke
-their subject (`loom revoke-token --subject <namespace>`): JIT refuses while any inactive
-account in the org still naming their email is revoked outright. Removing them at the IdP
-or from `LOOM_OIDC_JIT_EMAIL_DOMAINS` works too. `loom claim-release` clears the contact, so
-a released account names no one and does not block a sign-up.
+a sign-in is refused. A person who has an active account in that org, whatever its name, is
+signed in to it and never given another. JIT never rebuilds an existing name: a released,
+deleted or another account's one is skipped for the next free name, `<name>-2` and on,
+then a random suffix.
+
+To offboard a JIT user, revoke their subject (`loom revoke-token --subject <namespace>`)
+and delete their account: JIT refuses while any inactive account in the org still naming
+their email is revoked outright. Deleting alone is not offboarding (its owner can do it),
+and removing the domain from `LOOM_OIDC_JIT_EMAIL_DOMAINS` stops only new accounts from it,
+not the sign-in of an account that exists; removing the person at the IdP stops both. A
+revocation of a subject has no undo and lasts ten years: to let an offboarded person back
+in, `loom claim-release` the revoked account, which clears its contact so it names no one.
+That is also what a release does to an offboarded account tidied up later: it lets the
+person sign up again, under a new subject.
 
 **An aggregator acting for its users.** A subject listed in `LOOM_TRUSTED_CALLERS` may send
 `X-Loom-On-Behalf-Of: <subject>`: the call runs as that subject and every ledger row records

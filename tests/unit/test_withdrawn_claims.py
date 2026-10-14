@@ -313,3 +313,20 @@ def test_a_failed_mint_time_read_propagates(ch: _CH, monkeypatch: pytest.MonkeyP
         asyncio.run(rev.ended_claims(ORG, "alice", ["team"], issued_at=None))
     with pytest.raises(RuntimeError):
         asyncio.run(rev.subject_revoked("alice", issued_at=BEFORE))
+
+
+def test_several_subjects_are_checked_for_a_revocation_in_one_read(ch: _CH) -> None:
+    reads: list[list[str]] = []
+    read = ch.query_all
+
+    async def _counting(sql: str, params: dict[str, Any] | None = None) -> list[dict]:
+        reads.append(list((params or {}).get("keys") or []))
+        return await read(sql, params)
+
+    ch.query_all = _counting  # type: ignore[method-assign]
+    now = int(datetime.now(UTC).timestamp())
+    ch.revoked["bob"] = {"jti": "bob", "issued_before": None}
+    assert asyncio.run(rev.any_subject_revoked(["u-bob", "bob", "u-bob"], issued_at=now))
+    assert not asyncio.run(rev.any_subject_revoked(["u-bob"], issued_at=now))
+    assert not asyncio.run(rev.any_subject_revoked([], issued_at=now))
+    assert reads == [["bob", "u-bob"], ["u-bob"]]

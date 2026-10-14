@@ -797,7 +797,9 @@ async def _exchange(
         return issued
     finally:
         if outcome is oauth_claims.Claim.HELD and not keep_claim:
-            await oauth_claims.release(ch, key, holder)
+            # Shielded: an exchange cancelled before its consume used nothing
+            # up, and a claim left behind would lock the credential out.
+            await oauth_claims.release_shielded(ch, key, holder)
 
 
 async def _used_up(
