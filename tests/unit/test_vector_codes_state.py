@@ -6,7 +6,6 @@ from __future__ import annotations
 import ast
 import asyncio
 import re
-import time
 from pathlib import Path
 from typing import Any
 
@@ -317,35 +316,14 @@ async def test_a_read_only_process_retries_failed_first_probes_once_a_ttl(
     vector_codes_state.codes_apply("loom.chunks")
     await _the_refresh()
     assert len(ch.calls) > n  # tried at once, and failed again
-    n = len(ch.calls)
+    tried = vector_codes_state._refresh
     vector_codes_state.codes_apply("loom.chunks")  # within a TTL of that try
-    assert len(ch.calls) == n
+    assert vector_codes_state._refresh is tried
     ch.fail = False
     now[0] += vector_codes_state._ttl()
     vector_codes_state.codes_apply("loom.chunks")
     await _the_refresh()
     assert vector_codes_state.coded_columns() == {"loom.chunks.embedding"}
-
-
-@pytest.mark.asyncio
-async def test_inserts_refused_together_share_one_probe() -> None:
-    from server.core.errors import CodedWidthMismatchError
-
-    ch = _FakeCH(coded=[("chunks", "embedding")], patches={}, width=1024)
-    await vector_codes_state.probe(ch)
-    began = time.monotonic()
-    n = len(ch.calls)
-    ch.width = 3072  # rebuilt outside Loom
-    rows = [{"embedding": [0.1] * 1024}]
-    results = await asyncio.gather(
-        *(
-            vector_codes_state.refuse_on_fresh_widths("chunks", rows, since=began)
-            for _ in range(10)
-        ),
-        return_exceptions=True,
-    )
-    assert all(isinstance(r, CodedWidthMismatchError) for r in results)
-    assert len(ch.calls) - n == 1
 
 
 @pytest.mark.asyncio

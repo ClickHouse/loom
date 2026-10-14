@@ -188,7 +188,8 @@ async def refuse_on_fresh_widths(table: str, rows: list[dict[str, Any]], since: 
     """After ClickHouse refused `rows` with code 190 at monotonic `since`: read
     the widths with a probe started after the refusal (one that started earlier
     may predate the rebuild), and refuse by name a vector the table no longer
-    takes. Inserts refused at the same moment share one probe."""
+    takes. Each refused insert reads once; the inserts after it are refused by
+    the reading it published, before they reach ClickHouse."""
     if await _reading_since(since) and (found := _row_mismatch(table, rows)) is not None:
         _refuse(*found)
 

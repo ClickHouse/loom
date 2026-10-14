@@ -30,6 +30,8 @@ class _Table:
 
     # The probe's client.
     async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+        if "system.settings" in sql:
+            return [{"n": 1}]  # a server with the Quantized codec
         if "system.columns" in sql:
             self.probes += 1
             codec = f"CODEC(Quantized('rabitq', {self.width}, 0))"
@@ -188,3 +190,26 @@ async def test_placeholders_are_sized_from_a_probe_after_the_refusal(table, monk
     await _client(table, monkeypatch).insert("loom.memory_embeddings", rows)
     assert table.attempts == 2
     assert [len(rows[0][c]) for c in COLUMNS] == [1024, 1024]
+
+
+@pytest.mark.asyncio
+async def test_inserts_in_flight_at_a_rebuild_are_each_refused_by_name(table, monkeypatch) -> None:
+    """Refused one after another, each reads once and is refused by name; an insert
+    after them is refused by the published reading before it reaches ClickHouse."""
+    real_insert = table.insert
+
+    async def slow(t: str, data: Any, **kw: Any) -> None:
+        await asyncio.sleep(0.01)  # in flight together
+        await real_insert(t, data, **kw)
+
+    table.insert = slow  # type: ignore[method-assign]
+    client = _client(table, monkeypatch)
+    results = await asyncio.gather(
+        *(client.insert("loom.memory_embeddings", [_full(3072)]) for _ in range(4)),
+        return_exceptions=True,
+    )
+    assert all(isinstance(r, CodedWidthMismatchError) for r in results)
+    attempts = table.attempts
+    with pytest.raises(CodedWidthMismatchError):
+        await client.insert("loom.memory_embeddings", [_full(3072)])
+    assert table.attempts == attempts
