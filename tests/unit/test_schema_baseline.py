@@ -31,6 +31,7 @@ TRANSIENT_TABLES = {
     "memory_ask_precedents": "cached answers reused as precedents, recomputed on a miss",
     "memory_drops": "a review log of writes that were dropped",
     "memory_extraction_queue": "a work queue; the facts it yields live in loom.memory",
+    "memory_code_link_queue": "the code link worker's queue of memory writes (keys only)",
     "consolidation_runs": "the consolidation worker's run ledger",
 }
 
