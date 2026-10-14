@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from server.core.vectors import codes_state
 from server.core.vectors.code_tables import is_chunks_table, vector_dim_for_table
 
 PLACEHOLDER_COLUMNS: dict[str, tuple[str, ...]] = {
@@ -72,26 +73,16 @@ def _columns(table: str) -> tuple[str, tuple[str, ...], int]:
     return full, (), dim
 
 
-def _pads_coded(table: str, rows: list[dict[str, Any]]) -> bool:
-    """Whether `pad_rows` would size a placeholder from a coded column's width."""
-    from server.core.vectors.codes_state import stored_width
-
-    full, cols, _ = _columns(table)
-    return any(stored_width(full, c) and any(c in r and not r[c] for r in rows) for c in cols)
-
-
 def pad_rows(table: str, rows: list[dict[str, Any]]) -> int:
     """Replace empty vectors in `rows` (in place) for a table that has
     placeholder columns. Returns the number of vectors replaced; 0 for every
     other table or when nothing was empty."""
-    from server.core.vectors.codes_state import stored_width
-
     full, cols, dim = _columns(table)
     n = 0
     for c in cols:
         # A placeholder is never scored: it takes the width its coded column was
         # created at, so a write without a vector is never refused for its width.
-        width = stored_width(full, c) or dim
+        width = codes_state.stored_width(full, c) or dim
         if width <= 0:
             continue
         for r in rows:
@@ -103,10 +94,8 @@ def pad_rows(table: str, rows: list[dict[str, Any]]) -> int:
 
 async def fit_vectors(table: str, rows: list[dict[str, Any]]) -> None:
     """Refuse a vector its coded column cannot take, then pad the empty ones
-    (in place), both against a recent reading when a coded column is padded."""
-    from server.core.vectors import codes_state
-
-    if _pads_coded(table, rows):
+    (in place); for a coded table, both against a recent reading."""
+    if codes_state.has_coded(table):
         await codes_state.recheck()
     await codes_state.refuse_other_widths(table, rows)  # skips the empty vectors
     pad_rows(table, rows)

@@ -84,10 +84,10 @@ def provider_fixture(image: str, root: Path) -> Path:
     return override
 
 
-def smoke(image: str) -> None:
+def smoke(image: str, clickhouse_image: str) -> None:
     with tempfile.TemporaryDirectory(prefix="loom-docker-smoke-") as temp:
         root = Path(temp)
-        archive, checksum = build("smoke", root / "bundle")
+        archive, checksum = build("smoke", root / "bundle", clickhouse_image)
         stack = root / "stack"
         env = {
             **os.environ,
@@ -179,4 +179,17 @@ def smoke(image: str) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", required=True, help="A built or published image repository:tag")
-    smoke(parser.parse_args().image)
+    parser.add_argument(
+        "--clickhouse-image", help="the release the bundle names; default: the latest, resolved now"
+    )
+    args = parser.parse_args()
+    clickhouse_image = (
+        args.clickhouse_image
+        or subprocess.run(
+            ["bash", str(ROOT / "dev" / "clickhouse_release.sh")],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    )
+    smoke(args.image, clickhouse_image)

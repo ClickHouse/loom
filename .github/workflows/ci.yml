@@ -37,8 +37,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # `latest` moves; every job of this run takes the release it names now.
+      # Assigned first: a failed lookup then fails the step instead of writing "image=".
       - id: resolve
-        run: echo "image=$(bash dev/clickhouse_release.sh)" >> "$GITHUB_OUTPUT"
+        run: |
+          image=$(bash dev/clickhouse_release.sh)
+          echo "image=$image" >> "$GITHUB_OUTPUT"
 
   lint:
     name: ruff + mypy-gate

@@ -5,6 +5,8 @@ import importlib.util
 import tarfile
 from pathlib import Path
 
+import pytest
+
 
 def _module():
     path = Path(__file__).parents[2] / "scripts" / "release" / "build_stack_bundle.py"
@@ -52,3 +54,17 @@ def test_standalone_compose_uses_release_image_and_embeds_no_secret() -> None:
     assert "127.0.0.1" in env
     assert "LOOM_IDENTITY_PROVIDER=single-user" in env
     assert "__LOOM_JWT_SECRET__" in env
+
+
+@pytest.mark.parametrize(
+    "image", ["", "clickhouse/clickhouse-server:latest", "clickhouse/clickhouse-server:26.9"]
+)
+def test_a_bundle_names_one_exact_clickhouse_release(tmp_path: Path, image: str) -> None:
+    with pytest.raises(ValueError, match="not one ClickHouse release"):
+        _module().build("1.2.3", tmp_path, image)
+
+
+def test_a_rerun_reads_the_release_a_published_bundle_names(tmp_path: Path) -> None:
+    module = _module()
+    archive, _ = module.build("1.2.3", tmp_path, "clickhouse/clickhouse-server:26.9.18.11")
+    assert module.pinned_image(archive) == "clickhouse/clickhouse-server:26.9.18.11"

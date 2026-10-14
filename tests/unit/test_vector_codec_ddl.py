@@ -163,6 +163,23 @@ def test_the_plain_layout_is_noted_only_when_a_vector_table_is_created(
     assert ("created plain" in capsys.readouterr().out) is noted
 
 
+def test_a_server_without_the_codec_says_so(
+    monkeypatch: pytest.MonkeyPatch, capsys, tmp_path
+) -> None:
+    from server.core.schema import migrate as mig
+
+    (tmp_path / "1999_a.sql").write_text(
+        "CREATE TABLE IF NOT EXISTS loom.chunks (embedding Array(Float32)) ENGINE = Memory;\n"
+    )
+    monkeypatch.setattr(mig, "_nlp_available", lambda ch: True)
+    monkeypatch.setattr(mig, "_codec_supported", lambda ch: False)
+    monkeypatch.setattr(mig, "_dimensions_setting_known", lambda ch: False)
+    monkeypatch.setattr(mig, "_apply_file", lambda ch, f, **kw: None)
+    files = [tmp_path / "1999_a.sql"]
+    assert mig._apply_pending(object(), files, dry=True, lease=None) == 0  # type: ignore[arg-type]
+    assert "this server has no Quantized codec" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize(
     ("columns", "model", "width"),
     [

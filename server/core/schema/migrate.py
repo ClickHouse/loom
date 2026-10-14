@@ -468,7 +468,7 @@ def _new_table_layout(ch: Client) -> tuple[int | None, str]:
     if not _codec_supported(ch):
         return (
             None,
-            "vector tables created plain: the Quantized codec needs ClickHouse 26.8 or later",
+            "vector tables created plain: this server has no Quantized codec (26.8 or later)",
         )
     width = _install_vector_width(ch)
     if width is None:

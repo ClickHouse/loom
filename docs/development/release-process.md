@@ -82,17 +82,25 @@ A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not mov
 1. `version` takes the version from the tag (`vX.Y.Z` → `X.Y.Z`) and refuses a ref that
    is not a `v*` tag or not SemVer; it fails unless each of the three changelogs has
    `## [X.Y.Z] - YYYY-MM-DD` and `server/__init__.py` reads `__version__ = "X.Y.Z"`;
-2. `build` writes the version into the Python and TypeScript SDK sources and builds the
+2. `clickhouse` names the ClickHouse release the Compose bundle runs: the release
+   `clickhouse/clickhouse-server:latest` names now (`dev/clickhouse_release.sh`), or, on a
+   re-run, the one this version's published bundle already names, so rerunning the
+   installer for a version never moves ClickHouse. It migrates a fresh server of that
+   release and runs `make schema-check` before `build` may pin it;
+3. `build` writes the version into the Python and TypeScript SDK sources and builds the
    Python SDK wheel and sdist, the npm tarball (after the TypeScript SDK's `check:dist`),
    and zips of the two plugins (`loom-claude-code-plugin-vX.Y.Z.zip`,
    `loom-codex-plugin-vX.Y.Z.zip`); it also builds the source-free Compose bundle and its
-   SHA-256 file;
-3. `verify` checks those exact files: their names and embedded versions, the plugin
+   SHA-256 file, naming that ClickHouse release;
+4. `verify` checks those exact files: their names and embedded versions, the plugin
    manifests, no tests in the Claude Code zip, the executable bits git records, and
-   smoke-tests the wheel in a clean venv with `scripts/gates/sdk_wheel_smoke.py`;
-4. `docker` publishes `ghcr.io/clickhouse/loom` for linux/amd64 and linux/arm64, with
+   that the bundle names one exact ClickHouse release, and smoke-tests the wheel in a
+   clean venv with `scripts/gates/sdk_wheel_smoke.py`;
+5. `docker` publishes `ghcr.io/clickhouse/loom` for linux/amd64 and linux/arm64, with
    provenance and an SBOM;
-5. `github-release` creates the GitHub Release only after that image exists, or updates it
+6. `docker-smoke` installs the bundle with that image, on the ClickHouse release it
+   names, on amd64 and arm64;
+7. `github-release` creates the GitHub Release only after that image exists, or updates it
    on a re-run, with notes generated from the commits since the previous tag, and attaches
    the verified files.
 

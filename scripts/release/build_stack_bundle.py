@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import re
 import shutil
 import tarfile
 import tempfile
@@ -35,9 +36,24 @@ FILES = {
 
 
 LATEST_CLICKHOUSE = "${LOOM_CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:latest}"
+# One exact release, as dev/clickhouse_release.sh prints it.
+EXACT_CLICKHOUSE = re.compile(r"clickhouse/clickhouse-server:\d+(?:\.\d+){3}")
 
 
-def build(version: str, output_dir: Path, clickhouse_image: str | None = None) -> tuple[Path, Path]:
+def pinned_image(archive: Path) -> str:
+    """The ClickHouse image a built bundle names."""
+    with tarfile.open(archive) as bundle:
+        member = bundle.extractfile("loom-stack/compose.yaml")
+        compose = member.read().decode() if member else ""
+    found = EXACT_CLICKHOUSE.search(compose)
+    if not found:
+        raise ValueError(f"{archive} names no exact ClickHouse release")
+    return found.group(0)
+
+
+def build(version: str, output_dir: Path, clickhouse_image: str) -> tuple[Path, Path]:
+    if not EXACT_CLICKHOUSE.fullmatch(clickhouse_image):
+        raise ValueError(f"not one ClickHouse release: {clickhouse_image!r}")
     output_dir.mkdir(parents=True, exist_ok=True)
     archive = output_dir / "loom-stack.tar.gz"
     with tempfile.TemporaryDirectory(prefix="loom-stack-") as raw:
@@ -46,13 +62,12 @@ def build(version: str, output_dir: Path, clickhouse_image: str | None = None) -
             target = stage / destination
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / source, target)
-        if clickhouse_image:
-            compose = stage / "compose.yaml"
-            text = compose.read_text(encoding="utf-8")
-            if LATEST_CLICKHOUSE not in text:
-                raise ValueError(f"compose.yaml no longer defaults to {LATEST_CLICKHOUSE}")
-            pinned = f"${{LOOM_CLICKHOUSE_IMAGE:-{clickhouse_image}}}"
-            compose.write_text(text.replace(LATEST_CLICKHOUSE, pinned), encoding="utf-8")
+        compose = stage / "compose.yaml"
+        text = compose.read_text(encoding="utf-8")
+        if LATEST_CLICKHOUSE not in text:
+            raise ValueError(f"compose.yaml no longer defaults to {LATEST_CLICKHOUSE}")
+        pinned = f"${{LOOM_CLICKHOUSE_IMAGE:-{clickhouse_image}}}"
+        compose.write_text(text.replace(LATEST_CLICKHOUSE, pinned), encoding="utf-8")
         (stage / "VERSION").write_text(version + "\n", encoding="utf-8")
         with tarfile.open(archive, "w:gz", format=tarfile.PAX_FORMAT) as bundle:
             bundle.add(stage, arcname="loom-stack")
@@ -64,13 +79,17 @@ def build(version: str, output_dir: Path, clickhouse_image: str | None = None) -
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--version", required=True)
-    parser.add_argument(
-        "--clickhouse-image", required=True, help="e.g. clickhouse/clickhouse-server:26.9.18.11"
-    )
+    parser.add_argument("--version")
+    parser.add_argument("--clickhouse-image", help="e.g. clickhouse/clickhouse-server:26.9.18.11")
     parser.add_argument("--output-dir", type=Path, default=Path("release/stack"))
+    parser.add_argument("--pinned-in", type=Path, help="print the image this bundle names")
     args = parser.parse_args()
-    build(args.version, args.output_dir, args.clickhouse_image)
+    if args.pinned_in:
+        print(pinned_image(args.pinned_in))
+    elif args.version and args.clickhouse_image:
+        build(args.version, args.output_dir, args.clickhouse_image)
+    else:
+        parser.error("--version and --clickhouse-image, or --pinned-in")
 
 
 if __name__ == "__main__":

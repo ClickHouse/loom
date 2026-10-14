@@ -226,6 +226,21 @@ def test_shared_cap_is_divided_by_replicas_not_workers(settings_override, tmp_pa
     assert ratelimit.effective_divisor(shared=False) == 8
 
 
+def test_a_limit_is_sized_for_shared_buckets_before_any_check(
+    settings_override, tmp_path: Path
+) -> None:
+    """Sizing a limit resolves the store itself, so no call order matters."""
+    settings_override(
+        ratelimit_shared="on",
+        web_workers=4,
+        replica_count=1,
+        ratelimit_shared_path=str(tmp_path / "rl"),
+        ratelimit_shared_slots=256,
+    )
+    lim = Limiter(clock=FakeClock())
+    assert lim._ns_limit_for("ns", "memory") == DEFAULT_LIMITS["memory"]  # not divided by 4
+
+
 def test_per_process_fallback_keeps_the_worker_division(settings_override) -> None:
     settings_override(ratelimit_shared="off", web_workers=4, replica_count=1)
     lim = Limiter(clock=FakeClock())

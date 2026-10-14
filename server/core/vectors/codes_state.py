@@ -136,6 +136,11 @@ def _refuse(column: str, stored: int, written: int) -> None:
     )
 
 
+def has_coded(table: str) -> bool:
+    """Whether the last reading saw a coded column in `table`."""
+    return bool(_coded_of(table))
+
+
 def _coded_of(table: str) -> list[tuple[str, str, int]]:
     """(qualified column, column name, stored width) of `table`'s coded columns,
     as the write guards read them; a stale reading is refreshed in the background,
@@ -145,16 +150,15 @@ def _coded_of(table: str) -> list[tuple[str, str, int]]:
     return [(c, c[len(prefix) :], w) for c, w in _widths.items() if c.startswith(prefix)]
 
 
-# A refusal, or a placeholder sized for a coded column, uses a reading at most
-# this old, so a table rebuilt outside Loom is not written at its old width for
+# A write to a coded table is judged and padded against a reading at most this
+# old, so a table rebuilt outside Loom is not written at its old width for
 # a whole probe interval.
 FRESH_READING_S = 5.0
 
 
 async def recheck() -> None:
     """Re-read the widths when the reading is older than FRESH_READING_S;
-    concurrent writers wait on one re-read (the full probe: at most one every
-    few seconds, so its patch-part read is not worth splitting out)."""
+    concurrent writers wait on one re-read."""
     if _ch is None or (_probed_at is not None and time.monotonic() - _probed_at <= FRESH_READING_S):
         return
     await asyncio.shield(_start_refresh())
@@ -312,6 +316,7 @@ __all__ = [
     "width_mismatches",
     "written_by_served_model",
     "ensure_probed",
+    "has_coded",
     "is_coded",
     "probe",
     "recheck",

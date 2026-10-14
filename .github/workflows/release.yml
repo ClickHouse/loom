@@ -8,12 +8,14 @@ name: release
 # release's one-line installer never points at an image that does not exist.
 # docs/development/release-process.md is the maintainer procedure.
 #
-# Jobs: version (derive and gate the version), clickhouse (the ClickHouse
-# release the installer bundle names, migrated and schema-checked) -> build -> verify (inspect the
-# exact files) -> docker -> docker-smoke -> github-release -> pypi, npm (dispatch only). A
-# re-run after a partial publish is safe: the release is updated in place,
-# PyPI skips files it already has, npm skips a version it already has, and the
-# image tags are overwritten with the same build.
+# Jobs: version (derive and gate the version) -> clickhouse (the ClickHouse
+# release the installer bundle names, migrated and schema-checked) -> build ->
+# verify (inspect the exact files) -> docker -> docker-smoke -> github-release
+# -> pypi, npm (dispatch only). A re-run after a partial publish is safe: the
+# bundle keeps the ClickHouse release it was first published with, the
+# release is updated in place, PyPI skips files it already has, npm skips a
+# version it already has, and the image tags are overwritten with the same
+# build.
 #
 # The PyPI and npm jobs are dispatch-only, so a tag's GitHub Release can be
 # checked before the SDKs reach the registries.
@@ -92,6 +94,7 @@ jobs:
   # Loom version keeps its ClickHouse; it is migrated and checked here first.
   clickhouse:
     name: The ClickHouse release the bundle names
+    needs: version
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -118,8 +121,19 @@ jobs:
         run: |
           uv sync --locked --python "${{ steps.python.outputs.python-path }}"
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      # A re-run keeps the release a published bundle of this version names, so
+      # rerunning the installer for it never moves ClickHouse.
       - id: resolve
-        run: echo "image=$(bash dev/clickhouse_release.sh)" >> "$GITHUB_OUTPUT"
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release download "v$VERSION" --pattern loom-stack.tar.gz --dir published; then
+            image=$(python scripts/release/build_stack_bundle.py --pinned-in published/loom-stack.tar.gz)
+          else
+            image=$(bash dev/clickhouse_release.sh)
+          fi
+          echo "image=$image" >> "$GITHUB_OUTPUT"
       - name: Migrate a fresh server of that release and check schema.sql
         env:
           LOOM_CLICKHOUSE_IMAGE: ${{ steps.resolve.outputs.image }}
@@ -227,7 +241,7 @@ jobs:
         run: |
           pip install packaging==26.3
           python - <<'PY'
-          import json, os, pathlib, subprocess, sys, tarfile, zipfile
+          import json, os, pathlib, re, subprocess, sys, tarfile, zipfile
           from packaging.version import Version
 
           version = os.environ["VERSION"]
@@ -316,6 +330,9 @@ jobs:
                   if missing:
                       errors.append(f"stack bundle is missing {sorted(missing)}")
                   release_version = t.extractfile("loom-stack/VERSION").read().decode().strip()
+                  compose = t.extractfile("loom-stack/compose.yaml").read().decode()
+                  if not re.search(r"clickhouse/clickhouse-server:\d+(\.\d+){3}\}", compose):
+                      errors.append("stack bundle names no exact ClickHouse release")
                   if release_version != version:
                       errors.append(f"stack bundle version {release_version}, expected {version}")
 
@@ -376,7 +393,7 @@ jobs:
 
   docker-smoke:
     name: Released quickstart (${{ matrix.arch }})
-    needs: [version, docker]
+    needs: [version, clickhouse, docker]
     strategy:
       fail-fast: false
       matrix:
@@ -404,7 +421,10 @@ jobs:
       - name: Fresh installer stack, compiler indexing and dashboard provider recovery
         env:
           VERSION: ${{ needs.version.outputs.version }}
-        run: python3 scripts/gates/docker_quickstart_smoke.py --image "ghcr.io/clickhouse/loom:$VERSION"
+          CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
+        run: |
+          python3 scripts/gates/docker_quickstart_smoke.py --image "ghcr.io/clickhouse/loom:$VERSION" \
+            --clickhouse-image "$CLICKHOUSE_IMAGE"
 
   github-release:
     name: GitHub Release (artifacts attached)
