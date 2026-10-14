@@ -329,8 +329,8 @@ ABI, but the profile is untested there. Hosts without AppArmor, such as Docker D
 options safely: Docker ignores `apparmor=` there, so nothing replaces the `/proc` masks
 that `systempaths=unconfined` drops (see **`/proc`** below). Older parsers (Ubuntu 22.04,
 Debian 12) reject the profile; those hosts are left with `seccomp=unconfined` and
-`apparmor=unconfined` (end of this section), which lose the same `/proc` protection, so
-treat them the same way. Loom runs on all of these without the sandbox.
+`apparmor=unconfined` (the paragraph before **Without the sandbox**), which lose the same
+`/proc` protection. All of these hosts run Loom without the sandbox.
 
 Unless `LOOM_CODE_SANDBOX_REQUIRED` is set, every host still indexes the repositories
 listed in `LOOM_CODE_REPOS_JSON`; only repositories added from the page need the
