@@ -142,7 +142,12 @@ echo "$*" >> "$STUB_LOG"
 case "$1" in
   inspect)
     [[ "$STUB_INSPECT" == fail ]] && { echo "Error: No such object: ${@: -1}" >&2; exit 1; }
-    [[ "$STUB_INSPECT" == sandbox ]] && echo "[seccomp={} apparmor=loom-repo-sandbox]" || echo "[]"
+    case "$STUB_INSPECT" in
+      sandbox) echo "[seccomp={} apparmor=loom-repo-sandbox systempaths=unconfined]" ;;
+      last) echo "[seccomp={} apparmor=loom-repo-sandbox]" ;;
+      suffixed) echo "[apparmor=loom-repo-sandbox-old]" ;;
+      *) echo "[]" ;;
+    esac
     ;;
   exec) exit "$STUB_PROBE" ;;
 esac
@@ -184,6 +189,8 @@ _RM = "rm -f loom-green loom-green-workers"
         ("plain", 0, 0, 0, False),  # not under the profile: nothing to probe
         ("sandbox", 1, 1, 1, True),  # the first container fails: stop there
         ("sandbox", 0, 0, 2, False),  # both containers probed and pass
+        ("last", 1, 1, 1, True),  # the profile as the last option
+        ("suffixed", 1, 0, 0, False),  # another profile whose name only starts the same
     ],
 )
 def test_the_sandbox_probe_gates_the_swap(

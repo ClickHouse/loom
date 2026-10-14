@@ -386,10 +386,9 @@ under it is known only once a host has loaded it. CI is where that first happens
 `sandbox-profile` job in `.github/workflows/docker-smoke.yml` loads the profile on
 Ubuntu 24.04 with `kernel.apparmor_restrict_unprivileged_userns=1` left on and runs the
 probe and the hostile suite in the production image with the colours' options. On a
-deploy host, check it Check that in a throwaway container
-from the build about to be deployed, not the serving one: an image from before the
-`--disable-userns` fallback prints `False` under this profile (`True` means the sandbox
-runs):
+deploy host, check it in a throwaway container from the build about to be deployed, not
+the serving one: an image from before the `--disable-userns` fallback prints `False`
+under this profile (`True` means the sandbox runs):
 
 ```bash
 docker build -q -t loom:sandbox-check .
@@ -405,17 +404,22 @@ not loaded, and on a host without AppArmor. After the new colour starts, and bef
 proxy is swapped to it, `dev/sandbox_probe.sh` runs the same probe in each of the
 colour's containers that runs under the profile (`loom-<colour>` and
 `loom-<colour>-workers`). When one fails, or cannot be inspected, it prints why, removes
-the new colour's containers and exits with the old colour still serving. Removed, not stopped: the build already replaced the previous
-build in that colour, so it is no rollback target, and its workers cannot take the lease
-and run jobs unsandboxed. That is the first check of the real profile on a deploy that
-skipped the one above.
+the new colour's containers and exits with the old colour still serving. Removed, not
+stopped: the build already replaced the previous build in that colour, so it is no
+rollback target, and its workers cannot take the lease and run jobs unsandboxed. That is
+the first check of the real profile on a deploy that skipped the one above.
 
 **Requiring the sandbox.** The probe gates the swap, but the new workers start before
 it and may take the supervisor lease (on a first deploy, or when the old lease is free)
 and start repository jobs. `LOOM_CODE_SANDBOX_REQUIRED=true`, which the colours set,
-closes that window: where the sandbox cannot run, every repository job (clone, fetch,
-dependency install, compiler tier) fails with `SandboxRequiredError` instead of running
-as a plain process, and `/v1/health` reports `repo_jobs_unsandboxed` as an error.
+closes that window: where the sandbox cannot run, no repository job (clone, fetch,
+dependency install, compiler tier, `loom code scip-full`'s harness) runs as a plain
+process. The ingest pass and the compiler tiers skip every entry, operator ones
+included, and name the skip on the pass note; `loom code scip-full` exits 1; any job
+that still reaches the runner fails with `SandboxRequiredError`. `/v1/health` reports
+`repo_jobs_unsandboxed` as an error. One command is outside it: `loom code init`, the
+operator's first bare clone of an entry they configured, runs `git clone` as a plain
+process (it runs no repository code; the remote is the operator's own).
 
 No `no-new-privileges`: under it the kernel refuses the exec transition into the child
 profile, and bwrap would not start. The image's setuid binaries (`su`, `mount`,

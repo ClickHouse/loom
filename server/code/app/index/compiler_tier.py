@@ -24,6 +24,7 @@ from server.code.app.index.gitrepo import is_local_remote
 from server.code.app.index.producer_inference import worker_owns
 from server.code.app.index.sandbox import run_job, sandbox_available
 from server.code.domain.index.repos import checkout_for
+from server.settings import settings
 from server.workers import pass_context
 from server.workers.status import log_pass_errors, record_pass
 
@@ -114,6 +115,9 @@ UNSANDBOXED_NETWORK_SKIP = (
     "self-registered repository with a network remote, no clone, fetch or tier "
     "without the sandbox (nothing would vet the hosts it connects to)"
 )
+SANDBOX_REQUIRED_SKIP = (
+    "LOOM_CODE_SANDBOX_REQUIRED is set and the sandbox cannot run here: no clone, fetch or tier"
+)
 _unsandboxed_logged: set[tuple[str, str, str]] = set()
 
 
@@ -123,11 +127,15 @@ def unsandboxed_skip(cfg: RepoConfig, worker: str, *, runs_repo_code: bool = Fal
     from the Repositories page (`source == "registry"`): a job running its own
     build, or any job of an entry whose remote is reached over the network,
     since the plain-process fallback has no egress proxy. An operator's entry,
-    and a self-registered local mirror's non-build jobs, run either way.
+    and a self-registered local mirror's non-build jobs, run either way, unless
+    LOOM_CODE_SANDBOX_REQUIRED says every entry waits for the sandbox.
     Logged once per entry and worker."""
-    if cfg.source != "registry" or sandbox_available():
+    required = settings.code_sandbox_required
+    if (cfg.source != "registry" and not required) or sandbox_available():
         return ""
-    if runs_repo_code:
+    if required:
+        reason = SANDBOX_REQUIRED_SKIP
+    elif runs_repo_code:
         reason = UNSANDBOXED_SKIP
     elif not is_local_remote(cfg.git_remote):
         reason = UNSANDBOXED_NETWORK_SKIP

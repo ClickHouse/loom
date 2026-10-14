@@ -28,8 +28,10 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   docs/operations/code-index-operations.md.
 
 - `LOOM_CODE_SANDBOX_REQUIRED` (default off; the colours set it): where the sandbox
-  cannot run, repository jobs fail instead of running as plain processes, and
-  `/v1/health` reports `repo_jobs_unsandboxed` as an error.
+  cannot run, no repository job runs as a plain process. The ingest pass and the
+  compiler tiers skip every entry with a note, `loom code scip-full` exits 1, and
+  `/v1/health` reports `repo_jobs_unsandboxed` as an error. `loom code init`'s first bare
+  clone stays a plain `git clone`.
 
 ### Changed
 
@@ -40,6 +42,9 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 
 ### Fixed
 
+- `loom code scip-full` runs its harness (the repository's CMake) as a repository job, in
+  the sandbox like the delta worker, instead of as a plain process; its output is printed
+  when the harness ends.
 - `LOOM_CODE_SANDBOX_MAX_PIDS` bounds each repository job: it is set inside the job's
   user namespace, so on Linux 5.14 and later it no longer counts every task of the
   server's uid on the host.

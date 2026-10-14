@@ -9,10 +9,13 @@ import sys
 import time
 from typing import Any
 
-from server.cli._proc import wait_or_stop
 from server.cli.code_backfill import _record_manual_pass
 from server.cli.code_run import _identity, _note, _repo_cfg
 from server.core.paths import REPO_ROOT
+
+# The harness's own bound; deploy/cron/scip-full.sh's SCIP_FULL_ENTRY_TIMEOUT
+# (8h) bounds the whole command too.
+_FULL_HARNESS_TIMEOUT_S = 8 * 3600
 
 
 async def _scip_move_checkout(checkout: Any, bare: Any, git_head: str) -> None:
@@ -142,32 +145,20 @@ async def _scip_full_locked(args: argparse.Namespace, org: str, ns: str, cfg: An
     if missing:
         print(f"missing: {', '.join(missing)}", file=sys.stderr)
         return 2
+    # The harness runs the repository's CMake: a repository job, under the
+    # same sandbox and gate as the delta worker's.
+    from server.code.app.index.compiler_tier import SANDBOX_REQUIRED_SKIP, unsandboxed_skip
+
+    if skip := unsandboxed_skip(cfg, "scip-full", runs_repo_code=True):
+        print(f"skip {ns}: {skip}", file=sys.stderr)
+        _note(skipped="unsandboxed", reason=skip)
+        return 1 if skip == SANDBOX_REQUIRED_SKIP else 0
 
     await _scip_move_checkout(checkout, bare, git_head)
 
     with tempfile.TemporaryDirectory(prefix="scip_full_") as tmp:
         delta_path = Path(tmp) / "delta.json"
-        env = {
-            "PATH": "/usr/bin:/bin:/usr/local/bin",
-            "PYTHON": sys.executable,
-            "DELTA_OUT": str(delta_path),
-            "SCIP_CLANG": str(scip_clang),
-            "HOME": str(Path.home()),
-        }
-        if args.jobs:
-            env["JOBS"] = str(args.jobs)
-        print("scip-clang full index (this is the ~50 min step)…")
-        proc = await asyncio.create_subprocess_exec(
-            "bash",
-            str(harness),
-            str(checkout),
-            "--full",
-            "",
-            "-",
-            env=env,
-            start_new_session=True,
-        )
-        rc = await wait_or_stop(proc)
+        rc = await _run_full_harness(args, harness, checkout, scip_clang, Path(tmp))
         if rc != 0:
             print(f"harness failed (exit {rc})", file=sys.stderr)
             _note(head=git_head[:12], harness_exit=rc)
@@ -188,6 +179,41 @@ async def _scip_full_locked(args: argparse.Namespace, org: str, ns: str, cfg: An
     print(f"{key} -> {git_head[:12]}")
     _note(head=git_head[:12], harness_exit=0, **stats.model_dump())
     return 0
+
+
+async def _run_full_harness(
+    args: argparse.Namespace, harness: Any, checkout: Any, scip_clang: Any, out_dir: Any
+) -> int:
+    """The full-index harness as a repository job (compiler_tier.run_harness);
+    it writes `out_dir/delta.json`. Its output is printed when it ends."""
+    from pathlib import Path
+
+    from server.code.app.index.compiler_tier import run_harness
+    from server.code.app.index.gitrepo import git_config_env
+    from server.code.app.index.sandbox import tool_mounts
+
+    env = {
+        **git_config_env(),
+        "PATH": "/usr/bin:/bin:/usr/local/bin",
+        "PYTHON": sys.executable,
+        "DELTA_OUT": str(out_dir / "delta.json"),
+        "SCIP_CLANG": str(scip_clang),
+        "HOME": str(Path.home()),
+    }
+    if args.jobs:
+        env["JOBS"] = str(args.jobs)
+    print("scip-clang full index (this is the ~50 min step; output follows at the end)…")
+    rc, out = await run_harness(
+        harness,
+        checkout,
+        ["--full", "", "-"],
+        env,
+        out_dir=out_dir,
+        timeout_s=_FULL_HARNESS_TIMEOUT_S,
+        readonly=tool_mounts(scip_clang),
+    )
+    sys.stdout.write(out)
+    return rc
 
 
 async def _entries(args: argparse.Namespace) -> int:

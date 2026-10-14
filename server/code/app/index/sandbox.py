@@ -156,10 +156,15 @@ def sandbox_available() -> bool:
     global _available
     if _available is None:
         _available = _probe()
-        if not _available:
+        if not _available and settings.code_sandbox_required:
             logger.warning(
-                "repository jobs run UNSANDBOXED: bubblewrap is missing or cannot create "
-                "namespaces here; build-based tiers execute repository code on this host"
+                "repository jobs are REFUSED: LOOM_CODE_SANDBOX_REQUIRED is set and the "
+                "sandbox cannot run here (sandbox probe failed)"
+            )
+        elif not _available:
+            logger.warning(
+                "repository jobs run UNSANDBOXED: the sandbox cannot run here (sandbox "
+                "probe failed); build-based tiers execute repository code on this host"
             )
     return _available
 
@@ -173,7 +178,12 @@ def sandbox_state() -> bool | None:
 def _probe() -> bool:
     global _disable_userns
     bwrap = shutil.which("bwrap")
-    if not bwrap or not shutil.which("prlimit") or platform.machine() not in _AUDIT_ARCH:
+    missing = [name for name in ("bwrap", "prlimit") if not shutil.which(name)]
+    if not bwrap or missing or platform.machine() not in _AUDIT_ARCH:
+        if missing:
+            logger.warning("sandbox probe failed: %s not on PATH", " and ".join(missing))
+        else:
+            logger.warning("sandbox probe failed: no seccomp table for %s", platform.machine())
         return False
     try:
         help_text = subprocess.run(
@@ -651,7 +661,7 @@ async def run_job(argv: Sequence[str], **job: Unpack[JobOptions]) -> JobResult:
     if settings.code_sandbox_required:
         raise SandboxRequiredError(
             "repository job refused: LOOM_CODE_SANDBOX_REQUIRED is set and the sandbox "
-            "cannot run here (see the 'sandbox probe failed' warning)"
+            "cannot run here (the 'sandbox probe failed' warning says why)"
         )
     proc = await asyncio.create_subprocess_exec(
         *argv, env=dict(job["env"]), cwd=job.get("cwd"), **_pipes(job)

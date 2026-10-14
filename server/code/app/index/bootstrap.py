@@ -109,7 +109,7 @@ async def clone_if_missing(cfg: Any, repo: Any) -> bool:
     """True when the mirror exists after the call. A failed clone records
     stage=error with the reason and returns False; the next pass retries."""
     from server.code.app.index.gitrepo import auth_env, remote_access
-    from server.code.app.index.sandbox import run_job
+    from server.code.app.index.sandbox import SandboxRequiredError, run_job
 
     git_dir = cfg.git_dir
     if await asyncio.to_thread(os.path.isdir, git_dir):
@@ -133,6 +133,9 @@ async def clone_if_missing(cfg: Any, repo: Any) -> bool:
         await set_stage(
             repo, cfg.org, cfg.namespace, "error", reason="clone timed out; retrying next pass"
         )
+        return False
+    except SandboxRequiredError as e:
+        await set_stage(repo, cfg.org, cfg.namespace, "error", reason=str(e)[:300])
         return False
     err = done.stderr
     if done.returncode != 0:

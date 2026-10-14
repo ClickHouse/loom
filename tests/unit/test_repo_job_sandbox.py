@@ -335,6 +335,61 @@ def test_without_the_sandbox_the_ingest_pass_skips_self_registered_network_entri
     assert ingest_pass._without_unsandboxed(entries, CodeIngestResult()) == entries
 
 
+async def test_a_required_sandbox_skips_every_entry_before_any_fetch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Two entries sharing a mirror would be fetched once in prefetch_mirrors;
+    with the sandbox required and missing, the pass skips them first instead of
+    the fetch's SandboxRequiredError ending the pass."""
+    from server.code.app.index import compiler_tier, gitrepo, ingest_pass, pass_fetch
+    from server.code.app.index.pass_budget import CodeIngestResult
+    from server.settings import settings
+    from tests.unit.code_fixtures import repo_config
+
+    mirror = tmp_path / "shared.git"
+    mirror.mkdir()
+    entries = [
+        repo_config(
+            namespace=ns,
+            git_dir=str(mirror),
+            git_remote="https://github.com/a/b.git",
+            git_branch=branch,
+        )
+        for ns, branch in [("code-main", "main"), ("code-rel", "release")]
+    ]
+    monkeypatch.setattr(sandbox, "_available", False)
+    monkeypatch.setattr(settings, "code_sandbox_required", True)
+    fetched = []
+
+    async def fetch_many(*a, **k):
+        fetched.append(a)
+
+    monkeypatch.setattr(gitrepo, "fetch_many", fetch_many)
+    result = CodeIngestResult()
+    kept = ingest_pass._without_unsandboxed(entries, result)
+    assert kept == [] and result.note.endswith(compiler_tier.SANDBOX_REQUIRED_SKIP)
+    assert await pass_fetch.prefetch_mirrors(kept, result) == 0 and fetched == []
+    # the operator entries are skipped too, not only self-registered ones
+    assert compiler_tier.unsandboxed_skip(entries[0], "code_scip_delta", runs_repo_code=True)
+
+
+async def test_a_refused_clone_records_an_error_stage(tmp_path: Path, monkeypatch) -> None:
+    from unittest.mock import AsyncMock
+
+    from server.code.app.index import bootstrap
+    from server.settings import settings
+    from tests.unit.code_fixtures import repo_config
+
+    monkeypatch.setattr(sandbox, "_available", False)
+    monkeypatch.setattr(settings, "code_sandbox_required", True)
+    cfg = repo_config(git_dir=str(tmp_path / "m.git"), git_remote=str(tmp_path / "src.git"))
+    repo = AsyncMock()
+    assert await bootstrap.clone_if_missing(cfg, repo) is False
+    stage = repo.set_state.await_args_list[-1]
+    assert stage.args[2:4] == (bootstrap.STAGE_KEY, "error")
+    assert "LOOM_CODE_SANDBOX_REQUIRED" in stage.kwargs["detail"]
+
+
 async def test_a_parsed_stdout_past_its_limit_kills_the_job(monkeypatch) -> None:
     monkeypatch.setattr(sandbox, "_available", False)
     monkeypatch.setattr(sandbox, "_STDOUT_LIMIT", 4096)
@@ -552,3 +607,40 @@ def test_a_missing_sandbox_is_an_error_only_when_required(
     assert [(p.code, p.severity) for p in problems if p.code == "repo_jobs_unsandboxed"] == [
         ("repo_jobs_unsandboxed", severity)
     ]
+
+
+@pytest.mark.parametrize(("required", "rc", "ran"), [(True, 1, False), (False, 1, True)])
+async def test_scip_full_runs_its_harness_as_a_gated_repository_job(
+    tmp_path: Path, monkeypatch, required: bool, rc: int, ran: bool
+) -> None:
+    """The weekly full pass runs the repository's CMake: through run_harness
+    (the sandbox), and not at all where the sandbox is required and missing."""
+    import argparse
+    from unittest.mock import AsyncMock
+
+    from server.cli import code_scip
+    from server.code.app.index import compiler_tier
+    from server.code.store import index as store_index
+    from server.settings import settings
+    from tests.unit.code_fixtures import repo_config
+
+    for d in ("checkout", "bare.git"):
+        (tmp_path / d).mkdir()
+    (tmp_path / "scip-clang").touch()
+    monkeypatch.setattr(settings, "code_scip_clang_path", str(tmp_path / "scip-clang"))
+    monkeypatch.setattr(settings, "code_sandbox_required", required)
+    monkeypatch.setattr(sandbox, "_available", False)
+    repo = AsyncMock()
+    repo.get_state.return_value = "a" * 40
+    monkeypatch.setattr(store_index, "CodeRepo", lambda: repo)
+    monkeypatch.setattr(code_scip, "_scip_move_checkout", AsyncMock())
+    harness = AsyncMock(return_value=(1, "harness output\n"))
+    monkeypatch.setattr(compiler_tier, "run_harness", harness)
+    cfg = repo_config(
+        git_dir=str(tmp_path / "bare.git"), scip_checkout_dir=str(tmp_path / "checkout")
+    )
+    args = argparse.Namespace(checkout="", jobs=0, apply_delta="", keep_delta="")
+    assert await code_scip._scip_full_locked(args, "o", "code-x", cfg) == rc
+    assert harness.await_count == int(ran)
+    if ran:
+        assert harness.await_args.args[2] == ["--full", "", "-"]

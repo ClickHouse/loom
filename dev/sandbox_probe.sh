@@ -29,7 +29,8 @@ stop() {
 
 for c in "${containers[@]}"; do
   opts=$(docker inspect -f '{{.HostConfig.SecurityOpt}}' "$c") || stop "cannot inspect $c"
-  if [[ "$opts" != *apparmor=loom-repo-sandbox* ]]; then
+  # The whole token: `[seccomp=… apparmor=loom-repo-sandbox systempaths=…]`.
+  if [[ " ${opts//[\[\]]/ } " != *" apparmor=loom-repo-sandbox "* ]]; then
     continue
   fi
   # sandbox.py logs why a probe fails at WARNING, which shows here.
