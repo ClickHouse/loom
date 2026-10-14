@@ -42,6 +42,13 @@ class _CH:
         if "revoked_tokens" in sql:
             keys = (params or {}).get("keys")
             return [r for k, r in self.revoked.items() if keys is None or k in keys]
+        if "namespace_grants" in sql and "role = 'admin'" in sql:
+            wanted = (params or {}).get("nss") or []
+            return [
+                {"namespace": ns}
+                for ns, role in self.live.items()
+                if role == "admin" and ns in wanted
+            ]
         if "namespace_grants" in sql:
             return [{"namespace": ns} for ns in self.live]
         return []
@@ -234,6 +241,18 @@ def test_a_minting_path_reads_the_cutoffs_from_clickhouse(ch: _CH) -> None:
     assert asyncio.run(rev.ended_claims(ORG, "alice", ["team"], issued_at=later)) == set()
 
 
+def test_a_live_admin_grant_gives_a_minted_token_its_claim_back(ch: _CH) -> None:
+    # An operator reinstated the owner, or handed a released name back: the
+    # claim confers no more than that grant, so a new token carries it. A
+    # lower grant (a self-join stops at writer) leaves the namespace cut.
+    _end("team")
+    _end("notes")
+    ch.live = {"team": "admin", "notes": "writer"}
+    assert asyncio.run(rev.ended_claims(ORG, "alice", ["team", "notes"], issued_at=None)) == {
+        "notes"
+    }
+
+
 def test_a_subject_revocation_is_read_from_clickhouse(ch: _CH) -> None:
     now = int(datetime.now(UTC).timestamp())
     ch.revoked["alice"] = {"jti": "alice", "issued_before": now}
@@ -251,18 +270,19 @@ def test_the_mint_time_reads_are_sequentially_consistent(
     # a mint that misses a cutoff keeps the namespace for the token's life.
     from server.core.ch import sequential_reads_active
 
+    _end("team")
     consistent: list[bool] = []
     read = ch.query_all
 
     async def _recording(sql: str, params: dict[str, Any] | None = None) -> list[dict]:
-        if "revoked_tokens" in sql:
+        if "revoked_tokens" in sql or "namespace_grants" in sql:
             consistent.append(sequential_reads_active())
         return await read(sql, params)
 
     monkeypatch.setattr(ch, "query_all", _recording)
     asyncio.run(rev.ended_claims(ORG, "alice", ["team"], issued_at=None))
     asyncio.run(rev.subject_revoked("alice", issued_at=BEFORE))
-    assert consistent == [True, True]
+    assert consistent == [True, True, True], "the cutoffs, the admin grants, the subject"
 
 
 def test_a_failed_mint_time_read_propagates(ch: _CH, monkeypatch: pytest.MonkeyPatch) -> None:

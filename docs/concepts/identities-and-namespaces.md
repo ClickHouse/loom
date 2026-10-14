@@ -161,8 +161,9 @@ operation's role, or a live grant does.
   cutoff covers the whole second of the change). A grant made later does not restore the
   old claim. Signing in again, an OAuth code exchange and an OAuth refresh leave the
   namespace out of the token they mint (they read the cutoffs from ClickHouse, not the
-  server's snapshot), so whatever grant the person holds there now is what applies.
-  Approving a request never lowers a grant. A namespace the subject never held a grant on
+  server's snapshot), so whatever grant the person holds there now is what applies, until
+  they hold an admin grant there again: only another admin gives one (a self-join stops
+  below it), and the claim confers no more, so a new token carries it. Approving a request never lowers a grant. A namespace the subject never held a grant on
   keeps its claim; revoke the token to take that away. The server that took the grant away
   applies it at once, every other within `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` (default
   30 s). A service

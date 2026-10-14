@@ -463,7 +463,11 @@ NO_MEMORY_CONTENT: dict[str, str] = {
         "PR numbers, titles and backport verdicts of the public code record per release "
         "branch, keyed by org + code namespace; no memory row, no user axis."
     ),
-    "loom.revoked_tokens": "auth plane: revoked JWT ids.",
+    "loom.revoked_tokens": (
+        "auth plane: revoked JWT ids, revoked subjects, and grant cutoffs keyed "
+        "grant:<org>/<namespace>/<subject spelling> (an email among them), kept 10 years; "
+        "an erasure leaves them, since dropping one would hand a revoked claim back."
+    ),
     "loom.oauth_state": "auth plane: OAuth client registrations and codes; no memory rows.",
     "loom.oauth_claims": "auth plane: the OAuth exchange in flight per credential id.",
     "loom.service_accounts": "auth plane: service-account definitions.",

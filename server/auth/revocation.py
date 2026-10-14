@@ -16,6 +16,12 @@ The table is ReplacingMergeTree ORDER BY jti: the newest row per key governs.
 - Taking a grant away (`end_grant_claims`) writes a cutoff row keyed by
   `grant_claim_key`: tokens of that subject minted before it no longer reach
   the namespace through their own claim (`authz.withdrawn_claims`).
+- The snapshot therefore grows with every grant ever taken away: one row
+  per namespace and spelling of the subject, kept `NEVER_EXPIRES_DAYS` (a
+  sign-in mints past any cutoff, so none may lapse while the owner row
+  stands). Each is a short key and an int, and every refresh re-reads them
+  all; past `SNAPSHOT_WARN_ROWS` the refresh logs a warning so an operator
+  sees the read and the memory grow before they matter.
 
 Failure semantics: until the first successful read `loaded()` is False and
 `verify_token` refuses every token (503, retryable) — an empty set would let
@@ -44,6 +50,9 @@ log = logging.getLogger(__name__)
 # lands. Every expiry is therefore clamped below that range.
 NEVER_EXPIRES_DAYS = 3650
 _LATEST_EXPIRY = datetime(2105, 12, 31)
+# The snapshot size the refresh warns past: about 10 MB of keys per process,
+# re-read on every refresh.
+SNAPSHOT_WARN_ROWS = 100_000
 
 
 def revocation_expiry(expires_at: datetime | None, now: datetime) -> datetime:
@@ -118,6 +127,13 @@ async def refresh() -> None:
                 before[str(r["jti"])] = cutoff
         _revoked_jtis = frozenset(full)
         _revoked_before = before
+        if len(rows) > SNAPSHOT_WARN_ROWS:
+            log.warning(
+                "revocation snapshot holds %d rows (past %d), most of them grant cutoffs; "
+                "every process re-reads them on each refresh",
+                len(rows),
+                SNAPSHOT_WARN_ROWS,
+            )
         _loaded = True
         _loaded_at = time.monotonic()
     except Exception as e:  # noqa: BLE001 — keep the last revocation set on a CH glitch
@@ -275,7 +291,12 @@ async def ended_claims(
 
     For the paths that mint a token (sign-in, OAuth code exchange, refresh):
     the token's iat is past every cutoff, so a cutoff this process's snapshot
-    has not caught up with yet would never apply to it."""
+    has not caught up with yet would never apply to it.
+
+    A namespace the subject holds a live admin grant on again is not ended:
+    only another admin can give that (a self-join stops below it), and a
+    claim confers no more than it, so an owner an operator reinstated, or
+    handed a released name back to, is not kept out of their claim."""
     from server.auth.aliases import subject_aliases
 
     spellings = await subject_aliases(org, subject, strict=True)
@@ -288,7 +309,28 @@ async def ended_claims(
         cutoff = _cutoff_seconds(r.get("issued_before"))
         if cutoff is not None and (issued_at is None or issued_at < cutoff):
             ended.add(by_key[str(r["jti"])])
+    if ended:
+        ended -= await _admin_again(org, spellings, sorted(ended))
     return ended
+
+
+async def _admin_again(org: str, spellings: list[str], namespaces: list[str]) -> set[str]:
+    """The `namespaces` one of the subject's `spellings` holds a live admin
+    grant on, read as of every write that landed: a lagging replica must not
+    show a grant a revoke already ended."""
+    from server.core.ch import get_client, own_write_reads
+    from server.core.grant_sql import LIVE_GRANT
+
+    with own_write_reads():
+        rows = await get_client().query_all(
+            f"""
+            SELECT DISTINCT namespace FROM loom.namespace_grants FINAL
+            WHERE org = {{org:String}} AND namespace IN {{nss:Array(String)}}
+              AND lower(subject) IN {{subs:Array(String)}} AND role = 'admin' AND {LIVE_GRANT}
+            """,
+            params={"org": org, "nss": namespaces, "subs": [s.lower() for s in spellings]},
+        )
+    return {str(r["namespace"]) for r in rows}
 
 
 async def subject_revoked(subject: str, *, issued_at: int) -> bool:

@@ -729,8 +729,9 @@ def test_an_exchange_past_its_bound_is_told_to_retry(monkeypatch: pytest.MonkeyP
 def test_a_slow_consume_that_landed_is_never_answered_with_a_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The consume is the commit: only the decision is bounded, so a consume
-    that wrote its row and replied late still answers with the tokens."""
+    """The consume has its own bound, not what is left of the decision's, so
+    a consume that wrote its row and replied late still answers with the
+    tokens."""
     import asyncio
 
     from server.auth import oauth_claims
@@ -747,6 +748,79 @@ def test_a_slow_consume_that_landed_is_never_answered_with_a_retry(
     c = _client()
     code, verifier = _seed_code()
     assert _exchange(c, code, verifier).status_code == 200
+
+
+def test_a_find_past_its_bound_is_told_to_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The credential read is inside the exchange's deadline: a find that
+    stalls (its retries, a pool wait) cannot carry a live exchange past the
+    age its claim is taken over at."""
+    import asyncio
+
+    from server.auth import oauth_claims
+
+    store = oauth._store
+    find = store.find_code
+
+    async def _slow(code: str) -> dict | None:
+        await asyncio.sleep(1)
+        return await find(code)
+
+    c = _client()
+    code, verifier = _seed_code()
+    with monkeypatch.context() as slow:
+        slow.setattr(oauth_claims, "EXCHANGE_TIMEOUT_S", 0.05)
+        slow.setattr(store, "find_code", _slow)
+        assert _exchange(c, code, verifier).status_code == 503
+    assert _exchange(c, code, verifier).status_code == 200
+
+
+@pytest.fixture
+def held_claims(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Every exchange holds its claim; the keys released are recorded."""
+    from server.auth import oauth_claims
+
+    released: list[str] = []
+
+    async def _held(ch: object, key: str) -> tuple[oauth_claims.Claim, str]:
+        return oauth_claims.Claim.HELD, "me"
+
+    async def _release(ch: object, key: str, holder: str) -> None:
+        released.append(key)
+
+    monkeypatch.setattr(oauth_claims, "claim", _held)
+    monkeypatch.setattr(oauth_claims, "release", _release)
+    return released
+
+
+def test_a_decided_exchange_releases_its_claim(held_claims: list[str]) -> None:
+    c = _client()
+    code, verifier = _seed_code()
+    assert _exchange(c, code, verifier).status_code == 200
+    assert held_claims == [f"code:{oauth._token_id(code)}"]
+
+
+@pytest.mark.parametrize("outcome", ["issued", "refused"])
+def test_a_consume_that_did_not_finish_keeps_the_claim(
+    held_claims: list[str], monkeypatch: pytest.MonkeyPatch, outcome: str
+) -> None:
+    """A consume that failed may still land, so the claim is kept until it
+    goes stale and no retry reads the credential meanwhile. A refusal still
+    answers invalid_grant; an issue answers 503, never a 500."""
+    store = oauth._store
+
+    async def _down(code: str, grant: dict) -> None:
+        raise RuntimeError("replica away")
+
+    monkeypatch.setattr(store, "consume_code", _down)
+    c = _client()
+    code, verifier = _seed_code()
+    if outcome == "issued":
+        r = _exchange(c, code, verifier)
+        assert r.status_code == 503 and r.headers["retry-after"] == "5"
+    else:
+        r = _exchange(c, code, "not-the-verifier")
+        assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
+    assert held_claims == []
 
 
 @pytest.mark.parametrize("grant_type", ["authorization_code", "refresh_token"])

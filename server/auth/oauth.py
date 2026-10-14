@@ -26,8 +26,7 @@ import json
 import logging
 import secrets
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from collections.abc import Awaitable, Callable
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
 
@@ -691,14 +690,13 @@ async def token(request: Request) -> JSONResponse:
     code_verifier = f.get("code_verifier", "")
     refresh_token = f.get("refresh_token", "")
     if grant_type == "authorization_code":
-        async with _one_exchange("code", code):
-            grant = await _store.find_code(code)
-            if grant is None:
-                raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
-            decided = _decide_code(grant, client_id, redirect_uri, code_verifier)
-            issued = await _used_up_unless_retryable(
-                _issued(decided, client_id), lambda: _store.consume_code(code, grant)
-            )
+        issued = await _exchange(
+            "code",
+            code,
+            find=lambda: _store.find_code(code),
+            decide=lambda grant: _decide_code(grant, client_id, redirect_uri, code_verifier),
+            consume=lambda grant: _store.consume_code(code, grant),
+        )
         return JSONResponse(issued)
 
     if grant_type == "refresh_token":
@@ -710,26 +708,38 @@ async def token(request: Request) -> JSONResponse:
                 status_code=400,
                 detail={"error": "invalid_request", "error_description": "client_id required"},
             )
-        async with _one_exchange("refresh", refresh_token):
-            grant = await _store.find_refresh(refresh_token, client_id)
-            if grant is None:
-                raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
-            decided = _decide_refresh(grant)
-            issued = await _used_up_unless_retryable(
-                _issued(decided, grant["client_id"]),
-                lambda: _store.consume_refresh(refresh_token, grant),
-            )
+        issued = await _exchange(
+            "refresh",
+            refresh_token,
+            find=lambda: _store.find_refresh(refresh_token, client_id),
+            decide=_decide_refresh,
+            consume=lambda grant: _store.consume_refresh(refresh_token, grant),
+        )
         return JSONResponse(issued)
 
     raise HTTPException(status_code=400, detail={"error": "unsupported_grant_type"})
 
 
-@asynccontextmanager
-async def _one_exchange(record_type: str, credential: str) -> AsyncIterator[None]:
-    """Hold the credential's Keeper claim while its exchange runs
-    (`oauth_claims`). A concurrent exchange of it is told to retry, not that
-    the credential is used: it may be the owner retrying after a reply that
-    never arrived."""
+async def _exchange(
+    record_type: str,
+    credential: str,
+    *,
+    find: Callable[[], Awaitable[dict[str, Any] | None]],
+    decide: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]],
+    consume: Callable[[dict[str, Any]], Awaitable[None]],
+) -> dict[str, Any]:
+    """One exchange of a code or refresh token, under the credential's Keeper
+    claim (`oauth_claims`). A concurrent exchange of it is told to retry, not
+    that the credential is used: it may be the owner retrying after a reply
+    that never arrived.
+
+    The find, the decision and the issue share one deadline, the consume has
+    its own, and together they end well before the claim goes stale, so no
+    taker runs beside a live exchange. A refusal uses the credential up; a
+    failure before the consume leaves it (503) for the client's retry. A
+    consume that did not finish may still land, so the claim is kept until it
+    goes stale: a refusal still answers, an issue answers 503, and its tokens,
+    which the client never receives, are the worst it leaves."""
     from server.auth import oauth_claims
     from server.core.ch import get_client
 
@@ -741,44 +751,44 @@ async def _one_exchange(record_type: str, credential: str) -> AsyncIterator[None
         raise _unavailable("exchange claim", e) from e
     if outcome is oauth_claims.Claim.TAKEN:
         raise _unavailable("exchange claim", RuntimeError("another exchange holds it"))
+    keep_claim = False
+    grant: dict[str, Any] | None = None
     try:
-        yield
+        try:
+            async with asyncio.timeout(oauth_claims.EXCHANGE_TIMEOUT_S):
+                grant = await find()
+                if grant is None:
+                    raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
+                decided = await decide(grant)
+                issued = await _issue_tokens(decided, decided["client_id"])
+        except HTTPException as e:
+            if grant is not None and e.status_code != 503:
+                keep_claim = not await _used_up(consume, grant)
+            raise
+        except Exception as e:  # a find, decision or issue that did not finish uses nothing up
+            raise _unavailable("exchange", e, grant) from e
+        if not await _used_up(consume, grant):
+            keep_claim = True
+            raise _unavailable("consume", RuntimeError("did not finish"), grant)
+        return issued
     finally:
-        if outcome is oauth_claims.Claim.HELD:
+        if outcome is oauth_claims.Claim.HELD and not keep_claim:
             await oauth_claims.release(ch, key, holder)
 
 
-async def _issued(decided: Awaitable[dict[str, Any]], client_id: str) -> dict[str, Any]:
-    """The token response for the grant the exchange decided on, its refresh
-    token already saved."""
-    return await _issue_tokens(await decided, client_id)
-
-
-async def _used_up_unless_retryable(
-    issuing: Awaitable[dict[str, Any]], consume: Callable[[], Awaitable[None]]
-) -> dict[str, Any]:
-    """Await the exchange's tokens, then use the code or refresh token up. A
-    refusal uses it up too; a failure leaves it (503), so the client's retry
-    works. Only the decision and the issue are bounded
-    (`oauth_claims.EXCHANGE_TIMEOUT_S`): the consume is the commit, and a
-    cancelled one may still land. Issued before the consume, a token the
-    client never receives is the worst a failed consume leaves."""
-    from server.auth.oauth_claims import EXCHANGE_TIMEOUT_S
-    from server.core.ch import statement_timeout
+async def _used_up(
+    consume: Callable[[dict[str, Any]], Awaitable[None]], grant: dict[str, Any]
+) -> bool:
+    """Whether the consume finished within its bound (`CONSUME_TIMEOUT_S`)."""
+    from server.auth.oauth_claims import CONSUME_TIMEOUT_S
 
     try:
-        async with asyncio.timeout(EXCHANGE_TIMEOUT_S):
-            issued = await issuing
-    except HTTPException as e:
-        if e.status_code != 503:
-            with statement_timeout(5):
-                await consume()
-        raise
-    except Exception as e:  # a decision or an issue that did not finish uses nothing up
-        raise _unavailable("exchange", e) from e
-    with statement_timeout(5):
-        await consume()
-    return issued
+        async with asyncio.timeout(CONSUME_TIMEOUT_S):
+            await consume(grant)
+        return True
+    except Exception as e:  # noqa: BLE001 — the exchange is decided; the kept claim holds off a retry
+        log.warning("oauth: consume failed for %r in %r: %s", grant["subject"], grant["org"], e)
+        return False
 
 
 async def _decide_code(
