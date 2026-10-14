@@ -236,6 +236,7 @@ def test_revoking_ends_claims_only_when_the_grant_was_active(
         return 0
 
     monkeypatch.setattr(grants_repo, "find_any_grant", _find)
+    monkeypatch.setattr(grants_repo, "insert_row", _ignore)
     monkeypatch.setattr(grants_repo, "insert_rows", _ignore)
     monkeypatch.setattr(
         "server.identity.app.token_grants.cascade_revoke_to_created_tokens", _ignore
@@ -256,54 +257,42 @@ def _logged_at(role: str, at: datetime, namespace: str = "team") -> dict[str, An
     }
 
 
-def test_a_lowering_is_cut_again_once_its_row_landed(ch: _CH) -> None:
+def test_a_lowering_is_pending_until_its_second_cutoff(ch: _CH) -> None:
     # A committed insert can take seconds: a mint that read the grant before the
     # write landed is issued after the first cutoff, so only a second one cuts it.
-    _end("team")
-    key = rev.grant_claim_key(ORG, "team", "alice")
     pair = ("team", "alice")
-    asyncio.run(rev.cut_where_lowered(ORG, [pair], restamp={pair}, revoked_by="boss"))
-    assert ch.revoked[key]["reason"] == "grant lowered"
-
-
-def test_a_raise_of_a_pair_cut_before_is_not_cut_again(ch: _CH) -> None:
-    # A token minted after the old cutoff, by `loom mint-token` say, keeps its claim.
     _end("team")
-    key = rev.grant_claim_key(ORG, "team", "alice")
-    stamp = ch.revoked[key]["issued_before"]
-    ch.log = [_logged_at("viewer", stamp + timedelta(seconds=5))]
-    asyncio.run(rev.cut_where_lowered(ORG, [("team", "alice")], restamp=set(), revoked_by="b"))
-    assert ch.revoked[key]["reason"] == "test"
+    assert asyncio.run(rev.pending_restamps(ORG, [pair, ("notes", "alice")])) == [pair]
+    asyncio.run(rev.restamp(ORG, [pair], revoked_by="boss"))
+    assert asyncio.run(rev.pending_restamps(ORG, [pair])) == []
+
+
+def _cut_raised_under(ch: _CH, roles: list[str], written: int) -> bool:
+    """Whether writing log row `written` of `roles` (one per second) cuts the pair."""
+    then = datetime(2026, 5, 1, 12, 0, 0)
+    ch.log = [_logged_at(role, then + timedelta(seconds=i)) for i, role in enumerate(roles)]
+    version = int(ch.log[written]["version"])
+    asyncio.run(rev.cut_where_raised_under(ORG, {("team", "alice"): version}, revoked_by="b"))
+    return rev.grant_claim_key(ORG, "team", "alice") in ch.revoked
 
 
 @pytest.mark.parametrize(
-    ("roles", "cut"),
+    ("roles", "written", "cut"),
     [
-        # A raise landed between a writer's read and its write; the write lowered it.
-        (["viewer", "admin", "writer"], True),
-        (["viewer", "writer"], False),
-        ([], False),
+        # A raise landed between the writer's read (viewer) and its write.
+        (["viewer", "admin", "writer"], 2, True),
+        (["viewer", "writer"], 1, False),
+        # Only the row just before the write counts: an old lowering is history.
+        (["admin", "viewer", "writer"], 2, False),
+        # A later write is not this one's to judge.
+        (["viewer", "writer", "admin", "viewer"], 1, False),
+        (["writer"], 0, False),
     ],
 )
-def test_a_pair_is_cut_when_the_log_shows_it_fell(ch: _CH, roles: list[str], cut: bool) -> None:
-    then = datetime(2026, 5, 1, 12, 0, 0)
-    ch.log = [_logged_at(role, then + timedelta(seconds=i)) for i, role in enumerate(roles)]
-    asyncio.run(rev.cut_where_lowered(ORG, [("team", "alice")], restamp=set(), revoked_by="b"))
-    assert (rev.grant_claim_key(ORG, "team", "alice") in ch.revoked) is cut
-
-
-def test_only_log_rows_since_the_last_cutoff_count(ch: _CH) -> None:
-    # The lowering that cutoff was for is history; only a later fall counts.
-    _end("team")
-    key = rev.grant_claim_key(ORG, "team", "alice")
-    stamp = ch.revoked[key]["issued_before"]
-    ch.log = [
-        _logged_at("admin", stamp - timedelta(hours=1)),
-        _logged_at("writer", stamp - timedelta(seconds=1)),
-        _logged_at("writer", stamp + timedelta(seconds=5)),
-    ]
-    asyncio.run(rev.cut_where_lowered(ORG, [("team", "alice")], restamp=set(), revoked_by="b"))
-    assert ch.revoked[key]["reason"] == "test"
+def test_a_write_is_cut_when_the_row_before_it_ranks_higher(
+    ch: _CH, roles: list[str], written: int, cut: bool
+) -> None:
+    assert _cut_raised_under(ch, roles, written) is cut
 
 
 def test_a_newer_cutoff_wins_in_clickhouse_however_late_it_lands(ch: _CH) -> None:
@@ -550,23 +539,16 @@ def test_a_lowered_scoped_token_still_lists_the_namespace_its_gate_admits(ch: _C
     assert asyncio.run(ctx.resolve_my_namespaces(ORG)) == []
 
 
-def _logged(role: str, *, revoked: bool = False, status: str = "active") -> dict:
-    return {"role": role, "status": status, "revoked_at": datetime(2030, 1, 1) if revoked else None}
-
-
 @pytest.mark.parametrize(
-    ("history", "fell"),
+    ("row", "rank"),
     [
-        ([_logged("viewer"), _logged("admin"), _logged("writer")], True),
-        ([_logged("admin"), _logged("admin", revoked=True)], True),
-        ([_logged("viewer"), _logged("writer")], False),
-        # A request grants nothing, so approving it raises from nothing.
-        ([_logged("admin", status="pending"), _logged("writer")], False),
-        ([], False),
+        ({"role": "writer", "status": "active", "revoked_at": None}, 2),
+        ({"role": "admin", "status": "pending", "revoked_at": None}, 0),
+        ({"role": "admin", "status": "active", "revoked_at": datetime(2030, 1, 1)}, 0),
     ],
 )
-def test_a_grant_fell_when_it_ranks_below_an_earlier_one(history: list[dict], fell: bool) -> None:
-    assert rev._fell(history) is fell
+def test_a_log_row_grants_its_role_only_while_active(row: dict, rank: int) -> None:
+    assert rev._rank(row) == rank
 
 
 def test_a_grant_cutoff_acknowledged_late_does_not_move_this_process_back() -> None:
@@ -593,7 +575,7 @@ def test_a_cutoff_reads_the_spellings_with_sequential_consistency() -> None:
 
 
 @pytest.mark.grant_log_check
-def test_a_grant_write_cuts_every_namespace_it_lowered_in_one_insert(
+def test_a_lowering_cuts_every_namespace_in_one_insert_each_time(
     ch: _CH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from server.identity.app import grant_writes
@@ -602,12 +584,6 @@ def test_a_grant_write_cuts_every_namespace_it_lowered_in_one_insert(
         return None
 
     monkeypatch.setattr(grant_writes.grants_repo, "insert_rows", _landed)
-    then = datetime(2026, 5, 1, 12, 0, 0)
-    revoked = [
-        {**_logged_at("writer", then + timedelta(seconds=1)), "namespace": ns, "revoked_at": then}
-        for ns in ("a", "b", "c")
-    ]
-    ch.log = [{**_logged_at("writer", then), "namespace": ns} for ns in ("a", "b", "c")] + revoked
     inserts: list[list[dict[str, Any]]] = []
     insert = ch.insert
 
@@ -616,7 +592,10 @@ def test_a_grant_write_cuts_every_namespace_it_lowered_in_one_insert(
         await insert(table, rows, **k)
 
     monkeypatch.setattr(ch, "insert", _counted)
-    asyncio.run(grant_writes.insert_rows([{"org": ORG, **r} for r in revoked]))
+    rows = [{"org": ORG, "namespace": ns, "subject": "alice"} for ns in "abc"]
+    asyncio.run(grant_writes.lower(ORG, rows, reason="test"))
 
-    (written,) = inserts
-    assert {r["jti"] for r in written} == {rev.grant_claim_key(ORG, ns, "alice") for ns in "abc"}
+    first, second = inserts
+    keys = {rev.grant_claim_key(ORG, ns, "alice") for ns in "abc"}
+    assert {r["jti"] for r in first} == keys == {r["jti"] for r in second}
+    assert {r["reason"] for r in second} == {rev.RESTAMPED}

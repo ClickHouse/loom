@@ -172,7 +172,7 @@ def test_a_release_refused_for_too_many_spellings_says_what_to_release_first(
 
     fake = _FakeCH()
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
-    monkeypatch.setattr(cr, "write_grant_cutoffs", _too_many)
+    monkeypatch.setattr(cr.grant_writes, "write_pair_cutoffs", _too_many)
 
     assert _cmd_claim_release(_args()) == 1
     assert fake.inserts == []
@@ -196,7 +196,7 @@ def test_an_endpoint_release_refused_for_too_many_spellings_answers_409(
     fake = _FakeCH()
     monkeypatch.setattr(settings, "auth_required", False)
     monkeypatch.setattr(cr, "get_client", lambda: fake)
-    monkeypatch.setattr(cr, "write_grant_cutoffs", _too_many)
+    monkeypatch.setattr(cr.grant_writes, "write_pair_cutoffs", _too_many)
     app = FastAPI()
     register_exception_handler(app)
     cr.attach(app)

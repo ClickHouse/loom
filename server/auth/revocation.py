@@ -299,14 +299,13 @@ async def write_grant_cutoffs(
     that was minted before now, under each spelling of each subject.
 
     Callers write this before the grant row it is about, so a failure fails
-    their change. The grant write then runs `cut_where_lowered`, which stamps
-    the cutoff again once the row has landed."""
-    await _write_cutoffs(
+    their change, and `restamp` once the row has landed."""
+    await write_pair_cutoffs(
         org, [(ns, s) for ns in namespaces for s in subjects], reason=reason, revoked_by=revoked_by
     )
 
 
-async def _write_cutoffs(
+async def write_pair_cutoffs(
     org: str, pairs: list[tuple[str, str]], *, reason: str, revoked_by: str
 ) -> None:
     """One cutoff row per spelling of each (namespace, subject), in one insert."""
@@ -339,78 +338,79 @@ async def _write_cutoffs(
     _tighten_locally(keys, cutoff)
 
 
-async def cut_where_lowered(
-    org: str,
-    pairs: list[tuple[str, str]],
-    *,
-    restamp: set[tuple[str, str]],
-    revoked_by: str,
-) -> None:
-    """After a grant write, cut each (namespace, subject) whose older tokens
-    may still claim more than its grant, in one write.
-
-    `restamp` holds the pairs the write lowered after cutting them: a token
-    minted while its insert was in flight read the old grant and is issued
-    after that cutoff, so they are cut again. Any other pair is cut when the
-    grant log shows it fell since its last cutoff, which is a raise that
-    landed after the writer read the grant."""
-    from server.core.ch import get_client, own_write_reads
-
-    others = [pair for pair in pairs if pair not in restamp]
-    lowered = sorted(restamp & set(pairs))
-    if others:
-        keys = {pair: grant_claim_key(org, *pair) for pair in others}
-        cutoffs = {
-            str(r["jti"]): _cutoff_seconds(r.get("issued_before")) or 0
-            for r in await _read_revocations(sorted(keys.values()))
-        }
-        with own_write_reads():
-            rows = await get_client().query_all(
-                """
-                SELECT namespace, subject, role, status, revoked_at, version
-                FROM loom.namespace_grant_log
-                WHERE org = {org:String} AND namespace IN {ns:Array(String)}
-                  AND subject IN {subs:Array(String)}
-                ORDER BY namespace, subject, version
-                """,
-                params={
-                    "org": org,
-                    "ns": sorted({ns for ns, _ in others}),
-                    "subs": sorted({s for _, s in others}),
-                },
-            )
-        since: dict[tuple[str, str], list[dict[str, Any]]] = {}
-        for r in rows:
-            pair = (str(r["namespace"]), str(r["subject"]))
-            if pair in keys and int(r["version"]) >= cutoffs.get(keys[pair], 0) * 1_000_000_000:
-                since.setdefault(pair, []).append(r)
-        lowered += [pair for pair in others if _fell(since.get(pair, []))]
-    if lowered:
-        await _write_cutoffs(org, lowered, reason="grant lowered", revoked_by=revoked_by)
+# The reason a lowering's second cutoff carries. Until it is written, the
+# pair's cutoff still carries the op's own reason: the re-stamp is pending.
+RESTAMPED = "grant lowered"
 
 
-async def cut_pairs(org: str, pairs: list[tuple[str, str]]) -> set[tuple[str, str]]:
-    """Which of `pairs` have a grant cutoff."""
+async def restamp(org: str, pairs: list[tuple[str, str]], *, revoked_by: str) -> None:
+    """The second cutoff of a lowering, once its grant row has landed: a token
+    minted while the insert was in flight read the old grant, and is issued
+    after the first cutoff."""
+    if pairs:
+        await write_pair_cutoffs(org, pairs, reason=RESTAMPED, revoked_by=revoked_by)
+
+
+async def pending_restamps(org: str, pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """The pairs whose cutoff is still the first of a lowering."""
     keys = {grant_claim_key(org, *pair): pair for pair in pairs}
-    return {keys[str(r["jti"])] for r in await _read_revocations(sorted(keys))}
+    rows = await _read_revocations(sorted(keys))
+    return sorted(keys[str(r["jti"])] for r in rows if r.get("reason") != RESTAMPED)
 
 
-async def last_logged_role(org: str, namespace: str, subjects: list[str]) -> str | None:
-    """The role of the newest grant log row of any of `subjects` on `namespace`."""
+async def cut_where_raised_under(
+    org: str, written: dict[tuple[str, str], int], *, revoked_by: str
+) -> None:
+    """Cut each written (namespace, subject) whose row ranks below the row
+    just before it, by version, in the grant log.
+
+    `written` maps each pair to the version of the row just written. A write
+    that does not lower writes no less than the grant it read, so a higher row
+    before it is a raise that landed after that read, now lowered. A row
+    versioned below the one it read never won, so only the last one counts."""
     from server.core.ch import get_client, own_write_reads
 
     with own_write_reads():
-        row = await get_client().query_one(
+        rows = await get_client().query_all(
             """
-            SELECT role FROM loom.namespace_grant_log
-            WHERE org = {org:String} AND namespace = {ns:String}
+            SELECT namespace, subject, role, status, revoked_at, version
+            FROM loom.namespace_grant_log
+            WHERE org = {org:String} AND namespace IN {ns:Array(String)}
               AND subject IN {subs:Array(String)}
-            ORDER BY version DESC
-            LIMIT 1
+            ORDER BY version
             """,
-            params={"org": org, "ns": namespace, "subs": subjects},
+            params={
+                "org": org,
+                "ns": sorted({ns for ns, _ in written}),
+                "subs": sorted({s for _, s in written}),
+            },
         )
-    return str(row["role"]) if row else None
+    before: dict[tuple[str, str], dict[str, Any]] = {}
+    mine: dict[tuple[str, str], dict[str, Any]] = {}
+    for r in rows:
+        pair = (str(r["namespace"]), str(r["subject"]))
+        version = written.get(pair)
+        if version is None or int(r["version"]) > version:
+            continue
+        if int(r["version"]) == version:
+            mine[pair] = r
+        else:
+            before[pair] = r  # ordered by version: the last one wins
+    raised_under = [
+        pair
+        for pair in written
+        if pair in mine and pair in before and _rank(before[pair]) > _rank(mine[pair])
+    ]
+    if raised_under:
+        await write_pair_cutoffs(org, sorted(raised_under), reason=RESTAMPED, revoked_by=revoked_by)
+
+
+def _rank(row: dict[str, Any]) -> int:
+    """What a grant log row grants: its role's rank while active, else 0."""
+    from server.operations.base import grant_rank
+
+    live = row["revoked_at"] is None and row["status"] == "active"
+    return grant_rank(row["role"]) if live else 0
 
 
 async def logged_subjects(org: str, namespace: str) -> list[str]:
@@ -427,18 +427,6 @@ async def logged_subjects(org: str, namespace: str) -> list[str]:
             params={"org": org, "ns": namespace},
         )
     return sorted(str(r["subject"]) for r in rows)
-
-
-def _fell(rows: list[dict[str, Any]]) -> bool:
-    """Whether the last of `rows`, one subject's grant history oldest first,
-    ranks below an earlier one."""
-    from server.operations.base import grant_rank
-
-    ranks = [
-        grant_rank(r["role"]) if r["revoked_at"] is None and r["status"] == "active" else 0
-        for r in rows
-    ]
-    return bool(ranks) and max(ranks) > ranks[-1]
 
 
 def _cutoff_rows(keys: list[str], reason: str, revoked_by: str) -> tuple[list[dict[str, Any]], int]:
@@ -508,7 +496,7 @@ async def _read_revocations(keys: list[str]) -> list[dict[str, Any]]:
     with own_write_reads():
         return await get_client().query_all(
             """
-            SELECT jti, issued_before FROM loom.revoked_tokens FINAL
+            SELECT jti, issued_before, reason FROM loom.revoked_tokens FINAL
             WHERE jti IN {keys:Array(String)} AND expires_at > now()
             """,
             params={"keys": keys},

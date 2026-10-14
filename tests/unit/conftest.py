@@ -289,10 +289,9 @@ def _no_copy_head_check(request: pytest.FixtureRequest) -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def _no_grant_log_check(request: pytest.FixtureRequest) -> Iterator[None]:
-    """A grant write reads the grant log and the cutoffs after its insert
-    (`cut_where_lowered`, `cut_pairs`, `logged_subjects`); unit fakes answer
-    statements by shape, so those reads are off unless a test is marked
-    `grant_log_check`."""
+    """A grant write reads the grant log and writes cutoffs through
+    `grant_writes`; unit fakes answer statements by shape, so those calls are
+    off unless a test is marked `grant_log_check`."""
     if request.node.get_closest_marker("grant_log_check"):
         yield
         return
@@ -301,13 +300,16 @@ def _no_grant_log_check(request: pytest.FixtureRequest) -> Iterator[None]:
     async def _skip(*_a: object, **_k: object) -> None:
         return None
 
-    async def _none(*_a: object, **_k: object) -> list[str]:
+    async def _none(*_a: object, **_k: object) -> list[object]:
         return []
 
-    async def _no_pairs(*_a: object, **_k: object) -> set[tuple[str, str]]:
-        return set()
-
-    stubs = {"cut_where_lowered": _skip, "cut_pairs": _no_pairs, "logged_subjects": _none}
+    stubs = {
+        "cut_where_raised_under": _skip,
+        "restamp": _skip,
+        "write_pair_cutoffs": _skip,
+        "pending_restamps": _none,
+        "logged_subjects": _none,
+    }
     before = {name: getattr(grant_writes, name) for name in stubs}
     for name, stub in stubs.items():
         setattr(grant_writes, name, stub)
@@ -693,12 +695,10 @@ def scalar_code_repo(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 def recorded_cutoff_writes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> list[tuple[str, list[str], list[str]]]:
-    """Record the `write_grant_cutoffs` calls the grant handlers make instead of
-    writing cutoff rows: (org, namespaces, subjects) per call."""
-    import server.identity.app.claim_release as claim_release
-    import server.identity.app.grants as grants
-    import server.identity.app.namespace_membership as membership
+    """Record the first cutoff of each lowering the grant handlers make instead
+    of writing cutoff rows: (org, namespaces, subjects) per call."""
     import server.identity.app.namespace_snapshot as snapshot
+    from server.identity.app import grant_writes
 
     calls: list[tuple[str, list[str], list[str]]] = []
 
@@ -707,8 +707,14 @@ def recorded_cutoff_writes(
     ) -> None:
         calls.append((org, list(namespaces), list(subjects)))
 
-    for module in (claim_release, grants, membership, snapshot):
-        monkeypatch.setattr(module, "write_grant_cutoffs", _record)
+    async def _record_pairs(
+        org: str, pairs: list[tuple[str, str]], *, reason: str, revoked_by: str
+    ) -> None:
+        if pairs:
+            calls.append((org, sorted({ns for ns, _ in pairs}), sorted({s for _, s in pairs})))
+
+    monkeypatch.setattr(snapshot, "write_grant_cutoffs", _record)
+    monkeypatch.setattr(grant_writes, "write_pair_cutoffs", _record_pairs)
     return calls
 
 

@@ -23,8 +23,9 @@ _DIRECT = {
     "server/identity/app/namespace.py::insert_admin_grant": "admin",
     "server/identity/app/registration.py::grant_self_admin": "admin",
     "server/identity/app/token_grants.py::grant_restricted_to_token": "a minted token's own grants",
-    "server/identity/app/grant_writes.py::insert_row": "the checked path",
-    "server/identity/app/grant_writes.py::insert_rows": "the checked path",
+    "server/identity/app/grant_writes.py::write_row": "the checked path",
+    "server/identity/app/grant_writes.py::write_rows": "the checked path",
+    "server/identity/app/grant_writes.py::finish_lowering": "the checked path",
     "server/identity/store/grants.py::insert_row": "the repository",
     "server/identity/store/grants.py::insert_rows": "the repository",
 }

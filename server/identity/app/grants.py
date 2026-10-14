@@ -7,7 +7,6 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from server.auth.revocation import last_logged_role, write_grant_cutoffs
 from server.identity.api.models_grants import (
     GrantsApproveInput,
     GrantsApproveOutput,
@@ -155,38 +154,33 @@ async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
     pending_since = existing.pending_since if existing is not None else None
     if pending_role is not None and grant_rank(input.role) >= grant_rank(str(pending_role)):
         pending_role, pending_since = None, None
-    lowers = existing is not None and grant_rank(existing.role) > grant_rank(input.role)
-    if lowers:
-        # Older tokens claim the role being taken away: a flat one falls back to
-        # the new grant, a scoped one is capped at it.
-        await write_grant_cutoffs(
-            input.org,
-            [input.namespace],
-            [subject],
-            reason="grants.create lowered",
-            revoked_by=_actor(),
-        )
     now = datetime.now(UTC).replace(tzinfo=None)
     # granted_by is who issued the grant — the authenticated caller, as
     # grants.approve records the approver. The body's value is honoured only
     # with auth off, where there is no caller to stamp.
     granted_by = _actor() or input.granted_by or "admin"
-    await grant_writes.insert_row(
-        {
-            "org": input.org,
-            "namespace": input.namespace,
-            "subject": subject,
-            "role": input.role,
-            "status": "active",
-            "pending_role": pending_role,
-            "pending_since": pending_since,
-            "granted_at": now,
-            "granted_by": granted_by,
-            "revoked_at": None,
-            "version": _version(),
-        },
-        restamp=lowers,
-    )
+    row = {
+        "org": input.org,
+        "namespace": input.namespace,
+        "subject": subject,
+        "role": input.role,
+        "status": "active",
+        "pending_role": pending_role,
+        "pending_since": pending_since,
+        "granted_at": now,
+        "granted_by": granted_by,
+        "revoked_at": None,
+        "version": _version(),
+    }
+    if existing is not None and grant_rank(existing.role) > grant_rank(input.role):
+        # Older tokens claim the role being taken away: a flat one falls back to
+        # the new grant, a scoped one is capped at it.
+        await grant_writes.lower(input.org, [row], reason="grants.create lowered")
+    else:
+        await grant_writes.write_row(row)
+        if input.replace:
+            # Perhaps the retry of a lowering that never got its second cutoff.
+            await grant_writes.recheck(input.org, [(input.namespace, subject)])
     if input.role == "admin":
         # A maintainer maintains every branch of the repository.
         from server.code.app.index import maintainers
@@ -284,26 +278,23 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
     """Mark a grant revoked (revoking a pending request = reject). Idempotent.
 
     Refuses to revoke a namespace's last active admin — that would leave it
-    ownerless; promote a replacement first. The cutoffs that end older tokens'
-    claims, here and on a maintainer's sibling branches, are written before
-    any grant row, so a failed cutoff write fails the revoke. The sibling rows
-    land in the same insert as this one.
+    ownerless; promote a replacement first. A maintainer's revoke takes the
+    sibling branches too, in the same lowering.
     """
     from server.code.app.index import maintainers
 
     subject, row = await _live_grant_row(input.org, input.namespace, input.subject)
     if row is None:
-        # A retry: the revoke may have landed, under either spelling, with its
-        # check or cascade failing after it.
-        # A maintainer's revoke also took the sibling branches.
+        # Perhaps a retry: the revoke landed, under either spelling and on a
+        # maintainer's sibling branches too, without its second cutoff.
+        branches = maintainers.branch_namespaces(input.org, input.namespace) or [input.namespace]
         spellings = sorted({subject, input.subject})
-        branches = [input.namespace]
-        if await last_logged_role(input.org, input.namespace, spellings) == "admin":
-            branches = maintainers.branch_namespaces(input.org, input.namespace) or branches
-        pairs = [(ns, s) for ns in branches for s in spellings]
-        await grant_writes.recheck(input.org, pairs, lowering=True)
-        for ns in branches:
-            await _cascade_quietly(input.org, ns, subject)
+        pending = await grant_writes.recheck(
+            input.org, [(ns, s) for ns in branches for s in spellings]
+        )
+        for ns in sorted({input.namespace, *(ns for ns, _ in pending)}):
+            if ns == input.namespace or (await _live_grant_row(input.org, ns, subject))[1] is None:
+                await _cascade_quietly(input.org, ns, subject)
         return GrantsRevokeOutput(revoked=False)
 
     active = (row.status or "active") == "active"
@@ -320,18 +311,8 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
 
     siblings: list[dict[str, Any]] = []
     if row.role == "admin" and active:
-        # A revoked maintainer leaves every branch of the repository: planned
-        # first, so one cutoff write covers them all before any grant row lands.
+        # A revoked maintainer leaves every branch of the repository.
         siblings = await maintainers.plan_revoke(input.org, input.namespace, subject)
-    if active:
-        # A pending request granted nothing, so revoking it (a reject) ends no claim.
-        await write_grant_cutoffs(
-            input.org,
-            [input.namespace, *(r["namespace"] for r in siblings)],
-            [subject],
-            reason="grants.revoke",
-            revoked_by=_actor(),
-        )
     now = datetime.now(UTC).replace(tzinfo=None)
     revoked = {
         "org": input.org,
@@ -344,8 +325,11 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
         "revoked_at": now,
         "version": _version(),
     }
-    cut = [(r["namespace"], subject) for r in [revoked, *siblings]] if active else []
-    await grant_writes.insert_rows([revoked, *siblings], restamp=cut)
+    if active:
+        await grant_writes.lower(input.org, [revoked, *siblings], reason="grants.revoke")
+    else:
+        # A pending request granted nothing, so revoking it (a reject) ends no claim.
+        await grant_writes.write_row(revoked)
     for ns in [input.namespace, *(r["namespace"] for r in siblings)]:
         await _cascade_quietly(input.org, ns, subject)
     return GrantsRevokeOutput(revoked=True, revoked_at=now)
@@ -375,7 +359,7 @@ async def handle_grants_approve(input: GrantsApproveInput) -> GrantsApproveOutpu
     # last-admin guards grants.create / grants.revoke apply.
     if row is None or (row.status != "pending" and not row.pending_role):
         # Raced with a concurrent revoke/approve, or nothing pending — no-op, no role.
-        await grant_writes.recheck(input.org, [(input.namespace, input.subject)], lowering=False)
+        await grant_writes.recheck(input.org, [(input.namespace, input.subject)])
         return GrantsApproveOutput(
             subject=input.subject,
             namespace=input.namespace,
@@ -401,7 +385,7 @@ async def handle_grants_approve(input: GrantsApproveInput) -> GrantsApproveOutpu
     # audit trail and the "approved by …" notification need the right person.
     approver = _actor() or row.granted_by or "admin"
     if input.decision == "approve":
-        await grant_writes.insert_row(
+        await grant_writes.write_row(
             {
                 "org": input.org,
                 "namespace": input.namespace,
@@ -424,7 +408,7 @@ async def handle_grants_approve(input: GrantsApproveInput) -> GrantsApproveOutpu
     else:
         if no_base_access:
             # No base access → reject tombstones the whole row.
-            await grant_writes.insert_row(
+            await grant_writes.write_row(
                 {
                     "org": input.org,
                     "namespace": input.namespace,
@@ -442,7 +426,7 @@ async def handle_grants_approve(input: GrantsApproveInput) -> GrantsApproveOutpu
         else:
             # Has base access → reject clears only the request, leaving the
             # base role intact so the user isn't silently demoted.
-            await grant_writes.insert_row(
+            await grant_writes.write_row(
                 {
                     "org": input.org,
                     "namespace": input.namespace,

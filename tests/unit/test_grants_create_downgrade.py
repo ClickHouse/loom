@@ -34,11 +34,15 @@ def _wire(
     async def _insert(row: dict[str, Any], **_: Any) -> None:
         inserted.append(row)
 
+    async def _insert_rows(rows: list[dict[str, Any]], **_: Any) -> None:
+        inserted.extend(rows)
+
     async def _no_ceiling(*_a: Any, **_k: Any) -> None:
         return None
 
     monkeypatch.setattr(grants_repo, "find_active_grant", _find)
     monkeypatch.setattr(grants_repo, "insert_row", _insert)
+    monkeypatch.setattr(grants_repo, "insert_rows", _insert_rows)
     monkeypatch.setattr(grants_mod, "_enforce_code_ceiling", _no_ceiling)
     return inserted, looked_up
 
@@ -50,10 +54,10 @@ def restamped(monkeypatch: pytest.MonkeyPatch) -> list[set[tuple[str, str]]]:
 
     calls: list[set[tuple[str, str]]] = []
 
-    async def _record(org: str, pairs: Any, *, restamp: set[tuple[str, str]], **_: Any) -> None:
-        calls.append(restamp)
+    async def _record(org: str, pairs: list[tuple[str, str]], **_: Any) -> None:
+        calls.append(set(pairs))
 
-    monkeypatch.setattr(grant_writes, "cut_where_lowered", _record)
+    monkeypatch.setattr(grant_writes, "restamp", _record)
     return calls
 
 
@@ -147,7 +151,7 @@ async def test_an_upgrade_ends_no_claim(
     _wire(monkeypatch, _row("viewer"))
     await grants_mod.handle_grants_create(_create("writer"))
     assert recorded_cutoff_writes == []
-    assert restamped == [set()]
+    assert restamped == []
 
 
 @pytest.mark.asyncio

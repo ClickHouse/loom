@@ -140,9 +140,9 @@ async def revoke_token_grants(
         ch = get_client()
     rows = await _live_grants(ch, org, sa_subject, namespace)
     now = naive_utc_now_seconds()
-    await grant_writes.insert_rows(
-        [revoked_grant_row(org, sa_subject, r, now) for r in rows], ch=ch
-    )
+    if rows:
+        revoked = [revoked_grant_row(org, sa_subject, r, now) for r in rows]
+        await grant_writes.lower(org, revoked, reason="token grants revoked", ch=ch)
     return len(rows)
 
 

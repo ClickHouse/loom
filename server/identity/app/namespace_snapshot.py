@@ -278,23 +278,30 @@ async def handle_namespace_restore(
     # Grants. granted_by = caller so the restore is traceable; the
     # original granted_by stays in the snapshot payload.
     if payload.grants:
-        await grant_writes.insert_rows(
-            [
-                {
-                    "org": input.org,
-                    "namespace": input.target_namespace,
-                    "subject": g.subject,
-                    "role": g.role,
-                    "granted_at": now,
-                    "granted_by": caller,
-                    "revoked_at": None,
-                    "version": version_base + i,
-                }
-                for i, g in enumerate(payload.grants)
-            ],
-            restamp=[(input.target_namespace, s) for s in lowered],
-            ch=ch,
+        rows = [
+            {
+                "org": input.org,
+                "namespace": input.target_namespace,
+                "subject": g.subject,
+                "role": g.role,
+                "granted_at": now,
+                "granted_by": caller,
+                "revoked_at": None,
+                "version": version_base + i,
+            }
+            for i, g in enumerate(payload.grants)
+        ]
+        cut = set(lowered)
+        await grant_writes.finish_lowering(
+            input.org, [r for r in rows if r["subject"] in cut], revoked_by=caller, ch=ch
         )
+        await grant_writes.write_rows([r for r in rows if r["subject"] not in cut], ch=ch)
+        if target_existing is not None:
+            # Perhaps a retry whose lowered grants landed without their second cutoff.
+            await grant_writes.recheck(
+                input.org,
+                [(input.target_namespace, s) for s in sorted({r["subject"] for r in rows})],
+            )
 
     # Provenance audit row — carries the snapshot_id in the subject for
     # the idempotency lookup on re-restores.

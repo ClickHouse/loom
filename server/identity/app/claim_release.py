@@ -21,7 +21,6 @@ from pydantic import BaseModel, Field
 
 from server.auth.authz import Role
 from server.auth.jwt import AuthInfo
-from server.auth.revocation import write_grant_cutoffs
 from server.core.ch import CHClient, get_client
 from server.core.errors import TooManySpellingsError
 from server.identity.app import grant_writes
@@ -117,38 +116,33 @@ async def release_claim(
         params={"org": org, "ns": namespace},
     )
     grants_count = len({g["subject"] for g in grants})
-    if grants:
-        subjects = sorted({str(g["subject"]) for g in grants if g.get("status") == "active"})
-        try:
-            await write_grant_cutoffs(
-                org, [namespace], subjects, reason="claim released", revoked_by=actor_subject
+    tombstones = [
+        {
+            "org": org,
+            "namespace": namespace,
+            "subject": g["subject"],
+            "role": g["role"],
+            "status": g.get("status") or "active",
+            "granted_at": now,
+            "granted_by": g["granted_by"],
+            "revoked_at": now,
+            "version": time.time_ns() + i,
+        }
+        for i, g in enumerate(grants)
+    ]
+    # A pending request granted nothing, so its tombstone ends no claim.
+    active = [t for t in tombstones if t["status"] == "active"]
+    try:
+        if grants:
+            await grant_writes.lower(
+                org, active, reason="claim released", revoked_by=actor_subject, ch=ch
             )
-        except TooManySpellingsError as e:
-            raise _release_refusal(org, namespace, e) from e
-        tombstones = [
-            {
-                "org": org,
-                "namespace": namespace,
-                "subject": g["subject"],
-                "role": g["role"],
-                "granted_at": now,
-                "granted_by": g["granted_by"],
-                "revoked_at": now,
-                "version": time.time_ns() + i,
-            }
-            for i, g in enumerate(grants)
-        ]
-        try:
-            cut = [(namespace, s) for s in subjects]
-            await grant_writes.insert_rows(tombstones, restamp=cut, ch=ch)
-        except TooManySpellingsError as e:
-            raise _release_refusal(org, namespace, e) from e
-    else:
-        # A retry whose tombstones landed before its check failed.
-        try:
+            await grant_writes.write_rows([t for t in tombstones if t not in active], ch=ch)
+        else:
+            # Perhaps a retry whose tombstones landed without their second cutoff.
             await grant_writes.recheck_namespace(org, namespace)
-        except TooManySpellingsError as e:
-            raise _release_refusal(org, namespace, e) from e
+    except TooManySpellingsError as e:
+        raise _release_refusal(org, namespace, e) from e
 
     # Clear owner and mark inactive. The row stays, so the name stays taken
     # (self-signup's first-claim check does not filter on `active`): the

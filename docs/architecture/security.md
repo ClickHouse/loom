@@ -104,17 +104,19 @@ hold the design together:
   not verify; a cutoff refuses outright, and logs an error naming the subject, rather than
   read past 1000 accounts, so an operator can release the extra ones.
 - A grant change decides from a read of the current grant, and ClickHouse has no row
-  lock: a raise that lands between that read and the write is lowered without a cutoff.
-  `loom.namespace_grant_log`, filled by a materialized view on every grant insert and kept
-  a week, closes that. Each write that read first goes through `grant_writes`, which then
-  cuts, in one insert (`revocation.cut_where_lowered`), the pairs the op lowered and every
-  other pair whose grant the log shows fell since its last cutoff. A lowering is cut twice,
-  once before its row and once after: a token minted while the insert was in flight read
-  the old grant and is issued after the first cutoff. A raise is never cut, so a token
-  minted after an older cutoff (by `loom mint-token`, say) keeps its claim. A retried op
-  runs the same check, even when it finds its change already written; a retried lowering
-  cuts again every pair it had cut. The spellings a cutoff covers are read with sequential
-  consistency, since a missed one never gets a key.
+  lock, so a write can land after a concurrent change its read did not see. Every grant
+  write that reads first goes through `grant_writes`:
+  - An op that takes a role away (`lower`) cuts the claims before its rows and again after
+    them: a token minted while the insert was in flight read the old grant and is issued
+    after the first cutoff. Until the second cutoff lands, the pair's cutoff keeps the op's
+    own reason, so a retry that finds its rows written knows to finish it.
+  - Every other op writes no less than it read, so a higher row just before its own in
+    `loom.namespace_grant_log` (filled by a materialized view on every grant insert, kept a
+    week) is a raise it lowered without knowing, and that pair is cut. A raise is never
+    cut: a token minted after an older cutoff (by `loom mint-token`, say) keeps its claim.
+
+  The spellings a cutoff covers are read with sequential consistency, since a missed one
+  never gets a key.
 
 **One exchange per credential** (`server/auth/oauth_claims.py`). The OAuth store marks a
 code or refresh token used by writing a new ReplacingMergeTree version, so reading and then

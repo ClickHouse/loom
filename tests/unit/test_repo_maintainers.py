@@ -300,7 +300,7 @@ async def test_a_failed_cutoff_fails_a_maintainer_revoke_with_nothing_written(
 
     monkeypatch.setattr(grants_repo, "find_any_grant", _any)
     monkeypatch.setattr(ch_mod, "get_client", lambda: _CH())
-    monkeypatch.setattr(grants_mod, "write_grant_cutoffs", _down)
+    monkeypatch.setattr(grants_mod.grant_writes, "write_pair_cutoffs", _down)
     with pytest.raises(RuntimeError):
         await grants_mod.handle_grants_revoke(
             GrantsRevokeInput(org="clickhouse", namespace="code-x", subject="alice")
