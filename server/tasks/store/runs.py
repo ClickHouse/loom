@@ -355,6 +355,9 @@ async def idle_session_runs(ch: Any, *, idle_seconds: int, limit: int) -> list[R
                   -- Only the transport writes this shape (run.begin remaps it).
                   match(run_id, '^mcp-[0-9a-f]{40}$')
                   -- An earlier server's `mcp-<session id>`, which records no subject.
+                  -- Its session id was the client's, so it has no tighter shape: a
+                  -- hand-begun run copying all of this metadata is closed like one.
+                  -- Drop this clause once runs begun before this release have closed.
                   OR (
                       startsWith(run_id, 'mcp-')
                       AND JSONExtractString(metadata, 'transport') = 'mcp'
