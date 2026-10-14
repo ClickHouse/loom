@@ -13,7 +13,7 @@ The table is ReplacingMergeTree ORDER BY jti: the newest row per key governs.
   fills it, and the supervisor worker (lease holder) or `start_refresh_loop`
   (every other process) re-reads it each `jwt_revocation_cache_ttl_seconds`.
 - `is_revoked` is a frozenset/dict lookup — no I/O, safe from sync verify.
-- Taking a grant away (`end_grant_claims`) writes a cutoff row keyed by
+- Taking a grant away (`write_grant_cutoffs`) writes a cutoff row keyed by
   `grant_claim_key`: tokens of that subject minted before it no longer reach
   the namespace through their own claim (`authz.withdrawn_claims`).
 - A cutoff is kept `NEVER_EXPIRES_DAYS` (a sign-in mints past any cutoff,
@@ -239,13 +239,14 @@ def is_grant_claim_key(key: str) -> bool:
     return key.startswith(_GRANT_CLAIM_PREFIX)
 
 
-def claim_ended(org: str, namespace: str, subject: str, issued_at: int) -> bool:
-    """True if `subject`'s grant on (org, namespace) was taken away after a
-    token issued at `issued_at` (unix seconds) claimed it. Sync, no I/O."""
+def grant_cutoff_applies(org: str, namespace: str, subject: str, issued_at: int) -> bool:
+    """Whether a cutoff for `subject` on (org, namespace) is later than a
+    token issued at `issued_at` (unix seconds). Reads this process's
+    snapshot: no I/O, for the request path."""
     return is_revoked(grant_claim_key(org, namespace, subject), issued_at=issued_at)
 
 
-async def end_grant_claims(
+async def write_grant_cutoffs(
     org: str, namespaces: list[str], subjects: list[str], *, reason: str, revoked_by: str
 ) -> None:
     """Withdraw `namespaces` from the claims of every token `subjects` hold
@@ -254,10 +255,17 @@ async def end_grant_claims(
     Callers write this before the grant row it is about, so a failure fails
     their change. Raises on a ClickHouse failure; a second write that fails
     leaves the first cutoff, which only cuts."""
-    from server.auth.aliases import subject_aliases
+    from server.auth.aliases import cutoff_spellings
     from server.core.ch import get_client
 
-    spellings = await asyncio.gather(*(subject_aliases(org, s, strict=True) for s in subjects))
+    # A release cuts every member at once; read their spellings a few at a time.
+    limit = asyncio.Semaphore(8)
+
+    async def aliases(subject: str) -> list[str]:
+        async with limit:
+            return await cutoff_spellings(org, subject)
+
+    spellings = await asyncio.gather(*(aliases(s) for s in subjects))
     keys = sorted(
         {
             grant_claim_key(org, ns, alias)
@@ -296,18 +304,18 @@ def _cutoff_rows(keys: list[str], reason: str, revoked_by: str) -> list[dict[str
     ]
 
 
-async def ended_claims(
+async def read_grant_cutoffs(
     org: str, subject: str, namespaces: list[str], *, issued_at: int | None
 ) -> set[str]:
-    """The `namespaces` a grant of `subject`'s was taken away on after
-    `issued_at` (unix seconds; None: at any time), read from ClickHouse.
+    """Which of `namespaces` have a cutoff for `subject` later than
+    `issued_at` (unix seconds; None means any cutoff counts).
 
-    For the paths that mint a token: its iat is past every cutoff, so one
-    this process's snapshot has not caught up with would never apply to it.
-    No later grant ends a cutoff; the live grant decides access instead."""
-    from server.auth.aliases import subject_aliases
+    Token mints call this instead of `grant_cutoff_applies`: it reads
+    ClickHouse, not this process's snapshot, which may not have the newest
+    cutoff yet. A later grant does not remove a cutoff."""
+    from server.auth.aliases import cutoff_spellings
 
-    spellings = await subject_aliases(org, subject, strict=True)
+    spellings = await cutoff_spellings(org, subject)
     by_key = {grant_claim_key(org, ns, s): ns for ns in namespaces for s in spellings}
     if not by_key:
         return set()

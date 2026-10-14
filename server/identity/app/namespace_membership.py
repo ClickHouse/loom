@@ -8,7 +8,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from server.auth.revocation import end_grant_claims
+from server.auth.revocation import write_grant_cutoffs
 from server.core.ch import get_client
 from server.core.grant_sql import LIVE_GRANT
 from server.identity.api.models import (
@@ -251,7 +251,7 @@ async def handle_namespace_leave(
                 f"another member to admin (grants.create) before leaving"
             )
 
-    await end_grant_claims(
+    await write_grant_cutoffs(
         input.org, [input.namespace], [caller], reason="namespace.leave", revoked_by=caller
     )
     now = datetime.now(UTC).replace(tzinfo=None)

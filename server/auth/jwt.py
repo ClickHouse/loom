@@ -252,7 +252,7 @@ def mint_token(
     them from there. `issued_at` (unix seconds; default now) is the `iat`:
     a path that read the grant cutoffs to decide `namespaces` passes the
     time it took before that read, so a cutoff that landed after it still
-    postdates the token (`revocation.end_grant_claims`).
+    postdates the token (`revocation.write_grant_cutoffs`).
     """
     now = int(time.time()) if issued_at is None else issued_at
     payload: dict[str, Any] = {

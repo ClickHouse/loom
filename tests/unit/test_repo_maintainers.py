@@ -172,9 +172,14 @@ async def test_sync_quietly_never_raises(monkeypatch: pytest.MonkeyPatch) -> Non
 
 @pytest.fixture()
 def _handler_env(
-    monkeypatch: pytest.MonkeyPatch, grant_cutoffs: list[tuple[str, str, list[str]]]
+    monkeypatch: pytest.MonkeyPatch, recorded_cutoff_writes: list[tuple[str, str, list[str]]]
 ) -> dict[str, Any]:
-    calls: dict[str, Any] = {"sync": [], "revoke": [], "rows": [], "cutoffs": grant_cutoffs}
+    calls: dict[str, Any] = {
+        "sync": [],
+        "revoke": [],
+        "rows": [],
+        "cutoffs": recorded_cutoff_writes,
+    }
 
     async def _find(*_a: Any, **_k: Any) -> dict[str, Any] | None:
         return None
@@ -305,7 +310,7 @@ async def test_a_failed_cutoff_fails_a_maintainer_revoke_with_nothing_written(
 
     monkeypatch.setattr(grants_repo, "find_any_grant", _any)
     monkeypatch.setattr(ch_mod, "get_client", lambda: _CH())
-    monkeypatch.setattr(grants_mod, "end_grant_claims", _down)
+    monkeypatch.setattr(grants_mod, "write_grant_cutoffs", _down)
     with pytest.raises(RuntimeError):
         await grants_mod.handle_grants_revoke(
             GrantsRevokeInput(org="clickhouse", namespace="code-x", subject="alice")

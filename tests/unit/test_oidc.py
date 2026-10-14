@@ -28,7 +28,7 @@ sys.path.insert(0, str(ROOT))
 from server.auth import login, oauth, oidc, revocation, self_signup  # noqa: E402
 from server.settings import settings  # noqa: E402
 
-pytestmark = pytest.mark.usefixtures("ended_grant_claims")
+pytestmark = pytest.mark.usefixtures("cutoffs_read_at_mint")
 
 _ISS = "https://idp.example.com"
 _CLIENT_ID = "loom-oidc-client"

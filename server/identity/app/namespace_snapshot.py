@@ -6,7 +6,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from server.auth.revocation import end_grant_claims
+from server.auth.revocation import write_grant_cutoffs
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.grant_sql import LIVE_GRANT
@@ -339,6 +339,6 @@ async def _end_lowered_claims(
         if g.subject in live and grant_rank(live[g.subject]) > grant_rank(g.role)
     ]
     if lowered:
-        await end_grant_claims(
+        await write_grant_cutoffs(
             org, [namespace], lowered, reason="namespace.restore", revoked_by=caller
         )

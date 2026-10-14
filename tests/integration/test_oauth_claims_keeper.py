@@ -80,3 +80,12 @@ async def test_the_boot_sweep_drops_only_stale_claims(ch: Any) -> None:
     )
     assert [r["claim_key"] for r in rows] == [live]
     await oauth_claims.release(ch, live, holder)
+
+
+async def test_of_concurrent_takers_of_a_stale_claim_exactly_one_holds(ch: Any) -> None:
+    key = _key()
+    await ch.execute(_OLD_CLAIM, params={"k": key, "age": oauth_claims.STALE_S + 60})
+    outcomes = await asyncio.gather(*(oauth_claims.claim(ch, key) for _ in range(8)))
+    held = [holder for outcome, holder in outcomes if outcome is oauth_claims.Claim.HELD]
+    assert len(held) == 1
+    await oauth_claims.release(ch, key, held[0])

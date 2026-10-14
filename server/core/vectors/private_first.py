@@ -8,9 +8,10 @@ def private_first_passes(
     namespace: str, namespaces: list[str], visibility: dict[str, str]
 ) -> tuple[list[str], list[str]]:
     """The two passes of a private-first search over `namespaces`: the
-    addressed `namespace` and the private ones, then the public ones. Both are
-    empty when `visibility` is empty or names no private namespace: read them
-    all at once. A namespace without an answer counts as private."""
+    addressed `namespace` and the private ones, then the public ones. A
+    namespace missing from `visibility` counts as private. Both passes are
+    empty, meaning read them all at once, when `visibility` is empty or every
+    one of `namespaces` is answered public."""
     private = {ns for ns in namespaces if visibility.get(ns, "private") == "private"}
     if not visibility or not private:
         return [], []

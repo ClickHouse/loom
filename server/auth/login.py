@@ -155,20 +155,20 @@ async def _with_restricted_grants(
     identity (password and OIDC share it so the two never drift on the
     namespace set)."""
     subject, org, namespaces, roles = identity
-    namespaces = await _without_taken_away(subject, org, namespaces)
+    namespaces = await _without_cut_namespaces(subject, org, namespaces)
     return subject, org, await widen_with_restricted_grants(subject, org, namespaces), roles
 
 
-async def _without_taken_away(subject: str, org: str, namespaces: list[str]) -> list[str]:
+async def _without_cut_namespaces(subject: str, org: str, namespaces: list[str]) -> list[str]:
     """The owned `namespaces` minus those a grant of the person's was taken
     away on: owning the registry row is not access once a co-admin revoked or
     lowered the grant. When the cutoffs cannot be read, raise
     `SignInUnavailable` (503): failing open would hand a cut namespace back,
     and failing narrow would mint a token without the person's namespaces."""
-    from server.auth.revocation import ended_claims
+    from server.auth.revocation import read_grant_cutoffs
 
     try:
-        ended = await ended_claims(org, subject, namespaces, issued_at=None)
+        ended = await read_grant_cutoffs(org, subject, namespaces, issued_at=None)
     except Exception as e:
         log.warning("login: grant cutoff read failed for %r in %r: %s", subject, org, e)
         raise SignInUnavailable from e
@@ -359,12 +359,13 @@ _JIT_SUFFIX_TRIES = 5
 _JIT_RANDOM_TRIES = 5
 
 
-class _Name(NamedTuple):
-    """A name for a new JIT account: None when none is free, or `theirs` when
-    a first sign-in elsewhere has just written the person's account there."""
+class _FreeName(NamedTuple):
+    """A name for a new JIT account, None when none is free. With
+    `existing_account`, a first sign-in elsewhere has just written the
+    person's account there."""
 
     namespace: str | None
-    theirs: bool = False
+    existing_account: bool = False
 
 
 async def jit_provision_for_email(
@@ -413,12 +414,12 @@ async def _provision_jit(
     accounts = await _accounts_naming(org, ident)
     if any(a["active"] for a in accounts):
         return await _resolve_as_written(ident)  # their account, whatever its name
-    if await _revoked(accounts):
+    if await _any_revoked(accounts):
         # Offboarded: a fresh name would be a new subject past the revoke.
         log.info("oidc jit: an account of %r in %s is revoked; not provisioning", ident, org)
         return None
     name = await _free_name(org, ident, base)
-    if name.theirs:
+    if name.existing_account:
         return await _resolve_as_written(ident)
     if name.namespace is None:
         log.warning("oidc jit: no free name for %r in %s", ident, org)
@@ -436,7 +437,7 @@ async def _provision_jit(
     return await _resolve_as_written(ident)
 
 
-async def _free_name(org: str, ident: str, base: str) -> _Name:
+async def _free_name(org: str, ident: str, base: str) -> _FreeName:
     """The first name free for a new account: `base`, `base-2` and on, then
     random suffixes, so taking every predictable name cannot lock the person
     out. A taken name is never rebuilt: that would hand back its data and an
@@ -446,13 +447,13 @@ async def _free_name(org: str, ident: str, base: str) -> _Name:
     for ns in itertools.chain(predictable, random_names):
         row = await _registry_row(org, ns)
         if row is None:
-            return _Name(ns)
+            return _FreeName(ns)
         if row["active"] and row["contact_email"] == ident:
-            return _Name(ns, theirs=True)
-    return _Name(None)
+            return _FreeName(ns, existing_account=True)
+    return _FreeName(None)
 
 
-async def _revoked(accounts: list[dict[str, Any]]) -> bool:
+async def _any_revoked(accounts: list[dict[str, Any]]) -> bool:
     """Whether the subject of any of `accounts` is revoked outright."""
     from server.auth.revocation import subjects_revoked
 

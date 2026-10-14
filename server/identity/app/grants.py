@@ -7,7 +7,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from server.auth.revocation import end_grant_claims
+from server.auth.revocation import write_grant_cutoffs
 from server.identity.api.models_grants import (
     GrantsApproveInput,
     GrantsApproveOutput,
@@ -157,7 +157,7 @@ async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
     if existing is not None and grant_rank(existing.role) > grant_rank(input.role):
         # Older tokens claim the role being taken away: a flat one falls back to
         # the new grant, a scoped one must be minted again.
-        await end_grant_claims(
+        await write_grant_cutoffs(
             input.org,
             [input.namespace],
             [subject],
@@ -309,7 +309,7 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
         siblings = await maintainers.plan_revoke(input.org, input.namespace, subject)
     if (row.status or "active") == "active":
         # A pending request granted nothing, so revoking it (a reject) ends no claim.
-        await end_grant_claims(
+        await write_grant_cutoffs(
             input.org,
             [input.namespace, *(r["namespace"] for r in siblings)],
             [subject],

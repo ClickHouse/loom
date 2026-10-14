@@ -373,7 +373,7 @@ class _TablesCH:
 
 @pytest.mark.asyncio
 async def test_a_claim_release_disables_the_creator(
-    monkeypatch: pytest.MonkeyPatch, grant_cutoffs: list[tuple[str, str, list[str]]]
+    monkeypatch: pytest.MonkeyPatch, recorded_cutoff_writes: list[tuple[str, str, list[str]]]
 ) -> None:
     """release_claim blanks owner_email and tombstones every grant; the
     account check must still read the released creator as disabled."""
@@ -415,7 +415,7 @@ async def test_a_claim_release_disables_the_creator(
     assert await delegation.creator_account_active(ORG, "alice") is True
     await release_claim(org=ORG, namespace="a", reason="", actor_subject="op", ch=ch)
     assert ch.namespaces[(ORG, "a")]["owner_email"] == ""
-    assert grant_cutoffs == [(ORG, "a", ["alice"])]
+    assert recorded_cutoff_writes == [(ORG, "a", ["alice"])]
     monkeypatch.setattr(delegation, "_account_active", {})
     assert await delegation.creator_account_active(ORG, "alice") is False
 

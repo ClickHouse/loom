@@ -94,7 +94,9 @@ def _admits(auth: AuthInfo, namespace: str, role: Role = Role.VIEWER) -> bool:
 
 
 def _end(namespace: str) -> None:
-    asyncio.run(rev.end_grant_claims(ORG, [namespace], ["alice"], reason="test", revoked_by="boss"))
+    asyncio.run(
+        rev.write_grant_cutoffs(ORG, [namespace], ["alice"], reason="test", revoked_by="boss")
+    )
 
 
 def test_ending_a_grant_withdraws_the_claim_of_older_tokens(ch: _CH) -> None:
@@ -134,7 +136,7 @@ def test_an_unreadable_directory_fails_the_cutoff(ch: _CH, monkeypatch: pytest.M
     async def _down(*_a: Any, **_k: Any) -> list[str]:
         raise RuntimeError("replica away")
 
-    monkeypatch.setattr("server.auth.aliases.subject_aliases", _down)
+    monkeypatch.setattr("server.auth.aliases.cutoff_spellings", _down)
     with pytest.raises(RuntimeError):
         _end("team")
     assert ch.revoked == {}
@@ -173,7 +175,7 @@ def test_every_spelling_of_the_subject_is_cut(ch: _CH, monkeypatch: pytest.Monke
     async def _aliases(org: str, subject: str, **_k: Any) -> list[str]:
         return [subject, "alice@acme.com"]
 
-    monkeypatch.setattr("server.auth.aliases.subject_aliases", _aliases)
+    monkeypatch.setattr("server.auth.aliases.cutoff_spellings", _aliases)
     _end("team")
     assert set(ch.revoked) == {
         rev.grant_claim_key(ORG, "team", "alice"),
@@ -196,7 +198,7 @@ def test_a_spelling_in_another_case_is_cut_too(ch: _CH, monkeypatch: pytest.Monk
     async def _aliases(org: str, subject: str, **_k: Any) -> list[str]:
         return [subject, "Alice@Acme.com"]
 
-    monkeypatch.setattr("server.auth.aliases.subject_aliases", _aliases)
+    monkeypatch.setattr("server.auth.aliases.cutoff_spellings", _aliases)
     _end("team")
     lowercase = AuthInfo(
         subject="alice@acme.com",
@@ -222,7 +224,7 @@ def test_revoking_ends_claims_only_when_the_grant_was_active(
     status: str,
     cut: bool,
     monkeypatch: pytest.MonkeyPatch,
-    grant_cutoffs: list[tuple[str, str, list[str]]],
+    recorded_cutoff_writes: list[tuple[str, str, list[str]]],
 ) -> None:
     # Rejecting a join request granted nothing, so it ends no claim.
     async def _find(org: str, namespace: str, subject: str, **_k: Any) -> GrantState:
@@ -238,7 +240,7 @@ def test_revoking_ends_claims_only_when_the_grant_was_active(
     )
     revoke = GrantsRevokeInput(org=ORG, namespace="team", subject="alice")
     assert asyncio.run(grants_mod.handle_grants_revoke(revoke)).revoked
-    assert grant_cutoffs == ([(ORG, "team", ["alice"])] if cut else [])
+    assert recorded_cutoff_writes == ([(ORG, "team", ["alice"])] if cut else [])
 
 
 def test_the_cutoff_is_written_again_once_the_first_write_has_returned(
@@ -275,12 +277,12 @@ def test_a_minting_path_reads_the_cutoffs_from_clickhouse(ch: _CH) -> None:
     # The snapshot of this process may not have the cutoff yet; ClickHouse has.
     _end("team")
     rev._revoked_before.clear()
-    assert asyncio.run(rev.ended_claims(ORG, "alice", ["team", "notes"], issued_at=None)) == {
+    assert asyncio.run(rev.read_grant_cutoffs(ORG, "alice", ["team", "notes"], issued_at=None)) == {
         "team"
     }
-    assert asyncio.run(rev.ended_claims(ORG, "alice", ["team"], issued_at=BEFORE)) == {"team"}
+    assert asyncio.run(rev.read_grant_cutoffs(ORG, "alice", ["team"], issued_at=BEFORE)) == {"team"}
     later = int(datetime.now(UTC).timestamp()) + 2
-    assert asyncio.run(rev.ended_claims(ORG, "alice", ["team"], issued_at=later)) == set()
+    assert asyncio.run(rev.read_grant_cutoffs(ORG, "alice", ["team"], issued_at=later)) == set()
 
 
 def test_a_later_grant_does_not_end_a_cutoff_at_mint(ch: _CH) -> None:
@@ -288,7 +290,7 @@ def test_a_later_grant_does_not_end_a_cutoff_at_mint(ch: _CH) -> None:
     # exemption would rest on every path that can write an admin row.
     _end("team")
     ch.live = {"team": "admin"}
-    assert asyncio.run(rev.ended_claims(ORG, "alice", ["team"], issued_at=None)) == {"team"}
+    assert asyncio.run(rev.read_grant_cutoffs(ORG, "alice", ["team"], issued_at=None)) == {"team"}
 
 
 def test_a_subject_revocation_is_read_from_clickhouse(ch: _CH) -> None:
@@ -318,7 +320,7 @@ def test_the_mint_time_reads_are_sequentially_consistent(
         return await read(sql, params)
 
     monkeypatch.setattr(ch, "query_all", _recording)
-    asyncio.run(rev.ended_claims(ORG, "alice", ["team"], issued_at=None))
+    asyncio.run(rev.read_grant_cutoffs(ORG, "alice", ["team"], issued_at=None))
     asyncio.run(rev.subjects_revoked(["alice"], issued_at=BEFORE))
     assert consistent == [True, True], "the cutoffs, the subject"
 
@@ -329,7 +331,7 @@ def test_a_failed_mint_time_read_propagates(ch: _CH, monkeypatch: pytest.MonkeyP
 
     monkeypatch.setattr(ch, "query_all", _down)
     with pytest.raises(RuntimeError):
-        asyncio.run(rev.ended_claims(ORG, "alice", ["team"], issued_at=None))
+        asyncio.run(rev.read_grant_cutoffs(ORG, "alice", ["team"], issued_at=None))
     with pytest.raises(RuntimeError):
         asyncio.run(rev.subjects_revoked(["alice"], issued_at=BEFORE))
 
@@ -349,3 +351,28 @@ def test_several_subjects_are_checked_for_a_revocation_in_one_read(ch: _CH) -> N
     assert not asyncio.run(rev.subjects_revoked(["u-bob"], issued_at=now))
     assert not asyncio.run(rev.subjects_revoked([], issued_at=now))
     assert reads == [["bob", "u-bob"], ["u-bob"]]
+
+
+def test_cutoff_spellings_count_deactivated_accounts(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A grant revoked after the account was soft-deleted must still reach the
+    # token minted under its other spelling.
+    from server.auth import aliases
+
+    asked: list[dict[str, Any]] = []
+
+    class _Directory:
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict]:
+            asked.append(params)
+            return [{"owner_email": "alice", "contact_email": "Alice@Acme.com"}]
+
+    got = asyncio.run(aliases.cutoff_spellings(ORG, "alice", ch=_Directory()))
+    assert got == ["alice", "Alice@Acme.com"]
+    assert asked[0]["all"] is True
+
+
+def test_a_refusal_after_a_cutoff_says_the_claim_ended(ch: _CH) -> None:
+    _end("team")
+    for token, then in ((_scoped("team"), "mint a new token"), (_flat("team"), "does not allow")):
+        with pytest.raises(PermissionError, match="claim on .*/team ended") as refused:
+            asyncio.run(check_authorized(token, Role.VIEWER, ORG, "team"))
+        assert then in str(refused.value)

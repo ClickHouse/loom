@@ -44,8 +44,9 @@ async def subject_aliases(
     """`subject` first, then the other spelling(s) the directory ties to it;
     the subject alone when the read fails or nothing is tied to it.
 
-    `strict` reads the directory now and raises when it cannot: a caller
-    that takes access away must reach every spelling, not the cached ones."""
+    `strict` reads the directory now and raises when it cannot, for a caller
+    whose answer persists (an OAuth refresh's grant read). A grant cutoff
+    reads `cutoff_spellings` instead."""
     if not _is_human_subject(subject):
         return [subject] if subject else []
     key = (org, subject)
@@ -53,26 +54,8 @@ async def subject_aliases(
     now = time.monotonic()
     if hit is not None and not strict and now - hit[0] < TTL_S:
         return list(hit[1])
-    out = [subject]
     try:
-        from server.core.ch import get_client
-
-        client = ch or get_client()
-        rows = await client.query_all(  # type: ignore[attr-defined]
-            """
-            SELECT owner_email, contact_email
-            FROM loom.namespaces FINAL
-            WHERE org = {org:String} AND ifNull(active, true) = true
-              AND contact_email != ''
-              AND (owner_email = {sub:String} OR lower(contact_email) = lower({sub:String}))
-            LIMIT 8
-            """,
-            params={"org": org, "sub": subject},
-        )
-        for r in rows:
-            for spelling in (str(r.get("owner_email") or ""), str(r.get("contact_email") or "")):
-                if spelling and spelling.lower() not in {s.lower() for s in out}:
-                    out.append(spelling)
+        out = await _read_spellings(org, subject, ch, include_inactive=False)
     except Exception:
         if strict:
             raise
@@ -83,6 +66,40 @@ async def subject_aliases(
     if len(_CACHE) >= _CACHE_MAX:
         _CACHE.clear()
     _CACHE[key] = (now, tuple(out))
+    return out
+
+
+async def cutoff_spellings(org: str, subject: str, *, ch: object | None = None) -> list[str]:
+    """Every spelling a grant cutoff for `subject` must cover: read now, never
+    cached, raising when the directory cannot answer, and counting accounts
+    since deactivated, whose other spelling may still be in a token."""
+    if not _is_human_subject(subject):
+        return [subject] if subject else []
+    return await _read_spellings(org, subject, ch, include_inactive=True)
+
+
+async def _read_spellings(
+    org: str, subject: str, ch: object | None, *, include_inactive: bool
+) -> list[str]:
+    from server.core.ch import get_client
+
+    client = ch or get_client()
+    rows = await client.query_all(  # type: ignore[attr-defined]
+        """
+        SELECT owner_email, contact_email
+        FROM loom.namespaces FINAL
+        WHERE org = {org:String} AND ({all:Bool} OR ifNull(active, true) = true)
+          AND contact_email != ''
+          AND (owner_email = {sub:String} OR lower(contact_email) = lower({sub:String}))
+        LIMIT 8
+        """,
+        params={"org": org, "sub": subject, "all": include_inactive},
+    )
+    out = [subject]
+    for r in rows:
+        for spelling in (str(r.get("owner_email") or ""), str(r.get("contact_email") or "")):
+            if spelling and spelling.lower() not in {s.lower() for s in out}:
+                out.append(spelling)
     return out
 
 

@@ -185,12 +185,12 @@ curl -s "$LOOM_BASE_URL/v1/grants.create" -H "Authorization: Bearer $ADMIN_TOKEN
 
 - **Taking a grant away ends older tokens' claims.** `grants.revoke`, a `replace: true`
   lowering, `namespace.leave`, `loom claim-release` and a restore that lowers a grant each
-  write a cutoff (`grant:<org>/<namespace>/<sha256 of the subject>` in `loom.revoked_tokens`, one per
-  spelling of the subject, kept ten years). A flat token minted before it reaches the
-  namespace only through the subject's current grant; a scoped one loses it and must be
-  minted again. Every token minted later
-  (sign-in, an OAuth exchange or refresh) leaves the namespace out of its claim for good:
-  a later grant, an admin one included, gives access back through itself. A restricted
+  write a cutoff in `loom.revoked_tokens`, keyed by a hash of each case-folded spelling of
+  the subject and kept ten years. A flat token minted before it reaches the namespace only
+  through the subject's current grant; a scoped one loses it and must be minted again.
+  Every token minted later (sign-in, an OAuth exchange or refresh) leaves the namespace out
+  of its claim for good: a later grant, an admin one included, gives access back through
+  itself. A restricted
   namespace is the exception: a token reads one only by naming it, so a sign-in or a
   refresh names it again while a live grant there covers the person. A namespace an
   operator named at mint that was never granted to the subject keeps its claim; revoke the

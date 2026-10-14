@@ -1,7 +1,7 @@
 """Each sign-in path takes its issue time before it reads the grant cutoffs.
 
 A cutoff can land while a mint runs, after its read; it is written again once
-its insert returned (`revocation.end_grant_claims`), so the token or code must
+its insert returned (`revocation.write_grant_cutoffs`), so the token or code must
 carry a time from before the read for that second cutoff to postdate it."""
 
 from __future__ import annotations

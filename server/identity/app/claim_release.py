@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 from server.auth.authz import Role
 from server.auth.jwt import AuthInfo
-from server.auth.revocation import end_grant_claims
+from server.auth.revocation import write_grant_cutoffs
 from server.core.ch import CHClient, get_client
 
 log = logging.getLogger(__name__)
@@ -117,7 +117,7 @@ async def release_claim(
     grants_count = len({g["subject"] for g in grants})
     if grants:
         subjects = sorted({str(g["subject"]) for g in grants if g.get("status") == "active"})
-        await end_grant_claims(
+        await write_grant_cutoffs(
             org, [namespace], subjects, reason="claim released", revoked_by=actor_subject
         )
         tombstones = [

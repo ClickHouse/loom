@@ -659,8 +659,8 @@ def scalar_code_repo(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 
 @pytest.fixture
-def grant_cutoffs(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, list[str]]]:
-    """Record the `end_grant_claims` calls the grant handlers make instead of
+def recorded_cutoff_writes(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, list[str]]]:
+    """Record the `write_grant_cutoffs` calls the grant handlers make instead of
     writing cutoff rows: (org, namespace, subjects) per namespace cut."""
     import server.identity.app.claim_release as claim_release
     import server.identity.app.grants as grants
@@ -675,12 +675,12 @@ def grant_cutoffs(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, list[
         calls.extend((org, ns, list(subjects)) for ns in namespaces)
 
     for module in (claim_release, grants, membership, snapshot):
-        monkeypatch.setattr(module, "end_grant_claims", _record)
+        monkeypatch.setattr(module, "write_grant_cutoffs", _record)
     return calls
 
 
 @pytest.fixture
-def ended_grant_claims(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+def cutoffs_read_at_mint(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
     """Token-minting paths (sign-in, OAuth) read the revocations from
     ClickHouse; answer from this map instead: namespace -> the cutoff (unix
     seconds) a grant taken away there left, empty unless a test adds one. No
@@ -701,6 +701,6 @@ def ended_grant_claims(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
     async def _not_revoked(subjects: list[str], *, issued_at: int) -> bool:
         return False
 
-    monkeypatch.setattr(revocation, "ended_claims", _ended)
+    monkeypatch.setattr(revocation, "read_grant_cutoffs", _ended)
     monkeypatch.setattr(revocation, "subjects_revoked", _not_revoked)
     return cutoffs

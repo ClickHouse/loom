@@ -221,7 +221,7 @@ async def test_a_non_admin_learns_nothing_from_the_idempotency_probe(wire) -> No
 
 @pytest.mark.asyncio
 async def test_a_restore_that_lowers_a_grant_ends_the_older_claims(
-    monkeypatch: pytest.MonkeyPatch, grant_cutoffs: list[tuple[str, str, list[str]]]
+    monkeypatch: pytest.MonkeyPatch, recorded_cutoff_writes: list[tuple[str, str, list[str]]]
 ) -> None:
     from types import SimpleNamespace
 
@@ -240,7 +240,7 @@ async def test_a_restore_that_lowers_a_grant_ends_the_older_claims(
         SimpleNamespace(subject="carol", role="viewer"),  # new
     ]
     await namespace_snapshot._end_lowered_claims("o", "ns", restored, "boss", ch=None)
-    assert grant_cutoffs == [("o", "ns", ["alice"])]
+    assert recorded_cutoff_writes == [("o", "ns", ["alice"])]
 
 
 @pytest.mark.asyncio
@@ -276,7 +276,7 @@ async def test_a_failed_cutoff_write_fails_a_restore_with_nothing_written(
 
     from server.identity.store import grants as grants_repo
 
-    monkeypatch.setattr(namespace_snapshot, "end_grant_claims", _down)
+    monkeypatch.setattr(namespace_snapshot, "write_grant_cutoffs", _down)
     monkeypatch.setattr(grants_repo, "active_roles", _lowered)
     install, grants = wire
     grants[(ORG, NS, "owner@x")] = Role.ADMIN

@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 from server.auth import login, oauth
 from tests.unit.oauth_store_fake import MemoryOAuthStore
 
-pytestmark = pytest.mark.usefixtures("ended_grant_claims", "no_restricted_grants", "keeper")
+pytestmark = pytest.mark.usefixtures("cutoffs_read_at_mint", "no_restricted_grants", "keeper")
 
 
 @pytest.fixture
@@ -555,7 +555,7 @@ def test_a_non_utf8_form_body_is_a_400_not_a_500(path: str) -> None:
 
 
 def test_refresh_drops_a_namespace_whose_grant_ended_for_good(
-    ended_grant_claims: dict[str, int],
+    cutoffs_read_at_mint: dict[str, int],
 ) -> None:
     """A refresh mints with a fresh iat, past the cutoff a revoked grant left;
     the namespace leaves the sign-in snapshot, so no later refresh brings it back."""
@@ -574,11 +574,11 @@ def test_refresh_drops_a_namespace_whose_grant_ended_for_good(
             "code_verifier": verifier,
         },
     ).json()["refresh_token"]
-    ended_grant_claims["team"] = int(time.time()) + 5
+    cutoffs_read_at_mint["team"] = int(time.time()) + 5
     first = _refresh(c, rt).json()
     assert verify_token(first["access_token"]).namespaces == ("alice-ns",)
     # The rotated grant is newer than the cutoff now; only the snapshot keeps it out.
-    ended_grant_claims["team"] = int(time.time()) - 3600
+    cutoffs_read_at_mint["team"] = int(time.time()) - 3600
     second = _refresh(c, first["refresh_token"]).json()
     assert verify_token(second["access_token"]).namespaces == ("alice-ns",)
 
@@ -598,7 +598,7 @@ def _exchange(c: TestClient, code: str, verifier: str):
 
 @pytest.mark.parametrize(("cut_after_authorize", "kept"), [(True, False), (False, True)])
 def test_a_code_exchange_drops_a_namespace_taken_away_since_authorize(
-    ended_grant_claims: dict[str, int], cut_after_authorize: bool, kept: bool
+    cutoffs_read_at_mint: dict[str, int], cut_after_authorize: bool, kept: bool
 ) -> None:
     """A cutoff after the code was issued drops the namespace; an older one,
     which the authorize step already applied, does not."""
@@ -607,7 +607,7 @@ def test_a_code_exchange_drops_a_namespace_taken_away_since_authorize(
     c = _client()
     code, verifier = _seed_code()
     oauth._store.codes[oauth._token_id(code)]["namespaces"] = ["alice-ns", "team"]
-    ended_grant_claims["team"] = int(time.time()) + (5 if cut_after_authorize else -3600)
+    cutoffs_read_at_mint["team"] = int(time.time()) + (5 if cut_after_authorize else -3600)
     tok = _exchange(c, code, verifier).json()
     want = ("alice-ns", "team") if kept else ("alice-ns",)
     assert verify_token(tok["access_token"]).namespaces == want
@@ -642,7 +642,7 @@ def test_an_unreadable_revocation_store_mints_nothing(monkeypatch: pytest.Monkey
 
 
 def test_a_refresh_keeps_a_cut_restricted_namespace_still_granted(
-    ended_grant_claims: dict[str, int], monkeypatch: pytest.MonkeyPatch
+    cutoffs_read_at_mint: dict[str, int], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A restricted namespace is read only by a token naming it; lowered to a
     viewer grant, the person still reads it, so the refresh keeps it."""
@@ -658,13 +658,13 @@ def test_a_refresh_keeps_a_cut_restricted_namespace_still_granted(
     code, verifier = _seed_code()
     oauth._store.codes[oauth._token_id(code)]["namespaces"] = ["alice-ns", "restricted-qa"]
     rt = _exchange(c, code, verifier).json()["refresh_token"]
-    ended_grant_claims["restricted-qa"] = int(time.time()) + 5
+    cutoffs_read_at_mint["restricted-qa"] = int(time.time()) + 5
     tok = _refresh(c, rt).json()
     assert verify_token(tok["access_token"]).namespaces == ("alice-ns", "restricted-qa")
 
 
 def test_a_failed_restricted_grant_read_does_not_narrow_the_session(
-    ended_grant_claims: dict[str, int], monkeypatch: pytest.MonkeyPatch
+    cutoffs_read_at_mint: dict[str, int], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A lookup that failed is not a grant that ended: the refresh answers
     503 and keeps the restricted namespace once the lookup works again."""
@@ -684,7 +684,7 @@ def test_a_failed_restricted_grant_read_does_not_narrow_the_session(
     code, verifier = _seed_code()
     oauth._store.codes[oauth._token_id(code)]["namespaces"] = ["alice-ns", "restricted-qa"]
     rt = _exchange(c, code, verifier).json()["refresh_token"]
-    ended_grant_claims["restricted-qa"] = int(time.time()) + 5
+    cutoffs_read_at_mint["restricted-qa"] = int(time.time()) + 5
     assert _refresh(c, rt).status_code == 503
     tok = _refresh(c, rt).json()
     assert verify_token(tok["access_token"]).namespaces == ("alice-ns", "restricted-qa")
@@ -988,7 +988,8 @@ def test_without_a_keeper_the_credential_is_used_up_before_the_decision(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Nothing keeps two presenters apart but the consume, so it comes first,
-    as before the claim existed: a decision that fails has burnt the code."""
+    as before the claim existed. A decision that fails then has burnt the
+    code, so the answer says so instead of asking for a retry."""
     from server.auth import oauth_claims
 
     async def _unclaimed(ch: object, key: str) -> tuple[oauth_claims.Claim, str]:
@@ -1011,7 +1012,8 @@ def test_without_a_keeper_the_credential_is_used_up_before_the_decision(
     monkeypatch.setattr(store, "save_refresh", _down)
     c = _client()
     code, verifier = _seed_code()
-    assert _exchange(c, code, verifier).status_code == 503
+    r = _exchange(c, code, verifier)
+    assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
     assert order == ["consume", "issue"]
     assert _exchange(c, code, verifier).status_code == 400
 

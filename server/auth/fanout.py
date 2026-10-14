@@ -81,8 +81,9 @@ async def resolve_fanout(org: str) -> Fanout:
     public: set[str] = set()
     if len(mine) > cap and not ordered:
         # Only a scoped token's order is a priority. For anyone else the cut
-        # keeps the private namespaces, the ones the search reads first. With
-        # the addressed namespace among `mine` this may look up one too many.
+        # keeps the private namespaces, the ones the search reads first. The
+        # cap counts the namespaces besides the addressed one, so this may
+        # fetch visibility when nothing ends up cut.
         public = await directory().public_namespaces(org, mine)
     fanout = Fanout(
         org=org, namespaces=tuple(mine), cap=cap, ordered=ordered, public=frozenset(public)

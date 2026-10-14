@@ -21,7 +21,7 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 from server.auth.directory import ClassificationUnavailable, directory
-from server.auth.revocation import claim_ended
+from server.auth.revocation import grant_cutoff_applies
 from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT
 
 # Re-export from operations.base so there's one canonical Role definition.
@@ -144,10 +144,11 @@ async def check_authorized(
     # NOT fall through to grant lookup — the token was deliberately scoped
     # (and possibly downgraded), so it is its own ceiling. Non-namespace
     # (org-level) ops fall through to the flat-role check below.
+    withdrawn = (
+        org is not None and namespace is not None and bool(withdrawn_claims(auth, org, [namespace]))
+    )
     if auth.has_ns_roles() and org is not None and namespace is not None:
-        eff = auth.effective_role(org, namespace)
-        if eff is not None and withdrawn_claims(auth, org, [namespace]):
-            eff = None
+        eff = None if withdrawn else auth.effective_role(org, namespace)
         # An `ns_write` claim (inherited by a delegated child) binds writes too.
         outside_write_claim = (
             required_role.value >= Role.WRITER.value
@@ -164,6 +165,10 @@ async def check_authorized(
         # nothing else. Without it, every agent token minted before a person
         # joined a repository would need a re-mint to follow them in.
         if not (required_role.value <= Role.VIEWER.value and _is_code_namespace(org, namespace)):
+            if withdrawn:
+                raise _refused(
+                    _withdrawn_message(org, namespace, "mint a new token"), org, namespace
+                )
             raise _refused(
                 f"scoped token: {required_role.name} required on {org}/{namespace}; "
                 f"token grants {eff.name if eff else 'no access'} there",
@@ -179,7 +184,7 @@ async def check_authorized(
         ns_covered_by_jwt = (
             auth.can_write(org, namespace) if is_write else auth.can_access(org, namespace)
         )
-        if ns_covered_by_jwt and withdrawn_claims(auth, org, [namespace]):
+        if withdrawn:
             ns_covered_by_jwt = False
     else:
         ns_covered_by_jwt = False
@@ -218,6 +223,9 @@ async def check_authorized(
         return
 
     # Be specific so the failing gate is visible to debug clients.
+    if withdrawn:
+        then = f"the grant held there now does not allow {required_role.name}"
+        raise _refused(_withdrawn_message(org, namespace, then), org, namespace)
     if not ns_covered_by_jwt:
         raise _refused(
             f"principal {auth.subject!r} cannot access {org}/{namespace} "
@@ -331,9 +339,16 @@ def names_namespace(auth: AuthInfo, org: str, namespace: str) -> bool:
     return any(ns == namespace for ns, _role in auth.ns_roles)
 
 
+def _withdrawn_message(org: str, namespace: str, then: str) -> str:
+    return (
+        f"this token's claim on {org}/{namespace} ended when a grant there was revoked "
+        f"or lowered after it was minted; {then}"
+    )
+
+
 def withdrawn_claims(auth: AuthInfo, org: str, namespaces: list[str]) -> set[str]:
     """The `namespaces` this token names whose grant was taken away after it
-    was minted (`revocation.end_grant_claims`). A namespace the subject never
+    was minted (`revocation.write_grant_cutoffs`). A namespace the subject never
     held a grant on (an operator's `loom mint-token`) and a token minted after
     the revocation keep their claim. No I/O: the revocation snapshot."""
     if not namespaces or auth.issued_at is None:
@@ -342,7 +357,7 @@ def withdrawn_claims(auth: AuthInfo, org: str, namespaces: list[str]) -> set[str
     return {
         ns
         for ns in namespaces
-        if names_namespace(auth, org, ns) and claim_ended(org, ns, auth.subject, issued_at)
+        if names_namespace(auth, org, ns) and grant_cutoff_applies(org, ns, auth.subject, issued_at)
     }
 
 

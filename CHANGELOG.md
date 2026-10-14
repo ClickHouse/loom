@@ -61,21 +61,21 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   A URL or an unknown name is a 422. A namespace that still stores a URL is no longer reranked.
 - **Security:** revoking or lowering a grant ends what the subject's older tokens claim on
   that namespace: a flat one reaches it only through the subject's current grant, a scoped
-  one must be minted again. Tokens minted
-  later (sign-in, an OAuth code exchange or refresh) leave it out for good; a later grant
-  gives access back through itself, not through the old claim. A restricted namespace,
-  read only by a token naming it, is named again while a live grant covers the person. The
-  cutoff is a `loom.revoked_tokens` row keyed `grant:<org>/<namespace>/<subject hash>`;
-  `loom revoke-token --list --grants` shows them. A namespace never granted to the subject
-  (named by an operator at mint) keeps its claim. A refresh token saved before this
-  release can carry a cutoff that landed while it was minted until it expires.
+  one must be minted again. Tokens minted later (sign-in, an OAuth code exchange or
+  refresh) leave it out for good; a later grant gives access back through itself, not
+  through the old claim. A restricted namespace, read only by a token naming it, is named
+  again while a live grant covers the person. The cutoff is a `loom.revoked_tokens` row
+  keyed `grant:<org>/<namespace>/<hash of the case-folded subject>`; `loom revoke-token
+--list --grants` shows them. A namespace never granted to the subject (named by an
+  operator at mint) keeps its claim. A refresh token saved before this release can carry
+  a cutoff that landed while it was minted until it expires.
 - **Security:** with a Keeper, `/oauth/token` runs one exchange per code or refresh token
   (a KeeperMap claim, `loom.oauth_claims`, migration `027_oauth_claims.sql`); a concurrent
-  presenter is told to retry. A failed read answers a retryable 503
-  `temporarily_unavailable` and leaves the credential usable, where a failed account read
-  on refresh used to answer 500 and burn the token. Without a Keeper the credential is
-  used up before the decision, as before, and `/v1/health` reports
-  `oauth_claims_not_atomic`.
+  presenter is told to retry, and a failed read answers a retryable 503
+  `temporarily_unavailable` that leaves the credential usable, where a failed account read
+  on refresh used to answer 500 and burn the token. Without a Keeper the credential is used
+  up before the decision, as before; a failure after that answers `invalid_grant`, and
+  `/v1/health` reports `oauth_claims_not_atomic`.
 - **Security:** `context.fetch` no longer serves, and `context.offload` refuses to write,
   `page/` blobs: a parked `memory.search` page holds hits from every namespace its search
   fanned out over, and only `memory.search(page=...)` serves it, re-checking each of them.
