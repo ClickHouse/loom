@@ -305,9 +305,10 @@ async def ended_claims(
     is not ended: only another admin can give that (a self-join stops below
     it, a restore grants no admin over an existing namespace, OIDC JIT does
     not rebuild a released or deleted account, and the maintainer sync does
-    not undo a lowering on a branch), and a claim confers no more than it, so an owner an operator reinstated is not kept
-    out of their claim. An admin row granted before the cutoff is the one the
-    revoke is replacing (the cutoff lands first), so it lifts nothing."""
+    not undo a lowering on a branch), and a claim confers no more than it,
+    so an owner an operator reinstated is not kept out of their claim. An
+    admin row granted before the cutoff is the one the revoke is replacing
+    (the cutoff lands first), so it lifts nothing."""
     from server.auth.aliases import subject_aliases
 
     spellings = await subject_aliases(org, subject, strict=True)
