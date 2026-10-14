@@ -93,6 +93,10 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   closed implicit run keeps its session's memories whatever `LOOM_MEMORY_RUN_COMPLETE_RETAIN`
   says: the transport cannot judge the work, so a session ending no longer demotes or expires
   what it wrote.
+- **Operators:** `LOOM_MCP_SESSION_RUN_IDLE_SECONDS` must be at least 60, the interval at which
+  a web process re-checks a session's run; a lower value fails validation at boot.
+- `DELETE /mcp` draws the rate limiter like a `run.complete` call, per caller, and past the cap
+  answers `429 RATE_LIMITED` with `Retry-After`.
 
 ### Fixed
 
