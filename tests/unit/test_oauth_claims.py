@@ -110,6 +110,23 @@ def test_a_retried_insert_that_finds_its_own_claim_holds_it(monkeypatch) -> None
     assert outcome is oc.Claim.HELD and keeper.rows["code:abc"] == holder
 
 
+def test_an_insert_that_landed_but_answered_late_is_released(monkeypatch) -> None:
+    # The client gives up on the reply; the row it wrote must not lock the
+    # credential out until it goes stale.
+    keeper = _Keeper()
+    landed = keeper.execute
+
+    async def _late(sql: str, params: dict[str, Any]) -> None:
+        await landed(sql, params)
+        if sql.startswith("INSERT"):
+            raise TimeoutError("reply late")
+
+    monkeypatch.setattr(keeper, "execute", _late)
+    with pytest.raises(TimeoutError):
+        _claim(keeper)
+    assert keeper.rows == {}
+
+
 def test_no_claims_table_runs_the_exchange_unclaimed() -> None:
     keeper = _Keeper(table=False)
     assert _claim(keeper) == (oc.Claim.UNCLAIMED, "")

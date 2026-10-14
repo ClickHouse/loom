@@ -32,8 +32,9 @@ from server.core.schema.migrate_lease import (
 log = logging.getLogger(__name__)
 
 # A claim older than this was left by an exchange that died. A live one is done
-# well within it: the claim (5 s), the credential read (30 s), the decision
-# (`EXCHANGE_TIMEOUT_S`), the consume (5 s) and the release (5 s).
+# well within it: the claim (5 s), the credential read (30 s), the decision and
+# the tokens it issues (`EXCHANGE_TIMEOUT_S`), the consume (5 s) and the
+# release (5 s).
 STALE_S = 120
 EXCHANGE_TIMEOUT_S = 60
 
@@ -86,24 +87,34 @@ async def claim(ch: Any, key: str) -> tuple[Claim, str]:
     if not await _available(ch):
         return Claim.UNCLAIMED, ""
     me = uuid.uuid4().hex
-    params = {"k": key, "me": me, "stale": STALE_S}
-    with statement_timeout(5):
-        try:
-            await ch.execute(_INSERT, params=params)
-            return Claim.HELD, me
-        except Exception as e:
-            if not key_exists(e):
-                raise
-        # Held: by this call when a retried insert found its own first one, else
-        # by an exchange that is running, or by one that died and is taken over.
-        if await _holder(ch, key) != me:
-            try:
-                await ch.execute(_TAKE_OVER, params=params)
-            except Exception as e:
-                if not lost_race(e):
-                    raise
-        held = await _holder(ch, key) == me
+    try:
+        with statement_timeout(5):
+            held = await _claim(ch, key, me)
+    except Exception:
+        # An insert or takeover that answered late may still have landed; a
+        # claim left behind would lock the credential out until it went stale.
+        await release(ch, key, me)
+        raise
     return (Claim.HELD, me) if held else (Claim.TAKEN, "")
+
+
+async def _claim(ch: Any, key: str, me: str) -> bool:
+    params = {"k": key, "me": me, "stale": STALE_S}
+    try:
+        await ch.execute(_INSERT, params=params)
+        return True
+    except Exception as e:
+        if not key_exists(e):
+            raise
+    # Held: by this call when a retried insert found its own first one, else
+    # by an exchange that is running, or by one that died and is taken over.
+    if await _holder(ch, key) != me:
+        try:
+            await ch.execute(_TAKE_OVER, params=params)
+        except Exception as e:
+            if not lost_race(e):
+                raise
+    return await _holder(ch, key) == me
 
 
 async def release(ch: Any, key: str, holder: str) -> None:

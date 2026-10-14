@@ -747,3 +747,33 @@ def test_a_slow_consume_that_landed_is_never_answered_with_a_retry(
     c = _client()
     code, verifier = _seed_code()
     assert _exchange(c, code, verifier).status_code == 200
+
+
+@pytest.mark.parametrize("grant_type", ["authorization_code", "refresh_token"])
+def test_a_failed_token_issue_leaves_the_credential_for_the_retry(
+    monkeypatch: pytest.MonkeyPatch, grant_type: str
+) -> None:
+    """The new refresh token is saved before the old credential is used up,
+    so a save that fails answers 503 and the retry gets its tokens."""
+    store = oauth._store
+    c = _client()
+    code, verifier = _seed_code()
+    if grant_type == "authorization_code":
+
+        def exchange():
+            return _exchange(c, code, verifier)
+    else:
+        rt = _exchange(c, code, verifier).json()["refresh_token"]
+
+        def exchange():
+            return _refresh(c, rt)
+
+    save = store.save_refresh
+
+    async def _down(token: str, grant: dict) -> None:
+        raise RuntimeError("replica away")
+
+    monkeypatch.setattr(store, "save_refresh", _down)
+    assert exchange().status_code == 503
+    monkeypatch.setattr(store, "save_refresh", save)
+    assert exchange().status_code == 200

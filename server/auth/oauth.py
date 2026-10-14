@@ -697,9 +697,9 @@ async def token(request: Request) -> JSONResponse:
                 raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
             decided = _decide_code(grant, client_id, redirect_uri, code_verifier)
             issued = await _used_up_unless_retryable(
-                decided, lambda: _store.consume_code(code, grant)
+                _issued(decided, client_id), lambda: _store.consume_code(code, grant)
             )
-        return JSONResponse(await _issue_tokens(issued, client_id))
+        return JSONResponse(issued)
 
     if grant_type == "refresh_token":
         # A public client identifies itself on refresh (RFC 6749 §6), and the
@@ -716,9 +716,10 @@ async def token(request: Request) -> JSONResponse:
                 raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
             decided = _decide_refresh(grant)
             issued = await _used_up_unless_retryable(
-                decided, lambda: _store.consume_refresh(refresh_token, grant)
+                _issued(decided, grant["client_id"]),
+                lambda: _store.consume_refresh(refresh_token, grant),
             )
-        return JSONResponse(await _issue_tokens(issued, grant["client_id"]))
+        return JSONResponse(issued)
 
     raise HTTPException(status_code=400, detail={"error": "unsupported_grant_type"})
 
@@ -747,29 +748,37 @@ async def _one_exchange(record_type: str, credential: str) -> AsyncIterator[None
             await oauth_claims.release(ch, key, holder)
 
 
+async def _issued(decided: Awaitable[dict[str, Any]], client_id: str) -> dict[str, Any]:
+    """The token response for the grant the exchange decided on, its refresh
+    token already saved."""
+    return await _issue_tokens(await decided, client_id)
+
+
 async def _used_up_unless_retryable(
-    decided: Awaitable[dict[str, Any]], consume: Callable[[], Awaitable[None]]
+    issuing: Awaitable[dict[str, Any]], consume: Callable[[], Awaitable[None]]
 ) -> dict[str, Any]:
-    """Await the exchange's decision, then use the code or refresh token up.
-    A refusal uses it up too; a 503 leaves it, so the client's retry works.
-    Only the decision is bounded (`oauth_claims.EXCHANGE_TIMEOUT_S`): the
-    consume is the commit, and a cancelled one may still land."""
+    """Await the exchange's tokens, then use the code or refresh token up. A
+    refusal uses it up too; a failure leaves it (503), so the client's retry
+    works. Only the decision and the issue are bounded
+    (`oauth_claims.EXCHANGE_TIMEOUT_S`): the consume is the commit, and a
+    cancelled one may still land. Issued before the consume, a token the
+    client never receives is the worst a failed consume leaves."""
     from server.auth.oauth_claims import EXCHANGE_TIMEOUT_S
     from server.core.ch import statement_timeout
 
     try:
         async with asyncio.timeout(EXCHANGE_TIMEOUT_S):
-            grant = await decided
-    except TimeoutError as e:
-        raise _unavailable("exchange", e) from e
+            issued = await issuing
     except HTTPException as e:
         if e.status_code != 503:
             with statement_timeout(5):
                 await consume()
         raise
+    except Exception as e:  # a decision or an issue that did not finish uses nothing up
+        raise _unavailable("exchange", e) from e
     with statement_timeout(5):
         await consume()
-    return grant
+    return issued
 
 
 async def _decide_code(

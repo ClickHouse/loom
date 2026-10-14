@@ -446,3 +446,24 @@ def test_the_doctor_reads_the_same_claims_check(monkeypatch, rows, atomic, table
 
     monkeypatch.setattr(doctor, "_doctor_ch_query", query)
     assert doctor._doctor_keeper_table(settings, table_sql) is atomic
+
+
+@pytest.mark.parametrize("oauth", [True, False])
+def test_the_doctor_reports_unclaimed_oauth_exchanges_only_with_oauth_on(
+    monkeypatch, oauth: bool
+) -> None:
+    from server.cli import doctor
+    from server.settings import settings
+
+    asked: list[str] = []
+
+    def query(_settings, sql, params):
+        asked.append(sql)
+        return [] if "'oauth_claims'" in sql else [{"engine": "KeeperMap"}]
+
+    monkeypatch.setattr(settings, "oauth_enabled", oauth)
+    monkeypatch.setattr(doctor, "_doctor_ch_query", query)
+    monkeypatch.setattr(doctor, "_doctor_reader_probe", lambda _s: ("ok", ""))
+    codes = [p.code for p in doctor._doctor_problems()]
+    assert ("oauth_claims_not_atomic" in codes) is oauth
+    assert any("'oauth_claims'" in sql for sql in asked) is oauth
