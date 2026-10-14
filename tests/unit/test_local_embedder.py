@@ -363,12 +363,29 @@ def test_each_web_worker_gets_its_share_of_the_cpus_for_onnx(
 ) -> None:
     from server.core import web_workers
     from server.embedding import local
+    from server.workers import leader
 
+    monkeypatch.setattr(leader, "_CURRENT", None)  # a lifespan another test ran set one
     monkeypatch.setattr(web_workers, "cpu_limit", lambda: 8)
     monkeypatch.setattr(emb.settings, "web_workers", 4)
     assert local.onnx_threads() == 2
     monkeypatch.setattr(emb.settings, "web_workers", 16)
     assert local.onnx_threads() == 1
+
+
+def test_the_process_running_the_background_workers_gets_every_cpu_for_onnx(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.core import web_workers
+    from server.embedding import local
+    from server.workers import leader
+
+    monkeypatch.setattr(web_workers, "cpu_limit", lambda: 8)
+    monkeypatch.setattr(emb.settings, "web_workers", 4)
+    monkeypatch.setattr(leader, "_CURRENT", leader.SupervisorLease(path="", held=True))
+    assert local.onnx_threads() == 8
+    monkeypatch.setattr(leader, "_CURRENT", leader.SupervisorLease(path="", held=False))
+    assert local.onnx_threads() == 2
 
 
 def test_onnx_threads_stay_within_the_cpu_quota(

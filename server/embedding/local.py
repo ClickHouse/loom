@@ -57,10 +57,16 @@ def _resolve_model(spec: str) -> tuple[str, int]:
 
 
 def onnx_threads() -> int:
-    """This process's share of the CPUs: every web worker runs its own session."""
+    """This process's share of the CPUs: every web worker runs its own session,
+    and the one that runs the background workers (embedding drains, re-embeds)
+    takes all of them, since that is where the bulk embedding happens."""
     from server.core.web_workers import cpu_limit
     from server.settings import settings
+    from server.workers import leader
 
+    lease = leader.current()
+    if lease is not None and lease.held:
+        return cpu_limit()
     return max(1, cpu_limit() // max(1, int(settings.web_workers)))
 
 
