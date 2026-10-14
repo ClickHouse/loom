@@ -361,3 +361,30 @@ async def test_a_lease_taken_after_a_wait_lasts_its_whole_ttl() -> None:
         await asyncio.sleep(0.45)  # work after the hand-over, inside the TTL
         assert ch.rows["job"]["holder"] != "other"
     await handing
+
+
+async def test_an_attempt_that_ends_past_the_wait_is_the_last(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = [100.0]
+    monkeypatch.setattr(kl, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    ch = FakeKeeper()
+    ch.rows["job"] = {"holder": "other", "stale": False}
+    locks = _locks(ch, monkeypatch)
+    attempts = 0
+    attempt = locks._attempt
+
+    async def slow(name: str, me: str) -> bool:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            now[0] = 100.6  # the first attempt fails after the wait has run out
+        else:
+            ch.rows.pop("job", None)  # a second one would take it
+        return await attempt(name, me)
+
+    monkeypatch.setattr(locks, "_attempt", slow)
+    with pytest.raises(kl.LeaseBusy):
+        async with locks.lease("job", wait_s=0.5):
+            pytest.fail("took the lease after its wait")
+    assert attempts == 1

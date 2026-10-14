@@ -197,7 +197,7 @@ class KeyWriteLocks:
             started = time.monotonic()
             if await self._attempt(name, me):
                 return started
-            if started >= until:
+            if time.monotonic() >= until:
                 raise _busy()
             await asyncio.sleep(poll)
             poll = min(poll * 1.5, 0.5)
