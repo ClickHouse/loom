@@ -242,3 +242,35 @@ def test_a_subject_revocation_is_read_from_clickhouse(ch: _CH) -> None:
     ch.revoked["alice"] = {"jti": "alice", "issued_before": None}
     assert asyncio.run(rev.subject_revoked("alice", issued_at=now + 10)), "revoked outright"
     assert not asyncio.run(rev.subject_revoked("bob", issued_at=now))
+
+
+def test_the_mint_time_reads_are_sequentially_consistent(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # FINAL resolves the versions a replica holds, not ones it has not fetched:
+    # a mint that misses a cutoff keeps the namespace for the token's life.
+    from server.core.ch import sequential_reads_active
+
+    consistent: list[bool] = []
+    read = ch.query_all
+
+    async def _recording(sql: str, params: dict[str, Any] | None = None) -> list[dict]:
+        if "revoked_tokens" in sql:
+            consistent.append(sequential_reads_active())
+        return await read(sql, params)
+
+    monkeypatch.setattr(ch, "query_all", _recording)
+    asyncio.run(rev.ended_claims(ORG, "alice", ["team"], issued_at=None))
+    asyncio.run(rev.subject_revoked("alice", issued_at=BEFORE))
+    assert consistent == [True, True]
+
+
+def test_a_failed_mint_time_read_propagates(ch: _CH, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _down(*_a: Any, **_k: Any) -> list[dict]:
+        raise RuntimeError("replica away")
+
+    monkeypatch.setattr(ch, "query_all", _down)
+    with pytest.raises(RuntimeError):
+        asyncio.run(rev.ended_claims(ORG, "alice", ["team"], issued_at=None))
+    with pytest.raises(RuntimeError):
+        asyncio.run(rev.subject_revoked("alice", issued_at=BEFORE))
