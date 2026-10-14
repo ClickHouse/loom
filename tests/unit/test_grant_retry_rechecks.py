@@ -47,10 +47,10 @@ def rechecked(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, list[tuple[str
 def test_a_retried_revoke_rechecks_both_spellings_on_every_branch_and_cascades(
     rechecked: list[Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    cascaded: list[str] = []
+    cascaded: list[tuple[str, str]] = []
 
     async def _cascade(org: str, namespace: str, subject: str) -> None:
-        cascaded.append(subject)
+        cascaded.append((namespace, subject))
 
     monkeypatch.setattr(
         "server.code.app.index.maintainers.branch_namespaces",
@@ -72,7 +72,8 @@ def test_a_retried_revoke_rechecks_both_spellings_on_every_branch_and_cascades(
             ],
         )
     ]
-    assert cascaded == ["alice", "alice@x.io"]
+    # The cascade folds spellings itself: once per branch.
+    assert cascaded == [("code-x", "alice"), ("code-x-26-5", "alice")]
 
 
 def test_a_retried_approve_rechecks(rechecked: list[Any]) -> None:

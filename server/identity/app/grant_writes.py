@@ -2,9 +2,9 @@
 
 ClickHouse has no row lock, so a concurrent raise can land between that read and
 the write, and the write then lowers it without the cutoff a lowering needs.
-After the rows land, `revocation.cut_where_lowered` checks each subject against
-the grant log and cuts the claims a lowering left standing; for an op that
-wrote its own cutoff first, that is the second stamp a slow insert needs.
+After the rows land, `revocation.cut_where_lowered` cuts the claims a lowering
+left standing: again for a subject already cut, which a token minted while the
+write was in flight needs, and by the grant log for one never cut.
 
 Writers that only grant admin, or grant a subject that did not exist before,
 cannot lower a grant and insert through the repository directly.
@@ -12,7 +12,6 @@ cannot lower a grant and insert through the repository directly.
 
 from __future__ import annotations
 
-import time
 from typing import Any
 
 from server.auth.context import current_auth
@@ -22,7 +21,7 @@ from server.identity.store import grants as grants_repo
 
 async def insert_row(row: dict[str, Any]) -> None:
     await grants_repo.insert_row(row)
-    await _check(row["org"], [(row["namespace"], row["subject"])], time.time_ns())
+    await _check(row["org"], [(row["namespace"], row["subject"])])
 
 
 async def insert_rows(rows: list[dict[str, Any]], *, ch: Any | None = None) -> None:
@@ -30,15 +29,13 @@ async def insert_rows(rows: list[dict[str, Any]], *, ch: Any | None = None) -> N
     by_org: dict[str, set[tuple[str, str]]] = {}
     for row in rows:
         by_org.setdefault(row["org"], set()).add((row["namespace"], row["subject"]))
-    landed_ns = time.time_ns()
     for org, pairs in by_org.items():
-        await _check(org, sorted(pairs), landed_ns)
+        await _check(org, sorted(pairs))
 
 
 async def recheck(org: str, pairs: list[tuple[str, str]]) -> None:
-    """The check alone, for a retried op that finds its rows already written;
-    the grant log says when they landed."""
-    await _check(org, pairs, 0)
+    """The check alone, for a retried op that finds its rows already written."""
+    await _check(org, pairs)
 
 
 async def recheck_namespace(org: str, namespace: str) -> None:
@@ -47,10 +44,8 @@ async def recheck_namespace(org: str, namespace: str) -> None:
     await recheck(org, [(namespace, s) for s in subjects])
 
 
-async def _check(org: str, pairs: list[tuple[str, str]], landed_ns: int) -> None:
+async def _check(org: str, pairs: list[tuple[str, str]]) -> None:
     if not pairs:
         return
     auth = current_auth()
-    await cut_where_lowered(
-        org, pairs, landed_ns=landed_ns, revoked_by=auth.subject if auth else ""
-    )
+    await cut_where_lowered(org, pairs, revoked_by=auth.subject if auth else "")

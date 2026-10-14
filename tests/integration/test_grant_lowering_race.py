@@ -120,3 +120,25 @@ async def test_a_revoke_row_stamped_before_its_cutoff_but_landing_after_is_cut_a
         "SELECT reason FROM loom.revoked_tokens FINAL WHERE jti = {k:String}", params={"k": key}
     )
     assert row["reason"] == "grant lowered"
+
+
+async def test_a_revoke_of_a_grant_older_than_the_log_is_still_cut_again(ch: Any) -> None:
+    from server.identity.app import grant_writes
+
+    org = unique_org("lowering-race")
+    await grants_repo.insert_row(_grant(org, "erin", "admin"))
+    # The admin grant is older than the log's week.
+    await ch.execute(
+        "ALTER TABLE loom.namespace_grant_log DELETE WHERE org = {org:String} "
+        "SETTINGS mutations_sync = 2",
+        params={"org": org},
+    )
+    await revocation.write_grant_cutoffs(org, ["team"], ["erin"], reason="test", revoked_by="t")
+    revoked = {**_grant(org, "erin", "admin"), "revoked_at": datetime.now(UTC).replace(tzinfo=None)}
+    await grant_writes.insert_rows([revoked])
+
+    key = revocation.grant_claim_key(org, "team", "erin")
+    (row,) = await ch.query_all(
+        "SELECT reason FROM loom.revoked_tokens FINAL WHERE jti = {k:String}", params={"k": key}
+    )
+    assert row["reason"] == "grant lowered"

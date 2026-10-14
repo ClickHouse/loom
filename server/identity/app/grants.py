@@ -296,8 +296,8 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
         branches = maintainers.branch_namespaces(input.org, input.namespace) or [input.namespace]
         spellings = sorted({subject, input.subject})
         await grant_writes.recheck(input.org, [(ns, s) for ns in branches for s in spellings])
-        for spelling in spellings:
-            await _cascade_quietly(input.org, input.namespace, spelling)
+        for ns in branches:
+            await _cascade_quietly(input.org, ns, subject)
         return GrantsRevokeOutput(revoked=False)
 
     active = (row.status or "active") == "active"
@@ -339,7 +339,8 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
         "version": _version(),
     }
     await grant_writes.insert_rows([revoked, *siblings])
-    await _cascade_quietly(input.org, input.namespace, subject)
+    for ns in [input.namespace, *(r["namespace"] for r in siblings)]:
+        await _cascade_quietly(input.org, ns, subject)
     return GrantsRevokeOutput(revoked=True, revoked_at=now)
 
 

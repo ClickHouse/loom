@@ -1036,6 +1036,7 @@ a9a6595e5590	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.
 a9c65c860017	DELETE FROM loom.memory_evidence WHERE (org = {org:String} AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS lightweight_deletes_sync = 
 a9cdda19d241	SELECT kind, number, text_sha256, tombstoned_at, updated_at, embedding_dim, embedding_model FROM loom.qa_item_embeddings FINAL WHERE org = {org:String} AND namespace = {ns:String}
 a9d4bf10d1ae	SELECT ? AS seen FROM loom.agent_events WHERE org = {org:String} AND consumer = {consumer:String} AND operation IN {ops:Array(String)} AND success AND ts >= now() - INTERVAL {days:UInt32} DAY LIMIT ?
+a9d801200f30	SELECT namespace, subject, role, status, revoked_at FROM loom.namespace_grant_log WHERE org = {org:String} AND namespace IN {ns:Array(String)} AND subject IN {subs:Array(String)} ORDER BY namespace, s
 a9de83abc58a	SELECT count() AS n FROM loom.memory FINAL WHERE org = {org:String} AND user_id = {uid:String} AND tombstoned_at IS NULL
 a9e0fce6c2f6	SELECT concat(?, session_id, ?, toString(chunk_index)) AS memory_key, ? AS memory_type, content AS content_excerpt, toString(created_at) AS created_at, toString(created_at) AS valid_at FROM loom.memor
 a9e320777e4d	SELECT org, namespace, agent, user_id, session_id, memory_key, memory_type, value, confidence, source_trace, version, tombstoned_at, created_at, expires_at FROM loom.memory FINAL WHERE org = {org:Stri
@@ -1250,7 +1251,6 @@ c6fedc654be3	SELECT count() AS n FROM loom.code_context_packs FINAL WHERE org = 
 c72e7e6dceb9	SELECT count() AS n FROM loom.working_memory FINAL WHERE org = {org:String} AND tombstoned_at IS NULL AND namespace = {ns:String}
 c785437b00cf	ALTER TABLE loom.entity_edges DELETE WHERE (org = {org:String} AND (namespace, entity_a, entity_b) IN (SELECT namespace, entity_a, entity_b FROM loom.entity_edge_memories FINAL WHERE org = {org:String
 c7914fc052d6	SELECT revision, count() AS samples, quantileExact(?)(steps_taken) AS p50_steps, quantileExact(?)(duration_ms) AS p50_duration_ms, quantileExact(?)(tokens) AS p50_tokens FROM loom.procedure_runs WHERE
-c7b3955dfd9f	SELECT namespace, subject, role, status, revoked_at, version, toUnixTimestamp(logged_at) AS logged_s FROM loom.namespace_grant_log WHERE org = {org:String} AND namespace IN {ns:Array(String)} AND subj
 c7d96433646a	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 c7f72fd867b4	SELECT qualified_name, argMaxIf(symbol_id, version, tier = ?) AS scip_id, argMaxIf(symbol_id, version, tier = ?) AS ts_id, argMaxIf(signature, version, tier = ?) AS signature, any(path) AS path FROM l
 c85b7e038508	SELECT namespace, kind FROM loom.namespaces FINAL WHERE org = {org:String}

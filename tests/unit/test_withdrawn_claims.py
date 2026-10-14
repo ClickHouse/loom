@@ -245,36 +245,42 @@ def test_revoking_ends_claims_only_when_the_grant_was_active(
     assert recorded_cutoff_writes == ([(ORG, ["team"], ["alice"])] if cut else [])
 
 
-def _logged_at(role: str, at: datetime) -> dict[str, Any]:
-    ns = int(at.replace(tzinfo=UTC).timestamp() * 1_000_000_000)
+def _logged_at(role: str, at: datetime, namespace: str = "team") -> dict[str, Any]:
     return {
-        "namespace": "team",
+        "namespace": namespace,
         "subject": "alice",
         "role": role,
         "status": "active",
         "revoked_at": None,
-        "version": ns,
-        "logged_s": ns // 1_000_000_000,
+        "version": int(at.replace(tzinfo=UTC).timestamp() * 1_000_000_000),
     }
 
 
-@pytest.mark.parametrize(("landed_after_s", "stamped_again"), [(2, True), (-0.5, False)])
-def test_a_lowering_whose_row_landed_after_its_cutoff_is_stamped_again(
-    ch: _CH, landed_after_s: float, stamped_again: bool
-) -> None:
-    # A committed insert can take seconds: a mint that read before the cutoff
-    # landed took its issue time before that read, so a cutoff stamped before
-    # the grant row landed may predate its token.
+def test_a_pair_already_cut_is_cut_again_after_its_grant_write(ch: _CH) -> None:
+    # A committed insert can take seconds: a mint that read the grant before the
+    # write landed is issued after the first cutoff, so only a second one cuts it.
     _end("team")
     key = rev.grant_claim_key(ORG, "team", "alice")
-    stamp = ch.revoked[key]["issued_before"]
-    landed = stamp + timedelta(seconds=landed_after_s)
-    ch.log = [_logged_at("admin", stamp - timedelta(hours=1)), _logged_at("writer", landed)]
-    landed_ns = ch.log[-1]["version"]
-    asyncio.run(
-        rev.cut_where_lowered(ORG, [("team", "alice")], landed_ns=landed_ns, revoked_by="boss")
-    )
-    assert (ch.revoked[key]["reason"] == "grant lowered") is stamped_again
+    asyncio.run(rev.cut_where_lowered(ORG, [("team", "alice")], revoked_by="boss"))
+    assert ch.revoked[key]["reason"] == "grant lowered"
+
+
+@pytest.mark.parametrize(
+    ("roles", "cut"),
+    [
+        # A raise landed between a writer's read and its write; the write lowered it.
+        (["viewer", "admin", "writer"], True),
+        (["viewer", "writer"], False),
+        ([], False),
+    ],
+)
+def test_a_pair_never_cut_is_cut_when_the_log_shows_it_fell(
+    ch: _CH, roles: list[str], cut: bool
+) -> None:
+    then = datetime(2026, 5, 1, 12, 0, 0)
+    ch.log = [_logged_at(role, then + timedelta(seconds=i)) for i, role in enumerate(roles)]
+    asyncio.run(rev.cut_where_lowered(ORG, [("team", "alice")], revoked_by="boss"))
+    assert (rev.grant_claim_key(ORG, "team", "alice") in ch.revoked) is cut
 
 
 def test_a_newer_cutoff_wins_in_clickhouse_however_late_it_lands(ch: _CH) -> None:
@@ -521,50 +527,23 @@ def test_a_lowered_scoped_token_still_lists_the_namespace_its_gate_admits(ch: _C
     assert asyncio.run(ctx.resolve_my_namespaces(ORG)) == []
 
 
-def _logged(
-    role: str, at: int, *, landed: int | None = None, revoked: bool = False, status: str = "active"
-) -> dict:
-    """A grant log row versioned at `at`, landed at `landed` (unix seconds)."""
-    return {
-        "role": role,
-        "status": status,
-        "revoked_at": datetime(2030, 1, 1) if revoked else None,
-        "version": at * 1_000_000_000,
-        "logged_s": at if landed is None else landed,
-    }
+def _logged(role: str, *, revoked: bool = False, status: str = "active") -> dict:
+    return {"role": role, "status": status, "revoked_at": datetime(2030, 1, 1) if revoked else None}
 
 
 @pytest.mark.parametrize(
-    ("history", "cutoff", "landed", "lowered"),
+    ("history", "fell"),
     [
-        # A raise between a writer's read and its write, then the write: lowered.
-        ([_logged("viewer", 10), _logged("admin", 11), _logged("writer", 12)], None, 12, True),
-        ([_logged("viewer", 10), _logged("writer", 11)], None, 11, False),
-        # A lowering that landed before its own cutoff's stamp.
-        ([_logged("admin", 10), _logged("writer", 11)], 12, 11, False),
-        # The admin row was still in force when the cutoff passed: tokens minted then.
-        ([_logged("admin", 10), _logged("writer", 13)], 12, 13, True),
-        # Its version predates the cutoff, but its insert returned after it.
-        ([_logged("admin", 10), _logged("writer", 11)], 12, 13, True),
-        # A retry, long after: the log says the row landed before the cutoff.
-        ([_logged("admin", 10), _logged("writer", 11)], 12, 0, False),
-        # Two lowerings in flight across the cutoff: admin stayed in force until they landed.
-        (
-            [_logged("admin", 5), _logged("viewer", 11, landed=12), _logged("viewer", 11)],
-            12,
-            0,
-            True,
-        ),
-        ([_logged("admin", 10), _logged("admin", 11, revoked=True)], 12, 11, False),
+        ([_logged("viewer"), _logged("admin"), _logged("writer")], True),
+        ([_logged("admin"), _logged("admin", revoked=True)], True),
+        ([_logged("viewer"), _logged("writer")], False),
         # A request grants nothing, so approving it raises from nothing.
-        ([_logged("admin", 10, status="pending"), _logged("writer", 11)], None, 11, False),
-        ([], None, 0, False),
+        ([_logged("admin", status="pending"), _logged("writer")], False),
+        ([], False),
     ],
 )
-def test_a_grant_is_lowered_when_it_ranks_below_a_role_held_since_its_cutoff(
-    history: list[dict], cutoff: int | None, landed: int, lowered: bool
-) -> None:
-    assert rev._lowered_since(history, cutoff, landed * 1_000_000_000) is lowered
+def test_a_grant_fell_when_it_ranks_below_an_earlier_one(history: list[dict], fell: bool) -> None:
+    assert rev._fell(history) is fell
 
 
 def test_a_grant_cutoff_acknowledged_late_does_not_move_this_process_back() -> None:

@@ -165,8 +165,8 @@ operation's role, or a live grant does.
     included, gives access back through itself and never brings the claim back. A
     restricted namespace is the exception: a token reads one only by naming it, so a mint
     names it again while a live grant there covers the person. Each mint
-    takes its issue time before it reads the cutoffs, and a cutoff is written again when
-    the grant row landed after it, so a token minted while one was in flight is cut too.
+    takes its issue time before it reads the cutoffs, and a cutoff is written again once
+    the grant row has landed, so a token minted while one was in flight is cut too.
   - **What is not touched.** A namespace the subject never held a grant on keeps its
     claim; revoke the token to take that away. Approving a request never lowers a grant.
   - **When it applies.** The server that took the grant away applies it at once, every
