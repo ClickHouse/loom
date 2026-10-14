@@ -834,9 +834,12 @@ async def _settle(
 
 
 async def _find(kind: str, credential: str, client_id: str) -> dict[str, Any] | None:
+    grant: dict[str, Any] | None
     if kind == "code":
-        return await _store.find_code(credential)
-    return await _store.find_refresh(credential, client_id)
+        grant = await _store.find_code(credential)
+    else:
+        grant = await _store.find_refresh(credential, client_id)
+    return grant
 
 
 def _invalid_grant() -> HTTPException:
