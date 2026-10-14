@@ -554,8 +554,15 @@ class CHClient:
                 # cache off. Session-level, so every query benefits; a no-op
                 # on a server without a cache.
                 "enable_filesystem_cache": 1,
+                # Loom's DateTime columns carry no zone of their own, so a
+                # server whose <timezone> is not UTC would shift naive params
+                # and reads by its offset; every session reads and writes UTC.
+                "session_timezone": "UTC",
             },
         )
+        # The driver learns the zone it binds aware params in from the server
+        # default before the session setting applies; bind them in UTC too.
+        self._client.server_tz = UTC
         await _probe_vector_state(self)
 
     async def disconnect(self) -> None:

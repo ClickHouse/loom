@@ -4,6 +4,7 @@ when set, else port 8443."""
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -59,7 +60,12 @@ def test_the_migration_runner_and_the_otel_exporter_connect_through_it(
     from server.observability import otel_exporters
 
     seen: list[dict[str, Any]] = []
-    monkeypatch.setattr(clickhouse_connect, "get_client", lambda **kw: seen.append(kw))
+
+    def fake_get_client(**kw: Any) -> Any:
+        seen.append(kw)
+        return SimpleNamespace()
+
+    monkeypatch.setattr(clickhouse_connect, "get_client", fake_get_client)
     monkeypatch.setattr(settings, "ch_secure", False)
     monkeypatch.setattr(settings, "ch_port", 8443)
     migrate.client()

@@ -74,6 +74,10 @@ and file locks are listed in [system overview](system-overview.md#deployment-top
   telemetry (`async_insert = 1, wait_for_async_insert = 0`) adds `async_insert_deduplicate = 0`
   (`server/core/ch_writes.py`, `normalize_insert_settings`),
   because identical telemetry rows in one flush window are legitimate.
+- **Times are UTC.** `DateTime` columns carry no zone of their own, so the server
+  client and the migration runner pin `session_timezone = 'UTC'` and bind aware params
+  in UTC: a server whose `<timezone>` is something else reads and writes the same
+  instants.
 - **Retries never duplicate.** Every insert carries an `insert_deduplication_token` from
   the batch and a per-batch nonce (`insert_dedup_token`), so a retry after a dropped socket
   lands the batch once.

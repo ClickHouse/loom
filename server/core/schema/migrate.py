@@ -38,6 +38,7 @@ import time
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -80,13 +81,17 @@ def client(*, receive_timeout_s: int | None = None) -> Client:
 
     from server.core.ch_target import connection_kwargs
 
-    return clickhouse_connect.get_client(
+    ch = clickhouse_connect.get_client(
         **connection_kwargs(),
         # A statement waits for its mutation on every replica; the read
         # timeout must outlast that wait, which the runner bounds itself.
         send_receive_timeout=receive_timeout_s
         or max(300, int(settings.migrate_mutation_wait_s) + 60),
+        # UTC whatever the server's <timezone>, as server.core.ch pins it.
+        settings={"session_timezone": "UTC"},
     )
+    ch.server_tz = UTC
+    return ch
 
 
 def _reads_loom_table(stmt: str) -> bool:

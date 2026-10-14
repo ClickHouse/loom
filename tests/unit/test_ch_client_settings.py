@@ -34,6 +34,8 @@ async def test_session_settings_enable_filesystem_cache(monkeypatch: pytest.Monk
     assert captured["settings"]["async_insert"] == 0
     assert captured["settings"]["wait_for_async_insert"] == 1
     assert captured["settings"]["insert_deduplicate"] == 0
+    # Every session reads and writes UTC, whatever the server's <timezone>.
+    assert captured["settings"]["session_timezone"] == "UTC"
 
 
 @pytest.mark.asyncio
