@@ -28,6 +28,7 @@ Skips without LOOM_BASE_URL (tests/integration/conftest.py).
 
 from __future__ import annotations
 
+import time
 import typing
 import uuid
 from dataclasses import dataclass, field
@@ -36,6 +37,7 @@ from typing import Any
 import httpx
 import pytest
 
+from server.settings import settings
 from tests.integration._eventually import wait_until
 from tests.integration._resources import unique_org
 
@@ -603,27 +605,23 @@ def test_a_narrowed_token_cannot_reach_any_blacklist_op(
     r = _post(control_plane_url, tokens["namespace"], "blacklist.list", w)
     assert r.status_code == 200 and seed.pattern_id_v in r.text, r.text[:300]
 
-    def _refused() -> httpx.Response | None:
-        r = _post(
-            control_plane_url,
-            tokens["pinned_w"],
-            "memory.set",
-            {
-                **w,
-                "agent": "a",
-                "user_id": W,
-                "memory_key": "probe/blacklisted",
-                "value": f"a note holding {seed.pattern_v}",
-            },
-        )
-        return r if r.status_code == 422 else None
-
     # Another web process takes the pattern up within its version-check interval.
-    refused = wait_until(_refused, max_wait=10.0, interval=0.5, description="W to be refused")
-    assert "BLACKLISTED" in refused.text, refused.text[:300]
-    assert seed.nonce_v not in refused.text and seed.pattern_id_v not in refused.text, refused.text[
-        :300
-    ]
+    time.sleep(settings.blacklist_version_check_interval_seconds + 0.5)
+    r = _post(
+        control_plane_url,
+        tokens["pinned_w"],
+        "memory.set",
+        {
+            **w,
+            "agent": "a",
+            "user_id": W,
+            "memory_key": "probe/blacklisted",
+            "value": f"a note holding {seed.pattern_v}",
+        },
+    )
+    body = r.text[:300]
+    assert r.status_code == 422 and "BLACKLISTED" in r.text, f"{r.status_code} {body}"
+    assert seed.nonce_v not in r.text and seed.pattern_id_v not in r.text, body
 
 
 def test_pinned_users_keep_their_own_brief_under_one_key(

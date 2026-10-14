@@ -13,7 +13,7 @@ if [ -z "${LOOM_WEB_WORKERS:-}" ]; then
   LOOM_WEB_WORKERS=$(python -m server.core.web_workers)
   chosen=1
 fi
-# A word, a sign or a number past the shell's range fails the test as well.
+# A word, zero, a negative or a number past the shell's range fails the test.
 if ! [ "$LOOM_WEB_WORKERS" -ge 1 ] 2>/dev/null; then
   echo "loom: LOOM_WEB_WORKERS=$LOOM_WEB_WORKERS is not a positive whole number" >&2
   exit 2

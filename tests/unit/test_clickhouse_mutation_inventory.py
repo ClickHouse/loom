@@ -36,9 +36,10 @@ _EXPECTED_MUTATIONS = Counter(
         # and the terminal-state key drop), not a MergeTree part.
         ("server/tasks/store/repo.py", "task_leases", "UPDATE"): 2,
         ("server/tasks/store/repo.py", "task_leases", "DELETE"): 1,
-        # run.complete drops a run id claim, also a KeeperMap key (the erasure saga's
+        # run.complete drops a run id claim, and a session run's close takes over a
+        # stale close claim and drops its own: all KeeperMap keys (the erasure saga's
         # drop goes through erasure.store.mutations.run_keeper_delete).
-        ("server/tasks/store/runs.py", "agent_run_claims", "DELETE"): 1,
+        ("server/tasks/store/runs.py", "agent_run_claims", "DELETE"): 3,
         # Conditional Keeper key recovery, only after a kernel death proof and
         # a server-side quiescence check; not a MergeTree data mutation.
         ("server/insights/store/provider_lock.py", "_migration_lock", "DELETE"): 1,

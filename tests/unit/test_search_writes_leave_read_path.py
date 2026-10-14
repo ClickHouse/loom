@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -48,14 +49,16 @@ def test_ensure_returns_before_run_begin_lands_and_close_waits_for_it(monkeypatc
         await gate.wait()
         order.append(f"begin:{inp.run_id}")
 
-    async def complete(inp: Any) -> Any:
+    async def complete(ch: Any, inp: Any, existing: Any) -> None:
         order.append(f"complete:{inp.run_id}")
-        from server.tasks.api.models_run import RunCompleteOutput
 
-        return RunCompleteOutput(run_id=inp.run_id, status=inp.status, duration_ms=inp.duration_ms)
+    async def fetch(ch: Any, org: str, ns: str, run_id: str) -> dict[str, str]:
+        return {"status": "active", "metadata": "{}"}
 
     monkeypatch.setattr(h, "begin_session_run", slow_begin)
-    monkeypatch.setattr(h, "handle_run_complete", complete)
+    monkeypatch.setattr(h, "_complete", complete)
+    monkeypatch.setattr(h.runs_store, "fetch_run", fetch)
+    monkeypatch.setattr(h.runs_store, "claim_close", AsyncMock(return_value=None))
 
     async def active(org: str, run_id: str) -> list[dict[str, str]]:
         begun = f"begin:{run_id}" in order

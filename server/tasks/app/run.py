@@ -256,11 +256,10 @@ async def active_session_runs(org: str, run_id: str) -> list[RunLedgerRow]:
 
 async def close_session_run(org: str, run_id: str, *, reason: str) -> bool:
     """Complete every active row of an implicit session run; False when none is."""
-    closed = [
-        await _complete_session_run(row, reason=reason)
-        for row in await active_session_runs(org, run_id)
-    ]
-    return any(closed)
+    closed = False
+    for row in await active_session_runs(org, run_id):
+        closed |= await _complete_session_run(row, reason=reason)
+    return closed
 
 
 # One idle-sweep pass: how many runs it closes at most, how many at once, and
@@ -287,7 +286,7 @@ async def close_idle_session_runs(idle_seconds: int, *, org: str = "") -> int:
             if time.monotonic() >= deadline:
                 return False
             try:
-                return await _complete_session_run(row, reason="idle")
+                return await _complete_session_run(row, reason="idle", idle_seconds=idle_seconds)
             except Exception as e:  # noqa: BLE001 — one run's close must not hold up the rest
                 log.warning("session run %s: idle close failed: %s", row["run_id"], e)
                 return False
@@ -295,28 +294,46 @@ async def close_idle_session_runs(idle_seconds: int, *, org: str = "") -> int:
     return sum(await asyncio.gather(*(close(row) for row in stale)))
 
 
-async def _complete_session_run(row: RunLedgerRow, *, reason: str) -> bool:
-    """Complete one row, unless another close (the sweep on another host, a
-    DELETE) completed it first: a second completion would apply the retain
-    mode to the run's memories again. False when it was already closed."""
+async def _complete_session_run(row: RunLedgerRow, *, reason: str, idle_seconds: int = 0) -> bool:
+    """Complete one row of a session run, once: a close claim lets one of the
+    closes racing for it (the sweep on another host, a DELETE) through, and the
+    winner completes it only while it is still active, and with `idle_seconds`
+    (the sweep, which picked it a while ago) still idle. A second completion
+    would apply the retain mode to the run's memories again. Without Keeper
+    there is no claim, and two racing closes can both complete it."""
+    ch = get_client()
     org, namespace, run_id = str(row["org"]), str(row["namespace"]), str(row["run_id"])
-    if namespace not in {str(r["namespace"]) for r in await active_session_runs(org, run_id)}:
+    claimed = await runs_store.claim_close(ch, org, namespace, run_id)
+    if claimed is False:
         return False
-    await handle_run_complete(
-        RunCompleteInput(
-            org=org,
-            namespace=namespace,
-            run_id=run_id,
-            status="completed",
-            # The transport saw the session end; it cannot say how the work
-            # went, and `none` writes no evidence or harm.
-            outcome="none",
-            # 0: from the run's start, which every web process shares.
-            duration_ms=0,
-            metadata={"closed_by": f"mcp_{reason}"},
+    try:
+        with sequential_reads():
+            existing = await runs_store.fetch_run(ch, org, namespace, run_id)
+        if existing is None or existing.get("status") != "active":
+            return False
+        subject = str(json.loads(existing.get("metadata") or "{}").get("subject") or "")
+        if idle_seconds and await runs_store.called_lately(ch, run_id, subject, idle_seconds):
+            return False
+        await _complete(
+            ch,
+            RunCompleteInput(
+                org=org,
+                namespace=namespace,
+                run_id=run_id,
+                status="completed",
+                # The transport saw the session end; it cannot say how the work
+                # went, and `none` writes no evidence or harm.
+                outcome="none",
+                # 0: from the run's start, which every web process shares.
+                duration_ms=0,
+                metadata={"closed_by": f"mcp_{reason}"},
+            ),
+            existing,
         )
-    )
-    return True
+        return True
+    finally:
+        if claimed:
+            await runs_store.drop_close_claim(ch, org, namespace, run_id)
 
 
 async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:
@@ -517,7 +534,11 @@ async def handle_run_complete(input: RunCompleteInput) -> RunCompleteOutput:
             "call run.begin first",
             run_id=input.run_id,
         )
+    return await _complete(ch, input, existing)
 
+
+async def _complete(ch: Any, input: RunCompleteInput, existing: RunLedgerRow) -> RunCompleteOutput:
+    """Close the run `existing` is the stored row of."""
     now = _now()
     started = existing.get("started_at")
     duration_ms = int(input.duration_ms or 0)

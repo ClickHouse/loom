@@ -26,6 +26,71 @@ log = logging.getLogger(__name__)
 # Cap on the keys a derived read returns.
 DERIVED_LIMIT = 500
 
+# How long a session run's close claim holds before another close may take it
+# over: a close takes seconds, so an older claim is one whose closer died.
+CLOSE_CLAIM_STALE_S = 600
+
+
+async def claim_close(ch: Any, org: str, ns: str, run_id: str) -> bool | None:
+    """Claim the close of a session run's row, so one of the closes racing for it
+    completes it: True won, False another close holds it, None no claims table
+    (or Keeper failed) and so no claim. Drop it with `drop_close_claim`."""
+    key = json.dumps(["close", org, ns, run_id])
+    try:
+        if not await _claims_available(ch):
+            return None
+    except Exception as e:  # noqa: BLE001 — no claims table: the close goes unclaimed
+        _keeper_failed(e, "could not read system.tables for the claims table")
+        return None
+    for take_over in (False, True):
+        if take_over:
+            await ch.execute(
+                "ALTER TABLE loom.agent_run_claims DELETE WHERE claim_key = {k:String} "
+                "AND claimed_at < now64(3) - INTERVAL {stale:UInt32} SECOND",
+                params={"k": key, "stale": CLOSE_CLAIM_STALE_S},
+            )
+        try:
+            await ch.execute(
+                "INSERT INTO loom.agent_run_claims "
+                "(claim_key, org, namespace, run_id, user_id, session_id, claimed_at) "
+                "SETTINGS keeper_map_strict_mode = 1 "
+                "VALUES ({k:String}, {org:String}, {ns:String}, {rid:String}, '-', '-', now64(3))",
+                params={"k": key, "org": org, "ns": ns, "rid": run_id},
+            )
+            return True
+        except Exception as e:  # noqa: BLE001 — Keeper down leaves the close unclaimed
+            if not key_exists(e):
+                _keeper_failed(e)
+                return None
+    return False
+
+
+async def drop_close_claim(ch: Any, org: str, ns: str, run_id: str) -> None:
+    """Drop a close claim once the close is done. Best effort: one left behind
+    is taken over after CLOSE_CLAIM_STALE_S."""
+    try:
+        await ch.execute(
+            "ALTER TABLE loom.agent_run_claims DELETE WHERE claim_key = {k:String}",
+            params={"k": json.dumps(["close", org, ns, run_id])},
+        )
+    except Exception as e:  # noqa: BLE001 — a claim left behind expires
+        log.debug("close claim for %s not dropped: %s", run_id, e)
+
+
+async def called_lately(ch: Any, run_id: str, subject: str, idle_seconds: int) -> bool:
+    """Whether a request of the token `subject` ("" = anyone) labelled `run_id`
+    within `idle_seconds`."""
+    row = await ch.query_one(
+        """
+        SELECT count() > 0 AS called FROM loom.agent_events
+        WHERE run_id = {rid:String} AND ts >= now64(3) - INTERVAL {idle:UInt32} SECOND
+          AND ({subject:String} = '' OR subject = {subject:String})
+        """,
+        params={"rid": run_id, "subject": subject, "idle": idle_seconds},
+    )
+    return bool((row or {}).get("called"))
+
+
 RUN_COLUMNS = (
     "org",
     "namespace",

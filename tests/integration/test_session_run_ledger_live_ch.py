@@ -220,6 +220,42 @@ async def test_a_run_that_records_no_subject_stays_open_while_it_is_called(ch: A
 
 
 @pytest.mark.asyncio
+async def test_closes_racing_for_one_session_run_complete_it_once(ch: Any) -> None:
+    """With Keeper, the close claim lets one of them through."""
+    from server.tasks.api.models_run import RunBeginInput
+    from server.tasks.app.run import begin_session_run, close_session_run
+    from server.tasks.store.runs import claim_close, drop_close_claim
+
+    org = f"itest-race-{uuid.uuid4().hex[:8]}"
+    run_id = session_run_id(org, "sa:a", uuid.uuid4().hex)
+    if await claim_close(ch, org, "ns", run_id) is None:
+        pytest.skip("no Keeper claims table on this server")
+    await drop_close_claim(ch, org, "ns", run_id)
+    try:
+        for _ in range(5):
+            await begin_session_run(
+                RunBeginInput(
+                    org=org,
+                    namespace="ns",
+                    agent=AGENT,
+                    run_id=run_id,
+                    goal="mcp session (itest)",
+                    environment="mcp",
+                    metadata={"implicit": True, "subject": "sa:a"},
+                ),
+                started_at=naive_utc_now(),
+            )
+            closed = await asyncio.gather(
+                *(close_session_run(org, run_id, reason="session_end") for _ in range(3))
+            )
+            assert sorted(closed) == [False, False, True]
+    finally:
+        await ch.execute(
+            "DELETE FROM loom.agent_runs WHERE org = {org:String}", params={"org": org}
+        )
+
+
+@pytest.mark.asyncio
 async def test_a_scoped_callers_session_run_is_its_own(ch: Any) -> None:
     """A token pinned to one user: the run the transport begins is filed under
     that user, and its DELETE completes it on a web process that never served

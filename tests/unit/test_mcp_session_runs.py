@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -63,12 +64,12 @@ class _Ledger:
         self.begins.append(inp)
         self.active[inp.run_id] = inp.namespace
 
-    async def complete(self, inp: Any) -> Any:
+    async def fetch(self, ch: Any, org: str, ns: str, run_id: str) -> dict[str, Any] | None:
+        return {"status": "active", "metadata": "{}"} if run_id in self.active else None
+
+    async def complete(self, ch: Any, inp: Any, existing: Any) -> None:
         self.completes.append(inp)
         self.active.pop(inp.run_id, None)
-        from server.tasks.api.models_run import RunCompleteOutput
-
-        return RunCompleteOutput(run_id=inp.run_id, status=inp.status, duration_ms=inp.duration_ms)
 
 
 @pytest.fixture
@@ -77,8 +78,11 @@ def ledger(monkeypatch) -> _Ledger:
 
     led = _Ledger()
     monkeypatch.setattr(h, "begin_session_run", led.begin)
-    monkeypatch.setattr(h, "handle_run_complete", led.complete)
     monkeypatch.setattr(h, "active_session_runs", led.active_runs)
+    monkeypatch.setattr(h, "_complete", led.complete)
+    monkeypatch.setattr(h.runs_store, "fetch_run", led.fetch)
+    monkeypatch.setattr(h.runs_store, "claim_close", AsyncMock(return_value=True))
+    monkeypatch.setattr(h.runs_store, "drop_close_claim", AsyncMock())
     return led
 
 
@@ -565,11 +569,11 @@ def test_a_delete_closes_against_the_callers_quota(ledger: _Ledger, monkeypatch)
     seen: list[str] = []
     complete = ledger.complete
 
-    async def counted(inp: Any) -> Any:
+    async def counted(ch: Any, inp: Any, existing: Any) -> None:
         seen.append(quota_key_var.get())
-        return await complete(inp)
+        await complete(ch, inp, existing)
 
-    monkeypatch.setattr(h, "handle_run_complete", counted)
+    monkeypatch.setattr(h, "_complete", counted)
 
     async def _run() -> None:
         await mcp_runs.ensure("s", DEFAULTS, CALLER, now=0.0)
