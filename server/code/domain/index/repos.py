@@ -259,7 +259,12 @@ def _publish_config_errors(errors: dict[str, str]) -> None:
 def config_errors_for(namespace: str) -> list[str]:
     """Why this process could not use the entry for `namespace`, as of its last
     `configured_repos()` call."""
-    return [msg for key, msg in _config_errors.items() if key.split(":", 1)[-1] == namespace]
+    out = []
+    for key, msg in _config_errors.items():
+        kind, _, ns = key.partition(":")  # per-entry keys end in the namespace
+        if ns == namespace and kind != "entry":  # `entry:<i>` is an index, not a name
+            out.append(msg)
+    return out
 
 
 def config_error_count() -> int | None:

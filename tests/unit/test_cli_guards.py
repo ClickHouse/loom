@@ -56,6 +56,16 @@ def test_repo_cfg_names_why_an_entry_was_skipped(monkeypatch: pytest.MonkeyPatch
     assert "code-a.python" not in str(ex.value) and "Check LOOM_CODE_REPOS_JSON" in str(ex.value)
 
 
+def test_an_entry_index_is_not_read_as_a_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.code.domain.index import repos
+
+    monkeypatch.setattr(
+        settings, "code_repos_json", json.dumps([{"repo": "a/b"}, {"namespace": "x"}])
+    )
+    repos.configured_repos()
+    assert repos.config_errors_for("0") == []
+
+
 def test_no_default_code_namespace_is_a_clear_refusal(monkeypatch: pytest.MonkeyPatch) -> None:
     """With no scalar default the CLI and every code.* handler name what is missing
     instead of reading namespace ''."""
