@@ -7,12 +7,14 @@
 # nothing. GitHub Actions `services:` start BEFORE checkout and can't mount
 # repo files, so CI runs the container as a post-checkout step via this script.
 #
-# Pinned to the same image as dev/docker-compose.dev.yml so CI is reproducible
-# and matches what we validate against locally.
+# The same image as dev/docker-compose.dev.yml, the latest release, so CI
+# validates what runs locally.
 set -euo pipefail
 
 ROOT="${GITHUB_WORKSPACE:-$(pwd)}"
 CFG="$ROOT/deploy/clickhouse-config"
+# A CI run passes the one release it resolved (dev/clickhouse_release.sh).
+IMAGE="${LOOM_CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:latest}"
 
 docker run -d --pull always --name loom-ch \
   -p 8123:8123 -p 9000:9000 \
@@ -26,7 +28,7 @@ docker run -d --pull always --name loom-ch \
   -v "$CFG/nlp_user_settings.xml:/etc/clickhouse-server/users.d/nlp_user_settings.xml:ro" \
   -v "$CFG/merge_tree_settings.xml:/etc/clickhouse-server/config.d/merge_tree_settings.xml:ro" \
   -v "$CFG/keeper.xml:/etc/clickhouse-server/config.d/keeper.xml:ro" \
-  clickhouse/clickhouse-server:latest
+  "$IMAGE"
 # named_collections.xml is intentionally omitted: it's gitignored (built from a
 # template against an operator secret) and only powers CH SQL ai* functions,
 # which the test suite doesn't exercise.

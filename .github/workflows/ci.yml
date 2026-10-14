@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Daily on main: a new ClickHouse release that prints DDL or plans
+  # differently fails here, not on the next unrelated pull request.
+  schedule:
+    - cron: "17 5 * * *"
 
 # A new push to a pull request cancels its superseded run. Every push to main
 # runs to completion in its own group, so a failure on one merge commit is
@@ -24,6 +28,18 @@ env:
   UV_VERSION: "0.12.19"
 
 jobs:
+  clickhouse:
+    name: the ClickHouse release this run tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      image: ${{ steps.resolve.outputs.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # `latest` moves; every job of this run takes the release it names now.
+      - id: resolve
+        run: echo "image=$(bash dev/clickhouse_release.sh)" >> "$GITHUB_OUTPUT"
+
   lint:
     name: ruff + mypy-gate
     runs-on: ubuntu-latest
@@ -89,8 +105,11 @@ jobs:
 
   unit:
     name: pytest unit + coverage
+    needs: clickhouse
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      LOOM_CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
     # No ClickHouse service: unit tests skip cleanly when env config is absent.
     # The clickhouse binary is installed for clickhouse-local / -format checks.
     steps:
@@ -112,12 +131,11 @@ jobs:
         run: git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
       # The clickhouse binary (as clickhouse-local and clickhouse-format) for the
       # unit tests that run production SQL locally, such as the pending-grant
-      # checks. Taken from the image dev/ci_start_clickhouse.sh runs, so the
-      # parser and engine are the integration job's release (unless a release
-      # lands between the two pulls).
+      # checks. The run's release, so the parser and engine are the
+      # integration job's server.
       - name: Install the clickhouse binary
         run: |
-          id=$(docker create --pull always clickhouse/clickhouse-server:latest)
+          id=$(docker create --pull always "$LOOM_CLICKHOUSE_IMAGE")
           sudo docker cp -L "$id:/usr/bin/clickhouse" /usr/local/bin/clickhouse
           docker rm "$id" >/dev/null
           sudo ln -sf clickhouse /usr/local/bin/clickhouse-format
@@ -188,9 +206,11 @@ jobs:
 
   schema-check:
     name: schema.sql in sync with migrations
+    needs: clickhouse
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
+      LOOM_CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
       LOOM_CH_HOST: localhost
       LOOM_CH_PORT: "8123"
       LOOM_CH_USER: loom
@@ -335,9 +355,11 @@ jobs:
 
   integration:
     name: pytest integration (ClickHouse service)
+    needs: clickhouse
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
+      LOOM_CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
       LOOM_CH_HOST: localhost
       LOOM_CH_PORT: "8123"
       LOOM_CH_USER: loom

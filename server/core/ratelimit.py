@@ -496,9 +496,7 @@ class Limiter:
                 DEFAULT_LIMITS["default"],
             )
         )
-        return _scale_for_class(
-            _scale_for_replicas(base, shared=self._shared_active), traffic_class
-        )
+        return _scale_for_class(_scale_for_replicas(base, shared=self.shared_active), traffic_class)
 
     def _org_limit_for(self, org: str, op_class: str, traffic_class: str = "") -> Limit:
         ov = self._org_overrides.get((org, op_class))
@@ -510,9 +508,7 @@ class Limiter:
                 DEFAULT_ORG_LIMITS["default"],
             )
         )
-        return _scale_for_class(
-            _scale_for_replicas(base, shared=self._shared_active), traffic_class
-        )
+        return _scale_for_class(_scale_for_replicas(base, shared=self.shared_active), traffic_class)
 
     def _actor_limit_for(
         self, namespace: str, actor: str, op_class: str, traffic_class: str = ""
@@ -524,7 +520,7 @@ class Limiter:
         ov = self._actor_overrides.get((namespace, actor, op_class))
         if ov is not None:
             return _scale_for_class(
-                _scale_for_replicas(ov, shared=self._shared_active), traffic_class
+                _scale_for_replicas(ov, shared=self.shared_active), traffic_class
             )
         frac = actor_fraction()
         if frac >= 1.0:
@@ -731,7 +727,7 @@ class Limiter:
         be sized: the base key and every class-suffixed key on it, divided across
         the processes that hold copies, each at its own class fraction. `skip`
         leading key elements (the org) are not part of what the override names."""
-        per_process = _scale_for_replicas(limit, shared=self._shared_active)
+        per_process = _scale_for_replicas(limit, shared=self.shared_active)
         for full_key, existing in buckets.items():
             if not self._reaches(full_key, base, skip):
                 continue

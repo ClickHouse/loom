@@ -102,11 +102,11 @@ def pad_rows(table: str, rows: list[dict[str, Any]]) -> int:
 
 
 async def fit_vectors(table: str, rows: list[dict[str, Any]]) -> None:
-    """Refuse a vector its coded column cannot take, then pad the empty ones,
-    sized from a recent reading (in place)."""
+    """Refuse a vector its coded column cannot take, then pad the empty ones
+    (in place), both against a recent reading when a coded column is padded."""
     from server.core.vectors import codes_state
 
-    await codes_state.refuse_other_widths(table, rows)  # before any placeholder
     if _pads_coded(table, rows):
         await codes_state.recheck()
+    await codes_state.refuse_other_widths(table, rows)  # skips the empty vectors
     pad_rows(table, rows)

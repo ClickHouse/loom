@@ -28,13 +28,14 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   and a namespace's `rerank_endpoint` take a name, not a URL: `none`, `builtin:openai[:model]`,
   `builtin:cohere[:model]`, or an endpoint the operator names in `LOOM_RERANK_ENDPOINTS_JSON`.
   A URL or an unknown name is a 422. A namespace that still stores a URL is no longer reranked.
-- **Operators:** every stack runs the latest ClickHouse release (`clickhouse/clickhouse-server:latest`),
-  and CI tests it. On 26.8 or later a fresh install creates its vector
+- **Operators:** a release's installer bundle runs the ClickHouse release that was latest
+  when it was built (migrated and schema-checked then), so rerunning the installer keeps it
+  and a newer Loom release moves it; the repository's compose files and CI follow
+  `clickhouse/clickhouse-server:latest`. On 26.8 or later a fresh install creates its vector
   columns coded (`Quantized('rabitq', dim, 0)`) when the width is a multiple of 8; an install
   whose vector tables are plain stays plain until `scripts/ops/vector_codec_rebuild.py` moves
-  it. `LOOM_CLICKHOUSE_IMAGE` pins another image (a release, or
-  `clickhouse/clickhouse-server:head`, unsupported); `docker compose pull clickhouse` moves a
-  stack to a newer release.
+  it. `LOOM_CLICKHOUSE_IMAGE` overrides the image (a release, or
+  `clickhouse/clickhouse-server:head`, unsupported).
 - **Operators:** with `LOOM_WEB_WORKERS` unset, the image starts one web process per CPU the
   container may use, at most one per GiB of memory and at most 8, instead of one. Set it to
   keep the old behaviour or to leave cores for ClickHouse on a shared host. Several

@@ -148,15 +148,14 @@ def _coded_of(table: str) -> list[tuple[str, str, int]]:
 # A refusal, or a placeholder sized for a coded column, uses a reading at most
 # this old, so a table rebuilt outside Loom is not written at its old width for
 # a whole probe interval.
-RECHECK_BEFORE_REFUSING_S = 5.0
+FRESH_READING_S = 5.0
 
 
 async def recheck() -> None:
-    """Re-read the widths when the reading is older than RECHECK_BEFORE_REFUSING_S;
-    concurrent writers wait on one re-read."""
-    if _ch is None or (
-        _probed_at is not None and time.monotonic() - _probed_at <= RECHECK_BEFORE_REFUSING_S
-    ):
+    """Re-read the widths when the reading is older than FRESH_READING_S;
+    concurrent writers wait on one re-read (the full probe: at most one every
+    few seconds, so its patch-part read is not worth splitting out)."""
+    if _ch is None or (_probed_at is not None and time.monotonic() - _probed_at <= FRESH_READING_S):
         return
     await asyncio.shield(_start_refresh())
 
@@ -315,6 +314,7 @@ __all__ = [
     "ensure_probed",
     "is_coded",
     "probe",
+    "recheck",
     "refuse_other_widths",
     "refuse_width",
     "reset",

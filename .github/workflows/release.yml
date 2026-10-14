@@ -8,7 +8,8 @@ name: release
 # release's one-line installer never points at an image that does not exist.
 # docs/development/release-process.md is the maintainer procedure.
 #
-# Jobs: version (derive and gate the version) -> build -> verify (inspect the
+# Jobs: version (derive and gate the version), clickhouse (the ClickHouse
+# release the installer bundle names, migrated and schema-checked) -> build -> verify (inspect the
 # exact files) -> docker -> docker-smoke -> github-release -> pypi, npm (dispatch only). A
 # re-run after a partial publish is safe: the release is updated in place,
 # PyPI skips files it already has, npm skips a version it already has, and the
@@ -34,6 +35,7 @@ permissions:
 env:
   PYTHON_VERSION: "3.12"
   NODE_VERSION: "22"
+  UV_VERSION: "0.12.19"
 
 jobs:
   version:
@@ -86,9 +88,49 @@ jobs:
           grep -qxF "__version__ = \"$VERSION\"" server/__init__.py \
             || { echo "::error file=server/__init__.py::__version__ is not $VERSION"; exit 1; }
 
+  # The bundle names the ClickHouse release that is latest now, so an installed
+  # Loom version keeps its ClickHouse; it is migrated and checked here first.
+  clickhouse:
+    name: The ClickHouse release the bundle names
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      image: ${{ steps.resolve.outputs.image }}
+    env:
+      LOOM_CH_HOST: localhost
+      LOOM_CH_PORT: "8123"
+      LOOM_CH_USER: loom
+      LOOM_CH_PASSWORD: loomdev
+      LOOM_CH_DATABASE: loom
+      LOOM_CH_SECURE: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        id: python
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Install Loom from uv.lock (no extras)
+        run: |
+          uv sync --locked --python "${{ steps.python.outputs.python-path }}"
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - id: resolve
+        run: echo "image=$(bash dev/clickhouse_release.sh)" >> "$GITHUB_OUTPUT"
+      - name: Migrate a fresh server of that release and check schema.sql
+        env:
+          LOOM_CLICKHOUSE_IMAGE: ${{ steps.resolve.outputs.image }}
+        run: |
+          bash dev/ci_start_clickhouse.sh
+          python -m server.core.schema.migrate
+          make schema-check
+
   build:
     name: Build the release files
-    needs: version
+    needs: [version, clickhouse]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -147,15 +189,12 @@ jobs:
           zip -q "release/plugins/loom-claude-code-plugin-v${VERSION}.zip" LICENSE NOTICE THIRD_PARTY_NOTICES
           zip -q "release/plugins/loom-codex-plugin-v${VERSION}.zip" LICENSE NOTICE THIRD_PARTY_NOTICES
           ls -la release/*
-      # The bundle names the ClickHouse release that is latest now, so an
-      # installed Loom version keeps its ClickHouse.
       - name: Build the source-free Compose installer bundle
+        env:
+          CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
         run: |
-          docker pull -q clickhouse/clickhouse-server:latest
-          ch=$(docker run --rm --entrypoint clickhouse clickhouse/clickhouse-server:latest local --query "SELECT version()")
-          docker pull -q "clickhouse/clickhouse-server:$ch"
           python scripts/release/build_stack_bundle.py --version "$VERSION" \
-            --clickhouse-image "clickhouse/clickhouse-server:$ch"
+            --clickhouse-image "$CLICKHOUSE_IMAGE"
           cp install.sh release/stack/install.sh
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

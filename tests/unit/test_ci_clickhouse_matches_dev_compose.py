@@ -25,10 +25,11 @@ def _default_image(value: str) -> str:
 
 
 def test_same_image_the_latest_release() -> None:
-    image = re.search(r"^\s*(clickhouse/clickhouse-server:\S+)\s*$", SCRIPT, re.M)
-    assert image and image.group(1) == _default_image(CH["image"])
-    assert image.group(1) == "clickhouse/clickhouse-server:latest"
-    assert "--pull always" in SCRIPT  # a cached `latest` would hold an older release
+    image = re.search(r'^IMAGE="([^"]+)"$', SCRIPT, re.M)
+    assert image and _default_image(image.group(1)) == _default_image(CH["image"])
+    assert _default_image(CH["image"]) == "clickhouse/clickhouse-server:latest"
+    # A cached `latest` would hold an older release.
+    assert "--pull always" in SCRIPT and CH["pull_policy"] == "always"
 
 
 def test_the_standalone_stack_runs_the_same_image() -> None:

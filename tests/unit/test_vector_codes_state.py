@@ -204,7 +204,7 @@ async def test_a_refusal_rereads_a_reading_older_than_a_few_seconds(
 
 
 def _age_reading(monkeypatch: pytest.MonkeyPatch) -> None:
-    old = vector_codes_state._probed_at - vector_codes_state.RECHECK_BEFORE_REFUSING_S - 1
+    old = vector_codes_state._probed_at - vector_codes_state.FRESH_READING_S - 1
     monkeypatch.setattr(vector_codes_state, "_probed_at", old)
 
 
@@ -223,6 +223,24 @@ async def test_placeholders_take_the_width_a_refusal_reread(
     row = {"embedding": [0.1] * 1024, "memory_key_embedding": []}
     await fit_vectors("memory_embeddings", [row])
     assert len(row["memory_key_embedding"]) == 1024
+
+
+@pytest.mark.asyncio
+async def test_a_vector_at_the_old_width_beside_a_placeholder_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Refused by name, not left to ClickHouse's code 190."""
+    from server.core.errors import CodedWidthMismatchError
+    from server.core.vectors.placeholders import fit_vectors
+
+    columns = [("memory_embeddings", "embedding"), ("memory_embeddings", "memory_key_embedding")]
+    ch = _FakeCH(coded=columns, patches={}, width=3072)
+    await vector_codes_state.probe(ch)
+    ch.width = 1024  # rebuilt outside Loom
+    _age_reading(monkeypatch)
+    row = {"embedding": [0.1] * 3072, "memory_key_embedding": []}
+    with pytest.raises(CodedWidthMismatchError):
+        await fit_vectors("memory_embeddings", [row])
 
 
 @pytest.mark.asyncio

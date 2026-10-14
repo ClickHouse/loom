@@ -462,12 +462,14 @@ def _install_vector_width(ch: Client) -> int | None:
 
 
 def _new_table_layout(ch: Client) -> tuple[int | None, str]:
-    """The width new vector tables are coded at (None: plain), and a line saying
-    why ("" when the server has no codec)."""
+    """The width new vector tables are coded at (None: plain), and a line saying why."""
     from server.core.schema.vector_codec_ddl import codable
 
     if not _codec_supported(ch):
-        return None, ""
+        return (
+            None,
+            "vector tables created plain: the Quantized codec needs ClickHouse 26.8 or later",
+        )
     width = _install_vector_width(ch)
     if width is None:
         return None, "vector tables created plain, as the install's existing ones are"
@@ -701,6 +703,8 @@ def _apply_pending(
 ) -> int:
     """Apply `to_apply` in order, recording each; 1 on the first failure. A
     file in `baselined` is recorded without running."""
+    from server.core.schema.vector_codec_ddl import creates_coded_table
+
     # Probe NLP support once: it decides whether the NLP experimental flag is
     # sent at all (ClickHouse Cloud forbids it).
     nlp_ok = _nlp_available(ch)
@@ -711,9 +715,7 @@ def _apply_pending(
     if sync.accepted:
         scope = "active replicas" if sync.level == 3 else "all replicas"
         print(f"  · waits: level {sync.level} ({scope})")
-    from server.core.schema.vector_codec_ddl import creates_coded_table
-
-    if layout and any(creates_coded_table(f.read_text()) for f in to_apply):
+    if any(creates_coded_table(f.read_text()) for f in to_apply):
         print(f"  · {layout}")
     if dims:
         print(f"  · aggregating tables are created with {DIMENSIONS_SETTING} = 1")

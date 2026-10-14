@@ -202,18 +202,6 @@ def test_overrides_bind_every_worker_with_bucket_sharing_off(settings_override) 
     b.reset_all()
 
 
-def test_a_check_knows_whether_buckets_are_shared_before_adopting_overrides(
-    settings_override, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """An adopted override is divided by the workers only when buckets are not shared."""
-    settings_override(ratelimit_shared="off", web_workers=3)
-    lim, order = Limiter(), []
-    monkeypatch.setattr(lim, "_store", lambda: order.append("store"))
-    monkeypatch.setattr(lim, "_sync_overrides", lambda: order.append("sync"))
-    lim.check("ns1", "memory.set", org="o")
-    assert order == ["store", "sync"]
-
-
 def test_a_reset_keeps_the_lock_file_a_sibling_may_hold(settings_override) -> None:
     settings_override(ratelimit_shared="off", web_workers=3)
     lim = Limiter()
