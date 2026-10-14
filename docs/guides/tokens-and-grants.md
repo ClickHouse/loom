@@ -185,7 +185,7 @@ curl -s "$LOOM_BASE_URL/v1/grants.create" -H "Authorization: Bearer $ADMIN_TOKEN
 
 - **Taking a grant away ends older tokens' claims.** `grants.revoke`, a `replace: true`
   lowering, `namespace.leave`, `loom claim-release` and a restore that lowers a grant each
-  write a cutoff in `loom.revoked_tokens`, keyed by a hash of each case-folded spelling of
+  write a cutoff in `loom.revoked_tokens`, keyed by a hash of each lower-cased spelling of
   the subject and kept ten years. A flat token minted before it reaches the namespace only
   through the subject's current grant; a scoped one keeps its own role there, capped at
   that grant.
@@ -395,7 +395,9 @@ for a first sign-in with no account (`LOOM_OIDC_JIT_EMAIL_DOMAINS` restricts it)
 a sign-in is refused. A person who has an active account in that org, whatever its name, is
 signed in to it and never given another. JIT never rebuilds an existing name: a released,
 deleted or another account's one is skipped for the next free name, `<name>-2` and on,
-then a random suffix.
+then a random suffix. Two first sign-ins of one person at the same moment are kept to one
+account on one server; on two servers, with every predictable name taken, each may pick a
+different random name, and an operator releases the extra one.
 
 To offboard a JIT user, revoke their subject (`loom revoke-token --subject <namespace>`)
 and delete their account: JIT refuses while any inactive account in the org still naming

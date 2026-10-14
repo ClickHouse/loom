@@ -38,6 +38,10 @@ _LOOKUP_SPELLINGS = 8
 _CUTOFF_SPELLINGS = 1000
 
 
+class TooManySpellings(RuntimeError):
+    """More accounts tie spellings to a subject than a cutoff may read."""
+
+
 def _is_human_subject(subject: str) -> bool:
     return bool(subject) and subject != "*" and not subject.startswith("sa:")
 
@@ -111,12 +115,17 @@ async def _read_spellings(
         },
     )
     if include_inactive and len(rows) > limit:
-        raise RuntimeError(f"more than {limit} accounts tie spellings to {subject!r} in {org!r}")
-    out = [subject]
+        # No retry fixes this: an operator must release the extra accounts.
+        log.error("aliases: more than %d accounts name %r in %r", limit, subject, org)
+        raise TooManySpellings(
+            f"more than {limit} accounts tie spellings to {subject!r} in {org!r}"
+        )
+    out, seen = [subject], {subject.lower()}
     for r in rows:
         for spelling in (str(r.get("owner_email") or ""), str(r.get("contact_email") or "")):
-            if spelling and spelling.lower() not in {s.lower() for s in out}:
+            if spelling and spelling.lower() not in seen:
                 out.append(spelling)
+                seen.add(spelling.lower())
     return out
 
 

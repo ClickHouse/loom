@@ -155,10 +155,11 @@ async def test_an_unreadable_cutoff_store_refuses_the_sign_in(
 
 
 @pytest.mark.asyncio
-async def test_a_strict_widening_raises_instead_of_leaving_the_set(
+async def test_the_restricted_grant_read_raises_for_a_caller_that_must_not_narrow(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # An OAuth refresh: a failed read must not mint a narrowed session.
     ch = _FakeCH(_own("home"), RuntimeError("replica away"))
     monkeypatch.setattr(login, "get_client", lambda: ch)
     with pytest.raises(RuntimeError):
-        await login.widen_with_restricted_grants("jdoe", "clickhouse", ["home"], strict=True)
+        await login.restricted_grant_namespaces("jdoe", "clickhouse", strict=True)

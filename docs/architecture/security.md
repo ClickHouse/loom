@@ -76,13 +76,13 @@ token on every fresh process, which is when an operator restarts the fleet after
 revoking a leaked token. The cost is a short 503 window at boot.
 
 **Grant cutoffs.** Taking a grant away or lowering it writes a row of the same table,
-keyed `grant:["<org>","<namespace>","<hash of the case-folded subject>"]` (one per spelling of the
-subject; the hash keeps an email out of the key but can be tested against a guessed one;
-it is not a keyed HMAC because a rotated key would orphan cutoffs kept for ten years), so
-tokens minted before it no longer reach the namespace through their own claim
-(`revocation.write_grant_cutoffs`, `authz.withdrawn_claims`). The row is the only record:
-the grant row is replaced by the subject's next one, so a cutoff is never derived from
-it. Two consequences hold the design together:
+keyed `grant:["<org>","<namespace>","<hash of the lower-cased subject>"]` (one per
+spelling of the subject; the hash keeps an email out of the key but can be tested against
+a guessed one; it is not a keyed HMAC because a rotated key would orphan cutoffs kept for
+ten years), so tokens minted before it no longer reach the namespace through their own
+claim (`revocation.write_grant_cutoffs`, `authz.withdrawn_claims`). The row is the only
+record: the grant row is replaced by the subject's next one, so a cutoff is never derived
+from it. Three consequences hold the design together:
 
 - A cutoff lives as long as the longest token it must outlive. Rows are kept for
   `NEVER_EXPIRES_DAYS` (ten years) because tokens without `exp` exist and a sign-in
@@ -94,6 +94,12 @@ it. Two consequences hold the design together:
   for its whole life, while a request check catches up on the next refresh. When those
   reads fail, `/oauth/token` answers 503 and leaves the code or refresh token unused, so
   the client's retry works; a decided exchange, a token or a refusal, uses it up.
+- A cutoff's time comes from the clock of the host that wrote it, and the newest row for
+  a key wins, so the hosts' clocks must agree to within about a second (NTP). A host whose
+  clock runs behind could write a later cutoff that lands earlier than the one it
+  replaces. The spellings a cutoff covers come from contact emails, which self-signup does
+  not verify; a cutoff refuses outright, and logs an error naming the subject, rather than
+  read past 1000 accounts, so an operator can release the extra ones.
 
 **One exchange per credential** (`server/auth/oauth_claims.py`). The OAuth store marks a
 code or refresh token used by writing a new ReplacingMergeTree version, so reading and then
@@ -111,7 +117,9 @@ Keeper refuses the second insert, so exactly one presenter runs.
   presenter takes it over with a compare-and-swap.
 - **A consume that did not finish** (failed or cancelled) may still land, so the claim is
   kept until it goes stale. A refresh answers 503 with `Retry-After: 120`; a code, which
-  expires sooner, answers with its tokens. Each server boot deletes stale claims.
+  expires sooner, answers with its tokens. A retry inside those 120 s finds the claim held
+  and is told to retry in 5 s, as any concurrent presenter is, until it goes stale. Each
+  server boot deletes stale claims.
 - **Without a Keeper** there is no table. The credential is used up before the decision,
   as before the claim existed, and `/v1/health` reports `oauth_claims_not_atomic`.
 

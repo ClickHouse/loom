@@ -27,7 +27,7 @@ import logging
 import secrets
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any, Literal, NamedTuple, cast
+from typing import Any, Literal
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 import httpx
@@ -50,7 +50,7 @@ _PENDING_TTL = 600  # OIDC pending-login record: time to complete IdP sign-in
 # --------------------------------------------------------------------------
 # Grant store — durable (ClickHouse) by default; in-memory for tests.
 #
-# Async interface (both impls):
+# Async interface (`_CHStore`; tests swap in tests/unit/oauth_store_fake.py):
 #   save_client(client_id, redirect_uris, client_name) / get_client(client_id)
 #   save_code(code, grant)   / find_code(code), consume_code(code, grant)
 #   save_refresh(token, gr)  / find_refresh(token, client_id),
@@ -737,13 +737,13 @@ _Kind = Literal["code", "refresh"]
 _Decider = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
-class _Decision(NamedTuple):
-    """What an exchange decided: the credential's grant (None when nothing was
-    found), and either the tokens or the refusal to answer with."""
+class _Refused(Exception):
+    """A refusal decided on a found credential, which is used up before
+    `answer` is raised."""
 
-    grant: dict[str, Any] | None
-    tokens: dict[str, Any] | None = None
-    refusal: HTTPException | None = None
+    def __init__(self, grant: dict[str, Any], answer: HTTPException) -> None:
+        super().__init__(answer.detail)
+        self.grant, self.answer = grant, answer
 
 
 async def _exchange(
@@ -777,28 +777,32 @@ async def _exchange(
         raise _retry_later()
     claimed = claim is oauth_claims.Claim.HELD
     issued_at = int(time.time())  # before the decision reads the grant cutoffs
+    # Held until the consume is acknowledged: a cancelled one may still land.
     keep_claim = False
     try:
-        decided = await _settle(
-            kind, credential, client_id, decide, issued_at, consume_first=not claimed
-        )
-        if claimed and decided.grant is not None:
-            keep_claim = True  # until the consume is acknowledged: a cancelled one may land
-            if await _consume(kind, credential, decided.grant):
+        try:
+            grant, tokens = await _settle(
+                kind, credential, client_id, decide, issued_at, consume_first=not claimed
+            )
+        except _Refused as refused:
+            keep_claim = claimed
+            if claimed and await _consume(kind, credential, refused.grant):
                 keep_claim = False
-            elif decided.tokens is not None and kind == "refresh":
-                # The kept claim holds a retry off until it goes stale. A code
-                # expires before that, so its tokens are answered instead.
-                raise _log_and_retry_later(
-                    "consume", "did not finish", decided.grant, retry_after=oauth_claims.STALE_S
-                )
+            raise refused.answer from None
+        keep_claim = claimed
+        if claimed and await _consume(kind, credential, grant):
+            keep_claim = False
+        if keep_claim and kind == "refresh":
+            # The kept claim holds a retry off until it goes stale. A code
+            # expires before that, so its tokens are answered instead.
+            log.warning(
+                "oauth: consume did not finish for %r in %r", grant["subject"], grant["org"]
+            )
+            raise _retry_later(oauth_claims.STALE_S)
+        return tokens
     finally:
         if claimed and not keep_claim:
             await oauth_claims.release_shielded(ch, key, holder)
-    if decided.refusal is not None:
-        raise decided.refusal
-    # A decision without a refusal carries its tokens.
-    return cast("dict[str, Any]", decided.tokens)
 
 
 async def _settle(
@@ -809,19 +813,20 @@ async def _settle(
     issued_at: int,
     *,
     consume_first: bool,
-) -> _Decision:
-    """Find the credential and decide on it within `EXCHANGE_TIMEOUT_S`. A
-    failure is a retryable 503, unless the credential was already used up:
-    then a retry cannot succeed, and the answer is `invalid_grant`."""
-    from server.auth.oauth_claims import EXCHANGE_TIMEOUT_S
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Find the credential and decide on it within `EXCHANGE_TIMEOUT_S`:
+    its grant and the tokens issued for it. A refusal of a found credential
+    raises `_Refused`; a failure answers a retryable 503, unless the
+    credential was already used up, when a retry cannot succeed and the
+    answer is `invalid_grant`."""
+    from server.auth import oauth_claims
 
-    grant = None
     consumed = False
     try:
-        async with asyncio.timeout(EXCHANGE_TIMEOUT_S):
+        async with asyncio.timeout(oauth_claims.EXCHANGE_TIMEOUT_S):
             grant = await _find(kind, credential, client_id)
             if grant is None:
-                return _Decision(None, refusal=_invalid_grant())
+                raise _invalid_grant()
             if consume_first:
                 if not await _consume(kind, credential, grant):
                     raise RuntimeError("consume did not finish")
@@ -830,14 +835,15 @@ async def _settle(
                 decided = await decide(grant)
             except HTTPException as e:
                 if e.status_code == 503:
-                    raise
-                return _Decision(grant, refusal=e)
-            tokens = await _issue_tokens(decided, decided["client_id"], issued_at)
-            return _Decision(grant, tokens=tokens)
+                    raise  # a failure, not a refusal
+                raise _Refused(grant, e) from None
+            return grant, await _issue_tokens(decided, decided["client_id"], issued_at)
+    except _Refused:
+        raise
     except Exception as e:  # a find, decision or issue that did not finish
         if consumed:
             log.warning("oauth: exchange failed after its credential was used up: %s", e)
-            return _Decision(grant, refusal=_invalid_grant())
+            raise _invalid_grant() from e
         if isinstance(e, HTTPException):
             raise
         raise _log_and_retry_later("exchange", e) from e
@@ -856,10 +862,10 @@ def _invalid_grant() -> HTTPException:
 async def _consume(kind: _Kind, credential: str, grant: dict[str, Any]) -> bool:
     """Mark the credential consumed; False when that did not finish within
     `CONSUME_TIMEOUT_S` (it may still land)."""
-    from server.auth.oauth_claims import CONSUME_TIMEOUT_S
+    from server.auth import oauth_claims
 
     try:
-        async with asyncio.timeout(CONSUME_TIMEOUT_S):
+        async with asyncio.timeout(oauth_claims.CONSUME_TIMEOUT_S):
             if kind == "code":
                 await _store.consume_code(credential, grant)
             else:
@@ -904,10 +910,10 @@ async def _decide_refresh(grant: dict[str, Any]) -> dict[str, Any]:
 
 
 def _log_and_retry_later(
-    what: str, cause: object, grant: dict[str, Any] | None = None, *, retry_after: int = 5
+    what: str, cause: Exception, grant: dict[str, Any] | None = None, *, retry_after: int = 5
 ) -> HTTPException:
-    """Log that `what` failed (because of `cause`, an exception or a reason)
-    and return the retryable 503 to raise, with `retry_after` seconds."""
+    """Log that `what` failed because of `cause` and return the retryable 503
+    to raise, with `retry_after` seconds."""
     who = f" for {grant['subject']!r} in {grant['org']!r}" if grant else ""
     log.warning("oauth: %s failed%s: %s", what, who, cause)
     return _retry_later(retry_after)

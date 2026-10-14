@@ -223,7 +223,7 @@ def test_revoking_ends_claims_only_when_the_grant_was_active(
     status: str,
     cut: bool,
     monkeypatch: pytest.MonkeyPatch,
-    recorded_cutoff_writes: list[tuple[str, str, list[str]]],
+    recorded_cutoff_writes: list[tuple[str, list[str], list[str]]],
 ) -> None:
     # Rejecting a join request granted nothing, so it ends no claim.
     async def _find(org: str, namespace: str, subject: str, **_k: Any) -> GrantState:
@@ -239,7 +239,7 @@ def test_revoking_ends_claims_only_when_the_grant_was_active(
     )
     revoke = GrantsRevokeInput(org=ORG, namespace="team", subject="alice")
     assert asyncio.run(grants_mod.handle_grants_revoke(revoke)).revoked
-    assert recorded_cutoff_writes == ([(ORG, "team", ["alice"])] if cut else [])
+    assert recorded_cutoff_writes == ([(ORG, ["team"], ["alice"])] if cut else [])
 
 
 def test_the_cutoff_is_written_again_once_the_first_write_has_returned(
@@ -420,7 +420,7 @@ def test_a_cutoff_refuses_rather_than_cut_short_past_its_spelling_bound(
             assert "DISTINCT" in sql and params["lim"] == 3
             return [{"owner_email": f"u{i}", "contact_email": "a@x.io"} for i in range(3)]
 
-    with pytest.raises(RuntimeError, match="more than 2 accounts"):
+    with pytest.raises(aliases.TooManySpellings, match="more than 2 accounts tie spellings"):
         asyncio.run(aliases.cutoff_spellings(ORG, "a@x.io", ch=_Directory()))
 
 

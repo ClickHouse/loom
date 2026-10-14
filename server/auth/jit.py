@@ -138,7 +138,7 @@ async def jit_provision_for_email(
         except login.SignInUnavailable:
             raise
         except Exception as e:  # a read or write that failed: retryable, as any sign-in's
-            log.warning("oidc jit: sign-up of %r in %s failed: %s", ident, org, e)
+            log.error("oidc jit: sign-up of %r in %s failed: %s", ident, org, e, exc_info=True)
             raise login.SignInUnavailable from e
 
 

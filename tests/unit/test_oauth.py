@@ -24,19 +24,22 @@ pytestmark = pytest.mark.usefixtures("cutoffs_read_at_mint", "no_restricted_gran
 
 
 @pytest.fixture
-def keeper(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Every exchange holds its Keeper claim; the claim itself is tested in
-    test_oauth_claims.py."""
+def keeper(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Every exchange holds its Keeper claim; returns the keys released. The
+    claim itself is tested in test_oauth_claims.py."""
     from server.auth import oauth_claims
+
+    released: list[str] = []
 
     async def _held(ch: object, key: str) -> tuple[oauth_claims.Claim, str]:
         return oauth_claims.Claim.HELD, "me"
 
     async def _release(ch: object, key: str, holder: str) -> None:
-        return None
+        released.append(key)
 
     monkeypatch.setattr(oauth_claims, "claim", _held)
     monkeypatch.setattr(oauth_claims, "release", _release)
+    return released
 
 
 @pytest.fixture
@@ -811,34 +814,16 @@ def test_a_find_past_its_bound_is_told_to_retry(monkeypatch: pytest.MonkeyPatch)
     assert _exchange(c, code, verifier).status_code == 200
 
 
-@pytest.fixture
-def held_claims(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Every exchange holds its claim; the keys released are recorded."""
-    from server.auth import oauth_claims
-
-    released: list[str] = []
-
-    async def _held(ch: object, key: str) -> tuple[oauth_claims.Claim, str]:
-        return oauth_claims.Claim.HELD, "me"
-
-    async def _release(ch: object, key: str, holder: str) -> None:
-        released.append(key)
-
-    monkeypatch.setattr(oauth_claims, "claim", _held)
-    monkeypatch.setattr(oauth_claims, "release", _release)
-    return released
-
-
-def test_a_decided_exchange_releases_its_claim(held_claims: list[str]) -> None:
+def test_a_decided_exchange_releases_its_claim(keeper: list[str]) -> None:
     c = _client()
     code, verifier = _seed_code()
     assert _exchange(c, code, verifier).status_code == 200
-    assert held_claims == [f"code:{oauth._token_id(code)}"]
+    assert keeper == [f"code:{oauth._token_id(code)}"]
 
 
 @pytest.mark.parametrize("outcome", ["code", "refused", "refresh"])
 def test_a_consume_that_did_not_finish_keeps_the_claim(
-    held_claims: list[str], monkeypatch: pytest.MonkeyPatch, outcome: str
+    keeper: list[str], monkeypatch: pytest.MonkeyPatch, outcome: str
 ) -> None:
     """A consume that failed may still land, so the claim is kept until it
     goes stale and no retry reads the credential meanwhile. A code expires
@@ -852,7 +837,7 @@ def test_a_consume_that_did_not_finish_keeps_the_claim(
     code, verifier = _seed_code()
     if outcome == "refresh":
         rt = _exchange(c, code, verifier).json()["refresh_token"]
-        held_claims.clear()
+        keeper.clear()
         monkeypatch.setattr(store, "consume_refresh", _down)
         r = _refresh(c, rt)
         assert r.status_code == 503 and r.headers["retry-after"] == "120"
@@ -863,7 +848,7 @@ def test_a_consume_that_did_not_finish_keeps_the_claim(
         else:
             r = _exchange(c, code, "not-the-verifier")
             assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
-    assert held_claims == []
+    assert keeper == []
 
 
 @pytest.mark.parametrize("grant_type", ["authorization_code", "refresh_token"])
@@ -898,7 +883,7 @@ def test_a_failed_token_issue_leaves_the_credential_for_the_retry(
 
 @pytest.mark.parametrize("outcome", ["issued", "refused"])
 def test_a_cancelled_consume_keeps_the_claim(
-    held_claims: list[str], monkeypatch: pytest.MonkeyPatch, outcome: str
+    keeper: list[str], monkeypatch: pytest.MonkeyPatch, outcome: str
 ) -> None:
     """A consume cancelled from outside may still land: the claim is kept as
     for one that failed, and the cancellation propagates."""
@@ -906,7 +891,7 @@ def test_a_cancelled_consume_keeps_the_claim(
 
     code, verifier = _seed_code()
     asyncio.run(_cancel_while_consuming(monkeypatch, code, verifier, outcome))
-    assert held_claims == []
+    assert keeper == []
 
 
 async def _cancel_while_consuming(

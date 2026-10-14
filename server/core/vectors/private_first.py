@@ -9,31 +9,36 @@ from collections.abc import Awaitable, Callable, Sequence
 from contextlib import AbstractContextManager
 from typing import Any
 
-# A span around one pass: (op, number of namespaces) -> context manager.
-Span = Callable[[str, int], AbstractContextManager[Any]]
+# A span around one pass, called as span(op=..., namespaces=n).
+Span = Callable[..., AbstractContextManager[Any]]
+# The visibility of each namespace ("private" or "public"), read on demand.
+Visibility = Callable[[list[str]], Awaitable[dict[str, str]]]
 
 
-async def search_private_first[Hits: list[Any]](
+async def search_private_first[H](
     namespace: str,
     namespaces: list[str],
-    visibility: dict[str, str],
-    search_one: Callable[[str], Awaitable[tuple[str, Hits]]],
+    search_one: Callable[[str], Awaitable[tuple[str, list[H]]]],
     *,
+    visibility: Visibility | None,
     threshold: float,
     span: Span,
-) -> list[tuple[str, Hits]]:
+) -> list[tuple[str, list[H]]]:
     """`search_one` over `namespaces`, private first: the public ones are read
-    only when no first-pass hit reaches `threshold` similarity. With no
-    private namespace to read first, every namespace is read at once."""
-    passes = private_first_passes(namespace, namespaces, visibility)
+    only when no first-pass hit reaches `threshold` similarity. Every
+    namespace is read at once when there is one, when `visibility` is None
+    (not a fan-out), or when no private namespace can be read first."""
+    passes = None
+    if visibility is not None and len(namespaces) > 1:
+        passes = private_first_passes(namespace, namespaces, await visibility(namespaces))
     if passes is None:
-        with span("vector_search", len(namespaces)):
+        with span(op="vector_search", namespaces=len(namespaces)):
             return list(await asyncio.gather(*map(search_one, namespaces)))
     first, second = passes
-    with span("vector_search.private", len(first)):
+    with span(op="vector_search.private", namespaces=len(first)):
         results = list(await asyncio.gather(*map(search_one, first)))
     if second and best_similarity(results) < threshold:
-        with span("vector_search.public", len(second)):
+        with span(op="vector_search.public", namespaces=len(second)):
             results += await asyncio.gather(*map(search_one, second))
     return results
 

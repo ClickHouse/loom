@@ -170,7 +170,7 @@ async def test_revoking_the_person_cascades_to_the_tokens_they_minted_on_that_na
 
 @pytest.mark.asyncio
 async def test_grants_revoke_handler_calls_the_cascade(
-    monkeypatch: pytest.MonkeyPatch, recorded_cutoff_writes: list[tuple[str, str, list[str]]]
+    monkeypatch: pytest.MonkeyPatch, recorded_cutoff_writes: list[tuple[str, list[str], list[str]]]
 ) -> None:
     from server.identity.api.models_grants import GrantsRevokeInput
 

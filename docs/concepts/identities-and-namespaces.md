@@ -162,7 +162,9 @@ operation's role, or a live grant does.
     token minted in that second is cut too.
   - **What minting does.** Signing in, an OAuth code exchange and an OAuth refresh leave a
     cut namespace out of the token they mint, for good. A later grant, an admin one
-    included, gives access back through itself and never brings the claim back. Each mint
+    included, gives access back through itself and never brings the claim back. A
+    restricted namespace is the exception: a token reads one only by naming it, so a mint
+    names it again while a live grant there covers the person. Each mint
     takes its issue time before it reads the cutoffs, and a cutoff is written again once
     its first write returned, so a token minted while one was in flight is cut too.
   - **What is not touched.** A namespace the subject never held a grant on keeps its

@@ -650,12 +650,12 @@ def _oauth_claim_problems(settings: Any, state: HealthState) -> list[Problem]:
         Problem(
             "oauth_claims_not_atomic",
             "warn",
-            "loom.oauth_claims is absent (no ClickHouse Keeper), so /oauth/token marks a "
-            "code or refresh token used only after reading it: two concurrent exchanges of "
-            "one credential can both mint tokens.",
-            "Run ClickHouse with a Keeper (deploy/clickhouse-config/keeper.xml), create the "
-            "table from schemas/migrations/027_oauth_claims.sql (the migration skipped it) "
-            "and restart Loom.",
+            "loom.oauth_claims is absent (no ClickHouse Keeper), so /oauth/token keeps two "
+            "exchanges of one code or refresh token apart only by using it up first: two "
+            "concurrent ones can still both mint tokens.",
+            "Run ClickHouse with a Keeper (deploy/clickhouse-config/keeper.xml) and create the "
+            "table from schemas/migrations/027_oauth_claims.sql (the migration skipped it); "
+            "the next exchange finds it.",
             source="runtime",
         )
     ]

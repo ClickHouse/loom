@@ -172,7 +172,7 @@ async def test_sync_quietly_never_raises(monkeypatch: pytest.MonkeyPatch) -> Non
 
 @pytest.fixture()
 def _handler_env(
-    monkeypatch: pytest.MonkeyPatch, recorded_cutoff_writes: list[tuple[str, str, list[str]]]
+    monkeypatch: pytest.MonkeyPatch, recorded_cutoff_writes: list[tuple[str, list[str], list[str]]]
 ) -> dict[str, Any]:
     calls: dict[str, Any] = {
         "sync": [],
@@ -282,10 +282,7 @@ async def test_grants_revoke_admin_fans_out(
     assert out.revoked
     assert _handler_env["revoke"] == [("clickhouse", "code-x", "alice", ["code-x-26-5"])]
     # One cutoff write for the branch asked and every sibling, before any row.
-    assert _handler_env["cutoffs"] == [
-        ("clickhouse", "code-x", ["alice"]),
-        ("clickhouse", "code-x-26-5", ["alice"]),
-    ]
+    assert _handler_env["cutoffs"] == [("clickhouse", ["code-x", "code-x-26-5"], ["alice"])]
 
 
 async def test_a_failed_cutoff_fails_a_maintainer_revoke_with_nothing_written(

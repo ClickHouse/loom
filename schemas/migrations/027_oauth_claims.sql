@@ -7,8 +7,8 @@
 -- credential exactly one runs, and one that starts after the release finds
 -- the credential consumed. A row lives for one exchange, or until stale when
 -- the consume did not finish; one a crashed exchange left is taken over once
--- stale. `claim_key` is
--- `<record_type>:<credential id>` (the sha256 the store keys it by).
+-- stale. `claim_key` is `<record_type>:<credential id>` (the sha256 the store
+-- keys it by).
 --
 -- Tolerated on a server without a Keeper or without keeper_map_path_prefix
 -- (OSS without deploy/clickhouse-config/keeper.xml): the statement is

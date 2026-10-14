@@ -174,20 +174,15 @@ async def _without_cut_namespaces(subject: str, org: str, namespaces: list[str])
     return [ns for ns in namespaces if ns not in ended]
 
 
-async def widen_with_restricted_grants(
-    subject: str, org: str, namespaces: list[str], *, strict: bool = False
-) -> list[str]:
+async def widen_with_restricted_grants(subject: str, org: str, namespaces: list[str]) -> list[str]:
     """`namespaces` (the person's own, first — their order is the read
     priority) followed by `restricted_grant_namespaces`, deduplicated. Only
     restricted rows are added — see the module docstring. A failed read
     leaves the set as it was: a login must never fail on this lookup, and the
-    owned namespaces alone are the safe fallback. `strict` raises instead,
-    for a caller whose answer persists (an OAuth refresh grant)."""
+    owned namespaces alone are the safe fallback."""
     try:
-        restricted = await restricted_grant_namespaces(subject, org, strict=strict)
+        restricted = await restricted_grant_namespaces(subject, org, strict=False)
     except Exception:
-        if strict:
-            raise
         log.warning(
             "login: restricted-grant lookup failed for %r in %r; token names owned namespaces only",
             subject,
@@ -195,13 +190,15 @@ async def widen_with_restricted_grants(
             exc_info=True,
         )
         return list(namespaces)
-    own = list(namespaces)
-    return own + [ns for ns in restricted if ns not in set(own)]
+    own = set(namespaces)
+    return list(namespaces) + [ns for ns in restricted if ns not in own]
 
 
 async def restricted_grant_namespaces(subject: str, org: str, *, strict: bool) -> list[str]:
     """Every restricted namespace in `org` the subject holds an active,
-    unrevoked direct grant on, sorted. Raises when the read fails."""
+    unrevoked direct grant on, sorted. The grants read raises when it fails;
+    the alias read before it does too with `strict`, and otherwise falls back
+    to the subject alone."""
     from server.auth.aliases import subject_aliases
     from server.core.grant_sql import LIVE_GRANT
 

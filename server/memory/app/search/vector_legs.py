@@ -5,6 +5,7 @@ wire-hit fields every leg copies."""
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 from typing import Any
 
@@ -186,21 +187,18 @@ async def _run_vector_legs(
         # ---- unscoped path (no scoped-token order): visibility-based private-first
         # fallback, else a flat concurrent fan-out. Visibility is TTL-cached, so a
         # multi-namespace search does not pay a `loom.namespaces FINAL` round trip.
-        namespaces = list(ctx.namespaces)
-        visibility: dict[str, str] = {}
-        if input.namespace_scope == "all_mine" and len(namespaces) > 1:
-            visibility = await namespace_visibility.visibility_map(input.org, namespaces)
-
-        def span(op: str, n: int) -> Any:
-            return traced("ch.query.memory_embeddings", op=op, top_k=input.top_k, namespaces=n)
-
+        fan_out = input.namespace_scope == "all_mine"
         results_per_ns = await search_private_first(
             input.namespace,
-            namespaces,
-            visibility,
+            list(ctx.namespaces),
             lambda ns: _search_one(ctx, ns),
+            visibility=(
+                functools.partial(namespace_visibility.visibility_map, input.org)
+                if fan_out
+                else None
+            ),
             threshold=PRIVATE_HIT_THRESHOLD,
-            span=span,
+            span=functools.partial(traced, "ch.query.memory_embeddings", top_k=input.top_k),
         )
 
     # Join the entity-store ANN task launched before the vector legs.

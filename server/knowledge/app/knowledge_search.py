@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import functools
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from server.auth.fanout import namespaces_to_search
 from server.core.vectors.private_first import search_private_first
@@ -21,16 +22,16 @@ from server.knowledge.api.models_knowledge import (
 
 log = logging.getLogger(__name__)
 
-# A first-pass hit this close (cosine similarity) ends a private-first search
-# before its public pass.
-PRIVATE_HIT_THRESHOLD = 0.30
-
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from server.embedding import Embedder
     from server.knowledge.app.search import ChunkHit
+
+# A first-pass hit this close (cosine similarity) ends a private-first search
+# before its public pass.
+PRIVATE_HIT_THRESHOLD = 0.30
 
 
 async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearchOutput:
@@ -116,20 +117,17 @@ async def _search_private_first(
 ) -> list[tuple[str, list[ChunkHit]]]:
     from server.observability.otel import traced
 
-    visibility: dict[str, str] = {}
-    if input.namespace_scope == "all_mine" and len(namespaces) > 1:
-        visibility = await namespace_visibility.visibility_map(input.org, namespaces)
-
-    def span(op: str, n: int) -> Any:
-        return traced("ch.query.chunks", op=op, top_k=input.top_k, namespaces=n)
-
     return await search_private_first(
         input.namespace,
         namespaces,
-        visibility,
         search_one,
+        visibility=(
+            functools.partial(namespace_visibility.visibility_map, input.org)
+            if input.namespace_scope == "all_mine"
+            else None
+        ),
         threshold=PRIVATE_HIT_THRESHOLD,
-        span=span,
+        span=functools.partial(traced, "ch.query.chunks", top_k=input.top_k),
     )
 
 

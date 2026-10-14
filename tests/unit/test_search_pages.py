@@ -275,7 +275,8 @@ async def test_a_page_of_the_addressed_namespace_alone_reads_no_fan_out(monkeypa
 async def test_a_page_whose_fan_out_cannot_be_read_serves_the_addressed_namespace(
     monkeypatch,
 ) -> None:
-    """Fails closed: the other namespaces' hits wait for a read that works."""
+    """Fails closed: this page serves the addressed namespace's hits only, and
+    later pages carry on past the withheld ones."""
     import server.auth.fanout as fanout
     from server.memory.api.models_search import MemorySearchInput
     from server.memory.app import search as h

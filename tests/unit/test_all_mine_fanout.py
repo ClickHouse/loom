@@ -261,19 +261,24 @@ def test_the_conversation_fallback_reads_the_same_namespaces(
     async def _fanout(org: str) -> Fanout:
         return Fanout(org=org, namespaces=("work", "home"), cap=1)
 
-    async def _substring(org: str, namespace: str, *_a: object, **_k: object) -> list[MessageRow]:
-        day = {"local": 1, "work": 2}[namespace]
+    read: list[list[str]] = []
+
+    async def _substring(
+        org: str, namespaces: list[str], *_a: object, **_k: object
+    ) -> list[MessageRow]:
+        read.append(list(namespaces))
         return [
             MessageRow(
                 org=org,
-                namespace=namespace,
+                namespace=ns,
                 agent="a",
                 thread_id="t",
-                msg_id=namespace,
+                msg_id=ns,
                 role="user",
-                content=f"in {namespace}",
-                ts=datetime(2026, 1, day),
+                content=f"in {ns}",
+                ts=datetime(2026, 1, {"local": 1, "work": 2}[ns]),
             )
+            for ns in reversed(namespaces)
         ]
 
     monkeypatch.setattr(conversations, "get_embedder", lambda: _NoEmbedder())
@@ -281,5 +286,6 @@ def test_the_conversation_fallback_reads_the_same_namespaces(
     monkeypatch.setattr(conversation_repo, "search_substring", _substring)
     search = ConversationSearchInput(org=ORG, namespace="local", agent="a", query="in")
     out = asyncio.run(conversations.handle_conversation_search(search))
+    assert read == [["local", "work"]], "every namespace in one statement"
     assert [(h.namespace, h.msg_id) for h in out.hits] == [("work", "work"), ("local", "local")]
     assert out.namespaces_skipped == ["home"]

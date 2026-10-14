@@ -245,3 +245,35 @@ async def test_a_release_outlives_a_second_cancellation() -> None:
         await task
     await asyncio.sleep(0.1)
     assert keeper.rows == {}
+
+
+def test_a_claim_read_back_as_taken_drops_what_it_may_have_written() -> None:
+    # The insert landed, its reply was lost, the retry found the key, and a
+    # lagging follower showed no holder: the attempt answers TAKEN and
+    # releases its own holder id, which leaves anyone else's claim alone.
+    keeper = _Keeper()
+    asyncio.run(oc.probe(keeper))
+    other, holder = _claim(keeper)
+    assert other is oc.Claim.HELD
+    released: list[str] = []
+    execute = keeper.execute
+
+    async def _recording(sql: str, params: dict[str, Any]) -> None:
+        if " DELETE " in sql and "holder" in sql:
+            released.append(params["me"])
+        await execute(sql, params)
+
+    keeper.execute = _recording  # type: ignore[method-assign]
+    outcome, _ = _claim(keeper)
+    assert outcome is oc.Claim.TAKEN
+    assert len(released) == 1 and released[0] != holder
+    assert keeper.rows == {"code:abc": holder}
+
+
+def test_a_missing_claims_table_is_asked_for_again() -> None:
+    # A server that booted before the migration created the table starts
+    # claiming once it is there, without a restart.
+    keeper = _Keeper(table=False)
+    assert _claim(keeper)[0] is oc.Claim.UNCLAIMED
+    keeper.table = True
+    assert _claim(keeper)[0] is oc.Claim.HELD

@@ -22,7 +22,7 @@ class MemorySearchSettings(BaseModel):
     # (measured sweep of 24 namespaces: 6.2 s).
     memory_search_fanout_kinds: str = "memory"
     # Upper bound on how many of the caller's namespaces an all_mine fan-out
-    # reads besides the addressed one; memory.search names the rest in
+    # reads besides the addressed one; a search names the rest in
     # `namespaces_skipped`. Every leg issues at least one statement per
     # namespace. A guard, not a tuning knob: set well above what one person
     # holds, so it bounds a runaway sweep rather than trimming normal ones.

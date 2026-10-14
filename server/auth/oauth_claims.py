@@ -1,19 +1,21 @@
 """One exchange at a time per OAuth code or refresh token, claimed in Keeper.
 
-The OAuth store marks a credential used with a new ReplacingMergeTree
-version, and a read-then-mark cannot keep two concurrent exchanges of one
-credential apart. So once a first read has found the credential,
-/oauth/token claims its key in `loom.oauth_claims` under
-keeper_map_strict_mode, reads it again and decides, and releases the claim
-once the credential is used up (kept, to go stale, when the consume did not
-finish and may still land): Keeper refuses the second
-INSERT, so a concurrent presenter is told to retry (it may be the owner
-retrying), and its retry, after the release, finds the credential consumed.
-A claim a crashed exchange left is taken over once older than `STALE_S`,
-with Keeper's compare-and-swap, so of two takers one wins.
+The OAuth store marks a credential used by writing a new ReplacingMergeTree
+version, so reading it and then marking it cannot keep two concurrent
+exchanges apart. /oauth/token therefore:
 
-Without a Keeper the migration skipped the table, the exchange runs
-unclaimed (two presenters racing can both succeed) and /v1/health says so.
+1. reads the credential once, so a made-up one costs no Keeper write;
+2. claims its key in `loom.oauth_claims` under keeper_map_strict_mode, where
+   Keeper refuses a second insert, so a concurrent presenter is told to retry
+   (it may be the owner retrying);
+3. reads the credential again and decides;
+4. uses the credential up and releases the claim. A consume that did not
+   finish may still land, so its claim is kept until it goes stale.
+
+A claim older than `STALE_S` was left by an exchange that died, and is taken
+over with Keeper's compare-and-swap, so of two takers one wins. Without a
+Keeper the migration skipped the table and the exchange runs unclaimed, as
+/v1/health says.
 """
 
 from __future__ import annotations
@@ -74,8 +76,7 @@ _RELEASE = (
 _releases = TaskSet()
 
 # Whether loom.oauth_claims exists here: None until the boot probe or the
-# first exchange asks, then fixed for the process (a table created later is
-# used after a restart, as the health hint says).
+# first exchange asks.
 _atomic: bool | None = None
 
 
@@ -138,7 +139,13 @@ async def claim(ch: Any, key: str) -> tuple[Claim, str]:
         if attempted:
             await release_shielded(ch, key, me)
         raise
-    return (Claim.HELD, me) if held else (Claim.TAKEN, "")
+    if not held:
+        # Our insert may have landed with its reply lost, then read back as
+        # someone else's from a lagging Keeper follower. The release matches
+        # only our holder id, so it leaves a real holder's claim alone.
+        await release_shielded(ch, key, me)
+        return Claim.TAKEN, ""
+    return Claim.HELD, me
 
 
 async def _claim(ch: Any, key: str, me: str) -> bool:
@@ -184,9 +191,13 @@ async def _holder(ch: Any, key: str) -> str:
 
 
 async def _available(ch: Any) -> bool:
+    """Whether loom.oauth_claims is here. A yes is kept; a no is asked again,
+    so a server that booted before the migration created it starts claiming
+    without a restart."""
     global _atomic
-    if _atomic is None:
-        _atomic = is_keeper_table(await ch.query_one(OAUTH_CLAIMS_TABLE_SQL))
-        if not _atomic:
+    if _atomic is not True:
+        found = is_keeper_table(await ch.query_one(OAUTH_CLAIMS_TABLE_SQL))
+        if not found and _atomic is None:
             log.info("oauth: no loom.oauth_claims (no Keeper); exchanges are not claimed")
+        _atomic = found
     return _atomic

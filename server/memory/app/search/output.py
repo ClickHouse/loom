@@ -85,7 +85,8 @@ async def _serve_parked_page(input: MemorySearchInput) -> MemorySearchOutput:
     readable = await _readable_namespaces(input.org, input.namespace, payload)
     hits, nxt = _readable_slice(payload, offset, int(input.top_k), readable)
     # Hits from a namespace the caller lost are neither served nor counted; the
-    # count is over the whole parked list, so every page reports the same total.
+    # count is over the whole parked list, the same on every page while the
+    # caller's readable namespaces do not change.
     withheld = sum(1 for h in payload.get("hits") or [] if h.get("namespace", "") not in readable)
     total = max(0, int(payload.get("candidates_total") or 0) - withheld)
     # A parked page was serialised without tags unless the first call asked; fill on this

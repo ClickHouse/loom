@@ -51,7 +51,8 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   For anyone but a scoped token the cut drops public namespaces before private ones.
   `memory.search` names the rest in a new output field, `namespaces_skipped`, and the
   `loom_search` text lists them. `knowledge.search` and `conversation.search` carry the
-  same field, and every page of a paged `memory.search` repeats the first call's lists.
+  same field, and every page of a paged `memory.search` repeats the first call's lists,
+  less any namespace the caller can no longer read.
 
 ### Changed
 
@@ -61,14 +62,15 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   A URL or an unknown name is a 422. A namespace that still stores a URL is no longer reranked.
 - **Security:** revoking or lowering a grant ends what the subject's older tokens claim on
   that namespace: a flat one reaches it only through the subject's current grant, and a
-  scoped one keeps its own role there capped at that grant. Tokens minted later (sign-in, an OAuth code exchange or
-  refresh) leave it out for good; a later grant gives access back through itself, not
-  through the old claim. A restricted namespace, read only by a token naming it, is named
-  again while a live grant covers the person. The cutoff is a `loom.revoked_tokens` row
-  keyed `grant:["<org>","<namespace>","<hash of the case-folded subject>"]`, and
-  `loom revoke-token --list --grants` shows them. A namespace never granted to the
-  subject (named by an operator at mint) keeps its claim. A refresh token saved before
-  this release can carry a cutoff that landed while it was minted until it expires.
+  scoped one keeps its own role there capped at that grant. Tokens minted later (sign-in,
+  an OAuth code exchange or refresh) leave it out for good; a later grant gives access
+  back through itself, not through the old claim. A restricted namespace, read only by a
+  token naming it, is named again while a live grant covers the person. The cutoff is a
+  `loom.revoked_tokens` row keyed `grant:["<org>","<namespace>","<hash of the lower-cased
+subject>"]`, and `loom revoke-token --list --grants` shows them. A namespace never
+  granted to the subject (named by an operator at mint) keeps its claim. A refresh token
+  saved before this release can carry a cutoff that landed while it was minted until it
+  expires.
 - **Security:** with a Keeper, `/oauth/token` runs one exchange per code or refresh token
   (a KeeperMap claim, `loom.oauth_claims`, migration `027_oauth_claims.sql`); a concurrent
   presenter is told to retry, and a failed read answers a retryable 503
@@ -98,9 +100,9 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   registered under the derived name, with default settings and an admin grant, its data
   included. Now a person with an active account in the org is signed in to it, one with an
   account revoked outright (`loom revoke-token --subject`) is refused, and anyone else
-  gets the next free name (`<name>-2`, ..., then a random suffix). A first sign-in whose owner grant failed to land is finished at the
-  next sign-in, from a new `oidc-jit` tag on the account; a grant revoked or lowered since
-  is never given back.
+  gets the next free name (`<name>-2`, ..., then a random suffix). A first sign-in whose
+  owner grant failed to land is finished at the next sign-in, from a new `oidc-jit` tag on
+  the account; a grant revoked or lowered since is never given back.
 - **Security:** `namespace.restore` into an existing namespace needs an admin of it. The
   owner a first write auto-registered, who holds no grant there, could restore a payload
   whose grants made them, or anyone, admin.
