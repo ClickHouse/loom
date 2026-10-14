@@ -535,7 +535,7 @@ def test_a_fingerprint_changes_only_with_its_rules(
     from server.code.domain.declaration import fingerprint_version
 
     (d,) = [d for d in file_definitions(path, src.encode()) if d.name == "value"]
-    pinned = ("2", body, shape)
+    pinned = ("7", body, shape)
     assert (fingerprint_version().split("-")[0], d.body_hash[:16], d.shape.exact[:16]) == pinned, (
         "fingerprints changed: bump _RULES (a grammar upgrade alone needs none) and re-pin"
     )

@@ -317,8 +317,9 @@ class Prints(NamedTuple):
 
 
 # Bump when fingerprints or shapes change for the same code: links hashed under another
-# `fingerprint_version` are re-hashed.
-_RULES = 2
+# `fingerprint_version` are re-hashed. Never reuse a number: a stored link under it would
+# read as current.
+_RULES = 7
 
 
 # the words that open a scope, its name after them (`class DLL_EXPORT Foo`, a template
