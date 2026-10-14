@@ -121,10 +121,16 @@ async def _read_spellings(
         },
     )
     if for_cutoff and len(rows) > limit:
-        log.error("aliases: more than %d accounts name %r in %r", limit, subject, org)
+        log.error(
+            "aliases: more than %d accounts name %r in %r; release the extra ones "
+            "with `loom claim-release --org %s --namespace <account>`",
+            limit,
+            subject,
+            org,
+            org,
+        )
         raise TooManySpellings(
-            f"more than {limit} accounts tie spellings to {subject!r} in {org!r}; "
-            "an operator releases the extra ones with `loom claim-release`"
+            f"too many accounts name {subject!r} in {org!r}; ask your Loom operator"
         )
     out, seen = [subject], {subject.lower()}
     for r in rows:

@@ -102,9 +102,7 @@ class _Name(enum.Enum):
     NONE_FREE = enum.auto()  # every name tried is taken
 
 
-async def jit_provision_for_email(
-    email: str,
-) -> login.Identity | None:
+async def jit_provision_for_email(email: str) -> login.Identity | None:
     """Just-in-time provisioning for OIDC: when enabled, a verified email with
     no loom account gets a personal namespace auto-created (in oidc_jit_org),
     then resolves like any other account. Returns None (the caller then

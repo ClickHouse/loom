@@ -203,7 +203,7 @@ async def test_jit_provisions_when_enabled(monkeypatch) -> None:
     async def fake_provision(**kw: Any) -> None:
         calls.update(kw)
 
-    async def fake_resolve(email: str) -> tuple[str, str, list[str], list[str]]:
+    async def fake_resolve(email: str) -> login.Identity:
         return ("u-bob-xxxx", "acme", ["u-bob-xxxx"], ["writer"])
 
     async def none_registered(org: str, namespace: str) -> None:
@@ -234,7 +234,7 @@ def _jit_on(monkeypatch) -> dict[str, Any]:
     async def fake_provision(**kw: Any) -> None:
         provisioned.update(kw)
 
-    async def fake_resolve(email: str) -> tuple[str, str, list[str], list[str]]:
+    async def fake_resolve(email: str) -> login.Identity:
         return ("someone", "acme", ["someone"], ["admin"])
 
     async def no_accounts(org: str, ident: str) -> list[dict[str, Any]]:
@@ -361,7 +361,7 @@ async def test_an_active_account_of_the_person_is_resolved_never_provisioned_aga
             }
         ]
 
-    async def resolve(email: str) -> tuple[str, str, list[str], list[str]] | None:
+    async def resolve(email: str) -> login.Identity | None:
         return (
             ("u-bob-1234abcd-9f3e", "acme", ["u-bob-1234abcd-9f3e"], ["admin"])
             if resolves
@@ -529,6 +529,58 @@ async def test_a_jit_read_that_fails_is_a_retryable_sign_in_failure(monkeypatch)
     monkeypatch.setattr(jit, "_accounts_naming", down)
     with pytest.raises(login.SignInUnavailable):
         await jit.jit_provision_for_email("bob@acme.com")
+
+
+async def test_a_jit_sign_up_no_retry_fixes_is_not_turned_into_a_retry(monkeypatch) -> None:
+    from server.auth.aliases import TooManySpellings
+
+    _jit_on(monkeypatch)
+
+    async def too_many(org: str, ident: str) -> list[dict[str, Any]]:
+        raise TooManySpellings("too many accounts")
+
+    monkeypatch.setattr(jit, "_accounts_naming", too_many)
+    with pytest.raises(TooManySpellings):
+        await jit.jit_provision_for_email("bob@acme.com")
+
+
+async def test_an_oidc_sign_in_no_retry_fixes_is_refused_in_the_oauth_envelope(
+    monkeypatch,
+) -> None:
+    from fastapi import HTTPException
+
+    from server.auth.aliases import TooManySpellings
+
+    store = MemoryOAuthStore()
+    await store.save_pending(
+        "s",
+        {"nonce": "n", "client_id": "c", "redirect_uri": "http://r/cb", "code_challenge": "x"},
+    )
+
+    async def exchange(**_k: Any) -> dict[str, str]:
+        return {"id_token": "t"}
+
+    async def claims(*_a: Any, **_k: Any) -> dict[str, Any]:
+        return {"email": "alice@acme.io", "email_verified": True}
+
+    async def too_many(email: str) -> login.Identity:
+        raise TooManySpellings("too many accounts")
+
+    class _Req:
+        query_params = {"code": "c", "state": "s"}
+
+    monkeypatch.setattr(oauth, "_store", store)
+    monkeypatch.setattr(oidc, "exchange_code", exchange)
+    monkeypatch.setattr(oidc, "verify_id_token", claims)
+    monkeypatch.setattr(oidc, "verified_email", lambda claims: "alice@acme.io")
+    monkeypatch.setattr(login, "resolve_identity_for_email", too_many)
+    with pytest.raises(HTTPException) as refused:
+        await oauth.oidc_callback(_Req())  # type: ignore[arg-type]
+    assert refused.value.status_code == 403
+    assert refused.value.detail == {
+        "error": "access_denied",
+        "error_description": "too many accounts",
+    }
 
 
 @pytest.mark.parametrize("granted_before", [False, True])

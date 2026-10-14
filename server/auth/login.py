@@ -24,6 +24,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from server.auth.aliases import TooManySpellings
 from server.auth.attempts import Attempts, client_address
 from server.auth.jwt import mint_token
 from server.auth.passwords import hash_password, verify_password_off_loop
@@ -51,10 +52,10 @@ class LoginOutput(BaseModel):
     expires_at: datetime
 
 
-# Generic auth-failure message — never leak whether the account exists.
 # A signed-in person: (subject, org, namespaces, roles).
 Identity = tuple[str, str, list[str], list[str]]
 
+# Generic auth-failure message — never leak whether the account exists.
 _BAD_CREDS = {"code": "AUTH_INVALID", "message": "Invalid email or password."}
 
 # Failed sign-ins per identifier (guessing one account's password) and per
@@ -148,9 +149,7 @@ async def _check_credentials(ident: str, password: str) -> Identity | None:
     return await _with_restricted_grants(_identity_from_rows([primary, *same_credential]))
 
 
-async def _with_restricted_grants(
-    identity: Identity,
-) -> Identity:
+async def _with_restricted_grants(identity: Identity) -> Identity:
     """Add the restricted namespaces the person holds a grant on to a resolved
     identity (password and OIDC share it so the two never drift on the
     namespace set)."""
@@ -165,7 +164,6 @@ async def _without_cut_namespaces(subject: str, org: str, namespaces: list[str])
     lowered the grant. When the cutoffs cannot be read, raise
     `SignInUnavailable` (503): failing open would hand a cut namespace back,
     and failing narrow would mint a token without the person's namespaces."""
-    from server.auth.aliases import TooManySpellings
     from server.auth.revocation import read_grant_cutoffs
 
     try:
@@ -289,9 +287,7 @@ async def refreshed_roles(subject: str, org: str, roles: list[str]) -> list[str]
     return platform_roles(subject, verified_email=str(row.get("contact_email") or ""))
 
 
-async def resolve_identity_for_email(
-    email: str,
-) -> Identity | None:
+async def resolve_identity_for_email(email: str) -> Identity | None:
     """Map an externally-verified email (e.g. an OIDC id_token's) to a loom
     identity. No password — the IdP already authenticated the user. Matches
     active namespaces by contact_email; password_hash is NOT required, so

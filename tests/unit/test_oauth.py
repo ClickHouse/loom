@@ -1019,17 +1019,64 @@ def test_a_made_up_credential_is_refused_before_any_keeper_write(
     assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
 
 
-def test_too_many_spellings_refuses_the_exchange_for_good(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A retry cannot fix it, so the client gets invalid_grant, not a 503."""
-    from server.auth import revocation
+@pytest.mark.parametrize("claimed", [True, False])
+def test_too_many_spellings_refuses_the_exchange_for_good(
+    monkeypatch: pytest.MonkeyPatch, claimed: bool
+) -> None:
+    """A retry cannot fix it, so the client gets invalid_grant, not a 503.
+    Under a claim, where a failure would be a 503, the code is used up and
+    the claim released."""
+    from server.auth import oauth_claims, revocation
     from server.auth.aliases import TooManySpellings
 
-    async def _too_many(*_a: object, **_k: object) -> set[str]:
-        raise TooManySpellings("more than 1000 accounts")
+    released: list[str] = []
 
+    async def _claim(ch: object, key: str) -> tuple[oauth_claims.Claim, str]:
+        return (oauth_claims.Claim.HELD, "me") if claimed else (oauth_claims.Claim.UNCLAIMED, "")
+
+    async def _release(ch: object, key: str, holder: str) -> None:
+        released.append(key)
+
+    async def _too_many(*_a: object, **_k: object) -> set[str]:
+        raise TooManySpellings("too many accounts")
+
+    monkeypatch.setattr(oauth_claims, "claim", _claim)
+    monkeypatch.setattr(oauth_claims, "release", _release)
     monkeypatch.setattr(revocation, "read_grant_cutoffs", _too_many)
     c = _client()
     code, verifier = _seed_code()
     r = _exchange(c, code, verifier)
     assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
     assert "retry-after" not in r.headers
+    assert released == ([f"code:{oauth._token_id(code)}"] if claimed else [])
+    assert oauth._token_id(code) not in oauth._store.codes  # used up
+
+
+def test_a_password_sign_in_no_retry_fixes_is_refused_in_the_oauth_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.auth.aliases import TooManySpellings
+
+    async def _valid(*_a: object) -> None:
+        return None
+
+    async def _too_many(*_a: object, **_k: object) -> login.Identity:
+        raise TooManySpellings("too many accounts")
+
+    monkeypatch.setattr(oauth, "_validate_authorize_params", _valid)
+    monkeypatch.setattr(login, "resolve_user_credentials", _too_many)
+    r = _client().post(
+        "/oauth/authorize",
+        data={
+            "client_id": "c",
+            "redirect_uri": "http://127.0.0.1:9/cb",
+            "code_challenge": "x",
+            "identifier": "alice",
+            "password": "pw",
+        },
+    )
+    assert r.status_code == 403
+    assert r.json()["detail"] == {
+        "error": "access_denied",
+        "error_description": "too many accounts",
+    }

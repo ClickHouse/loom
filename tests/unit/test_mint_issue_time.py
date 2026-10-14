@@ -39,7 +39,7 @@ def _clock(monkeypatch: pytest.MonkeyPatch) -> dict[str, float]:
 
 @pytest.fixture
 def _slow_identity(_clock: dict[str, float]) -> Any:
-    async def _read(*_a: Any, **_k: Any) -> tuple[str, str, list[str], list[str]]:
+    async def _read(*_a: Any, **_k: Any) -> login.Identity:
         _clock["t"] += _READ_TAKES  # an issue time taken after the read shows it
         return _IDENTITY
 

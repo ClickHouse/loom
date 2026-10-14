@@ -220,8 +220,8 @@ def _apply_locally(keys: list[str], cutoff: int | None) -> None:
 
     Here they replace what the snapshot holds, as the rows just inserted
     replace theirs in ClickHouse: a cutoff narrows a full revocation of the
-    same key. A refresh only adds them, since another process may have
-    written a newer row since."""
+    same key. A refresh only tightens with them (a full revocation, or a
+    later cutoff), since another process may have written a newer row since."""
     global _revoked_jtis, _revoked_before
     now = time.monotonic()
     full, before = set(_revoked_jtis), dict(_revoked_before)

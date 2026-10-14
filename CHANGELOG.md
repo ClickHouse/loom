@@ -82,7 +82,10 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   `page/` blobs: a parked `memory.search` page holds hits from every namespace its search
   fanned out over, and only `memory.search(page=...)` serves it, re-checking each of them.
 - Sign-in answers a retryable 503 when it cannot read the grant cutoffs, as an OAuth
-  exchange does, instead of a token without the person's own namespaces.
+  exchange does.
+- Sign-in refuses with 409 `TOO_MANY_SPELLINGS` when more than 1000 accounts name the
+  person's email, and an OAuth exchange answers `invalid_grant`; taking a grant away on
+  that person refuses the same way. An operator releases the extra accounts.
 - `grants.approve` refuses (409 `GRANT_WOULD_DOWNGRADE`) to approve a request below the
   subject's current grant; lower a grant with `grants.create replace=true`.
 - With auth off, an `all_mine` search also reads every namespace the single user registered,
@@ -105,7 +108,7 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   the account; a grant revoked or lowered since is never given back.
 - **Security:** self-signup refuses an email a deleted account still holds, as it refuses
   a taken name. Signing up and deleting again and again tied any number of accounts to
-  someone else's address. `loom claim-release` frees the email with the name.
+  someone else's address. `loom claim-release` frees the email; the name stays reserved.
 - **Security:** `namespace.restore` into an existing namespace needs an admin of it. The
   owner a first write auto-registered, who holds no grant there, could restore a payload
   whose grants made them, or anyone, admin.

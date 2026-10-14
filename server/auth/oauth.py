@@ -35,6 +35,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
+from server.auth.aliases import TooManySpellings
 from server.auth.jwt import mint_token
 from server.settings import settings
 
@@ -526,6 +527,8 @@ async def authorize_submit(request: Request) -> RedirectResponse:
         ) from e
     except SignInUnavailable as e:
         raise _logged_unavailable("sign-in", e) from e
+    except TooManySpellings as e:
+        raise _access_denied(e) from e
     if resolved is None:
         # Bounce back to the form with an error (don't leak which field).
         raise HTTPException(status_code=401, detail={"error": "access_denied"})
@@ -631,6 +634,8 @@ async def oidc_callback(request: Request) -> RedirectResponse:
             resolved = await jit_provision_for_email(email)
     except SignInUnavailable as e:
         raise _logged_unavailable("sign-in", e) from e
+    except TooManySpellings as e:
+        raise _access_denied(e) from e
     if resolved is None:
         raise HTTPException(
             status_code=403,
@@ -787,21 +792,23 @@ async def _exchange_claimed(
 
     keep_claim = False
     grant: dict[str, Any] | None = None
+    refusal: HTTPException | None = None
     try:
         try:
             async with asyncio.timeout(oauth_claims.EXCHANGE_TIMEOUT_S):
                 grant = await _find(kind, credential, client_id)
                 if grant is None:
                     raise _invalid_grant()
-                tokens, refusal = await _decide_and_issue(grant, decide, issued_at), None
+                tokens = await _decide_and_issue(grant, decide, issued_at)
         except HTTPException as e:
             if e.status_code == 503 or grant is None:  # nothing to use up
                 raise
-            tokens, refusal = None, e
+            refusal = e
         except Exception as e:  # a find, decision or issue that did not finish
             raise _logged_unavailable("exchange", e) from e
-        keep_claim = True  # a cancelled consume may still land
-        keep_claim = not await _consume(kind, credential, grant)
+        keep_claim = True  # until the consume answers: a cancelled one may still land
+        if await _consume(kind, credential, grant):
+            keep_claim = False
     finally:
         if not keep_claim:
             await release()
@@ -812,16 +819,15 @@ async def _exchange_claimed(
         # answered; the new refresh token is saved but never delivered.
         log.warning("oauth: consume of a refresh token did not finish")
         raise _unavailable(oauth_claims.STALE_S)
-    assert tokens is not None
     return tokens
 
 
 async def _exchange_unclaimed(
     kind: _Kind, credential: str, grant: dict[str, Any], decide: _Decider, issued_at: int
 ) -> dict[str, Any]:
-    """Without a Keeper: use the credential up first, then decide, so two
-    presenters are kept apart by one round trip. Once it is used up a retry
-    cannot succeed, so any failure answers `invalid_grant`."""
+    """Without a Keeper: use the credential up first, so two presenters race
+    only in the window between the read and the consume. Once it is used up a
+    retry cannot succeed, so any failure answers `invalid_grant`."""
     from server.auth import oauth_claims
 
     if not await _consume(kind, credential, grant):
@@ -829,12 +835,9 @@ async def _exchange_unclaimed(
     try:
         async with asyncio.timeout(oauth_claims.EXCHANGE_TIMEOUT_S):
             return await _decide_and_issue(grant, decide, issued_at)
-    except HTTPException as e:
-        if e.status_code != 503:
-            raise
-        log.warning("oauth: exchange failed after its credential was used up: %s", e.detail)
-        raise _invalid_grant() from e
     except Exception as e:  # a decision or issue that did not finish
+        if isinstance(e, HTTPException) and e.status_code != 503:
+            raise
         log.warning("oauth: exchange failed after its credential was used up: %s", e)
         raise _invalid_grant() from e
 
@@ -917,6 +920,14 @@ def _logged_unavailable(
     return _unavailable()
 
 
+def _access_denied(refusal: TooManySpellings) -> HTTPException:
+    """A sign-in refused until an operator acts, in the OAuth envelope."""
+    return HTTPException(
+        status_code=403,
+        detail={"error": "access_denied", "error_description": refusal.message},
+    )
+
+
 def _unavailable(retry_after: int = 5) -> HTTPException:
     return HTTPException(
         status_code=503,
@@ -932,7 +943,6 @@ async def _mint_namespaces(grant: dict[str, Any], issued_at: int) -> list[str]:
     and still granted (a restricted namespace is read only by a token naming
     it, and the live grant is checked on every call). Read from ClickHouse:
     a token minted past a revocation this process has not seen keeps it."""
-    from server.auth.aliases import TooManySpellings
     from server.auth.login import restricted_grant_namespaces
     from server.auth.revocation import read_grant_cutoffs, subjects_revoked
 

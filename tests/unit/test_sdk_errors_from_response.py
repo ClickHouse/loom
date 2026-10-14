@@ -117,6 +117,7 @@ _SERVER_CODE_CLASSES: dict[str, type[LoomError]] = {
     "RESOURCE_NOT_FOUND": NotFound,
     "PRECONDITION_FAILED": PreconditionFailed,
     "GRANT_WOULD_DOWNGRADE": PreconditionFailed,
+    "TOO_MANY_SPELLINGS": PreconditionFailed,
     "OVERLOADED": Overloaded,
     "RATE_LIMITED": RateLimited,
     "BACKEND_UNAVAILABLE": BackendUnavailable,
@@ -130,6 +131,7 @@ _SERVER_CODE_CLASSES: dict[str, type[LoomError]] = {
 
 
 def test_every_server_error_maps_to_its_documented_sdk_class() -> None:
+    import server.auth.aliases  # defines TOO_MANY_SPELLINGS
     import server.identity.app.policy_gate  # noqa: F401 — defines POLICY_FORBIDDEN
 
     def subclasses(cls: type[LoomServerError]) -> list[type[LoomServerError]]:
