@@ -3,7 +3,6 @@ audit rows as one payload, and that payload written back into a namespace."""
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -321,13 +320,11 @@ async def _end_lowered_claims(
 ) -> None:
     """A restore writes its grants over the live ones. A subject it lowers
     loses the claims of older tokens there, as any other downgrade does."""
-    live = await asyncio.gather(
-        *(grants_repo.find_active_grant(org, namespace, g.subject, ch=ch) for g in grants)
-    )
+    live = await grants_repo.active_roles(org, namespace, [g.subject for g in grants], ch=ch)
     lowered = [
         g.subject
-        for g, current in zip(grants, live, strict=True)
-        if current is not None and grant_rank(current.role) > grant_rank(g.role)
+        for g in grants
+        if g.subject in live and grant_rank(live[g.subject]) > grant_rank(g.role)
     ]
     if lowered:
         await end_grant_claims(

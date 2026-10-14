@@ -149,7 +149,36 @@ async def _with_restricted_grants(
     identity (password and OIDC share it so the two never drift on the
     namespace set)."""
     subject, org, namespaces, roles = identity
+    namespaces = await _without_taken_away(subject, org, namespaces)
     return subject, org, await widen_with_restricted_grants(subject, org, namespaces), roles
+
+
+async def _without_taken_away(subject: str, org: str, namespaces: list[str]) -> list[str]:
+    """The owned `namespaces` minus those the person's grant was taken away on
+    and not given back: owning the registry row is not access once a co-admin
+    revoked it. A failed read leaves those out; the login itself goes on."""
+    from server.auth.revocation import claim_was_cut
+
+    cut = [ns for ns in namespaces if claim_was_cut(org, ns, subject)]
+    if not cut:
+        return namespaces
+    try:
+        from server.auth.aliases import subject_aliases
+        from server.core.grant_sql import LIVE_GRANT
+
+        rows = await get_client().query_all(
+            """
+            SELECT DISTINCT namespace FROM loom.namespace_grants FINAL
+            WHERE org = {org:String} AND namespace IN {nss:Array(String)}
+              AND subject IN {subs:Array(String)} AND {live}
+            """.replace("{live}", LIVE_GRANT),
+            params={"org": org, "nss": cut, "subs": await subject_aliases(org, subject)},
+        )
+        given_back = {str(r["namespace"]) for r in rows}
+    except Exception:
+        log.warning("login: grant lookup failed for %r in %r", subject, org, exc_info=True)
+        given_back = set()
+    return [ns for ns in namespaces if ns not in cut or ns in given_back]
 
 
 async def widen_with_restricted_grants(subject: str, org: str, namespaces: list[str]) -> list[str]:

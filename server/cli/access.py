@@ -294,6 +294,9 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+    if args.grants and not args.list:
+        print("  ✗ --grants widens --list; pass --list", file=sys.stderr)
+        return 2
     if issued_before is not None and not args.subject:
         print("  ✗ --issued-before narrows a --subject revocation; pass --subject", file=sys.stderr)
         return 2

@@ -205,3 +205,31 @@ async def test_a_parked_page_drops_hits_the_caller_can_no_longer_read(monkeypatc
     )
     out = await h.handle_memory_search(page)
     assert [(r.memory_key, r.namespace) for r in out.results] == [("b", "n"), ("d", "home")]
+    assert out.candidates_total == 2
+
+
+@pytest.mark.asyncio
+async def test_a_page_reads_on_past_withheld_hits(monkeypatch) -> None:
+    """A page whose rows all came from a namespace the caller lost is not the
+    end of the list: the page slices on until it has readable hits."""
+    import server.auth.authz as authz
+    from server.memory.api.models_search import MemorySearchInput
+    from server.memory.app import search as h
+
+    async def _not_team(org: str, namespace: str, *_a: Any, **_k: Any) -> bool:
+        return namespace != "team"
+
+    tail = [_hit("a", 0.9, ns="team"), _hit("b", 0.8, ns="team"), _hit("c", 0.7, ns="n")]
+    tail += [_hit("d", 0.6, ns="n")]
+    content = _encode(2, 4, tail)
+    key = sp.page_blob_key(content)
+    patch_handler_name(monkeypatch, "get_client", lambda: _CH(content))
+    monkeypatch.setattr(authz, "row_in_scope", _not_team)
+    page = MemorySearchInput(
+        org="o", namespace="n", agent="*", query="q", top_k=1, page=sp.make_handle(key, 0)
+    )
+    out = await h.handle_memory_search(page)
+    assert [r.memory_key for r in out.results] == ["c"] and not out.abstain
+    assert out.next_page == sp.make_handle(key, 3)
+    last = await h.handle_memory_search(page.model_copy(update={"page": out.next_page}))
+    assert [r.memory_key for r in last.results] == ["d"] and last.next_page == ""

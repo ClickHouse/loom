@@ -217,6 +217,13 @@ def is_grant_claim_key(key: str) -> bool:
     return key.startswith(_GRANT_CLAIM_PREFIX)
 
 
+def claim_was_cut(org: str, namespace: str, subject: str) -> bool:
+    """True if a grant of `subject`'s on (org, namespace) was ever taken away
+    (an unexpired cutoff exists), whatever the token. Sync, no I/O."""
+    key = grant_claim_key(org, namespace, subject)
+    return key in _revoked_before or key in _revoked_jtis
+
+
 def claim_ended(org: str, namespace: str, subject: str, issued_at: int) -> bool:
     """True if `subject`'s grant on (org, namespace) was taken away after a
     token issued at `issued_at` (unix seconds) claimed it. Sync, no I/O."""

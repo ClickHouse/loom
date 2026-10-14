@@ -40,6 +40,8 @@ def base(control_plane_url: str) -> Iterator[str]:
         "LOOM_JWT_AUDIENCE": _AUD,
         "LOOM_JWT_PUBLIC_KEYS_JSON": "",
         "LOOM_JWT_TRUSTED_ISSUERS": "",
+        "LOOM_SELF_SIGNUP": "open",
+        "LOOM_SELF_SIGNUP_ORG": ORG,
     }
     with loom_server("grant-revocation", env) as url:
         yield url
@@ -196,3 +198,33 @@ def test_leaving_ends_the_claim_and_a_later_token_is_untouched(base: str) -> Non
     assert _writes(base, old, ns) == 403
     time.sleep(1.1)
     assert _writes(base, _token("alice", [ns]), ns) == 200
+
+
+def test_signing_in_again_does_not_bring_back_a_revoked_owner(base: str) -> None:
+    ns = f"gr-{uuid.uuid4().hex[:8]}"
+    email, password = f"{ns}@example.com", secrets.token_urlsafe(16)
+    signup = httpx.post(
+        f"{base}/v1/auth/self-signup",
+        json={"namespace": ns, "email": email, "password": password},
+        timeout=15.0,
+    )
+    assert signup.status_code == 200, signup.text
+    owner = signup.json()["subject"]
+
+    def _login() -> str:
+        out = httpx.post(
+            f"{base}/v1/auth/login",
+            json={"identifier": email, "password": password},
+            timeout=15.0,
+        )
+        assert out.status_code == 200, out.text
+        return str(out.json()["token"])
+
+    assert _writes(base, _login(), ns) == 200
+    co_admin = _call(base, "grants.create", _admin(), namespace=ns, subject="bob", role="admin")
+    assert co_admin.status_code == 200, co_admin.text
+    _revoke(base, ns, subject=owner)
+    assert _writes(base, _login(), ns) == 403
+    given_back = _call(base, "grants.create", _admin(), namespace=ns, subject=owner, role="writer")
+    assert given_back.status_code == 200, given_back.text
+    assert _writes(base, _login(), ns) == 200

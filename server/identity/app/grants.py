@@ -376,10 +376,7 @@ async def handle_grants_approve(input: GrantsApproveInput) -> GrantsApproveOutpu
     await _enforce_code_ceiling(input.org, input.namespace, str(target_role))
     # granted_by on the new row is the approver, not the requester — the
     # audit trail and the "approved by …" notification need the right person.
-    from server.auth.context import current_auth
-
-    auth = current_auth()
-    approver = auth.subject if auth is not None and auth.subject else row.granted_by or "admin"
+    approver = _actor() or row.granted_by or "admin"
     if input.decision == "approve":
         await grants_repo.insert_row(
             {

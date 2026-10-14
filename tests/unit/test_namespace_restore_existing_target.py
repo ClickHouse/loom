@@ -226,16 +226,14 @@ async def test_a_restore_that_lowers_a_grant_ends_the_older_claims(
     from types import SimpleNamespace
 
     from server.identity.app import namespace_snapshot
-    from server.identity.domain.grants import GrantState
     from server.identity.store import grants as grants_repo
 
     live = {"alice": "writer", "bob": "viewer"}
 
-    async def _active(org: str, namespace: str, subject: str, **_k: object) -> GrantState | None:
-        role = live.get(subject)
-        return GrantState.from_row({"role": role, "status": "active"}) if role else None
+    async def _active(org: str, namespace: str, subjects: list[str], **_k: object) -> dict:
+        return {s: live[s] for s in subjects if s in live}
 
-    monkeypatch.setattr(grants_repo, "find_active_grant", _active)
+    monkeypatch.setattr(grants_repo, "active_roles", _active)
     restored = [
         SimpleNamespace(subject="alice", role="viewer"),  # lowered
         SimpleNamespace(subject="bob", role="writer"),  # raised

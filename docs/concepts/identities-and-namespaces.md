@@ -157,8 +157,10 @@ operation's role, or a live grant does.
   claim, a restore that lowers it, a maintainer leaving a repository's branches) also ends
   what the subject's older tokens claim there, a namespace an operator named at mint
   included: a token minted before it reaches the namespace only through the grant the
-  subject holds now, and a scoped token must be minted again. A grant made later does not
-  restore the old claim, and an OAuth refresh drops the namespace from the session.
+  subject holds now, and a scoped token must be minted again, from the next second on (the
+  cutoff covers the whole second of the change). A grant made later does not restore the
+  old claim, and an OAuth refresh drops the namespace from the session; signing in again
+  names an owned namespace only while the person holds a grant there.
   Approving a request never lowers a grant. A namespace the subject never held a grant on
   keeps its claim; revoke the token to take that away. The server that took the grant away
   applies it at once, every other within `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` (default

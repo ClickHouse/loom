@@ -124,3 +124,25 @@ async def test_widening_reads_the_gates_live_grant_predicate(
     await login.widen_with_restricted_grants("jdoe", "clickhouse", ["own"])
     grant_sql = [s for s in ch.sql if "namespace_grants" in s]
     assert grant_sql and LIVE_GRANT in grant_sql[0]
+
+
+@pytest.mark.asyncio
+async def test_a_login_leaves_out_an_owned_namespace_whose_grant_was_taken_away(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Owning the registry row is not access once a co-admin revoked it; a
+    grant given back afterwards brings the namespace back."""
+    import server.auth.revocation as rev
+
+    keys = {rev.grant_claim_key("clickhouse", ns, "jdoe"): 1 for ns in ("team", "back")}
+    monkeypatch.setattr(rev, "_revoked_before", keys)
+    ch = _FakeCH(_own("home", "team", "back"), [{"namespace": "back"}])
+    monkeypatch.setattr(login, "get_client", lambda: ch)
+    assert await login._without_taken_away("jdoe", "clickhouse", ["back", "home", "team"]) == [
+        "back",
+        "home",
+    ]
+    ch.grant_rows = RuntimeError("replica away")
+    assert await login._without_taken_away("jdoe", "clickhouse", ["back", "home", "team"]) == [
+        "home"
+    ]

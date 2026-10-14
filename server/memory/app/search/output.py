@@ -4,6 +4,7 @@ serving a parked page."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -82,15 +83,11 @@ async def _serve_parked_page(input: MemorySearchInput) -> MemorySearchOutput:
         )
     if payload is None:
         return empty
-    rows, nxt = _pages.slice_page(payload, offset=offset, top_k=int(input.top_k))
-    hits: list[_MemorySearchHit] = []
-    for r in rows:
-        try:
-            hits.append(_MemorySearchHit.model_validate(r))
-        except Exception:  # noqa: BLE001 — a row this build cannot read is skipped
-            continue
-    hits = await _still_readable(input.org, input.namespace, hits)
-    total = int(payload.get("candidates_total") or 0)
+    readable = await _readable_namespaces(input.org, input.namespace, payload)
+    hits, nxt = _readable_slice(payload, offset, int(input.top_k), readable)
+    # Hits from a namespace the caller lost are neither served nor counted.
+    withheld = sum(1 for h in payload.get("hits") or [] if h.get("namespace", "") not in readable)
+    total = max(0, int(payload.get("candidates_total") or 0) - withheld)
     # A parked page was serialised without tags unless the first call asked; fill on this
     # call's own switch.
     await _fill_hit_tags(hits, input)
@@ -112,18 +109,42 @@ async def _serve_parked_page(input: MemorySearchInput) -> MemorySearchOutput:
     return out
 
 
-async def _still_readable(
-    org: str, namespace: str, hits: list[_MemorySearchHit]
-) -> list[_MemorySearchHit]:
-    """The parked hits the caller may still read. A page was parked under the
-    addressed `namespace`, which the transport authorized again, but its hits
-    can come from any namespace the first call fanned out over, and a grant
-    there may have been taken away since."""
+async def _readable_namespaces(org: str, namespace: str, payload: dict[str, Any]) -> set[str]:
+    """The namespaces of a parked list the caller may still read. The page was
+    parked under the addressed `namespace`, which the transport authorized
+    again, but its hits can come from any namespace the first call fanned out
+    over, and a grant there may have been taken away since."""
     from server.auth.authz import row_in_scope
 
-    foreign = {h.namespace for h in hits} - {"", namespace}
-    readable = {"", namespace} | {ns for ns in foreign if await row_in_scope(org, ns)}
-    return [h for h in hits if h.namespace in readable]
+    foreign = sorted(
+        {str(h.get("namespace", "")) for h in payload.get("hits") or []} - {"", namespace}
+    )
+    allowed = await asyncio.gather(*(row_in_scope(org, ns) for ns in foreign))
+    return {"", namespace} | {ns for ns, ok in zip(foreign, allowed, strict=True) if ok}
+
+
+def _readable_slice(
+    payload: dict[str, Any], offset: int, top_k: int, readable: set[str]
+) -> tuple[list[_MemorySearchHit], int]:
+    """Up to `top_k` readable hits from `offset` on, and the offset after the
+    last row read (-1 at the end). Slices on past withheld rows, so a page is
+    short only when the list is."""
+    from server.memory.app import search_pages as _pages
+
+    hits: list[_MemorySearchHit] = []
+    nxt = offset
+    while len(hits) < top_k and nxt >= 0:
+        rows, nxt = _pages.slice_page(payload, offset=nxt, top_k=top_k - len(hits))
+        for r in rows:
+            if r.get("namespace", "") not in readable:
+                continue
+            try:
+                hits.append(_MemorySearchHit.model_validate(r))
+            except Exception:  # noqa: BLE001 — a row this build cannot read is skipped
+                continue
+        if not rows:
+            break
+    return hits, nxt
 
 
 async def _shape_final_hits(

@@ -146,6 +146,26 @@ async def find_active_grant(
     return None if row is None else GrantState.from_row(row)
 
 
+async def active_roles(
+    org: str,
+    namespace: str,
+    subjects: list[str],
+    *,
+    ch: _CHClient | None = None,
+) -> dict[str, str]:
+    """subject -> role of the ACTIVE grants on (org, ns) among `subjects`."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        """
+        SELECT subject, role FROM loom.namespace_grants FINAL
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND subject IN {subs:Array(String)} AND {live}
+        """.replace("{live}", LIVE_GRANT),
+        params={"org": org, "ns": namespace, "subs": subjects},
+    )
+    return {str(r["subject"]): str(r["role"]) for r in rows}
+
+
 async def find_any_grant(
     org: str,
     namespace: str,

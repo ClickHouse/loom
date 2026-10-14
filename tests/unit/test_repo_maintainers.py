@@ -140,7 +140,9 @@ async def test_revoke_leaves_every_branch_except_where_they_are_the_only_admin(
             _admin("code-x-26-6", "alice"),  # alone there
         ]
     )
-    n = await maintainers.revoke_repo_maintainer("clickhouse", "code-x", "alice", ch=ch)
+    n = await maintainers.revoke_repo_maintainer(
+        "clickhouse", "code-x", "alice", actor="ops", ch=ch
+    )
     assert n == 1
     (row,) = ch.inserted
     assert (row["namespace"], row["subject"], row["role"]) == ("code-x-26-5", "alice", "admin")
