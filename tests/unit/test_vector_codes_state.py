@@ -244,6 +244,23 @@ async def test_a_write_that_embeds_is_judged_on_a_recent_reading(
 
 
 @pytest.mark.asyncio
+async def test_a_write_that_embeds_rereads_inside_the_probe_interval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The background interval is a minute; a write still reads a few seconds' reading."""
+    from server.core.errors import CodedWidthMismatchError
+
+    ch = _FakeCH(coded=[("chunks", "embedding")], patches={}, width=3072)
+    await vector_codes_state.probe(ch)
+    ch.width = 1024  # rebuilt outside Loom
+    old = vector_codes_state._state.probed_at - vector_codes_state.FRESH_READING_S - 1
+    assert vector_codes_state._ttl() > vector_codes_state.FRESH_READING_S + 1
+    monkeypatch.setattr(vector_codes_state._state, "probed_at", old)
+    with pytest.raises(CodedWidthMismatchError):
+        await vector_codes_state.refuse_width("chunks", 3072)
+
+
+@pytest.mark.asyncio
 async def test_a_refusal_rereads_a_reading_a_second_old(monkeypatch: pytest.MonkeyPatch) -> None:
     """Even inside the probe interval: the table went back to the served width."""
     ch = _FakeCH(coded=[("chunks", "embedding")], patches={}, width=1024)

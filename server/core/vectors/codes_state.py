@@ -21,7 +21,7 @@ This module holds both facts per table, read from `system.columns` and
 The same read records the width each coded column was created at, which the
 write guards check (`refuse_width`, `refuse_other_widths`): ClickHouse refuses
 a whole insert that carries a vector of another width. A write that embeds
-reads again first when the reading is older than the probe interval, and a
+reads again first when the reading is older than FRESH_READING_S, and a
 write is refused only on a reading under REFUSAL_READING_S old.
 
 A failed probe keeps the previous reading. A table never read (never probed,
@@ -164,6 +164,9 @@ def _coded_of(table: str) -> list[tuple[str, str, int]]:
     return [(c, c[len(prefix) :], w) for c, w in _state.widths.items() if c.startswith(prefix)]
 
 
+# A write that embeds reads again first when the reading is older than this,
+# apart from the background probe interval, which only refreshes reads' facts.
+FRESH_READING_S = 5.0
 # A write is refused only on a reading at most this old when it is judged.
 REFUSAL_READING_S = 1.0
 
@@ -176,11 +179,11 @@ async def refuse_other_widths(table: str, rows: list[dict[str, Any]]) -> None:
 
 async def refuse_width(table: str, dim: int) -> None:
     """The same check for a write whose vectors will be `dim` wide, made before
-    any part of it is written, against a reading no older than the probe interval.
+    any part of it is written, against a reading no older than FRESH_READING_S.
     That narrows, not closes, the window in which a table rebuilt outside Loom
     takes half a write: its version row lands and its vectors are refused."""
     if _state.codec_available is not False:
-        await _reading_since(time.monotonic() - _ttl())
+        await _reading_since(time.monotonic() - FRESH_READING_S)
     await _refuse_if(lambda: _width_mismatch(table, dim))
 
 
