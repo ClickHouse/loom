@@ -193,12 +193,12 @@ supervisor runs them. Procedures are in [deployment](../operations/deployment.md
 
 ### Web tier
 
-| Knob                             | Effect                                                                                                                                                                    |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| More web replicas                | N web containers behind a load balancer, all with `LOOM_BACKGROUND_WORKERS=off`.                                                                                          |
-| `LOOM_WEB_WORKERS`               | uvicorn processes per container; unset, the image starts one per CPU the container may use, at most one per GiB of memory and at most 8. One process is at most one core. |
-| `LOOM_REPLICA_COUNT`             | Divides each rate-limit bucket by N, because buckets are per replica (below).                                                                                             |
-| `LOOM_LATENCY_BUDGET_MULTIPLIER` | Scales every op's `budget_p99_ms` before a budget violation fires (default 1.0).                                                                                          |
+| Knob                             | Effect                                                                                                                                                                                                                                       |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| More web replicas                | N web containers behind a load balancer, all with `LOOM_BACKGROUND_WORKERS=off`.                                                                                                                                                             |
+| `LOOM_WEB_WORKERS`               | uvicorn processes per container; unset, the image starts one per CPU the container may use, at most one per GiB of memory and at most 8. Each process runs its Python on one core; the local embedder gives each an equal share of the CPUs. |
+| `LOOM_REPLICA_COUNT`             | Divides each rate-limit bucket by N, because buckets are per replica (below).                                                                                                                                                                |
+| `LOOM_LATENCY_BUDGET_MULTIPLIER` | Scales every op's `budget_p99_ms` before a budget violation fires (default 1.0).                                                                                                                                                             |
 
 A new replica needs no warm-up beyond loading its revocation snapshot. Read-your-writes
 across processes is handled by ClickHouse (committed inserts, sequential re-reads), not

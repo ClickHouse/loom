@@ -236,7 +236,8 @@ One image serves every role. Settings decide what a process does:
 | Branch / A-B server | `LOOM_BOOT_MIGRATE=false`, `LOOM_INSTANCE_LABEL=<who>:<what>:<port>` | Serves a shared ClickHouse without applying migrations.                                                                                                                                                               |
 | Read-replica        | `LOOM_READ_REPLICA=true`                                             | Serves the shared data, ops and writes from its own endpoint with the same tokens: no migrations, workers or git mirrors; takes the main Loom's published settings ([read-replicas](../operations/read-replicas.md)). |
 
-`LOOM_WEB_WORKERS` sets uvicorn processes per container (default 1). Each runs the full
+`LOOM_WEB_WORKERS` sets uvicorn processes per container (unset, the image starts one per
+CPU the container may use, at most one per GiB of memory and at most 8). Each runs the full
 lifespan; under `auto` the host lock picks the one that runs the workers. `on` takes no
 lock, so it belongs only on a single-process workers container.
 
