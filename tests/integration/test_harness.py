@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from server.auth.revocation import grant_claim_key
 from tests.integration._redact import MASK, redact
 from tests.integration._resources import minted_orgs, purge, unique_org
 
@@ -55,6 +56,7 @@ class _RecordingClient:
 
     def __init__(self) -> None:
         self.commands: list[str] = []
+        self.parameters: list[dict[str, Any]] = []
 
     def query(self, sql: str, parameters: dict[str, Any] | None = None) -> Any:
         if "system.tables" in sql:
@@ -65,8 +67,9 @@ class _RecordingClient:
             rows = [(0,)]
         return type("R", (), {"result_rows": rows})()
 
-    def command(self, sql: str, **_: Any) -> None:
+    def command(self, sql: str, parameters: dict[str, Any] | None = None, **_: Any) -> None:
         self.commands.append(sql)
+        self.parameters.append(parameters or {})
 
 
 def test_purge_refuses_an_org_the_suite_did_not_mint() -> None:
@@ -84,3 +87,5 @@ def test_purge_deletes_from_every_org_table_and_reports_no_residue() -> None:
         "ALTER TABLE `loom`.`revoked_tokens` "
         "DELETE WHERE arrayExists(p -> startsWith(jti, p), %(prefixes)s)",
     ]
+    (prefix,) = client.parameters[1]["prefixes"]
+    assert grant_claim_key("it-ok-0123abcd", "team", "alice").startswith(prefix)

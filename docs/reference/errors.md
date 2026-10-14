@@ -157,8 +157,11 @@ contact, so it stops counting. A release first cuts the tokens of its grantees, 
 releasing an account the person holds a grant on refuses too: release those last, once at
 most 1000 remain.
 
-When the person holds a grant on too many of them for that, clear just their contact,
-which changes no grant and so cuts no token, then re-run the query above and release them:
+When the person holds a grant on too many of them for that, clear just their contact.
+That changes no grant, but it unties each account's owner from the person, so a later
+cutoff for the person no longer reaches tokens minted under that owner. Retire those
+tokens first, with `loom revoke-token --subject <owner_email>` for each account in the
+list, then clear the contacts:
 
 ```sql
 INSERT INTO loom.namespaces
@@ -170,8 +173,12 @@ FROM (
 )
 ```
 
-The filter sits in the subquery because `REPLACE` would otherwise rename `contact_email`
-under it, and `greatest` keeps the new row from losing to one stamped later.
+The filter sits in the subquery because a `WHERE` beside `REPLACE` reads the replaced
+`''`. `greatest` keeps the new row from losing to the row it replaces when that row is
+stamped ahead of the server's clock; on a tie the later insert wins.
+
+Re-run the first query to check that at most 1000 remain, then release each account the
+`INSERT` listed with `loom claim-release`.
 
 ## How the entries below are generated
 

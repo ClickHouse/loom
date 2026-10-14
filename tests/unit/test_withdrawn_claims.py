@@ -428,14 +428,71 @@ def test_a_cutoff_refuses_rather_than_cut_short_past_its_spelling_bound(
     assert "errors.md#too-many-spellings" in caplog.text
 
 
+def test_a_spelling_refusal_keeps_its_subject_and_bound_through_a_copy() -> None:
+    import copy
+    import pickle
+
+    from server.core.errors import TooManySpellingsError
+
+    refusal = TooManySpellingsError("too many accounts", subject="a@x.io", limit=2)
+    for again in (copy.copy(refusal), pickle.loads(pickle.dumps(refusal))):
+        assert again.message == "too many accounts"
+        assert again.extra == {"subject": "a@x.io", "limit": 2}
+
+
 def test_the_documented_spelling_bound_is_the_one_a_cutoff_reads() -> None:
     from server.auth import aliases
     from server.core.errors import TooManySpellingsError
     from server.core.paths import REPO_ROOT
 
-    bound = f"more than {aliases._CUTOFF_SPELLINGS} accounts"
-    assert bound in " ".join((TooManySpellingsError.__doc__ or "").split())
-    assert bound.capitalize() in (REPO_ROOT / "docs/reference/errors.md").read_text()
+    n = aliases._CUTOFF_SPELLINGS
+    errors_md = (REPO_ROOT / "docs/reference/errors.md").read_text()
+    (table_row,) = [
+        line for line in errors_md.splitlines() if line.startswith("| `TOO_MANY_SPELLINGS`")
+    ]
+    assert f"more than {n} accounts" in " ".join((TooManySpellingsError.__doc__ or "").split())
+    assert f"More than {n} accounts" in table_row
+    assert f"at most {n} remain" in " ".join(errors_md.split())
+    security_md = (REPO_ROOT / "docs/architecture/security.md").read_text()
+    assert f"past {n} accounts" in " ".join(security_md.split())
+
+
+def test_a_refused_cutoff_cancels_the_spelling_reads_still_running(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.core.errors import TooManySpellingsError
+
+    cancelled: list[str] = []
+
+    async def _spellings(org: str, subject: str, **_k: Any) -> list[str]:
+        if subject == "squatted":
+            raise TooManySpellingsError("too many accounts", subject=subject, limit=1000)
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            cancelled.append(subject)
+            raise
+        return [subject]
+
+    monkeypatch.setattr("server.auth.aliases.cutoff_spellings", _spellings)
+
+    async def _cut() -> None:
+        with pytest.raises(TooManySpellingsError):
+            await rev.write_grant_cutoffs(
+                ORG, ["team"], ["alice", "squatted"], reason="test", revoked_by="admin"
+            )
+        await asyncio.sleep(0)
+        # Checked inside the loop: asyncio.run cancels whatever is left on exit.
+        assert cancelled == ["alice"]
+
+    asyncio.run(_cut())
+    assert ch.revoked == {}
+
+
+def test_every_cutoff_key_of_an_org_starts_with_its_prefix() -> None:
+    key = rev.grant_claim_key("it-ok-0123abcd", "team", "alice")
+    assert key.startswith(rev.grant_claim_prefix("it-ok-0123abcd"))
+    assert not key.startswith(rev.grant_claim_prefix("it-ok-0123abc"))
 
 
 def test_a_slash_in_an_org_or_namespace_cannot_make_two_scopes_share_a_key() -> None:

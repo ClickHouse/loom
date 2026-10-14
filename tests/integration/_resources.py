@@ -9,7 +9,6 @@ dev stack keeps every other tenant's rows.
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import secrets
@@ -17,6 +16,8 @@ import time
 from typing import Any
 
 import pytest
+
+from server.auth.revocation import grant_claim_prefix
 
 _ORG_SHAPE = re.compile(r"^it-[a-z0-9][a-z0-9-]{0,40}-[0-9a-f]{8}$")
 _minted: set[str] = set()
@@ -141,7 +142,7 @@ def _delete_grant_cutoffs(client: Any, database: str, orgs: frozenset[str]) -> N
     client.command(
         f"ALTER TABLE `{database}`.`revoked_tokens` "
         "DELETE WHERE arrayExists(p -> startsWith(jti, p), %(prefixes)s)",
-        parameters={"prefixes": [f"grant:[{json.dumps(o)}," for o in sorted(orgs)]},
+        parameters={"prefixes": [grant_claim_prefix(o) for o in sorted(orgs)]},
         settings={"mutations_sync": 2},
     )
 

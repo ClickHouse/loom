@@ -266,6 +266,11 @@ def grant_claim_key(org: str, namespace: str, subject: str) -> str:
     return _GRANT_CLAIM_PREFIX + json.dumps([org, namespace, digest], separators=(",", ":"))
 
 
+def grant_claim_prefix(org: str) -> str:
+    """The start every one of `org`'s grant cutoff keys shares."""
+    return f"{_GRANT_CLAIM_PREFIX}[{json.dumps(org)},"
+
+
 def grant_cutoff_applies(org: str, namespace: str, subject: str, issued_at: int) -> bool:
     """Whether a cutoff for `subject` on (org, namespace) is later than a
     token issued at `issued_at` (unix seconds). Reads this process's
@@ -292,7 +297,14 @@ async def write_grant_cutoffs(
         async with limit:
             return await cutoff_spellings(org, subject)
 
-    spellings = await asyncio.gather(*(spellings_of(s) for s in subjects))
+    reads = [asyncio.ensure_future(spellings_of(s)) for s in subjects]
+    try:
+        spellings = await asyncio.gather(*reads)
+    except BaseException:
+        # Stop the other reads; a TaskGroup would wrap the refusal callers catch.
+        for read in reads:
+            read.cancel()
+        raise
     keys = sorted(
         {
             grant_claim_key(org, ns, alias)

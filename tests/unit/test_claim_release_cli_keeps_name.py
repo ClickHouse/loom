@@ -206,6 +206,7 @@ def test_an_endpoint_release_refused_for_too_many_spellings_answers_409(
     assert r.status_code == 409
     detail = r.json()["detail"]
     assert detail["code"] == "TOO_MANY_SPELLINGS"
+    assert detail["subject"] == "bob@acme.test" and detail["limit"] == 1000
     assert "more than 1000 accounts name its grantee 'bob@acme.test'" in detail["message"]
     assert "#too_many_spellings" in r.headers["link"]
     assert fake.inserts == []

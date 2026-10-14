@@ -6,7 +6,7 @@ server `code` is a class the SDK deserializes via `errors.from_response`.
 
 from __future__ import annotations
 
-import json
+import functools
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -103,8 +103,12 @@ class TooManySpellingsError(LoomServerError):
     code = "TOO_MANY_SPELLINGS"
     status_code = 409
 
-    def __init__(self, message: str = "", *, subject: str, limit: int) -> None:
+    def __init__(self, message: str, *, subject: str, limit: int) -> None:
         super().__init__(message, subject=subject, limit=limit)
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        # The default rebuilds from `args` alone, which lacks the keywords.
+        return functools.partial(type(self), **self.extra), (self.message,)
 
 
 class OverloadedError(LoomServerError):
