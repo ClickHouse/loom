@@ -15008,6 +15008,7 @@ class SearchQueryOutput(TypedDict, total=False):
     profile: NotRequired[dict[str, Any]]
     conversations: NotRequired[dict[str, Any]]
     withheld: NotRequired[Optional[dict[str, Any]]]
+    namespaces_skipped: NotRequired[list[str]]
 
 
 class SessionBriefDeleteInput(TypedDict, total=False):

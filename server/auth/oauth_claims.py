@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import enum
 import logging
+import time
 import uuid
 from typing import Any
 
@@ -76,14 +77,16 @@ _RELEASE = (
 _releases = TaskSet()
 
 # Whether loom.oauth_claims exists here: None until the boot probe or the
-# first exchange asks.
+# first exchange asks. A no is asked again after `_ABSENT_RECHECK_S`.
 _atomic: bool | None = None
+_absent_until = 0.0
+_ABSENT_RECHECK_S = 60.0
 
 
 class Claim(enum.Enum):
-    HELD = "held"  # this exchange holds the key
-    TAKEN = "taken"  # another exchange of the credential is running
-    UNCLAIMED = "unclaimed"  # no claims table here
+    HELD = enum.auto()  # this exchange holds the key
+    TAKEN = enum.auto()  # another exchange of the credential is running
+    UNCLAIMED = enum.auto()  # no claims table here
 
 
 def claims_atomic() -> bool | None:
@@ -191,13 +194,16 @@ async def _holder(ch: Any, key: str) -> str:
 
 
 async def _available(ch: Any) -> bool:
-    """Whether loom.oauth_claims is here. A yes is kept; a no is asked again,
-    so a server that booted before the migration created it starts claiming
-    without a restart."""
-    global _atomic
-    if _atomic is not True:
-        found = is_keeper_table(await ch.query_one(OAUTH_CLAIMS_TABLE_SQL))
-        if not found and _atomic is None:
+    """Whether loom.oauth_claims is here. A yes is kept; a no is asked again
+    after `_ABSENT_RECHECK_S`, so a server that booted before the migration
+    created the table starts claiming without a restart."""
+    global _atomic, _absent_until
+    if _atomic is True or (_atomic is False and time.monotonic() < _absent_until):
+        return _atomic
+    found = is_keeper_table(await ch.query_one(OAUTH_CLAIMS_TABLE_SQL))
+    if not found:
+        if _atomic is None:
             log.info("oauth: no loom.oauth_claims (no Keeper); exchanges are not claimed")
-        _atomic = found
+        _absent_until = time.monotonic() + _ABSENT_RECHECK_S
+    _atomic = found
     return _atomic

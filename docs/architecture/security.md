@@ -80,7 +80,7 @@ keyed `grant:["<org>","<namespace>","<hash of the lower-cased subject>"]` (one p
 spelling of the subject; the hash keeps an email out of the key but can be tested against
 a guessed one; it is not a keyed HMAC because a rotated key would orphan cutoffs kept for
 ten years), so tokens minted before it no longer reach the namespace through their own
-claim (`revocation.write_grant_cutoffs`, `authz.withdrawn_claims`). The row is the only
+claim (`revocation.write_grant_cutoffs`, `authz.claim_withdrawn`). The row is the only
 record: the grant row is replaced by the subject's next one, so a cutoff is never derived
 from it. Three consequences hold the design together:
 

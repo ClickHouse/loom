@@ -15,7 +15,7 @@ The table is ReplacingMergeTree ORDER BY jti: the newest row per key governs.
 - `is_revoked` is a frozenset/dict lookup — no I/O, safe from sync verify.
 - Taking a grant away (`write_grant_cutoffs`) writes a cutoff row keyed by
   `grant_claim_key`: tokens of that subject minted before it no longer reach
-  the namespace through their own claim (`authz.withdrawn_claims`).
+  the namespace through their own claim (`authz.claim_withdrawn`).
 - A cutoff is kept `NEVER_EXPIRES_DAYS` (a sign-in mints past any cutoff,
   so none may lapse while the owner row stands). Its key is per namespace
   and subject spelling, and a later cutoff replaces it, so the table holds

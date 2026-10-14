@@ -57,6 +57,7 @@ class _Keeper:
 @pytest.fixture(autouse=True)
 def _unprobed(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setattr(oc, "_atomic", None)
+    monkeypatch.setattr(oc, "_absent_until", 0.0)
     yield
 
 
@@ -276,4 +277,6 @@ def test_a_missing_claims_table_is_asked_for_again() -> None:
     keeper = _Keeper(table=False)
     assert _claim(keeper)[0] is oc.Claim.UNCLAIMED
     keeper.table = True
+    assert _claim(keeper)[0] is oc.Claim.UNCLAIMED, "a no is kept for a while"
+    oc._absent_until = 0.0  # the recheck is due
     assert _claim(keeper)[0] is oc.Claim.HELD

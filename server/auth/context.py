@@ -81,7 +81,7 @@ async def resolve_my_namespaces(org: str, subject: str | None = None) -> list[st
       widen), returned sorted.
 
     Either way a claimed namespace whose grant was revoked or lowered after
-    the token was minted is left out (`authz.withdrawn_claims`), unless a
+    the token was minted is left out (`authz.claim_withdrawn`), unless a
     scoped token's subject still holds a grant there (`authz.scoped_claims`).
 
     A delegated token (a `creator` claim) is neither: its claim narrowed to

@@ -535,10 +535,18 @@ async def test_a_jit_read_that_fails_is_a_retryable_sign_in_failure(monkeypatch)
 async def test_signing_in_finishes_a_jit_account_whose_owner_grant_never_landed(
     monkeypatch, granted_before: bool
 ) -> None:
-    # Provisioning wrote the namespace row, then failed on the grant. A grant
-    # revoked or lowered since leaves a row, and is never given back.
+    # Provisioning wrote the namespace row, then failed on the grant. The next
+    # OIDC sign-in resolves that row as the person's account, so the callback
+    # finishes it first. A grant revoked or lowered since leaves a row, and
+    # is never given back.
+    from tests.unit.oauth_store_fake import MemoryOAuthStore
+
     _jit_on(monkeypatch)
     granted: list[tuple[str, str]] = []
+    store = MemoryOAuthStore()
+    await store.save_pending(
+        "s", {"nonce": "n", "client_id": "c", "redirect_uri": "http://r/cb", "code_challenge": "x"}
+    )
 
     async def accounts(org: str, ident: str) -> list[dict[str, Any]]:
         return [{"namespace": "u-bob", "owner": "u-bob", "active": True, "tags": [jit.JIT_TAG]}]
@@ -549,8 +557,21 @@ async def test_signing_in_finishes_a_jit_account_whose_owner_grant_never_landed(
     async def grant(org: str, namespace: str, subject: str, **_k: Any) -> None:
         granted.append((namespace, subject))
 
+    async def exchange(**_k: Any) -> dict[str, str]:
+        return {"id_token": "t"}
+
+    async def claims(*_a: Any, **_k: Any) -> dict[str, Any]:
+        return {"email": "bob@acme.com", "email_verified": True}
+
+    class _Req:
+        query_params = {"code": "c", "state": "s"}
+
+    monkeypatch.setattr(oauth, "_store", store)
+    monkeypatch.setattr(oidc, "exchange_code", exchange)
+    monkeypatch.setattr(oidc, "verify_id_token", claims)
+    monkeypatch.setattr(oidc, "verified_email", lambda c: "bob@acme.com")
     monkeypatch.setattr(jit, "_accounts_naming", accounts)
     monkeypatch.setattr(jit, "_ever_granted", ever_granted)
     monkeypatch.setattr(self_signup, "insert_owner_grant", grant)
-    assert await jit.jit_provision_for_email("bob@acme.com") is not None
+    assert (await oauth.oidc_callback(_Req())).status_code == 302  # type: ignore[arg-type]
     assert granted == ([] if granted_before else [("u-bob", "u-bob")])

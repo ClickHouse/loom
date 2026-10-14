@@ -655,7 +655,7 @@ def _oauth_claim_problems(settings: Any, state: HealthState) -> list[Problem]:
             "concurrent ones can still both mint tokens.",
             "Run ClickHouse with a Keeper (deploy/clickhouse-config/keeper.xml) and create the "
             "table from schemas/migrations/027_oauth_claims.sql (the migration skipped it); "
-            "the next exchange finds it.",
+            "an exchange within a minute finds it.",
             source="runtime",
         )
     ]

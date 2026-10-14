@@ -142,6 +142,22 @@ async def jit_provision_for_email(
             raise login.SignInUnavailable from e
 
 
+async def finish_unfinished_account(email: str) -> None:
+    """Before an OIDC sign-in resolves `email`: write the owner grant of its
+    JIT account if that account's provisioning failed before the grant. A
+    no-op when JIT is off. Raises `SignInUnavailable` when it cannot read."""
+    from server.settings import settings as _settings
+
+    if not _settings.oidc_jit_provision:
+        return
+    org, ident = _settings.oidc_jit_org, email.strip().lower()
+    try:
+        await _finish_provisioning(org, await _accounts_naming(org, ident))
+    except Exception as e:  # a read or write that failed: retryable, as any sign-in's
+        log.error("oidc jit: finishing %r in %s failed: %s", ident, org, e, exc_info=True)
+        raise login.SignInUnavailable from e
+
+
 async def _provision_jit(
     org: str, ident: str, base: str
 ) -> tuple[str, str, list[str], list[str]] | None:
@@ -150,7 +166,6 @@ async def _provision_jit(
 
     accounts = await _accounts_naming(org, ident)
     if any(a["active"] for a in accounts):
-        await _finish_provisioning(org, accounts)
         return await _resolve_as_written(ident)  # their account, whatever its name
     if await _any_revoked(accounts):
         # Offboarded: a fresh name would be a new subject past the revoke.

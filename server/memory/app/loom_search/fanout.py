@@ -209,7 +209,7 @@ async def search_sections(
     from server.memory.app.search import handle_memory_search
 
     scope = request_scope()
-    namespaces, _ = await namespaces_to_search(org, namespace, namespace_scope)
+    namespaces, skipped = await namespaces_to_search(org, namespace, namespace_scope)
 
     mem_input = MemorySearchInput(
         org=org,
@@ -261,6 +261,7 @@ async def search_sections(
 
     # The QA verdict leads when the question is a defect report.
     payload: dict[str, Any] = {"tracker": t_section} if isinstance(t_section, dict) else {}
+    payload["namespaces_skipped"] = skipped
     if isinstance(mem_result, Exception):
         payload["memory"] = {"error": _leg_error(mem_result), "results": []}
     else:

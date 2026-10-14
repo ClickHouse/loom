@@ -7339,6 +7339,7 @@ export interface SearchQueryOutput {
   profile?: Record<string, unknown>;
   conversations?: Record<string, unknown>;
   withheld?: Record<string, unknown> | null;
+  namespaces_skipped?: string[];
 }
 
 export interface SessionBriefDeleteInput {

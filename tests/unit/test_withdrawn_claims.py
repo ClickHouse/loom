@@ -16,7 +16,7 @@ import pytest
 import server.auth.context as ctx
 import server.auth.revocation as rev
 import server.identity.app.grants as grants_mod
-from server.auth.authz import check_authorized, withdrawn_claims
+from server.auth.authz import check_authorized, claim_withdrawn
 from server.auth.jwt import AuthInfo
 from server.identity.api.models_grants import GrantsRevokeInput
 from server.identity.domain.grants import GrantState
@@ -156,7 +156,7 @@ def test_a_later_grant_does_not_restore_the_old_claim(ch: _CH) -> None:
 def test_a_claim_never_backed_by_a_grant_is_left_alone(ch: _CH) -> None:
     # An operator's `loom mint-token --namespaces notes`; no cutoff names it.
     assert _admits(_flat("notes"), "notes")
-    assert withdrawn_claims(_flat("*"), ORG, ["team"]) == set()
+    assert not claim_withdrawn(_flat("*"), ORG, "team")
 
 
 def test_the_check_reads_no_clickhouse(ch: _CH, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -167,7 +167,7 @@ def test_the_check_reads_no_clickhouse(ch: _CH, monkeypatch: pytest.MonkeyPatch)
             raise AssertionError("the claim check must not reach ClickHouse")
 
     monkeypatch.setattr("server.core.ch.get_client", lambda: _Unreachable())
-    assert withdrawn_claims(_scoped("team"), ORG, ["team"]) == {"team"}
+    assert claim_withdrawn(_scoped("team"), ORG, "team")
 
 
 def test_every_spelling_of_the_subject_is_cut(ch: _CH, monkeypatch: pytest.MonkeyPatch) -> None:

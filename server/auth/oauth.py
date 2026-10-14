@@ -592,7 +592,7 @@ async def _start_oidc_login(
 @router.get("/oauth/callback")
 async def oidc_callback(request: Request) -> RedirectResponse:
     from server.auth import oidc
-    from server.auth.jit import jit_provision_for_email
+    from server.auth.jit import finish_unfinished_account, jit_provision_for_email
     from server.auth.login import SignInUnavailable, resolve_identity_for_email
 
     code = request.query_params.get("code", "")
@@ -623,6 +623,7 @@ async def oidc_callback(request: Request) -> RedirectResponse:
     # from here, so the account lookup (and a JIT provisioning) comes out of it.
     issued_at = int(time.time())
     try:
+        await finish_unfinished_account(email)
         resolved = await resolve_identity_for_email(email)
         if resolved is None:
             # No account — auto-provision one if JIT is on (else stay fail-closed).
@@ -770,8 +771,11 @@ async def _exchange(
     issued_at = int(time.time())  # before the decision reads the grant cutoffs
     keep_claim = False
     try:
+        # Without a claim nothing changed since the first read; with one, the
+        # credential is read again under it.
+        known = None if claimed else found
         grant, answer = await _settle(
-            kind, credential, client_id, decide, issued_at, consume_first=not claimed
+            kind, credential, client_id, decide, issued_at, known=known, consume_first=not claimed
         )
         # Held until the consume is acknowledged: a cancelled one may still land.
         keep_claim = claimed
@@ -798,6 +802,7 @@ async def _settle(
     decide: _Decider,
     issued_at: int,
     *,
+    known: dict[str, Any] | None,
     consume_first: bool,
 ) -> tuple[dict[str, Any], dict[str, Any] | HTTPException]:
     """Find the credential and decide on it within `EXCHANGE_TIMEOUT_S`: its
@@ -810,7 +815,7 @@ async def _settle(
     consumed = False
     try:
         async with asyncio.timeout(oauth_claims.EXCHANGE_TIMEOUT_S):
-            grant = await _find(kind, credential, client_id)
+            grant = known or await _find(kind, credential, client_id)
             if grant is None:
                 raise _invalid_grant()
             if consume_first:

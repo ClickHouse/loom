@@ -218,16 +218,16 @@ def test_knowledge_reads_an_addressed_public_namespace_in_the_first_pass(
 
 def test_the_loom_search_text_names_the_skipped_namespaces() -> None:
     payload = copy.deepcopy(SEARCH_PAYLOAD)
-    payload["memory"]["namespaces_skipped"] = ["work", "home"]
+    payload["namespaces_skipped"] = ["work", "home"]
     answer = mcp_tools.search_answer(payload, {"query": "q"}, "local", "session-1")
     text = answer["content"][0]["text"]
     assert "Not read, over the fan-out cap: work, home." in text.splitlines()
 
-    payload["memory"]["namespaces_skipped"] = [f"ns-{i}" for i in range(8)]
+    payload["namespaces_skipped"] = [f"ns-{i}" for i in range(8)]
     text = mcp_tools.search_answer(payload, {"query": "q"}, "local", "session-1")["content"][0][
         "text"
     ]
-    assert "ns-0, ns-1, ns-2, ns-3, ns-4 and 3 more (memory.namespaces_skipped)." in text
+    assert "ns-0, ns-1, ns-2, ns-3, ns-4 and 3 more (namespaces_skipped)." in text
 
 
 def test_an_unaddressed_search_starts_at_home_even_past_the_cap(

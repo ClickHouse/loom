@@ -36,5 +36,6 @@ Search every plane of the caller's Loom content in one call.
 | `profile` | `dict[str, Any]` | Profile sections whose label or text matches the query words, then by meaning. |
 | `conversations` | `dict[str, Any]` | The `conversation.search` hits under `results`. |
 | `withheld` | `dict[str, Any] \| None` | Counts of hits held back per section by the answer-first rules, with `reason`; absent when nothing was withheld or `explain` is set. |
+| `namespaces_skipped` | `list[str]` | The caller's namespaces no leg read because the fan-out stops at `memory_search_fanout_max_namespaces`; address one by name to search it. |
 
 <!-- prettier-ignore-end -->

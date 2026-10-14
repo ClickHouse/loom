@@ -47,12 +47,12 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   clone stays a plain `git clone`.
 
 - `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES` (default 32) caps how many of the caller's
-  namespaces a `namespace_scope=all_mine` search reads besides the addressed one.
-  For anyone but a scoped token the cut drops public namespaces before private ones.
+  namespaces a `namespace_scope=all_mine` search reads besides the addressed one. For
+  anyone but a scoped token the cut drops public namespaces before private ones.
   `memory.search` names the rest in a new output field, `namespaces_skipped`, and the
-  `loom_search` text lists them. `knowledge.search` and `conversation.search` carry the
-  same field, and every page of a paged `memory.search` repeats the first call's lists,
-  less any namespace the caller can no longer read.
+  `loom_search` output and text list them. `knowledge.search` and `conversation.search`
+  carry the same field, and every page of a paged `memory.search` repeats the first call's
+  lists, less any namespace the caller can no longer read.
 
 ### Changed
 
@@ -103,6 +103,9 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   gets the next free name (`<name>-2`, ..., then a random suffix). A first sign-in whose
   owner grant failed to land is finished at the next sign-in, from a new `oidc-jit` tag on
   the account; a grant revoked or lowered since is never given back.
+- **Security:** self-signup refuses an email a deleted account still holds, as it refuses
+  a taken name. Signing up and deleting again and again tied any number of accounts to
+  someone else's address. `loom claim-release` frees the email with the name.
 - **Security:** `namespace.restore` into an existing namespace needs an admin of it. The
   owner a first write auto-registered, who holds no grant there, could restore a payload
   whose grants made them, or anyone, admin.

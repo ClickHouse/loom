@@ -146,8 +146,11 @@ async def check_authorized(
     # (org-level) ops fall through to the flat-role check below.
     withdrawn = org is not None and namespace is not None and claim_withdrawn(auth, org, namespace)
     if auth.has_ns_roles() and org is not None and namespace is not None:
-        if await _check_scoped(auth, required_role, org, namespace, withdrawn=withdrawn):
+        role = await _scoped_role(auth, required_role, org, namespace, withdrawn=withdrawn)
+        if role is not None and role.value >= required_role.value:
             return
+        if not _code_namespace_read(required_role, org, namespace):
+            raise _scoped_refusal(required_role, org, namespace, role, withdrawn=withdrawn)
 
     # Reads check the readable set; writes (WRITER+) check the narrower
     # writable set, so a token can read an inherited parent namespace
@@ -311,40 +314,43 @@ def names_namespace(auth: AuthInfo, org: str, namespace: str) -> bool:
     return any(ns == namespace for ns, _role in auth.ns_roles)
 
 
-async def _check_scoped(
+async def _scoped_role(
     auth: AuthInfo, required_role: Role, org: str, namespace: str, *, withdrawn: bool
-) -> bool:
-    """Decide a namespace-bound op for a scoped token by its own role there:
-    True when that role allows `required_role`, a refusal when it does not.
-    A token whose claim was withdrawn keeps no more than the grant its subject
-    holds there now. A read of a code namespace is the exception: it goes on
-    to the grant check (False)."""
-    eff = auth.effective_role(org, namespace)
-    if eff is not None and withdrawn:
-        live = await _lookup_grant(org, namespace, auth.subject)
-        eff = None if live is None else min(eff, live)
-    # An `ns_write` claim (inherited by a delegated child) binds writes too.
-    outside_write_claim = (
+) -> Role | None:
+    """The role a scoped token holds on (org, namespace) for this op: its own,
+    capped at the subject's live grant when its claim was withdrawn. None for
+    a write outside its `ns_write` claim (inherited by a delegated child)."""
+    if (
         required_role.value >= Role.WRITER.value
-        and bool(auth.write_namespaces)
+        and auth.write_namespaces
         and not auth.can_write(org, namespace)
-    )
-    if eff is not None and eff.value >= required_role.value and not outside_write_claim:
-        return True
-    # On a repository the join IS the read. A scoped token's map caps what it
-    # writes and which memory it reads; a code index is read-only reference
-    # data a maintainer admits people to by grant, so a reader grant (the
-    # subject's own, or the creator's for a service account) widens READS of
-    # a configured code namespace and nothing else. Without it, every agent
-    # token minted before a person joined a repository would need a re-mint
-    # to follow them in.
-    if required_role.value <= Role.VIEWER.value and _is_code_namespace(org, namespace):
-        return False
+    ):
+        return None
+    role = auth.effective_role(org, namespace)
+    if role is not None and withdrawn:
+        live = await _lookup_grant(org, namespace, auth.subject)
+        role = None if live is None else min(role, live)
+    return role
+
+
+def _code_namespace_read(required_role: Role, org: str, namespace: str) -> bool:
+    """A read of a configured code namespace, which a scoped token leaves to
+    the grant check. On a repository the join IS the read: a code index is
+    read-only reference data a maintainer admits people to by grant, so a
+    reader grant (the subject's own, or the creator's for a service account)
+    widens reads there and nothing else. Without it, every agent token minted
+    before a person joined a repository would need a re-mint to follow them."""
+    return required_role.value <= Role.VIEWER.value and _is_code_namespace(org, namespace)
+
+
+def _scoped_refusal(
+    required_role: Role, org: str, namespace: str, role: Role | None, *, withdrawn: bool
+) -> PermissionError:
     if withdrawn:
-        raise _refused(_withdrawn_message(org, namespace, required_role), org, namespace)
-    raise _refused(
+        return _refused(_withdrawn_message(org, namespace, required_role), org, namespace)
+    return _refused(
         f"scoped token: {required_role.name} required on {org}/{namespace}; "
-        f"token grants {eff.name if eff else 'no access'} there",
+        f"token grants {role.name if role else 'no access'} there",
         org,
         namespace,
     )
@@ -371,11 +377,6 @@ def claim_withdrawn(auth: AuthInfo, org: str, namespace: str) -> bool:
     )
 
 
-def withdrawn_claims(auth: AuthInfo, org: str, namespaces: list[str]) -> set[str]:
-    """The `namespaces` whose claim this token lost (`claim_withdrawn`)."""
-    return {ns for ns in namespaces if claim_withdrawn(auth, org, ns)}
-
-
 async def scoped_claims(auth: AuthInfo, org: str) -> list[str]:
     """A scoped token's named namespaces, in order, that its gate still
     admits: a withdrawn claim stays while its subject holds a live grant
@@ -389,9 +390,7 @@ async def scoped_claims(auth: AuthInfo, org: str) -> list[str]:
 
 def live_claims(auth: AuthInfo, org: str, namespaces: Iterable[str]) -> list[str]:
     """The named `namespaces` (no `*`) whose claim still stands, in order."""
-    named = [ns for ns in namespaces if ns and ns != "*"]
-    withdrawn = withdrawn_claims(auth, org, named)
-    return [ns for ns in named if ns not in withdrawn]
+    return [ns for ns in namespaces if ns and ns != "*" and not claim_withdrawn(auth, org, ns)]
 
 
 async def _check_restricted(auth: AuthInfo, required_role: Role, org: str, namespace: str) -> None:
@@ -570,5 +569,4 @@ __all__ = [
     "scoped_claims",
     "row_in_scope",
     "scope_flags",
-    "withdrawn_claims",
 ]

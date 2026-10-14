@@ -591,12 +591,12 @@ def search_answer(
         f"{know_n} knowledge, {conv_n} conversation hit"
         f"{'' if (mem_n + prof_n + know_n + conv_n) == 1 else 's'}.{withheld_note(payload)}"
     ]
-    if skipped := payload["memory"].get("namespaces_skipped"):
+    if skipped := payload.get("namespaces_skipped"):
         named = ", ".join(skipped[:_SKIPPED_NAMED])
         more = len(skipped) - _SKIPPED_NAMED
         lines.append(
             f"Not read, over the fan-out cap: {named}"
-            + (f" and {more} more (memory.namespaces_skipped)" if more > 0 else "")
+            + (f" and {more} more (namespaces_skipped)" if more > 0 else "")
             + "."
         )
     if prof_hits:

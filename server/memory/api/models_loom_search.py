@@ -79,3 +79,6 @@ class SearchOutput(BaseModel):
     # Counts of hits held back per section by the answer-first rules, with `reason`;
     # absent when nothing was withheld or `explain` is set.
     withheld: dict[str, Any] | None = None
+    # The caller's namespaces no leg read because the fan-out stops at
+    # `memory_search_fanout_max_namespaces`; address one by name to search it.
+    namespaces_skipped: list[str] = Field(default_factory=list)
