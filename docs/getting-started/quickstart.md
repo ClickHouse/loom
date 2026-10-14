@@ -389,7 +389,8 @@ secret and provider keys.
 
 `LOOM_CODE_REPOS_JSON` is one line holding every repository as a JSON array
 ([Configure the entry](../operations/code-index-operations.md#configure-the-entry)).
-Add it to `~/.loom/.env`, or add an entry to the array if the line is already there.
+In `~/.loom/.env`, uncomment the `LOOM_CODE_REPOS_JSON` line (add it if your `.env`
+predates it) and edit it.
 `dev` is the org a single-user stack runs as; in multi-user mode use your account's org,
 here and in `--org` below:
 

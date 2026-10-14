@@ -533,8 +533,11 @@ def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
                 "error",
                 "Repository jobs (clone, fetch, dependency installs, compiler tiers) are "
                 "refused: LOOM_CODE_SANDBOX_REQUIRED is set and the sandbox cannot run here.",
-                "Address the 'sandbox probe failed' warning in the server log (`loom doctor` "
-                "prints it), or load the AppArmor profile — 'Repository-job sandbox' in "
+                "Address the 'sandbox probe failed' warning in the server log (printed at the "
+                "top of `loom doctor`). In a container on an AppArmor 4.0 host, load the "
+                "loom-repo-sandbox profile and copy the security_opt of "
+                "dev/docker-compose.colour.yml. Or unset LOOM_CODE_SANDBOX_REQUIRED and list "
+                "repositories in LOOM_CODE_REPOS_JSON — 'Repository-job sandbox' in "
                 "docs/operations/code-index-operations.md.",
                 source="runtime",
             ),
@@ -549,11 +552,12 @@ def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
             "this host; self-registered repositories get no build tier, those with a "
             "network remote are not cloned or fetched, and adding one from the page is "
             "refused.",
-            "Address the 'sandbox probe failed' warning in the server log (`loom doctor` "
-            "prints it). In a container on an AppArmor 4.0 host, load the loom-repo-sandbox "
-            "profile and copy the security_opt of dev/docker-compose.colour.yml. Where the "
-            "sandbox cannot run, list repositories in LOOM_CODE_REPOS_JSON — "
-            "'Repository-job sandbox' in docs/operations/code-index-operations.md.",
+            "Address the 'sandbox probe failed' warning in the server log (printed at the "
+            "top of `loom doctor`). In a container on an AppArmor 4.0 host, load the "
+            "loom-repo-sandbox profile and copy the security_opt of "
+            "dev/docker-compose.colour.yml. Where the sandbox cannot run, list repositories "
+            "in LOOM_CODE_REPOS_JSON — 'Repository-job sandbox' in "
+            "docs/operations/code-index-operations.md.",
             source="runtime",
         ),
     ]
