@@ -1,15 +1,5 @@
-"""MCP transport — one implicit run per token and `Mcp-Session-Id`.
-
-The ledger owns the run; this module is each web process's cache of it.
-
-- A session's first run-scoped call begins it in the caller's org and default
-  namespace (`metadata.implicit`, the token's subject), under an id that binds
-  the token (`session_run_id`). Writes are stamped with it; reads are labelled.
-- `DELETE /mcp` closes it from any web process, the `mcp_session_run_sweep`
-  worker once it goes idle; a later call re-opens it.
-- Begins and closes run detached from the request, as the transport's own
-  bookkeeping. Ledger failures never fail a tool call.
-"""
+"""MCP transport: each web process's cache of the one implicit run per token and
+`Mcp-Session-Id`, which the ledger owns (docs/features/runs.md tells the whole story)."""
 
 from __future__ import annotations
 
@@ -61,10 +51,8 @@ class Caller:
 
     @classmethod
     def of_call(cls, auth: Any, arguments: dict[str, Any]) -> Caller | None:
-        """The caller as the call's read scope resolves it: the scope the admission
-        gate binds next, from the same arguments, so the run row stays inside it.
-        None when it does not resolve (the gate refuses the call, or admits it
-        acting as no one)."""
+        """The caller as the call's read scope resolves it, so the run row stays
+        inside that scope; None when it does not resolve."""
         from server.core.errors import AuthInsufficientError, IdentityIncompleteError
         from server.identity.domain.read_scope import resolve_read_filters
 
@@ -150,6 +138,29 @@ def current(run_id: str) -> SessionRun | None:
     return _RUNS.get(run_id)
 
 
+def run_id_for(
+    session_id: str | None,
+    defaults: dict[str, str] | None,
+    caller: Caller | None,
+    *,
+    now: float | None = None,
+) -> str | None:
+    """The run id `ensure` answers with for this call, without beginning the run:
+    None with no session or caller identity, or while a failed begin waits out
+    CHECK_INTERVAL_S."""
+    if not session_id or not defaults or caller is None:
+        return None
+    org, namespace, agent = (str(defaults.get(k) or "") for k in ("org", "namespace", "agent"))
+    if any(v in ("", "-") for v in (org, namespace, agent)):
+        return None
+    run_id = session_run_id(org, caller.subject, session_id)
+    now = time.monotonic() if now is None else now
+    failed_at = _BEGIN_FAILED_AT.get(run_id)
+    if run_id not in _RUNS and failed_at is not None and now - failed_at < CHECK_INTERVAL_S:
+        return None
+    return run_id
+
+
 async def ensure(
     session_id: str | None,
     defaults: dict[str, str] | None,
@@ -157,49 +168,37 @@ async def ensure(
     *,
     now: float | None = None,
 ) -> SessionRun | None:
-    """The session's run, begun on first use, in the org and namespace `defaults`
-    name, and filed under the first call's user and session: a later call on the
-    session joins it whatever user it acts as. None when the transport has no
-    session or caller identity, or `run.begin` failed (retried after
-    CHECK_INTERVAL_S, not on every call)."""
+    """The session's run, begun on first use in the org and namespace `defaults`
+    name and filed under the first call's user and session; None when
+    `run_id_for` is."""
     if not session_id or not defaults or caller is None:
         return None
     now = time.monotonic() if now is None else now
-    org = str(defaults.get("org") or "")
-    namespace = str(defaults.get("namespace") or "")
-    agent = str(defaults.get("agent") or "")
-    if any(v in ("", "-") for v in (org, namespace, agent)):
+    run_id = run_id_for(session_id, defaults, caller, now=now)
+    if run_id is None:
         return None
-    run_id = session_run_id(org, caller.subject, session_id)
     run = _RUNS.get(run_id)
     if run is not None:
         _RUNS.move_to_end(run_id)
         if now - run.checked_at >= CHECK_INTERVAL_S:
-            # The idle sweep or a DELETE on another web process may have closed
-            # it since: ask the ledger, off the call's path, and re-open it if so.
-            # A check that races such a DELETE re-opens the run; the sweep closes it.
+            # A DELETE or the idle sweep may have closed it since: re-open it if so.
             run.checked_at = now
             run.begin_task = _PENDING.spawn(
                 _begin(run, now=now, first=False), name=f"mcp-run-check:{run_id}", detached=True
             )
         return run
-    failed_at = _BEGIN_FAILED_AT.get(run_id)
-    if failed_at is not None and now - failed_at < CHECK_INTERVAL_S:
-        return None
     if len(_RUNS) >= SESSION_RUN_CAP:
         # A cap, not a sign the session ended: its next call here joins the run.
         _RUNS.popitem(last=False)
     from server.core.datetimes import naive_utc_now
 
-    # The run is registered now, under a deterministic id, and its begin lands
-    # in the background: an awaited agent_runs insert would hold every session's
-    # first tool call for ~3 s on ClickHouse Cloud, and the id is all the call
-    # needs.
+    # Begun in the background: an awaited insert would hold the session's first
+    # call for seconds on ClickHouse Cloud, and the call needs only the id.
     run = SessionRun(
         run_id=run_id,
-        org=org,
-        namespace=namespace,
-        agent=agent,
+        org=str(defaults["org"]),
+        namespace=str(defaults["namespace"]),
+        agent=str(defaults["agent"]),
         caller=caller,
         row_session_id=caller.session_id if caller.session_id != "-" else session_id,
         started_at=naive_utc_now(),
@@ -215,10 +214,8 @@ async def ensure(
 
 
 async def _begin(run: SessionRun, *, now: float, first: bool) -> None:
-    """`run.begin` for a registered run, unless another web process of this server
-    began it already. A `first` begin that fails forgets the run and the session waits
-    CHECK_INTERVAL_S before the next attempt; a failed check of a run already
-    begun keeps it, and the next check tries again."""
+    """`run.begin` for a registered run unless a web process began it already. A
+    failed `first` begin forgets the run for CHECK_INTERVAL_S; a failed check keeps it."""
     _attribute(run.quota_key)
     try:
         from server.tasks.api.models_run import RunBeginInput
@@ -309,6 +306,7 @@ __all__ = [
     "drain_ledger_writes",
     "ensure",
     "reset",
+    "run_id_for",
     "stamps_run",
     "subject_of",
     "takes_run",

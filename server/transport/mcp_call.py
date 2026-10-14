@@ -188,10 +188,10 @@ async def _call_tool(
     toolset: str | None = None,
 ) -> dict[str, Any]:
     """One MCP `tools/call`, in phases (each below this function, in order):
-    resolve the tool → bind the caller's identity → the session run (inline:
-    source-pinned) → argument refusal + validation → authorization →
-    admission (traffic class, policy, rate limit) → idempotency replay (only
-    for an admitted caller) → open the trace → span identity
+    resolve the tool → bind the caller's identity → stamp the session run's
+    id → argument refusal + validation → authorization → admission (traffic
+    class, policy, rate limit) → the session run begins → idempotency replay
+    (only for an admitted caller) → open the trace → span identity
     (inline) → the handler → success telemetry → the response. Every phase
     that can end the call returns its response and this function returns it
     at once, so no gate runs after a refusal and none runs after the
@@ -213,7 +213,7 @@ async def _call_tool(
 
     request_id, defaults = await _bind_caller_identity(op, arguments, auth, client_name)
 
-    stamped_run = await _bind_session_run(op, arguments, defaults, mcp_session_id)
+    run_caller, stamped_run = _stamp_session_run(op, arguments, defaults, mcp_session_id)
 
     client_idem_key = _pop_idempotency_key(op, arguments)
 
@@ -248,6 +248,8 @@ async def _call_tool(
     if refused is not None:
         return refused  # POLICY_FORBIDDEN, AUTH_INSUFFICIENT (read scope) or RATE_LIMITED
     input_obj = call.input_obj  # names the user a scoped read binds
+
+    await _bind_session_run(op, defaults, mcp_session_id, run_caller)
 
     # The replay cache is read only for an admitted caller.
     replay, idem_scope, idem_body_hash = await _idempotency_gate(call, name, client_idem_key)
@@ -323,42 +325,57 @@ def _begin_call() -> None:
     # HTTP's `_begin_request` resets them: a batch runs its entries in one
     # task, so the previous entry's would otherwise ride every later row.
     from server.observability.ledger import set_hint_context
+    from server.observability.run_context import set_ledger_run
     from server.observability.traffic_class import set_current_traffic_class
 
     set_hint_context("")
     set_current_traffic_class("")
+    set_ledger_run("")  # bound again once the call is admitted
+
+
+def _stamp_session_run(
+    op: Operation, arguments: dict[str, Any], defaults: dict[str, str] | None, mcp_session_id: str
+) -> tuple[_mcp_runs.Caller | None, bool]:
+    """Phase 3 of `_call_tool`: stamp the session run's id into a write that names
+    no run, before validation; the run itself begins only once the call is
+    admitted (`_bind_session_run`). Returns the caller the run is filed under
+    (None when the op takes no run) and whether `run_id` was stamped."""
+    # A read is never stamped: its `run_id` field filters to the run's own rows, so
+    # it is only labelled through the ledger ContextVar.
+    try:
+        from server.auth.context import current_auth
+
+        if not defaults or not _mcp_runs.takes_run(op):
+            return None, False
+        # The run row lives in the caller's org and default namespace, whatever
+        # namespace a call names, so every web process files it under one key.
+        caller = _mcp_runs.Caller.of_call(current_auth(), arguments)
+        run_id = _mcp_runs.run_id_for(mcp_session_id, defaults, caller)
+        if run_id and _mcp_runs.stamps_run(op) and str(arguments.get("run_id") or "") in ("", "-"):
+            arguments["run_id"] = run_id
+            return caller, True
+        return caller, False
+    except Exception as _run_err:  # noqa: BLE001 — the ledger never fails a tool call
+        log.debug("mcp session run failed for %s (non-fatal): %s", op.name, _run_err)
+        return None, False
 
 
 async def _bind_session_run(
-    op: Operation, arguments: dict[str, Any], defaults: dict[str, str] | None, mcp_session_id: str
-) -> bool:
-    """Phase 3 of `_call_tool`: the session's implicit run, bound for the
-    ledger and stamped into a write. Returns whether `run_id` was stamped."""
-    # One implicit run per MCP session. A write that names no run gets the session's
-    # stamped into `run_id` (provenance; the cross-scope duplicate rule applies as for
-    # any run). A read is only LABELLED — its `run_id` field is a filter to the run's
-    # own rows, so the ledger run rides the request ContextVar instead and the retrieval
-    # is unchanged. The ledger's own verbs and the code plane never take it.
+    op: Operation, defaults: dict[str, str] | None, mcp_session_id: str, caller: Any
+) -> None:
+    """Begin (or join) the session's implicit run for an admitted call and bind it
+    for the ledger, so a refused call never writes a run row."""
     session_run_id = ""
-    stamped_run = False
     try:
-        from server.auth.context import current_auth
         from server.observability.run_context import set_ledger_run
 
-        if defaults and _mcp_runs.takes_run(op):
-            # The run row lives in the caller's org and default namespace, whatever
-            # namespace a call names, so every web process files it under one key.
-            caller = _mcp_runs.Caller.of_call(current_auth(), arguments)
+        if caller is not None:
             run = await _mcp_runs.ensure(mcp_session_id, defaults, caller)
             if run is not None:
                 session_run_id = run.run_id
-                if _mcp_runs.stamps_run(op) and str(arguments.get("run_id") or "") in ("", "-"):
-                    arguments["run_id"] = session_run_id
-                    stamped_run = True
         set_ledger_run(session_run_id)
     except Exception as _run_err:  # noqa: BLE001 — the ledger never fails a tool call
         log.debug("mcp session run failed for %s (non-fatal): %s", op.name, _run_err)
-    return stamped_run
 
 
 async def _resolve_tool(

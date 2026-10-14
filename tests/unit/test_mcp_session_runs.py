@@ -289,15 +289,46 @@ def test_call_tool_stamps_writes_only_and_binds_the_ledger_run() -> None:
     import server.transport.mcp_call as mcp_call
 
     call = inspect.getsource(mcp_call._call_tool)
-    stamp_at = call.index("await _bind_session_run(op, arguments, defaults, mcp_session_id)")
+    stamp_at = call.index("_stamp_session_run(op, arguments, defaults, mcp_session_id)")
+    validate_at = call.index("_validated_input(")
+    admitted_at = call.index("refused = await _admission_refusal(call)")
+    begin_at = call.index("await _bind_session_run(op, defaults, mcp_session_id, run_caller)")
     handler_at = call.index("result = await op.handler(input_obj)")
-    assert stamp_at < handler_at, "the session run must be bound before the handler runs"
-    src = inspect.getsource(mcp_call._bind_session_run)
-    assert 'arguments["run_id"] = session_run_id' in src
-    assert "set_ledger_run(session_run_id)" in src
+    # Stamped before validation; begun only once the call is admitted.
+    assert stamp_at < validate_at < admitted_at < begin_at < handler_at
+    src = inspect.getsource(mcp_call._stamp_session_run)
+    assert 'arguments["run_id"] = run_id' in src
+    assert "set_ledger_run(session_run_id)" in inspect.getsource(mcp_call._bind_session_run)
     # Reads are never stamped: the only assignment is guarded by stamps_run.
-    guard = src[src.index("if _mcp_runs.stamps_run(op)") :].split("\n", 1)[0]
+    guard = src[src.index("if run_id and _mcp_runs.stamps_run(op)") :].split("\n", 1)[0]
     assert "stamps_run(op)" in guard and 'arguments.get("run_id")' in guard
+
+
+def test_a_refused_call_begins_no_run(ledger: _Ledger, monkeypatch) -> None:
+    """A call the gates refuse (here: a rate limit) carries the stamped id but
+    writes no run row, so rotating Mcp-Session-Id cannot fill the ledger."""
+    from server.transport import mcp_call
+
+    stamped: list[str] = []
+
+    async def _defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:
+        return DEFAULTS
+
+    async def _refuse(call: Any) -> dict[str, Any]:
+        stamped.append(call.arguments.get("run_id"))
+        return {"jsonrpc": "2.0", "id": call.req_id, "result": {"isError": True}}
+
+    monkeypatch.setattr(mcp_call, "_caller_defaults", _defaults)
+    monkeypatch.setattr(mcp_call, "_admission_refusal", _refuse)
+    params = {"name": "loom_memory_set", "arguments": {"memory_key": "k", "value": "v"}}
+
+    async def _run() -> None:
+        await mcp_call._call_tool(1, params, mcp_session_id="s")
+        await mcp_runs.drain_ledger_writes()
+
+    asyncio.run(_run())
+    assert stamped == [rid("s")]
+    assert ledger.begins == [] and mcp_runs.current(rid("s")) is None
 
 
 def test_delete_route_is_wired() -> None:
@@ -375,24 +406,15 @@ def test_a_cached_run_is_checked_with_the_ledger_once_a_minute(ledger: _Ledger) 
     asyncio.run(_run())
 
 
-def test_a_session_run_lives_in_the_callers_org(monkeypatch) -> None:
+def test_a_session_run_lives_in_the_callers_org() -> None:
     """A DELETE knows only the caller, never a call's arguments, so the run sits
     in the caller's org and default namespace whatever a call names."""
     from server.operations.registry import OPERATIONS_BY_NAME
     from server.transport import mcp_call
 
-    seen: list[dict[str, str]] = []
-
-    async def _ensure(session_id: Any, defaults: Any, caller: Any) -> None:
-        seen.append(defaults)
-        return None
-
-    monkeypatch.setattr(mcp_call._mcp_runs, "ensure", _ensure)
     arguments = {"org": "other", "namespace": "ns-b", "memory_key": "k", "value": "v"}
-    asyncio.run(
-        mcp_call._bind_session_run(OPERATIONS_BY_NAME["memory.set"], arguments, DEFAULTS, "s")
-    )
-    assert (seen[0]["org"], seen[0]["namespace"]) == ("clickhouse", "ns-a")
+    mcp_call._stamp_session_run(OPERATIONS_BY_NAME["memory.set"], arguments, DEFAULTS, "s")
+    assert arguments["run_id"] == rid("s")  # the caller's org, not the call's
 
 
 def test_two_callers_sending_one_session_id_hold_two_runs(ledger: _Ledger) -> None:
@@ -496,8 +518,10 @@ def test_a_delete_closes_a_run_whose_calls_named_another_org(
     from server.transport import mcp_call
 
     async def _run() -> None:
+        op = OPERATIONS_BY_NAME["memory.set"]
         arguments = {"org": "other", "namespace": "ns-b", "memory_key": "k", "value": "v"}
-        await mcp_call._bind_session_run(OPERATIONS_BY_NAME["memory.set"], arguments, DEFAULTS, "s")
+        caller, _ = mcp_call._stamp_session_run(op, arguments, DEFAULTS, "s")
+        await mcp_call._bind_session_run(op, DEFAULTS, "s", caller)
         await mcp_runs.drain_ledger_writes()
         assert arguments["run_id"] == rid("s")
         if not warm:
