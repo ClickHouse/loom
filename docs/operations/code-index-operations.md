@@ -332,8 +332,8 @@ Debian 12) reject the profile; those hosts are left with `seccomp=unconfined` an
 `apparmor=unconfined` (end of this section), which lose the same `/proc` protection, so
 treat them the same way. Loom runs on all of these without the sandbox.
 
-Every host still indexes the repositories listed in `LOOM_CODE_REPOS_JSON`; only adding
-one from the page needs the sandbox. _Without the sandbox_ says what that runs, and the
+Unless `LOOM_CODE_SANDBOX_REQUIRED` is set, every host still indexes the repositories
+listed in `LOOM_CODE_REPOS_JSON`; only adding one from the page needs the sandbox. _Without the sandbox_ says what that runs, and the
 [quickstart](../getting-started/quickstart.md#optional-index-a-repository-on-the-released-stack)
 has the released stack's commands.
 

@@ -338,8 +338,10 @@ async def test_code_repo_add_is_refused_without_the_sandbox(plane, monkeypatch) 
     """A self-registered repository's build tiers run its own code, so without the
     repository-job sandbox nothing is registered and the remote is never asked."""
     from server.code.app.index import sandbox
+    from server.settings import settings
 
     monkeypatch.setattr(sandbox, "_available", False)
+    monkeypatch.setattr(settings, "code_sandbox_required", False)
     for call in (
         admin.handle_code_repo_add(CodeRepoAddInput(org=ORG, repo="acme/widgets", branch="main")),
         admin.handle_code_repo_remote_branches(CodeRepoAddInput(org=ORG, repo="acme/widgets")),
