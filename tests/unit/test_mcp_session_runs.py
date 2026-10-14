@@ -640,7 +640,7 @@ def test_a_loop_of_deletes_is_rate_limited_before_it_reads_the_ledger(monkeypatc
     monkeypatch.setattr(mcp_runs, "close_session", close_session)
     limiter = get_limiter()
     limiter.reset_all()
-    limiter.set_namespace_limit("", "default", Limit(capacity=1, rate=0.0))
+    limiter.set_namespace_limit("mcp-session-end:", "default", Limit(capacity=1, rate=0.0))
     app = FastAPI()
     mcp_mod.attach(app)
     try:
@@ -650,5 +650,30 @@ def test_a_loop_of_deletes_is_rate_limited_before_it_reads_the_ledger(monkeypatc
         assert r.status_code == 429 and r.headers["Retry-After"]
         assert r.json()["code"] == "RATE_LIMITED"
         assert closes == ["a"]
+    finally:
+        limiter.reset_all()
+
+
+def test_one_subjects_deletes_do_not_spend_anothers(monkeypatch) -> None:
+    from server.auth.jwt import AuthInfo
+    from server.core.ratelimit import Limit, get_limiter
+    from server.settings import settings
+    from server.transport import gates
+
+    monkeypatch.setattr(settings, "web_workers", 1)
+    monkeypatch.setattr(settings, "ratelimit_shared", "off")
+
+    def token(subject: str) -> AuthInfo:
+        return AuthInfo(
+            subject=subject, org="acme", namespaces=(), roles=(), is_service_account=False
+        )
+
+    limiter = get_limiter()
+    limiter.reset_all()
+    limiter.set_namespace_limit("mcp-session-end:alice", "default", Limit(capacity=1, rate=0.0))
+    try:
+        assert gates.session_end_rate_limit(token("alice"), "acme").allowed
+        assert not gates.session_end_rate_limit(token("alice"), "acme").allowed
+        assert gates.session_end_rate_limit(token("bob"), "acme").allowed
     finally:
         limiter.reset_all()

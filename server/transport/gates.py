@@ -301,16 +301,19 @@ def rate_limit(
 
 def session_end_rate_limit(auth: AuthInfo | None, org: str) -> CheckResult | None:
     """The limiter's answer for a `DELETE /mcp`, which names no namespace: it
-    draws run.complete's buckets under the caller's org and subject, so a loop
-    of DELETEs is capped like a loop of calls. FAILS OPEN, as `rate_limit` does."""
+    draws run.complete's buckets from a slot of its own per subject, plus the
+    org's bucket, so a loop of DELETEs from one token is capped like a loop of
+    calls without spending another subject's DELETEs. FAILS OPEN, as
+    `rate_limit` does."""
     from server.core.ratelimit import get_limiter
 
+    subject = auth.subject if auth is not None and auth.subject else ""
     try:
         return get_limiter().check(
-            "",
+            f"mcp-session-end:{subject}",
             "run.complete",
             org=org or None,
-            actor=(auth.subject if auth is not None and auth.subject else None),
+            actor=subject or None,
         )
     except Exception as e:  # noqa: BLE001 — FAILS OPEN: a limiter error admits the DELETE
         _fail_open("rate_limit", "run.complete", e)
