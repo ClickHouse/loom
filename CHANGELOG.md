@@ -57,8 +57,10 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   longer used and can be deleted, except a `clang` extra producer's: Loom does not create
   a C/C++ build tree, so move it from `<scip_checkout_dir>-clang` to
   `<scip_checkout_dir>.clang` and delete its `build/compile_commands.json`, which records
-  the old absolute paths; the next C/C++ run configures it again. `loom code scip-full`
-  now runs in the C/C++ tier's own tree and moves the C/C++ watermark where `clang` is an
+  the old absolute paths; the next C/C++ run configures it again with the harness's own
+  CMake options. For a build with options of its own, delete `build/CMakeCache.txt` and
+  `build/CMakeFiles` instead and configure it again yourself. `loom code scip-full` now
+  runs in the C/C++ tier's own tree and moves the C/C++ watermark where `clang` is an
   extra producer. A `LOOM_CODE_REPOS_JSON` entry whose namespace contains `.` or `/` is
   skipped and counted in `loom.code.repos_config_errors`; rename it, which indexes it
   again under the new name.
