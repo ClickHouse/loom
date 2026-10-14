@@ -46,6 +46,8 @@ EXACT_CLICKHOUSE = re.compile(r"clickhouse/clickhouse-server:\d+(?:\.\d+){3}")
 _PINNED = re.compile(
     re.escape("${LOOM_CLICKHOUSE_IMAGE:-") + f"({EXACT_CLICKHOUSE.pattern})" + re.escape("}")
 )
+# A bundle built before LOOM_CLICKHOUSE_IMAGE names its release bare.
+_BARE = re.compile(rf"^\s*image: ({EXACT_CLICKHOUSE.pattern})\s*$", re.MULTILINE)
 
 
 def pinned_image(archive: Path) -> str:
@@ -53,7 +55,7 @@ def pinned_image(archive: Path) -> str:
     with tarfile.open(archive) as bundle:
         member = bundle.extractfile("loom-stack/compose.yaml")
         compose = member.read().decode() if member else ""
-    found = _PINNED.search(compose)
+    found = _PINNED.search(compose) or _BARE.search(compose)
     if not found:
         raise ValueError(f"{archive} names no exact ClickHouse release")
     return found.group(1)

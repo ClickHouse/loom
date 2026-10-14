@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import tarfile
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -72,18 +73,36 @@ def test_a_rerun_reads_the_release_a_published_bundle_names(tmp_path: Path) -> N
     assert module.pinned_image(archive) == "clickhouse/clickhouse-server:26.9.18.11"
 
 
-def test_the_pin_is_the_compose_default_not_a_release_a_comment_names(tmp_path: Path) -> None:
-    module = _module()
-    archive, _ = module.build("1.2.3", tmp_path, "clickhouse/clickhouse-server:26.9.18.11")
+def _edited_bundle(tmp_path: Path, edit: Callable[[str], str]) -> Path:
+    """A built bundle whose compose.yaml `edit` rewrote."""
+    archive, _ = _module().build("1.2.3", tmp_path, "clickhouse/clickhouse-server:26.9.18.11")
     stage = tmp_path / "stage"
     with tarfile.open(archive) as bundle:
         bundle.extractall(stage, filter="data")
     compose = stage / "loom-stack" / "compose.yaml"
-    compose.write_text("# e.g. clickhouse/clickhouse-server:26.8.1.1\n" + compose.read_text())
+    compose.write_text(edit(compose.read_text()))
     edited = tmp_path / "edited.tar.gz"
     with tarfile.open(edited, "w:gz") as bundle:
         bundle.add(stage / "loom-stack", arcname="loom-stack")
-    assert module.pinned_image(edited) == "clickhouse/clickhouse-server:26.9.18.11"
+    return edited
+
+
+def test_the_pin_is_the_compose_default_not_a_release_a_comment_names(tmp_path: Path) -> None:
+    edited = _edited_bundle(
+        tmp_path, lambda c: "# e.g. clickhouse/clickhouse-server:26.8.1.1\n" + c
+    )
+    assert _module().pinned_image(edited) == "clickhouse/clickhouse-server:26.9.18.11"
+
+
+def test_a_bundle_from_before_the_override_names_its_release_bare(tmp_path: Path) -> None:
+    def bare(compose: str) -> str:
+        return compose.replace(
+            "${LOOM_CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:26.9.18.11}",
+            "clickhouse/clickhouse-server:26.5.1.882",
+        )
+
+    edited = _edited_bundle(tmp_path, bare)
+    assert _module().pinned_image(edited) == "clickhouse/clickhouse-server:26.5.1.882"
 
 
 def test_the_pin_pattern_reads_what_build_writes() -> None:
