@@ -222,6 +222,18 @@ def test_a_reset_keeps_the_lock_file_a_sibling_may_hold(settings_override) -> No
     assert not path.exists() and Path(f"{path}.lock").exists()
 
 
+def test_overrides_skip_a_shared_table_the_buckets_do_not_use(
+    settings_override, tmp_path: Path
+) -> None:
+    """With bucket sharing off, a configured table path shares no overrides either."""
+    table = tmp_path / "rl.buckets"
+    settings_override(ratelimit_shared="off", ratelimit_shared_path=str(table), web_workers=1)
+    assert Limiter()._overrides_document() is None
+    settings_override(ratelimit_shared="off", ratelimit_shared_path=str(table), web_workers=3)
+    doc = Limiter()._overrides_document()
+    assert doc is not None and doc.name == "ratelimit-overrides"  # the server's own file
+
+
 def test_one_worker_keeps_its_overrides_in_memory(settings_override) -> None:
     settings_override(ratelimit_shared="auto", web_workers=1)
     lim = Limiter()

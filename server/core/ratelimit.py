@@ -276,6 +276,11 @@ def effective_divisor(*, shared: bool) -> int:
     return effective_replicas()
 
 
+def _wants_table(mode: str, workers: int) -> bool:
+    """Whether LOOM_RATELIMIT_SHARED puts this server's buckets in a shared table."""
+    return mode == "on" or (mode == "auto" and workers > 1)
+
+
 @dataclass(frozen=True)
 class _Overrides:
     """Admin overrides per (namespace, op class), (org, op class) and
@@ -353,7 +358,7 @@ class Limiter:
         # With several web workers the admin overrides live in a host file, so
         # one set through any worker binds them all.
         self._overrides_doc: SharedDocument[_Overrides] | None = None
-        self._overrides_key: tuple[str, int] | None = None
+        self._overrides_key: tuple[str, str, int] | None = None
 
     # -- backend selection ---------------------------------
 
@@ -375,8 +380,7 @@ class Limiter:
                 pass
             self._shared = None
         self._shared_key = key
-        want = mode == "on" or (mode == "auto" and workers > 1)
-        if not want:
+        if not _wants_table(mode, workers):
             self._shared_reason = (
                 "off by LOOM_RATELIMIT_SHARED" if mode == "off" else "single web worker"
             )
@@ -399,14 +403,15 @@ class Limiter:
     # -- overrides shared through the table's directory --------------------
 
     def _overrides_document(self) -> SharedDocument[_Overrides] | None:
-        """Beside an explicit shared table (two servers sharing a cap share their
-        overrides too), else one per server once there are several workers.
-        Resolved once per setting, as `_store` is."""
-        explicit, workers = str(settings.ratelimit_shared_path), int(settings.web_workers)
-        if (explicit, workers) != self._overrides_key:
-            self._overrides_key = (explicit, workers)
+        """Beside an explicit shared table this server uses (two servers sharing a
+        cap share their overrides too), else one per server once there are
+        several workers. Resolved once per setting, as `_store` is."""
+        mode, explicit = str(settings.ratelimit_shared), str(settings.ratelimit_shared_path)
+        workers = max(1, int(settings.web_workers))
+        if (mode, explicit, workers) != self._overrides_key:
+            self._overrides_key = (mode, explicit, workers)
             codec = (_decode_overrides, _encode_overrides)
-            if explicit:
+            if explicit and _wants_table(mode, workers):
                 self._overrides_doc = SharedDocument(f"{explicit}.overrides.json", *codec)
             elif workers > 1:
                 self._overrides_doc = server_document("ratelimit-overrides", *codec)
