@@ -115,6 +115,11 @@ class CodeSettings(BaseModel):
     # the job's user namespace, so other jobs and the server do not count;
     # Linux 5.14+, older kernels count the uid's tasks host-wide).
     code_sandbox_max_pids: int = 2048
+    # Set by deployments that ship the sandbox profiles: a repository job
+    # refuses to run rather than run unsandboxed, and /v1/health reports the
+    # missing sandbox as an error. False: without the sandbox, jobs fall back
+    # to plain processes as "Without the sandbox" in code-index-operations.md says.
+    code_sandbox_required: bool = False
     # Largest file a process may write, in MiB (a pack or index.scip).
     code_sandbox_max_file_mb: int = 32768
     # Bare clone the ingest worker fetches into (created by `loom code init`)

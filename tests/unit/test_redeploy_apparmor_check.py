@@ -128,16 +128,68 @@ def test_redeploy_runs_the_check_before_the_preflight() -> None:
     assert check < text.index("dev/redeploy_preflight.sh")
 
 
-def test_redeploy_probes_both_new_containers_before_the_swap_and_removes_them_on_failure() -> None:
+def test_redeploy_probes_the_new_colour_between_health_and_the_swap() -> None:
     text = (ROOT / "redeploy.sh").read_text(encoding="utf-8")
-    loop = text.index('for c in "loom-$idle" "loom-$idle-workers"; do')
-    block = text[loop : text.index("done", loop)]
-    # decided from the running container, not the compose text (comments included)
-    assert "{{.HostConfig.SecurityOpt}}" in block and "*apparmor=loom-repo-sandbox*" in block
-    assert 'docker exec "$c" python -c' in block and "s.sandbox_available()" in block
-    # removed, not stopped: the up already replaced the previous build in that colour, and
-    # --rollback starts a stopped colour without probing it
-    assert 'docker rm -f "loom-$idle" "loom-$idle-workers"' in block and "docker stop" not in block
+    probe = text.index('dev/sandbox_probe.sh "$idle" || {')
+    assert text.index('wait_workers "$idle"') < probe < text.index('swap_to "$idle"')
+    # --rollback refuses a colour whose containers are gone (the probe removes them)
     rollback = text[text.index("rollback() {") : text.index("# ---- arguments")]
     assert "the previous build is gone" in rollback
-    assert text.index('wait_workers "$idle"') < loop < text.index('swap_to "$idle"')
+
+
+_STUB_DOCKER = """#!/usr/bin/env bash
+echo "$*" >> "$STUB_LOG"
+case "$1" in
+  inspect)
+    [[ "$STUB_INSPECT" == fail ]] && { echo "Error: No such object: ${@: -1}" >&2; exit 1; }
+    [[ "$STUB_INSPECT" == sandbox ]] && echo "[seccomp={} apparmor=loom-repo-sandbox]" || echo "[]"
+    ;;
+  exec) exit "$STUB_PROBE" ;;
+esac
+"""
+
+
+def _probe(tmp_path: Path, inspect: str, probe: int) -> tuple[int, list[str]]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "docker").write_text(_STUB_DOCKER)
+    (bin_dir / "docker").chmod(0o755)
+    log = tmp_path / "docker.log"
+    log.touch()
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "STUB_LOG": str(log),
+        "STUB_INSPECT": inspect,
+        "STUB_PROBE": str(probe),
+    }
+    done = subprocess.run(
+        ["bash", str(ROOT / "dev" / "sandbox_probe.sh"), "green"],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=30,
+    )
+    return done.returncode, log.read_text().splitlines()
+
+
+_RM = "rm -f loom-green loom-green-workers"
+
+
+@pytest.mark.parametrize(
+    ("inspect", "probe", "rc", "execs", "removed"),
+    [
+        # an inspection error is a failure, not "not under the profile"
+        ("fail", 0, 1, 0, True),
+        ("plain", 0, 0, 0, False),  # not under the profile: nothing to probe
+        ("sandbox", 1, 1, 1, True),  # the first container fails: stop there
+        ("sandbox", 0, 0, 2, False),  # both containers probed and pass
+    ],
+)
+def test_the_sandbox_probe_gates_the_swap(
+    tmp_path: Path, inspect: str, probe: int, rc: int, execs: int, removed: bool
+) -> None:
+    code, calls = _probe(tmp_path, inspect, probe)
+    assert code == rc
+    assert sum(c.startswith("exec ") for c in calls) == execs
+    assert (_RM in calls) is removed

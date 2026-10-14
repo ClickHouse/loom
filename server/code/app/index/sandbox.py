@@ -635,13 +635,24 @@ async def _drain_and_wait(proc: asyncio.subprocess.Process) -> None:
     await proc.wait()
 
 
+class SandboxRequiredError(RuntimeError):
+    """A repository job refused: LOOM_CODE_SANDBOX_REQUIRED is set and this host
+    cannot run the sandbox."""
+
+
 async def run_job(argv: Sequence[str], **job: Unpack[JobOptions]) -> JobResult:
     """A repository job: inside the sandbox when the host has one, else a plain
-    child process with the same environment, timeout and process-group kill.
-    Without the sandbox a process that left the job's session (setsid) is not
-    killed, and while it holds the job's output the job ends as a timeout."""
+    child process with the same environment, timeout and process-group kill,
+    unless LOOM_CODE_SANDBOX_REQUIRED says to refuse instead. Without the
+    sandbox a process that left the job's session (setsid) is not killed, and
+    while it holds the job's output the job ends as a timeout."""
     if sandbox_available():
         return await run_sandboxed(argv, **job)
+    if settings.code_sandbox_required:
+        raise SandboxRequiredError(
+            "repository job refused: LOOM_CODE_SANDBOX_REQUIRED is set and the sandbox "
+            "cannot run here (see the 'sandbox probe failed' warning)"
+        )
     proc = await asyncio.create_subprocess_exec(
         *argv, env=dict(job["env"]), cwd=job.get("cwd"), **_pipes(job)
     )
@@ -652,6 +663,7 @@ __all__ = [
     "RELAY_URL",
     "JobOptions",
     "JobResult",
+    "SandboxRequiredError",
     "layout_refusal",
     "run_job",
     "run_sandboxed",

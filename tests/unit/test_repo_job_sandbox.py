@@ -519,3 +519,36 @@ def test_the_layout_check_and_the_mount_refusal_read_one_list(tmp_path: Path, mo
     assert "inside Loom's data" in sandbox.layout_refusal()
     with pytest.raises(PermissionError):
         sandbox._readonly_paths({"PATH": "/usr/bin"}, [])
+
+
+async def test_a_required_sandbox_refuses_the_job_instead_of_running_it_plain(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(sandbox, "_available", False)
+    marker = tmp_path / "ran"
+    argv = ["sh", "-c", f"touch {marker}"]
+    env = {"PATH": "/usr/bin:/bin"}
+    monkeypatch.setattr(settings, "code_sandbox_required", True)
+    with pytest.raises(sandbox.SandboxRequiredError, match="LOOM_CODE_SANDBOX_REQUIRED"):
+        await sandbox.run_job(argv, env=env, timeout_s=10)
+    assert not marker.exists()
+    monkeypatch.setattr(settings, "code_sandbox_required", False)
+    assert (await sandbox.run_job(argv, env=env, timeout_s=10)).returncode == 0
+    assert marker.exists()
+
+
+@pytest.mark.parametrize(("required", "severity"), [(True, "error"), (False, "warn")])
+def test_a_missing_sandbox_is_an_error_only_when_required(
+    monkeypatch, required: bool, severity: str
+) -> None:
+    from server.observability.problems import HealthState, collect_problems
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_ingest_enabled", True)
+    monkeypatch.setattr(settings, "code_sandbox_required", required)
+    problems = collect_problems(settings, HealthState(repo_sandbox=False))
+    assert [(p.code, p.severity) for p in problems if p.code == "repo_jobs_unsandboxed"] == [
+        ("repo_jobs_unsandboxed", severity)
+    ]

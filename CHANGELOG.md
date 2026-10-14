@@ -15,15 +15,21 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   They use narrow profiles instead of `unconfined`: `dev/seccomp/loom-repo-sandbox.json`
   (Docker's default plus one rule allowing `clone`, `unshare`, `mount`, `umount2` and
   `pivot_root` to every process; the default allows the first four only with
-  `CAP_SYS_ADMIN`, and `pivot_root` never), the AppArmor profile `deploy/apparmor/loom-repo-sandbox` (`docker-default` for every
-  process, and a child profile adding `userns, mount, pivot_root` for whatever execs
-  `bwrap` and what it runs) and `systempaths=unconfined`, plus `pids_limit: 8192` per
-  container as a backstop. Load the AppArmor profile on the host before the next
-  redeploy; `redeploy.sh` (through `dev/apparmor_check.sh`) stops when it is missing or
-  the host has no AppArmor, and removes the new colour instead of swapping to it when the
-  sandbox probe fails in either of its containers.
-  The other Compose stacks are unchanged. See "Repository-job sandbox" in
+  `CAP_SYS_ADMIN`, and `pivot_root` never), the AppArmor profile
+  `deploy/apparmor/loom-repo-sandbox` (`docker-default` for every process, and a child
+  profile adding `userns, mount, pivot_root` for whatever execs `bwrap` and what it runs)
+  and `systempaths=unconfined`, plus `pids_limit: 8192` per container as a backstop.
+  Load the AppArmor profile on the host before the next redeploy; `redeploy.sh` (through
+  `dev/apparmor_check.sh`) stops when it is missing or the host has no AppArmor, and
+  (through `dev/sandbox_probe.sh`) removes the new colour instead of swapping to it when
+  the sandbox probe fails, or cannot run, in either of its containers. A CI job
+  (`sandbox-profile` in `docker-smoke.yml`) runs the probe and the hostile suite under the
+  shipped profile. The other Compose stacks are unchanged. See "Repository-job sandbox" in
   docs/operations/code-index-operations.md.
+
+- `LOOM_CODE_SANDBOX_REQUIRED` (default off; the colours set it): where the sandbox
+  cannot run, repository jobs fail instead of running as plain processes, and
+  `/v1/health` reports `repo_jobs_unsandboxed` as an error.
 
 ### Changed
 

@@ -97,6 +97,9 @@ services:
     environment:
       PORT: "${LOOM_COLOUR_PORT:?set LOOM_COLOUR_PORT=7781|7782}"
       LOOM_BLOB_DIR: /app/var/blobs
+      # This stack ships the sandbox profiles: refuse repository jobs rather
+      # than run them unsandboxed if the sandbox cannot run.
+      LOOM_CODE_SANDBOX_REQUIRED: "true"
       LOOM_BACKGROUND_WORKERS: "auto"
       LOOM_WEB_WORKERS: "1"
       LOOM_SUPERVISOR_LOCK_PATH: /app/var/shared/supervisor.lock
@@ -119,6 +122,9 @@ services:
     environment:
       PORT: "${LOOM_COLOUR_PORT:?set LOOM_COLOUR_PORT=7781|7782}"
       LOOM_BLOB_DIR: /app/var/blobs
+      # This stack ships the sandbox profiles: refuse repository jobs rather
+      # than run them unsandboxed if the sandbox cannot run.
+      LOOM_CODE_SANDBOX_REQUIRED: "true"
       LOOM_RATELIMIT_SHARED_PATH: /app/var/shared/ratelimit.buckets
       LOOM_SUPERVISOR_LOCK_PATH: /app/var/shared/supervisor.lock
       LOOM_BOOT_MIGRATE_LOCK_PATH: /app/var/shared/migrate.lock

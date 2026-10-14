@@ -364,22 +364,11 @@ wait_workers "$idle" || {
   echo "!!! loom-$idle-workers is not healthy; not swapping. Inspect: docker logs loom-$idle-workers"
   exit 1
 }
-# A container started under the sandbox profile must run the sandbox: a
-# profile that loads but refuses bwrap would otherwise leave repository jobs
-# unsandboxed without a word. Decided from what the container runs with, not
-# the compose text. sandbox.py logs why a probe fails at WARNING.
-for c in "loom-$idle" "loom-$idle-workers"; do
-  [[ "$(docker inspect -f '{{.HostConfig.SecurityOpt}}' "$c" 2>/dev/null)" == *apparmor=loom-repo-sandbox* ]] || continue
-  docker exec "$c" python -c \
-    'from server.code.app.index import sandbox as s; raise SystemExit(0 if s.sandbox_available() else 1)' \
-    && continue
-  echo "!!! $c cannot run the repository-job sandbox (the warning above says why); not swapping."
-  echo "    Removing loom-$idle so its workers cannot take the lease and run jobs unsandboxed, and so"
-  echo "    --rollback never starts it: the up above already replaced the previous build there."
-  echo "    The proxy still points at loom-${active:-nothing}. See \"Repository-job sandbox\" in docs/operations/code-index-operations.md"
-  docker rm -f "loom-$idle" "loom-$idle-workers" >/dev/null || true
+# The new colour must run the repository-job sandbox before it takes traffic.
+dev/sandbox_probe.sh "$idle" || {
+  echo "    The proxy still points at loom-${active:-nothing}."
   exit 1
-done
+}
 
 # ---- swap ------------------------------------------------------------------
 
