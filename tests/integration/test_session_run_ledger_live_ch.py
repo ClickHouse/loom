@@ -696,7 +696,7 @@ async def test_a_check_after_an_erasure_begins_a_new_run_not_the_erased_one(ch: 
 
 
 @pytest.mark.asyncio
-async def test_a_reopened_session_run_keeps_what_its_close_recorded(ch: Any) -> None:
+async def test_a_reopened_session_run_keeps_what_its_close_recalled(ch: Any) -> None:
     from server.identity.domain.read_scope import WHOLE_NAMESPACE
     from server.tasks.api.models_run import RunBeginInput, RunCompleteInput
     from server.tasks.app.run import _complete, _parse_metadata, begin_session_run
@@ -737,7 +737,7 @@ async def test_a_reopened_session_run_keeps_what_its_close_recorded(ch: Any) -> 
         assert row is not None and row["status"] == "active"
         meta = _parse_metadata(row["metadata"])
         assert meta["recalled_keys"] == ["user/fact/one"]
-        assert meta["closed_by"] == "mcp_idle"
+        assert "closed_by" not in meta  # the reopen undid that close
         assert meta["subject"] == "sub"
     finally:
         await ch.execute(

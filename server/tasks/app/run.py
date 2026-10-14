@@ -72,10 +72,24 @@ def _iso(value: Any) -> str:
 
 
 def _metadata_json(meta: dict[str, Any]) -> str:
-    text = json.dumps(meta or {}, default=str, separators=(",", ":"))
+    meta = meta or {}
+    text = _dumps(meta)
+    keys = meta.get("recalled_keys")
+    if len(text) > _METADATA_LIMIT and isinstance(keys, list):
+        # Drop the last recalled keys, not the run's own keys (`implicit`, `subject`).
+        over = len(text) - _METADATA_LIMIT
+        kept = list(keys)
+        while kept and over > 0:
+            over -= len(_dumps(kept.pop())) + 1
+        text = _dumps({**meta, "recalled_keys": kept})
     if len(text) > _METADATA_LIMIT:
-        return json.dumps({"_truncated": True, "_bytes": len(text)})
+        session_keys = {k: meta[k] for k in ("implicit", "subject") if k in meta}
+        return _dumps({"_truncated": True, "_bytes": len(text), **session_keys})
     return text
+
+
+def _dumps(value: Any) -> str:
+    return json.dumps(value, default=str, separators=(",", ":"))
 
 
 def _parse_metadata(raw: Any) -> dict[str, Any]:
@@ -240,7 +254,8 @@ def _user_of(input: RunBeginInput) -> str:
 async def begin_session_run(input: RunBeginInput, *, started_at: datetime) -> None:
     """Open, or re-open, an MCP session's implicit run under the transport's id,
     with no claim (run.begin cannot name that id); a re-opened run keeps its start,
-    owner and metadata (an earlier close's `recalled_keys` and `closed_by`)."""
+    owner and metadata (an earlier close's `recalled_keys`), less the `closed_by`
+    of the close it reopens from."""
     ch = get_client()
     with sequential_reads():
         existing = await runs_store.fetch_run(ch, input.org, input.namespace, input.run_id)
@@ -249,11 +264,13 @@ async def begin_session_run(input: RunBeginInput, *, started_at: datetime) -> No
         started_ns = (started_at - datetime(1970, 1, 1)) // timedelta(microseconds=1) * 1000
         version = _FIRST_BEGIN_VERSION_BASE - started_ns
     else:
+        metadata = _parse_metadata(existing.get("metadata"))
+        metadata.pop("closed_by", None)
         input = input.model_copy(
             update={
                 "user_id": str(existing.get("user_id") or input.user_id),
                 "session_id": str(existing.get("session_id") or input.session_id),
-                "metadata": {**_parse_metadata(existing.get("metadata")), **input.metadata},
+                "metadata": {**metadata, **input.metadata},
             }
         )
     await _open_run(ch, input, input.run_id, existing, started_at=started_at, version=version)
