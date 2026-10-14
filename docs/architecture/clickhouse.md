@@ -409,7 +409,9 @@ with `purge=true` and runner state.
   `/oauth/token` exchange: claim the credential's key, read it, decide, consume, drop
   the claim. A claim a dead exchange left is taken over after two minutes by an
   `ALTER … UPDATE` whose staleness test Keeper's compare-and-swap checks, so of two
-  takers one wins. The drop is a Keeper key drop, not a MergeTree mutation.
+  takers one wins. A claim is kept, to go stale, when the consume did not finish, and
+  each boot sweeps the claims older than two minutes with one strict-mode
+  `ALTER … DELETE`. The drop and the sweep are Keeper key drops, not MergeTree mutations.
 
 **Classification for erasure.** `server/erasure/store/census.py` puts every table in
 `schemas/schema.sql` in exactly one list, and `tests/unit/test_every_table_is_classified.py`

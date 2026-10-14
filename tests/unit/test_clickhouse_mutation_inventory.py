@@ -40,8 +40,9 @@ _EXPECTED_MUTATIONS = Counter(
         # drop goes through erasure.store.mutations.run_keeper_delete).
         ("server/tasks/store/runs.py", "agent_run_claims", "DELETE"): 1,
         # An OAuth exchange's claim is a KeeperMap key: the release drops a
-        # znode and a stale claim's takeover is a compare-and-swap on it.
-        ("server/auth/oauth_claims.py", "oauth_claims", "DELETE"): 1,
+        # znode, the boot sweep drops the stale ones, and a stale claim's
+        # takeover is a compare-and-swap on it.
+        ("server/auth/oauth_claims.py", "oauth_claims", "DELETE"): 2,
         ("server/auth/oauth_claims.py", "oauth_claims", "UPDATE"): 1,
         # Conditional Keeper key recovery, only after a kernel death proof and
         # a server-side quiescence check; not a MergeTree data mutation.
