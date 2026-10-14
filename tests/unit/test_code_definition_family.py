@@ -561,7 +561,7 @@ def test_a_fingerprint_changes_only_with_its_rules(
     from server.code.domain.declaration import fingerprint_version
 
     (d,) = [d for d in file_definitions(path, src.encode()) if d.name == "value"]
-    pinned = ("7", body, shape)
+    pinned = ("8", body, shape)
     assert (fingerprint_version().split("-")[0], d.body_hash[:16], d.shape.exact[:16]) == pinned, (
         "fingerprints changed: bump _RULES (a grammar upgrade alone needs none) and re-pin"
     )
@@ -1125,6 +1125,31 @@ def test_parentheses_a_formatter_adds_keep_the_fingerprint(
 )
 def test_parentheses_that_mean_something_change_it(path: str, before: str, after: str) -> None:
     assert _value(path, before) != _value(path, after)
+
+
+_STRICT = "function value() { %s return this === undefined; }\n"
+
+
+@pytest.mark.parametrize("path", ["a.js", "a.ts"])
+def test_what_makes_a_string_a_directive_changes_it(path: str) -> None:
+    bodies = ['"use strict";', '("use strict");', '; "use strict";', ';/* a */ ;"use strict";']
+    values = {_value(path, _STRICT % b) for b in bodies}
+    assert len(values) == len(bodies)
+
+
+@pytest.mark.parametrize(
+    "formatted",
+    ["'use strict';", '"use strict"', '"use strict";;'],
+    ids=["quotes", "no-semicolon", "extra-semicolon"],
+)
+def test_a_directive_reformatted_keeps_it(formatted: str) -> None:
+    assert _value("a.js", _STRICT % formatted) == _value("a.js", _STRICT % '"use strict";')
+
+
+def test_parentheses_and_empty_statements_away_from_a_string_keep_it() -> None:
+    plain = "function value(a) { f(a); return a; }\n"
+    formatted = "function value(a) { ; (f(a)); ; return (a); ; }\n"
+    assert _value("a.js", formatted) == _value("a.js", plain)
 
 
 @pytest.mark.parametrize(

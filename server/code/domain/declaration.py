@@ -319,7 +319,7 @@ class Prints(NamedTuple):
 # Bump when fingerprints or shapes change for the same code: links hashed under another
 # `fingerprint_version` are re-hashed. Never reuse a number: a stored link under it would
 # read as current.
-_RULES = 7
+_RULES = 8
 
 
 # the words that open a scope, its name after them (`class DLL_EXPORT Foo`, a template
@@ -1142,8 +1142,9 @@ def _leaves(
 
 def _unparenthesized(node: Any, grammar: str) -> Any:
     """`node` without what a formatter adds or removes around it: parentheses around one
-    Python, JS or TS expression (not one that ends an optional chain, `(a?.b).c`) or an
-    arrow's one untyped parameter, a TS union's leading `|`."""
+    Python, JS or TS expression (not one that ends an optional chain, `(a?.b).c`, nor a
+    JS / TS statement's lone string) or an arrow's one untyped parameter, a TS union's
+    leading `|`."""
     while True:
         inner = None
         if node.type == "parenthesized_expression" and grammar in _UNPARENTHESIZED:
@@ -1152,6 +1153,9 @@ def _unparenthesized(node: Any, grammar: str) -> Any:
             chained = parent is not None and parent.type in _CHAINS
             if chained and inner is not None and b"?." in inner.text:
                 inner = None
+            lone = grammar in _ECMA and inner is not None and inner.type == "string"
+            if lone and parent is not None and parent.type == "expression_statement":
+                inner = None  # `("use strict");` is no directive
         elif node.type == "formal_parameters" and grammar in _ECMA:
             arrow = node.parent is not None and node.parent.type == "arrow_function"
             inner = _sole_child(node) if arrow else None
@@ -1201,7 +1205,7 @@ def _formatting(node: Any, grammar: str) -> bool:
     if grammar not in _ECMA or node.type not in (";", "empty_statement"):
         return False
     if node.type == "empty_statement":
-        return parent.type in _STATEMENT_LISTS
+        return parent.type in _STATEMENT_LISTS and not _before_string(node)
     if parent.type == "empty_statement":
         return False
     if parent.type in _MEMBER_LISTS:
@@ -1210,6 +1214,23 @@ def _formatting(node: Any, grammar: str) -> bool:
     in_for_head = up is not None and up.type in _FORS
     in_for_head = in_for_head and not _same(up.child_by_field_name("body"), parent)
     return node.next_sibling is None and not in_for_head
+
+
+def _string_statement(node: Any) -> bool:
+    """`node` is a JS / TS expression statement of one string, as a directive is."""
+    if node is None or node.type != "expression_statement":
+        return False
+    inner = _sole_child(node)
+    return inner is not None and inner.type == "string"
+
+
+def _before_string(empty: Any) -> bool:
+    """A string statement follows `empty` before any other statement: dropping `empty`
+    would make that string a directive (`; "use strict";`)."""
+    node = empty.next_sibling
+    while node is not None and node.type in {*_COMMENTS, "empty_statement"}:
+        node = node.next_sibling
+    return _string_statement(node)
 
 
 def _optional(node: Any, parent: Any, grammar: str) -> bool:
