@@ -47,13 +47,20 @@ x-colour-common: &colour-common
   # The repository-job sandbox (bubblewrap) needs user namespaces, mounts and a
   # fresh /proc, which Docker's defaults refuse. Narrow profiles, not
   # `unconfined`: the seccomp file is Docker's default plus one rule, and the
-  # AppArmor profile is docker-default plus `userns, mount, pivot_root`. Load
-  # deploy/apparmor/loom-repo-sandbox on the host first (redeploy.sh checks);
-  # "Repository-job sandbox" in docs/operations/code-index-operations.md.
+  # AppArmor profile is docker-default with a child profile that only bwrap
+  # enters, which allows `userns, mount, pivot_root`. No `no-new-privileges`:
+  # it would stop bwrap entering that child profile. Load
+  # deploy/apparmor/loom-repo-sandbox on the host first (redeploy.sh checks).
+  # See "Repository-job sandbox" in docs/operations/code-index-operations.md.
   security_opt:
     - seccomp=./seccomp/loom-repo-sandbox.json
     - apparmor=loom-repo-sandbox
     - systempaths=unconfined
+  # The bound on a repository job's processes. The sandbox's RLIMIT_NPROC
+  # (LOOM_CODE_SANDBOX_MAX_PIDS, set high in each service below) counts every
+  # task of uid 999 on the host, both colours' and other containers' included,
+  # so it cannot bound one job; this cgroup limit counts this container only.
+  pids_limit: 8192
   env_file:
     - ../.env
   networks:
@@ -92,6 +99,8 @@ services:
     environment:
       PORT: "${LOOM_COLOUR_PORT:?set LOOM_COLOUR_PORT=7781|7782}"
       LOOM_BLOB_DIR: /app/var/blobs
+      # pids_limit bounds a job; the uid-wide rlimit only has to stay out of its way.
+      LOOM_CODE_SANDBOX_MAX_PIDS: "65536"
       LOOM_BACKGROUND_WORKERS: "auto"
       LOOM_WEB_WORKERS: "1"
       LOOM_SUPERVISOR_LOCK_PATH: /app/var/shared/supervisor.lock
@@ -114,6 +123,8 @@ services:
     environment:
       PORT: "${LOOM_COLOUR_PORT:?set LOOM_COLOUR_PORT=7781|7782}"
       LOOM_BLOB_DIR: /app/var/blobs
+      # pids_limit bounds a job; the uid-wide rlimit only has to stay out of its way.
+      LOOM_CODE_SANDBOX_MAX_PIDS: "65536"
       LOOM_RATELIMIT_SHARED_PATH: /app/var/shared/ratelimit.buckets
       LOOM_SUPERVISOR_LOCK_PATH: /app/var/shared/supervisor.lock
       LOOM_BOOT_MIGRATE_LOCK_PATH: /app/var/shared/migrate.lock

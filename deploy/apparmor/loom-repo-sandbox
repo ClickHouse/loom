@@ -1,19 +1,33 @@
 # loom-repo-sandbox: the AppArmor profile for Loom containers that run the
 # bubblewrap repository-job sandbox (dev/docker-compose.colour.yml asks for it).
 #
-# It is Docker's docker-default (github.com/moby/profiles apparmor/v0.2.1,
-# template.go, the version Docker 29.x vendors), renamed, with these changes:
-#   - `userns,` `mount,` `pivot_root,` replace `deny mount,`: bwrap creates a
-#     user namespace and mounts its fresh root inside it. The container has no
-#     CAP_SYS_ADMIN, so a mount succeeds only inside that namespace. On hosts
-#     with kernel.apparmor_restrict_unprivileged_userns=1 (Ubuntu 23.10+) an
-#     unconfined process that creates a user namespace is moved into the
-#     restrictive `unprivileged_userns` profile, so `apparmor=unconfined` is
-#     not enough; an explicit `userns` rule is.
+# The container's processes run under Docker's docker-default
+# (github.com/moby/profiles apparmor/v0.2.1, template.go, the version Docker
+# 29.x vendors), renamed, with `deny mount` kept and no `userns` rule: they can
+# create no user namespace and mount nothing. Only /usr/bin/bwrap moves, on
+# exec, into the child profile loom-repo-sandbox//bwrap, which adds
+# `userns, mount, pivot_root`: bwrap creates a user namespace and mounts the
+# job's fresh root inside it. Everything bwrap starts (the job and the commands
+# it runs) inherits the child profile; Loom's own seccomp filter, which bwrap
+# installs before it runs the job, refuses the job unshare, mount, umount2,
+# pivot_root and a clone with CLONE_NEWUSER.
+#
+# Other changes from docker-default, in both profiles:
 #   - `abi <abi/4.0>` instead of 3.0, because `userns` needs it; `unix,` and
-#     `mqueue,` keep what ABI 3.0 left unmediated (4.0 mediates both).
+#     `mqueue,` keep what ABI 3.0 left unmediated (4.0 mediates both). Under
+#     4.0 a profile without `userns` may not create a user namespace.
 #   - no separate dockerd signal peer: dockerd runs unconfined, which the
-#     `peer=unconfined` line already covers.
+#     `peer=unconfined` lines already cover.
+#   - the two profiles may signal and trace each other, as processes in one
+#     container may under docker-default (the server kills a timed-out job).
+#
+# `apparmor=unconfined` is no substitute on hosts with
+# kernel.apparmor_restrict_unprivileged_userns=1 (Ubuntu 23.10+): an unconfined
+# process that creates a user namespace is moved into the restrictive
+# `unprivileged_userns` profile, which refuses the mounts.
+#
+# Do not combine with `no-new-privileges`: under it the kernel refuses the
+# exec transition into the child profile, and bwrap fails to start.
 #
 # Load it on the Docker host, and on every boot (apparmor.service loads
 # /etc/apparmor.d at boot):
@@ -36,9 +50,11 @@ profile loom-repo-sandbox flags=(attach_disconnected,mediate_deleted) {
   capability,
   file,
   umount,
-  userns,
-  mount,
-  pivot_root,
+  deny mount,
+
+  # bubblewrap, whoever execs it (the server runs it under prlimit).
+  /usr/bin/bwrap Cx -> bwrap,
+
   # Host (privileged) processes may send signals to container processes.
   signal (receive) peer=unconfined,
   # runc may send signals to container processes (for "docker stop").
@@ -47,6 +63,7 @@ profile loom-repo-sandbox flags=(attach_disconnected,mediate_deleted) {
   signal (receive) peer=crun,
   # Container processes may send signals amongst themselves.
   signal (send,receive) peer=loom-repo-sandbox,
+  signal (send,receive) peer=loom-repo-sandbox//bwrap,
 
   deny @{PROC}/* w,   # deny write for all files directly in /proc (not in a subdir)
   # deny write to files not in /proc/<number>/** or /proc/sys/**
@@ -68,4 +85,49 @@ profile loom-repo-sandbox flags=(attach_disconnected,mediate_deleted) {
   # allow processes within the container to trace each other,
   # provided all other LSM and yama setting allow it.
   ptrace (trace,tracedby,read,readby) peer=loom-repo-sandbox,
+  ptrace (trace,tracedby,read,readby) peer=loom-repo-sandbox//bwrap,
+
+  # bwrap and everything it runs: the profile above plus the user namespace
+  # and the mounts bwrap makes in it. `file,` gives inherit-exec (ix), so the
+  # job stays here; it could not move back anyway, as bwrap sets
+  # no_new_privs before it runs the job.
+  profile bwrap flags=(attach_disconnected,mediate_deleted) {
+    #include <abstractions/base>
+
+    network,
+    deny network alg,
+    unix,
+    mqueue,
+    capability,
+    file,
+    umount,
+    userns,
+    mount,
+    pivot_root,
+
+    signal (receive) peer=unconfined,
+    signal (receive) peer=runc,
+    signal (receive) peer=crun,
+    signal (send,receive) peer=loom-repo-sandbox,
+    signal (send,receive) peer=loom-repo-sandbox//bwrap,
+
+    deny @{PROC}/* w,
+    deny @{PROC}/{[^1-9/],[^1-9/][^0-9/],[^1-9s/][^0-9y/][^0-9s/],[^1-9/][^0-9/][^0-9/][^0-9/]*}/** w,
+    deny @{PROC}/sys/[^k]** w,
+    deny @{PROC}/sys/kernel/{?,??,[^s][^h][^m]**} w,
+    deny @{PROC}/sysrq-trigger rwklx,
+    deny @{PROC}/kcore rwklx,
+
+    deny /sys/[^f]*/** wklx,
+    deny /sys/f[^s]*/** wklx,
+    deny /sys/fs/[^c]*/** wklx,
+    deny /sys/fs/c[^g]*/** wklx,
+    deny /sys/fs/cg[^r]*/** wklx,
+    deny /sys/firmware/** rwklx,
+    deny /sys/devices/virtual/powercap/** rwklx,
+    deny /sys/kernel/security/** rwklx,
+
+    ptrace (trace,tracedby,read,readby) peer=loom-repo-sandbox,
+    ptrace (trace,tracedby,read,readby) peer=loom-repo-sandbox//bwrap,
+  }
 }

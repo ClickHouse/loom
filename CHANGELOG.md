@@ -13,12 +13,16 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 - The blue/green colours (`dev/docker-compose.colour.yml`) run the bubblewrap
   repository-job sandbox, so `/v1/health` no longer reports `repo_jobs_unsandboxed` there.
   They use narrow profiles instead of `unconfined`: `dev/seccomp/loom-repo-sandbox.json`
-  (Docker's default plus `clone`, `unshare`, `mount`, `umount2`, `pivot_root`),
-  the AppArmor profile `deploy/apparmor/loom-repo-sandbox` (`docker-default` plus
-  `userns, mount, pivot_root`) and `systempaths=unconfined`. Load the AppArmor profile on
-  the host before the next redeploy; `redeploy.sh` stops when it is missing. The other
-  Compose stacks are unchanged. See "Repository-job sandbox" in
-  docs/operations/code-index-operations.md.
+  (Docker's default plus `clone`, `unshare`, `mount`, `umount2`, `pivot_root`), the
+  AppArmor profile `deploy/apparmor/loom-repo-sandbox` (`docker-default` for every
+  process, and a child profile adding `userns, mount, pivot_root` that only `bwrap` and
+  what it runs enter) and `systempaths=unconfined`. Each colour container gets
+  `pids_limit: 8192`, and `LOOM_CODE_SANDBOX_MAX_PIDS` is raised to 65536 there: the
+  rlimit counts every task of the uid on the host, so the cgroup is the bound. Load the
+  AppArmor profile on the host and check it in a throwaway container before the next
+  redeploy; `redeploy.sh` (through `dev/apparmor_check.sh`) stops when it is missing or
+  the host has no AppArmor. The other Compose stacks are unchanged. See "Repository-job
+  sandbox" in docs/operations/code-index-operations.md.
 
 ### Changed
 

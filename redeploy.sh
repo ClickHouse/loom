@@ -290,6 +290,12 @@ if [[ "$behind" -gt 0 ]]; then
   git rebase --autostash origin/main
 fi
 
+# ---- AppArmor profile --------------------------------------------------------
+# The colour compose names an AppArmor profile for the repository-job sandbox;
+# Docker refuses to start a container whose profile the kernel has not loaded.
+# A host check, so it runs before the preflight's slower ones.
+dev/apparmor_check.sh "$COLOUR_COMPOSE" || exit 1
+
 # ---- preflight ---------------------------------------------------------------
 # Health-sha through the proxy, who holds :7777 (docker-proxy for loom-proxy,
 # which answers health — fine), migrate dry-run --strict. Exit 3 = the running
@@ -340,18 +346,6 @@ holder=$(ss -ltnp 2>/dev/null | awk -v p=":$idle_port" '$4 ~ p"$" {print}' || tr
 if [[ -n "$holder" ]] && [[ "$(container_state "$idle")" != "running" ]]; then
   echo "!!! :$idle_port is held but loom-$idle is not running — a stray process holds the idle colour's port:"
   echo "$holder" | sed 's/^/    /'
-  exit 1
-fi
-
-# ---- AppArmor profile --------------------------------------------------------
-# The colour compose names an AppArmor profile for the repository-job sandbox;
-# Docker refuses to start a container whose profile the kernel has not loaded.
-# Profile names are readable without root under policy/profiles/*/name.
-aa_profile=$(sed -n 's/^ *- apparmor=\([A-Za-z0-9_.-]*\).*/\1/p' "$COLOUR_COMPOSE" | head -1)
-if [[ -n "$aa_profile" && -d /sys/kernel/security/apparmor/policy/profiles ]] \
-  && ! cat /sys/kernel/security/apparmor/policy/profiles/*/name 2>/dev/null | grep -qxF "$aa_profile"; then
-  echo "!!! AppArmor profile $aa_profile is not loaded; $COLOUR_COMPOSE needs it. Load it once (persists across boots):"
-  echo "    sudo install -m644 deploy/apparmor/$aa_profile /etc/apparmor.d/$aa_profile && sudo apparmor_parser -r -W /etc/apparmor.d/$aa_profile"
   exit 1
 fi
 

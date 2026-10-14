@@ -242,6 +242,10 @@ async def test_a_raw_clone_into_a_new_user_namespace_is_refused(monkeypatch) -> 
 
 async def test_a_fork_bomb_is_bounded_and_nothing_survives(monkeypatch) -> None:
     monkeypatch.setattr(sandbox.settings, "code_sandbox_max_pids", 64)
+    # RLIMIT_NPROC counts every task of this uid on the host, other containers'
+    # included, and no pid namespace shows them all: see whether a job starts.
+    if (await sandbox.run_sandboxed(["true"], env=ENV, timeout_s=30)).returncode != 0:
+        pytest.skip("this uid already runs 64 tasks on the host, so no job starts under the limit")
     marker = "bomb-31337"
     bomb = f"""
         # {marker}
