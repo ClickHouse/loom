@@ -58,7 +58,7 @@ async def drain(timeout_s: float = 5.0) -> int:
 
 
 class PolicyForbiddenError(LoomServerError):
-    """403 with the decision attached: which rules denied, per-leaf values,
+    """Carries the decision: which rules denied, per-leaf values,
     and any evaluation errors — "denied by policy" and "denied because the
     check could not run" are distinguishable by `errors`."""
 

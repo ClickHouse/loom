@@ -96,8 +96,9 @@ class GrantWouldDowngradeError(LoomServerError):
 
 
 class TooManySpellingsError(LoomServerError):
-    """409 — more accounts tie spellings to a subject than a grant cutoff may
-    read. No retry fixes it: an operator releases the extra accounts."""
+    """409 — more than 1000 accounts in the org name the person's email, more
+    than a grant cutoff reads. No retry fixes it: an operator releases the
+    extra accounts."""
 
     code = "TOO_MANY_SPELLINGS"
     status_code = 409

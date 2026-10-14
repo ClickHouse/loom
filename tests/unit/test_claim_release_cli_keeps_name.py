@@ -162,13 +162,13 @@ def test_cli_confirmation_names_the_owner_from_the_registry_row(
     assert fake.inserts == []
 
 
-def test_a_release_its_grantee_has_too_many_spellings_for_says_what_to_release_first(
+def test_a_release_refused_for_too_many_spellings_says_what_to_release_first(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from server.core.errors import TooManySpellingsError
 
     async def _too_many(*_a: Any, **_k: Any) -> None:
-        raise TooManySpellingsError("too many accounts")
+        raise TooManySpellingsError("too many accounts", subject="bob@acme.test", limit=1000)
 
     fake = _FakeCH()
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
@@ -176,6 +176,6 @@ def test_a_release_its_grantee_has_too_many_spellings_for_says_what_to_release_f
 
     assert _cmd_claim_release(_args()) == 1
     assert fake.inserts == []
-    assert (
-        "Release first the accounts naming it that it holds no grant on" in capsys.readouterr().err
-    )
+    err = capsys.readouterr().err
+    assert "more than 1000 accounts name its grantee 'bob@acme.test'" in err
+    assert "those 'bob@acme.test' holds no grant on, then this one" in err

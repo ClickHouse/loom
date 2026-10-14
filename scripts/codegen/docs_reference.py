@@ -501,8 +501,9 @@ def _typed_errors() -> dict[str, tuple[int, str, str]]:
             code, status = attrs.get("code"), attrs.get("status_code")
             if isinstance(code, str) and _CODE_LITERAL.match(code) and isinstance(status, int):
                 # A docstring led by its status ("409 — …"): the entry names it already.
-                doc = _LEADING_STATUS.sub("", _first_sentence(ast.get_docstring(cls)))
-                doc = doc[:1].upper() + doc[1:]
+                doc, stripped = _LEADING_STATUS.subn("", _first_sentence(ast.get_docstring(cls)))
+                if stripped:
+                    doc = doc[:1].upper() + doc[1:]
                 typed.setdefault(code, (status, doc, f"{module}.{cls.name}"))
     return typed
 

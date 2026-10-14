@@ -117,7 +117,9 @@ async def test_an_oidc_callback_issues_its_code_before_its_cutoff_read(
     assert int(code["exp"]) - oauth._CODE_TTL == before
 
 
-def test_a_sign_in_no_retry_fixes_answers_its_409(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_login_answers_409_too_many_spellings_with_its_link(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from server.core.errors import TooManySpellingsError, register_exception_handler
 
     async def _too_many(*_a: Any, **_k: Any) -> Any:

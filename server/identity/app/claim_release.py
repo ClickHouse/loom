@@ -23,6 +23,7 @@ from server.auth.authz import Role
 from server.auth.jwt import AuthInfo
 from server.auth.revocation import write_grant_cutoffs
 from server.core.ch import CHClient, get_client
+from server.core.errors import TooManySpellingsError
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -117,9 +118,12 @@ async def release_claim(
     grants_count = len({g["subject"] for g in grants})
     if grants:
         subjects = sorted({str(g["subject"]) for g in grants if g.get("status") == "active"})
-        await write_grant_cutoffs(
-            org, [namespace], subjects, reason="claim released", revoked_by=actor_subject
-        )
+        try:
+            await write_grant_cutoffs(
+                org, [namespace], subjects, reason="claim released", revoked_by=actor_subject
+            )
+        except TooManySpellingsError as e:
+            raise _release_these_first(org, namespace, e) from e
         tombstones = [
             {
                 "org": org,
@@ -187,3 +191,18 @@ async def _may_release(info: AuthInfo, org: str, namespace: str) -> bool:
 
 def attach(app: Any) -> None:
     app.include_router(router)
+
+
+def _release_these_first(
+    org: str, namespace: str, refusal: TooManySpellingsError
+) -> TooManySpellingsError:
+    """The refusal of a release whose grantee more than the bound of accounts
+    name: releasing those of them it holds no grant on first lowers the count."""
+    subject, limit = refusal.extra["subject"], refusal.extra["limit"]
+    return TooManySpellingsError(
+        f"cannot release {org}/{namespace}: more than {limit} accounts name its grantee "
+        f"{subject!r}. Release first the other accounts naming {subject!r}, those "
+        f"{subject!r} holds no grant on, then this one.",
+        subject=subject,
+        limit=limit,
+    )

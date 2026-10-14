@@ -421,10 +421,11 @@ def test_a_cutoff_refuses_rather_than_cut_short_past_its_spelling_bound(
             assert "DISTINCT" in sql and params["lim"] == 3
             return [{"owner_email": f"u{i}", "contact_email": "a@x.io"} for i in range(3)]
 
-    with pytest.raises(TooManySpellingsError, match="ask your Loom operator"):
+    with pytest.raises(TooManySpellingsError, match="ask your Loom operator") as refused:
         asyncio.run(aliases.cutoff_spellings(ORG, "a@x.io", ch=_Directory()))
-    # The command that fixes it is for the operator, who reads the log.
-    assert f"loom claim-release --org {ORG}" in caplog.text
+    assert refused.value.extra == {"subject": "a@x.io", "limit": 2}
+    # How to fix it is for the operator, who reads the log.
+    assert "errors.md#too-many-spellings" in caplog.text
 
 
 def test_a_slash_in_an_org_or_namespace_cannot_make_two_scopes_share_a_key() -> None:

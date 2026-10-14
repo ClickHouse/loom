@@ -132,16 +132,18 @@ deduplicates; a `Retry-After` honoured up to 60 s. Each op's kind is in the
 ### Too many spellings
 
 `/v1/auth/login`, and any op that takes a grant away from that person (`grants.revoke`, a
-lowering `grants.create`, `namespace.leave`, `namespace.restore`, `claim-release`),
-answer 409 `TOO_MANY_SPELLINGS` with the text in `detail.message`. `/oauth/authorize` and
-the OIDC callback answer 403 `access_denied`, and `/oauth/token` 400 `invalid_grant`, with
-the text in `error_description`.
+lowering `grants.create`, `namespace.leave`, `namespace.restore`), answer 409
+`TOO_MANY_SPELLINGS` with the text in `detail.message`, as do `loom claim-release` and
+`POST /v1/admin/claim_release`. `/oauth/authorize` and the OIDC callback answer 403
+`access_denied`, and `/oauth/token` 400 `invalid_grant`, with the text in
+`detail.error_description`.
 
-The server log names the email. Its accounts are the distinct `(owner_email,
-contact_email)` pairs this lists:
+The server log names the email. The bound counts its accounts' distinct
+`(owner_email, contact_email)` pairs:
 
 ```sql
-SELECT namespace, owner_email, active, password_hash != '' AS has_password, created_at
+SELECT namespace, owner_email, contact_email, active,
+       password_hash != '' AS has_password, created_at
 FROM loom.namespaces FINAL
 WHERE org = '<org>' AND contact_email != ''
   AND (owner_email = '<email>' OR lower(contact_email) = lower('<email>'))
@@ -150,9 +152,19 @@ ORDER BY created_at
 
 Keep the account the person signs in with and release the others with
 `loom claim-release --org <org> --namespace <account>`; a release clears the account's
-contact, so it stops counting. A release cuts its grantees' tokens first, so releasing an
-account the person holds a grant on refuses too: release those last, once fewer than
-1000 remain.
+contact, so it stops counting. A release first cuts the tokens of its grantees, so
+releasing an account the person holds a grant on refuses too: release those last, once at
+most 1000 remain.
+
+When the person holds a grant on too many of them for that, clear just their contact,
+which changes no grant and so cuts no token, then release them:
+
+```sql
+INSERT INTO loom.namespaces
+SELECT * REPLACE ('' AS contact_email, now() AS updated_at)
+FROM loom.namespaces FINAL
+WHERE org = '<org>' AND namespace IN ('<account>', ...)
+```
 
 ## How the entries below are generated
 
@@ -556,7 +568,7 @@ Raised in `server/memory/app/set_commit.py`, `server/memory/app/update.py`, `ser
 
 #### `POLICY_FORBIDDEN`
 
-HTTP 403, raised as `server.identity.app.policy_gate.PolicyForbiddenError`. 403 with the decision attached: which rules denied, per-leaf values, and any evaluation errors — "denied by policy" and "denied because the check could not run" are distinguishable by `errors`. What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 403, raised as `server.identity.app.policy_gate.PolicyForbiddenError`. Carries the decision: which rules denied, per-leaf values, and any evaluation errors — "denied by policy" and "denied because the check could not run" are distinguishable by `errors`. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `PRECONDITION_FAILED`
 
@@ -688,7 +700,7 @@ Raised in `server/memory/app/curation.py`.
 
 #### `TOO_MANY_SPELLINGS`
 
-HTTP 409, raised as `server.core.errors.TooManySpellingsError`. More accounts tie spellings to a subject than a grant cutoff may read. What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 409, raised as `server.core.errors.TooManySpellingsError`. More than 1000 accounts in the org name the person's email, more than a grant cutoff reads. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `UNKNOWN_ARGUMENT`
 
