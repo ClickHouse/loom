@@ -289,9 +289,10 @@ def _no_copy_head_check(request: pytest.FixtureRequest) -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def _no_grant_log_check(request: pytest.FixtureRequest) -> Iterator[None]:
-    """A grant write reads the grant log after its insert (`cut_where_lowered`,
-    `logged_subjects`); unit fakes answer statements by shape, so those reads
-    are off unless a test is marked `grant_log_check`."""
+    """A grant write reads the grant log and the cutoffs after its insert
+    (`cut_where_lowered`, `cut_pairs`, `logged_subjects`); unit fakes answer
+    statements by shape, so those reads are off unless a test is marked
+    `grant_log_check`."""
     if request.node.get_closest_marker("grant_log_check"):
         yield
         return
@@ -303,11 +304,16 @@ def _no_grant_log_check(request: pytest.FixtureRequest) -> Iterator[None]:
     async def _none(*_a: object, **_k: object) -> list[str]:
         return []
 
-    before = grant_writes.cut_where_lowered, grant_writes.logged_subjects
-    grant_writes.cut_where_lowered = _skip  # type: ignore[assignment]
-    grant_writes.logged_subjects = _none  # type: ignore[assignment]
+    async def _no_pairs(*_a: object, **_k: object) -> set[tuple[str, str]]:
+        return set()
+
+    stubs = {"cut_where_lowered": _skip, "cut_pairs": _no_pairs, "logged_subjects": _none}
+    before = {name: getattr(grant_writes, name) for name in stubs}
+    for name, stub in stubs.items():
+        setattr(grant_writes, name, stub)
     yield
-    grant_writes.cut_where_lowered, grant_writes.logged_subjects = before  # type: ignore[assignment]
+    for name, original in before.items():
+        setattr(grant_writes, name, original)
 
 
 @pytest.fixture(autouse=True)

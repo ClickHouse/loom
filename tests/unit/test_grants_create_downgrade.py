@@ -43,6 +43,20 @@ def _wire(
     return inserted, looked_up
 
 
+@pytest.fixture
+def restamped(monkeypatch: pytest.MonkeyPatch) -> list[set[tuple[str, str]]]:
+    """The pairs each grant write asked to cut again."""
+    from server.identity.app import grant_writes
+
+    calls: list[set[tuple[str, str]]] = []
+
+    async def _record(org: str, pairs: Any, *, restamp: set[tuple[str, str]], **_: Any) -> None:
+        calls.append(restamp)
+
+    monkeypatch.setattr(grant_writes, "cut_where_lowered", _record)
+    return calls
+
+
 def _row(role: str, **extra: Any) -> dict[str, Any]:
     return {
         "role": role,
@@ -112,22 +126,28 @@ async def test_downgrade_without_replace_is_409_with_typed_code(
 
 @pytest.mark.asyncio
 async def test_downgrade_with_replace_overwrites_and_ends_older_claims(
-    monkeypatch: pytest.MonkeyPatch, recorded_cutoff_writes: list[tuple[str, list[str], list[str]]]
+    monkeypatch: pytest.MonkeyPatch,
+    recorded_cutoff_writes: list[tuple[str, list[str], list[str]]],
+    restamped: list[set[tuple[str, str]]],
 ) -> None:
     inserted, _ = _wire(monkeypatch, _row("admin"))
     out = await grants_mod.handle_grants_create(_create("viewer", replace=True))
     assert out.role == "viewer"
     assert inserted[0]["role"] == "viewer"
     assert recorded_cutoff_writes == [("o", ["ns"], ["alice"])]
+    assert restamped == [{("ns", "alice")}], "cut again once the row landed"
 
 
 @pytest.mark.asyncio
 async def test_an_upgrade_ends_no_claim(
-    monkeypatch: pytest.MonkeyPatch, recorded_cutoff_writes: list[tuple[str, list[str], list[str]]]
+    monkeypatch: pytest.MonkeyPatch,
+    recorded_cutoff_writes: list[tuple[str, list[str], list[str]]],
+    restamped: list[set[tuple[str, str]]],
 ) -> None:
     _wire(monkeypatch, _row("viewer"))
     await grants_mod.handle_grants_create(_create("writer"))
     assert recorded_cutoff_writes == []
+    assert restamped == [set()]
 
 
 @pytest.mark.asyncio

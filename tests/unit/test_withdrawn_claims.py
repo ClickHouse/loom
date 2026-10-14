@@ -256,13 +256,24 @@ def _logged_at(role: str, at: datetime, namespace: str = "team") -> dict[str, An
     }
 
 
-def test_a_pair_already_cut_is_cut_again_after_its_grant_write(ch: _CH) -> None:
+def test_a_lowering_is_cut_again_once_its_row_landed(ch: _CH) -> None:
     # A committed insert can take seconds: a mint that read the grant before the
     # write landed is issued after the first cutoff, so only a second one cuts it.
     _end("team")
     key = rev.grant_claim_key(ORG, "team", "alice")
-    asyncio.run(rev.cut_where_lowered(ORG, [("team", "alice")], revoked_by="boss"))
+    pair = ("team", "alice")
+    asyncio.run(rev.cut_where_lowered(ORG, [pair], restamp={pair}, revoked_by="boss"))
     assert ch.revoked[key]["reason"] == "grant lowered"
+
+
+def test_a_raise_of_a_pair_cut_before_is_not_cut_again(ch: _CH) -> None:
+    # A token minted after the old cutoff, by `loom mint-token` say, keeps its claim.
+    _end("team")
+    key = rev.grant_claim_key(ORG, "team", "alice")
+    stamp = ch.revoked[key]["issued_before"]
+    ch.log = [_logged_at("viewer", stamp + timedelta(seconds=5))]
+    asyncio.run(rev.cut_where_lowered(ORG, [("team", "alice")], restamp=set(), revoked_by="b"))
+    assert ch.revoked[key]["reason"] == "test"
 
 
 @pytest.mark.parametrize(
@@ -274,13 +285,25 @@ def test_a_pair_already_cut_is_cut_again_after_its_grant_write(ch: _CH) -> None:
         ([], False),
     ],
 )
-def test_a_pair_never_cut_is_cut_when_the_log_shows_it_fell(
-    ch: _CH, roles: list[str], cut: bool
-) -> None:
+def test_a_pair_is_cut_when_the_log_shows_it_fell(ch: _CH, roles: list[str], cut: bool) -> None:
     then = datetime(2026, 5, 1, 12, 0, 0)
     ch.log = [_logged_at(role, then + timedelta(seconds=i)) for i, role in enumerate(roles)]
-    asyncio.run(rev.cut_where_lowered(ORG, [("team", "alice")], revoked_by="boss"))
+    asyncio.run(rev.cut_where_lowered(ORG, [("team", "alice")], restamp=set(), revoked_by="b"))
     assert (rev.grant_claim_key(ORG, "team", "alice") in ch.revoked) is cut
+
+
+def test_only_log_rows_since_the_last_cutoff_count(ch: _CH) -> None:
+    # The lowering that cutoff was for is history; only a later fall counts.
+    _end("team")
+    key = rev.grant_claim_key(ORG, "team", "alice")
+    stamp = ch.revoked[key]["issued_before"]
+    ch.log = [
+        _logged_at("admin", stamp - timedelta(hours=1)),
+        _logged_at("writer", stamp - timedelta(seconds=1)),
+        _logged_at("writer", stamp + timedelta(seconds=5)),
+    ]
+    asyncio.run(rev.cut_where_lowered(ORG, [("team", "alice")], restamp=set(), revoked_by="b"))
+    assert ch.revoked[key]["reason"] == "test"
 
 
 def test_a_newer_cutoff_wins_in_clickhouse_however_late_it_lands(ch: _CH) -> None:

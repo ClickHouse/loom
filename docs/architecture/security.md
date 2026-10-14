@@ -107,13 +107,13 @@ hold the design together:
   lock: a raise that lands between that read and the write is lowered without a cutoff.
   `loom.namespace_grant_log`, filled by a materialized view on every grant insert and kept
   a week, closes that. Each write that read first goes through `grant_writes`, which then
-  cuts, in one insert (`revocation.cut_where_lowered`), every subject it wrote that
-  already has a cutoff there, and every other one whose grant the log shows fell. The
-  first is a lowering's second stamp: a token minted while its insert was in flight read
-  the old grant and is issued after the first cutoff. Cutting a pair again costs nothing
-  else, since a mint leaves a cut namespace out and a request falls back to the live
-  grant, so it needs no timing. A retried op runs the same check, even when it finds its
-  change already written. The spellings a cutoff covers are read with sequential
+  cuts, in one insert (`revocation.cut_where_lowered`), the pairs the op lowered and every
+  other pair whose grant the log shows fell since its last cutoff. A lowering is cut twice,
+  once before its row and once after: a token minted while the insert was in flight read
+  the old grant and is issued after the first cutoff. A raise is never cut, so a token
+  minted after an older cutoff (by `loom mint-token`, say) keeps its claim. A retried op
+  runs the same check, even when it finds its change already written; a retried lowering
+  cuts again every pair it had cut. The spellings a cutoff covers are read with sequential
   consistency, since a missed one never gets a key.
 
 **One exchange per credential** (`server/auth/oauth_claims.py`). The OAuth store marks a

@@ -113,7 +113,7 @@ async def test_a_revoke_row_stamped_before_its_cutoff_but_landing_after_is_cut_a
         await insert(rows, **k)
 
     monkeypatch.setattr(grants_repo, "insert_rows", _slow)
-    await grant_writes.insert_rows([planned])
+    await grant_writes.insert_rows([planned], restamp=[("team", "dave")])
 
     key = revocation.grant_claim_key(org, "team", "dave")
     (row,) = await ch.query_all(
@@ -135,10 +135,28 @@ async def test_a_revoke_of_a_grant_older_than_the_log_is_still_cut_again(ch: Any
     )
     await revocation.write_grant_cutoffs(org, ["team"], ["erin"], reason="test", revoked_by="t")
     revoked = {**_grant(org, "erin", "admin"), "revoked_at": datetime.now(UTC).replace(tzinfo=None)}
-    await grant_writes.insert_rows([revoked])
+    await grant_writes.insert_rows([revoked], restamp=[("team", "erin")])
 
     key = revocation.grant_claim_key(org, "team", "erin")
     (row,) = await ch.query_all(
         "SELECT reason FROM loom.revoked_tokens FINAL WHERE jti = {k:String}", params={"k": key}
     )
     assert row["reason"] == "grant lowered"
+
+
+async def test_a_raise_of_a_pair_cut_before_writes_no_cutoff(ch: Any) -> None:
+    # A token minted after the old cutoff, by `loom mint-token` say, keeps its claim.
+    from server.identity.app import grant_writes
+
+    org = unique_org("lowering-race")
+    await grants_repo.insert_row(_grant(org, "fay", "admin"))
+    await revocation.write_grant_cutoffs(org, ["team"], ["fay"], reason="test", revoked_by="t")
+    await grants_repo.insert_row(_grant(org, "fay", "viewer"))
+    await asyncio.sleep(1.1)
+    await grant_writes.insert_row(_grant(org, "fay", "writer"))
+
+    key = revocation.grant_claim_key(org, "team", "fay")
+    (row,) = await ch.query_all(
+        "SELECT reason FROM loom.revoked_tokens FINAL WHERE jti = {k:String}", params={"k": key}
+    )
+    assert row["reason"] == "test"

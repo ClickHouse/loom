@@ -241,7 +241,7 @@ async def handle_namespace_leave(
 
     existing = await grants_repo.find_active_grant(input.org, input.namespace, caller)
     if existing is None:
-        await grant_writes.recheck(input.org, [(input.namespace, caller)])
+        await grant_writes.recheck(input.org, [(input.namespace, caller)], lowering=True)
         return NamespaceLeaveOutput(left=False, namespace=input.namespace)
 
     if existing.role == "admin":
@@ -267,7 +267,8 @@ async def handle_namespace_leave(
             "granted_by": existing.granted_by,
             "revoked_at": now,
             "version": time.time_ns(),
-        }
+        },
+        restamp=True,
     )
     return NamespaceLeaveOutput(left=True, namespace=input.namespace, left_at=now)
 
@@ -282,7 +283,7 @@ async def handle_namespace_cancel_request(
 
     existing = await grants_repo.find_any_grant(input.org, input.namespace, caller)
     if existing is None:
-        await grant_writes.recheck(input.org, [(input.namespace, caller)])
+        await grant_writes.recheck(input.org, [(input.namespace, caller)], lowering=False)
         return NamespaceCancelRequestOutput(
             cancelled=False,
             namespace=input.namespace,
@@ -294,7 +295,7 @@ async def handle_namespace_cancel_request(
     # branch). Elevation request: status='active', pending_role carries it.
     no_base_access = existing.status == "pending"
     if not pending_role and not no_base_access:
-        await grant_writes.recheck(input.org, [(input.namespace, caller)])
+        await grant_writes.recheck(input.org, [(input.namespace, caller)], lowering=False)
         return NamespaceCancelRequestOutput(
             cancelled=False,
             namespace=input.namespace,

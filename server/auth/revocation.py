@@ -339,27 +339,35 @@ async def _write_cutoffs(
     _tighten_locally(keys, cutoff)
 
 
-async def cut_where_lowered(org: str, pairs: list[tuple[str, str]], *, revoked_by: str) -> None:
+async def cut_where_lowered(
+    org: str,
+    pairs: list[tuple[str, str]],
+    *,
+    restamp: set[tuple[str, str]],
+    revoked_by: str,
+) -> None:
     """After a grant write, cut each (namespace, subject) whose older tokens
     may still claim more than its grant, in one write.
 
-    A pair with a cutoff is cut again: a token minted while the write was in
-    flight read the old grant, and is issued after the first cutoff. That
-    costs nothing else, since a mint already leaves a cut namespace out and a
-    request falls back to the live grant. A pair never cut is cut when the
-    grant log shows it held a higher role than it does now, which is a raise
-    that landed after the writer read the grant."""
+    `restamp` holds the pairs the write lowered after cutting them: a token
+    minted while its insert was in flight read the old grant and is issued
+    after that cutoff, so they are cut again. Any other pair is cut when the
+    grant log shows it fell since its last cutoff, which is a raise that
+    landed after the writer read the grant."""
     from server.core.ch import get_client, own_write_reads
 
-    keys = {pair: grant_claim_key(org, *pair) for pair in pairs}
-    cut = {str(r["jti"]) for r in await _read_revocations(sorted(keys.values()))}
-    uncut = [pair for pair in pairs if keys[pair] not in cut]
-    lowered = [pair for pair in pairs if keys[pair] in cut]
-    if uncut:
+    others = [pair for pair in pairs if pair not in restamp]
+    lowered = sorted(restamp & set(pairs))
+    if others:
+        keys = {pair: grant_claim_key(org, *pair) for pair in others}
+        cutoffs = {
+            str(r["jti"]): _cutoff_seconds(r.get("issued_before")) or 0
+            for r in await _read_revocations(sorted(keys.values()))
+        }
         with own_write_reads():
             rows = await get_client().query_all(
                 """
-                SELECT namespace, subject, role, status, revoked_at
+                SELECT namespace, subject, role, status, revoked_at, version
                 FROM loom.namespace_grant_log
                 WHERE org = {org:String} AND namespace IN {ns:Array(String)}
                   AND subject IN {subs:Array(String)}
@@ -367,16 +375,42 @@ async def cut_where_lowered(org: str, pairs: list[tuple[str, str]], *, revoked_b
                 """,
                 params={
                     "org": org,
-                    "ns": sorted({ns for ns, _ in uncut}),
-                    "subs": sorted({s for _, s in uncut}),
+                    "ns": sorted({ns for ns, _ in others}),
+                    "subs": sorted({s for _, s in others}),
                 },
             )
-        history: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        since: dict[tuple[str, str], list[dict[str, Any]]] = {}
         for r in rows:
-            history.setdefault((str(r["namespace"]), str(r["subject"])), []).append(r)
-        lowered += [pair for pair in uncut if _fell(history.get(pair, []))]
+            pair = (str(r["namespace"]), str(r["subject"]))
+            if pair in keys and int(r["version"]) >= cutoffs.get(keys[pair], 0) * 1_000_000_000:
+                since.setdefault(pair, []).append(r)
+        lowered += [pair for pair in others if _fell(since.get(pair, []))]
     if lowered:
-        await _write_cutoffs(org, sorted(lowered), reason="grant lowered", revoked_by=revoked_by)
+        await _write_cutoffs(org, lowered, reason="grant lowered", revoked_by=revoked_by)
+
+
+async def cut_pairs(org: str, pairs: list[tuple[str, str]]) -> set[tuple[str, str]]:
+    """Which of `pairs` have a grant cutoff."""
+    keys = {grant_claim_key(org, *pair): pair for pair in pairs}
+    return {keys[str(r["jti"])] for r in await _read_revocations(sorted(keys))}
+
+
+async def last_logged_role(org: str, namespace: str, subjects: list[str]) -> str | None:
+    """The role of the newest grant log row of any of `subjects` on `namespace`."""
+    from server.core.ch import get_client, own_write_reads
+
+    with own_write_reads():
+        row = await get_client().query_one(
+            """
+            SELECT role FROM loom.namespace_grant_log
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND subject IN {subs:Array(String)}
+            ORDER BY version DESC
+            LIMIT 1
+            """,
+            params={"org": org, "ns": namespace, "subs": subjects},
+        )
+    return str(row["role"]) if row else None
 
 
 async def logged_subjects(org: str, namespace: str) -> list[str]:

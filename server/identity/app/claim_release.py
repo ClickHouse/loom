@@ -139,7 +139,8 @@ async def release_claim(
             for i, g in enumerate(grants)
         ]
         try:
-            await grant_writes.insert_rows(tombstones, ch=ch)
+            cut = [(namespace, s) for s in subjects]
+            await grant_writes.insert_rows(tombstones, restamp=cut, ch=ch)
         except TooManySpellingsError as e:
             raise _release_refusal(org, namespace, e) from e
     else:

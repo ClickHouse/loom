@@ -7,7 +7,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from server.auth.revocation import write_grant_cutoffs
+from server.auth.revocation import last_logged_role, write_grant_cutoffs
 from server.identity.api.models_grants import (
     GrantsApproveInput,
     GrantsApproveOutput,
@@ -155,7 +155,8 @@ async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
     pending_since = existing.pending_since if existing is not None else None
     if pending_role is not None and grant_rank(input.role) >= grant_rank(str(pending_role)):
         pending_role, pending_since = None, None
-    if existing is not None and grant_rank(existing.role) > grant_rank(input.role):
+    lowers = existing is not None and grant_rank(existing.role) > grant_rank(input.role)
+    if lowers:
         # Older tokens claim the role being taken away: a flat one falls back to
         # the new grant, a scoped one is capped at it.
         await write_grant_cutoffs(
@@ -183,7 +184,8 @@ async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
             "granted_by": granted_by,
             "revoked_at": None,
             "version": _version(),
-        }
+        },
+        restamp=lowers,
     )
     if input.role == "admin":
         # A maintainer maintains every branch of the repository.
@@ -293,9 +295,13 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
     if row is None:
         # A retry: the revoke may have landed, under either spelling, with its
         # check or cascade failing after it.
-        branches = maintainers.branch_namespaces(input.org, input.namespace) or [input.namespace]
+        # A maintainer's revoke also took the sibling branches.
         spellings = sorted({subject, input.subject})
-        await grant_writes.recheck(input.org, [(ns, s) for ns in branches for s in spellings])
+        branches = [input.namespace]
+        if await last_logged_role(input.org, input.namespace, spellings) == "admin":
+            branches = maintainers.branch_namespaces(input.org, input.namespace) or branches
+        pairs = [(ns, s) for ns in branches for s in spellings]
+        await grant_writes.recheck(input.org, pairs, lowering=True)
         for ns in branches:
             await _cascade_quietly(input.org, ns, subject)
         return GrantsRevokeOutput(revoked=False)
@@ -338,7 +344,8 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
         "revoked_at": now,
         "version": _version(),
     }
-    await grant_writes.insert_rows([revoked, *siblings])
+    cut = [(r["namespace"], subject) for r in [revoked, *siblings]] if active else []
+    await grant_writes.insert_rows([revoked, *siblings], restamp=cut)
     for ns in [input.namespace, *(r["namespace"] for r in siblings)]:
         await _cascade_quietly(input.org, ns, subject)
     return GrantsRevokeOutput(revoked=True, revoked_at=now)
@@ -368,7 +375,7 @@ async def handle_grants_approve(input: GrantsApproveInput) -> GrantsApproveOutpu
     # last-admin guards grants.create / grants.revoke apply.
     if row is None or (row.status != "pending" and not row.pending_role):
         # Raced with a concurrent revoke/approve, or nothing pending — no-op, no role.
-        await grant_writes.recheck(input.org, [(input.namespace, input.subject)])
+        await grant_writes.recheck(input.org, [(input.namespace, input.subject)], lowering=False)
         return GrantsApproveOutput(
             subject=input.subject,
             namespace=input.namespace,

@@ -22,11 +22,11 @@ ORG = "acme"
 
 
 @pytest.fixture
-def rechecked(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, list[tuple[str, str]]]]:
-    calls: list[tuple[str, list[tuple[str, str]]]] = []
+def rechecked(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, list[tuple[str, str]], bool]]:
+    calls: list[tuple[str, list[tuple[str, str]], bool]] = []
 
-    async def _recheck(org: str, pairs: list[tuple[str, str]]) -> None:
-        calls.append((org, pairs))
+    async def _recheck(org: str, pairs: list[tuple[str, str]], *, lowering: bool) -> None:
+        calls.append((org, pairs, lowering))
 
     async def _nothing(*_a: Any, **_k: Any) -> None:
         return None
@@ -44,9 +44,20 @@ def rechecked(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, list[tuple[str
     return calls
 
 
-def test_a_retried_revoke_rechecks_both_spellings_on_every_branch_and_cascades(
-    rechecked: list[Any], monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("last_role", "branches"), [("admin", ["code-x", "code-x-26-5"]), ("viewer", ["code-x"])]
+)
+def test_a_retried_revoke_rechecks_both_spellings_and_cascades_where_it_revoked(
+    rechecked: list[Any],
+    monkeypatch: pytest.MonkeyPatch,
+    last_role: str,
+    branches: list[str],
 ) -> None:
+    # Only a maintainer's revoke took the sibling branches.
+    async def _last(*_a: Any) -> str:
+        return last_role
+
+    monkeypatch.setattr(grants_app, "last_logged_role", _last)
     cascaded: list[tuple[str, str]] = []
 
     async def _cascade(org: str, namespace: str, subject: str) -> None:
@@ -61,37 +72,28 @@ def test_a_retried_revoke_rechecks_both_spellings_on_every_branch_and_cascades(
     )
     revoke = GrantsRevokeInput(org=ORG, namespace="code-x", subject="alice@x.io")
     assert not asyncio.run(grants_app.handle_grants_revoke(revoke)).revoked
-    assert rechecked == [
-        (
-            ORG,
-            [
-                ("code-x", "alice"),
-                ("code-x", "alice@x.io"),
-                ("code-x-26-5", "alice"),
-                ("code-x-26-5", "alice@x.io"),
-            ],
-        )
-    ]
+    pairs = [(ns, s) for ns in branches for s in ("alice", "alice@x.io")]
+    assert rechecked == [(ORG, pairs, True)]
     # The cascade folds spellings itself: once per branch.
-    assert cascaded == [("code-x", "alice"), ("code-x-26-5", "alice")]
+    assert cascaded == [(ns, "alice") for ns in branches]
 
 
 def test_a_retried_approve_rechecks(rechecked: list[Any]) -> None:
     approve = GrantsApproveInput(org=ORG, namespace="team", subject="bob")
     asyncio.run(grants_app.handle_grants_approve(approve))
-    assert rechecked == [(ORG, [("team", "bob")])]
+    assert rechecked == [(ORG, [("team", "bob")], False)]
 
 
 def test_a_retried_leave_rechecks(rechecked: list[Any]) -> None:
     leave = NamespaceLeaveInput(org=ORG, namespace="team", subject="bob")
     assert not asyncio.run(membership.handle_namespace_leave(leave)).left
-    assert rechecked == [(ORG, [("team", "bob")])]
+    assert rechecked == [(ORG, [("team", "bob")], True)]
 
 
 def test_a_retried_cancel_request_rechecks(rechecked: list[Any]) -> None:
     cancel = NamespaceCancelRequestInput(org=ORG, namespace="team", subject="bob")
     assert not asyncio.run(membership.handle_namespace_cancel_request(cancel)).cancelled
-    assert rechecked == [(ORG, [("team", "bob")])]
+    assert rechecked == [(ORG, [("team", "bob")], False)]
 
 
 class _Registry:

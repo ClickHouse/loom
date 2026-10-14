@@ -406,6 +406,7 @@
 45f934c1fd24	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 4646e37d7905	SELECT org, namespace, agent, user_id, session_id, memory_key FROM ( SELECT DISTINCT org, namespace, agent, user_id, session_id, memory_key FROM loom.memory WHERE tombstoned_at IS NULL AND (arrayExist
 4672a3936441	SELECT count() AS n FROM loom.memory_record_conflicts FINAL WHERE org = {org:String} AND (prior_record_id IN (SELECT record_id FROM loom.memory_records WHERE org = {org:String} AND user_id = {uid:Stri
+46e49e69bbff	SELECT role FROM loom.namespace_grant_log WHERE org = {org:String} AND namespace = {ns:String} AND subject IN {subs:Array(String)} ORDER BY version DESC LIMIT ?
 472e38ad8c05	SELECT count() AS n FROM loom.entity_triple_memories WHERE org = {org:String} AND namespace IN {ns:Array(String)}
 473ffda699d1	SELECT memory_key, memory_type, content_excerpt, created_at, valid_at, version, status FROM ( SELECT memory_key, memory_type, content_excerpt, toString(created_at) AS created_at, toString(valid_at) AS
 47cab79e53c6	SELECT path, scope, symbol_ids, start_line, end_line, content FROM ( SELECT path, scope, symbol_ids, start_line, end_line, content, chunk_id, tombstoned_at FROM loom.code_chunks WHERE org = {org:Strin
@@ -799,6 +800,7 @@
 8445e6363129	SELECT pr_number, any(title) AS title, any(author) AS author, min(merged_at) AS merged_at, max(opened_at) AS opened_at, any(files) AS files, any(linked_issues) AS linked_issues FROM loom.code_pr_histo
 84503eca22ec	ALTER TABLE loom.memory UPDATE tombstoned_at = {now:DateTime} WHERE (org = {org:String} AND tombstoned_at IS NULL AND has(tags, ?) AND hasAny(tags, (SELECT groupArray(concat(?, memory_key)) FROM loom.
 8452df8453eb	DELETE FROM loom.memory_embeddings WHERE (org = {org:String} AND user_id = {uid:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS lightweight_deletes_sync = ?
+845fd4252270	SELECT namespace, subject, role, status, revoked_at, version FROM loom.namespace_grant_log WHERE org = {org:String} AND namespace IN {ns:Array(String)} AND subject IN {subs:Array(String)} ORDER BY nam
 8499dcb5bf9a	SELECT path, scope, symbol_ids, start_line, end_line, content FROM ( SELECT path, scope, symbol_ids, start_line, end_line, content, chunk_id, tombstoned_at FROM loom.code_chunks WHERE org = {org:Strin
 84df5144d637	SELECT count() AS n FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL AND agent = {agent:String} AND user_id = {uid:String} AND session_id = {sid:St
 850f03574fca	ALTER TABLE loom.memory_records UPDATE tombstoned_at = {now:DateTime} WHERE (org = {org:String} AND tombstoned_at IS NULL AND user_id = {uid:String}) AND ({erasure_mutation_tag:String} = {erasure_muta
@@ -1036,7 +1038,6 @@ a9a6595e5590	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.
 a9c65c860017	DELETE FROM loom.memory_evidence WHERE (org = {org:String} AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS lightweight_deletes_sync = 
 a9cdda19d241	SELECT kind, number, text_sha256, tombstoned_at, updated_at, embedding_dim, embedding_model FROM loom.qa_item_embeddings FINAL WHERE org = {org:String} AND namespace = {ns:String}
 a9d4bf10d1ae	SELECT ? AS seen FROM loom.agent_events WHERE org = {org:String} AND consumer = {consumer:String} AND operation IN {ops:Array(String)} AND success AND ts >= now() - INTERVAL {days:UInt32} DAY LIMIT ?
-a9d801200f30	SELECT namespace, subject, role, status, revoked_at FROM loom.namespace_grant_log WHERE org = {org:String} AND namespace IN {ns:Array(String)} AND subject IN {subs:Array(String)} ORDER BY namespace, s
 a9de83abc58a	SELECT count() AS n FROM loom.memory FINAL WHERE org = {org:String} AND user_id = {uid:String} AND tombstoned_at IS NULL
 a9e0fce6c2f6	SELECT concat(?, session_id, ?, toString(chunk_index)) AS memory_key, ? AS memory_type, content AS content_excerpt, toString(created_at) AS created_at, toString(created_at) AS valid_at FROM loom.memor
 a9e320777e4d	SELECT org, namespace, agent, user_id, session_id, memory_key, memory_type, value, confidence, source_trace, version, tombstoned_at, created_at, expires_at FROM loom.memory FINAL WHERE org = {org:Stri

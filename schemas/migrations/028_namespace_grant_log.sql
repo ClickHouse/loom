@@ -1,8 +1,8 @@
 -- Every grant row as it was inserted. loom.namespace_grants keeps only the latest row per
 -- (org, namespace, subject), so a write that read the grant before a concurrent raise
 -- landed cannot tell it lowered that raise. After such a write, the server reads this log:
--- a subject never cut whose grant now ranks below one it held gets a cutoff. Such a raise
--- lands within seconds of the write, so a week is kept.
+-- a subject whose grant now ranks below one it held since its last cutoff gets a new one.
+-- The check runs right after the write, so a week of rows is plenty.
 CREATE TABLE IF NOT EXISTS loom.namespace_grant_log
 (
     `org` LowCardinality(String),
