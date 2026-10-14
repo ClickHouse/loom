@@ -297,13 +297,14 @@ async def write_grant_cutoffs(
         async with limit:
             return await cutoff_spellings(org, subject)
 
-    reads = [asyncio.ensure_future(spellings_of(s)) for s in subjects]
+    reads = [asyncio.create_task(spellings_of(s)) for s in subjects]
     try:
         spellings = await asyncio.gather(*reads)
     except BaseException:
         # Stop the other reads; a TaskGroup would wrap the refusal callers catch.
         for read in reads:
             read.cancel()
+        await asyncio.gather(*reads, return_exceptions=True)
         raise
     keys = sorted(
         {

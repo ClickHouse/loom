@@ -435,9 +435,11 @@ def test_a_spelling_refusal_keeps_its_subject_and_bound_through_a_copy() -> None
     from server.core.errors import TooManySpellingsError
 
     refusal = TooManySpellingsError("too many accounts", subject="a@x.io", limit=2)
+    refusal.add_note("while releasing vault")
     for again in (copy.copy(refusal), pickle.loads(pickle.dumps(refusal))):
         assert again.message == "too many accounts"
         assert again.extra == {"subject": "a@x.io", "limit": 2}
+        assert again.__notes__ == ["while releasing vault"]
 
 
 def test_the_documented_spelling_bound_is_the_one_a_cutoff_reads() -> None:
@@ -452,7 +454,7 @@ def test_the_documented_spelling_bound_is_the_one_a_cutoff_reads() -> None:
     ]
     assert f"more than {n} accounts" in " ".join((TooManySpellingsError.__doc__ or "").split())
     assert f"More than {n} accounts" in table_row
-    assert f"at most {n} remain" in " ".join(errors_md.split())
+    assert " ".join(errors_md.split()).count(f"at most {n} remain") == 2
     security_md = (REPO_ROOT / "docs/architecture/security.md").read_text()
     assert f"past {n} accounts" in " ".join(security_md.split())
 
@@ -481,8 +483,6 @@ def test_a_refused_cutoff_cancels_the_spelling_reads_still_running(
             await rev.write_grant_cutoffs(
                 ORG, ["team"], ["alice", "squatted"], reason="test", revoked_by="admin"
             )
-        await asyncio.sleep(0)
-        # Checked inside the loop: asyncio.run cancels whatever is left on exit.
         assert cancelled == ["alice"]
 
     asyncio.run(_cut())

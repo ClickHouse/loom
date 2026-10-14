@@ -159,9 +159,8 @@ most 1000 remain.
 
 When the person holds a grant on too many of them for that, clear just their contact.
 That changes no grant, but it unties each account's owner from the person, so a later
-cutoff for the person no longer reaches tokens minted under that owner. Retire those
-tokens first, with `loom revoke-token --subject <owner_email>` for each account in the
-list, then clear the contacts:
+cutoff for the person no longer reaches tokens minted under that owner. List the extra
+accounts, never the one the person keeps, and clear their contacts:
 
 ```sql
 INSERT INTO loom.namespaces
@@ -177,8 +176,20 @@ The filter sits in the subquery because a `WHERE` beside `REPLACE` reads the rep
 `''`. `greatest` keeps the new row from losing to the row it replaces when that row is
 stamped ahead of the server's clock; on a tie the later insert wins.
 
-Re-run the first query to check that at most 1000 remain, then release each account the
-`INSERT` listed with `loom claim-release`.
+Then retire the tokens those owners hold, with
+`loom revoke-token --subject <owner_email> --issued-before <time>` for each account you
+named; script it over the list. Take `<time>` at least a minute after the `INSERT`, once
+servers no longer cache the old tie: a token minted after that claims nothing the person
+was granted, so it may stay. A subject revocation spans every org, so an owner name that
+is also an account elsewhere loses that account's current sessions too; check first:
+
+```sql
+SELECT org, namespace FROM loom.namespaces FINAL
+WHERE owner_email IN ('<owner_email>', ...) AND org != '<org>'
+```
+
+Re-run the first query to check that at most 1000 remain, then release each account you
+named in the `INSERT` with `loom claim-release --org <org> --namespace <account>`.
 
 ## How the entries below are generated
 

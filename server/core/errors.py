@@ -108,7 +108,7 @@ class TooManySpellingsError(LoomServerError):
 
     def __reduce__(self) -> tuple[Any, ...]:
         # The default rebuilds from `args` alone, which lacks the keywords.
-        return functools.partial(type(self), **self.extra), (self.message,)
+        return functools.partial(type(self), **self.extra), (self.message,), self.__dict__
 
 
 class OverloadedError(LoomServerError):
