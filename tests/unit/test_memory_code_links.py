@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 
 from server.code.domain.anchor import Definition, Shape
-from server.code.domain.declaration import edit_pattern
+from server.code.domain.declaration import edit_pattern, fingerprint_version
 from server.memory.app import (
     code_link_pass,
     code_link_policy,
@@ -55,7 +55,7 @@ def _mirror_holds_every_commit(monkeypatch):
 
 def _full(link: dict[str, Any]) -> dict[str, Any]:
     """A link row with every column: `link` over the table's defaults."""
-    return code_links.store.LINK_COLS | link
+    return code_links.store.LINK_COLS | {"fingerprint_version": fingerprint_version()} | link
 
 
 def _row(mid: str, **kw: Any) -> dict[str, Any]:
@@ -1146,9 +1146,9 @@ async def test_new_fingerprint_rules_rehash_links_from_their_own_commits(monkeyp
             }
         )
 
-    async def stale(org, cns, version, *, limit, offset=0):
-        assert version == fingerprint_version()
-        return [link("fresh"), link("changed")]
+    async def stale(org, cns, version, *, after, limit):
+        assert version == fingerprint_version() and after is None
+        return [link("fresh"), link("changed")], None
 
     # c1 and c2 hold the same code; c0 older code
     async def defs(commit, path, qn):
@@ -1240,8 +1240,11 @@ async def test_a_hash_whose_code_is_gone_is_cleared_and_every_page_is_rehashed(
         [link("m3", "unresolved", "old-a", "old-c")],
     ]
 
-    async def stale(org, cns, version, *, limit, offset=0):
-        return pages.pop(0) if pages else []
+    starts: list[Any] = []
+
+    async def stale(org, cns, version, *, after, limit):
+        starts.append(after)
+        return pages.pop(0), ("m1",) if pages else None
 
     async def defs(commit, path, qn):
         return []  # neither commit has the code any more
@@ -1265,6 +1268,7 @@ async def test_a_hash_whose_code_is_gone_is_cleared_and_every_page_is_rehashed(
         "m3": "old-a",
     }
     assert {r["fingerprint_version"] for r in written} == {fingerprint_version()}
+    assert starts == [None, ("m1",)]  # each page starts at the last one's end
 
 
 @pytest.mark.asyncio
@@ -1455,8 +1459,8 @@ def _changed_link(**change: Any) -> dict[str, Any]:
 async def _refingerprinted(monkeypatch, row, policies, defs, has=None) -> dict[str, Any]:
     """`row` as one re-hash pass writes it, its namespace under `policies`."""
 
-    async def stale(org, cns, version, *, limit, offset=0):
-        return [row]
+    async def stale(org, cns, version, *, after, limit):
+        return [row], None
 
     async def policies_of(org, nss):
         return policies
@@ -3517,3 +3521,171 @@ async def test_a_stalled_queue_is_backfilled_once_while_it_catches_up(monkeypatc
     horizon[0] = 10_000
     await worker._link_writes(10, code_link_pass.PassResult())
     assert scans == [None, None]
+
+
+@pytest.mark.asyncio
+async def test_a_linking_failure_still_rechecks_every_repository(monkeypatch) -> None:
+    import contextlib
+
+    from server.memory.workers import code_links as worker
+
+    async def refresh_repos():
+        return None
+
+    @contextlib.asynccontextmanager
+    async def queue_lease():
+        yield
+
+    async def link_writes(batch, result):
+        raise TimeoutError("backfill page timed out")
+
+    rechecked: list[Any] = []
+
+    async def recheck_all(result):
+        rechecked.append(result)
+
+    monkeypatch.setattr(code_links.code, "refresh_repos", refresh_repos)
+    monkeypatch.setattr(code_links, "queue_lease", queue_lease)
+    monkeypatch.setattr(worker, "_link_writes", link_writes)
+    monkeypatch.setattr(code_link_recheck, "recheck_all", recheck_all)
+    assert (await worker.run_pass())["errors"] == 1
+    assert len(rechecked) == 1 and "TimeoutError" in rechecked[0].errors[0]
+
+
+@pytest.mark.asyncio
+async def test_an_empty_registry_snapshot_neither_links_nor_restarts_the_backfill(
+    monkeypatch,
+) -> None:
+    from server.memory.workers import code_links as worker
+
+    cursors = {
+        "queue": json.dumps([100, 0, "", "", "", "", "", ""]),
+        "repos": '[["o", "c"]]',
+        "backfill": '{"done": true}',
+    }
+    configured: list[list[list[str]]] = [[], [["o", "c"]]]
+
+    async def link_cursor(name):
+        return cursors.get(name, "")
+
+    async def set_link_cursor(name, value):
+        cursors[name] = value
+
+    async def queue_horizon():
+        return 0
+
+    async def link_queued(position, batch, result):
+        return position
+
+    scans: list[Any] = []
+
+    async def backfill(after, limit, result):
+        scans.append(after)
+        return None
+
+    async def sweep_erased(cursor, limit, result):
+        return cursor
+
+    monkeypatch.setattr(code_links.code, "link_cursor", link_cursor)
+    monkeypatch.setattr(code_links.code, "set_link_cursor", set_link_cursor)
+    monkeypatch.setattr(code_links.code, "configured_code_namespaces", lambda: configured.pop(0))
+    monkeypatch.setattr(code_links.store, "queue_horizon", queue_horizon)
+    for fn in (link_queued, backfill, sweep_erased):
+        monkeypatch.setattr(code_links, fn.__name__, fn)
+    await worker._link_writes(10, code_link_pass.PassResult())  # the registry read failed
+    assert json.loads(cursors["repos"]) == [["o", "c"]]
+    await worker._link_writes(10, code_link_pass.PassResult())  # and is back
+    assert scans == [] and json.loads(cursors["backfill"]) == {"done": True}
+
+
+def test_the_backfill_cursor_reads_back_what_it_wrote() -> None:
+    from server.memory.workers.code_links import Backfill
+
+    for state in (Backfill(), Backfill(after=("o", "n"), stall=True), Backfill(done=True)):
+        assert Backfill.from_json(json.loads(json.dumps(state.to_json()))) == state
+    assert Backfill().to_json() == {} and Backfill(done=True).to_json() == {"done": True}
+    stalled = Backfill(after=("o", "n"), stall=True)
+    assert stalled.restarted() == Backfill(stall=True)
+    assert stalled.read_to(None) == Backfill(done=True, stall=True)
+
+
+@pytest.mark.asyncio
+async def test_a_link_not_rehashed_to_these_rules_is_not_rechecked(monkeypatch) -> None:
+    def link(mid: str, version: str) -> dict[str, Any]:
+        return _full({"path": "a.py", "qualified_name": "a::f", "memory_id": mid}) | (
+            {"fingerprint_version": version} if version else {}
+        )
+
+    ours, old = link("m1", ""), link("m2", "0-old")
+    seen: list[list[str]] = []
+
+    async def recheck(org, cns, rows, changed, head, files):
+        seen.append([a["memory_id"] for a in rows])
+        return []
+
+    monkeypatch.setattr(code_link_recheck, "_recheck", recheck)
+    unparsed: set[str] = set()
+    await code_link_recheck._recheck_paths(
+        "o",
+        "code-a",
+        {"a.py": [ours, old]},
+        ["a.py"],
+        None,
+        "c2",
+        code_link_pass.RepoReads("o", "code-a"),
+        unparsed,
+        set(),
+    )
+    # its path is retried from the link's own commit once the re-hash succeeds
+    assert seen == [["m1"]] and unparsed == {"a.py"}
+
+
+@pytest.mark.asyncio
+async def test_a_link_not_rehashed_to_these_rules_stays_due_unjudged() -> None:
+    old = _full(
+        {
+            "path": "a.py",
+            "qualified_name": "a::f",
+            "state": "changed",
+            "policy_due": 1,
+            "fingerprint_version": "0-old",
+        }
+    )
+    budget = code_link_pass.Budget(judgements=5)
+    out = await code_link_policy._revise(
+        "o",
+        _row("m1"),
+        [old],
+        code_change.REVISE,
+        "c2",
+        code_link_pass.RepoReads("o", "code-a"),
+        budget,
+        code_link_pass.PassResult(),
+    )
+    assert out is None and budget.judgements == 5  # deferred whole: nothing written
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("gone", [{"tombstoned_at": datetime(2026, 1, 1)}, {"status": "deleted"}])
+async def test_a_move_of_a_memory_gone_since_it_was_read_is_dropped(monkeypatch, gone) -> None:
+    head = _row("m1") | gone
+
+    async def memory_heads(org, ids):
+        return [head]
+
+    monkeypatch.setattr(code_links.store, "memory_heads", memory_heads)
+    inputs = code_link_reads.inputs_now("o", head)
+    row = _full({"memory_id": "m1", "code_namespace": "code-a", "inputs_hash": inputs})
+    move = code_link_recheck.Move(row, code_link_pass.link_of(row))
+    assert await code_link_recheck._current_moves("o", [move]) == []
+    head = _row("m1")
+    assert await code_link_recheck._current_moves("o", [move]) == [move]
+
+
+def test_the_settle_window_has_a_floor() -> None:
+    from pydantic import ValidationError
+
+    from server.settings import Settings
+
+    with pytest.raises(ValidationError):
+        Settings(memory_code_links_settle_seconds=5)

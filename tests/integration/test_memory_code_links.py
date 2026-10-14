@@ -909,8 +909,8 @@ async def test_a_pass_behind_the_queue_ttl_that_fails_still_owes_its_backfill(
 
     with monkeypatch.context() as m:
         m.setattr(code_links, "backfill", down)
-        with pytest.raises(RuntimeError):
-            await run_pass()  # the queue cursor moves on, then the backfill fails
+        # the queue cursor moves on, then the backfill fails: an error, the recheck still runs
+        assert (await run_pass())["errors"] == 1
     assert json.loads(await memory_links.link_cursor("queue"))[0] > horizon
     for _ in range(50):
         await run_pass()
@@ -2240,6 +2240,7 @@ async def test_a_pass_that_fails_after_a_repository_is_configured_still_backfill
     mid = await _remember(MEM, "early", "`fetch_rows` returns one")
     await run_pass()
     await code.set_link_cursor("backfill", _BACKFILL_DONE)
+    await code.set_link_cursor("repos", "[]")  # none seen: the next configured one is new
     await run_pass()
     set_registry_repos(entries)
     c1 = env.commit({"src/k.py": "def fetch_rows():\n    return 1\n"})
@@ -2250,8 +2251,8 @@ async def test_a_pass_that_fails_after_a_repository_is_configured_still_backfill
 
     with monkeypatch.context() as m:
         m.setattr(code_links, "link_queued", down)
-        with pytest.raises(RuntimeError):
-            await run_pass()  # the repository is recorded as seen, then the pass fails
+        # the repository is recorded as seen, then the linking fails
+        assert (await run_pass())["errors"] == 1
     await run_pass()
     assert [x["state"] for x in await _links(mid)] == ["fresh"]
 
@@ -3743,3 +3744,36 @@ async def test_a_reformatted_type_or_constant_stays_fresh(env, path, before, aft
     await _index(TRUNK, env, c2, [path])
     await _pass()
     assert [link["state"] for link in await _links(mid)] == ["fresh"]
+
+
+async def test_stale_fingerprints_page_by_key_each_link_once(env) -> None:
+    import uuid
+
+    from server.core.ch import get_client
+    from server.memory.store import code_links as store
+
+    cns = "rehash-pages"
+
+    def link(path: str, **kw: Any) -> Any:
+        return store.link_row(
+            org=ORG,
+            code_namespace=cns,
+            namespace=MEM,
+            memory_id=str(uuid.uuid4()),
+            path=path,
+            qualified_name=f"{path}::f",
+            **{"fingerprint_version": "0-old", **kw},
+        )
+
+    stale = [link(p) for p in ("a.py", "b.py", "c.py") for _ in range(3)]
+    others = [link("a.py", fingerprint_version="now"), link("", state="pending")]
+    await get_client().insert(store.TABLE, [*stale, *others])
+    pages: list[list[str]] = []
+    after: tuple[str, ...] | None = None
+    while True:
+        rows, after = await store.stale_fingerprints(ORG, cns, "now", after=after, limit=2)
+        pages.append([r["memory_id"] for r in rows])
+        if after is None:
+            break
+    seen = [m for page in pages for m in page]
+    assert sorted(seen) == sorted(a["memory_id"] for a in stale) and len(pages) == 5
