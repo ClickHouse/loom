@@ -68,3 +68,17 @@ def test_a_rerun_reads_the_release_a_published_bundle_names(tmp_path: Path) -> N
     module = _module()
     archive, _ = module.build("1.2.3", tmp_path, "clickhouse/clickhouse-server:26.9.18.11")
     assert module.pinned_image(archive) == "clickhouse/clickhouse-server:26.9.18.11"
+
+
+def test_the_pin_is_the_compose_default_not_a_release_a_comment_names(tmp_path: Path) -> None:
+    module = _module()
+    archive, _ = module.build("1.2.3", tmp_path, "clickhouse/clickhouse-server:26.9.18.11")
+    stage = tmp_path / "stage"
+    with tarfile.open(archive) as bundle:
+        bundle.extractall(stage, filter="data")
+    compose = stage / "loom-stack" / "compose.yaml"
+    compose.write_text("# e.g. clickhouse/clickhouse-server:26.8.1.1\n" + compose.read_text())
+    edited = tmp_path / "edited.tar.gz"
+    with tarfile.open(edited, "w:gz") as bundle:
+        bundle.add(stage / "loom-stack", arcname="loom-stack")
+    assert module.pinned_image(edited) == "clickhouse/clickhouse-server:26.9.18.11"

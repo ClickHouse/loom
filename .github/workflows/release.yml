@@ -122,20 +122,21 @@ jobs:
           uv sync --locked --python "${{ steps.python.outputs.python-path }}"
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       # A re-run keeps the release a published bundle of this version names, so
-      # rerunning the installer for it never moves ClickHouse. Only "release not
-      # found" means unpublished; any other failure stops the run.
+      # rerunning the installer for it never moves ClickHouse. A release without
+      # the bundle (an upload that failed) was never installable and resolves
+      # anew; an answer other than "release not found" stops the run.
       - id: resolve
         env:
           VERSION: ${{ needs.version.outputs.version }}
           GH_TOKEN: ${{ github.token }}
         run: |
           if assets=$(gh release view "v$VERSION" --json assets -q '.assets[].name' 2>gh.err); then
-            if ! grep -qx loom-stack.tar.gz <<<"$assets"; then
-              echo "::error::v$VERSION is published without loom-stack.tar.gz"
-              exit 1
+            if grep -qx loom-stack.tar.gz <<<"$assets"; then
+              gh release download "v$VERSION" --pattern loom-stack.tar.gz --dir published
+              image=$(python scripts/release/build_stack_bundle.py pinned-in published/loom-stack.tar.gz)
+            else
+              image=$(bash dev/clickhouse_release.sh)
             fi
-            gh release download "v$VERSION" --pattern loom-stack.tar.gz --dir published
-            image=$(python scripts/release/build_stack_bundle.py --pinned-in published/loom-stack.tar.gz)
           elif grep -q "release not found" gh.err; then
             image=$(bash dev/clickhouse_release.sh)
           else
@@ -216,7 +217,7 @@ jobs:
         env:
           CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
         run: |
-          python scripts/release/build_stack_bundle.py --version "$VERSION" \
+          python scripts/release/build_stack_bundle.py build --version "$VERSION" \
             --clickhouse-image "$CLICKHOUSE_IMAGE"
           cp install.sh release/stack/install.sh
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

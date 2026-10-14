@@ -72,10 +72,16 @@ before the upgrade ([backup and recovery](./backup-and-recovery.md)).
 
 Each installer bundle names the ClickHouse release it was built with, so installing an
 earlier Loom version also runs an earlier ClickHouse on a volume the newer one wrote,
-which it may not read. To roll back Loom alone, keep the newer ClickHouse by setting
-`LOOM_CLICKHOUSE_IMAGE` in `~/.loom/.env` to the image it runs now
-(`docker compose --project-directory ~/.loom images clickhouse`); to go back on both,
-restore a backup taken before the upgrade.
+which it may not read. To roll back Loom alone, keep the newer ClickHouse: before running
+the earlier installer (it starts the stack at once), pin the image ClickHouse runs now
+in the install directory's `.env` (`~/.loom` unless `LOOM_INSTALL_DIR` says otherwise):
+
+```bash
+image=$(docker inspect -f '{{.Config.Image}}' "$(docker compose --project-directory ~/.loom ps -q clickhouse)")
+echo "LOOM_CLICKHOUSE_IMAGE=$image" >> ~/.loom/.env
+```
+
+To go back on both, restore a backup taken before the upgrade.
 
 ## What stays the same across an upgrade
 

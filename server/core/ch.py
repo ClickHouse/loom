@@ -931,6 +931,9 @@ class CHClient:
             # refused slot or a cut deadline.
             if isinstance(e, LoomServerError):
                 raise
+            from server.core.vectors.codes_state import refuse_after_width_error
+
+            await refuse_after_width_error(table, rows, e)
             had_cache = type_names is not None or table in _COLUMN_TYPES
             _COLUMN_TYPES.pop(table, None)
             if project_onto_table:

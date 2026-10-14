@@ -58,7 +58,7 @@ def placeholder(dim: int) -> list[float]:
     return [0.0] * int(dim)
 
 
-def _columns(table: str) -> tuple[str, tuple[str, ...], int]:
+def _placeholder_spec(table: str) -> tuple[str, tuple[str, ...], int]:
     """(qualified table, placeholder columns, width when not coded)."""
     from server.settings import settings
 
@@ -73,11 +73,11 @@ def _columns(table: str) -> tuple[str, tuple[str, ...], int]:
     return full, (), dim
 
 
-def pad_rows(table: str, rows: list[dict[str, Any]]) -> int:
+def _pad_rows(table: str, rows: list[dict[str, Any]]) -> int:
     """Replace empty vectors in `rows` (in place) for a table that has
     placeholder columns. Returns the number of vectors replaced; 0 for every
     other table or when nothing was empty."""
-    full, cols, dim = _columns(table)
+    full, cols, dim = _placeholder_spec(table)
     n = 0
     for c in cols:
         # A placeholder is never scored: it takes the width its coded column was
@@ -92,10 +92,19 @@ def pad_rows(table: str, rows: list[dict[str, Any]]) -> int:
     return n
 
 
+def _pads_coded(table: str, rows: list[dict[str, Any]]) -> bool:
+    """Whether a placeholder would be sized from a coded column's width."""
+    full, cols, _ = _placeholder_spec(table)
+    return any(
+        codes_state.stored_width(full, c) and any(c in r and not r[c] for r in rows) for c in cols
+    )
+
+
 async def fit_vectors(table: str, rows: list[dict[str, Any]]) -> None:
     """Refuse a vector its coded column cannot take, then pad the empty ones
-    (in place); for a coded table, both against a recent reading."""
-    if codes_state.has_coded(table):
+    (in place). A placeholder for a coded column is sized from a recent reading;
+    a vector that misses the reading re-reads it before it is refused."""
+    if _pads_coded(table, rows):
         await codes_state.recheck()
     await codes_state.refuse_other_widths(table, rows)  # skips the empty vectors
-    pad_rows(table, rows)
+    _pad_rows(table, rows)

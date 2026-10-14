@@ -177,7 +177,7 @@ def test_a_server_without_the_codec_says_so(
     monkeypatch.setattr(mig, "_apply_file", lambda ch, f, **kw: None)
     files = [tmp_path / "1999_a.sql"]
     assert mig._apply_pending(object(), files, dry=True, lease=None) == 0  # type: ignore[arg-type]
-    assert "this server has no Quantized codec" in capsys.readouterr().out
+    assert "no Quantized codec here" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(

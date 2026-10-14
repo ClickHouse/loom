@@ -247,7 +247,8 @@ async def test_a_vector_at_the_old_width_beside_a_placeholder_is_refused(
 async def test_full_vectors_at_the_old_width_are_refused_by_name(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No placeholder in the batch: the write still re-reads a stale reading."""
+    """They match the stale reading, so ClickHouse refuses them (code 190); the
+    re-read then names the mismatch instead of a 500."""
     from server.core.errors import CodedWidthMismatchError
     from server.core.vectors.placeholders import fit_vectors
 
@@ -255,10 +256,15 @@ async def test_full_vectors_at_the_old_width_are_refused_by_name(
     ch = _FakeCH(coded=columns, patches={}, width=3072)
     await vector_codes_state.probe(ch)
     ch.width = 1024  # rebuilt outside Loom
-    _age_reading(monkeypatch)
-    row = {"embedding": [0.1] * 3072, "memory_key_embedding": [0.1] * 3072}
+    rows = [{"embedding": [0.1] * 3072, "memory_key_embedding": [0.1] * 3072}]
+    n = len(ch.calls)
+    await fit_vectors("memory_embeddings", rows)  # a full batch costs no probe
+    assert len(ch.calls) == n
+    refused = RuntimeError("Code: 190. DB::Exception: Elements of array are not of the same size")
     with pytest.raises(CodedWidthMismatchError):
-        await fit_vectors("memory_embeddings", [row])
+        await vector_codes_state.refuse_after_width_error("memory_embeddings", rows, refused)
+    other = RuntimeError("Code: 241. DB::Exception: Memory limit exceeded")
+    await vector_codes_state.refuse_after_width_error("memory_embeddings", rows, other)
 
 
 @pytest.mark.asyncio

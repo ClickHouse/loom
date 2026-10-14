@@ -14,9 +14,14 @@ set -euo pipefail
 ROOT="${GITHUB_WORKSPACE:-$(pwd)}"
 CFG="$ROOT/deploy/clickhouse-config"
 # A CI run passes the one release it resolved (dev/clickhouse_release.sh).
+# `latest` is pulled every time, so a cached tag cannot hold an older release.
 IMAGE="${LOOM_CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:latest}"
+PULL=missing
+if [ -z "${LOOM_CLICKHOUSE_IMAGE:-}" ]; then
+  PULL=always
+fi
 
-docker run -d --pull always --name loom-ch \
+docker run -d --pull "$PULL" --name loom-ch \
   -p 8123:8123 -p 9000:9000 \
   -e CLICKHOUSE_DB=loom \
   -e CLICKHOUSE_USER=loom \

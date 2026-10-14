@@ -136,11 +136,6 @@ def _refuse(column: str, stored: int, written: int) -> None:
     )
 
 
-def has_coded(table: str) -> bool:
-    """Whether the last reading saw a coded column in `table`."""
-    return bool(_coded_of(table))
-
-
 def _coded_of(table: str) -> list[tuple[str, str, int]]:
     """(qualified column, column name, stored width) of `table`'s coded columns,
     as the write guards read them; a stale reading is refreshed in the background,
@@ -150,9 +145,9 @@ def _coded_of(table: str) -> list[tuple[str, str, int]]:
     return [(c, c[len(prefix) :], w) for c, w in _widths.items() if c.startswith(prefix)]
 
 
-# A write to a coded table is judged and padded against a reading at most this
-# old, so a table rebuilt outside Loom is not written at its old width for
-# a whole probe interval.
+# A vector that misses the reading, or a placeholder for a coded column, is
+# judged against a reading at most this old, so a table rebuilt outside Loom
+# is not written at its old width for a whole probe interval.
 FRESH_READING_S = 5.0
 
 
@@ -168,6 +163,21 @@ async def refuse_other_widths(table: str, rows: list[dict[str, Any]]) -> None:
     """Raise CodedWidthMismatchError when a row carries a vector its coded column
     cannot take; ClickHouse would fail the whole insert with code 190."""
     await _refuse_if(lambda: _row_mismatch(table, rows))
+
+
+async def refuse_after_width_error(
+    table: str, rows: list[dict[str, Any]], error: Exception
+) -> None:
+    """After ClickHouse refused the insert of `rows` with code 190, re-read the
+    widths and refuse by name when a vector misses them: a table rebuilt outside
+    Loom since the last reading."""
+    from server.core.ch_errors import error_code
+
+    if _ch is None or error_code(error) != 190:
+        return
+    await asyncio.shield(_start_refresh())
+    if (found := _row_mismatch(table, rows)) is not None:
+        _refuse(*found)
 
 
 async def refuse_width(table: str, dim: int) -> None:
@@ -316,10 +326,10 @@ __all__ = [
     "width_mismatches",
     "written_by_served_model",
     "ensure_probed",
-    "has_coded",
     "is_coded",
     "probe",
     "recheck",
+    "refuse_after_width_error",
     "refuse_other_widths",
     "refuse_width",
     "reset",

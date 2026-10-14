@@ -287,12 +287,12 @@ def test_placeholder_pads_a_mapped_table_to_its_own_width(mapped, monkeypatch) -
         patch.object(settings, "embedding_dim", 3072),
     ):
         rows = [{"embedding": [], "embedding_dim": 0}]
-        assert vp.pad_rows("loom.scratch_tiny", rows) == 1
+        assert vp._pad_rows("loom.scratch_tiny", rows) == 1
         assert len(rows[0]["embedding"]) == 256
         rows = [{"embedding": [], "embedding_dim": 0}]
-        assert vp.pad_rows("loom.code_chunks", rows) == 1
+        assert vp._pad_rows("loom.code_chunks", rows) == 1
         assert len(rows[0]["embedding"]) == 3072
-        assert vp.pad_rows("loom.unrelated", [{"embedding": []}]) == 0
+        assert vp._pad_rows("loom.unrelated", [{"embedding": []}]) == 0
 
 
 def test_a_placeholder_takes_its_coded_columns_width(monkeypatch) -> None:
@@ -305,7 +305,7 @@ def test_a_placeholder_takes_its_coded_columns_width(monkeypatch) -> None:
     monkeypatch.setattr(codes_state, "_widths", {"loom.memory_embeddings.embedding": 3072})
     with patch.object(settings, "embedding_dim", 1024):
         rows = [{"embedding": [], "memory_key_embedding": []}]
-        assert vp.pad_rows("memory_embeddings", rows) == 2
+        assert vp._pad_rows("memory_embeddings", rows) == 2
     assert len(rows[0]["embedding"]) == 3072
     assert len(rows[0]["memory_key_embedding"]) == 1024  # plain here: the setting
     asyncio.run(codes_state.refuse_other_widths("memory_embeddings", rows))

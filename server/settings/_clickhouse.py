@@ -119,7 +119,6 @@ class ClickHouseSettings(BaseModel):
     # distance, stage 2 rescores. Only read when the codes setting is sent.
     vector_search_quantized_fetch_multiplier: float = 3.0
     # Seconds between re-reads of which vector columns are coded and which
-    # coded tables carry patch parts. A process writing to a coded table
-    # re-reads within a few seconds of the write instead, so it never writes
-    # at an old width for this long.
+    # coded tables carry patch parts. A write that pads a coded column, or
+    # whose vectors miss the reading, re-reads one older than a few seconds.
     vector_codes_state_probe_seconds: int = 60

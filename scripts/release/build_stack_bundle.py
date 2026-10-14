@@ -35,9 +35,15 @@ FILES = {
 }
 
 
-LATEST_CLICKHOUSE = "${LOOM_CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:latest}"
+def _image_default(image: str) -> str:
+    """How compose.yaml names its ClickHouse image: `image` unless overridden."""
+    return f"${{LOOM_CLICKHOUSE_IMAGE:-{image}}}"
+
+
+LATEST_CLICKHOUSE = _image_default("clickhouse/clickhouse-server:latest")
 # One exact release, as dev/clickhouse_release.sh prints it.
 EXACT_CLICKHOUSE = re.compile(r"clickhouse/clickhouse-server:\d+(?:\.\d+){3}")
+_PINNED = re.compile(re.escape(_image_default("@")).replace("@", f"({EXACT_CLICKHOUSE.pattern})"))
 
 
 def pinned_image(archive: Path) -> str:
@@ -45,10 +51,7 @@ def pinned_image(archive: Path) -> str:
     with tarfile.open(archive) as bundle:
         member = bundle.extractfile("loom-stack/compose.yaml")
         compose = member.read().decode() if member else ""
-    default = (
-        re.escape("${LOOM_CLICKHOUSE_IMAGE:-") + f"({EXACT_CLICKHOUSE.pattern})" + re.escape("}")
-    )
-    found = re.search(default, compose)
+    found = _PINNED.search(compose)
     if not found:
         raise ValueError(f"{archive} names no exact ClickHouse release")
     return found.group(1)
@@ -69,7 +72,7 @@ def build(version: str, output_dir: Path, clickhouse_image: str) -> tuple[Path, 
         text = compose.read_text(encoding="utf-8")
         if LATEST_CLICKHOUSE not in text:
             raise ValueError(f"compose.yaml no longer defaults to {LATEST_CLICKHOUSE}")
-        pinned = f"${{LOOM_CLICKHOUSE_IMAGE:-{clickhouse_image}}}"
+        pinned = _image_default(clickhouse_image)
         compose.write_text(text.replace(LATEST_CLICKHOUSE, pinned), encoding="utf-8")
         (stage / "VERSION").write_text(version + "\n", encoding="utf-8")
         with tarfile.open(archive, "w:gz", format=tarfile.PAX_FORMAT) as bundle:
@@ -82,17 +85,20 @@ def build(version: str, output_dir: Path, clickhouse_image: str) -> tuple[Path, 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--version")
-    parser.add_argument("--clickhouse-image", help="e.g. clickhouse/clickhouse-server:26.9.18.11")
-    parser.add_argument("--output-dir", type=Path, default=Path("release/stack"))
-    parser.add_argument("--pinned-in", type=Path, help="print the image this bundle names")
+    commands = parser.add_subparsers(dest="command", required=True)
+    bundle = commands.add_parser("build", help="build the bundle and its checksum")
+    bundle.add_argument("--version", required=True)
+    bundle.add_argument(
+        "--clickhouse-image", required=True, help="e.g. clickhouse/clickhouse-server:26.9.18.11"
+    )
+    bundle.add_argument("--output-dir", type=Path, default=Path("release/stack"))
+    read = commands.add_parser("pinned-in", help="print the ClickHouse image a bundle names")
+    read.add_argument("archive", type=Path)
     args = parser.parse_args()
-    if args.pinned_in:
-        print(pinned_image(args.pinned_in))
-    elif args.version and args.clickhouse_image:
-        build(args.version, args.output_dir, args.clickhouse_image)
+    if args.command == "pinned-in":
+        print(pinned_image(args.archive))
     else:
-        parser.error("--version and --clickhouse-image, or --pinned-in")
+        build(args.version, args.output_dir, args.clickhouse_image)
 
 
 if __name__ == "__main__":
