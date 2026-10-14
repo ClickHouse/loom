@@ -1022,6 +1022,42 @@ async def test_validate_counts_only_repositories_the_caller_may_read(env) -> Non
     assert (memory_only.count, memory_only.samples) == (0, [])
 
 
+async def test_stale_links_count_and_sample_each_memory_once(env) -> None:
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.memory.app.code_link_reads import stale_links
+    from server.operations.base import Role
+
+    repo = env
+    src = "def alpha_val():\n    return 1\n\n\ndef beta_val():\n    return 2\n"
+    c1 = repo.commit({"src/ab.py": src})
+    await _index(TRUNK, repo, c1, ["src/ab.py"])
+    # two users' memories under one key, one of them linked twice
+    await _remember(MEM, "ab", "`alpha_val` and `beta_val` return one and two", user_id="ann")
+    await _remember(MEM, "ab", "`alpha_val` returns one", user_id="bob")
+    await _pass()
+    c2 = repo.commit({"src/ab.py": src.replace("1", "3").replace("2", "4")})
+    await _index(TRUNK, repo, c2, ["src/ab.py"])
+    await _pass()
+    set_current_auth(
+        AuthInfo(
+            subject="it@example.com",
+            org=ORG,
+            namespaces=(MEM, TRUNK),
+            roles=(Role.VIEWER,),
+            is_service_account=False,
+        )
+    )
+    try:
+        links = await stale_links(ORG, MEM, limit=10)
+    finally:
+        set_current_auth(None)
+    assert [(a["memory_key"], a["state"], a["total"]) for a in links] == [
+        ("ab", "changed", 2),
+        ("ab", "changed", 2),
+    ]
+
+
 async def test_loom_writes_no_memory_version(env, ch_client) -> None:
     repo = env
     c1 = repo.commit({"src/w.py": "def write_free():\n    return 1\n"})

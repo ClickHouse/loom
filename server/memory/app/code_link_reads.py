@@ -85,7 +85,7 @@ async def stale_links(
 ) -> list[dict[str, Any]]:
     """Up to `limit` of the namespace's changed, unresolved and missing links into
     repositories the caller may read, of its served memories (those under `keys` when
-    given) as they are now, newest check first; each with its memory_key,
+    given) as they are now, one per memory, newest check first; each with its memory_key,
     code_namespace, path, qualified_name, state, changed_since, checked_at and `total`,
     the number of memories they are of."""
     trunk = code.trunk_namespace(org, namespace)
@@ -201,7 +201,7 @@ async def _hit_links(
     input: Any, hits: list[Any]
 ) -> tuple[list[Ident | None], dict[Ident, list[LinkRow]]]:
     """Each hit's memory identity, and the live links of those memories."""
-    if not code.code_namespaces() or getattr(input, "scope", "private") != "private" or not hits:
+    if not code.code_namespaces() or not hits:
         return [None] * len(hits), {}
     idents = [_identity(input, h) for h in hits]
     links: dict[Ident, list[LinkRow]] = defaultdict(list)

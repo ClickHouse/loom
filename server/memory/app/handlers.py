@@ -23,6 +23,7 @@ from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.embedding import get_embedder
 from server.identity.app.request_scope import request_narrowed, request_scope
 from server.memory.api.models_crud import (
+    CodeLink,
     MemoryClearInput,
     MemoryClearOutput,
     MemoryDeleteInput,
@@ -460,9 +461,12 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
     from server.memory.app.code_link_reads import head_of, links_of
     from server.memory.app.served_superseded import shown_successors
 
-    successors, links = await asyncio.gather(
-        shown_successors(input.org, input.namespace, [row]), links_of(input.org, head_of(row))
-    )
+    successors_read = shown_successors(input.org, input.namespace, [row])
+    links: list[CodeLink] = []
+    if not input.fields or "code" in input.fields:
+        successors, links = await asyncio.gather(successors_read, links_of(input.org, head_of(row)))
+    else:
+        successors = await successors_read
     return MemoryGetOutput(
         found=True,
         code=links,

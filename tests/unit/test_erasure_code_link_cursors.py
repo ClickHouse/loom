@@ -31,14 +31,15 @@ def test_a_cursor_naming_an_erased_memory_loses_the_identity() -> None:
 
 
 class _CH:
-    def __init__(self) -> None:
+    def __init__(self, queue: list[Any] = _QUEUE) -> None:
+        self.queue = queue
         self.sql: list[tuple[str, dict[str, Any]]] = []
         self.inserted: list[dict[str, Any]] = []
 
     async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
         self.sql.append((sql, dict(params or {})))
         if "code_index_state" in sql:
-            return [{"state_key": "queue", "state_value": json.dumps(_QUEUE), "version": 9}]
+            return [{"state_key": "queue", "state_value": json.dumps(self.queue), "version": 9}]
         return []
 
     async def execute(self, sql: str, params: Any = None) -> None:
@@ -60,3 +61,16 @@ async def test_the_scrub_writes_the_cursor_anew_and_deletes_what_it_was() -> Non
     )
     delete, params = ch.sql[-1]
     assert delete.startswith("DELETE FROM loom.code_index_state") and params["v"] == 10
+
+
+@pytest.mark.asyncio
+async def test_the_scrub_deletes_older_versions_when_the_current_one_names_someone_else() -> None:
+    # FINAL reads bob's position; an older version not merged away yet may hold alice's
+    ch = _CH([*_QUEUE[:5], "bob", *_QUEUE[6:]])
+    await steps._scrub_link_cursors("o", set(), "alice", ch)  # type: ignore[arg-type]
+    assert ch.inserted == []
+    delete, params = ch.sql[-1]
+    assert delete.startswith("DELETE FROM loom.code_index_state")
+    assert (params["key"], params["v"]) == ("queue", 9)
+    read, params = ch.sql[0]
+    assert params["keys"] == ["queue", "backfill", "sweep"]

@@ -354,6 +354,37 @@ async def test_the_lesson_scope_is_the_callers_own_the_teams_and_the_readable_ex
     assert nss == ["alice"]
 
 
+@pytest.mark.asyncio
+async def test_lessons_keep_the_named_order_and_read_nothing_when_none_is_readable(
+    monkeypatch,
+) -> None:
+    from server.auth import authz
+    from server.code.app import memory_links
+    from server.settings import settings
+
+    hidden = {"secret"}
+
+    async def readable(org, ns, role):
+        return ns not in hidden
+
+    monkeypatch.setattr(authz, "row_in_scope", readable)
+    monkeypatch.setattr(memory_links, "trunk_namespace", lambda org, n: "code-a")
+    nss = await code_plane_reads.lesson_namespaces("o", "code-a-26-8", ["bob", "secret", "alice"])
+    assert nss == [settings.default_namespace, "bob", "alice", "code-a"]
+    hidden.update(nss)
+    assert await code_plane_reads.lesson_namespaces("o", "code-a", ["bob"]) == []
+
+    async def no_read(*a, **k):
+        raise AssertionError("no lesson namespace is readable: nothing is read")
+
+    monkeypatch.setattr(code_plane_reads.links_store, "for_paths", no_read)
+    monkeypatch.setattr(memory_links, "indexed_head", no_read)
+    out = await code_plane_reads.lessons_for_symbol(
+        "o", "code-a", qualified_name="a::f", paths=["a.py"], namespaces=[]
+    )
+    assert out == []
+
+
 async def test_an_mcp_code_read_names_the_callers_memory_home_for_its_lessons(monkeypatch) -> None:
     from server.transport import mcp_call
 

@@ -19,9 +19,8 @@ async def served_excerpts(
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """The served rows of `namespaces` among `memory_ids` (live, unexpired, not `high`),
-    with the first
-    200 characters of the value as text (a JSON string value decoded), for a code read's
-    lessons."""
+    with the first 200 characters of the value as text (a JSON string value decoded),
+    for a code read's lessons."""
     if not memory_ids or not namespaces:
         return []
     return await query_all_sliced(

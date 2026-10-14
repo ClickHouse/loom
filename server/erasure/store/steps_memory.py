@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable, Sequence
+from typing import get_args
 
 from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client
@@ -20,6 +21,7 @@ from server.erasure.store.mutations import (
 )
 from server.erasure.store.predicates import NS_EQ, ORG_NS, UID, USER_CHUNKS
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
+from server.memory.store.code_links import _KEY_COLUMNS, IDENTITY, QueuePosition
 
 
 async def purge_code_index_by_namespace(
@@ -548,7 +550,13 @@ _CODE_LINK_TABLES = ("loom.memory_code_links", "loom.memory_code_link_queue")
 
 _CURSORS = "loom.code_index_state"
 _LINK_CURSOR_NS = "memory_code_links"  # the link worker's cursors (`code_link_pass.Cursor`)
+_LINK_CURSOR_KEYS = ("queue", "backfill", "sweep")
 _NO_MEMORY = "00000000-0000-0000-0000-000000000000"
+# A queue position is (queued_at, version, *IDENTITY); backfill's `after` is an IDENTITY,
+# sweep's a link key.
+_QUEUED = len(get_args(QueuePosition)) - len(IDENTITY)
+_ORG, _NS, _UID = (IDENTITY.index(c) for c in ("org", "namespace", "user_id"))
+_LINK_ORG, _LINK_NS = (_KEY_COLUMNS.index(c) for c in ("org", "namespace"))
 
 
 def _scrubbed(key: str, value: str, org: str, namespaces: set[str], user_id: str) -> str | None:
@@ -557,49 +565,58 @@ def _scrubbed(key: str, value: str, org: str, namespaces: set[str], user_id: str
     few rows."""
     data = json.loads(value) if value else None
 
-    def names(ns: str, uid: str) -> bool:
-        return ns in namespaces or bool(user_id) and uid == user_id
+    def names(who: Sequence[str]) -> bool:
+        return who[_ORG] == org and (
+            who[_NS] in namespaces or bool(user_id) and who[_UID] == user_id
+        )
 
-    if key == "queue" and isinstance(data, list) and data[2] == org and names(data[3], data[5]):
-        return json.dumps([*data[:2], *[""] * 6])
-    if not isinstance(data, dict) or not (after := data.get("after")) or after[0] != org:
+    if key == "queue" and isinstance(data, list) and names(data[_QUEUED:]):
+        return json.dumps([*data[:_QUEUED], *[""] * len(IDENTITY)])
+    if not isinstance(data, dict) or not (after := data.get("after")):
         return None
-    if key == "backfill" and names(after[1], after[3]):
-        return json.dumps({**data, "after": [*after[:2], *[""] * 4]})
-    if key == "sweep" and (after[4] in namespaces or user_id):
-        return json.dumps({**data, "after": [*after[:5], _NO_MEMORY]})
+    if key == "backfill" and names(after):
+        kept = [
+            v if c in ("org", "namespace") else "" for c, v in zip(IDENTITY, after, strict=True)
+        ]
+        return json.dumps({**data, "after": kept})
+    if key == "sweep" and after[_LINK_ORG] == org and (after[_LINK_NS] in namespaces or user_id):
+        kept = [
+            _NO_MEMORY if c == "memory_id" else v for c, v in zip(_KEY_COLUMNS, after, strict=True)
+        ]
+        return json.dumps({**data, "after": kept})
     return None
 
 
 async def _scrub_link_cursors(
     org: str, namespaces: set[str], user_id: str, ch: _CHClient | None
 ) -> None:
-    """Rewrite the link worker's cursors that name an erased memory, and delete the
-    versions that did."""
+    """Rewrite the link worker's cursors that name an erased memory, and delete every
+    older version of them: one not yet merged away may name it while the current one
+    does not."""
     ch = ch or _default_client()
     rows = await ch.query_all(
         f"SELECT state_key, state_value, version FROM {_CURSORS} FINAL "
-        "WHERE org = '' AND namespace = {ns:String}",
-        params={"ns": _LINK_CURSOR_NS},
+        "WHERE org = '' AND namespace = {ns:String} AND state_key IN {keys:Array(String)}",
+        params={"ns": _LINK_CURSOR_NS, "keys": list(_LINK_CURSOR_KEYS)},
     )
     for r in rows:
+        version = int(r["version"])
         value = _scrubbed(str(r["state_key"]), str(r["state_value"]), org, namespaces, user_id)
-        if value is None:
-            continue
-        version = int(r["version"]) + 1
-        await ch.insert(
-            _CURSORS,
-            [
-                {
-                    "org": "",
-                    "namespace": _LINK_CURSOR_NS,
-                    "state_key": r["state_key"],
-                    "state_value": value,
-                    "updated_at": naive_utc_now(),
-                    "version": version,
-                }
-            ],
-        )
+        if value is not None:
+            version += 1
+            await ch.insert(
+                _CURSORS,
+                [
+                    {
+                        "org": "",
+                        "namespace": _LINK_CURSOR_NS,
+                        "state_key": r["state_key"],
+                        "state_value": value,
+                        "updated_at": naive_utc_now(),
+                        "version": version,
+                    }
+                ],
+            )
         await ch.execute(
             f"DELETE FROM {_CURSORS} WHERE org = '' AND namespace = {{ns:String}} "
             "AND state_key = {key:String} AND version < {v:UInt64} "

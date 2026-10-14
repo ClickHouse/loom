@@ -206,6 +206,30 @@ async def test_handle_memory_get_projects_and_validates_before_the_read(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_memory_get_reads_links_only_when_its_fields_show_code(monkeypatch) -> None:
+    from server.memory import store as memory_repo
+    from server.memory.app import code_link_reads
+    from server.memory.app import handlers as H
+
+    read: list[str] = []
+
+    async def get_by_key(identity, key, **kw):
+        return _row(key)
+
+    async def links_of(org, memory):
+        read.append(org)
+        return []
+
+    monkeypatch.setattr(memory_repo, "get_by_key", get_by_key)
+    monkeypatch.setattr(code_link_reads, "links_of", links_of)
+    for fields in (["value"], [], ["value", "code"]):
+        await H.handle_memory_get(
+            MemoryGetInput(org="o", namespace="n", agent="a", memory_key="k", fields=fields)
+        )
+    assert len(read) == 2
+
+
+@pytest.mark.asyncio
 async def test_handle_memory_bulk_get_projects_every_entry(monkeypatch) -> None:
     from server.memory import store as memory_repo
     from server.memory.app import query as Q

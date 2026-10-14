@@ -25,19 +25,16 @@ async def lesson_namespaces(org: str, code_namespace: str, extra: Sequence[str])
     the caller's memory home by default) and the repository's trunk code namespace (its
     team rules), each only when the caller may read it; with no caller, the deployment's
     default namespace. Readable alone is not shown."""
-    from server.auth.authz import row_in_scope
     from server.auth.context import current_auth
     from server.code.app.memory_links import trunk_namespace
-    from server.operations.base import Role
+    from server.memory.app.code_link_reads import readable_code
     from server.settings import settings
 
     own = [settings.default_namespace] if current_auth() is None else []
     candidates = [*own, *extra, trunk_namespace(org, code_namespace) or code_namespace]
-    return [
-        ns
-        for ns in dict.fromkeys(n for n in candidates if n)
-        if await row_in_scope(org, ns, Role.VIEWER)
-    ]
+    names = list(dict.fromkeys(n for n in candidates if n))
+    readable = await readable_code(org, set(names))
+    return [ns for ns in names if ns in readable]
 
 
 def _named(qualified_name: str, defs: list[Definition]) -> list[Definition]:
@@ -72,6 +69,8 @@ async def lessons_for_symbol(
     from server.code.app import memory_links as code
     from server.memory.app.code_link_reads import current_links
 
+    if not namespaces:
+        return []
     trunk = code.trunk_namespace(org, code_namespace) or code_namespace
     stored, head = await asyncio.gather(
         links_store.for_paths(

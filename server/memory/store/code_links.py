@@ -678,8 +678,9 @@ async def stale_of_served(
 ) -> list[dict[str, Any]]:
     """Up to `limit` (at least one) of the namespace's live links in `states` made from
     their served memory as it is now (under `memory_keys` when given), into `readable`
-    code, newest check first; `total` counts their memories. A memory's code namespace is
-    `trunk`, else that of the first (repo tag, namespace) of `tag_namespaces` it is tagged."""
+    code, the newest checked of each memory, newest first; `total` counts their memories.
+    A memory's code namespace is `trunk`, else that of the first (repo tag, namespace) of
+    `tag_namespaces` it is tagged."""
     keys = "AND memory_key IN {mks:Array(String)}" if memory_keys is not None else ""
     narrow = (
         f"org = {{org:String}} AND namespace = {{ns:String}} "
@@ -694,7 +695,7 @@ async def stale_of_served(
         SELECT l.memory_key AS memory_key, l.code_namespace AS code_namespace,
                l.path AS path, l.qualified_name AS qualified_name, l.state AS state,
                l.changed_since AS changed_since, l.checked_at AS checked_at,
-               uniqExact(l.memory_key) OVER () AS total
+               uniqExact(l.memory_id) OVER () AS total
         FROM (
             SELECT memory_id, memory_key, code_namespace, path, qualified_name, state,
                    changed_since, checked_at, inputs_hash
@@ -711,6 +712,7 @@ async def stale_of_served(
         ) AS m ON m.memory_id = l.memory_id
         WHERE l.inputs_hash = m.inputs_now
         ORDER BY l.checked_at DESC, l.memory_key, l.path, l.qualified_name
+        LIMIT 1 BY l.memory_id
         LIMIT {{lim:UInt32}}
         """,
         params={

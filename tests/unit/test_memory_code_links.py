@@ -764,6 +764,18 @@ async def test_a_key_several_agents_share_is_the_memory_its_row_names(served) ->
 
 
 @pytest.mark.asyncio
+async def test_a_shared_search_reads_code_state_as_a_private_one_does(served) -> None:
+    served.heads += [
+        _row("g", memory_key="g", agent="_shared"),
+        _row("f", memory_key="f", agent="_shared"),
+    ]
+    served.links.update(g=[_link("g", "missing")], f=[_link("f", "changed")])
+    hits = [_hit(k, who=("_shared", "-", "-")) for k in ("g", "f")]
+    await code_link_reads.annotate_hits(_search(scope="shared"), hits)
+    assert [(h.memory_key, h.code_state) for h in hits] == [("f", "changed")]
+
+
+@pytest.mark.asyncio
 async def test_the_heads_policies_and_readability_are_read_at_once(served, monkeypatch) -> None:
     import asyncio
 

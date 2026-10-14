@@ -74,8 +74,8 @@ async def query_all_sliced(
     ch: _CHClient, sql: str, params: dict[str, Any], key: str
 ) -> list[dict[str, Any]]:
     """`query_all` with the list `params[key]` bound a slice at a time: every slice's
-    rows, in order. An empty list is bound once, as itself."""
+    rows, in order. An empty list sends no statement and reads no row."""
     rows: list[dict[str, Any]] = []
-    for part in param_slices(params[key]) or [[]]:
+    for part in param_slices(params[key]):
         rows += await ch.query_all(sql, params | {key: part})
     return rows

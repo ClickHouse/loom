@@ -248,7 +248,7 @@ async def test_a_long_path_or_commit_list_is_read_in_slices_under_the_field_cap(
     assert [c for _, p in ch.sql for c in p["checked_commit"]] == commits
     ch = _CH()
     await store.for_commits("o", ["c"], [], ch=ch)
-    assert [p["checked_commit"] for _, p in ch.sql] == [[]]  # an empty list narrows to none
+    assert ch.sql == []  # an empty list narrows to none: nothing is read
 
 
 @pytest.mark.asyncio
