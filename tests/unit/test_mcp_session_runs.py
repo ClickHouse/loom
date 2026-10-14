@@ -144,7 +144,7 @@ def test_ensure_mints_one_run_per_session_and_reuses_it(ledger: _Ledger) -> None
 
 def test_a_sibling_worker_does_not_begin_the_sessions_run_again(ledger: _Ledger) -> None:
     """Another web process serving the same session finds the run active and
-    leaves its goal alone; once the run is closed, a later call reopens it."""
+    joins it; once the run is closed, a later call reopens it."""
 
     async def _run() -> None:
         await mcp_runs.ensure("sess-1", DEFAULTS, CALLER, now=100.0)

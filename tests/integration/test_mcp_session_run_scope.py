@@ -199,8 +199,8 @@ async def test_a_runs_goal_never_shows_what_a_call_sent(
             assert r.json()["run_closed"] is True, r.text[:400]
 
     rows = ch_client.query(
-        "SELECT namespace, goal FROM loom.agent_runs FINAL WHERE org = {org:String}",
+        "SELECT namespace, agent, goal FROM loom.agent_runs FINAL WHERE org = {org:String}",
         parameters={"org": org},
     ).result_rows
-    assert len(rows) == 3 and {namespace for namespace, _ in rows} == {"ns-a"}
-    assert all(goal.startswith("mcp session (") for _, goal in rows), rows
+    assert len(rows) == 3 and {namespace for namespace, _, _ in rows} == {"ns-a"}
+    assert all(goal == f"mcp session ({agent})" for _, agent, goal in rows), rows

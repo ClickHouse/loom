@@ -12,12 +12,15 @@ if [ -z "${LOOM_WEB_WORKERS:-}" ]; then
   LOOM_WEB_WORKERS=$(python -m server.core.web_workers)
   chosen=1
 fi
+positive=""
 case "$LOOM_WEB_WORKERS" in
-  '' | *[!0-9]*)
-    echo "loom: LOOM_WEB_WORKERS=$LOOM_WEB_WORKERS is not a whole number" >&2
-    exit 2
-    ;;
+  '' | *[!0-9]*) ;;
+  *) [ "$LOOM_WEB_WORKERS" -ge 1 ] && positive=1 ;;
 esac
+if [ -z "$positive" ]; then
+  echo "loom: LOOM_WEB_WORKERS=$LOOM_WEB_WORKERS is not a positive whole number" >&2
+  exit 2
+fi
 # One directory for the files the processes share, LOOM_RUNTIME_DIR or one
 # chosen now, checked before they start. A single process shares none, so it
 # needs none unless one is pinned; with no private directory (a read-only root

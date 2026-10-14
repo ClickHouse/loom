@@ -216,7 +216,7 @@ async def ensure(
 
 async def _begin(run: SessionRun, *, now: float, first: bool) -> None:
     """`run.begin` for a registered run, unless another web process of this server
-    began it already. A that fails forgets the run and the session waits
+    began it already. A `first` begin that fails forgets the run and the session waits
     CHECK_INTERVAL_S before the next attempt; a failed check of a run already
     begun keeps it, and the next check tries again."""
     _attribute(run.quota_key)
@@ -238,7 +238,7 @@ async def _begin(run: SessionRun, *, now: float, first: bool) -> None:
                 # namespace the caller reads, and the run's readers are this one's.
                 goal=f"mcp session ({run.agent})",
                 environment="mcp",
-                consumer=run.agent[:64],
+                consumer=run.agent,
                 # The idle sweep counts only this token's calls as the session's.
                 metadata={
                     "implicit": True,

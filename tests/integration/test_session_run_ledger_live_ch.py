@@ -334,7 +334,7 @@ async def test_a_session_run_starts_before_a_call_that_lands_before_its_begin(ch
 
 
 @pytest.mark.asyncio
-async def test_a_reopened_session_run_keeps_its_first_goal_and_owner(ch: Any) -> None:
+async def test_a_reopened_session_run_keeps_its_owner(ch: Any) -> None:
     from server.tasks.api.models_run import RunBeginInput
     from server.tasks.app.run import begin_session_run
     from server.tasks.store.runs import fetch_run
@@ -342,22 +342,22 @@ async def test_a_reopened_session_run_keeps_its_first_goal_and_owner(ch: Any) ->
     namespace = f"itest-{uuid.uuid4().hex[:12]}"
     run_id = session_run_id(ORG, "sub", uuid.uuid4().hex)
 
-    def begin(user: str, goal: str) -> RunBeginInput:
+    def begin(user: str) -> RunBeginInput:
         return RunBeginInput(
             org=ORG,
             namespace=namespace,
             agent=AGENT,
             run_id=run_id,
             user_id=user,
-            goal=goal,
+            goal="mcp session (itest)",
             environment="mcp",
         )
 
     try:
-        await begin_session_run(begin("u1", "first"), started_at=naive_utc_now())
-        await begin_session_run(begin("u2", "a later call's query"), started_at=naive_utc_now())
+        await begin_session_run(begin("u1"), started_at=naive_utc_now())
+        await begin_session_run(begin("u2"), started_at=naive_utc_now())
         row = await fetch_run(ch, ORG, namespace, run_id)
-        assert row is not None and (row["user_id"], row["goal"]) == ("u1", "first")
+        assert row is not None and row["user_id"] == "u1"
     finally:
         await ch.execute(
             "DELETE FROM loom.agent_runs WHERE org = {org:String} AND namespace = {ns:String}",

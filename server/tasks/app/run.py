@@ -232,14 +232,13 @@ async def begin_session_run(input: RunBeginInput, *, started_at: datetime) -> No
     made for it. The id binds the token (`session_run_id`) and an explicit
     run.begin cannot name it, so it takes no claim, and the id the session's calls
     carry is the one stored. A new row starts at `started_at`, when the transport
-    registered the run; a re-opened one keeps its start, first goal and owner."""
+    registered the run; a re-opened one keeps its start and owner."""
     ch = get_client()
     with sequential_reads():
         existing = await runs_store.fetch_run(ch, input.org, input.namespace, input.run_id)
     if existing is not None:
         input = input.model_copy(
             update={
-                "goal": str(existing.get("goal") or input.goal),
                 "user_id": str(existing.get("user_id") or input.user_id),
                 "session_id": str(existing.get("session_id") or input.session_id),
             }
