@@ -404,7 +404,19 @@ LOOM_CODE_REPOS_JSON=[{"org":"dev","namespace":"code-myrepo","repo":"acme/myrepo
   the parser tier.
 - For a private repository, add a GitHub token (`LOOM_CODE_GITHUB_TOKEN` in `.env`, or
   `github_token` on the entry) and drop `"public":true`: it is for repositories public on
-  their host, and lets anyone in the org read the index at once.
+  their host, and lets anyone in the org join the index as a reader at once from
+  **Repositories**.
+- In multi-user mode a listed repository has no maintainer, so without `"public":true` a
+  reader's join request waits with nobody to approve it. Give someone access as the
+  operator, with a token minted in the container. `admin` makes them the maintainer, who
+  approves readers from then on; `viewer` lets them read:
+
+  ```bash
+  ADMIN_TOKEN=$(docker compose --project-directory "$HOME/.loom" exec -T loom loom mint-token --subject operator --org acme --namespaces code-myrepo --roles admin --ttl-days 1)
+  curl -s http://localhost:7777/v1/grants.create -H "Authorization: Bearer $ADMIN_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"org":"acme","namespace":"code-myrepo","subject":"you@example.com","role":"admin"}'
+  ```
 
 Then recreate the `loom` container and run the first index:
 

@@ -202,12 +202,14 @@ carries: `go.mod` (at any depth) for Go; `tsconfig.json`, `jsconfig.json` or
 `pyproject.toml`, `setup.py` or `requirements.txt` at the root for Python.
 `code.index_status` lists them as `compiler_candidates`. Name the producer where a build
 file is incidental, such as a C++ repository whose `pyproject.toml` only serves its test
-tooling; `scip_extra_producers` adds tiers beside a named one.
+tooling; `scip_extra_producers` adds tiers beside a named one. Each tier works in its own
+tree: the named producer (C/C++ when the entry names none) in `scip_checkout_dir`, every
+other one in `<scip_checkout_dir>-<producer>`.
 
 All four workers are enabled by default. The Docker image includes the Python,
 TypeScript, and Go indexers. Their workers create a missing working tree as an empty
 repository and fetch each commit into it from the entry's mirror; the C/C++ tier of an
-operator's entry needs the configured build tree instead. A worker whose project
+operator's entry needs the configured build tree instead, and Loom never creates it. A worker whose project
 prerequisites are absent records a skip in `workers.status`; the Tree-sitter tier
 remains available. TypeScript projects have their dependencies installed automatically
 in their checkout. C/C++ projects need a compilation database and scip-clang (upstream

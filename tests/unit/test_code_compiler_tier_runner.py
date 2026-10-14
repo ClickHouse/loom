@@ -107,7 +107,7 @@ async def test_an_entry_without_a_checkout_gets_an_empty_one(
     (tmp_path / "repo.git").mkdir()
     result, ctx = await _run(w, _Cfg(tmp_path), _repo(watermark), owns=True)
     assert result.repos_checked == 1 and not result.errors and ctx.count == 0
-    assert (tmp_path / "checkout" / ".git").is_dir()
+    assert (tmp_path / f"checkout-{w.PRODUCER}" / ".git").is_dir()
     assert not any("checkout missing" in s for s in result.skipped)
 
 

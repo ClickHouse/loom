@@ -207,12 +207,14 @@ def default_git_dir() -> str:
 
 
 def checkout_for(cfg: RepoConfig, producer: str) -> str:
-    """The working tree `producer` indexes for this entry: the entry's checkout for its
-    primary producer, a sibling `<checkout>-<producer>` for an extra one."""
+    """The working tree `producer` indexes for this entry: the entry's checkout for the
+    producer it names, a sibling `<checkout>-<producer>` for any other, so two tiers
+    never move one tree. An entry that names none keeps its checkout for scip-clang,
+    which needs it to be a configured build tree."""
     base = cfg.scip_checkout_dir or settings.code_scip_checkout_dir
-    if producer in cfg.scip_extra_producers:
-        return f"{base.rstrip('/')}-{producer}"
-    return base
+    if producer == (cfg.scip_producer or "clang"):
+        return base
+    return f"{base.rstrip('/')}-{producer}"
 
 
 def _default_checkout_dir(base: RepoConfig, ns: str) -> str:

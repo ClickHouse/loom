@@ -95,7 +95,7 @@ import {
   type CodeRepoRemoteBranches,
   type CodeWorkerStatus,
 } from "../api";
-import { sharedHealth, sharedIndexStatus } from "../lib/sharedReads";
+import { invalidateShared, sharedHealth, sharedIndexStatus } from "../lib/sharedReads";
 import { NamespaceSettingsDialog } from "../flows/NamespaceSettingsDialog";
 import { joinTarget, withdrawTarget, leaveTarget, type JoinTarget } from "../lib/joinActions";
 import { freshness, type Fresh } from "../lib/codeFreshness";
@@ -380,22 +380,36 @@ function useJoinActions(onChanged: () => void) {
   return { busy, join, cancel, leave, joinAll, leaveAll, applyPlan };
 }
 
-/** Whether `/v1/health` says this deployment runs without the repository-job sandbox,
- *  where adding a repository or branch from the page is refused (`SANDBOX_UNAVAILABLE`). */
-export function runsUnsandboxed(health: Record<string, unknown> | null): boolean {
+/** How `/v1/health` reports a deployment without the repository-job sandbox, where adding
+ *  a repository or branch from the page is refused (`SANDBOX_UNAVAILABLE`): "warn" while
+ *  LOOM_CODE_REPOS_JSON entries still index, "error" when LOOM_CODE_SANDBOX_REQUIRED
+ *  refuses them too, null when the sandbox runs or health has not said. */
+export function sandboxProblem(health: Record<string, unknown> | null): "warn" | "error" | null {
   const problems = health?.problems;
-  return Array.isArray(problems) && problems.some((p) => isRecord(p) && p.code === "repo_jobs_unsandboxed");
+  if (!Array.isArray(problems)) return null;
+  const found = problems.find((p) => isRecord(p) && p.code === "repo_jobs_unsandboxed");
+  return isRecord(found) && (found.severity === "warn" || found.severity === "error") ? found.severity : null;
 }
 
-/** False once health reports the sandbox off; true until then, so a slow or failed
- *  health read never hides the buttons. */
-function useCanAddRepositories(): boolean {
-  const [canAdd, setCanAdd] = useState(true);
-  useAbortableEffect(async (_signal, live) => {
-    const health = await sharedHealth();
-    if (live() && runsUnsandboxed(health)) setCanAdd(false);
+const sandboxRefused = (err: unknown): boolean => err instanceof ApiError && err.code === "SANDBOX_UNAVAILABLE";
+
+/** null until health reports the sandbox off, so a slow or failed read never hides the
+ *  add buttons. `recheck` reads health again, for when the server refuses an add. */
+function useSandboxProblem(): { problem: "warn" | "error" | null; recheck: () => void } {
+  const [problem, setProblem] = useState<"warn" | "error" | null>(null);
+  const [checks, setChecks] = useState(0);
+  useAbortableEffect(
+    async (_signal, live) => {
+      const health = await sharedHealth();
+      if (live()) setProblem(sandboxProblem(health));
+    },
+    [checks],
+  );
+  const recheck = useCallback(() => {
+    invalidateShared("health");
+    setChecks((n) => n + 1);
   }, []);
-  return canAdd;
+  return { problem, recheck };
 }
 
 function RepositoriesHome({
@@ -412,7 +426,8 @@ function RepositoriesHome({
   const actions = useJoinActions(onChanged);
   const [requesting, setRequesting] = useState<{ repo: CodeRepoSummary; role: RepoRole } | null>(null);
   const [adding, setAdding] = useState(false);
-  const canAdd = useCanAddRepositories();
+  const { problem: sandbox, recheck: recheckSandbox } = useSandboxProblem();
+  const canAdd = sandbox === null;
   const [addingBranch, setAddingBranch] = useState<RepoGroup | null>(null);
   const [managing, setManaging] = useState<RepoGroup | null>(null);
   // The add-a-tracker dialog, from a card (that repository) or the page (none)
@@ -643,7 +658,9 @@ function RepositoriesHome({
           description={
             canAdd
               ? "Add the first one: a Git remote and a branch. You become its maintainer and the indexer builds it in the background."
-              : "This server cannot add repositories from this page, because it runs without the repository-job sandbox. Ask the operator to list them in LOOM_CODE_REPOS_JSON."
+              : sandbox === "warn"
+                ? "This server cannot add repositories from this page, because it runs without the repository-job sandbox. Ask the operator to list them in LOOM_CODE_REPOS_JSON."
+                : "This server cannot index repositories until its repository-job sandbox runs. Ask the operator."
           }
           action={org && canAdd ? { label: "Add repository", onClick: () => setAdding(true) } : undefined}
         />
@@ -725,7 +742,13 @@ function RepositoriesHome({
           await actions.join(r, role);
         }}
       />
-      <AddRepositoryDialog open={adding} org={org} onOpenChange={setAdding} onAdded={onChanged} />
+      <AddRepositoryDialog
+        open={adding}
+        org={org}
+        onOpenChange={setAdding}
+        onAdded={onChanged}
+        onSandboxRefused={recheckSandbox}
+      />
       <BranchesDialog
         group={managing}
         onOpenChange={(v) => {
@@ -742,6 +765,7 @@ function RepositoriesHome({
           if (!v) setAddingBranch(null);
         }}
         onAdded={onChanged}
+        onSandboxRefused={recheckSandbox}
       />
       {registering && (
         <Suspense fallback={null}>
@@ -1090,11 +1114,14 @@ export function AddRepositoryDialog({
   org,
   onOpenChange,
   onAdded,
+  onSandboxRefused,
 }: {
   open: boolean;
   org: string;
   onOpenChange: (v: boolean) => void;
   onAdded: () => void;
+  /** The server refused for want of the repository-job sandbox (`SANDBOX_UNAVAILABLE`). */
+  onSandboxRefused?: () => void;
 }) {
   const [repo, setRepo] = useState("");
   const [branch, setBranch] = useState("");
@@ -1163,6 +1190,7 @@ export function AddRepositoryDialog({
     } catch (err) {
       if (err instanceof ApiError && err.code === "REMOTE_REFUSED" && !token.trim()) setTokenNeeded("refused");
       else setError(humanizeError(err));
+      if (sandboxRefused(err)) onSandboxRefused?.();
     } finally {
       setLooking(false);
     }
@@ -1234,6 +1262,7 @@ export function AddRepositoryDialog({
       } else {
         setError(humanizeError(err));
       }
+      if (sandboxRefused(err)) onSandboxRefused?.();
     } finally {
       setBusy(false);
     }
@@ -1637,10 +1666,12 @@ function AddBranchDialog({
   group,
   onOpenChange,
   onAdded,
+  onSandboxRefused,
 }: {
   group: RepoGroup | null;
   onOpenChange: (v: boolean) => void;
   onAdded: () => void;
+  onSandboxRefused?: () => void;
 }) {
   const [branch, setBranch] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1666,6 +1697,7 @@ function AddBranchDialog({
       onAdded();
     } catch (err) {
       setError(humanizeError(err));
+      if (sandboxRefused(err)) onSandboxRefused?.();
     } finally {
       setBusy(false);
     }

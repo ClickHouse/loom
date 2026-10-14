@@ -39,25 +39,32 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   and a namespace's `rerank_endpoint` take a name, not a URL: `none`, `builtin:openai[:model]`,
   `builtin:cohere[:model]`, or an endpoint the operator names in `LOOM_RERANK_ENDPOINTS_JSON`.
   A URL or an unknown name is a 422. A namespace that still stores a URL is no longer reranked.
-- **Breaking:** an `LOOM_CODE_REPOS_JSON` entry (or the scalar `LOOM_CODE_REPO`) that names
+- **Breaking:** a `LOOM_CODE_REPOS_JSON` entry (or the scalar `LOOM_CODE_REPO`) that names
   no `scip_producer` gets the compiler tiers its tree's build files call for, as a
   dashboard entry does, instead of `clang`. An entry relying on the old default can gain a
   tier (a C++ repository with a root `pyproject.toml` also gets scip-python) or lose
   scip-clang (no root `CMakeLists.txt`); add `"scip_producer":"clang"` to keep it as it was.
   The Python, TypeScript and Go tiers now create a missing working tree for these entries
   too; the C/C++ tier still needs the configured build tree.
-- The Repositories page hides **Add repository** and **Add branch** when `/v1/health`
-  reports `repo_jobs_unsandboxed`, where the server refuses both.
+- An entry that names no producer gives each tier its own working tree: C/C++ keeps
+  `scip_checkout_dir`, every other tier uses `<scip_checkout_dir>-<producer>`, so two tiers
+  never move one tree. A repository added from the dashboard therefore moves its Python,
+  TypeScript or Go tier to a new working tree, filled once from the mirror (a TypeScript
+  tier also reinstalls its dependencies there); the old `checkout-<namespace>` directory
+  is no longer used and can be deleted.
+- The server probes the repository-job sandbox at boot, so `/v1/health` reports
+  `repo_jobs_unsandboxed` before any repository job runs. The Repositories page hides
+  **Add repository** and **Add branch** when it does, where the server refuses both.
 
 ### Fixed
 
 - The quickstart told released-stack users to add repositories from the dashboard, which
   that stack refuses with `SANDBOX_UNAVAILABLE`, since it runs without the repository-job
-  sandbox. It now shows how to index one through `LOOM_CODE_REPOS_JSON`, `loom code init` and
-  `loom code backfill`, with no `scip_producer` or working tree to set up. The refusal names that route where it works, the
-  `repo_jobs_unsandboxed` fix in `loom doctor` and `/v1/health` matches it, and the sandbox
-  docs say which hosts can load the AppArmor profile: AppArmor 4.0 or later, tested on
-  Ubuntu 24.04.
+  sandbox. It now shows how to index one through `LOOM_CODE_REPOS_JSON`, `loom code init`
+  and `loom code backfill`, with no `scip_producer` or working tree to set up. The refusal
+  names that route where it works, the `repo_jobs_unsandboxed` fix in `loom doctor` and
+  `/v1/health` matches it, and the sandbox docs say which hosts can load the AppArmor
+  profile: AppArmor 4.0 or later, tested on Ubuntu 24.04.
 - `loom code scip-full` moves its checkout and runs its harness (the repository's CMake)
   as repository jobs, in the sandbox like the delta worker, instead of as plain processes.
   The checkout fetch now names the bare clone and the submodule update gets the network,

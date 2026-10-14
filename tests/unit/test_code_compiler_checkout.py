@@ -48,7 +48,8 @@ def test_registry_entry_initializes_checkout_for_its_bare_mirror(tmp_path: Path)
     actual, actual_bare, missing = resolve_checkout(cfg, "python")
 
     assert missing is None
-    assert actual == checkout and (checkout / ".git").exists()
+    assert actual == tmp_path / "checkouts" / "code-example-python"
+    assert (actual / ".git").exists()
     assert actual_bare == bare.resolve()
 
 
@@ -63,6 +64,18 @@ def test_operator_entry_gets_its_checkout_unless_scip_clang_needs_a_build_tree(
     assert missing is not None and "checkout missing" in missing
     assert not checkout.exists()
 
-    _actual, _bare, missing = resolve_checkout(cfg, "python")
+    actual, _bare, missing = resolve_checkout(cfg, "python")
     assert missing is None
-    assert (checkout / ".git").exists()
+    assert actual == tmp_path / "operator-owned-python" and (actual / ".git").exists()
+    assert not checkout.exists()  # the scip-clang build tree is left alone
+
+
+def test_a_checkout_that_cannot_be_created_is_reported_with_gits_reason(tmp_path: Path) -> None:
+    bare = _bare_repo(tmp_path)
+    (tmp_path / "a-file").write_text("")
+    cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "a-file" / "checkout"))
+
+    _actual, _bare, missing = resolve_checkout(cfg, "python")
+
+    assert missing is not None and missing.startswith("checkout missing at ")
+    assert "(git init: " in missing

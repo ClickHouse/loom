@@ -273,6 +273,16 @@ def cancel_boot_tasks() -> None:
         task.cancel()
 
 
+async def probe_sandbox() -> None:
+    """Probe the repository-job sandbox before serving. `/v1/health` reports only what
+    this process has probed, and a stack with no repositories never runs a repository
+    job that would probe it, so the first answer would say nothing."""
+    if settings.code_ingest_enabled:
+        from server.code.app.index.sandbox import sandbox_available
+
+        await asyncio.to_thread(sandbox_available)
+
+
 def start_tracker_sources_refresher(ch: Any) -> asyncio.Task[None]:
     """Every process — not only the leader — loads the
     self-service tracker registry at boot and keeps it within

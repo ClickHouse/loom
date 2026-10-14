@@ -321,10 +321,8 @@ async def _repo_status(cfg: Any, *, state: IndexState | None = None) -> CodeInde
         lags.update(published_lags(state, {k: val(k) for k in lags}, clone_head))
     else:
         clone_head, lags = await _clone_lags(cfg, state, lags, val)
-    # The entry's own tier is the headline; every tier with a
-    # watermark is listed. An `.env` entry without a producer field means
-    # clang (RepoConfig's default); a registry row's '' defers to whichever
-    # watermark is set.
+    # The entry's own tier is the headline; every tier with a watermark is
+    # listed. An entry naming no producer defers to whichever watermark is set.
     tiers = compiler_tiers(cfg.scip_producer, state, lags)
     primary = next((t for t in tiers if t["primary"]), None)
     scip_commit = str(primary["commit"]) if primary else ""
