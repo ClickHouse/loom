@@ -462,7 +462,7 @@
    "has_first_pass_hook": false,
    "idle_interval_seconds": null,
    "interval_seconds": 60,
-   "max_pass_seconds": null,
+   "max_pass_seconds": 240.0,
    "name": "mcp_session_run_sweep",
    "owned_tables": [],
    "pass_callable": {
@@ -883,7 +883,7 @@
    "has_first_pass_hook": false,
    "idle_interval_seconds": null,
    "interval_seconds": 60,
-   "max_pass_seconds": null,
+   "max_pass_seconds": 240.0,
    "name": "mcp_session_run_sweep",
    "owned_tables": [],
    "pass_callable": {
@@ -1390,7 +1390,7 @@
    "has_first_pass_hook": false,
    "idle_interval_seconds": null,
    "interval_seconds": 60,
-   "max_pass_seconds": null,
+   "max_pass_seconds": 240.0,
    "name": "mcp_session_run_sweep",
    "owned_tables": [],
    "pass_callable": {

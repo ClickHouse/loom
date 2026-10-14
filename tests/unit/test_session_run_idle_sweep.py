@@ -107,3 +107,11 @@ async def test_the_worker_pass_closes_with_the_idle_window(monkeypatch) -> None:
     monkeypatch.setattr(run_handlers, "close_idle_session_runs", close)
     assert await session_run_sweep.run_pass() == 2
     assert windows == [900]
+
+
+def test_the_pass_deadline_leaves_room_for_the_close_budget() -> None:
+    from server.workers.registry import _WORKERS
+
+    (row,) = [w for w in _WORKERS if w.name == "mcp_session_run_sweep"]
+    assert row.max_pass_seconds is not None
+    assert row.max_pass_seconds > run_handlers.IDLE_CLOSE_BUDGET_S

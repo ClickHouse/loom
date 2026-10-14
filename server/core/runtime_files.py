@@ -38,7 +38,7 @@ def runtime_dir() -> str:
     pinned = str(settings.runtime_dir).strip()
     if not pinned:
         return choose_runtime_dir()
-    if not _private_dir(pinned):
+    if not _private_dir(pinned, tighten=False):
         raise OSError(f"LOOM_RUNTIME_DIR={pinned} is not a directory only this user can enter")
     return pinned
 
@@ -57,9 +57,10 @@ def choose_runtime_dir() -> str:
     raise OSError(f"none of {', '.join(candidates)} is a directory only this user can enter")
 
 
-def _private_dir(path: str) -> bool:
+def _private_dir(path: str, *, tighten: bool = True) -> bool:
     """Whether `path` is, or is now, a directory of this user's that no other
-    account can enter (a looser mode of its own is tightened)."""
+    account can enter; a looser mode of its own is tightened, or with
+    `tighten=False` (a directory the operator named) refused."""
     with contextlib.suppress(OSError):
         os.makedirs(path, mode=0o700, exist_ok=True)
     try:
@@ -67,6 +68,8 @@ def _private_dir(path: str) -> bool:
         if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.geteuid():
             return False
         if stat.S_IMODE(st.st_mode) & 0o077:
+            if not tighten:
+                return False
             os.chmod(path, 0o700)
     except OSError:
         return False

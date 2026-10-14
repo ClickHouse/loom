@@ -138,6 +138,12 @@ async def test_a_failed_probe_keeps_the_previous_reading() -> None:
     assert vector_codes_state.coded_columns() == {"loom.chunks.embedding"}
 
 
+async def _the_refresh() -> None:
+    """Wait for the re-probe a stale reading scheduled."""
+    assert vector_codes_state._refresh is not None, "no refresh was scheduled"
+    await vector_codes_state._refresh
+
+
 @pytest.mark.asyncio
 async def test_a_stale_reading_refreshes_in_the_background(monkeypatch: pytest.MonkeyPatch) -> None:
     ch = _FakeCH(coded=[("chunks", "embedding")], patches={"chunks": 0})
@@ -151,7 +157,7 @@ async def test_a_stale_reading_refreshes_in_the_background(monkeypatch: pytest.M
     assert _FLAG in search_sql.vector_search_settings(
         table="loom.chunks"
     )  # this statement: the old reading
-    await asyncio.sleep(0.01)
+    await _the_refresh()
     assert len(ch.calls) > n
     monkeypatch.setattr(settings, "vector_codes_state_probe_seconds", 60)
     assert _FLAG not in search_sql.vector_search_settings(table="loom.chunks")
@@ -170,7 +176,7 @@ async def test_a_process_that_only_writes_refreshes_its_widths_too(
     monkeypatch.setattr(settings, "vector_codes_state_probe_seconds", 0)
     with pytest.raises(CodedWidthMismatchError):
         vector_codes_state.refuse_width("chunks", 8)  # this write: the old reading
-    await asyncio.sleep(0.01)
+    await _the_refresh()
     monkeypatch.setattr(settings, "vector_codes_state_probe_seconds", 60)
     vector_codes_state.refuse_width("chunks", 8)
 

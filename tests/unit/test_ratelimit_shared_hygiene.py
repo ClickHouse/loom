@@ -210,3 +210,17 @@ def test_an_unusable_runtime_directory_leaves_the_limiter_per_process(
     lim = ratelimit.Limiter()
     assert lim.check("ns1", "memory.set", org="o").allowed
     assert not lim.shared_active
+
+
+def test_a_pinned_directory_others_can_enter_is_refused_not_changed(
+    tmp_path: Path, settings_override
+) -> None:
+    from server.core import runtime_files as rs
+
+    open_dir = tmp_path / "rt"
+    open_dir.mkdir(mode=0o755)
+    open_dir.chmod(0o755)
+    settings_override(runtime_dir=str(open_dir))
+    with pytest.raises(OSError, match="LOOM_RUNTIME_DIR"):
+        rs.runtime_dir()
+    assert stat.S_IMODE(open_dir.stat().st_mode) == 0o755

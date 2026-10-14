@@ -7,6 +7,7 @@
 set -eu
 
 chosen=""
+pinned=${LOOM_RUNTIME_DIR:-}
 if [ -z "${LOOM_WEB_WORKERS:-}" ]; then
   LOOM_WEB_WORKERS=$(python -m server.core.web_workers)
   chosen=1
@@ -14,18 +15,18 @@ fi
 # One directory for the files the processes share, LOOM_RUNTIME_DIR or one
 # chosen now, checked before they start. A single process shares none, so it
 # needs none; with no private directory (a read-only root without a tmpfs) a
-# chosen count falls back to one process.
+# chosen count falls back to one process, unless the operator pinned one.
 if [ "$LOOM_WEB_WORKERS" -gt 1 ]; then
   status=0
   shared=$(python -m server.core.runtime_files) || status=$?
   if [ "$status" -eq 0 ]; then
     LOOM_RUNTIME_DIR=$shared
     export LOOM_RUNTIME_DIR
-  elif [ "$status" -eq 2 ] && [ -n "$chosen" ]; then
+  elif [ "$status" -eq 2 ] && [ -n "$chosen" ] && [ -z "$pinned" ]; then
     echo "loom: no runtime directory to share; starting one web process" >&2
     LOOM_WEB_WORKERS=1
   else
-    [ "$status" -eq 2 ] && echo "loom: LOOM_WEB_WORKERS=$LOOM_WEB_WORKERS needs one; not starting" >&2
+    [ "$status" -eq 2 ] && echo "loom: $LOOM_WEB_WORKERS web processes need one; not starting" >&2
     exit "$status"
   fi
 fi

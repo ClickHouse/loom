@@ -87,12 +87,12 @@ def test_an_explicit_count_with_nowhere_to_share_refuses_to_start(
     assert "no private directory" in done.stderr and "not starting" in done.stderr
 
 
-def test_a_chosen_count_with_a_rejected_pin_starts_one_process_and_keeps_the_pin(
-    tmp_path: Path,
-) -> None:
+def test_a_pin_it_cannot_use_refuses_to_start_even_with_a_chosen_count(tmp_path: Path) -> None:
+    """A pinned directory is the operator's choice: a typo or the wrong owner is
+    refused rather than quietly costing them the extra processes."""
     done = _launch(tmp_path, workers="", runtime_dir="none", pinned="/data/rt")
-    assert done.returncode == 0 and _workers(done.stdout) == "1"
-    assert done.stdout.strip().endswith("runtime=/data/rt")
+    assert done.returncode == 2 and done.stdout == ""
+    assert "not starting" in done.stderr
 
 
 def test_a_check_that_breaks_stops_the_launcher_whatever_the_count(tmp_path: Path) -> None:

@@ -315,7 +315,8 @@ def test_a_worker_that_starts_after_the_runtime_dir_turns_read_only_still_shares
     """With the launcher's directory, no worker falls back to another one, where
     its updates would succeed out of its siblings' sight."""
     settings_override(web_workers=3, runtime_dir=str(tmp_path / "run" / "loom"))
-    (tmp_path / "run" / "loom").mkdir(parents=True)
+    (tmp_path / "run").mkdir()
+    (tmp_path / "run" / "loom").mkdir(mode=0o700)
     a = BudgetOverrides()
     a.set_for_consumer("c1", "*", 4)
     shared = tmp_path / "run" / "loom"

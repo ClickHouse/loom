@@ -148,7 +148,7 @@ def stamps_run(op: Any) -> bool:
     return not op.read_only
 
 
-def goal_of(arguments: dict[str, Any], defaults: dict[str, str]) -> str:
+def goal_of(op: Any, arguments: dict[str, Any], defaults: dict[str, str]) -> str:
     """The run's goal: the first call's query, else its key, else a label. The
     label too when the call works outside the run's org and namespace, whose
     readers may not read where it went: another namespace, or a search across
@@ -157,7 +157,7 @@ def goal_of(arguments: dict[str, Any], defaults: dict[str, str]) -> str:
     elsewhere = (
         str(arguments.get("org") or defaults.get("org")) != defaults.get("org")
         or str(arguments.get("namespace") or "") != defaults.get("namespace")
-        or arguments.get("namespace_scope") == "all_mine"
+        or _scope_of(op, arguments) == "all_mine"
         or arguments.get("namespaces")
     )
     if elsewhere:
@@ -167,6 +167,20 @@ def goal_of(arguments: dict[str, Any], defaults: dict[str, str]) -> str:
         if isinstance(v, str) and v.strip():
             return v.strip()[:GOAL_MAX_CHARS]
     return label
+
+
+def _scope_of(op: Any, arguments: dict[str, Any]) -> str | None:
+    """The `namespace_scope` the op will search with: the call's, else the
+    field's default, which None leaves to the deployment's."""
+    fields = op.input_model.model_fields
+    if "namespace_scope" not in fields:
+        return None
+    scope = arguments.get("namespace_scope", fields["namespace_scope"].default)
+    if scope is None:
+        from server.settings import settings
+
+        scope = settings.memory_search_default_namespace_scope
+    return str(scope)
 
 
 def current(run_id: str) -> SessionRun | None:
