@@ -117,6 +117,8 @@ async def _readable_namespaces(org: str, namespace: str, payload: dict[str, Any]
     A page that names no other namespace skips the fan-out read."""
     from server.auth.fanout import resolve_fanout
 
+    # Hits of the addressed namespace that carry no `namespace` (tier and
+    # anchor rows) count as the addressed one.
     authorized = {"", namespace}
     named = {str(h.get("namespace", "")) for h in payload.get("hits") or []}
     named |= {

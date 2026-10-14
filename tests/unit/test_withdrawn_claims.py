@@ -144,14 +144,13 @@ def test_an_unreadable_directory_fails_the_cutoff(ch: _CH, monkeypatch: pytest.M
 
 def test_a_later_grant_does_not_restore_the_old_claim(ch: _CH) -> None:
     # Round-trip a self-join: the person's own viewer grant lands after the
-    # cutoff. The older writer token reads through that grant, but its claim
-    # no longer carries the write it was minted with.
+    # cutoff. The older writer tokens, flat or scoped, read through that
+    # grant, but their claims no longer carry the write they were minted with.
     _end("team")
     ch.live["team"] = "viewer"
-    old = _flat("team")
-    assert _admits(old, "team", Role.VIEWER)
-    assert not _admits(old, "team", Role.WRITER)
-    assert not _admits(_scoped("team"), "team"), "a scoped token is re-minted"
+    for old in (_flat("team"), _scoped("team")):
+        assert _admits(old, "team", Role.VIEWER)
+        assert not _admits(old, "team", Role.WRITER)
 
 
 def test_a_claim_never_backed_by_a_grant_is_left_alone(ch: _CH) -> None:
@@ -372,10 +371,20 @@ def test_cutoff_spellings_count_deactivated_accounts(monkeypatch: pytest.MonkeyP
 
 def test_a_refusal_after_a_cutoff_says_the_claim_ended(ch: _CH) -> None:
     _end("team")
-    for token, then in ((_scoped("team"), "mint a new token"), (_flat("team"), "does not allow")):
+    for token in (_scoped("team"), _flat("team")):
         with pytest.raises(PermissionError, match="claim on .*/team ended") as refused:
             asyncio.run(check_authorized(token, Role.VIEWER, ORG, "team"))
-        assert then in str(refused.value)
+        assert "does not allow VIEWER" in str(refused.value)
+
+
+def test_a_lowered_scoped_token_keeps_what_the_new_grant_allows(ch: _CH) -> None:
+    # Lowered from admin to writer: a writer-scoped token loses nothing it
+    # could do, so it is not refused; it is capped at the grant held now.
+    _end("team")
+    ch.live["team"] = "writer"
+    assert _admits(_scoped("team"), "team", Role.WRITER)
+    ch.live["team"] = "viewer"
+    assert not _admits(_scoped("team"), "team", Role.WRITER)
 
 
 def test_a_refresh_that_read_before_the_cutoff_keeps_it(ch: _CH) -> None:

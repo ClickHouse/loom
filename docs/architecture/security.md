@@ -77,7 +77,8 @@ revoking a leaked token. The cost is a short 503 window at boot.
 
 **Grant cutoffs.** Taking a grant away or lowering it writes a row of the same table,
 keyed `grant:<org>/<namespace>/<hash of the case-folded subject>` (one per spelling of the
-subject; the hash keeps an email out of the key but can be tested against a guessed one), so
+subject; the hash keeps an email out of the key but can be tested against a guessed one;
+it is not a keyed HMAC because a rotated key would orphan cutoffs kept for ten years), so
 tokens minted before it no longer reach the namespace through their own claim
 (`revocation.write_grant_cutoffs`, `authz.withdrawn_claims`). The row is the only record:
 the grant row is replaced by the subject's next one, so a cutoff is never derived from
@@ -103,9 +104,11 @@ Keeper refuses the second insert, so exactly one presenter runs.
 - **The other presenter** gets a retryable 503, not `invalid_grant`: it may be the owner
   retrying after a lost reply. Its retry, after the release, finds the credential used.
 - **Time limits.** Each phase has a wall-clock limit that counts retries and pool waits:
-  10 s to take the claim, 60 s to read the credential and decide, 10 s to use it up. A
-  claim older than 120 s was left by a dead exchange, and the next presenter takes it over
-  with a compare-and-swap.
+  10 s for a first read that finds the credential (a made-up one is refused there, before
+  any Keeper write), 10 s to take the claim, 60 s to read the credential again and decide,
+  10 s to use it up. The first read ends before the claim lands, so a live claim is at
+  most 80 s old. A claim older than 120 s was left by a dead exchange, and the next
+  presenter takes it over with a compare-and-swap.
 - **A consume that did not finish** (failed or cancelled) may still land, so the claim is
   kept until it goes stale. A refresh answers 503 with `Retry-After: 120`; a code, which
   expires sooner, answers with its tokens. Each server boot deletes stale claims.

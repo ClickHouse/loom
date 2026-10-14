@@ -60,8 +60,8 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   `builtin:cohere[:model]`, or an endpoint the operator names in `LOOM_RERANK_ENDPOINTS_JSON`.
   A URL or an unknown name is a 422. A namespace that still stores a URL is no longer reranked.
 - **Security:** revoking or lowering a grant ends what the subject's older tokens claim on
-  that namespace: a flat one reaches it only through the subject's current grant, a scoped
-  one must be minted again. Tokens minted later (sign-in, an OAuth code exchange or
+  that namespace: a flat one reaches it only through the subject's current grant, and a
+  scoped one keeps its own role there capped at that grant. Tokens minted later (sign-in, an OAuth code exchange or
   refresh) leave it out for good; a later grant gives access back through itself, not
   through the old claim. A restricted namespace, read only by a token naming it, is named
   again while a live grant covers the person. The cutoff is a `loom.revoked_tokens` row

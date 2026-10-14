@@ -213,9 +213,11 @@ async def revoke(
 
 def _apply_locally(keys: list[str], cutoff: int | None) -> None:
     """Apply revocations this process just wrote, now and in every refresh
-    for a while (`_fold_written`). Just written, they are the newest rows for
-    their keys, so they replace what the snapshot holds. `loaded()` is left as
-    it is: rows this process wrote are not a snapshot."""
+    for a while (`_fold_written`). Here they replace what the snapshot holds:
+    the rows just inserted are the newest versions of their keys in
+    ClickHouse. A later refresh may know newer ones, so it never moves a key
+    back. `loaded()` is left as it is: rows this process wrote are not a
+    snapshot."""
     global _revoked_jtis, _revoked_before
     now = time.monotonic()
     full, before = set(_revoked_jtis), dict(_revoked_before)
@@ -256,10 +258,6 @@ def grant_claim_key(org: str, namespace: str, subject: str) -> str:
     checks."""
     digest = hashlib.sha256(subject.lower().encode()).hexdigest()[:32]
     return f"{_GRANT_CLAIM_PREFIX}{org}/{namespace}/{digest}"
-
-
-def is_grant_claim_key(key: str) -> bool:
-    return key.startswith(_GRANT_CLAIM_PREFIX)
 
 
 def grant_cutoff_applies(org: str, namespace: str, subject: str, issued_at: int) -> bool:
@@ -379,20 +377,19 @@ async def _read_revocations(keys: list[str]) -> list[dict[str, Any]]:
         )
 
 
-async def list_active() -> list[dict[str, Any]]:
-    """The unexpired revocations, newest first — the same rows the refresh
-    worker reads every `jwt_revocation_cache_ttl_seconds`, so this read is
-    already paid for at that cadence. Most rows are grant cutoffs, one per
-    namespace and spelling of each subject a grant was taken from."""
+async def list_active(*, include_grant_cutoffs: bool = False) -> list[dict[str, Any]]:
+    """The unexpired revocations, newest first. Grant cutoffs, most of the
+    table, are left out unless asked for."""
     from server.core.ch import get_client
 
     rows = await get_client().query_all(
         """
         SELECT jti, revoked_at, expires_at, reason, revoked_by, issued_before
         FROM loom.revoked_tokens FINAL
-        WHERE expires_at > now()
+        WHERE expires_at > now() AND ({cutoffs:Bool} OR NOT startsWith(jti, {prefix:String}))
         ORDER BY revoked_at DESC
         """,
+        params={"cutoffs": include_grant_cutoffs, "prefix": _GRANT_CLAIM_PREFIX},
     )
     return [dict(r) for r in rows]
 

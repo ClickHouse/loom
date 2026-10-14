@@ -37,7 +37,7 @@ class Fanout:
     # The order is a priority (a scoped token's), read as strict tiers.
     ordered: bool = False
     # The public ones, which the cap drops before any private one, unless the
-    # order is a priority. Left unread when every namespace fits under the cap.
+    # order is a priority. Not fetched when every namespace fits under the cap.
     public: frozenset[str] = frozenset()
 
     def split(self, namespace: str) -> Split:

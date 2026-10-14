@@ -187,7 +187,8 @@ curl -s "$LOOM_BASE_URL/v1/grants.create" -H "Authorization: Bearer $ADMIN_TOKEN
   lowering, `namespace.leave`, `loom claim-release` and a restore that lowers a grant each
   write a cutoff in `loom.revoked_tokens`, keyed by a hash of each case-folded spelling of
   the subject and kept ten years. A flat token minted before it reaches the namespace only
-  through the subject's current grant; a scoped one loses it and must be minted again.
+  through the subject's current grant; a scoped one keeps its own role there, capped at
+  that grant.
   Every token minted later (sign-in, an OAuth exchange or refresh) leaves the namespace out
   of its claim for good: a later grant, an admin one included, gives access back through
   itself. A restricted namespace is the exception: a token reads one only by naming it,

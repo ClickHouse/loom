@@ -157,8 +157,9 @@ operation's role, or a live grant does.
     `grants.create` with `replace=true`, `namespace.leave`, a released claim, a restore that
     lowers it, a maintainer leaving a repository's branches) writes a cutoff. A token
     minted before it reaches the namespace only through the grant the subject holds now,
-    even when an operator also named the namespace at mint. A scoped token must be minted
-    again, from the next second on: the cutoff covers the whole second of the change.
+    even when an operator also named the namespace at mint; a scoped one keeps its own role
+    there, capped at that grant. The cutoff covers the whole second of the change, so a
+    token minted in that second is cut too.
   - **What minting does.** Signing in, an OAuth code exchange and an OAuth refresh leave a
     cut namespace out of the token they mint, for good. A later grant, an admin one
     included, gives access back through itself and never brings the claim back. Each mint

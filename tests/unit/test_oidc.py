@@ -513,3 +513,14 @@ async def test_authorize_redirects_to_idp(monkeypatch) -> None:
     pend = oauth._store.pending[captured["state"]]
     assert pend["client_id"] == cid and pend["mcp_state"] == "mcp-state"
     assert pend["nonce"] == captured["nonce"]
+
+
+async def test_a_jit_read_that_fails_is_a_retryable_sign_in_failure(monkeypatch) -> None:
+    _jit_on(monkeypatch)
+
+    async def down(org: str, ident: str) -> list[dict[str, Any]]:
+        raise RuntimeError("replica away")
+
+    monkeypatch.setattr(jit, "_accounts_naming", down)
+    with pytest.raises(login.SignInUnavailable):
+        await jit.jit_provision_for_email("bob@acme.com")

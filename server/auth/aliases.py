@@ -91,6 +91,8 @@ async def _read_spellings(
     from server.core.ch import get_client
 
     limit = _CUTOFF_SPELLINGS if include_inactive else _LOOKUP_SPELLINGS
+    # A cutoff reads one row more than it may use, to see that it has them all.
+    fetch = limit + 1 if include_inactive else limit
     client = ch or get_client()
     rows = await client.query_all(  # type: ignore[attr-defined]
         """
@@ -101,12 +103,17 @@ async def _read_spellings(
           AND (owner_email = {sub:String} OR lower(contact_email) = lower({sub:String}))
         LIMIT {lim:UInt32}
         """,
-        params={"org": org, "sub": subject, "all": include_inactive, "lim": limit + 1},
+        params={
+            "org": org,
+            "sub": subject,
+            "all": include_inactive,
+            "lim": fetch,
+        },
     )
     if include_inactive and len(rows) > limit:
         raise RuntimeError(f"more than {limit} accounts tie spellings to {subject!r} in {org!r}")
     out = [subject]
-    for r in rows[:limit]:
+    for r in rows:
         for spelling in (str(r.get("owner_email") or ""), str(r.get("contact_email") or "")):
             if spelling and spelling.lower() not in {s.lower() for s in out}:
                 out.append(spelling)

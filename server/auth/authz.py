@@ -146,7 +146,7 @@ async def check_authorized(
     # (org-level) ops fall through to the flat-role check below.
     withdrawn = org is not None and namespace is not None and claim_withdrawn(auth, org, namespace)
     if auth.has_ns_roles() and org is not None and namespace is not None:
-        if _scoped_allows(auth, required_role, org, namespace, withdrawn=withdrawn):
+        if await _check_scoped(auth, required_role, org, namespace, withdrawn=withdrawn):
             return
 
     # Reads check the readable set; writes (WRITER+) check the narrower
@@ -197,8 +197,7 @@ async def check_authorized(
 
     # Be specific so the failing gate is visible to debug clients.
     if withdrawn:
-        then = f"the grant held there now does not allow {required_role.name}"
-        raise _refused(_withdrawn_message(org, namespace, then), org, namespace)
+        raise _refused(_withdrawn_message(org, namespace, required_role), org, namespace)
     if not ns_covered_by_jwt:
         raise _refused(
             f"principal {auth.subject!r} cannot access {org}/{namespace} "
@@ -312,13 +311,18 @@ def names_namespace(auth: AuthInfo, org: str, namespace: str) -> bool:
     return any(ns == namespace for ns, _role in auth.ns_roles)
 
 
-def _scoped_allows(
+async def _check_scoped(
     auth: AuthInfo, required_role: Role, org: str, namespace: str, *, withdrawn: bool
 ) -> bool:
-    """Whether a scoped token's own role on (org, namespace) allows
-    `required_role`. Raises when it does not, except for a read of a code
-    namespace, which goes on to the grant check (False)."""
-    eff = None if withdrawn else auth.effective_role(org, namespace)
+    """Decide a namespace-bound op for a scoped token by its own role there:
+    True when that role allows `required_role`, a refusal when it does not.
+    A token whose claim was withdrawn keeps no more than the grant its subject
+    holds there now. A read of a code namespace is the exception: it goes on
+    to the grant check (False)."""
+    eff = auth.effective_role(org, namespace)
+    if eff is not None and withdrawn:
+        live = await _lookup_grant(org, namespace, auth.subject)
+        eff = None if live is None else min(eff, live)
     # An `ns_write` claim (inherited by a delegated child) binds writes too.
     outside_write_claim = (
         required_role.value >= Role.WRITER.value
@@ -327,29 +331,30 @@ def _scoped_allows(
     )
     if eff is not None and eff.value >= required_role.value and not outside_write_claim:
         return True
-    # On a repository the join IS the read. A scoped
-    # token's map caps what it writes and which memory it reads; a code
-    # index is read-only reference data a maintainer admits people to by
-    # grant, so a reader grant — the subject's own, or the creator's for
-    # a service account — widens READS of a configured code namespace and
-    # nothing else. Without it, every agent token minted before a person
-    # joined a repository would need a re-mint to follow them in.
-    if not (required_role.value <= Role.VIEWER.value and _is_code_namespace(org, namespace)):
-        if withdrawn:
-            raise _refused(_withdrawn_message(org, namespace, "mint a new token"), org, namespace)
-        raise _refused(
-            f"scoped token: {required_role.name} required on {org}/{namespace}; "
-            f"token grants {eff.name if eff else 'no access'} there",
-            org,
-            namespace,
-        )
-    return False
+    # On a repository the join IS the read. A scoped token's map caps what it
+    # writes and which memory it reads; a code index is read-only reference
+    # data a maintainer admits people to by grant, so a reader grant (the
+    # subject's own, or the creator's for a service account) widens READS of
+    # a configured code namespace and nothing else. Without it, every agent
+    # token minted before a person joined a repository would need a re-mint
+    # to follow them in.
+    if required_role.value <= Role.VIEWER.value and _is_code_namespace(org, namespace):
+        return False
+    if withdrawn:
+        raise _refused(_withdrawn_message(org, namespace, required_role), org, namespace)
+    raise _refused(
+        f"scoped token: {required_role.name} required on {org}/{namespace}; "
+        f"token grants {eff.name if eff else 'no access'} there",
+        org,
+        namespace,
+    )
 
 
-def _withdrawn_message(org: str, namespace: str, then: str) -> str:
+def _withdrawn_message(org: str, namespace: str, required_role: Role) -> str:
     return (
         f"this token's claim on {org}/{namespace} ended when a grant there was revoked "
-        f"or lowered after it was minted; {then}"
+        f"or lowered after it was minted, and the grant held there now does not allow "
+        f"{required_role.name}"
     )
 
 

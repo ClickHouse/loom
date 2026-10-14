@@ -758,10 +758,9 @@ async def _exchange(
     from server.auth import oauth_claims
     from server.core.ch import get_client
 
-    # A made-up credential costs a read, not a Keeper write. The read stands in
-    # front of the claim, so it gets the claim's time limit.
+    # A made-up credential costs a read, not a Keeper write.
     try:
-        async with asyncio.timeout(oauth_claims.CLAIM_TIMEOUT_S):
+        async with asyncio.timeout(oauth_claims.FIND_TIMEOUT_S):
             found = await _find(kind, credential, client_id)
     except Exception as e:  # an unreadable store answers retryably, as below
         raise _log_and_retry_later("credential read", e) from e
@@ -929,7 +928,7 @@ async def _mint_namespaces(grant: dict[str, Any], issued_at: int) -> list[str]:
     and still granted (a restricted namespace is read only by a token naming
     it, and the live grant is checked on every call). Read from ClickHouse:
     a token minted past a revocation this process has not seen keeps it."""
-    from server.auth.login import widen_with_restricted_grants
+    from server.auth.login import restricted_grant_namespaces
     from server.auth.revocation import read_grant_cutoffs, subjects_revoked
 
     org, subject = grant["org"], grant["subject"]
@@ -939,7 +938,7 @@ async def _mint_namespaces(grant: dict[str, Any], issued_at: int) -> list[str]:
             raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
         ended = await read_grant_cutoffs(org, subject, namespaces, issued_at=issued_at)
         if ended:
-            ended -= set(await widen_with_restricted_grants(subject, org, [], strict=True))
+            ended -= set(await restricted_grant_namespaces(subject, org, strict=True))
     except HTTPException:
         raise
     except Exception as e:  # no token is minted past a revocation it could not read

@@ -177,37 +177,14 @@ async def _without_cut_namespaces(subject: str, org: str, namespaces: list[str])
 async def widen_with_restricted_grants(
     subject: str, org: str, namespaces: list[str], *, strict: bool = False
 ) -> list[str]:
-    """`namespaces` (the person's own, first — their order is
-    the read priority) followed by every restricted namespace in `org` the
-    subject holds an active, unrevoked direct grant on, sorted, deduplicated.
-    Only restricted rows are added — see the module docstring. A failed read
-    leaves the set as it was: a login must never fail on this lookup, and
-    the owned namespaces alone are the safe fallback. `strict` raises instead,
+    """`namespaces` (the person's own, first — their order is the read
+    priority) followed by `restricted_grant_namespaces`, deduplicated. Only
+    restricted rows are added — see the module docstring. A failed read
+    leaves the set as it was: a login must never fail on this lookup, and the
+    owned namespaces alone are the safe fallback. `strict` raises instead,
     for a caller whose answer persists (an OAuth refresh grant)."""
-    ch = get_client()
     try:
-        from server.auth.aliases import subject_aliases
-        from server.core.grant_sql import LIVE_GRANT
-
-        subjects = [s.lower() for s in await subject_aliases(org, subject, ch=ch, strict=strict)]
-        # LIVE_GRANT's columns are the grant row's: the namespaces side
-        # selects none of them.
-        rows = await ch.query_all(
-            """
-            SELECT g.namespace AS namespace
-            FROM (SELECT * FROM loom.namespace_grants FINAL) AS g
-            INNER JOIN (SELECT org, namespace, classification, active
-                        FROM loom.namespaces FINAL) AS n
-                ON n.org = g.org AND n.namespace = g.namespace
-            WHERE g.org = {org:String}
-              AND lower(g.subject) IN {subs:Array(String)}
-              AND {live}
-              AND toString(n.classification) = 'restricted'
-              AND ifNull(n.active, true) = true
-            ORDER BY g.namespace
-            """.replace("{live}", LIVE_GRANT),
-            params={"org": org, "subs": subjects},
-        )
+        restricted = await restricted_grant_namespaces(subject, org, strict=strict)
     except Exception:
         if strict:
             raise
@@ -219,9 +196,36 @@ async def widen_with_restricted_grants(
         )
         return list(namespaces)
     own = list(namespaces)
-    seen = set(own)
-    extra = sorted({str(r.get("namespace") or "") for r in rows if r.get("namespace")} - seen)
-    return own + extra
+    return own + [ns for ns in restricted if ns not in set(own)]
+
+
+async def restricted_grant_namespaces(subject: str, org: str, *, strict: bool) -> list[str]:
+    """Every restricted namespace in `org` the subject holds an active,
+    unrevoked direct grant on, sorted. Raises when the read fails."""
+    from server.auth.aliases import subject_aliases
+    from server.core.grant_sql import LIVE_GRANT
+
+    ch = get_client()
+    subjects = [s.lower() for s in await subject_aliases(org, subject, ch=ch, strict=strict)]
+    # LIVE_GRANT's columns are the grant row's: the namespaces side selects
+    # none of them.
+    rows = await ch.query_all(
+        """
+        SELECT g.namespace AS namespace
+        FROM (SELECT * FROM loom.namespace_grants FINAL) AS g
+        INNER JOIN (SELECT org, namespace, classification, active
+                    FROM loom.namespaces FINAL) AS n
+            ON n.org = g.org AND n.namespace = g.namespace
+        WHERE g.org = {org:String}
+          AND lower(g.subject) IN {subs:Array(String)}
+          AND {live}
+          AND toString(n.classification) = 'restricted'
+          AND ifNull(n.active, true) = true
+        ORDER BY g.namespace
+        """.replace("{live}", LIVE_GRANT),
+        params={"org": org, "subs": subjects},
+    )
+    return sorted({str(r.get("namespace") or "") for r in rows if r.get("namespace")})
 
 
 def _identity_from_rows(

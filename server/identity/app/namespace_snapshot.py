@@ -199,7 +199,7 @@ async def handle_namespace_restore(
 
     # The cutoffs for the grants this restore lowers come before any row, as
     # in every other grant change: a failure then writes nothing.
-    if payload.grants:
+    if payload.grants and target_existing is not None:
         await _end_lowered_claims(input.org, input.target_namespace, payload.grants, caller, ch)
 
     now = naive_utc_now_seconds()

@@ -156,7 +156,7 @@ async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
         pending_role, pending_since = None, None
     if existing is not None and grant_rank(existing.role) > grant_rank(input.role):
         # Older tokens claim the role being taken away: a flat one falls back to
-        # the new grant, a scoped one must be minted again.
+        # the new grant, a scoped one is capped at it.
         await write_grant_cutoffs(
             input.org,
             [input.namespace],

@@ -2,10 +2,11 @@
 
 The OAuth store marks a credential used with a new ReplacingMergeTree
 version, and a read-then-mark cannot keep two concurrent exchanges of one
-credential apart. So /oauth/token claims the credential's key in
-`loom.oauth_claims` under keeper_map_strict_mode before it reads it, and
-releases the claim once the exchange is decided (kept, to go stale, when the
-consume did not finish and may still land): Keeper refuses the second
+credential apart. So once a first read has found the credential,
+/oauth/token claims its key in `loom.oauth_claims` under
+keeper_map_strict_mode, reads it again and decides, and releases the claim
+once the credential is used up (kept, to go stale, when the consume did not
+finish and may still land): Keeper refuses the second
 INSERT, so a concurrent presenter is told to retry (it may be the owner
 retrying), and its retry, after the release, finds the credential consumed.
 A claim a crashed exchange left is taken over once older than `STALE_S`,
@@ -39,6 +40,9 @@ log = logging.getLogger(__name__)
 # pool waits included. The rest is margin for the replicas' clocks.
 STALE_S = 120
 CLAIM_TIMEOUT_S = 10
+# The read that finds a credential before any claim. It ends before the claim
+# lands, so it adds nothing to a claim's age.
+FIND_TIMEOUT_S = 10
 EXCHANGE_TIMEOUT_S = 60
 CONSUME_TIMEOUT_S = 10
 # A release past this leaves the claim to go stale rather than hold the reply.

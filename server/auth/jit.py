@@ -100,7 +100,13 @@ async def jit_provision_for_email(
     # One sign-up per email at a time in this process, as self-signup does:
     # a second sign-in waits and finds the account the first wrote.
     async with claim_lock(org, "email:" + ident):
-        return await _provision_jit(org, ident, base)
+        try:
+            return await _provision_jit(org, ident, base)
+        except login.SignInUnavailable:
+            raise
+        except Exception as e:  # a read or write that failed: retryable, as any sign-in's
+            log.warning("oidc jit: sign-up of %r in %s failed: %s", ident, org, e)
+            raise login.SignInUnavailable from e
 
 
 async def _provision_jit(

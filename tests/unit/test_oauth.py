@@ -43,10 +43,10 @@ def keeper(monkeypatch: pytest.MonkeyPatch) -> None:
 def no_restricted_grants(monkeypatch: pytest.MonkeyPatch) -> None:
     """The restricted-grant read a refresh makes; a test that needs one patches it."""
 
-    async def _none(subject: str, org: str, namespaces: list[str], **_k: object) -> list[str]:
-        return list(namespaces)
+    async def _none(subject: str, org: str, **_k: object) -> list[str]:
+        return []
 
-    monkeypatch.setattr(login, "widen_with_restricted_grants", _none)
+    monkeypatch.setattr(login, "restricted_grant_namespaces", _none)
 
 
 def _revoke_subject(monkeypatch: pytest.MonkeyPatch, cutoff: int | None) -> None:
@@ -648,12 +648,10 @@ def test_a_refresh_keeps_a_cut_restricted_namespace_still_granted(
     viewer grant, the person still reads it, so the refresh keeps it."""
     from server.auth.jwt import verify_token
 
-    async def _still_granted(
-        subject: str, org: str, namespaces: list[str], **_k: object
-    ) -> list[str]:
-        return [*namespaces, "restricted-qa"]
+    async def _still_granted(subject: str, org: str, **_k: object) -> list[str]:
+        return ["restricted-qa"]
 
-    monkeypatch.setattr(login, "widen_with_restricted_grants", _still_granted)
+    monkeypatch.setattr(login, "restricted_grant_namespaces", _still_granted)
     c = _client()
     code, verifier = _seed_code()
     oauth._store.codes[oauth._token_id(code)]["namespaces"] = ["alice-ns", "restricted-qa"]
@@ -672,14 +670,14 @@ def test_a_failed_restricted_grant_read_does_not_narrow_the_session(
 
     calls = {"n": 0}
 
-    async def _flaky(subject: str, org: str, namespaces: list[str], **kw: object) -> list[str]:
+    async def _flaky(subject: str, org: str, **kw: object) -> list[str]:
         calls["n"] += 1
         if calls["n"] == 1:
             assert kw.get("strict") is True
             raise RuntimeError("replica away")
-        return [*namespaces, "restricted-qa"]
+        return ["restricted-qa"]
 
-    monkeypatch.setattr(login, "widen_with_restricted_grants", _flaky)
+    monkeypatch.setattr(login, "restricted_grant_namespaces", _flaky)
     c = _client()
     code, verifier = _seed_code()
     oauth._store.codes[oauth._token_id(code)]["namespaces"] = ["alice-ns", "restricted-qa"]

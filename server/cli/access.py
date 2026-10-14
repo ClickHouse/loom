@@ -303,9 +303,7 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
 
     async def _run(ch: Any) -> int:
         if args.list:
-            rows = await revocation.list_active()
-            if not args.grants:
-                rows = [r for r in rows if not revocation.is_grant_claim_key(str(r["jti"]))]
+            rows = await revocation.list_active(include_grant_cutoffs=args.grants)
             return _print_revocations(rows, as_json=args.json)
         token_id = args.jti or args.subject
         by = f"cli:{getpass.getuser()}"
