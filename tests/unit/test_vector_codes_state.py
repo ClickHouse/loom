@@ -296,7 +296,10 @@ async def test_a_process_whose_first_probes_fail_reads_once_clickhouse_answers()
 
     ch = _FakeCH(coded=[("chunks", "embedding")], patches={}, width=1024, fail=True)
     await vector_codes_state.probe(ch)
-    assert vector_codes_state._state.probed_at is None and vector_codes_state._state.codec_available is None
+    assert (
+        vector_codes_state._state.probed_at is None
+        and vector_codes_state._state.codec_available is None
+    )
     ch.fail = False
     with pytest.raises(CodedWidthMismatchError):
         await vector_codes_state.refuse_width("chunks", 3072)

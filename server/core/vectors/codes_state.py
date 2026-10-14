@@ -64,6 +64,7 @@ WHERE c.database = {db:String} AND c.compression_codec LIKE '%Quantized(%'
 """
 CODEC_SETTING_SQL = "SELECT count() AS n FROM system.settings WHERE name = 'enable_quantized_codec'"
 
+
 @dataclass
 class _State:
     # "loom.table.column" of every coded vector column; None = never read.

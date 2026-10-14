@@ -35,7 +35,9 @@ def test_an_array_of_nullable_datetimes_is_marked_past_a_null() -> None:
 def test_other_columns_are_not_walked() -> None:
     vector, today = [0.5, 0.25], date(2026, 1, 2)
     types = ["Array(BFloat16)", "Date", "String", "Array(Float32)"]
-    [row] = _insert_data([{"v": vector, "d": today, "s": "x", "e": []}], ["v", "d", "s", "e"], types)
+    [row] = _insert_data(
+        [{"v": vector, "d": today, "s": "x", "e": []}], ["v", "d", "s", "e"], types
+    )
     assert row[0] is vector and row[1] is today and row[2:] == ["x", []]
 
 
