@@ -8,7 +8,11 @@
 set -eu
 
 chosen=""
+# LOOM_RUNTIME_DIR, like the count, may be pinned in the env file alone.
 pinned=${LOOM_RUNTIME_DIR:-}
+if [ -z "$pinned" ]; then
+  pinned=$(python -m server.core.env_file LOOM_RUNTIME_DIR)
+fi
 if [ -z "${LOOM_WEB_WORKERS:-}" ]; then
   LOOM_WEB_WORKERS=$(python -m server.core.env_file LOOM_WEB_WORKERS)
 fi

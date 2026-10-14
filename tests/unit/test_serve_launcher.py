@@ -16,6 +16,7 @@ _PYTHON = """#!/bin/sh
 case "$*" in
   "-m server.core.web_workers") echo 4 ;;
   "-m server.core.env_file LOOM_WEB_WORKERS") echo "$STUB_ENV_FILE_WORKERS" ;;
+  "-m server.core.env_file LOOM_RUNTIME_DIR") echo "${STUB_ENV_FILE_RUNTIME_DIR:-}" ;;
   "-m server.core.runtime_files")
     [ "$STUB_RUNTIME_DIR" = none ] && { echo "loom: no private directory" >&2; exit 2; }
     [ "$STUB_RUNTIME_DIR" = broken ] && { echo "Traceback: settings invalid" >&2; exit 1; }
@@ -29,7 +30,13 @@ echo "$* runtime=${LOOM_RUNTIME_DIR:-}"
 
 
 def _launch(
-    tmp_path: Path, *, workers: str, runtime_dir: str, pinned: str = "", env_file: str = ""
+    tmp_path: Path,
+    *,
+    workers: str,
+    runtime_dir: str,
+    pinned: str = "",
+    env_file: str = "",
+    env_file_runtime_dir: str = "",
 ) -> subprocess.CompletedProcess[str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
@@ -41,6 +48,7 @@ def _launch(
         "STUB_RUNTIME_DIR": runtime_dir,
         "LOOM_WEB_WORKERS": workers,
         "STUB_ENV_FILE_WORKERS": env_file,
+        "STUB_ENV_FILE_RUNTIME_DIR": env_file_runtime_dir,
         "PORT": "1",
     }
     if pinned:
@@ -123,6 +131,17 @@ def test_a_pin_it_cannot_use_refuses_to_start_even_with_a_chosen_count(tmp_path:
     """A pinned directory is the operator's choice: a typo or the wrong owner is
     refused rather than quietly costing them the extra processes."""
     done = _launch(tmp_path, workers="", runtime_dir="none", pinned="/data/rt")
+    assert done.returncode == 2 and done.stdout == ""
+    assert "not starting" in done.stderr
+
+
+@pytest.mark.parametrize("workers", ["", "1"])
+def test_a_pin_only_the_env_file_names_is_checked_too(tmp_path: Path, workers: str) -> None:
+    """The server reads .env, so a directory pinned there alone is refused, not
+    skipped or traded for one process."""
+    done = _launch(
+        tmp_path, workers=workers, runtime_dir="none", env_file_runtime_dir="/nonexist/x"
+    )
     assert done.returncode == 2 and done.stdout == ""
     assert "not starting" in done.stderr
 
