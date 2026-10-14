@@ -89,6 +89,7 @@ def client(*, receive_timeout_s: int | None = None) -> Client:
         or max(300, int(settings.migrate_mutation_wait_s) + 60),
         # UTC whatever the server's <timezone>, as server.core.ch pins it.
         settings={"session_timezone": "UTC"},
+        tz_source="server",
     )
     ch.server_tz = UTC
     return ch

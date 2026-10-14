@@ -535,6 +535,7 @@ class CHClient:
             # bound is disabled); each statement's own deadline is applied
             # per call in `_with_retry`.
             send_receive_timeout=_driver_read_timeout_s(),
+            tz_source="server",
             connector_limit=settings.ch_pool_maxsize,
             connector_limit_per_host=settings.ch_pool_maxsize,
             # Close idle pooled connections before the Cloud load balancer
@@ -562,6 +563,8 @@ class CHClient:
         )
         # The driver learns the zone it binds aware params in from the server
         # default before the session setting applies; bind them in UTC too.
+        # tz_source="server" reads a bare DateTime in that zone, so reads come
+        # back naive UTC, never in the host's zone.
         self._client.server_tz = UTC
         await _probe_vector_state(self)
 

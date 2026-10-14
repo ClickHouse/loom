@@ -1,13 +1,15 @@
 """Loom's ClickHouse sessions run in UTC whatever zone the server defaults to:
 naive and aware datetime params bind as the same instant, and reads come back
-naive UTC. A user whose settings profile sets another `session_timezone`
-stands in for a server whose <timezone> is not UTC."""
+naive UTC whatever the host's zone. A user whose settings profile sets another
+`session_timezone` stands in for a server whose <timezone> is not UTC; one with
+summer time is the case the driver would otherwise read in the host's zone."""
 
 from __future__ import annotations
 
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -26,13 +28,17 @@ _SQL = (
 
 
 @pytest.fixture
-def kolkata_user(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+def berlin_user(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    from clickhouse_connect.driver import tzutil
+
     from server.core.schema.migrate import client
+
+    monkeypatch.setattr(tzutil, "local_tz", ZoneInfo("America/New_York"))
 
     admin = client()
     admin.command(
         "CREATE SETTINGS PROFILE OR REPLACE tz_probe_profile "
-        "SETTINGS session_timezone = 'Asia/Kolkata'"
+        "SETTINGS session_timezone = 'Europe/Berlin'"
     )
     admin.command(
         f"CREATE USER OR REPLACE {_USER} IDENTIFIED BY '{_PASSWORD}' "
@@ -59,7 +65,7 @@ def _assert_utc(row: dict[str, Any]) -> None:
     assert row["read_back"] == _NOON
 
 
-async def test_the_async_client_binds_and_reads_in_utc(kolkata_user: None) -> None:
+async def test_the_async_client_binds_and_reads_in_utc(berlin_user: None) -> None:
     from server.core.ch import CHClient
 
     c = CHClient()
@@ -70,7 +76,7 @@ async def test_the_async_client_binds_and_reads_in_utc(kolkata_user: None) -> No
         await c.disconnect()
 
 
-def test_the_migration_client_binds_and_reads_in_utc(kolkata_user: None) -> None:
+def test_the_migration_client_binds_and_reads_in_utc(berlin_user: None) -> None:
     from server.core.schema.migrate import client
 
     ch = client()
