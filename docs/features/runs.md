@@ -111,7 +111,9 @@ the same run for the session and no other token can name it by sending the same
 session id. A process registers the run on the session's first admitted
 run-scoped call and writes the begin row in the background (an awaited insert
 would hold that call for seconds on ClickHouse Cloud); a call the gates refuse
-writes no run row. Each process checks a cached run with the ledger at most once
+writes no run row. Two processes that both find no row each write a first begin,
+and the earlier start and its owner win (a first begin's row version counts down from
+its start; every later write supersedes it). Each process checks a cached run with the ledger at most once
 a minute and re-opens it when a `DELETE` or the sweep closed it in the meantime.
 A `DELETE` closes the run whichever process it reaches, by its id; the close
 counts every write under that id, whoever closes it. A `DELETE` that reaches

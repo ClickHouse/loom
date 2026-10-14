@@ -30,6 +30,11 @@ pytestmark = pytest.mark.skipif(
 ORG, AGENT = "itest-org", "itest-mcp"
 
 
+def _at(ns: int) -> datetime:
+    """A row's write time as its start, for a run begun that long ago."""
+    return datetime.fromtimestamp(ns / 1e9, UTC)
+
+
 def _sweep_only(monkeypatch: pytest.MonkeyPatch, org: str) -> None:
     """The live tests share a database: the sweep reads this test's org only."""
     monkeypatch.setattr(
@@ -107,6 +112,7 @@ async def test_the_idle_sweep_closes_a_run_its_own_calls_did_not_keep_busy(
                         else json.dumps({"implicit": run_id != explicit, "subject": "sa:a"})
                     ),
                     "version": long_ago,
+                    "started_at": _at(long_ago),
                 }
                 for run_id in [*busy, quiet, borrowed, explicit, legacy]
             ],
@@ -155,6 +161,7 @@ async def test_the_idle_sweep_reads_any_number_of_active_runs(
                     "environment": "mcp",
                     "metadata": '{"implicit":true,"subject":"sa:a"}',
                     "version": long_ago,
+                    "started_at": _at(long_ago),
                 }
                 for run_id in ids
             ],
@@ -192,6 +199,7 @@ async def test_the_idle_sweep_closes_a_run_however_long_ago_it_was_written(
                     "environment": "mcp",
                     "metadata": '{"implicit":true,"subject":"sa:a"}',
                     "version": long_ago,
+                    "started_at": _at(long_ago),
                 }
             ],
             settings={"async_insert": 0},
@@ -228,6 +236,7 @@ async def test_a_run_that_records_no_subject_stays_open_while_it_is_called(
                     "environment": "mcp",
                     "metadata": '{"implicit":true,"transport":"mcp"}',
                     "version": long_ago,
+                    "started_at": _at(long_ago),
                 }
                 for run_id in (busy, quiet)
             ],
@@ -264,7 +273,9 @@ async def test_a_run_reopened_or_called_within_the_window_is_busy(ch: Any) -> No
     long_ago = time.time_ns() - 7200 * 10**9
     try:
         await ch.insert(
-            "loom.agent_runs", [{**row, "version": long_ago}], settings={"async_insert": 0}
+            "loom.agent_runs",
+            [{**row, "version": long_ago, "started_at": _at(long_ago)}],
+            settings={"async_insert": 0},
         )
         assert not await busy_lately(ch, org, "ns", run_id, "sa:a", 60)
         await _ledger_call(ch, "elsewhere", run_id, subject="sa:eve", org=org)
@@ -274,7 +285,9 @@ async def test_a_run_reopened_or_called_within_the_window_is_busy(ch: Any) -> No
         await ch.execute(
             "DELETE FROM loom.agent_events WHERE org = {org:String}", params={"org": org}
         )
-        await ch.insert("loom.agent_runs", [row], settings={"async_insert": 0})  # re-opened now
+        # Re-opened now: a new version that keeps the old start.
+        reopened = {**row, "started_at": _at(long_ago)}
+        await ch.insert("loom.agent_runs", [reopened], settings={"async_insert": 0})
         assert await busy_lately(ch, org, "ns", run_id, "sa:a", 60)
     finally:
         for table in ("agent_runs", "agent_events"):
@@ -584,3 +597,53 @@ async def test_a_close_under_an_unpinned_scoped_token_counts_all_the_runs_writes
                 f"DELETE FROM loom.{table} WHERE org = {{org:String}} AND namespace = {{ns:String}}",
                 params={"org": ORG, "ns": namespace},
             )
+
+
+@pytest.mark.asyncio
+async def test_two_first_begins_that_both_found_no_run_keep_the_earlier(
+    ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two cold web processes read "no run" before either writes: the run keeps
+    the earlier start and its owner, and a close still supersedes both."""
+    from datetime import timedelta
+
+    from server.tasks.api.models_run import RunBeginInput
+    from server.tasks.app.run import begin_session_run, close_session_run
+    from server.tasks.store import runs as runs_store
+
+    namespace = f"itest-{uuid.uuid4().hex[:12]}"
+    run_id = session_run_id(ORG, "sa:a", uuid.uuid4().hex)
+    first = naive_utc_now().replace(microsecond=0)  # DateTime64(3) keeps it exactly
+
+    def begin(user: str) -> RunBeginInput:
+        return RunBeginInput(
+            org=ORG,
+            namespace=namespace,
+            agent=AGENT,
+            run_id=run_id,
+            user_id=user,
+            goal="mcp session (itest)",
+            environment="mcp",
+            metadata={"implicit": True, "subject": "sa:a"},
+        )
+
+    async def absent(*_: Any) -> None:
+        return None
+
+    try:
+        with monkeypatch.context() as m:
+            m.setattr(runs_store, "fetch_run", absent)  # both read before either writes
+            await begin_session_run(begin("u1"), started_at=first)
+            await begin_session_run(begin("u2"), started_at=first + timedelta(milliseconds=240))
+        row = await runs_store.fetch_run(ch, ORG, namespace, run_id)
+        assert row is not None
+        assert (row["user_id"], to_naive_utc(row["started_at"])) == ("u1", first)
+        assert await runs_store.busy_lately(ch, ORG, namespace, run_id, "sa:a", 60)
+        assert await close_session_run(ORG, run_id, reason="session_end")
+        row = await runs_store.fetch_run(ch, ORG, namespace, run_id)
+        assert row is not None and row["status"] == "completed"
+    finally:
+        await ch.execute(
+            "DELETE FROM loom.agent_runs WHERE org = {org:String} AND namespace = {ns:String}",
+            params={"org": ORG, "ns": namespace},
+        )

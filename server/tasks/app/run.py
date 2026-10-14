@@ -20,7 +20,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from server.core.ch import get_client, sequential_reads
@@ -57,6 +57,10 @@ _METADATA_LIMIT = 8_000
 IDLE_CLOSE_BATCH = 500
 IDLE_CLOSES_AT_ONCE = 8
 IDLE_CLOSE_BUDGET_S = 120.0
+# A session run's first begin writes this minus its start (in ns) as its version, so
+# of two web processes that both found no row the earlier start and its owner win
+# under FINAL; every later write takes the server's ns clock, far above it.
+_FIRST_BEGIN_VERSION_BASE = 3_500_000_000_000_000_000
 
 
 def _iso(value: Any) -> str:
@@ -239,14 +243,18 @@ async def begin_session_run(input: RunBeginInput, *, started_at: datetime) -> No
     ch = get_client()
     with sequential_reads():
         existing = await runs_store.fetch_run(ch, input.org, input.namespace, input.run_id)
-    if existing is not None:
+    version = None
+    if existing is None:
+        started_ms = int(started_at.replace(tzinfo=UTC).timestamp() * 1000)
+        version = _FIRST_BEGIN_VERSION_BASE - started_ms * 1_000_000
+    else:
         input = input.model_copy(
             update={
                 "user_id": str(existing.get("user_id") or input.user_id),
                 "session_id": str(existing.get("session_id") or input.session_id),
             }
         )
-    await _open_run(ch, input, input.run_id, existing, started_at=started_at)
+    await _open_run(ch, input, input.run_id, existing, started_at=started_at, version=version)
 
 
 async def active_session_runs(org: str, run_id: str) -> list[RunLedgerRow]:
@@ -362,9 +370,10 @@ async def _open_run(
     existing: RunLedgerRow | None,
     *,
     started_at: datetime | None = None,
+    version: int | None = None,
 ) -> RunBeginOutput:
     """Write the run's active row and answer with its id. A new row starts at
-    `started_at` (default: now)."""
+    `started_at` (default: now); `version` replaces the server's (a session run's first begin)."""
     # The begin row in the ledger carries the run it opened, so begin and complete join
     # on `run_id` (the body names none; the transport's fallback is the header run, empty
     # for a bare client).
@@ -405,6 +414,8 @@ async def _open_run(
             else input.metadata
         ),
     }
+    if version is not None:
+        row["version"] = version
     await runs_store.insert_runs(ch, [row])
     return RunBeginOutput(
         run_id=run_id,

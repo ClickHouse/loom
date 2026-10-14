@@ -74,7 +74,10 @@ _SYNC_INSERT = {"async_insert": 0, "wait_for_async_insert": 1}
 def run_row(row: RunLedgerRow) -> dict[str, Any]:
     """Every agent_runs column of `row`, the grade columns defaulted."""
     cols: dict[str, Any] = dict(row)
-    return {c: cols[c] if c in cols else _COLUMN_DEFAULTS[c] for c in RUN_COLUMNS}
+    out = {c: cols[c] if c in cols else _COLUMN_DEFAULTS[c] for c in RUN_COLUMNS}
+    if "version" in cols:
+        out["version"] = cols["version"]
+    return out
 
 
 async def fetch_run(ch: Any, org: str, ns: str, run_id: str) -> RunLedgerRow | None:
@@ -362,6 +365,9 @@ async def idle_session_runs(
         SELECT org, namespace, run_id FROM loom.agent_runs FINAL
         WHERE run_id IN candidates AND ({org:String} = '' OR org = {org:String})
           AND status = 'active' AND JSONExtractBool(metadata, 'implicit')
+          -- Neither begun nor written since: a first begin's version is no time
+          -- (begin_session_run), so its start says when it was begun.
+          AND started_at < now64(3) - INTERVAL {idle:UInt32} SECOND
           AND version < toUInt64(toUnixTimestamp64Nano(now64(9) - INTERVAL {idle:UInt32} SECOND))
           AND (org, run_id, JSONExtractString(metadata, 'subject')) NOT IN recent
           AND (
@@ -391,6 +397,9 @@ async def busy_lately(
             OR (SELECT max(version) FROM loom.agent_runs
                 WHERE org = {org:String} AND namespace = {ns:String} AND run_id = {rid:String})
                >= toUInt64(toUnixTimestamp64Nano(now64(9) - INTERVAL {idle:UInt32} SECOND))
+            OR (SELECT max(started_at) FROM loom.agent_runs
+                WHERE org = {org:String} AND namespace = {ns:String} AND run_id = {rid:String})
+               >= now64(3) - INTERVAL {idle:UInt32} SECOND
             AS busy
         """,
         params={"org": org, "ns": ns, "rid": run_id, "subject": subject, "idle": idle_seconds},
