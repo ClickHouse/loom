@@ -48,7 +48,7 @@ def test_ensure_returns_before_run_begin_lands_and_close_waits_for_it(monkeypatc
         await gate.wait()
         order.append(f"begin:{inp.run_id}")
 
-    async def complete(ch: Any, inp: Any, existing: Any) -> None:
+    async def complete(ch: Any, inp: Any, existing: Any, **_: Any) -> None:
         order.append(f"complete:{inp.run_id}")
 
     async def fetch(ch: Any, org: str, ns: str, run_id: str) -> dict[str, str]:

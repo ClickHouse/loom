@@ -70,37 +70,42 @@ def _min_limit(dirs: list[Path], read: Callable[[Path], float | None]) -> float:
     return min(vals) if vals else math.inf
 
 
+def _number(raw: str | None) -> float | None:
+    """A cgroup value as a number; None (no limit) when it does not parse."""
+    try:
+        return float(raw) if raw else None
+    except ValueError:
+        return None
+
+
 def _v2_cpu(d: Path) -> float | None:
-    raw = _read(d / "cpu.max")
-    if not raw:
-        return None
-    quota, _, period = raw.partition(" ")
-    if quota == "max" or not period:
-        return None
-    return int(quota) / int(period)
+    quota, _, period = (_read(d / "cpu.max") or "").partition(" ")
+    q, p = _number(quota), _number(period)
+    return q / p if q and p else None
 
 
 def _v1_cpu(d: Path) -> float | None:
-    quota, period = _read(d / "cpu.cfs_quota_us"), _read(d / "cpu.cfs_period_us")
-    if not quota or not period or int(quota) <= 0:
-        return None
-    return int(quota) / int(period)
+    q, p = _number(_read(d / "cpu.cfs_quota_us")), _number(_read(d / "cpu.cfs_period_us"))
+    return q / p if q and q > 0 and p else None
 
 
 def _v2_mem(d: Path) -> float | None:
-    raw = _read(d / "memory.max")
-    return None if not raw or raw == "max" else float(raw)
+    return _number(_read(d / "memory.max"))  # "max" does not parse: no limit
 
 
 def _v1_mem(d: Path) -> float | None:
-    raw = _read(d / "memory.limit_in_bytes")
-    return None if not raw or int(raw) >= _UNLIMITED else float(raw)
+    limit = _number(_read(d / "memory.limit_in_bytes"))
+    return None if limit is None or limit >= _UNLIMITED else limit
 
 
 def _mem_total(meminfo: str) -> float:
+    """The host's memory to the nearest GiB: MemTotal reads a little under the
+    nominal size, which would cost an 8 GiB host a worker."""
     for line in meminfo.splitlines():
         if line.startswith("MemTotal:"):
-            return float(line.split()[1]) * 1024
+            kib = _number(line.split()[1])
+            if kib is not None:
+                return round(kib / 1024**2) * 1024.0**3
     return math.inf
 
 

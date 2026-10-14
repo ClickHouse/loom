@@ -612,8 +612,8 @@ class Limiter:
         """
         op_class = op_class_for(op_name)
         cls = bucket_class(traffic_class)
-        self._sync_overrides()
         store = self._store()
+        self._sync_overrides()
         if store is not None:
             return self._check_shared(
                 store, namespace, op_class, org=org, actor=actor, traffic_class=cls
@@ -771,9 +771,9 @@ class Limiter:
         if self._overrides_doc is not None:
             path = self._overrides_doc.path  # None: never used, or no directory
             if path:
-                for name in (path, path + ".lock"):
-                    with contextlib.suppress(OSError):
-                        os.remove(name)
+                # The lock file stays: a sibling may hold it.
+                with contextlib.suppress(OSError):
+                    os.remove(path)
             self._overrides_doc, self._overrides_key = None, None
 
 

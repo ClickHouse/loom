@@ -220,10 +220,18 @@ async def test_a_run_that_records_no_subject_stays_open_while_it_is_called(ch: A
 
 
 @pytest.mark.asyncio
-async def test_closes_racing_for_one_session_run_leave_it_completed(ch: Any) -> None:
+async def test_closes_racing_for_one_session_run_leave_it_completed(
+    ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Closes that judge nothing may both get through; the run ends completed."""
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app.write import handle_memory_set
+    from server.settings import settings
     from server.tasks.api.models_run import RunBeginInput
     from server.tasks.app.run import active_session_runs, begin_session_run, close_session_run
+
+    # The server default would age the run's memories; a session's run keeps them.
+    monkeypatch.setattr(settings, "memory_run_complete_retain", "demote")
 
     org = f"itest-race-{uuid.uuid4().hex[:8]}"
     run_id = session_run_id(org, "sa:a", uuid.uuid4().hex)
@@ -240,14 +248,31 @@ async def test_closes_racing_for_one_session_run_leave_it_completed(ch: Any) -> 
             ),
             started_at=naive_utc_now(),
         )
+        await handle_memory_set(
+            MemorySetInput(
+                org=org,
+                namespace="ns",
+                agent=AGENT,
+                run_id=run_id,
+                memory_key="t/fact/1",
+                value="the session noted a fact",
+            )
+        )
         closed = await asyncio.gather(
             *(close_session_run(org, run_id, reason="session_end") for _ in range(3))
         )
-        assert any(closed) and await active_session_runs(org, run_id) == []
-    finally:
-        await ch.execute(
-            "DELETE FROM loom.agent_runs WHERE org = {org:String}", params={"org": org}
+        assert any(closed)
+        assert await active_session_runs(org, run_id) == []
+        row = await ch.query_one(
+            "SELECT confidence, expires_at FROM loom.memory FINAL WHERE org = {org:String}",
+            params={"org": org},
         )
+        assert row == {"confidence": 1.0, "expires_at": None}
+    finally:
+        for table in ("agent_runs", "memory"):
+            await ch.execute(
+                f"DELETE FROM loom.{table} WHERE org = {{org:String}}", params={"org": org}
+            )
 
 
 @pytest.mark.asyncio

@@ -50,6 +50,11 @@ def codec_width(codec: str) -> int | None:
     return int(found.group(1)) if found else None
 
 
+def creates_coded_table(sql: str) -> bool:
+    """Whether `sql` creates a table whose vector columns get the codec."""
+    return any(m.group(1) in CODED_TABLES for m in _CREATE_RE.finditer(sql))
+
+
 def codable(dim: int) -> bool:
     """Whether the codec takes `dim`: RaBitQ packs one bit per dimension into whole bytes."""
     return dim > 0 and dim % 8 == 0

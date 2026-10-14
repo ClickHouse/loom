@@ -70,7 +70,8 @@ leave that key out of `memories_used` so the run is not counted twice. See
 
 Pinned, verified, promoted, locked, episodic and reflection rows are kept whatever the
 mode, and no mode tombstones anything. The default comes from
-`LOOM_MEMORY_RUN_COMPLETE_RETAIN`.
+`LOOM_MEMORY_RUN_COMPLETE_RETAIN`; an MCP session's implicit run always keeps, since
+the transport that closes it cannot judge the work.
 
 ## Graded runs
 

@@ -175,10 +175,26 @@ async def test_a_process_that_only_writes_refreshes_its_widths_too(
     ch.coded = []  # the table was rebuilt plain
     monkeypatch.setattr(settings, "vector_codes_state_probe_seconds", 0)
     with pytest.raises(CodedWidthMismatchError):
-        vector_codes_state.refuse_width("chunks", 8)  # this write: the old reading
+        await vector_codes_state.refuse_width("chunks", 8)  # a fresh, old reading
     await _the_refresh()
     monkeypatch.setattr(settings, "vector_codes_state_probe_seconds", 60)
-    vector_codes_state.refuse_width("chunks", 8)
+    await vector_codes_state.refuse_width("chunks", 8)
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_rereads_a_reading_older_than_a_few_seconds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A table rebuilt outside Loom is not refused on its old width meanwhile."""
+    ch = _FakeCH(coded=[("chunks", "embedding")], patches={"chunks": 0})
+    await vector_codes_state.probe(ch)
+    ch.coded = []  # rebuilt plain by an operator's script
+    monkeypatch.setattr(
+        vector_codes_state,
+        "_probed_at",
+        vector_codes_state._probed_at - vector_codes_state.RECHECK_BEFORE_REFUSING_S - 1,
+    )
+    await vector_codes_state.refuse_width("chunks", 8)  # re-read, then let through
 
 
 @pytest.mark.asyncio
@@ -335,12 +351,15 @@ def test_a_vector_its_coded_column_cannot_take_is_refused_by_name(
         {"loom.memory_embeddings.embedding": 8, "loom.memory_embeddings.memory_key_embedding": 8},
     )
     fits = {"embedding": [0.0] * 8, "memory_key_embedding": []}
-    vector_codes_state.refuse_other_widths("memory_embeddings", [fits])
-    vector_codes_state.refuse_other_widths("loom.chunks", [{"embedding": [0.0] * 3}])
+    refuse = vector_codes_state.refuse_other_widths
+    asyncio.run(refuse("memory_embeddings", [fits]))
+    asyncio.run(refuse("loom.chunks", [{"embedding": [0.0] * 3}]))
     with pytest.raises(CodedWidthMismatchError) as e:
-        vector_codes_state.refuse_other_widths(
-            "loom.memory_embeddings",
-            [fits, {"embedding": [0.0] * 8, "memory_key_embedding": [1.0]}],
+        asyncio.run(
+            refuse(
+                "loom.memory_embeddings",
+                [fits, {"embedding": [0.0] * 8, "memory_key_embedding": [1.0]}],
+            )
         )
     assert e.value.status_code == 503
     assert e.value.to_detail()["code"] == "CODED_WIDTH_MISMATCH"

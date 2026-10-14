@@ -63,5 +63,5 @@ async def test_a_knowledge_write_at_another_width_touches_nothing(ch: _Untouched
     with pytest.raises(CodedWidthMismatchError):
         await write()
     assert ch.used == []
-    codes_state.refuse_width("chunks", FixedEmbedder.dim * 2)  # the stored width passes
-    codes_state.refuse_width("memory_embeddings", 7)  # not coded: nothing to refuse
+    await codes_state.refuse_width("chunks", FixedEmbedder.dim * 2)  # the stored width passes
+    await codes_state.refuse_width("memory_embeddings", 7)  # not coded: nothing to refuse

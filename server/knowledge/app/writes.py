@@ -177,7 +177,7 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
     from server.knowledge.store import chunks as knowledge_repo
 
     embedder = get_embedder()
-    codes_state.refuse_width("chunks", embedder.dim)
+    await codes_state.refuse_width("chunks", embedder.dim)
     doc_id = str(uuid.uuid4())
     version = _nano_version()
     now = datetime.now(UTC).replace(tzinfo=None)
@@ -296,7 +296,7 @@ async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
     from server.observability.otel import traced
 
     embedder = get_embedder()
-    codes_state.refuse_width("chunks", embedder.dim)
+    await codes_state.refuse_width("chunks", embedder.dim)
     doc_id = str(uuid.uuid4())
     version = _nano_version()
     now = datetime.now(UTC).replace(tzinfo=None)
@@ -551,7 +551,7 @@ async def handle_knowledge_bulk_add(
     Chunking + embedding still per-doc per the configured policy."""
 
     embedder = get_embedder()
-    codes_state.refuse_width("chunks", embedder.dim)
+    await codes_state.refuse_width("chunks", embedder.dim)
     now = datetime.now(UTC).replace(tzinfo=None)
 
     doc_rows: list[DocumentInsertRow] = []

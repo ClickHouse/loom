@@ -138,6 +138,28 @@ def test_a_fresh_install_codes_its_vectors_only_at_a_codable_width(
 
 
 @pytest.mark.parametrize(
+    ("sql", "noted"),
+    [
+        (
+            "CREATE TABLE IF NOT EXISTS loom.chunks (embedding Array(Float32)) ENGINE = Memory;",
+            True,
+        ),
+        ("CREATE TABLE IF NOT EXISTS loom.x (a UInt8) ENGINE = Memory;", False),
+    ],
+)
+def test_the_plain_layout_is_noted_only_when_a_vector_table_is_created(
+    monkeypatch: pytest.MonkeyPatch, capsys, tmp_path, sql: str, noted: bool
+) -> None:
+    from server.core.schema import migrate as mig
+
+    (tmp_path / "1999_a.sql").write_text(sql + "\n")
+    monkeypatch.setattr(mig, "_codec_supported", lambda ch: True)
+    monkeypatch.setattr(mig, "_install_vector_width", lambda ch: None)
+    assert mig._new_table_codec_width(object(), [tmp_path / "1999_a.sql"]) is None  # type: ignore[arg-type]
+    assert ("created plain" in capsys.readouterr().out) is noted
+
+
+@pytest.mark.parametrize(
     ("columns", "model", "width"),
     [
         (

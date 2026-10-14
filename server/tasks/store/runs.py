@@ -27,18 +27,25 @@ log = logging.getLogger(__name__)
 DERIVED_LIMIT = 500
 
 
-async def called_lately(ch: Any, run_id: str, subject: str, idle_seconds: int) -> bool:
-    """Whether a request of the token `subject` ("" = anyone) labelled `run_id`
-    within `idle_seconds`."""
+async def busy_lately(
+    ch: Any, org: str, ns: str, run_id: str, subject: str, idle_seconds: int
+) -> bool:
+    """Whether the run was begun or re-opened, or a request of the token
+    `subject` ("" = anyone) labelled it, within `idle_seconds`."""
     row = await ch.query_one(
         """
-        SELECT count() > 0 AS called FROM loom.agent_events
-        WHERE run_id = {rid:String} AND ts >= now64(3) - INTERVAL {idle:UInt32} SECOND
-          AND ({subject:String} = '' OR subject = {subject:String})
+        SELECT
+            (SELECT count() FROM loom.agent_events
+             WHERE run_id = {rid:String} AND ts >= now64(3) - INTERVAL {idle:UInt32} SECOND
+               AND ({subject:String} = '' OR subject = {subject:String})) > 0
+            OR (SELECT max(version) FROM loom.agent_runs
+                WHERE org = {org:String} AND namespace = {ns:String} AND run_id = {rid:String})
+               >= toUInt64(toUnixTimestamp64Nano(now64(9) - INTERVAL {idle:UInt32} SECOND))
+            AS busy
         """,
-        params={"rid": run_id, "subject": subject, "idle": idle_seconds},
+        params={"org": org, "ns": ns, "rid": run_id, "subject": subject, "idle": idle_seconds},
     )
-    return bool((row or {}).get("called"))
+    return bool((row or {}).get("busy"))
 
 
 RUN_COLUMNS = (

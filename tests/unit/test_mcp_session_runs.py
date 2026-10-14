@@ -66,7 +66,7 @@ class _Ledger:
     async def fetch(self, ch: Any, org: str, ns: str, run_id: str) -> dict[str, Any] | None:
         return {"status": "active", "metadata": "{}"} if run_id in self.active else None
 
-    async def complete(self, ch: Any, inp: Any, existing: Any) -> None:
+    async def complete(self, ch: Any, inp: Any, existing: Any, **_: Any) -> None:
         self.completes.append(inp)
         self.active.pop(inp.run_id, None)
 
@@ -566,7 +566,7 @@ def test_a_delete_closes_against_the_callers_quota(ledger: _Ledger, monkeypatch)
     seen: list[str] = []
     complete = ledger.complete
 
-    async def counted(ch: Any, inp: Any, existing: Any) -> None:
+    async def counted(ch: Any, inp: Any, existing: Any, **_: Any) -> None:
         seen.append(quota_key_var.get())
         await complete(ch, inp, existing)
 

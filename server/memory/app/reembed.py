@@ -388,7 +388,7 @@ async def reembed_all(
     from server.core.vectors import codes_state
 
     for table in _TABLES:
-        codes_state.refuse_width(table, embedder.dim)
+        await codes_state.refuse_width(table, embedder.dim)
     written: dict[str, int] = {}
     resume_table, resume_key = decode_resume(resume) if resume else ("", None)
     tables = list(_TABLES)

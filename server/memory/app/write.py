@@ -656,7 +656,7 @@ async def _memory_set_phases(input: MemorySetInput) -> MemorySetOutput:
     # hit different tables and don't depend on each other; parallelize to
     # pay 1×RTT instead of 2 (RTT dominates on CH Cloud). A vector the coded
     # table cannot take fails the write before the calls it pays for.
-    codes_state.refuse_width("memory_embeddings", get_embedder().dim)
+    await codes_state.refuse_width("memory_embeddings", get_embedder().dim)
     await _set_embed(w)
 
     _cfg, conflict_result, peers_out, _rejected_dry_run = await _set_conflict_verdict(w, _cfg_task)

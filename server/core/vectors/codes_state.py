@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from typing import Any
 
 from server.core.schema.vector_codec_ddl import CODED_TABLES, codec_width
@@ -144,22 +145,50 @@ def _coded_of(table: str) -> list[tuple[str, str, int]]:
     return [(c, c[len(prefix) :], w) for c, w in _widths.items() if c.startswith(prefix)]
 
 
-def refuse_other_widths(table: str, rows: list[dict[str, Any]]) -> None:
+# A refusal re-reads a reading older than this first, so a table rebuilt outside
+# Loom is not refused on its old width for a whole probe interval.
+RECHECK_BEFORE_REFUSING_S = 5.0
+
+
+async def refuse_other_widths(table: str, rows: list[dict[str, Any]]) -> None:
     """Raise CodedWidthMismatchError when a row carries a vector its coded column
     cannot take; ClickHouse would fail the whole insert with code 190."""
+    await _refuse_if(lambda: _row_mismatch(table, rows))
+
+
+async def refuse_width(table: str, dim: int) -> None:
+    """The same check for a write whose vectors will be `dim` wide, made before
+    any part of it is written."""
+    await _refuse_if(lambda: _width_mismatch(table, dim))
+
+
+def _row_mismatch(table: str, rows: list[dict[str, Any]]) -> tuple[str, int, int] | None:
     for column, name, stored in _coded_of(table):
         for row in rows:
             vector = row.get(name)
             if vector is not None and len(vector) and len(vector) != stored:
-                _refuse(column, stored, len(vector))
+                return column, stored, len(vector)
+    return None
 
 
-def refuse_width(table: str, dim: int) -> None:
-    """The same check for a write whose vectors will be `dim` wide, made before
-    any part of it is written."""
+def _width_mismatch(table: str, dim: int) -> tuple[str, int, int] | None:
     for column, _, stored in _coded_of(table):
         if stored != dim:
-            _refuse(column, stored, dim)
+            return column, stored, dim
+    return None
+
+
+async def _refuse_if(mismatch: Callable[[], tuple[str, int, int] | None]) -> None:
+    found = mismatch()
+    if found is None:
+        return
+    if _ch is not None and (
+        _probed_at is None or time.monotonic() - _probed_at > RECHECK_BEFORE_REFUSING_S
+    ):
+        await probe(_ch)
+        found = mismatch()
+    if found is not None:
+        _refuse(*found)
 
 
 def is_coded(table: str, column: str) -> bool | None:

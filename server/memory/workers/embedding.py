@@ -357,10 +357,10 @@ async def run_pass(
         # this embedder will write, because that column is part of the dedup key.
         embedder = get_embedder()
         # Stubs are marked by embedding_dim=0 (search filters embedding_dim>0
-        # and the drain fills them), so the vector value is irrelevant. It is
-        # still a dim-length zero vector, not []: a vector_similarity index
-        # rejects a 0-element array.
-        stub_embedding = [0.0] * embedder.dim
+        # and the drain fills them), so the vector value is irrelevant. Empty:
+        # the insert pads it to the width its column takes, which a
+        # vector_similarity index and a coded column both need.
+        stub_embedding: list[float] = []
 
         # Reconcile memories that have NO embedding row at all, so the stub drain
         # below picks them up. `find_embedding_stubs` only sees `embedding_dim = 0`

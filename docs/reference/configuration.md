@@ -1179,7 +1179,7 @@ Source: `server/settings/_tasks.py`
 
 | Variable | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `LOOM_MEMORY_RUN_COMPLETE_RETAIN` | `'keep' \| 'demote' \| 'expire'` | `'keep'` | What run.complete does to the rows the run wrote when the call does not say: keep = nothing; demote = scale confidence by the expiry demote factor now; expire = expires_at now + memory_run_complete_expire_days with on_expire=demote. Pinned, verified, promoted, locked, episodic and reflection rows are always kept. |
+| `LOOM_MEMORY_RUN_COMPLETE_RETAIN` | `'keep' \| 'demote' \| 'expire'` | `'keep'` | What run.complete does to the rows the run wrote when the call does not say: keep = nothing; demote = scale confidence by the expiry demote factor now; expire = expires_at now + memory_run_complete_expire_days with on_expire=demote. Pinned, verified, promoted, locked, episodic and reflection rows are always kept, and so is everything an MCP session's implicit run wrote when the transport closes it. |
 | `LOOM_MEMORY_RUN_COMPLETE_EXPIRE_DAYS` | `int` | `7` | Days until expiry for `memory_run_complete_retain = expire`. |
 
 ## Tracker

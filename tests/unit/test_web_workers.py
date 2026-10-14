@@ -51,6 +51,18 @@ def test_host_memory_bounds_the_count(tmp_path: Path) -> None:
     assert default_workers(cpus=6, proc_cgroup="0::/\n", meminfo=meminfo, root=tmp_path) == 2
 
 
+def test_host_memory_counts_whole_gib_as_nominal(tmp_path: Path) -> None:
+    """MemTotal reads a little under the size the host was sold with."""
+    meminfo = "MemTotal:        8029428 kB\n"  # an 8 GiB host
+    assert default_workers(cpus=8, proc_cgroup="0::/\n", meminfo=meminfo, root=tmp_path) == 8
+
+
+def test_a_cgroup_value_that_does_not_parse_is_no_limit(tmp_path: Path) -> None:
+    _w(tmp_path, "/", "cpu.max", "garbage 100000")
+    _w(tmp_path, "/", "memory.max", "unexpected")
+    assert default_workers(cpus=3, proc_cgroup="0::/\n", meminfo=BIG_MEM, root=tmp_path) == 3
+
+
 def test_never_below_one(tmp_path: Path) -> None:
     _w(tmp_path, "/", "memory.max", str(64 * 1024 * 1024))
     assert default_workers(cpus=4, proc_cgroup="0::/\n", meminfo=BIG_MEM, root=tmp_path) == 1

@@ -40,7 +40,7 @@ class _Ledger:
         await asyncio.sleep(0)
         return None if self._done(run_id) else {"status": "active", "metadata": "{}"}
 
-    async def complete(self, ch: Any, inp: Any, existing: Any) -> None:
+    async def complete(self, ch: Any, inp: Any, existing: Any, **_: Any) -> None:
         await asyncio.sleep(0.01)
         if inp.run_id.startswith("broken"):
             raise ValueError("the row is gone")
@@ -53,7 +53,7 @@ def _ledger(monkeypatch, *run_ids: str) -> _Ledger:
     monkeypatch.setattr(run_handlers, "_complete", ledger.complete)
     monkeypatch.setattr(run_handlers, "active_session_runs", ledger.active)
     monkeypatch.setattr(run_handlers.runs_store, "fetch_run", ledger.fetch)
-    monkeypatch.setattr(run_handlers.runs_store, "called_lately", AsyncMock(return_value=False))
+    monkeypatch.setattr(run_handlers.runs_store, "busy_lately", AsyncMock(return_value=False))
     return ledger
 
 
@@ -78,7 +78,7 @@ async def test_a_run_whose_close_fails_does_not_hold_up_the_rest(monkeypatch) ->
 async def test_a_pass_stops_closing_when_its_time_is_spent(monkeypatch) -> None:
     ledger = _ledger(monkeypatch, "slow", "next")
 
-    async def slow_complete(ch: Any, inp: Any, existing: Any) -> None:
+    async def slow_complete(ch: Any, inp: Any, existing: Any, **_: Any) -> None:
         await asyncio.sleep(0.2)  # a close on a slow ClickHouse
         ledger.completes.append(inp)
 
@@ -94,7 +94,7 @@ async def test_a_pass_closes_a_few_runs_at_a_time(monkeypatch) -> None:
     ledger = _ledger(monkeypatch, *(f"r{i}" for i in range(10)))
     running, most = 0, 0
 
-    async def complete(ch: Any, inp: Any, existing: Any) -> None:
+    async def complete(ch: Any, inp: Any, existing: Any, **_: Any) -> None:
         nonlocal running, most
         running += 1
         most = max(most, running)
@@ -149,8 +149,8 @@ async def test_closes_racing_for_one_run_judge_nothing(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_run_its_token_called_since_the_pick_is_left_open(monkeypatch) -> None:
+async def test_a_run_busy_since_the_pick_is_left_open(monkeypatch) -> None:
     ledger = _ledger(monkeypatch, "a")
-    monkeypatch.setattr(run_handlers.runs_store, "called_lately", AsyncMock(return_value=True))
+    monkeypatch.setattr(run_handlers.runs_store, "busy_lately", AsyncMock(return_value=True))
     assert await run_handlers.close_idle_session_runs(1800) == 0
     assert ledger.completes == []

@@ -298,9 +298,8 @@ async def _complete_session_run(
     row: RunLedgerRow, *, reason: str, idle_seconds: int | None = None
 ) -> bool:
     """Complete one row of a session run while it is still active, and for the
-    sweep (`idle_seconds`, which picked it a while ago) still idle. The close
-    judges nothing: no outcome, no retain mode, so two closes racing for one run
-    (the sweep on two hosts, a DELETE) at worst write the same row twice."""
+    sweep (`idle_seconds`, which picked it a while ago) still idle. Outcome none,
+    memories kept: a close racing another for the run only repeats the completion."""
     ch = get_client()
     org, namespace, run_id = str(row["org"]), str(row["namespace"]), str(row["run_id"])
     with sequential_reads():
@@ -308,8 +307,8 @@ async def _complete_session_run(
     if existing is None or existing.get("status") != "active":
         return False
     subject = str(_parse_metadata(existing.get("metadata")).get("subject") or "")
-    if idle_seconds is not None and await runs_store.called_lately(
-        ch, run_id, subject, idle_seconds
+    if idle_seconds is not None and await runs_store.busy_lately(
+        ch, org, namespace, run_id, subject, idle_seconds
     ):
         return False
     await _complete(
@@ -319,9 +318,7 @@ async def _complete_session_run(
             namespace=namespace,
             run_id=run_id,
             status="completed",
-            # The transport saw the session end; it cannot say how the work went,
-            # so it writes no evidence or harm and leaves the session's memories
-            # as they are, whatever the server's default retain mode.
+            # The transport cannot say how the session's work went.
             outcome="none",
             retain="keep",
             # 0: from the run's start, which every web process shares.
@@ -329,6 +326,7 @@ async def _complete_session_run(
             metadata={"closed_by": f"mcp_{reason}"},
         ),
         existing,
+        drop_claim=False,  # run.begin_session_run takes none
     )
     return True
 
@@ -534,7 +532,9 @@ async def handle_run_complete(input: RunCompleteInput) -> RunCompleteOutput:
     return await _complete(ch, input, existing)
 
 
-async def _complete(ch: Any, input: RunCompleteInput, existing: RunLedgerRow) -> RunCompleteOutput:
+async def _complete(
+    ch: Any, input: RunCompleteInput, existing: RunLedgerRow, *, drop_claim: bool = True
+) -> RunCompleteOutput:
     """Close the run from its stored row `existing`; the caller checked access."""
     now = _now()
     started = existing.get("started_at")
@@ -613,8 +613,8 @@ async def _complete(ch: Any, input: RunCompleteInput, existing: RunLedgerRow) ->
         }
     )
     await runs_store.insert_runs(ch, [row])
-    # run.begin already dropped its claim; this drops one a begin left behind.
-    await runs_store.delete_claim(ch, input.org, input.namespace, input.run_id)
+    if drop_claim:  # run.begin already dropped its claim; this drops one a begin left behind
+        await runs_store.delete_claim(ch, input.org, input.namespace, input.run_id)
     from server.memory.app.recall_credit import note_closer_from_request
 
     note_closer_from_request(input.org)  # this consumer closes the usage loop

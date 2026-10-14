@@ -7,6 +7,7 @@ the leg calls are exactly the single-model ones."""
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from unittest.mock import patch
 
@@ -307,7 +308,7 @@ def test_a_placeholder_takes_its_coded_columns_width(monkeypatch) -> None:
         assert vp.pad_rows("memory_embeddings", rows) == 2
     assert len(rows[0]["embedding"]) == 3072
     assert len(rows[0]["memory_key_embedding"]) == 1024  # plain here: the setting
-    codes_state.refuse_other_widths("memory_embeddings", rows)
+    asyncio.run(codes_state.refuse_other_widths("memory_embeddings", rows))
 
 
 def test_memo_key_separates_the_arms() -> None:

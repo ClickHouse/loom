@@ -869,7 +869,7 @@ class CHClient:
         from server.core.vectors.placeholders import pad_rows as _pad_rows
 
         _pad_rows(table, rows)
-        refuse_other_widths(table, rows)
+        await refuse_other_widths(table, rows)
         columns = list(rows[0].keys())
         if project_onto_table is None:
             project_onto_table = table in PROJECTED_TABLES

@@ -118,9 +118,6 @@ def reset_cache() -> None:
     derived from them (after boot migrations, and in tests)."""
     _cache["at"], _cache["value"] = 0.0, None
     _created_cache.clear()
-    try:
-        from server.core.ch_schema_guard import schema_guard_reset
+    from server.core.ch_schema_guard import schema_guard_reset
 
-        schema_guard_reset()
-    except Exception:  # noqa: BLE001 — a reset never fails on import order
-        pass
+    schema_guard_reset()

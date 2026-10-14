@@ -643,7 +643,7 @@ async def handle_memory_bulk_set(
     await _bulk_build_rows(input, state, identity_dupes, entity_resolution, now_utc)
     if state.pending:
         # Before the calls it pays for: a vector the coded table cannot take fails the batch.
-        codes_state.refuse_width("memory_embeddings", embedder.dim)
+        await codes_state.refuse_width("memory_embeddings", embedder.dim)
 
     emb_idx_of, value_vectors, entity_embeddings = await _bulk_embed_rows(
         input, state, embedder, entity_resolution, _bulk_clock, now_utc

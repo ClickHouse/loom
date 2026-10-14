@@ -151,10 +151,7 @@ async def create_snapshot(
     if current != schema:
         raise ValueError("Rebuild source schema changed before snapshot")
     vectors = {surface.column for surface in EMBEDDING_SURFACES if surface.table == names.table}
-    # A copy made by CREATE ... AS SELECT from a Quantized column enforces the source
-    # codec's width though its DDL shows no codec; with the cast it takes vectors of
-    # any width (the new model's included). toTypeName keeps the column's own type:
-    # an uncoded install may store Array(Float32).
+    # A CTAS copy keeps a Quantized column's width hidden; the cast drops it.
     columns = ", ".join(
         f"CAST({_identifier(name)}, toTypeName({_identifier(name)})) AS {_identifier(name)}"
         if name in vectors

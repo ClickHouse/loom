@@ -128,11 +128,16 @@ class SharedDocument[T]:
             fd = open_private(path, os.O_RDONLY)
         except FileNotFoundError:
             return None
-        with os.fdopen(fd, encoding="utf-8") as fh:
+        try:
+            fh = os.fdopen(fd, encoding="utf-8")
+        except BaseException:
+            os.close(fd)
+            raise
+        with fh:
             version = _version(os.fstat(fh.fileno()))
             try:
                 state = self._decode(json.load(fh))
-            except (ValueError, LookupError, TypeError, AttributeError) as e:
+            except (ValueError, LookupError, TypeError, AttributeError, RecursionError) as e:
                 log.warning("%s is corrupt (%s); ignored until it is replaced", path, e)
                 state = None
         # Seen once read or found corrupt; a read that failed is tried again.

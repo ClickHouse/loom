@@ -607,7 +607,7 @@ async def _write_revision(
     embedder = get_embedder() if searchable else None
     if embedder is not None:
         # Before the version row lands beside an embedding the coded table refuses.
-        codes_state.refuse_width("memory_embeddings", embedder.dim)
+        await codes_state.refuse_width("memory_embeddings", embedder.dim)
     # The namespace's write config in one round trip beside the embedding call, as memory.set
     # does — not six reads in a row.
     cfg_task = _cf_start_write_config(input.org, existing, embedder is not None)

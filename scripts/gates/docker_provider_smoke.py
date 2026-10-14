@@ -137,6 +137,13 @@ def smoke_providers(base: str, compose: list[str]) -> None:
     # A key-only change needs neither rebuild nor container recreation.
     rotation = dashboard_action(base, "apply", "docker-smoke-8", "8", "docker-smoke-rotated-key")
     assert rotation["state"] == "active", rotation
+    # The install is coded: a width the codec cannot take is refused before any rebuild.
+    try:
+        configure(base, "docker-smoke-12", 12)
+    except urllib.error.HTTPError as error:
+        assert error.code == 422 and b"unsupported_dimensions" in error.read(), error.code
+    else:
+        raise AssertionError("A coded install must refuse a 12-dimension model")
     control(compose, "docker-smoke-16")
     saved = dashboard_action(base, "apply", "docker-smoke-16", "16")
     assert saved["state"] == "queued", saved
