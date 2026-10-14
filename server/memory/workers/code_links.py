@@ -36,8 +36,9 @@ async def run_pass() -> dict[str, Any]:
                 await _link_writes(batch, result)
         except LeaseBusy:
             pass  # another host is linking them
-        except Exception as e:  # noqa: BLE001 — a linking failure never stops the recheck
+        except Exception as e:  # a linking failure never stops the recheck
             # LeaseLost among them: another host took the queue over, its cursors written
+            log.exception("memory_code_links: linking failed")
             result.errors.append(f"link: {e!r}")
         await code_link_recheck.recheck_all(result)
         rec.outcome = result.as_dict()

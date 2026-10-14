@@ -64,7 +64,7 @@ def _links(monkeypatch, heads: list[dict[str, Any]], rows: list[dict[str, Any]])
     monkeypatch.setattr(code_links, "live_links", live_links)
     monkeypatch.setattr(code_links, "served_heads", served_heads)
     monkeypatch.setattr("server.code.app.memory_links.code_namespaces", lambda: ["code-a"])
-    monkeypatch.setattr("server.memory.app.code_link_reads.readable_code", readable)
+    monkeypatch.setattr("server.memory.app.code_link_reads.readable", readable)
     monkeypatch.setattr("server.memory.app.code_link_reads.current", lambda org, m, links: links)
 
 

@@ -461,12 +461,14 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
     from server.memory.app.code_link_reads import head_of, links_of
     from server.memory.app.served_superseded import shown_successors
 
-    successors_read = shown_successors(input.org, input.namespace, [row])
-    links: list[CodeLink] = []
-    if not input.fields or "code" in input.fields:
-        successors, links = await asyncio.gather(successors_read, links_of(input.org, head_of(row)))
-    else:
-        successors = await successors_read
+    wants_code = not input.fields or "code" in input.fields
+
+    async def code() -> list[CodeLink]:
+        return await links_of(input.org, head_of(row)) if wants_code else []
+
+    successors, links = await asyncio.gather(
+        shown_successors(input.org, input.namespace, [row]), code()
+    )
     return MemoryGetOutput(
         found=True,
         code=links,

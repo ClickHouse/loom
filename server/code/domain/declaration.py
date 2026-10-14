@@ -1213,7 +1213,8 @@ def _formatting(node: Any, grammar: str) -> bool:
 
 def _optional(node: Any, parent: Any, grammar: str) -> bool:
     """A Python tuple's or `with`'s parentheses, a JS / TS type member's `,`, the empty
-    `()` of `new A()`, Rust's comma after a match arm (needed only between two)."""
+    `()` of `new A()`, Rust's comma after a match arm (every one is dropped: source that
+    leaves out a required one does not parse)."""
     if grammar == "python":
         return node.type in ("(", ")") and parent.type in {*_BARE_TUPLES, "with_clause"}
     if grammar == "rust":

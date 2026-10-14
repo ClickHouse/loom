@@ -256,7 +256,7 @@ async def _linked(input: MemoryForFileInput, path: str, nss: list[str]) -> dict[
     `extra_namespaces` or the `repo:` tag names. None named: no links (a path alone
     is in every repository)."""
     from server.code.app.memory_links import namespace_for_tags, trunk_namespace
-    from server.memory.app.code_link_reads import current_links, readable_code
+    from server.memory.app.code_link_reads import current_links, readable
     from server.memory.store import code_links
 
     trunks = [t for ns in input.extra_namespaces if (t := trunk_namespace(input.org, ns))]
@@ -268,7 +268,7 @@ async def _linked(input: MemoryForFileInput, path: str, nss: list[str]) -> dict[
             input.org, trunks, [path], namespaces=nss, states=list(STATE_RANK)
         )
         links = await current_links(input.org, links)
-        seen = await readable_code(input.org, {a["code_namespace"] for a in links})
+        seen = await readable(input.org, {a["code_namespace"] for a in links})
     except Exception as e:  # noqa: BLE001 — the links are additive; the files match stands
         log.debug("memory.for_file: code links skipped: %s", e)
         return {}

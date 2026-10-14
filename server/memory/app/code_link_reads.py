@@ -90,7 +90,7 @@ async def stale_links(
     the number of memories they are of."""
     trunk = code.trunk_namespace(org, namespace)
     tagged = [] if trunk else _tag_namespaces(org)
-    seen = await readable_code(org, {trunk, *(cns for _, cns in tagged)} - {""})
+    seen = await readable(org, {trunk, *(cns for _, cns in tagged)} - {""})
     if not seen:
         return []
     return await store.stale_of_served(
@@ -115,9 +115,8 @@ def _tag_namespaces(org: str) -> list[tuple[str, str]]:
     ]
 
 
-async def readable_code(org: str, namespaces: set[str]) -> set[str]:
-    """The code namespaces among `namespaces` the caller may read: a link names paths
-    and symbols of its repository."""
+async def readable(org: str, namespaces: set[str]) -> set[str]:
+    """The namespaces among `namespaces` the caller may read."""
     from server.auth.authz import row_in_scope
     from server.operations.base import Role
 
@@ -160,7 +159,7 @@ async def links_of(org: str, memory: dict[str, Any]) -> list[CodeLink]:
         return []  # no link is made from a memory that names no repository
     try:
         rows = current(org, memory, await store.for_memories(org, [str(memory["mid"])]))
-        seen = await readable_code(org, {a["code_namespace"] for a in rows})
+        seen = await readable(org, {a["code_namespace"] for a in rows})
     except Exception as e:  # noqa: BLE001 — the links are additive to the read
         log.debug("code links unavailable: %s", e)
         return []
@@ -250,7 +249,7 @@ async def _annotation_reads(
         return [None] * len(hits), set(), {}
     heads, seen, policies = await asyncio.gather(
         store.served_heads(input.org, _linked_keys(links)),
-        readable_code(input.org, {a["code_namespace"] for v in links.values() for a in v}),
+        readable(input.org, {a["code_namespace"] for v in links.values() for a in v}),
         store.code_change_policies(input.org, sorted({i[0] for i in links})),
     )
     return _heads_of(input.org, idents, links, heads), seen, policies

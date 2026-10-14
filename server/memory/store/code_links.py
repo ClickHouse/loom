@@ -140,8 +140,8 @@ async def _erasing(ch: _CHClient, orgs: list[str]) -> set[str]:
     return {str(r["org"]) for r in rows}
 
 
-_KEY = LINK_KEY
-_KEY_COLUMNS = _KEY.split(", ")
+_KEY_COLUMNS = LINK_KEY
+_KEY = ", ".join(LINK_KEY)
 
 
 def _past(columns: Sequence[str], types: Sequence[str]) -> str:
@@ -471,10 +471,7 @@ async def served_heads(
     )
 
 
-_QUEUE_KEY = (
-    "(toUnixTimestamp64Micro(queued_at), version, "
-    "org, namespace, agent, user_id, session_id, memory_key)"
-)
+_QUEUE_KEY = f"(toUnixTimestamp64Micro(queued_at), version, {', '.join(IDENTITY)})"
 _POSITION = "Tuple(Int64, UInt64, String, String, String, String, String, String)"
 
 
@@ -583,23 +580,22 @@ async def backfill_page(
     return idents, await _heads(ch, idents)
 
 
+_IDENTS = "Array(Tuple(String, String, String, String, String, String))"
+
+
 async def for_identities(
     idents: Sequence[tuple[str, ...]], *, ch: _CHClient | None = None
 ) -> list[LinkRow]:
-    """Live links of these (org, namespace, agent, user_id, session_id, memory_key)."""
+    """Live links of these memory identities (`IDENTITY`)."""
     if not idents:
         return []
     rows = await query_all_sliced(
         ch or _default_client(),
-        f"SELECT * {_LIVE} AND (org, namespace, agent, user_id, session_id, memory_key) "
-        "IN {ids:Array(Tuple(String, String, String, String, String, String))}",
+        f"SELECT * {_LIVE} AND ({', '.join(IDENTITY)}) IN {{ids:{_IDENTS}}}",
         {"ids": sorted(set(idents))},
         "ids",
     )
     return _links(rows)
-
-
-_IDENTS = "Array(Tuple(String, String, String, String, String, String))"
 
 
 async def _heads(

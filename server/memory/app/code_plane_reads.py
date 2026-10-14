@@ -27,14 +27,14 @@ async def lesson_namespaces(org: str, code_namespace: str, extra: Sequence[str])
     default namespace. Readable alone is not shown."""
     from server.auth.context import current_auth
     from server.code.app.memory_links import trunk_namespace
-    from server.memory.app.code_link_reads import readable_code
+    from server.memory.app.code_link_reads import readable
     from server.settings import settings
 
     own = [settings.default_namespace] if current_auth() is None else []
     candidates = [*own, *extra, trunk_namespace(org, code_namespace) or code_namespace]
     names = list(dict.fromkeys(n for n in candidates if n))
-    readable = await readable_code(org, set(names))
-    return [ns for ns in names if ns in readable]
+    seen = await readable(org, set(names))
+    return [ns for ns in names if ns in seen]
 
 
 def _named(qualified_name: str, defs: list[Definition]) -> list[Definition]:

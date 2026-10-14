@@ -19,10 +19,11 @@ async def refingerprint(
     org: str, cns: str, files: link_pass.RepoReads, result: link_pass.PassResult
 ) -> None:
     """Re-hash the links hashed under other rules or grammars than these, a page at a
-    time, each page written as it is done; a link whose code does not parse stays due
-    for the next pass."""
+    time, each page written as it is done. A link whose old text does not parse, or is
+    gone from git, stays under its rules and out of rechecks, and is reported."""
     version = fingerprint_version()
     after: tuple[str, ...] | None = None
+    failed: set[str] = set()
     while True:
         rows, nxt = await store.stale_fingerprints(
             org, cns, version, after=after, limit=_REFINGERPRINT_PAGE
@@ -31,8 +32,9 @@ async def refingerprint(
         for a in rows:
             try:
                 fields = await _rehashed(a, files) if a["qualified_name"] else {}
-            except code.ParseFailed:
-                continue  # stays under its rules, kept out of rechecks, till it parses
+            except code.ParseFailed as e:
+                failed.add(e.path)
+                continue
             rehashed.append((a, fields, _owes(a, fields)))
         revised = await policy.revised_namespaces([a for a, _, owed in rehashed if owed])
         out = []
@@ -46,6 +48,8 @@ async def refingerprint(
         result.rechecked += len(out)
         if (after := nxt) is None:
             break
+    if failed:
+        result.errors.append(f"re-hash {org}/{cns}: not re-hashed: {', '.join(sorted(failed))}")
 
 
 async def _rehashed(a: LinkRow, files: link_pass.RepoReads) -> dict[str, Any]:
@@ -81,8 +85,11 @@ async def _rehashed(a: LinkRow, files: link_pass.RepoReads) -> dict[str, Any]:
         out["body_hash"] = checked[0] or out["anchored_hash"]
     elif rebased is not None and rebased[0] and _agree(anchored, rebased):
         out["body_hash"] = rebased[0]
+    elif out["anchored_hash"]:
+        out |= {"body_hash": out["anchored_hash"], "baseline_commit": ""}
     else:
-        out |= {"body_hash": out["anchored_hash"] or a["body_hash"], "baseline_commit": ""}
+        # no text to take a baseline from under these rules: the old hash is no baseline
+        raise code.ParseFailed(link.anchored_path, "baseline text not readable")
     baseline = out["body_hash"]
     if a["state"] in ("fresh", "moved") and out["checked_hash"] not in ("", baseline):
         # these rules see a change the old ones did not

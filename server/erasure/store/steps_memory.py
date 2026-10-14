@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable, Sequence
-from typing import get_args
 
 from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client
@@ -21,7 +20,7 @@ from server.erasure.store.mutations import (
 )
 from server.erasure.store.predicates import NS_EQ, ORG_NS, UID, USER_CHUNKS
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
-from server.memory.domain.code_link_keys import IDENTITY, LINK_KEY, QueuePosition
+from server.memory.domain.code_link_keys import IDENTITY, LINK_KEY, QUEUE_PREFIX
 
 
 async def purge_code_index_by_namespace(
@@ -552,12 +551,11 @@ _CURSORS = "loom.code_index_state"
 _LINK_CURSOR_NS = "memory_code_links"  # the link worker's cursors (`code_link_pass.Cursor`)
 _LINK_CURSOR_KEYS = ("queue", "backfill", "sweep")
 _NO_MEMORY = "00000000-0000-0000-0000-000000000000"
-_LINK_KEY = LINK_KEY.split(", ")
 # A queue position is (queued_at, version, *IDENTITY); backfill's `after` is an IDENTITY,
 # sweep's a link key.
-_QUEUED = len(get_args(QueuePosition)) - len(IDENTITY)
+_QUEUED = len(QUEUE_PREFIX)
 _ORG, _NS, _UID = (IDENTITY.index(c) for c in ("org", "namespace", "user_id"))
-_LINK_ORG, _LINK_NS = (_LINK_KEY.index(c) for c in ("org", "namespace"))
+_LINK_ORG, _LINK_NS = (LINK_KEY.index(c) for c in ("org", "namespace"))
 
 
 def _scrubbed(key: str, value: str, org: str, namespaces: set[str], user_id: str) -> str | None:
@@ -581,9 +579,7 @@ def _scrubbed(key: str, value: str, org: str, namespaces: set[str], user_id: str
         ]
         return json.dumps({**data, "after": kept})
     if key == "sweep" and after[_LINK_ORG] == org and (after[_LINK_NS] in namespaces or user_id):
-        kept = [
-            _NO_MEMORY if c == "memory_id" else v for c, v in zip(_LINK_KEY, after, strict=True)
-        ]
+        kept = [_NO_MEMORY if c == "memory_id" else v for c, v in zip(LINK_KEY, after, strict=True)]
         return json.dumps({**data, "after": kept})
     return None
 

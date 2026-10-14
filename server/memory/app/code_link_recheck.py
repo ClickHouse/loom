@@ -609,7 +609,7 @@ async def _current_moves(org: str, moves: list[Move]) -> list[Move]:
     heads = {
         h["mid"]: h
         for h in await store.memory_heads(org, [m.row["memory_id"] for m in moves])
-        if h.get("tombstoned_at") is None and h["status"] in SERVED
+        if h["tombstoned_at"] is None and h["status"] in SERVED
     }
     out = []
     for m in moves:
