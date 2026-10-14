@@ -59,11 +59,12 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   and a namespace's `rerank_endpoint` take a name, not a URL: `none`, `builtin:openai[:model]`,
   `builtin:cohere[:model]`, or an endpoint the operator names in `LOOM_RERANK_ENDPOINTS_JSON`.
   A URL or an unknown name is a 422. A namespace that still stores a URL is no longer reranked.
-- **Security:** revoking a grant now ends what the subject's older tokens claim on that
-  namespace. A flat or scoped token minted before the revocation no longer reaches a
-  namespace it names unless a live grant remains; a namespace never granted to the subject
-  (named by an operator at mint) keeps its claim. Servers pick a revocation up within
-  `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS`.
+- **Security:** revoking or lowering a grant now ends what the subject's older tokens claim
+  on that namespace. A flat or scoped token minted before it reaches the namespace only
+  through the subject's current grant, and a grant made later does not restore the claim.
+  The cutoff is a `loom.revoked_tokens` row (`grant:<org>/<namespace>/<subject>`), so
+  `loom revoke-token --list` shows it. A namespace never granted to the subject (named by an
+  operator at mint) keeps its claim.
 - With auth off, an `all_mine` search also reads every namespace the single user registered,
   not only the addressed one.
 - The addressed namespace is always searched first. A scoped token's other namespaces follow

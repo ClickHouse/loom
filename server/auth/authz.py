@@ -144,7 +144,7 @@ async def check_authorized(
     # (org-level) ops fall through to the flat-role check below.
     if auth.has_ns_roles() and org is not None and namespace is not None:
         eff = auth.effective_role(org, namespace)
-        if eff is not None and await withdrawn_claims(auth, org, [namespace]):
+        if eff is not None and withdrawn_claims(auth, org, [namespace]):
             eff = None
         # An `ns_write` claim (inherited by a delegated child) binds writes too.
         outside_write_claim = (
@@ -177,7 +177,7 @@ async def check_authorized(
         ns_covered_by_jwt = (
             auth.can_write(org, namespace) if is_write else auth.can_access(org, namespace)
         )
-        if ns_covered_by_jwt and await withdrawn_claims(auth, org, [namespace]):
+        if ns_covered_by_jwt and withdrawn_claims(auth, org, [namespace]):
             ns_covered_by_jwt = False
     else:
         ns_covered_by_jwt = False
@@ -329,50 +329,21 @@ def names_namespace(auth: AuthInfo, org: str, namespace: str) -> bool:
     return any(ns == namespace for ns, _role in auth.ns_roles)
 
 
-async def withdrawn_claims(auth: AuthInfo, org: str, namespaces: list[str]) -> set[str]:
-    """The `namespaces` this token names whose grant was revoked after it was
-    minted: its subject held a grant there, none is live now, and the last
-    revocation is no older than the token. A claim minted on a grant ends
-    with it; a namespace the subject never held a grant on (an operator's
-    `loom mint-token`) and a token minted after the revocation keep theirs.
+def withdrawn_claims(auth: AuthInfo, org: str, namespaces: list[str]) -> set[str]:
+    """The `namespaces` this token names whose grant was taken away after it
+    was minted (`revocation.end_grant_claims`). A namespace the subject never
+    held a grant on (an operator's `loom mint-token`) and a token minted after
+    the revocation keep their claim. No I/O: the revocation snapshot."""
+    from server.auth.revocation import grant_claim_key, is_revoked
 
-    Only a namespace the revocation snapshot shows a grant revoked on since
-    the mint is read from ClickHouse; a failed read withdraws it."""
-    from server.auth.aliases import subject_aliases
-    from server.auth.revocation import grant_revoked_since
-    from server.core.ch import get_client
-
-    if auth.issued_at is None:
+    if not namespaces or auth.issued_at is None:
         return set()
-    issued_at = auth.issued_at
-    revoked = [
+    return {
         ns
         for ns in namespaces
-        if names_namespace(auth, org, ns) and grant_revoked_since(org, ns, issued_at)
-    ]
-    if not revoked:
-        return set()
-    try:
-        rows = await get_client().query_all(
-            """
-            SELECT namespace, toUnixTimestamp(max(revoked_at)) AS last_revoked
-            FROM loom.namespace_grants FINAL
-            WHERE org = {org:String} AND namespace IN {nss:Array(String)}
-              AND subject IN {subs:Array(String)}
-            GROUP BY namespace
-            HAVING countIf({live}) = 0 AND last_revoked >= {iat:UInt64}
-            """.replace("{live}", LIVE_GRANT),
-            params={
-                "org": org,
-                "nss": revoked,
-                "subs": await subject_aliases(org, auth.subject),
-                "iat": issued_at,
-            },
-        )
-    except Exception as e:  # noqa: BLE001 — an unreadable grant table withdraws, never admits
-        log.warning("withdrawn-claim lookup failed for %s/%s: %s", org, auth.subject, e)
-        return set(revoked)
-    return {str(r["namespace"]) for r in rows}
+        if names_namespace(auth, org, ns)
+        and is_revoked(grant_claim_key(org, ns, auth.subject), issued_at=auth.issued_at)
+    }
 
 
 async def _check_restricted(auth: AuthInfo, required_role: Role, org: str, namespace: str) -> None:

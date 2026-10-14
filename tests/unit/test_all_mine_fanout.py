@@ -245,3 +245,46 @@ def test_an_unaddressed_search_starts_at_home_even_past_the_cap(
     arguments = {"org": ORG, "namespace": "aaa-team", "namespace_scope": "all_mine"}
     asyncio.run(mcp_call._address_home(arguments, _flat("*")))
     assert arguments["namespace"] == "alice"
+
+
+def test_the_conversation_fallback_reads_the_same_namespaces(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import datetime
+
+    from server.knowledge.api.models_conversations import ConversationSearchInput
+    from server.knowledge.app import conversations
+    from server.knowledge.store import conversations as conversation_repo
+    from server.knowledge.store.conversations import MessageRow
+
+    class _NoEmbedder:
+        model_name = "fake"
+
+        async def embed(self, text: str) -> list[float]:
+            raise RuntimeError("embedder down")
+
+    async def _fanout(org: str) -> Fanout:
+        return Fanout(org=org, namespaces=("work", "home"), cap=1)
+
+    async def _substring(org: str, namespace: str, *_a: object, **_k: object) -> list[MessageRow]:
+        day = {"local": 1, "work": 2}[namespace]
+        return [
+            MessageRow(
+                org=org,
+                namespace=namespace,
+                agent="a",
+                thread_id="t",
+                msg_id=namespace,
+                role="user",
+                content=f"in {namespace}",
+                ts=datetime(2026, 1, day),
+            )
+        ]
+
+    monkeypatch.setattr(conversations, "get_embedder", lambda: _NoEmbedder())
+    monkeypatch.setattr(fanout_mod, "resolve_fanout", _fanout)
+    monkeypatch.setattr(conversation_repo, "search_substring", _substring)
+    search = ConversationSearchInput(org=ORG, namespace="local", agent="a", query="in")
+    out = asyncio.run(conversations.handle_conversation_search(search))
+    assert [(h.namespace, h.msg_id) for h in out.hits] == [("work", "work"), ("local", "local")]
+    assert out.namespaces_skipped == ["home"]

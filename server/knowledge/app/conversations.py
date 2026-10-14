@@ -488,12 +488,11 @@ async def handle_conversation_search(
         log.warning("conversation embed query failed; falling back to substring: %s", e)
         query_vec = None
 
-    if query_vec is None:
-        return await _search_substring_fallback(input)
-
     namespaces, skipped = await namespaces_to_search(
         input.org, input.namespace, input.namespace_scope
     )
+    if query_vec is None:
+        return await _search_substring_fallback(input, namespaces, skipped)
 
     async def _search_one(ns: str) -> tuple[str, list[ConversationHit]]:
         return ns, await vector_search(
@@ -538,34 +537,42 @@ async def handle_conversation_search(
 
 
 async def _search_substring_fallback(
-    input: ConversationSearchInput,
+    input: ConversationSearchInput, namespaces: list[str], skipped: list[str]
 ) -> ConversationSearchOutput:
-    """Lexical fallback used when the embedder is unavailable."""
+    """Lexical fallback used when the embedder is unavailable: the same
+    namespaces, newest match first."""
     from server.knowledge.store import conversations as conversation_repo
 
-    rows = await conversation_repo.search_substring(
-        input.org,
-        input.namespace,
-        input.agent,
-        input.query,
-        thread_id=input.thread_id or None,
-        role=input.role or None,
-        run_id=input.run_id,
-        limit=input.top_k,
-    )
-    hits = [
-        _ConversationHit(
-            thread_id=r.thread_id,
-            msg_id=r.msg_id,
-            role=r.role,
-            content_excerpt=(
-                r.content[:_EXCERPT_LIMIT] + "…" if len(r.content) > _EXCERPT_LIMIT else r.content
-            ),
-            ts=r.ts,
+    async def _search_one(ns: str) -> list[_ConversationHit]:
+        rows = await conversation_repo.search_substring(
+            input.org,
+            ns,
+            input.agent,
+            input.query,
+            thread_id=input.thread_id or None,
+            role=input.role or None,
+            run_id=input.run_id,
+            limit=input.top_k,
         )
-        for r in rows
-    ]
-    return ConversationSearchOutput(hits=hits)
+        return [
+            _ConversationHit(
+                thread_id=r.thread_id,
+                msg_id=r.msg_id,
+                role=r.role,
+                content_excerpt=(
+                    r.content[:_EXCERPT_LIMIT] + "…"
+                    if len(r.content) > _EXCERPT_LIMIT
+                    else r.content
+                ),
+                ts=r.ts,
+                namespace=ns,
+            )
+            for r in rows
+        ]
+
+    hits = [h for per_ns in await asyncio.gather(*map(_search_one, namespaces)) for h in per_ns]
+    hits.sort(key=lambda h: h.ts, reverse=True)
+    return ConversationSearchOutput(hits=hits[: input.top_k], namespaces_skipped=skipped)
 
 
 def _safe_load_json(s: Any) -> dict[str, Any]:

@@ -167,7 +167,9 @@ class AuthSettings(BaseModel):
     jwt_leeway_seconds: int = 30
 
     # Seconds the `loom.revoked_tokens` snapshot is cached; verify checks both
-    # jti and sub against it, so a revoke takes effect within this TTL.
+    # jti and sub against it, and the namespace gate checks the cutoffs a
+    # revoked or lowered grant leaves, so either takes effect on other
+    # processes within this TTL (at once on the one that wrote it).
     jwt_revocation_cache_ttl_seconds: float = 30.0
     # Oldest revocation snapshot a process still trusts, seconds. Past it
     # (refreshes keep failing) every bearer is refused with a retryable 503.

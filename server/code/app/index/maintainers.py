@@ -27,6 +27,7 @@ import time
 from datetime import datetime
 from typing import Any
 
+from server.auth.revocation import end_grant_claims
 from server.core.datetimes import naive_utc_now
 
 log = logging.getLogger(__name__)
@@ -179,6 +180,8 @@ async def revoke_repo_maintainer(
             )
         )
     if out:
+        for row in out:
+            await end_grant_claims(org, row["namespace"], [subject], reason="maintainer revoked")
         await _insert(client, out)
         log.info(
             "repo maintainers: %s/%s — %r revoked on %d sibling branch(es)",

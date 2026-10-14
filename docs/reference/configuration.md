@@ -38,7 +38,7 @@ Source: `server/settings/_auth.py`
 | `LOOM_JWT_ALGORITHM` | `'HS256' \| 'RS256'` | `'HS256'` | "HS256" (default) or "RS256": under RS256 the secret-map entries are PEM private keys and verifiers use the public keys (JWKS endpoint), so the public map must hold the signing kid (checked at load). |
 | `LOOM_JWT_PUBLIC_KEYS_JSON` | `str` | *(unset)* | JSON (or base64 JSON) map kid → PEM public key: this deployment's own keys under RS256, and a gateway's keys whose RS256 tokens it accepts. |
 | `LOOM_JWT_LEEWAY_SECONDS` | `int` | `30` | Clock-skew tolerance on iat/exp, seconds; small enough to give replay no useful post-exp window. |
-| `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` | `float` | `30.0` | Seconds the `loom.revoked_tokens` snapshot is cached; verify checks both jti and sub against it, so a revoke takes effect within this TTL. |
+| `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` | `float` | `30.0` | Seconds the `loom.revoked_tokens` snapshot is cached; verify checks both jti and sub against it, and the namespace gate checks the cutoffs a revoked or lowered grant leaves, so either takes effect on other processes within this TTL (at once on the one that wrote it). |
 | `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS` | `float` | `600.0` | Oldest revocation snapshot a process still trusts, seconds. Past it (refreshes keep failing) every bearer is refused with a retryable 503. |
 | `LOOM_SELF_SIGNUP` | `'off' \| 'open'` | `'off'` | Browser self-signup: "off" (endpoint 404s) or "open" (/v1/auth/self-signup mints JWTs scoped to the requested namespace). |
 | `LOOM_SELF_SIGNUP_ORG` | `str` | `'dev'` | Default org for self-signed tokens. |

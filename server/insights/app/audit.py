@@ -53,7 +53,7 @@ async def handle_audit_list(input: AuditListInput) -> AuditListOutput:
                 # grant elevates the caller into it.
                 covered = (
                     auth.can_access(input.org, input.namespace)
-                    and not await withdrawn_claims(auth, input.org, [input.namespace])
+                    and not withdrawn_claims(auth, input.org, [input.namespace])
                 ) or input.namespace in await resolve_my_namespaces(input.org)
                 if not covered:
                     return AuditListOutput(rows=[], next_cursor=None)

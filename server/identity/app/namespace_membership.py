@@ -8,6 +8,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
+from server.auth.revocation import end_grant_claims
 from server.core.ch import get_client
 from server.core.grant_sql import LIVE_GRANT
 from server.identity.api.models import (
@@ -249,6 +250,7 @@ async def handle_namespace_leave(
                 f"another member to admin (grants.create) before leaving"
             )
 
+    await end_grant_claims(input.org, input.namespace, [caller], reason="namespace.leave")
     now = datetime.now(UTC).replace(tzinfo=None)
     await grants_repo.insert_row(
         {
@@ -463,11 +465,14 @@ async def handle_namespace_list_mine(
         for r in grant_rows
     ]
 
+    from server.auth.authz import withdrawn_claims
     from server.auth.context import current_auth
 
     auth = current_auth()
     if auth is not None:
         jwt_only = [ns for ns in auth.namespaces if ns != "*" and ns not in seen]
+        withdrawn = withdrawn_claims(auth, input.org, jwt_only)
+        jwt_only = [ns for ns in jwt_only if ns not in withdrawn]
         # Claim-only namespaces have no grant row to JOIN through, so look up
         # kind/visibility directly — otherwise a code namespace named in a
         # token's claim would masquerade as a memory namespace and the header

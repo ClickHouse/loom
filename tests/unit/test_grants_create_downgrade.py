@@ -111,11 +111,23 @@ async def test_downgrade_without_replace_is_409_with_typed_code(
 
 
 @pytest.mark.asyncio
-async def test_downgrade_with_replace_overwrites(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_downgrade_with_replace_overwrites_and_ends_older_claims(
+    monkeypatch: pytest.MonkeyPatch, grant_cutoffs: list[tuple[str, str, list[str]]]
+) -> None:
     inserted, _ = _wire(monkeypatch, _row("admin"))
     out = await grants_mod.handle_grants_create(_create("viewer", replace=True))
     assert out.role == "viewer"
     assert inserted[0]["role"] == "viewer"
+    assert grant_cutoffs == [("o", "ns", ["alice"])]
+
+
+@pytest.mark.asyncio
+async def test_an_upgrade_ends_no_claim(
+    monkeypatch: pytest.MonkeyPatch, grant_cutoffs: list[tuple[str, str, list[str]]]
+) -> None:
+    _wire(monkeypatch, _row("viewer"))
+    await grants_mod.handle_grants_create(_create("writer"))
+    assert grant_cutoffs == []
 
 
 @pytest.mark.asyncio
@@ -190,7 +202,9 @@ async def test_an_email_spelling_is_checked_against_the_row_it_would_replace(
 
 
 @pytest.mark.asyncio
-async def test_revoke_by_email_revokes_the_canonical_row(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_revoke_by_email_revokes_the_canonical_row(
+    monkeypatch: pytest.MonkeyPatch, grant_cutoffs: list[tuple[str, str, list[str]]]
+) -> None:
     from server.identity.api.models_grants import GrantsRevokeInput
     from server.identity.app import token_grants
 
@@ -216,4 +230,5 @@ async def test_revoke_by_email_revokes_the_canonical_row(monkeypatch: pytest.Mon
         GrantsRevokeInput(org="o", namespace="ns", subject="alice@x.com")
     )
     assert out.revoked is True
+    assert grant_cutoffs == [("o", "ns", ["alice"])]
     assert inserted[0]["subject"] == "alice" and inserted[0]["revoked_at"] is not None

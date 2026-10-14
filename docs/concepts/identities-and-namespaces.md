@@ -152,12 +152,15 @@ operation's role, or a live grant does.
   ```
 
 - **Grants** (`loom.namespace_grants`, one row per `(org, namespace, subject)`) add a role
-  on one namespace above what the token carries. Revoking one also ends what the subject's
-  older tokens claim there: a token minted before the revocation no longer reaches a
-  namespace it names, unless the subject still holds a live grant on it. A namespace the
-  subject never held a grant on (one an operator named at mint) keeps its claim; revoke the
-  token to take that away. Every server sees a revocation within
-  `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` (default 30 s). A service
+  on one namespace above what the token carries. Revoking or lowering one (`grants.revoke`,
+  `grants.create` with `replace=true`, `namespace.leave`, a released claim) also ends what
+  the subject's older tokens claim there: a token minted before it no longer reaches the
+  namespace through its own claim, only through whatever grant the subject holds now, and
+  a scoped token must be minted again. A grant made later does not restore the old claim. A
+  namespace the subject never held a grant on (one an operator named at mint) keeps its
+  claim, and so does a token minted in the same second as the revocation; revoke the token
+  to take those away. The server that took the grant away applies it at once, every other
+  within `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` (default 30 s). A service
   account with no grant of its own on a namespace uses its creator's grant there, so a
   token minted from the dashboard follows the person who made it, except on a restricted
   namespace.

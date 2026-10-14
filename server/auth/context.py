@@ -108,7 +108,7 @@ async def resolve_my_namespaces(org: str, subject: str | None = None) -> list[st
     # order (= read priority); do not union other grants (= subset restrict).
     if auth is not None and auth.has_ns_roles():
         claimed = [ns for ns in auth.namespaces if ns and ns != "*"]
-        withdrawn = await withdrawn_claims(auth, org, claimed)
+        withdrawn = withdrawn_claims(auth, org, claimed)
         return await _without_unreadable_restricted(
             org, [ns for ns in claimed if ns not in withdrawn]
         )
@@ -118,7 +118,7 @@ async def resolve_my_namespaces(org: str, subject: str | None = None) -> list[st
     if auth is not None and auth.subject:
         resolved_subject = auth.subject
         jwt_namespaces = {ns for ns in auth.namespaces if ns and ns != "*"}
-        jwt_namespaces -= await withdrawn_claims(auth, org, sorted(jwt_namespaces))
+        jwt_namespaces -= withdrawn_claims(auth, org, sorted(jwt_namespaces))
     if not resolved_subject:
         resolved_subject = subject
 

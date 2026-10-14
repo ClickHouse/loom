@@ -1,163 +1,203 @@
-"""A token's namespace claim ends with the grant it was minted on: revoking
-the grant withdraws the claim from every token minted before the revocation,
-while a claim never backed by a grant and a token minted later keep theirs."""
+"""A token's namespace claim ends with the grant it was minted on: taking the
+grant away writes a cutoff, and tokens minted before it no longer reach the
+namespace through their own claim. A later grant does not lift the cutoff, a
+claim never backed by a grant keeps working, and a token minted afterwards
+is not touched."""
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 
 import server.auth.context as ctx
 import server.auth.revocation as rev
+import server.identity.app.grants as grants_mod
 from server.auth.authz import check_authorized, withdrawn_claims
 from server.auth.jwt import AuthInfo
+from server.identity.api.models_grants import GrantsRevokeInput
+from server.identity.domain.grants import GrantState
+from server.identity.store import grants as grants_repo
 from server.operations.base import Role
 
 ORG = "acme"
-MINTED = 1_800_000_000
+BEFORE = int(datetime(2026, 1, 1, tzinfo=UTC).timestamp())
 
 
-class _Grants:
-    """Answers the withdrawn-claim read with the namespaces it was told the
-    subject holds only revoked grants on; counts the reads."""
+class _CH:
+    """`loom.revoked_tokens` as written, and the subject's live grants."""
 
     def __init__(self) -> None:
-        self.revoked_only: list[str] = []
-        self.reads = 0
-        self.fail = False
+        self.revoked: dict[str, dict[str, Any]] = {}
+        self.live: dict[str, str] = {}  # namespace -> role
+
+    async def insert(self, table: str, rows: list[dict[str, Any]], **_k: Any) -> None:
+        assert table == "loom.revoked_tokens"
+        self.revoked.update({r["jti"]: r for r in rows})
 
     async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[dict]:
-        if "last_revoked" not in sql:
-            return []
-        self.reads += 1
-        if self.fail:
-            raise RuntimeError("replica away")
-        asked = (params or {}).get("nss", [])
-        return [{"namespace": ns} for ns in self.revoked_only if ns in asked]
+        if "revoked_tokens" in sql:
+            return list(self.revoked.values())
+        if "namespace_grants" in sql:
+            return [{"namespace": ns} for ns in self.live]
+        return []
 
-    async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> None:
+    async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> dict | None:
+        if "namespace_grants" in sql and (params or {}).get("ns") in self.live:
+            return {"role": self.live[params["ns"]]}
         return None
 
 
 @pytest.fixture
-def grants(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Grants]:
-    ch = _Grants()
-    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
-    monkeypatch.setattr(rev, "_grants_revoked", {})
-    yield ch
+def ch(monkeypatch: pytest.MonkeyPatch) -> Iterator[_CH]:
+    client = _CH()
+    monkeypatch.setattr("server.core.ch.get_client", lambda: client)
+    monkeypatch.setattr(rev, "_revoked_jtis", frozenset())
+    monkeypatch.setattr(rev, "_revoked_before", {})
+    yield client
     ctx.set_current_auth(None)
 
 
-def _revoked_at(monkeypatch: pytest.MonkeyPatch, namespace: str, at: int) -> None:
-    monkeypatch.setattr(rev, "_grants_revoked", {**rev._grants_revoked, (ORG, namespace): at})
-
-
-def _flat(*namespaces: str) -> AuthInfo:
+def _flat(*namespaces: str, issued_at: int = BEFORE) -> AuthInfo:
     return AuthInfo(
         subject="alice",
         org=ORG,
         namespaces=namespaces,
         roles=(Role.WRITER,),
         is_service_account=False,
-        issued_at=MINTED,
+        issued_at=issued_at,
     )
 
 
 def _scoped(namespace: str) -> AuthInfo:
     return AuthInfo(
-        subject="sa:bot",
+        subject="alice",
         org=ORG,
         namespaces=(namespace,),
         roles=(),
-        is_service_account=True,
+        is_service_account=False,
         ns_roles=((namespace, "writer"),),
-        issued_at=MINTED,
+        issued_at=BEFORE,
     )
 
 
-def _admits(auth: AuthInfo, namespace: str) -> bool:
+def _admits(auth: AuthInfo, namespace: str, role: Role = Role.VIEWER) -> bool:
     try:
-        asyncio.run(check_authorized(auth, Role.VIEWER, ORG, namespace))
+        asyncio.run(check_authorized(auth, role, ORG, namespace))
     except PermissionError:
         return False
     return True
 
 
-def test_a_claim_is_read_without_io_until_a_revocation_could_touch_it(grants: _Grants) -> None:
-    assert _admits(_flat("team"), "team")
-    assert grants.reads == 0
+def _end(namespace: str) -> None:
+    asyncio.run(rev.end_grant_claims(ORG, namespace, ["alice"], reason="test"))
 
 
-def test_revoking_the_grant_withdraws_the_claim_of_an_older_token(
-    grants: _Grants, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _revoked_at(monkeypatch, "team", MINTED + 60)
-    grants.revoked_only = ["team"]
+def test_ending_a_grant_withdraws_the_claim_of_older_tokens(ch: _CH) -> None:
+    assert _admits(_flat("team"), "team") and _admits(_scoped("team"), "team")
+    _end("team")
     assert not _admits(_flat("team"), "team")
     assert not _admits(_scoped("team"), "team")
+    assert _admits(_flat("team", "notes"), "notes"), "only the ended namespace is withdrawn"
 
 
-def test_a_token_minted_after_the_revocation_keeps_its_claim(
-    grants: _Grants, monkeypatch: pytest.MonkeyPatch
+def test_the_cutoff_lands_in_this_process_without_waiting_for_a_refresh(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _revoked_at(monkeypatch, "team", MINTED - 60)
-    grants.revoked_only = ["team"]
-    assert _admits(_flat("team"), "team")
-    assert grants.reads == 0
+    async def _stale() -> None:
+        return None
 
-
-def test_someone_elses_revocation_leaves_the_claim(
-    grants: _Grants, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # The namespace had a grant revoked, but not one of this subject's (or the
-    # subject still holds a live one): the read finds nothing to withdraw.
-    _revoked_at(monkeypatch, "team", MINTED + 60)
-    assert _admits(_flat("team"), "team")
-    assert grants.reads == 1
-
-
-def test_a_failed_read_withdraws_the_claim(
-    grants: _Grants, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _revoked_at(monkeypatch, "team", MINTED + 60)
-    grants.fail = True
+    monkeypatch.setattr(rev, "refresh", _stale)
+    _end("team")
     assert not _admits(_flat("team"), "team")
 
 
-def test_a_wildcard_claim_names_no_namespace_to_withdraw(
-    grants: _Grants, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _revoked_at(monkeypatch, "team", MINTED + 60)
-    grants.revoked_only = ["team"]
-    assert asyncio.run(withdrawn_claims(_flat("*"), ORG, ["team"])) == set()
+def test_a_token_minted_after_the_cutoff_keeps_its_claim(ch: _CH) -> None:
+    _end("team")
+    later = int(datetime.now(UTC).timestamp()) + 1
+    assert _admits(_flat("team", issued_at=later), "team")
 
 
-def test_the_callers_namespaces_leave_out_a_withdrawn_claim(
-    grants: _Grants, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _revoked_at(monkeypatch, "team", MINTED + 60)
-    grants.revoked_only = ["team"]
+def test_a_later_grant_does_not_restore_the_old_claim(ch: _CH) -> None:
+    # Round-trip a self-join: the person's own viewer grant lands after the
+    # cutoff. The older writer token reads through that grant, but its claim
+    # no longer carries the write it was minted with.
+    _end("team")
+    ch.live["team"] = "viewer"
+    old = _flat("team")
+    assert _admits(old, "team", Role.VIEWER)
+    assert not _admits(old, "team", Role.WRITER)
+    assert not _admits(_scoped("team"), "team"), "a scoped token is re-minted"
+
+
+def test_a_claim_never_backed_by_a_grant_is_left_alone(ch: _CH) -> None:
+    # An operator's `loom mint-token --namespaces notes`; no cutoff names it.
+    assert _admits(_flat("notes"), "notes")
+    assert withdrawn_claims(_flat("*"), ORG, ["team"]) == set()
+
+
+def test_the_check_reads_no_clickhouse(ch: _CH, monkeypatch: pytest.MonkeyPatch) -> None:
+    _end("team")
+
+    class _Unreachable:
+        def __getattr__(self, name: str) -> Any:
+            raise AssertionError("the claim check must not reach ClickHouse")
+
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _Unreachable())
+    assert withdrawn_claims(_scoped("team"), ORG, ["team"]) == {"team"}
+
+
+def test_every_spelling_of_the_subject_is_cut(ch: _CH, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _aliases(org: str, subject: str, **_k: Any) -> list[str]:
+        return [subject, "alice@acme.com"]
+
+    monkeypatch.setattr("server.auth.aliases.subject_aliases", _aliases)
+    _end("team")
+    assert set(ch.revoked) == {
+        rev.grant_claim_key(ORG, "team", "alice"),
+        rev.grant_claim_key(ORG, "team", "alice@acme.com"),
+    }
+    by_email = AuthInfo(
+        subject="alice@acme.com",
+        org=ORG,
+        namespaces=("team",),
+        roles=(Role.WRITER,),
+        is_service_account=False,
+        issued_at=BEFORE,
+    )
+    assert not _admits(by_email, "team")
+
+
+def test_the_callers_namespaces_leave_out_a_withdrawn_claim(ch: _CH) -> None:
+    _end("team")
     ctx.set_current_auth(_flat("team", "notes"))
     assert asyncio.run(ctx.resolve_my_namespaces(ORG)) == ["notes"]
     ctx.set_current_auth(_scoped("team"))
     assert asyncio.run(ctx.resolve_my_namespaces(ORG)) == []
 
 
-def test_the_refresh_reads_the_last_grant_revocation_per_namespace(
+@pytest.mark.parametrize(("status", "cut"), [("active", True), ("pending", False)])
+def test_revoking_ends_claims_only_when_the_grant_was_active(
+    status: str,
+    cut: bool,
     monkeypatch: pytest.MonkeyPatch,
+    grant_cutoffs: list[tuple[str, str, list[str]]],
 ) -> None:
-    class _CH:
-        async def query_all(self, sql: str, *a: object, **k: object) -> list[dict[str, object]]:
-            if "namespace_grants" in sql:
-                return [{"org": ORG, "namespace": "team", "last_revoked": MINTED + 60}]
-            return []
+    # Rejecting a join request granted nothing, so it ends no claim.
+    async def _find(org: str, namespace: str, subject: str, **_k: Any) -> GrantState:
+        return GrantState.from_row({"role": "writer", "status": status, "granted_by": "boss"})
 
-    monkeypatch.setattr("server.core.ch.get_client", lambda: _CH())
-    monkeypatch.setattr(rev, "_grants_revoked", {})
-    asyncio.run(rev.refresh())
-    assert rev.grant_revoked_since(ORG, "team", MINTED)
-    assert not rev.grant_revoked_since(ORG, "team", MINTED + 61)
-    assert not rev.grant_revoked_since(ORG, "notes", MINTED)
+    async def _ignore(*_a: Any, **_k: Any) -> Any:
+        return 0
+
+    monkeypatch.setattr(grants_repo, "find_any_grant", _find)
+    monkeypatch.setattr(grants_repo, "insert_row", _ignore)
+    monkeypatch.setattr(
+        "server.identity.app.token_grants.cascade_revoke_to_created_tokens", _ignore
+    )
+    revoke = GrantsRevokeInput(org=ORG, namespace="team", subject="alice")
+    assert asyncio.run(grants_mod.handle_grants_revoke(revoke)).revoked
+    assert grant_cutoffs == ([(ORG, "team", ["alice"])] if cut else [])

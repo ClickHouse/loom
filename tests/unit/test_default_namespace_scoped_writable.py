@@ -38,6 +38,7 @@ class _Auth:
         self.org = "clickhouse"
         self.namespaces = namespaces
         self.ns_roles = ns_roles
+        self.issued_at = None
         self.write_namespaces: tuple[str, ...] = ()
         self.is_service_account = False
 

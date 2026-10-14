@@ -13,9 +13,9 @@ The table is ReplacingMergeTree ORDER BY jti: the newest row per key governs.
   fills it, and the supervisor worker (lease holder) or `start_refresh_loop`
   (every other process) re-reads it each `jwt_revocation_cache_ttl_seconds`.
 - `is_revoked` is a frozenset/dict lookup — no I/O, safe from sync verify.
-- The same refresh reads when each namespace last had a grant revoked
-  (`grant_revoked_since`), so a check of a token's own claim stays free of
-  I/O until a revocation could touch it.
+- Taking a grant away (`end_grant_claims`) writes a cutoff row keyed by
+  `grant_claim_key`: tokens of that subject minted before it no longer reach
+  the namespace through their own claim (`authz.withdrawn_claims`).
 
 Failure semantics: until the first successful read `loaded()` is False and
 `verify_token` refuses every token (503, retryable) — an empty set would let
@@ -64,10 +64,6 @@ _revoked_jtis: frozenset[str] = frozenset()
 # Keys revoked only for tokens issued before the cutoff (unix seconds);
 # replaced together with `_revoked_jtis` on every refresh.
 _revoked_before: dict[str, int] = {}
-# The newest grant revocation per (org, namespace), unix seconds, read with
-# the token sets: a token minted before it may name a namespace its grant
-# no longer backs (`authz.withdrawn_claims`).
-_grants_revoked: dict[tuple[str, str], int] = {}
 # False until one refresh has succeeded in this process.
 _loaded = False
 # time.monotonic() of the last successful refresh; 0.0 = never.
@@ -99,18 +95,11 @@ def is_revoked(jti: str, *, issued_at: int | None = None) -> bool:
     return cutoff is not None and issued_at is not None and issued_at < cutoff
 
 
-def grant_revoked_since(org: str, namespace: str, issued_at: int) -> bool:
-    """True if a grant on (org, namespace) was revoked at or after
-    `issued_at` (unix seconds). Sync, hot-path safe."""
-    revoked = _grants_revoked.get((org, namespace))
-    return revoked is not None and revoked >= issued_at
-
-
 async def refresh() -> None:
     """Re-read the revocation set from CH and replace the in-memory copy."""
     from server.core.ch import get_client
 
-    global _revoked_jtis, _revoked_before, _grants_revoked, _loaded, _loaded_at
+    global _revoked_jtis, _revoked_before, _loaded, _loaded_at
     try:
         ch = get_client()
         rows = await ch.query_all(
@@ -127,21 +116,8 @@ async def refresh() -> None:
                 full.add(str(r["jti"]))
             else:
                 before[str(r["jti"])] = cutoff
-        grants = await ch.query_all(
-            """
-            SELECT org, namespace, max(revoked_at) AS last_revoked
-            FROM loom.namespace_grants FINAL
-            WHERE revoked_at IS NOT NULL
-            GROUP BY org, namespace
-            """,
-        )
         _revoked_jtis = frozenset(full)
         _revoked_before = before
-        _grants_revoked = {
-            (str(r["org"]), str(r["namespace"])): cutoff
-            for r in grants
-            if (cutoff := _cutoff_seconds(r.get("last_revoked"))) is not None
-        }
         _loaded = True
         _loaded_at = time.monotonic()
     except Exception as e:  # noqa: BLE001 — keep the last revocation set on a CH glitch
@@ -225,6 +201,54 @@ def _apply_locally(key: str, cutoff: int | None) -> None:
         _revoked_jtis = _revoked_jtis - {key}
         before[key] = cutoff
     _revoked_before = before
+
+
+_GRANT_CLAIM_PREFIX = "grant:"
+
+
+def grant_claim_key(org: str, namespace: str, subject: str) -> str:
+    """The revocation key that withdraws (org, namespace) from `subject`'s
+    token claims. Never a jti (a hex id) or a subject verify checks."""
+    return f"{_GRANT_CLAIM_PREFIX}{org}/{namespace}/{subject}"
+
+
+async def end_grant_claims(org: str, namespace: str, subjects: list[str], *, reason: str) -> None:
+    """Withdraw (org, namespace) from the claims of every token `subjects`
+    hold that was minted before now, under each spelling of each subject.
+
+    Called before a grant is revoked or lowered: a grant row is replaced by
+    the subject's next one (a join request, a self-join), so only a row of
+    its own keeps the revocation. A later grant does not lift it; a token
+    minted afterwards is not touched. Raises on a ClickHouse failure, so the
+    caller's grant write does not land without it."""
+    from server.auth.aliases import subject_aliases
+    from server.auth.context import current_auth
+    from server.core.ch import get_client
+
+    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    keys = {
+        grant_claim_key(org, namespace, alias)
+        for subject in subjects
+        for alias in await subject_aliases(org, subject)
+    }
+    if not keys:
+        return
+    auth = current_auth()
+    rows = [
+        {
+            "jti": key,
+            "revoked_at": now,
+            "expires_at": revocation_expiry(None, now),
+            "reason": reason,
+            "revoked_by": auth.subject if auth is not None else "",
+            "issued_before": now,
+        }
+        for key in sorted(keys)
+    ]
+    await get_client().insert("loom.revoked_tokens", rows)
+    await refresh()
+    for key in keys:
+        _apply_locally(key, _cutoff_seconds(now))
 
 
 async def list_active() -> list[dict[str, Any]]:

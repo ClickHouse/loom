@@ -6,6 +6,7 @@ import logging
 import time
 from datetime import UTC, datetime
 
+from server.auth.revocation import end_grant_claims
 from server.identity.api.models_grants import (
     GrantsApproveInput,
     GrantsApproveOutput,
@@ -127,6 +128,11 @@ async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
     pending_since = existing.pending_since if existing is not None else None
     if pending_role is not None and grant_rank(input.role) >= grant_rank(str(pending_role)):
         pending_role, pending_since = None, None
+    if existing is not None and grant_rank(existing.role) > grant_rank(input.role):
+        # Older tokens claim the role being taken away; they fall back to the new grant.
+        await end_grant_claims(
+            input.org, input.namespace, [subject], reason="grants.create lowered"
+        )
     now = datetime.now(UTC).replace(tzinfo=None)
     # granted_by is who issued the grant — the authenticated caller, as
     # grants.approve records the approver. The body's value is honoured only
@@ -263,6 +269,9 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
                 f"first (grants.create role=admin)"
             )
 
+    if (row.status or "active") == "active":
+        # A pending request granted nothing, so revoking it (a reject) ends no claim.
+        await end_grant_claims(input.org, input.namespace, [subject], reason="grants.revoke")
     now = datetime.now(UTC).replace(tzinfo=None)
     await grants_repo.insert_row(
         {

@@ -130,7 +130,9 @@ async def test_sync_respects_a_newer_explicit_revocation_on_a_branch() -> None:
     assert [(r["namespace"], r["subject"]) for r in ch.inserted] == [("code-x-26-6", "alice")]
 
 
-async def test_revoke_leaves_every_branch_except_where_they_are_the_only_admin() -> None:
+async def test_revoke_leaves_every_branch_except_where_they_are_the_only_admin(
+    grant_cutoffs: list[tuple[str, str, list[str]]],
+) -> None:
     ch = _FakeCH(
         [
             _admin("code-x-26-5", "alice"),
@@ -143,6 +145,7 @@ async def test_revoke_leaves_every_branch_except_where_they_are_the_only_admin()
     (row,) = ch.inserted
     assert (row["namespace"], row["subject"], row["role"]) == ("code-x-26-5", "alice", "admin")
     assert row["revoked_at"] is not None
+    assert grant_cutoffs == [("clickhouse", "code-x-26-5", ["alice"])]
 
 
 async def test_sync_quietly_never_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -157,8 +160,10 @@ async def test_sync_quietly_never_raises(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 @pytest.fixture()
-def _handler_env(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    calls: dict[str, Any] = {"sync": [], "revoke": [], "rows": []}
+def _handler_env(
+    monkeypatch: pytest.MonkeyPatch, grant_cutoffs: list[tuple[str, str, list[str]]]
+) -> dict[str, Any]:
+    calls: dict[str, Any] = {"sync": [], "revoke": [], "rows": [], "cutoffs": grant_cutoffs}
 
     async def _find(*_a: Any, **_k: Any) -> dict[str, Any] | None:
         return None
@@ -253,3 +258,4 @@ async def test_grants_revoke_admin_fans_out(
         GrantsRevokeInput(org="clickhouse", namespace="code-x", subject="alice")
     )
     assert out.revoked and _handler_env["revoke"] == [("clickhouse", "code-x", "alice")]
+    assert _handler_env["cutoffs"] == [("clickhouse", "code-x", ["alice"])]

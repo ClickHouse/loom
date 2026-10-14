@@ -11,6 +11,7 @@ import uuid
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, cast
 
+from server.auth.authz import withdrawn_claims
 from server.auth.personal_namespace import derive_personal_slug
 from server.core.naming import slugify
 from server.identity.app import caller_defaults
@@ -330,9 +331,23 @@ async def _caller_defaults(
     if auth is not None:
         auth_info = cast("AuthInfo", auth)
         subject = auth_info.subject
-        claimed_namespaces = [
-            n for n in (getattr(auth_info, "namespaces", None) or ()) if n and n != "*"
-        ]
+        if subject:
+            org = (
+                auth_info.org
+                if auth_info.org and auth_info.org != "*"
+                else settings.self_signup_org
+            )
+            claimed_namespaces = [
+                n for n in (getattr(auth_info, "namespaces", None) or ()) if n and n != "*"
+            ]
+            withdrawn = withdrawn_claims(auth_info, org, claimed_namespaces)
+            claimed_namespaces = [n for n in claimed_namespaces if n not in withdrawn]
+        else:
+            return None
+    elif settings.effective_identity_provider() == "single-user":
+        subject = "you"
+        org = settings.self_signup_org
+        claimed_namespaces = []
     else:
         subject = "you"
         claimed_namespaces = []

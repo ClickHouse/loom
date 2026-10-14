@@ -149,7 +149,9 @@ async def test_mcp_default_namespace_validates_the_saved_pick_against_the_pair(m
     client = AsyncMock()
     client.query_one.side_effect = [{"namespace": "code-x"}, {"role": "writer"}]
     monkeypatch.setattr("server.core.ch.get_client", lambda: client)
-    auth = SimpleNamespace(subject="jdoe", org="acme", namespaces=("personal-jdoe",))
+    auth = SimpleNamespace(
+        subject="jdoe", org="acme", namespaces=("personal-jdoe",), issued_at=None
+    )
     out = await mi._caller_defaults(auth, "claude-code")
     assert out is not None and out["namespace"] == "code-x" and out["org"] == "acme"
     validation = client.query_one.await_args_list[1]

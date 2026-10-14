@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from server.auth.authz import Role
 from server.auth.jwt import AuthInfo
+from server.auth.revocation import end_grant_claims
 from server.core.ch import CHClient, get_client
 
 log = logging.getLogger(__name__)
@@ -107,7 +108,7 @@ async def release_claim(
     # Revoke all grants by inserting tombstone rows.
     grants = await ch.query_all(
         """
-        SELECT subject, role, granted_by FROM loom.namespace_grants FINAL
+        SELECT subject, role, granted_by, status FROM loom.namespace_grants FINAL
         WHERE org = {org:String} AND namespace = {ns:String}
               AND revoked_at IS NULL
         """,
@@ -115,6 +116,8 @@ async def release_claim(
     )
     grants_count = len({g["subject"] for g in grants})
     if grants:
+        subjects = sorted({str(g["subject"]) for g in grants if g.get("status") == "active"})
+        await end_grant_claims(org, namespace, subjects, reason="claim released")
         tombstones = [
             {
                 "org": org,
