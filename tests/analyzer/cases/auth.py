@@ -18,6 +18,7 @@ async def _auth(ch: RecordingCH, c: dict[str, Any]) -> None:
     await aliases._read_spellings(ORG, "alice@x.io", ch, for_cutoff=True)
     await revocation._read_revocations([revocation.grant_claim_key(ORG, NS, "alice"), "alice"])
     await revocation.list_active()
+    await revocation.cut_where_lowered(ORG, NS, ["alice"], revoked_by="admin")
     await jit._registry_row(ORG, NS)
     await jit._accounts_naming(ORG, "alice@x.io")
     await jit._ever_granted(ORG, {"namespace": NS, "owner": "alice"})

@@ -24,6 +24,7 @@ from server.identity.api.models import (
     NamespaceMarkSeenOutput,
     _MineEntry,
 )
+from server.identity.app import grant_writes
 from server.identity.app import namespace as _registry
 from server.identity.domain import join_policy as _jp
 from server.operations.base import grant_rank
@@ -131,7 +132,7 @@ async def handle_namespace_join(
         # never becomes a base role. Active grant → keep that base role and
         # record the elevation as pending_role.
         if existing is None or existing.status == "pending":
-            await grants_repo.insert_row(
+            await grant_writes.insert_row(
                 {
                     "org": input.org,
                     "namespace": input.namespace,
@@ -158,7 +159,7 @@ async def handle_namespace_join(
             )
 
         base_role = existing.role
-        await grants_repo.insert_row(
+        await grant_writes.insert_row(
             {
                 "org": input.org,
                 "namespace": input.namespace,
@@ -185,7 +186,7 @@ async def handle_namespace_join(
         )
 
     # Ungated path — single row, exact role requested.
-    await grants_repo.insert_row(
+    await grant_writes.insert_row(
         {
             "org": input.org,
             "namespace": input.namespace,
@@ -255,7 +256,7 @@ async def handle_namespace_leave(
         input.org, [input.namespace], [caller], reason="namespace.leave", revoked_by=caller
     )
     now = datetime.now(UTC).replace(tzinfo=None)
-    await grants_repo.insert_row(
+    await grant_writes.insert_row(
         {
             "org": input.org,
             "namespace": input.namespace,
@@ -299,7 +300,7 @@ async def handle_namespace_cancel_request(
     now = datetime.now(UTC).replace(tzinfo=None)
     if no_base_access and not pending_role:
         # No underlying base row — cancelling means revoking entirely.
-        await grants_repo.insert_row(
+        await grant_writes.insert_row(
             {
                 "org": input.org,
                 "namespace": input.namespace,
@@ -322,7 +323,7 @@ async def handle_namespace_cancel_request(
         )
 
     # New-shape: clear pending_role, leave base role active.
-    await grants_repo.insert_row(
+    await grant_writes.insert_row(
         {
             "org": input.org,
             "namespace": input.namespace,

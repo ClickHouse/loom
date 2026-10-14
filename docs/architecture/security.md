@@ -81,8 +81,8 @@ spelling of the subject; the hash keeps an email out of the key but can be teste
 a guessed one; it is not a keyed HMAC because a rotated key would orphan cutoffs kept for
 ten years), so tokens minted before it no longer reach the namespace through their own
 claim (`revocation.write_grant_cutoffs`, `authz.claim_withdrawn`). The row is the only
-record: the grant row is replaced by the subject's next one, so a cutoff is never derived
-from it. Three consequences hold the design together:
+lasting record: the grant row is replaced by the subject's next one. Four consequences
+hold the design together:
 
 - A cutoff lives as long as the longest token it must outlive. Rows are kept for
   `NEVER_EXPIRES_DAYS` (ten years) because tokens without `exp` exist and a sign-in
@@ -103,6 +103,13 @@ from it. Three consequences hold the design together:
   replaces. The spellings a cutoff covers come from contact emails, which self-signup does
   not verify; a cutoff refuses outright, and logs an error naming the subject, rather than
   read past 1000 accounts, so an operator can release the extra ones.
+- A grant change decides from a read of the current grant, and ClickHouse has no row
+  lock: a raise that lands between that read and the write is lowered without a cutoff.
+  `loom.namespace_grant_log`, filled by a materialized view on every grant insert and kept
+  a week, closes that. Each write that read first goes through `grant_writes`, which then
+  cuts any subject whose grant now ranks below a role it held since its last cutoff
+  (`revocation.cut_where_lowered`); a retried write repeats the check. The spellings a
+  cutoff covers are read with sequential consistency, since a missed one never gets a key.
 
 **One exchange per credential** (`server/auth/oauth_claims.py`). The OAuth store marks a
 code or refresh token used by writing a new ReplacingMergeTree version, so reading and then

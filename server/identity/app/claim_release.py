@@ -24,6 +24,7 @@ from server.auth.jwt import AuthInfo
 from server.auth.revocation import write_grant_cutoffs
 from server.core.ch import CHClient, get_client
 from server.core.errors import TooManySpellingsError
+from server.identity.app import grant_writes
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -137,11 +138,7 @@ async def release_claim(
             }
             for i, g in enumerate(grants)
         ]
-        await ch.insert(
-            "loom.namespace_grants",
-            tombstones,
-            settings={"async_insert": 0, "wait_for_async_insert": 1},
-        )
+        await grant_writes.insert_rows(tombstones, ch=ch)
 
     # Clear owner and mark inactive. The row stays, so the name stays taken
     # (self-signup's first-claim check does not filter on `active`): the

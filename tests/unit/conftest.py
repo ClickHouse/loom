@@ -288,6 +288,25 @@ def _no_copy_head_check(request: pytest.FixtureRequest) -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _no_grant_log_check(request: pytest.FixtureRequest) -> Iterator[None]:
+    """A grant write reads the grant log after its insert (`cut_where_lowered`);
+    unit fakes answer statements by shape, so that read is off unless a test
+    is marked `grant_log_check`."""
+    if request.node.get_closest_marker("grant_log_check"):
+        yield
+        return
+    from server.identity.app import grant_writes
+
+    async def _skip(*_a: object, **_k: object) -> None:
+        return None
+
+    before = grant_writes.cut_where_lowered
+    grant_writes.cut_where_lowered = _skip  # type: ignore[assignment]
+    yield
+    grant_writes.cut_where_lowered = before  # type: ignore[assignment]
+
+
+@pytest.fixture(autouse=True)
 def _no_run_claims() -> Iterator[None]:
     """run.begin sees no Keeper unless a test says otherwise: the claims-table
     check is cached per process, so without this the first test to ask decides

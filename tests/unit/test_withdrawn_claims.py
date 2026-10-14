@@ -508,3 +508,57 @@ def test_a_lowered_scoped_token_still_lists_the_namespace_its_gate_admits(ch: _C
     assert asyncio.run(ctx.resolve_my_namespaces(ORG)) == ["team"]
     ch.live.clear()
     assert asyncio.run(ctx.resolve_my_namespaces(ORG)) == []
+
+
+def _logged(role: str, at: int, *, revoked: bool = False, status: str = "active") -> dict:
+    return {
+        "role": role,
+        "status": status,
+        "revoked_at": datetime(2030, 1, 1) if revoked else None,
+        "version": at * 1_000_000_000,
+    }
+
+
+@pytest.mark.parametrize(
+    ("history", "cutoff", "lowered"),
+    [
+        # A raise between a writer's read and its write, then the write: lowered.
+        ([_logged("viewer", 10), _logged("admin", 11), _logged("writer", 12)], None, True),
+        ([_logged("viewer", 10), _logged("writer", 11)], None, False),
+        # A lowering whose own cutoff predates every later row.
+        ([_logged("admin", 10), _logged("writer", 11)], 12, False),
+        # The admin row was still in force when the cutoff passed: tokens minted then.
+        ([_logged("admin", 10), _logged("writer", 13)], 12, True),
+        ([_logged("admin", 10), _logged("admin", 11, revoked=True)], 12, False),
+        # A request grants nothing, so approving it raises from nothing.
+        ([_logged("admin", 10, status="pending"), _logged("writer", 11)], None, False),
+        ([], None, False),
+    ],
+)
+def test_a_grant_is_lowered_when_it_ranks_below_a_role_held_since_its_cutoff(
+    history: list[dict], cutoff: int | None, lowered: bool
+) -> None:
+    assert rev._lowered_since(history, cutoff) is lowered
+
+
+def test_a_grant_cutoff_acknowledged_late_does_not_move_this_process_back() -> None:
+    key = rev.grant_claim_key(ORG, "team", "alice")
+    rev._tighten_locally([key], 200)
+    rev._tighten_locally([key], 100)  # an older write, acknowledged after
+    assert rev._revoked_before[key] == 200 and rev._written[key][0] == 200
+
+
+def test_a_cutoff_reads_the_spellings_with_sequential_consistency() -> None:
+    from server.auth import aliases
+    from server.core.ch import sequential_reads_active
+
+    seen: list[bool] = []
+
+    class _Directory:
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict]:
+            seen.append(sequential_reads_active())
+            return []
+
+    asyncio.run(aliases.cutoff_spellings(ORG, "alice", ch=_Directory()))
+    asyncio.run(aliases.subject_aliases(ORG, "bob", ch=_Directory()))
+    assert seen == [True, False]

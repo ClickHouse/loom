@@ -78,10 +78,15 @@ async def subject_aliases(
 async def cutoff_spellings(org: str, subject: str, *, ch: object | None = None) -> list[str]:
     """Every spelling a grant cutoff for `subject` must cover: read now, never
     cached, raising when the directory cannot answer, and counting accounts
-    since deactivated, whose other spelling may still be in a token."""
+    since deactivated, whose other spelling may still be in a token. Read
+    with sequential consistency: a spelling a lagging replica misses gets no
+    cutoff, and no later refresh writes one."""
+    from server.core.ch import own_write_reads
+
     if not _is_human_subject(subject):
         return [subject] if subject else []
-    return await _read_spellings(org, subject, ch, for_cutoff=True)
+    with own_write_reads():
+        return await _read_spellings(org, subject, ch, for_cutoff=True)
 
 
 async def _read_spellings(

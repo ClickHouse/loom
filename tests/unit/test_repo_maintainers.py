@@ -130,7 +130,15 @@ async def test_sync_respects_a_newer_explicit_revocation_on_a_branch() -> None:
     assert [(r["namespace"], r["subject"]) for r in ch.inserted] == [("code-x-26-6", "alice")]
 
 
-async def test_a_revoke_plans_every_branch_except_where_they_are_the_only_admin() -> None:
+async def test_a_revoke_plans_every_branch_except_where_they_are_the_only_admin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    written: list[dict[str, Any]] = []
+
+    async def _insert_rows(rows: list[dict[str, Any]]) -> None:
+        written.extend(rows)
+
+    monkeypatch.setattr("server.identity.app.grant_writes.insert_rows", _insert_rows)
     ch = _FakeCH(
         [
             _admin("code-x-26-5", "alice"),
@@ -142,11 +150,13 @@ async def test_a_revoke_plans_every_branch_except_where_they_are_the_only_admin(
     assert (row["namespace"], row["subject"], row["role"]) == ("code-x-26-5", "alice", "admin")
     assert row["revoked_at"] is not None
     assert ch.inserted == [], "planned, not written"
-    await maintainers.write_revokes("clickhouse", "code-x", "alice", [row], ch=ch)
-    assert ch.inserted == [row]
+    await maintainers.write_revokes("clickhouse", "code-x", "alice", [row])
+    assert written == [row]
 
 
-async def test_a_failed_plan_or_write_never_fails_the_revoke() -> None:
+async def test_a_failed_plan_or_write_never_fails_the_revoke(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class _Down(_FakeCH):
         async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
             raise RuntimeError("clickhouse down")
@@ -156,7 +166,12 @@ async def test_a_failed_plan_or_write_never_fails_the_revoke() -> None:
 
     down = _Down([])
     assert await maintainers.plan_revoke("clickhouse", "code-x", "alice", ch=down) == []
-    await maintainers.write_revokes("clickhouse", "code-x", "alice", [{"namespace": "n"}], ch=down)
+
+    async def _down(rows: list[dict[str, Any]]) -> None:
+        raise RuntimeError("clickhouse down")
+
+    monkeypatch.setattr("server.identity.app.grant_writes.insert_rows", _down)
+    await maintainers.write_revokes("clickhouse", "code-x", "alice", [{"namespace": "n"}])
 
 
 async def test_sync_quietly_never_raises(monkeypatch: pytest.MonkeyPatch) -> None:

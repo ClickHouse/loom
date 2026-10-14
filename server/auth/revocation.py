@@ -236,6 +236,19 @@ def _apply_locally(keys: list[str], cutoff: int | None) -> None:
     _revoked_jtis, _revoked_before = frozenset(full), before
 
 
+def _tighten_locally(keys: list[str], cutoff: int) -> None:
+    """`_apply_locally` for grant cutoffs, which only move forward: a write
+    acknowledged after a newer one must not pull this process's cutoff back."""
+    global _revoked_before
+    now = time.monotonic()
+    before = dict(_revoked_before)
+    for key in keys:
+        newest = max(cutoff, before.get(key, cutoff))
+        before[key] = newest
+        _written[key] = (newest, now)
+    _revoked_before = before
+
+
 def _fold_written(full: set[str], before: dict[str, int]) -> None:
     """Apply what this process wrote in the last `_WRITTEN_KEEP_S` to a
     snapshot being built, dropping older entries. A key never moves back: a
@@ -324,7 +337,66 @@ async def write_grant_cutoffs(
     rows = _cutoff_rows(keys, reason, revoked_by)
     await ch.insert("loom.revoked_tokens", rows)
     # This process applies them now; every other at its next refresh.
-    _apply_locally(keys, _cutoff_seconds(rows[0]["issued_before"]))
+    _tighten_locally(keys, int(rows[0]["issued_before"].replace(tzinfo=UTC).timestamp()))
+
+
+async def cut_where_lowered(
+    org: str, namespace: str, subjects: list[str], *, revoked_by: str
+) -> None:
+    """Write a cutoff for each of `subjects` whose grant on `namespace` now
+    ranks below a role it held since its last cutoff.
+
+    Run after a grant write that read the grant first: a raise that landed
+    between that read and the write is lowered by it, and only the grant log
+    shows it. Retrying the write runs this again, so a cutoff that failed here
+    is written then."""
+    from server.core.ch import get_client, own_write_reads
+
+    with own_write_reads():
+        rows = await get_client().query_all(
+            """
+            SELECT subject, role, status, revoked_at, version
+            FROM loom.namespace_grant_log
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND subject IN {subs:Array(String)}
+            ORDER BY subject, version
+            """,
+            params={"org": org, "ns": namespace, "subs": subjects},
+        )
+    cutoffs = {
+        str(r["jti"]): _cutoff_seconds(r.get("issued_before"))
+        for r in await _read_revocations([grant_claim_key(org, namespace, s) for s in subjects])
+    }
+    history: dict[str, list[dict[str, Any]]] = {}
+    for r in rows:
+        history.setdefault(str(r["subject"]), []).append(r)
+    lowered = [
+        s
+        for s in subjects
+        if _lowered_since(history.get(s, []), cutoffs.get(grant_claim_key(org, namespace, s)))
+    ]
+    if lowered:
+        await write_grant_cutoffs(
+            org, [namespace], lowered, reason="grant lowered", revoked_by=revoked_by
+        )
+
+
+def _lowered_since(rows: list[dict[str, Any]], cutoff: int | None) -> bool:
+    """Whether the last of `rows`, one subject's grant history oldest first,
+    ranks below the row in force at `cutoff` (unix seconds) or any later one."""
+    from server.operations.base import grant_rank
+
+    if not rows:
+        return False
+    ranks = [
+        grant_rank(r["role"]) if r["revoked_at"] is None and r["status"] == "active" else 0
+        for r in rows
+    ]
+    first = 0
+    if cutoff is not None:
+        after = [i for i, r in enumerate(rows) if int(r["version"]) >= cutoff * 1_000_000_000]
+        first = max(after[0] - 1, 0) if after else len(rows) - 1
+    return max(ranks[first:]) > ranks[-1]
 
 
 def _cutoff_rows(keys: list[str], reason: str, revoked_by: str) -> list[dict[str, Any]]:

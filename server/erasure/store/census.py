@@ -498,6 +498,7 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     "loom.namespaces": "namespace registry and per-namespace settings.",
     "loom.namespace_types": "per-type retention/dedup configuration.",
     "loom.namespace_grants": "access grants (subject, role).",
+    "loom.namespace_grant_log": "every grant row as inserted (subject, role); a week kept.",
     "loom.namespace_visits": "last-seen per (subject, namespace) for the namespace picker.",
     "loom.namespace_policies": "admin-authored access policies (effect, actions, condition).",
     "loom.namespace_ontology": "admin-registered kinds/names for the ontology.",

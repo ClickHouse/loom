@@ -22,6 +22,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.datetimes import naive_utc_now_seconds
+from server.identity.app import grant_writes
 from server.identity.store import grants as grants_repo
 from server.operations.base import grant_rank
 
@@ -139,7 +140,9 @@ async def revoke_token_grants(
         ch = get_client()
     rows = await _live_grants(ch, org, sa_subject, namespace)
     now = naive_utc_now_seconds()
-    await grants_repo.insert_rows([revoked_grant_row(org, sa_subject, r, now) for r in rows])
+    await grant_writes.insert_rows(
+        [revoked_grant_row(org, sa_subject, r, now) for r in rows], ch=ch
+    )
     return len(rows)
 
 

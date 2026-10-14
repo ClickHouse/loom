@@ -22,6 +22,7 @@ from server.identity.api.models_grants import (
     _GrantEntry,
     _PendingForMeEntry,
 )
+from server.identity.app import grant_writes
 from server.identity.domain.grants import GrantState
 from server.identity.store import grants as grants_repo
 from server.operations.base import grant_rank
@@ -169,7 +170,7 @@ async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
     # grants.approve records the approver. The body's value is honoured only
     # with auth off, where there is no caller to stamp.
     granted_by = _actor() or input.granted_by or "admin"
-    await grants_repo.insert_row(
+    await grant_writes.insert_row(
         {
             "org": input.org,
             "namespace": input.namespace,
@@ -318,7 +319,7 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
             revoked_by=_actor(),
         )
     now = datetime.now(UTC).replace(tzinfo=None)
-    await grants_repo.insert_row(
+    await grant_writes.insert_row(
         {
             "org": input.org,
             "namespace": input.namespace,
@@ -389,7 +390,7 @@ async def handle_grants_approve(input: GrantsApproveInput) -> GrantsApproveOutpu
     # audit trail and the "approved by …" notification need the right person.
     approver = _actor() or row.granted_by or "admin"
     if input.decision == "approve":
-        await grants_repo.insert_row(
+        await grant_writes.insert_row(
             {
                 "org": input.org,
                 "namespace": input.namespace,
@@ -412,7 +413,7 @@ async def handle_grants_approve(input: GrantsApproveInput) -> GrantsApproveOutpu
     else:
         if no_base_access:
             # No base access → reject tombstones the whole row.
-            await grants_repo.insert_row(
+            await grant_writes.insert_row(
                 {
                     "org": input.org,
                     "namespace": input.namespace,
@@ -430,7 +431,7 @@ async def handle_grants_approve(input: GrantsApproveInput) -> GrantsApproveOutpu
         else:
             # Has base access → reject clears only the request, leaving the
             # base role intact so the user isn't silently demoted.
-            await grants_repo.insert_row(
+            await grant_writes.insert_row(
                 {
                     "org": input.org,
                     "namespace": input.namespace,

@@ -200,19 +200,17 @@ async def _plan_revoke(
     return out
 
 
-async def write_revokes(
-    org: str, namespace: str, subject: str, rows: list[dict[str, Any]], *, ch: Any | None = None
-) -> None:
+async def write_revokes(org: str, namespace: str, subject: str, rows: list[dict[str, Any]]) -> None:
     """Write the planned revoke rows. A failure is logged, not raised: the
     sibling admin grants then stay live, reachable through a flat token's
     grant check, until an operator revokes them; their cutoffs, written
     first, still end older tokens' claims there."""
     if not rows:
         return
-    from server.core.ch import get_client
+    from server.identity.app import grant_writes
 
     try:
-        await _insert(ch or get_client(), rows)
+        await grant_writes.insert_rows(rows)
     except Exception:  # the fan-out never fails the revoke that caused it
         log.warning(
             "repo maintainers: revoke fan-out failed for %s/%s/%s",

@@ -20,6 +20,7 @@ from server.identity.api.models import (
     _SnapshotMemoryRow,
     _SnapshotTypeRow,
 )
+from server.identity.app import grant_writes
 from server.identity.app import namespace as _registry
 from server.identity.store import grants as grants_repo
 from server.identity.store import namespaces as namespaces_repo
@@ -274,8 +275,7 @@ async def handle_namespace_restore(
     # Grants. granted_by = caller so the restore is traceable; the
     # original granted_by stays in the snapshot payload.
     if payload.grants:
-        await ch.insert(
-            "loom.namespace_grants",
+        await grant_writes.insert_rows(
             [
                 {
                     "org": input.org,
@@ -289,7 +289,7 @@ async def handle_namespace_restore(
                 }
                 for i, g in enumerate(payload.grants)
             ],
-            settings={"async_insert": 0, "wait_for_async_insert": 1},
+            ch=ch,
         )
 
     # Provenance audit row — carries the snapshot_id in the subject for

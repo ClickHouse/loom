@@ -177,6 +177,7 @@ markers = [
   "provider: calls a real LLM or embedding provider; skips without its key",
   "recovery: kills, restarts or resumes a worker, saga or migration mid-flight",
   "copy_head_check: a unit test that runs the post-copy head re-check (off by default in unit)",
+  "grant_log_check: a unit test that runs the post-write grant log check (off by default in unit)",
 ]
 
 [tool.mypy]

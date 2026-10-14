@@ -24,6 +24,7 @@ INSERT_VIEWS = {
     "memory_record_versions_mv": "memory_record_versions",
     "memory_usage_totals_mv": "memory_usage_totals",
     "memory_versions_mv": "memory_versions",
+    "namespace_grant_log_mv": "namespace_grant_log",
     "session_brief_revisions_mv": "session_brief_revisions",
 }
 

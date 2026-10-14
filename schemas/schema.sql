@@ -16,12 +16,12 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 140 tables + 17 materialized views.
+-- Counts: 141 tables + 18 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 
 -- ======================================================================
--- Tables (140)
+-- Tables (141)
 -- ======================================================================
 
 -- loom.agent_cost_rollup_daily
@@ -2435,6 +2435,24 @@ ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace)
 SETTINGS index_granularity = 8192;
 
+-- loom.namespace_grant_log
+CREATE TABLE IF NOT EXISTS loom.namespace_grant_log
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `subject` String,
+    `role` LowCardinality(String),
+    `status` LowCardinality(String),
+    `revoked_at` Nullable(DateTime),
+    `version` UInt64,
+    `logged_at` DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+PARTITION BY toDate(logged_at)
+ORDER BY (org, namespace, subject, version)
+TTL logged_at + toIntervalDay(7)
+SETTINGS ttl_only_drop_parts = 1, index_granularity = 8192;
+
 -- loom.namespace_grants
 CREATE TABLE IF NOT EXISTS loom.namespace_grants
 (
@@ -3353,7 +3371,7 @@ ORDER BY (org, namespace, agent, user_id, session_id, run_id, block_key)
 SETTINGS index_granularity = 8192;
 
 -- ======================================================================
--- Materialized views (17)
+-- Materialized views (18)
 -- ======================================================================
 
 -- loom.agent_cost_rollup_refresh
@@ -3928,6 +3946,27 @@ AS SELECT
     on_expire,
     expire_reason
 FROM loom.memory;
+
+-- loom.namespace_grant_log_mv
+CREATE MATERIALIZED VIEW IF NOT EXISTS loom.namespace_grant_log_mv TO loom.namespace_grant_log
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `subject` String,
+    `role` LowCardinality(String),
+    `status` LowCardinality(String),
+    `revoked_at` Nullable(DateTime),
+    `version` UInt64
+)
+AS SELECT
+    org,
+    namespace,
+    subject,
+    role,
+    status,
+    revoked_at,
+    version
+FROM loom.namespace_grants;
 
 -- loom.session_brief_revisions_mv
 CREATE MATERIALIZED VIEW IF NOT EXISTS loom.session_brief_revisions_mv TO loom.session_brief_revisions
