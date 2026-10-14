@@ -42,6 +42,11 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 
 ### Fixed
 
+- The quickstart told released-stack users to add repositories from the dashboard, which
+  that stack refuses with `SANDBOX_UNAVAILABLE`, since it runs without the repository-job
+  sandbox. It now shows how to index one through `LOOM_CODE_REPOS_JSON`, `loom code init` and
+  `loom code backfill`. The refusal names that route, and the sandbox docs say which hosts
+  can load the AppArmor profile (Docker Desktop and SELinux hosts run without it).
 - `loom code scip-full` moves its checkout and runs its harness (the repository's CMake)
   as repository jobs, in the sandbox like the delta worker, instead of as plain processes.
   The checkout fetch now names the bare clone and the submodule update gets the network,

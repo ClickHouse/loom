@@ -38,7 +38,7 @@ installs the Compose and ClickHouse configuration under `~/.loom`, pulls the mat
 `http://localhost:7777/v1/health`. The image contains the API, workers, migrations and
 the built React dashboard at `/me`; no Python or Node installation is needed. Python,
 TypeScript and Go compiler indexers are included and enabled. TypeScript repository
-dependencies are prepared automatically when you add a repository from the dashboard.
+dependencies are prepared automatically for each repository you index.
 The image supports Linux `amd64` and `arm64`, including Docker Desktop on Apple Silicon.
 
 Pin a release or inspect everything before starting:
@@ -65,6 +65,24 @@ docker compose --project-directory "$HOME/.loom" down
 ```
 
 Add `--volumes` only for an intentional, irreversible reset.
+
+### Index a repository on the released stack
+
+List the repository in `LOOM_CODE_REPOS_JSON` in `~/.loom/.env`
+([Configure the entry](../operations/code-index-operations.md#configure-the-entry)), then
+recreate the stack and run the first index:
+
+```bash
+echo 'LOOM_CODE_REPOS_JSON=[{"org":"dev","namespace":"code-myrepo","repo":"acme/myrepo","git_branch":"main","public":true}]' >> ~/.loom/.env
+docker compose --project-directory "$HOME/.loom" up -d --force-recreate loom
+docker compose --project-directory "$HOME/.loom" exec loom loom code init --namespace code-myrepo --org dev
+docker compose --project-directory "$HOME/.loom" exec loom loom code backfill --namespace code-myrepo --org dev --embed
+```
+
+`backfill --embed` needs a real embedding provider ([Models and keys](./models-and-keys.md)).
+Adding a repository from the dashboard is refused on this stack with `SANDBOX_UNAVAILABLE`:
+it needs the [repository-job sandbox](../operations/code-index-operations.md#repository-job-sandbox),
+which this stack leaves off because Docker's default confinement blocks it.
 
 ### Start in multi-user mode
 
@@ -397,6 +415,7 @@ the answer and the chunks it cited. With the fake LLM it prints the top
 | 401 `AUTH_INVALID` after turning auth on               | No token, or one signed with another `LOOM_JWT_SECRET`. Re-mint with the Compose command in [Get a token](#3-get-a-token).                                                     |
 | `/me` returns 503                                      | The server runs from source (`make server`) without a built frontend. Run `make frontend-build`.                                                                               |
 | Released stack does not become healthy                 | Run `docker compose --project-directory "$HOME/.loom" logs --tail 100 loom clickhouse`. See [Troubleshooting](../operations/troubleshooting.md).                               |
+| Adding a repository answers `SANDBOX_UNAVAILABLE`      | The stack runs without the repository-job sandbox. Index the repository through `LOOM_CODE_REPOS_JSON` ([Index a repository](#index-a-repository-on-the-released-stack)).      |
 | Port `8123`, `9000` or `7777` is taken                 | Remap the ClickHouse host ports ([local stack](../operations/deployment.md#local-stack)).                                                                                      |
 
 ## Next

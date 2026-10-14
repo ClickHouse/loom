@@ -22,7 +22,9 @@ It also needs the [repository-job sandbox](../../operations/code-index-operation
 a repository added here gets compiler tiers that execute its own build code, and its
 clone talks to a host the person chose, so without the sandbox the add is refused
 (`SANDBOX_UNAVAILABLE`) and entries already added are no longer fetched or indexed.
-No shipped Compose stack enables the sandbox by default. Each org holds at most `LOOM_CODE_SELF_SERVICE_MAX_REPOS` (20) entries.
+Of the shipped Compose stacks only the blue/green colours (`dev/docker-compose.colour.yml`)
+run it. On the others, the released stack included, index a repository through
+`LOOM_CODE_REPOS_JSON` ([quickstart](../../getting-started/quickstart.md#index-a-repository-on-the-released-stack)). Each org holds at most `LOOM_CODE_SELF_SERVICE_MAX_REPOS` (20) entries.
 
 Any signed-in member of an org can add a repository and becomes its first maintainer.
 The remote can be `owner/name` (GitHub shorthand), an HTTPS URL, or an SSH/scp-style
@@ -139,14 +141,14 @@ and survives restarts. `code.refresh` (writer) and the admin ops always need a g
 
 ## Failure modes
 
-| Symptom                                           | Cause and fix                                                                                                                    |
-| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| A configured entry never indexes                  | no `git_head` watermark: run `loom code init` and `loom code backfill`                                                           |
-| Adding a repository answers `SANDBOX_UNAVAILABLE` | the host cannot run bubblewrap: see the [sandbox requirements](../../operations/code-index-operations.md#repository-job-sandbox) |
-| A self-service card stays at `error`              | read `stage_detail` in `code.repos`; a failed clone retries next pass (timeout `LOOM_CODE_BOOTSTRAP_CLONE_TIMEOUT_S`)            |
-| A private self-service repository stops fetching  | `LOOM_JWT_SECRET` was rotated; re-enter the token                                                                                |
-| An entry is missing from `code.repos`             | check `loom.code.repos_config_errors`; `code.repos` also lists only what the caller may read                                     |
-| Answers are lexical only                          | the entry has not reached `LOOM_CODE_READY_EMBED_COVERAGE` ([freshness](freshness.md))                                           |
+| Symptom                                           | Cause and fix                                                                                                                                                                              |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| A configured entry never indexes                  | no `git_head` watermark: run `loom code init` and `loom code backfill`                                                                                                                     |
+| Adding a repository answers `SANDBOX_UNAVAILABLE` | the host cannot run bubblewrap: list the repository in `LOOM_CODE_REPOS_JSON` instead, or see the [sandbox requirements](../../operations/code-index-operations.md#repository-job-sandbox) |
+| A self-service card stays at `error`              | read `stage_detail` in `code.repos`; a failed clone retries next pass (timeout `LOOM_CODE_BOOTSTRAP_CLONE_TIMEOUT_S`)                                                                      |
+| A private self-service repository stops fetching  | `LOOM_JWT_SECRET` was rotated; re-enter the token                                                                                                                                          |
+| An entry is missing from `code.repos`             | check `loom.code.repos_config_errors`; `code.repos` also lists only what the caller may read                                                                                               |
+| Answers are lexical only                          | the entry has not reached `LOOM_CODE_READY_EMBED_COVERAGE` ([freshness](freshness.md))                                                                                                     |
 
 ## Related
 

@@ -346,7 +346,10 @@ async def test_code_repo_add_is_refused_without_the_sandbox(plane, monkeypatch) 
     ):
         with pytest.raises(ValidationError) as ei:
             await call
-        assert ei.value.to_detail()["code"] == "SANDBOX_UNAVAILABLE"
+        detail = ei.value.to_detail()
+        assert detail["code"] == "SANDBOX_UNAVAILABLE"
+        # The refusal names the path that works without the sandbox.
+        assert "LOOM_CODE_REPOS_JSON" in detail["message"]
     assert plane.ch.inserted == []
 
 
