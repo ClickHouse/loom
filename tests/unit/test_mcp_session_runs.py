@@ -616,3 +616,39 @@ def test_the_idle_window_is_no_shorter_than_a_processs_check() -> None:
     with pytest.raises(ValidationError):
         Settings(mcp_session_run_idle_seconds=59)
     assert mcp_runs.CHECK_INTERVAL_S == 60
+
+
+def test_a_loop_of_deletes_is_rate_limited_before_it_reads_the_ledger(monkeypatch) -> None:
+    """DELETE names no namespace, so it draws run.complete's buckets under the caller."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from server.core.ratelimit import Limit, get_limiter
+    from server.settings import settings
+    from server.transport import mcp as mcp_mod
+
+    monkeypatch.setattr(settings, "auth_required", False)
+    monkeypatch.setattr(settings, "mcp_auth_mode", "open")
+    monkeypatch.setattr(settings, "web_workers", 1)
+    monkeypatch.setattr(settings, "ratelimit_shared", "off")
+    closes: list[str] = []
+
+    async def close_session(session_id: Any, org: str, subject: str) -> bool:
+        closes.append(session_id)
+        return False
+
+    monkeypatch.setattr(mcp_runs, "close_session", close_session)
+    limiter = get_limiter()
+    limiter.reset_all()
+    limiter.set_namespace_limit("", "default", Limit(capacity=1, rate=0.0))
+    app = FastAPI()
+    mcp_mod.attach(app)
+    try:
+        c = TestClient(app)
+        assert c.delete("/mcp", headers={"Mcp-Session-Id": "a"}).status_code == 200
+        r = c.delete("/mcp", headers={"Mcp-Session-Id": "b"})
+        assert r.status_code == 429 and r.headers["Retry-After"]
+        assert r.json()["code"] == "RATE_LIMITED"
+        assert closes == ["a"]
+    finally:
+        limiter.reset_all()

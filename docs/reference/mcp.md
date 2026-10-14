@@ -16,10 +16,10 @@ and others) with `loom install` or by hand is in
 
 ## Endpoint
 
-| Request                          | Does                                                                                                                        |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `POST /mcp`                      | One JSON-RPC request or a batch. The answer is a JSON body, not an event stream. A notification answers `202` with no body. |
-| `DELETE /mcp` + `Mcp-Session-Id` | Ends the session and closes its implicit run.                                                                               |
+| Request                          | Does                                                                                                                                                |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /mcp`                      | One JSON-RPC request or a batch. The answer is a JSON body, not an event stream. A notification answers `202` with no body.                         |
+| `DELETE /mcp` + `Mcp-Session-Id` | Ends the session and closes its implicit run. Rate-limited as `run.complete` in the caller's org: past the cap it answers `429` with `Retry-After`. |
 
 Query parameters on the URL select what `tools/list` shows for that connection:
 
