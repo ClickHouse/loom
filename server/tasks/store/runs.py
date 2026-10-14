@@ -13,7 +13,6 @@ import enum
 import json
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any
 
 from server.core.ch import sequential_reads
@@ -26,97 +25,6 @@ log = logging.getLogger(__name__)
 
 # Cap on the keys a derived read returns.
 DERIVED_LIMIT = 500
-
-# How long a session run's close claim holds before another close may take it
-# over: a close takes seconds, so an older claim is one whose closer died.
-CLOSE_CLAIM_STALE_S = 600
-
-
-@dataclass(frozen=True)
-class CloseClaim:
-    """A session run close's claim: `held` when this close may complete the row.
-    `claimed_at` fences it: only the close that wrote it drops it."""
-
-    held: bool
-    claimed_at: datetime | None = None
-
-
-async def claim_close(ch: Any, row: RunLedgerRow) -> CloseClaim | None:
-    """Claim the close of a session run's row, so one of the closes racing for it
-    completes it; a claim older than CLOSE_CLAIM_STALE_S is taken over. None when
-    there is no claims table, or Keeper failed: the close goes unclaimed."""
-    key = _close_key(row)
-    try:
-        if not await _claims_available(ch):
-            return None
-        for _ in range(2):
-            claimed_at = datetime.now(UTC).replace(tzinfo=None)
-            if await _insert_close_claim(ch, key, row, claimed_at):
-                return CloseClaim(held=True, claimed_at=claimed_at)
-            holder = await ch.query_one(
-                "SELECT claimed_at, "
-                "claimed_at < now64(3) - INTERVAL {stale:UInt32} SECOND AS stale "
-                "FROM loom.agent_run_claims WHERE claim_key = {k:String}",
-                params={"k": key, "stale": CLOSE_CLAIM_STALE_S},
-            )
-            if holder is not None and not holder["stale"]:
-                return CloseClaim(held=False)
-            if holder is not None:  # its closer died: take the claim over
-                await _drop_claim_at(ch, key, holder["claimed_at"])
-        return CloseClaim(held=False)
-    except Exception as e:  # noqa: BLE001 — Keeper down leaves the close unclaimed
-        _keeper_failed(
-            e, "close claim failed", fallback="closing without a claim", reason="close_unclaimed"
-        )
-        return None
-
-
-async def drop_close_claim(ch: Any, row: RunLedgerRow, claim: CloseClaim) -> None:
-    """Drop this close's claim once its close is done; a claim another close has
-    taken over since is left alone. Best effort: one left behind goes stale."""
-    try:
-        await _drop_claim_at(ch, _close_key(row), claim.claimed_at)
-    except Exception as e:  # noqa: BLE001 — a claim left behind goes stale
-        log.debug("close claim for %s not dropped: %s", row["run_id"], e)
-
-
-def _close_key(row: RunLedgerRow) -> str:
-    return json.dumps(["close", str(row["org"]), str(row["namespace"]), str(row["run_id"])])
-
-
-async def _insert_close_claim(ch: Any, key: str, row: RunLedgerRow, claimed_at: datetime) -> bool:
-    """Write the claim, carrying the run's user and session for erasure; False
-    when another close holds it."""
-    try:
-        await ch.execute(
-            "INSERT INTO loom.agent_run_claims "
-            "(claim_key, org, namespace, run_id, user_id, session_id, claimed_at) "
-            "SETTINGS keeper_map_strict_mode = 1 "
-            "VALUES ({k:String}, {org:String}, {ns:String}, {rid:String}, "
-            "{uid:String}, {sid:String}, {at:DateTime64(3)})",
-            params={
-                "k": key,
-                "org": str(row["org"]),
-                "ns": str(row["namespace"]),
-                "rid": str(row["run_id"]),
-                "uid": str(row.get("user_id") or "-"),
-                "sid": str(row.get("session_id") or "-"),
-                "at": claimed_at,
-            },
-        )
-        return True
-    except Exception as e:
-        if key_exists(e):
-            return False
-        raise
-
-
-async def _drop_claim_at(ch: Any, key: str, claimed_at: Any) -> None:
-    await ch.execute(
-        "ALTER TABLE loom.agent_run_claims DELETE "
-        "WHERE claim_key = {k:String} AND claimed_at = {at:DateTime64(3)}",
-        params={"k": key, "at": claimed_at},
-    )
 
 
 async def called_lately(ch: Any, run_id: str, subject: str, idle_seconds: int) -> bool:
@@ -251,21 +159,14 @@ async def probe_claims(ch: Any) -> None:
         log.warning("run claims: could not read system.tables: %s", e)
 
 
-def _keeper_failed(
-    e: BaseException,
-    what: str = "Keeper claim failed",
-    *,
-    fallback: str = "checking the run row only",
-    reason: str = "row_check_only",
-) -> None:
-    """A claim could not be made: run.begin falls back to the row check (a
-    narrowed caller only re-opens its own run, else gets a fresh id), and a
-    session run's close to an unclaimed close."""
+def _keeper_failed(e: BaseException, what: str = "Keeper claim failed") -> None:
+    """The claim could not be made: run.begin falls back to the row check (a
+    narrowed caller only re-opens its own run, else gets a fresh id)."""
     if what not in _keeper_errors_logged:
         _keeper_errors_logged.add(what)
-        log.warning("run claims: %s, %s: %s", what, fallback, e)
+        log.warning("run.begin: %s, checking the run row only: %s", what, e)
     with provider_health.unrecorded():
-        degradations.note("run_claims", reason, e)
+        degradations.note("run_claims", "row_check_only", e)
 
 
 async def claim_run(
@@ -477,7 +378,7 @@ async def idle_session_runs(
             SELECT run_id, subject FROM loom.agent_events
             WHERE ts >= now64(3) - INTERVAL {idle:UInt32} SECOND AND run_id IN candidates
         )
-        SELECT org, namespace, run_id, user_id, session_id FROM loom.agent_runs FINAL
+        SELECT org, namespace, run_id FROM loom.agent_runs FINAL
         WHERE run_id IN candidates AND ({org:String} = '' OR org = {org:String})
           AND status = 'active' AND JSONExtractBool(metadata, 'implicit')
           AND version < toUInt64(toUnixTimestamp64Nano(now64(9) - INTERVAL {idle:UInt32} SECOND))

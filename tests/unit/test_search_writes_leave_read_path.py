@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 import inspect
 from typing import Any
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -58,7 +57,6 @@ def test_ensure_returns_before_run_begin_lands_and_close_waits_for_it(monkeypatc
     monkeypatch.setattr(h, "begin_session_run", slow_begin)
     monkeypatch.setattr(h, "_complete", complete)
     monkeypatch.setattr(h.runs_store, "fetch_run", fetch)
-    monkeypatch.setattr(h.runs_store, "claim_close", AsyncMock(return_value=None))
 
     async def active(org: str, run_id: str) -> list[dict[str, str]]:
         begun = f"begin:{run_id}" in order

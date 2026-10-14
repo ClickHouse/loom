@@ -16,15 +16,13 @@ from server.tasks.app import run as run_handlers
 
 
 class _Ledger:
-    """Answers the idle query with `run_ids` and keeps the close claims; each
-    step yields to the loop, as a ClickHouse round trip does."""
+    """Answers the idle query with `run_ids`; each step yields to the loop, as a
+    ClickHouse round trip does."""
 
-    def __init__(self, *run_ids: str, keeper: bool = True) -> None:
+    def __init__(self, *run_ids: str) -> None:
         self.rows = [{"org": "o", "namespace": "n", "run_id": r} for r in run_ids]
         self.completes: list[Any] = []
         self.params: list[Any] = []
-        self.keeper = keeper
-        self.claims: set[str] = set()
 
     def _done(self, run_id: str) -> bool:
         return run_id in {c.run_id for c in self.completes}
@@ -38,18 +36,6 @@ class _Ledger:
         await asyncio.sleep(0)
         return [r for r in self.rows if r["run_id"] == run_id and not self._done(run_id)]
 
-    async def claim(self, ch: Any, row: dict[str, Any]) -> Any:
-        await asyncio.sleep(0)
-        if not self.keeper:
-            return None
-        held = row["run_id"] not in self.claims
-        self.claims.add(row["run_id"])
-        return run_handlers.runs_store.CloseClaim(held=held)
-
-    async def drop(self, ch: Any, row: dict[str, Any], claim: Any) -> None:
-        if claim.held:
-            self.claims.discard(row["run_id"])
-
     async def fetch(self, ch: Any, org: str, ns: str, run_id: str) -> dict[str, Any] | None:
         await asyncio.sleep(0)
         return None if self._done(run_id) else {"status": "active", "metadata": "{}"}
@@ -61,13 +47,11 @@ class _Ledger:
         self.completes.append(inp)
 
 
-def _ledger(monkeypatch, *run_ids: str, keeper: bool = True) -> _Ledger:
-    ledger = _Ledger(*run_ids, keeper=keeper)
+def _ledger(monkeypatch, *run_ids: str) -> _Ledger:
+    ledger = _Ledger(*run_ids)
     monkeypatch.setattr(run_handlers, "get_client", lambda: ledger)
     monkeypatch.setattr(run_handlers, "_complete", ledger.complete)
     monkeypatch.setattr(run_handlers, "active_session_runs", ledger.active)
-    monkeypatch.setattr(run_handlers.runs_store, "claim_close", ledger.claim)
-    monkeypatch.setattr(run_handlers.runs_store, "drop_close_claim", ledger.drop)
     monkeypatch.setattr(run_handlers.runs_store, "fetch_run", ledger.fetch)
     monkeypatch.setattr(run_handlers.runs_store, "called_lately", AsyncMock(return_value=False))
     return ledger
@@ -151,28 +135,17 @@ def test_the_pass_deadline_leaves_room_for_the_close_budget() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("rival", ["sweep", "delete"])
-async def test_closes_racing_for_one_run_complete_it_once(monkeypatch, rival: str) -> None:
-    """Two sweeps, or a sweep and a DELETE: the close claim lets one through, so
-    the run's memories get the retain mode once."""
+async def test_closes_racing_for_one_run_judge_nothing(monkeypatch) -> None:
+    """Two sweeps and a DELETE at once: any that get through write the same
+    close, with no outcome and the memories kept, so a repeat changes nothing."""
     ledger = _ledger(monkeypatch, "a")
-    other = (
-        run_handlers.close_idle_session_runs(1800)
-        if rival == "sweep"
-        else run_handlers.close_session_run("o", "a", reason="session_end")
-    )
-    await asyncio.gather(run_handlers.close_idle_session_runs(1800), other)
-    assert [c.run_id for c in ledger.completes] == ["a"]
-
-
-@pytest.mark.asyncio
-async def test_without_keeper_racing_closes_can_both_complete_a_run(monkeypatch) -> None:
-    """No claims table: the close is at least once, as the docstring says."""
-    ledger = _ledger(monkeypatch, "a", keeper=False)
     await asyncio.gather(
-        run_handlers.close_idle_session_runs(1800), run_handlers.close_idle_session_runs(1800)
+        run_handlers.close_idle_session_runs(1800),
+        run_handlers.close_idle_session_runs(1800),
+        run_handlers.close_session_run("o", "a", reason="session_end"),
     )
-    assert [c.run_id for c in ledger.completes] == ["a", "a"]
+    assert ledger.completes and {c.run_id for c in ledger.completes} == {"a"}
+    assert {(c.outcome, c.retain) for c in ledger.completes} == {("none", "keep")}
 
 
 @pytest.mark.asyncio
@@ -180,23 +153,4 @@ async def test_a_run_its_token_called_since_the_pick_is_left_open(monkeypatch) -
     ledger = _ledger(monkeypatch, "a")
     monkeypatch.setattr(run_handlers.runs_store, "called_lately", AsyncMock(return_value=True))
     assert await run_handlers.close_idle_session_runs(1800) == 0
-    assert ledger.completes == [] and ledger.claims == set()
-
-
-@pytest.mark.asyncio
-async def test_a_keeper_failure_leaves_the_close_unclaimed(monkeypatch) -> None:
-    """The claim answers None, as with no claims table, rather than raising."""
-    from server.tasks.store import runs as store
-
-    class _DownKeeper:
-        async def execute(self, sql: str, params: Any = None) -> None:
-            raise RuntimeError("Coordination::Exception: Connection loss")
-
-    async def available(ch: Any) -> bool:
-        return True
-
-    monkeypatch.setattr(store, "_claims_available", available)
-    assert (
-        await store.claim_close(_DownKeeper(), {"org": "o", "namespace": "n", "run_id": "r"})
-        is None
-    )
+    assert ledger.completes == []

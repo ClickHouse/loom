@@ -59,9 +59,10 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   so it closes after a restart too, and so do the implicit runs an earlier server left open.
   **Operators:** a web process no longer closes idle runs itself, so a deployment that runs no
   background workers anywhere (`LOOM_BACKGROUND_WORKERS=off` on every process) keeps them open.
-  The first sweeps after the upgrade close every implicit run an earlier server left open, and
-  `LOOM_MEMORY_RUN_COMPLETE_RETAIN` applies to each as to any close: with `demote` or `expire`
-  the memories those sessions wrote are demoted or set to expire.
+  The first sweeps after the upgrade close every implicit run an earlier server left open. A
+  closed implicit run keeps its session's memories whatever `LOOM_MEMORY_RUN_COMPLETE_RETAIN`
+  says: the transport cannot judge the work, so a session ending no longer demotes or expires
+  what it wrote.
 
 ### Fixed
 

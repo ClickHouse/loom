@@ -297,48 +297,40 @@ async def close_idle_session_runs(idle_seconds: int, *, org: str = "") -> int:
 async def _complete_session_run(
     row: RunLedgerRow, *, reason: str, idle_seconds: int | None = None
 ) -> bool:
-    """Complete one row of a session run, once: a close claim lets one of the
-    closes racing for it (the sweep on another host, a DELETE) through, and the
-    winner completes it only while it is still active, and for the sweep
-    (`idle_seconds`, which picked it a while ago) still idle. A second
-    completion would apply the retain mode to the run's memories again. Two
-    can still both complete it without Keeper, or when one stalls past
-    CLOSE_CLAIM_STALE_S and another takes its claim over."""
+    """Complete one row of a session run while it is still active, and for the
+    sweep (`idle_seconds`, which picked it a while ago) still idle. The close
+    judges nothing: no outcome, no retain mode, so two closes racing for one run
+    (the sweep on two hosts, a DELETE) at worst write the same row twice."""
     ch = get_client()
     org, namespace, run_id = str(row["org"]), str(row["namespace"]), str(row["run_id"])
-    claim = await runs_store.claim_close(ch, row)
-    if claim is not None and not claim.held:
+    with sequential_reads():
+        existing = await runs_store.fetch_run(ch, org, namespace, run_id)
+    if existing is None or existing.get("status") != "active":
         return False
-    try:
-        with sequential_reads():
-            existing = await runs_store.fetch_run(ch, org, namespace, run_id)
-        if existing is None or existing.get("status") != "active":
-            return False
-        subject = str(_parse_metadata(existing.get("metadata")).get("subject") or "")
-        if idle_seconds is not None and await runs_store.called_lately(
-            ch, run_id, subject, idle_seconds
-        ):
-            return False
-        await _complete(
-            ch,
-            RunCompleteInput(
-                org=org,
-                namespace=namespace,
-                run_id=run_id,
-                status="completed",
-                # The transport saw the session end; it cannot say how the work
-                # went, and `none` writes no evidence or harm.
-                outcome="none",
-                # 0: from the run's start, which every web process shares.
-                duration_ms=0,
-                metadata={"closed_by": f"mcp_{reason}"},
-            ),
-            existing,
-        )
-        return True
-    finally:
-        if claim is not None:
-            await runs_store.drop_close_claim(ch, row, claim)
+    subject = str(_parse_metadata(existing.get("metadata")).get("subject") or "")
+    if idle_seconds is not None and await runs_store.called_lately(
+        ch, run_id, subject, idle_seconds
+    ):
+        return False
+    await _complete(
+        ch,
+        RunCompleteInput(
+            org=org,
+            namespace=namespace,
+            run_id=run_id,
+            status="completed",
+            # The transport saw the session end; it cannot say how the work went,
+            # so it writes no evidence or harm and leaves the session's memories
+            # as they are, whatever the server's default retain mode.
+            outcome="none",
+            retain="keep",
+            # 0: from the run's start, which every web process shares.
+            duration_ms=0,
+            metadata={"closed_by": f"mcp_{reason}"},
+        ),
+        existing,
+    )
+    return True
 
 
 async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:
