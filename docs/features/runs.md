@@ -96,7 +96,8 @@ starts with `mcp-` and whose `metadata.implicit` is true once no call of its
 token reached it within `LOOM_MCP_SESSION_RUN_IDLE_SECONDS`, so a run begun by
 hand should not claim to be implicit. The run sits in the caller's default
 namespace, so what its readers see stays there: its goal is a label when the
-session's first call worked elsewhere, and `memories_written` lists the writes in
+session's first call worked elsewhere (a search across every namespace the
+caller reads counts), and `memories_written` lists the writes in
 that namespace only (the others still carry its `run_id`).
 
 ## Operations

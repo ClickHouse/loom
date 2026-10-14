@@ -190,3 +190,32 @@ async def test_a_runs_goal_never_shows_a_call_in_another_namespace(
     ).result_rows
     assert rows and all("SECRET" not in goal for _, goal in rows)
     assert {namespace for namespace, _ in rows} == {"ns-a"}
+
+
+@pytest.mark.asyncio
+async def test_a_search_in_the_runs_namespace_names_the_runs_goal(
+    control_plane_url: str, ch_client: Any
+) -> None:
+    org, ns, session = unique_org("mcp-goal-here"), "ns", uuid.uuid4().hex
+    token = _mint(org, ns)
+    body = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "loom_search",
+            "arguments": {"query": "why is CI red", "namespace_scope": "this"},
+        },
+    }
+    async with httpx.AsyncClient(base_url=control_plane_url, timeout=30) as c:
+        await _require_auth(c)
+        r = await c.post("/mcp", json=body, headers=_headers(token, session))
+        assert r.status_code == 200 and "error" not in r.json(), r.text[:400]
+        r = await c.delete("/mcp", headers=_headers(token, session))
+        assert r.json()["run_closed"] is True, r.text[:400]
+
+    rows = ch_client.query(
+        "SELECT goal FROM loom.agent_runs FINAL WHERE org = {org:String}",
+        parameters={"org": org},
+    ).result_rows
+    assert rows == [("why is CI red",)]

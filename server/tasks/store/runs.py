@@ -340,12 +340,11 @@ async def active_runs_by_id(ch: Any, org: str, run_id: str) -> list[RunLedgerRow
 
 
 async def idle_session_runs(
-    ch: Any, *, idle_seconds: int, horizon_days: int, limit: int, org: str = ""
+    ch: Any, *, idle_seconds: int, limit: int, org: str = ""
 ) -> list[RunLedgerRow]:
-    """Up to `limit` active implicit MCP session runs, last written within
-    `horizon_days`, that no request of their token reached within
-    `idle_seconds`, in random order so runs that fail to close cannot hold the
-    front. `org` narrows it to one org ("" = every org).
+    """Up to `limit` active implicit MCP session runs that no request of their
+    token reached within `idle_seconds`, in random order so runs that fail to
+    close cannot hold the front. `org` narrows it to one org ("" = every org).
 
     Implicit runs are told by `metadata.implicit` and the `mcp-` prefix, which
     also covers the `mcp-<session id>` runs of earlier servers. `version` is
@@ -355,9 +354,6 @@ async def idle_session_runs(
         WITH candidates AS (
             SELECT run_id FROM loom.agent_runs
             WHERE status = 'active' AND environment = 'mcp' AND startsWith(run_id, 'mcp-')
-              AND version >= toUInt64(
-                  toUnixTimestamp64Nano(now64(9) - INTERVAL {horizon:UInt32} DAY)
-              )
         )
         SELECT org, namespace, run_id FROM loom.agent_runs FINAL
         WHERE run_id IN candidates AND ({org:String} = '' OR org = {org:String})
@@ -370,7 +366,7 @@ async def idle_session_runs(
         ORDER BY rand()
         LIMIT {lim:UInt32}
         """,
-        params={"org": org, "idle": idle_seconds, "horizon": horizon_days, "lim": limit},
+        params={"org": org, "idle": idle_seconds, "lim": limit},
     )
     return rows
 

@@ -150,6 +150,39 @@ async def test_the_idle_sweep_reads_any_number_of_active_runs(
 
 
 @pytest.mark.asyncio
+async def test_the_idle_sweep_closes_a_run_however_long_ago_it_was_written(ch: Any) -> None:
+    """A run an earlier server, or a month without workers, left open."""
+    from server.tasks.app.run import active_session_runs, close_idle_session_runs
+
+    org = f"itest-old-{uuid.uuid4().hex[:8]}"
+    run_id = session_run_id(org, "sa:a", uuid.uuid4().hex)
+    long_ago = int((naive_utc_now().timestamp() - 31 * 86400) * 1e9)
+    try:
+        await ch.insert(
+            "loom.agent_runs",
+            [
+                {
+                    "org": org,
+                    "namespace": "ns",
+                    "agent": AGENT,
+                    "run_id": run_id,
+                    "goal": "g",
+                    "environment": "mcp",
+                    "metadata": '{"implicit":true,"subject":"sa:a"}',
+                    "version": long_ago,
+                }
+            ],
+            settings={"async_insert": 0},
+        )
+        assert await close_idle_session_runs(1800, org=org) == 1
+        assert await active_session_runs(org, run_id) == []
+    finally:
+        await ch.execute(
+            "DELETE FROM loom.agent_runs WHERE org = {org:String}", params={"org": org}
+        )
+
+
+@pytest.mark.asyncio
 async def test_a_scoped_callers_session_run_is_its_own(ch: Any) -> None:
     """A token pinned to one user: the run the transport begins is filed under
     that user, and its DELETE completes it on a web process that never served

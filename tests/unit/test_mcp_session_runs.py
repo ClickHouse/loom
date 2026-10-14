@@ -127,7 +127,7 @@ def test_goal_is_the_first_query_then_key_then_fallback() -> None:
     [
         {"org": "clickhouse", "namespace": "ns-b"},
         {"org": "other", "namespace": "ns-a"},
-        {"org": "clickhouse", "namespace": "ns-a", "namespace_scope": "all"},
+        {"org": "clickhouse", "namespace": "ns-a", "namespace_scope": "all_mine"},
         {"org": "clickhouse", "namespace": "ns-a", "namespaces": ["ns-b"]},
     ],
 )
@@ -137,6 +137,20 @@ def test_a_call_outside_the_runs_namespace_leaves_its_text_out_of_the_goal(
     """The run's readers are its namespace's; they may not read where the call went."""
     goal = mcp_runs.goal_of({**elsewhere, "query": "SECRET in ns-b"}, DEFAULTS)
     assert goal == "mcp session (cursor)"
+
+
+def test_a_search_kept_to_the_runs_namespace_gives_its_query() -> None:
+    """`loom_search` as the transport hands it on: its arguments are coerced
+    first, and a search scoped to this namespace stays in it."""
+    from server.transport.mcp_defaults import coerce_search_arguments
+
+    arguments = {"org": "clickhouse", "namespace": "ns-a", "query": "why is CI red"}
+    this = {**arguments, "namespace_scope": "this"}
+    coerce_search_arguments(this)
+    assert mcp_runs.goal_of(this, DEFAULTS) == "why is CI red"
+    every = {**arguments}
+    coerce_search_arguments(every)  # unscoped: every namespace the caller reads
+    assert mcp_runs.goal_of(every, DEFAULTS) == "mcp session (cursor)"
 
 
 # ---- ensure: one run per session, begun once ----

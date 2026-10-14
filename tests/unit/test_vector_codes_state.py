@@ -158,6 +158,24 @@ async def test_a_stale_reading_refreshes_in_the_background(monkeypatch: pytest.M
 
 
 @pytest.mark.asyncio
+async def test_a_process_that_only_writes_refreshes_its_widths_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rebuild to a plain column reaches the write guards, not only the reads."""
+    from server.core.errors import CodedWidthMismatchError
+
+    ch = _FakeCH(coded=[("chunks", "embedding")], patches={"chunks": 0})
+    await vector_codes_state.probe(ch)
+    ch.coded = []  # the table was rebuilt plain
+    monkeypatch.setattr(settings, "vector_codes_state_probe_seconds", 0)
+    with pytest.raises(CodedWidthMismatchError):
+        vector_codes_state.refuse_width("chunks", 8)  # this write: the old reading
+    await asyncio.sleep(0.01)
+    monkeypatch.setattr(settings, "vector_codes_state_probe_seconds", 60)
+    vector_codes_state.refuse_width("chunks", 8)
+
+
+@pytest.mark.asyncio
 async def test_connect_probes_once_per_process(monkeypatch: pytest.MonkeyPatch) -> None:
     """A bench importing the services must build chunk reads with the flag,
     so connect probes (not only the server lifespan)."""

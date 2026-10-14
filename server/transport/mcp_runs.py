@@ -151,12 +151,13 @@ def stamps_run(op: Any) -> bool:
 def goal_of(arguments: dict[str, Any], defaults: dict[str, str]) -> str:
     """The run's goal: the first call's query, else its key, else a label. The
     label too when the call works outside the run's org and namespace, whose
-    readers may not read where it went."""
-    label = f"mcp session ({defaults['agent']})"[:GOAL_MAX_CHARS]
+    readers may not read where it went: another namespace, or a search across
+    every namespace the caller reads (`namespace_scope="all_mine"`)."""
+    label = f"mcp session ({defaults.get('agent', '')})"[:GOAL_MAX_CHARS]
     elsewhere = (
-        str(arguments.get("org") or defaults["org"]) != defaults["org"]
-        or str(arguments.get("namespace") or "") != defaults["namespace"]
-        or arguments.get("namespace_scope")
+        str(arguments.get("org") or defaults.get("org")) != defaults.get("org")
+        or str(arguments.get("namespace") or "") != defaults.get("namespace")
+        or arguments.get("namespace_scope") == "all_mine"
         or arguments.get("namespaces")
     )
     if elsewhere:
