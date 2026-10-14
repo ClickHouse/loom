@@ -45,3 +45,10 @@ def test_unknown_types_check_every_cell() -> None:
     vector = [0.5, 0.25]
     [row] = _insert_data([{"v": vector, "t": NAIVE, "h": [None, NAIVE]}], ["v", "t", "h"], None)
     assert row[0] is vector and row[1].tzinfo is UTC and row[2][1].tzinfo is UTC
+
+
+def test_datetimes_inside_tuples_and_maps_are_marked_too() -> None:
+    types = ["Array(Tuple(DateTime, UInt32))", "Map(String, DateTime)"]
+    [[pairs, by_name]] = _insert_data([{"p": [(NAIVE, 7)], "m": {"k": NAIVE}}], ["p", "m"], types)
+    assert pairs == [(NAIVE.replace(tzinfo=UTC), 7)] and pairs[0][0].tzinfo is UTC
+    assert by_name["k"].tzinfo is UTC

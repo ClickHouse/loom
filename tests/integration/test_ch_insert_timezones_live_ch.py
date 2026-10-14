@@ -36,12 +36,16 @@ async def main(table: str) -> None:
     ch = get_client()
     await ch.connect()
     written = datetime.fromisoformat(sys.argv[2])
-    await ch.insert(table, [{"t": written, "t64": written, "hours": [written]}])
+    await ch.insert(
+        table,
+        [{"t": written, "t64": written, "hours": [written], "pairs": [(written, 1)], "named": {"k": written}}],
+    )
     row = await ch.query_one(
         f"SELECT toUnixTimestamp64Milli(t64) AS ms, toUnixTimestamp(t) AS s, "
-        f"toUnixTimestamp(hours[1]) AS h, t64 FROM {table}"
+        f"toUnixTimestamp(hours[1]) AS h, toUnixTimestamp(pairs[1].1) AS p, "
+        f"toUnixTimestamp(named['k']) AS n, t64 FROM {table}"
     )
-    print(row["ms"], row["s"], row["h"], row["t64"] == written)
+    print(row["ms"], row["s"], row["h"], row["p"], row["n"], row["t64"] == written)
     await ch.disconnect()
 
 asyncio.run(main(sys.argv[1]))
@@ -118,7 +122,8 @@ async def table() -> Any:
     await ch.connect()
     name = f"loom._tz_round_trip_{uuid.uuid4().hex[:12]}"
     await ch.execute(
-        f"CREATE TABLE {name} (t DateTime, t64 DateTime64(3), hours Array(DateTime)) "
+        f"CREATE TABLE {name} (t DateTime, t64 DateTime64(3), hours Array(DateTime), "
+        "pairs Array(Tuple(DateTime, UInt32)), named Map(String, DateTime)) "
         "ENGINE = MergeTree ORDER BY tuple()"
     )
     try:
@@ -132,8 +137,9 @@ async def table() -> Any:
 @pytest.mark.parametrize("zone", ZONES)
 async def test_a_naive_utc_write_keeps_its_instant_in_any_host_zone(table: str, zone: str) -> None:
     out = await _run_in(zone, ROUND_TRIP, table, WRITTEN)
-    ms, s, h, read_back = out.split()[-4:]
-    assert (int(ms), int(s), int(h)) == (EPOCH_MS, EPOCH_MS // 1000, EPOCH_MS // 1000)
+    ms, *seconds, read_back = out.split()[-6:]
+    assert int(ms) == EPOCH_MS
+    assert [int(x) for x in seconds] == [EPOCH_MS // 1000] * 4
     assert read_back == "True"
 
 

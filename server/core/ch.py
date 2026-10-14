@@ -473,7 +473,8 @@ def _insert_data(
 ) -> list[list[Any]]:
     """The rows as value lists, with naive datetimes (UTC by Loom's convention)
     marked UTC: the driver inserts a naive one as the host's local time. Only
-    the DateTime columns are walked, or every cell when the types are unknown."""
+    columns whose type names a DateTime (also inside an Array, Tuple or Map) are
+    walked, or every cell when the types are unknown."""
     data = [[r[c] for c in columns] for r in rows]
     if type_names is None:
         timed = list(range(len(columns)))
@@ -485,11 +486,19 @@ def _insert_data(
     return data
 
 
+# What a list or tuple must hold before it is rebuilt: a datetime, or a container
+# that may hold one. A vector (a long list of floats) is passed through as it is.
+_NESTED = (datetime, list, tuple, dict)
+
+
 def _as_utc_instant(value: Any) -> Any:
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=UTC)
-    if isinstance(value, list) and any(isinstance(v, datetime | list) for v in value):
-        return [_as_utc_instant(v) for v in value]
+    if isinstance(value, list | tuple) and any(isinstance(v, _NESTED) for v in value):
+        marked = [_as_utc_instant(v) for v in value]
+        return marked if isinstance(value, list) else tuple(marked)
+    if isinstance(value, dict):
+        return {_as_utc_instant(k): _as_utc_instant(v) for k, v in value.items()}
     return value
 
 
