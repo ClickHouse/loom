@@ -8,7 +8,6 @@ Skips cleanly when LOOM_CH_HOST is unset.
 from __future__ import annotations
 
 import asyncio
-import functools
 import json
 import os
 import time
@@ -36,12 +35,14 @@ def _at(ns: int) -> datetime:
 
 
 def _sweep_only(monkeypatch: pytest.MonkeyPatch, org: str) -> None:
-    """The live tests share a database: the sweep reads this test's org only."""
-    monkeypatch.setattr(
-        run_handlers.runs_store,
-        "idle_session_runs",
-        functools.partial(run_handlers.runs_store.idle_session_runs, org=org),
-    )
+    """The live tests share a database: the sweep closes this test's org only."""
+    every_org = run_handlers.runs_store.idle_session_runs
+
+    async def idle_in_org(ch: Any, *, idle_seconds: int, limit: int) -> list[Any]:
+        rows = await every_org(ch, idle_seconds=idle_seconds, limit=1_000_000)
+        return [r for r in rows if r["org"] == org][:limit]
+
+    monkeypatch.setattr(run_handlers.runs_store, "idle_session_runs", idle_in_org)
 
 
 @pytest.fixture

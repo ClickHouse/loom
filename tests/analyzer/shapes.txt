@@ -158,6 +158,7 @@
 1cfc6f95dc0f	SELECT uniqExact(pr_number) AS fixes, count() AS branch_rows, max(computed_at) AS last_computed, min(computed_at) AS first_computed FROM loom.code_backport_gaps FINAL WHERE org = {org:String} AND code
 1d111f0f3599	SELECT count() AS n FROM loom.conversation_embeddings FINAL WHERE org = {org:String} AND user_id = {uid:String}
 1d3fedeb9e9b	SELECT namespace, toString(memory_id) AS canonical_id, memory_key, memory_type, value, tags, version, agent, session_id, user_id, source_class, toString(created_at) AS created_at, toString(coalesce(va
+1d48d0eb22d5	WITH candidates AS ( SELECT run_id FROM loom.agent_runs WHERE status = ? AND environment = ? AND startsWith(run_id, ?) ), -- Calls by run and token; a run that records no subject (an earlier -- server
 1d5aebee9613	SELECT namespace, role, ifNull(status, ?) AS status, pending_role FROM loom.namespace_grants FINAL WHERE org = {org:String} AND subject = {subject:String} AND revoked_at IS NULL
 1d663514724c	SELECT pr_number, comment_id, path, line, author, excerpt, comment_created_at, on_file, in_range FROM ( SELECT pr_number, comment_id, path, line, author, excerpt, comment_created_at, in_range, count()
 1e0e9634872a	SELECT mention_text, canonical_text, confidence, evidence_count, created_at FROM loom.entity_canonical_map FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL LIMIT {l
@@ -520,7 +521,6 @@
 5b9b9bcb4313	SELECT symbol_id, qualified_name, path, fan_in_calls, fan_in_nontest, fan_in_name, caller_files, defined_files, is_test FROM loom.code_symbol_stats FINAL WHERE org = {org:String} AND namespace = {ns:S
 5ba354d2d325	SELECT org, namespace, agent, thread_id, msg_id, role, content, reasoning, user_id, run_id, metadata, tokens, ts FROM loom.conversations WHERE org = {org:String} AND namespace = {ns:String} AND agent 
 5ba70394a5d2	SELECT org, namespace, agent, thread_id, msg_id, role, content, reasoning, user_id, run_id, metadata, tokens, ts FROM loom.conversations WHERE org = {org:String} AND namespace = {ns:String} AND agent 
-5c5d901b37f9	WITH candidates AS ( SELECT run_id FROM loom.agent_runs WHERE status = ? AND environment = ? AND startsWith(run_id, ?) ), -- Calls by run and token; a run that records no subject (an earlier -- server
 5c7221c42763	SELECT to_key AS memory_key, relation, toString(created_at) AS created_at FROM loom.operator_edges FINAL WHERE org = {o:String} AND namespace = {n:String} AND from_key = {k:String} AND tombstoned_at I
 5c82679e79d3	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 5c8af1de6795	SELECT id, org, scope_type, scope_value, requester, urgency, attempts, steps_completed, requested_at, failure_reason, residue FROM loom.erasure_requests FINAL WHERE status IN (?, ?) AND last_checkpoin

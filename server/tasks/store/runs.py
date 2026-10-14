@@ -343,10 +343,8 @@ async def active_runs_by_id(ch: Any, org: str, run_id: str) -> list[RunLedgerRow
     return rows
 
 
-async def idle_session_runs(
-    ch: Any, *, idle_seconds: int, limit: int, org: str = ""
-) -> list[RunLedgerRow]:
-    """Up to `limit` active implicit MCP session runs (`org`, "" = every org) that
+async def idle_session_runs(ch: Any, *, idle_seconds: int, limit: int) -> list[RunLedgerRow]:
+    """Up to `limit` active implicit MCP session runs, in every org, that
     no request of their token reached within `idle_seconds`, in random order so
     runs that fail to close cannot hold the front."""
     rows: list[RunLedgerRow] = await ch.query_all(
@@ -359,11 +357,10 @@ async def idle_session_runs(
         -- server's, or no auth) stays busy while any call reaches it.
         recent AS (
             SELECT org, run_id, subject FROM loom.agent_events
-            WHERE ({org:String} = '' OR org = {org:String})
-              AND ts >= now64(3) - INTERVAL {idle:UInt32} SECOND AND run_id IN candidates
+            WHERE ts >= now64(3) - INTERVAL {idle:UInt32} SECOND AND run_id IN candidates
         )
         SELECT org, namespace, run_id FROM loom.agent_runs FINAL
-        WHERE run_id IN candidates AND ({org:String} = '' OR org = {org:String})
+        WHERE run_id IN candidates
           AND status = 'active' AND JSONExtractBool(metadata, 'implicit')
           -- Neither begun nor written since: a first begin's version is no time
           -- (begin_session_run), so its start says when it was begun.
@@ -377,7 +374,7 @@ async def idle_session_runs(
         ORDER BY rand()
         LIMIT {lim:UInt32}
         """,
-        params={"org": org, "idle": idle_seconds, "lim": limit},
+        params={"idle": idle_seconds, "lim": limit},
     )
     return rows
 
