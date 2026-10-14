@@ -20,8 +20,6 @@ from server.identity.app import grants as grants_app
 from server.identity.store import grants as grants_repo
 from tests.integration._resources import unique_org
 
-pytestmark = pytest.mark.grant_log_check
-
 
 @pytest.fixture
 async def ch() -> AsyncIterator[Any]:

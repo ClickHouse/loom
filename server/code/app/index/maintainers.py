@@ -213,7 +213,7 @@ async def write_revokes(org: str, namespace: str, subject: str, rows: list[dict[
         await grant_writes.insert_rows(rows)
     except Exception:  # the fan-out never fails the revoke that caused it
         log.warning(
-            "repo maintainers: revoke fan-out failed for %s/%s/%s",
+            "repo maintainers: revoke fan-out, or its cutoff check, failed for %s/%s/%s",
             org,
             namespace,
             subject,

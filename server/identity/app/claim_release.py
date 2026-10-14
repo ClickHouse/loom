@@ -138,7 +138,10 @@ async def release_claim(
             }
             for i, g in enumerate(grants)
         ]
-        await grant_writes.insert_rows(tombstones, ch=ch)
+        try:
+            await grant_writes.insert_rows(tombstones, ch=ch)
+        except TooManySpellingsError as e:
+            raise _release_refusal(org, namespace, e) from e
 
     # Clear owner and mark inactive. The row stays, so the name stays taken
     # (self-signup's first-claim check does not filter on `active`): the

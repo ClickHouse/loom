@@ -134,7 +134,10 @@ deduplicates; a `Retry-After` honoured up to 60 s. Each op's kind is in the
 `/v1/auth/login`, any op that takes a grant away from that person (`grants.revoke`, a
 lowering `grants.create`, `namespace.leave`, `namespace.restore`) and
 `POST /v1/admin/claim_release` answer 409 `TOO_MANY_SPELLINGS` with the text in
-`detail.message`, and the subject and bound in `detail.subject` and `detail.limit`;
+`detail.message`, and the subject and bound in `detail.subject` and `detail.limit`. Any
+other op that changes the person's grant (`grants.create`, `grants.approve`,
+`namespace.join`, `namespace.cancel_request`) can answer it too, after its change landed,
+when it finds a concurrent change lowered the grant; repeat it once the accounts are fixed.
 `loom claim-release` prints the text and exits 1. `/oauth/authorize` and the OIDC callback
 answer 403 `access_denied`, and `/oauth/token` 400 `invalid_grant`, with the text in
 `detail.error_description`.
@@ -178,7 +181,9 @@ stamped ahead of the server's clock; on a tie the later insert wins.
 
 Then retire the tokens those owners hold, with
 `loom revoke-token --subject <owner_email> --issued-before <time>` for each account you
-named; script it over the list. Take `<time>` at least a minute after the `INSERT`, once
+named, skipping an owner `loom revoke-token --list` already lists with `-` under
+`issued_before`: a new row replaces the old, so it would let that owner's later tokens
+back in. Script it over the list. Take `<time>` at least a minute after the `INSERT`, once
 servers no longer cache the old tie: a token minted after that claims nothing the person
 was granted, so it may stay. A subject revocation spans every org, so an owner name that
 is also an account elsewhere loses that account's current sessions too; check first:

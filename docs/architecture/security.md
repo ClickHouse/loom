@@ -107,9 +107,12 @@ hold the design together:
   lock: a raise that lands between that read and the write is lowered without a cutoff.
   `loom.namespace_grant_log`, filled by a materialized view on every grant insert and kept
   a week, closes that. Each write that read first goes through `grant_writes`, which then
-  cuts any subject whose grant now ranks below a role it held since its last cutoff
-  (`revocation.cut_where_lowered`); a retried write repeats the check. The spellings a
-  cutoff covers are read with sequential consistency, since a missed one never gets a key.
+  cuts, in one insert, every subject whose grant now ranks below a role it held since its
+  last cutoff (`revocation.cut_where_lowered`). The same check stamps a lowering's cutoff
+  again when the grant row landed after it, which a slow insert makes common: a token
+  minted in between still claims the old role. A retried op repeats the check, even when
+  it finds its change already written. The spellings a cutoff covers are read with
+  sequential consistency, since a missed one never gets a key.
 
 **One exchange per credential** (`server/auth/oauth_claims.py`). The OAuth store marks a
 code or refresh token used by writing a new ReplacingMergeTree version, so reading and then
@@ -134,8 +137,8 @@ Keeper refuses the second insert, so exactly one presenter runs.
   as before the claim existed, and `/v1/health` reports `oauth_claims_not_atomic`.
 
 Every token a sign-in or an exchange mints takes its issue time before it reads the grant
-cutoffs, and a cutoff is written again once its first write returned, so a cutoff that
-landed while a mint ran still postdates the token.
+cutoffs, and a cutoff is written again when the grant row landed after it, so a cutoff
+that landed while a mint ran still postdates the token.
 
 ## Authorization
 

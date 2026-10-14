@@ -33,6 +33,7 @@ class _CH:
     def __init__(self) -> None:
         self.revoked: dict[str, dict[str, Any]] = {}
         self.live: dict[str, str] = {}  # namespace -> role
+        self.log: list[dict[str, Any]] = []  # loom.namespace_grant_log rows
 
     async def insert(self, table: str, rows: list[dict[str, Any]], **_k: Any) -> None:
         assert table == "loom.revoked_tokens"
@@ -42,6 +43,8 @@ class _CH:
         if "revoked_tokens" in sql:
             keys = (params or {}).get("keys")
             return [r for k, r in self.revoked.items() if keys is None or k in keys]
+        if "namespace_grant_log" in sql:
+            return self.log
         if "namespace_grants" in sql:
             return [{"namespace": ns} for ns in self.live]
         return []
@@ -242,34 +245,38 @@ def test_revoking_ends_claims_only_when_the_grant_was_active(
     assert recorded_cutoff_writes == ([(ORG, ["team"], ["alice"])] if cut else [])
 
 
-def test_the_cutoff_is_written_again_once_the_first_write_has_returned(
-    ch: _CH, monkeypatch: pytest.MonkeyPatch
+def _logged_at(role: str, at: datetime) -> dict[str, Any]:
+    ns = int(at.replace(tzinfo=UTC).timestamp() * 1_000_000_000)
+    return {
+        "namespace": "team",
+        "subject": "alice",
+        "role": role,
+        "status": "active",
+        "revoked_at": None,
+        "version": ns,
+    }
+
+
+@pytest.mark.parametrize(("landed_after_s", "stamped_again"), [(2, True), (-0.5, False)])
+def test_a_lowering_whose_row_landed_after_its_cutoff_is_stamped_again(
+    ch: _CH, landed_after_s: float, stamped_again: bool
 ) -> None:
-    # A committed insert takes seconds: a mint that read before the first row
-    # landed took its issue time before that read, so only a cutoff stamped
-    # after the write returned is sure to postdate its token.
-    clock = {"t": datetime(2026, 5, 1, 12, 0, 0)}
-
-    class _Clock(datetime):
-        @classmethod
-        def now(cls, tz: Any = None) -> datetime:  # type: ignore[override]
-            return clock["t"].replace(tzinfo=tz) if tz else clock["t"]
-
-    written: list[datetime] = []
-    insert = ch.insert
-
-    async def _slow(table: str, rows: list[dict[str, Any]], **k: Any) -> None:
-        written.extend(r["issued_before"] for r in rows)
-        clock["t"] += timedelta(seconds=3)
-        await insert(table, rows, **k)
-
-    monkeypatch.setattr(rev, "datetime", _Clock)
-    monkeypatch.setattr(ch, "insert", _slow)
+    # A committed insert can take seconds: a mint that read before the cutoff
+    # landed took its issue time before that read, so a cutoff stamped before
+    # the grant row landed may predate its token.
     _end("team")
-    first, second = written
-    assert second - first == timedelta(seconds=3)
     key = rev.grant_claim_key(ORG, "team", "alice")
-    assert ch.revoked[key]["issued_before"] == second, "the newest row governs"
+    stamp = ch.revoked[key]["issued_before"]
+    landed = stamp + timedelta(seconds=landed_after_s)
+    ch.log = [_logged_at("admin", stamp - timedelta(hours=1)), _logged_at("writer", landed)]
+    asyncio.run(rev.cut_where_lowered(ORG, [("team", "alice")], revoked_by="boss"))
+    assert (ch.revoked[key]["reason"] == "grant lowered") is stamped_again
+
+
+def test_a_newer_cutoff_wins_in_clickhouse_however_late_it_lands(ch: _CH) -> None:
+    _end("team")
+    row = ch.revoked[rev.grant_claim_key(ORG, "team", "alice")]
+    assert row["version"] == int(row["issued_before"].replace(tzinfo=UTC).timestamp()) * 10**9
 
 
 def test_a_minting_path_reads_the_cutoffs_from_clickhouse(ch: _CH) -> None:
@@ -562,3 +569,33 @@ def test_a_cutoff_reads_the_spellings_with_sequential_consistency() -> None:
     asyncio.run(aliases.cutoff_spellings(ORG, "alice", ch=_Directory()))
     asyncio.run(aliases.subject_aliases(ORG, "bob", ch=_Directory()))
     assert seen == [True, False]
+
+
+@pytest.mark.grant_log_check
+def test_a_grant_write_cuts_every_namespace_it_lowered_in_one_insert(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.identity.app import grant_writes
+
+    async def _landed(rows: list[dict[str, Any]], **_k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(grant_writes.grants_repo, "insert_rows", _landed)
+    then = datetime(2026, 5, 1, 12, 0, 0)
+    revoked = [
+        {**_logged_at("writer", then + timedelta(seconds=1)), "namespace": ns, "revoked_at": then}
+        for ns in ("a", "b", "c")
+    ]
+    ch.log = [{**_logged_at("writer", then), "namespace": ns} for ns in ("a", "b", "c")] + revoked
+    inserts: list[list[dict[str, Any]]] = []
+    insert = ch.insert
+
+    async def _counted(table: str, rows: list[dict[str, Any]], **k: Any) -> None:
+        inserts.append(rows)
+        await insert(table, rows, **k)
+
+    monkeypatch.setattr(ch, "insert", _counted)
+    asyncio.run(grant_writes.insert_rows([{"org": ORG, **r} for r in revoked]))
+
+    (written,) = inserts
+    assert {r["jti"] for r in written} == {rev.grant_claim_key(ORG, ns, "alice") for ns in "abc"}

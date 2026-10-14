@@ -3,7 +3,8 @@
 ClickHouse has no row lock, so a concurrent raise can land between that read and
 the write, and the write then lowers it without the cutoff a lowering needs.
 After the rows land, `revocation.cut_where_lowered` checks each subject against
-the grant log and cuts the claims a lowering left standing.
+the grant log and cuts the claims a lowering left standing; for an op that
+wrote its own cutoff first, that is the second stamp a slow insert needs.
 
 Writers that only grant admin, or grant a subject that did not exist before,
 cannot lower a grant and insert through the repository directly.
@@ -29,11 +30,15 @@ async def insert_rows(rows: list[dict[str, Any]], *, ch: Any | None = None) -> N
 
 
 async def _cut_where_lowered(rows: list[dict[str, Any]]) -> None:
-    by_namespace: dict[tuple[str, str], set[str]] = {}
+    by_org: dict[str, set[tuple[str, str]]] = {}
     for row in rows:
-        by_namespace.setdefault((row["org"], row["namespace"]), set()).add(row["subject"])
+        by_org.setdefault(row["org"], set()).add((row["namespace"], row["subject"]))
     auth = current_auth()
-    for (org, namespace), subjects in by_namespace.items():
-        await cut_where_lowered(
-            org, namespace, sorted(subjects), revoked_by=auth.subject if auth else ""
-        )
+    for org, pairs in by_org.items():
+        await cut_where_lowered(org, sorted(pairs), revoked_by=auth.subject if auth else "")
+
+
+async def recheck(org: str, namespace: str, subject: str) -> None:
+    """The check alone, for a retried op that finds its row already written."""
+    auth = current_auth()
+    await cut_where_lowered(org, [(namespace, subject)], revoked_by=auth.subject if auth else "")

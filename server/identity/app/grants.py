@@ -288,6 +288,7 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
 
     subject, row = await _live_grant_row(input.org, input.namespace, input.subject)
     if row is None:
+        await grant_writes.recheck(input.org, input.namespace, subject)
         return GrantsRevokeOutput(revoked=False)
 
     active = (row.status or "active") == "active"
@@ -365,6 +366,7 @@ async def handle_grants_approve(input: GrantsApproveInput) -> GrantsApproveOutpu
     # last-admin guards grants.create / grants.revoke apply.
     if row is None or (row.status != "pending" and not row.pending_role):
         # Raced with a concurrent revoke/approve, or nothing pending — no-op, no role.
+        await grant_writes.recheck(input.org, input.namespace, input.subject)
         return GrantsApproveOutput(
             subject=input.subject,
             namespace=input.namespace,

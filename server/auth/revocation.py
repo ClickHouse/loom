@@ -20,7 +20,8 @@ The table is ReplacingMergeTree ORDER BY jti: the newest row per key governs.
   namespace with any cutoff, ever, so a lapsed cutoff would hand it back.
   Its key is per namespace and subject spelling, and a later cutoff
   replaces it, so the table holds at most one row per pair that ever lost
-  a grant, however often. Past `SNAPSHOT_WARN_ROWS` a process logs one
+  a grant, however often; a service account whose token lost its grants is
+  a subject too. Past `SNAPSHOT_WARN_ROWS` a process logs one
   warning.
 
 Failure semantics: until the first successful read `loaded()` is False and
@@ -298,8 +299,17 @@ async def write_grant_cutoffs(
     that was minted before now, under each spelling of each subject.
 
     Callers write this before the grant row it is about, so a failure fails
-    their change. Raises on a ClickHouse failure; a second write that fails
-    leaves the first cutoff, which only cuts."""
+    their change. The grant write then runs `cut_where_lowered`, which stamps
+    the cutoff again when the row landed after it."""
+    await _write_cutoffs(
+        org, [(ns, s) for ns in namespaces for s in subjects], reason=reason, revoked_by=revoked_by
+    )
+
+
+async def _write_cutoffs(
+    org: str, pairs: list[tuple[str, str]], *, reason: str, revoked_by: str
+) -> None:
+    """One cutoff row per spelling of each (namespace, subject), in one insert."""
     from server.auth.aliases import cutoff_spellings
     from server.core.ch import get_client
 
@@ -310,75 +320,62 @@ async def write_grant_cutoffs(
         async with limit:
             return await cutoff_spellings(org, subject)
 
+    subjects = sorted({s for _, s in pairs})
     reads = [asyncio.create_task(spellings_of(s)) for s in subjects]
     try:
-        spellings = await asyncio.gather(*reads)
+        spellings = dict(zip(subjects, await asyncio.gather(*reads), strict=True))
     except BaseException:
         # Stop the other reads; a TaskGroup would wrap the refusal callers catch.
         for read in reads:
             read.cancel()
         await asyncio.gather(*reads, return_exceptions=True)
         raise
-    keys = sorted(
-        {
-            grant_claim_key(org, ns, alias)
-            for ns in namespaces
-            for group in spellings
-            for alias in group
-        }
-    )
+    keys = sorted({grant_claim_key(org, ns, alias) for ns, s in pairs for alias in spellings[s]})
     if not keys:
         return
-    ch = get_client()
-    await ch.insert("loom.revoked_tokens", _cutoff_rows(keys, reason, revoked_by))
-    # Again, stamped after the first write landed: a mint that read the
-    # cutoffs before it did took its issue time before that read, so only
-    # this second cutoff is sure to postdate its token.
-    rows = _cutoff_rows(keys, reason, revoked_by)
-    await ch.insert("loom.revoked_tokens", rows)
+    rows, cutoff = _cutoff_rows(keys, reason, revoked_by)
+    await get_client().insert("loom.revoked_tokens", rows)
     # This process applies them now; every other at its next refresh.
-    _tighten_locally(keys, int(rows[0]["issued_before"].replace(tzinfo=UTC).timestamp()))
+    _tighten_locally(keys, cutoff)
 
 
-async def cut_where_lowered(
-    org: str, namespace: str, subjects: list[str], *, revoked_by: str
-) -> None:
-    """Write a cutoff for each of `subjects` whose grant on `namespace` now
-    ranks below a role it held since its last cutoff.
+async def cut_where_lowered(org: str, pairs: list[tuple[str, str]], *, revoked_by: str) -> None:
+    """Cut each (namespace, subject) whose grant now ranks below a role it
+    held since its last cutoff, in one write.
 
-    Run after a grant write that read the grant first: a raise that landed
-    between that read and the write is lowered by it, and only the grant log
-    shows it. Retrying the write runs this again, so a cutoff that failed here
-    is written then."""
+    Run after a grant write that read the grant first. It finds a raise that
+    landed between that read and the write, and a lowering whose own cutoff
+    was stamped before the row landed: a token minted in between still claims
+    the old role. Every op that wrote through `grant_writes` runs it again on
+    a retry, so a cut that failed here is written then."""
     from server.core.ch import get_client, own_write_reads
 
+    namespaces = sorted({ns for ns, _ in pairs})
+    subjects = sorted({s for _, s in pairs})
     with own_write_reads():
         rows = await get_client().query_all(
             """
-            SELECT subject, role, status, revoked_at, version
+            SELECT namespace, subject, role, status, revoked_at, version
             FROM loom.namespace_grant_log
-            WHERE org = {org:String} AND namespace = {ns:String}
+            WHERE org = {org:String} AND namespace IN {ns:Array(String)}
               AND subject IN {subs:Array(String)}
-            ORDER BY subject, version
+            ORDER BY namespace, subject, version
             """,
-            params={"org": org, "ns": namespace, "subs": subjects},
+            params={"org": org, "ns": namespaces, "subs": subjects},
         )
+    keys = {pair: grant_claim_key(org, *pair) for pair in pairs}
     cutoffs = {
         str(r["jti"]): _cutoff_seconds(r.get("issued_before"))
-        for r in await _read_revocations([grant_claim_key(org, namespace, s) for s in subjects])
+        for r in await _read_revocations(sorted(keys.values()))
     }
-    history: dict[str, list[dict[str, Any]]] = {}
+    history: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for r in rows:
-        history.setdefault(str(r["subject"]), []).append(r)
+        history.setdefault((str(r["namespace"]), str(r["subject"])), []).append(r)
     lowered = [
-        s
-        for s in subjects
-        if _lowered_since(history.get(s, []), cutoffs.get(grant_claim_key(org, namespace, s)))
+        pair for pair in pairs if _lowered_since(history.get(pair, []), cutoffs.get(keys[pair]))
     ]
     if lowered:
-        await write_grant_cutoffs(
-            org, [namespace], lowered, reason="grant lowered", revoked_by=revoked_by
-        )
+        await _write_cutoffs(org, lowered, reason="grant lowered", revoked_by=revoked_by)
 
 
 def _lowered_since(rows: list[dict[str, Any]], cutoff: int | None) -> bool:
@@ -399,21 +396,26 @@ def _lowered_since(rows: list[dict[str, Any]], cutoff: int | None) -> bool:
     return max(ranks[first:]) > ranks[-1]
 
 
-def _cutoff_rows(keys: list[str], reason: str, revoked_by: str) -> list[dict[str, Any]]:
+def _cutoff_rows(keys: list[str], reason: str, revoked_by: str) -> tuple[list[dict[str, Any]], int]:
     """One cutoff per key at the next whole second, so a token minted in the
-    second of the change is cut too."""
+    second of the change is cut too; and that second as unix seconds."""
     now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
-    return [
+    issued_before = now + timedelta(seconds=1)
+    cutoff = int(issued_before.replace(tzinfo=UTC).timestamp())
+    rows = [
         {
             "jti": key,
             "revoked_at": now,
             "expires_at": revocation_expiry(None, now),
             "reason": reason,
             "revoked_by": revoked_by,
-            "issued_before": now + timedelta(seconds=1),
+            "issued_before": issued_before,
+            # The newest cutoff wins in ClickHouse too, however late its insert lands.
+            "version": cutoff * 1_000_000_000,
         }
         for key in keys
     ]
+    return rows, cutoff
 
 
 async def read_grant_cutoffs(
