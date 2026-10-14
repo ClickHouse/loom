@@ -227,7 +227,7 @@ out of `.env`.
 | Experimental NLP functions        | the stemmed and lemmatized lexical columns                                                                                                                                                                                                                                                               | flag is read-only; the runner drops it and `stem()` runs without it | `nlp_user_settings.xml` and `lemmatizers.xml` with the Lemmagen3 model in `deploy/lemmagen3/`                                                                                                          |
 | `Quantized` codec (26.8 or later) | codes-first vector search: a fresh install creates its vector columns coded when `LOOM_EMBEDDING_DIM` is a multiple of 8                                                                                                                                                                                 | where the service version has it                                    | nothing to configure; an older server gets plain vectors and full-precision scans                                                                                                                      |
 | `aiEmbed` (26.7 or later)         | only `loom reembed --in-database`                                                                                                                                                                                                                                                                        | where the service version has it                                    | needs a named collection (`named_collections.xml.template`)                                                                                                                                            |
-| The version CI tests              | `dev/ci_start_clickhouse.sh` and `dev/docker-compose.dev.yml` pin `clickhouse/clickhouse-server:26.9.17.8`                                                                                                                                                                                               | n/a                                                                 | run that version or later                                                                                                                                                                              |
+| The version CI tests              | the latest release: `dev/ci_start_clickhouse.sh` and the compose files run `clickhouse/clickhouse-server:latest`                                                                                                                                                                                         | n/a                                                                 | `docker compose pull clickhouse` to follow it; pin a release with `LOOM_CLICKHOUSE_IMAGE`                                                                                                              |
 
 - **Run ids without Keeper.** Without Keeper (or while Keeper fails) a narrowed
   token's `run.begin` with a new caller-supplied `run_id` gets a server-made id
@@ -235,11 +235,12 @@ out of `.env`.
   Claude Code and Codex plugins switch to it once run.begin answers). Known gap: a namespace-wide caller whose claim
   hits a Keeper error while a narrowed user wins the claim on the same new id at the
   same moment can end up sharing that id with them.
-- **Another ClickHouse image.** The compose files run the release CI tests; set
-  `LOOM_CLICKHOUSE_IMAGE` in `.env` to run another, such as
+- **Another ClickHouse image.** The compose files run the latest release, as CI does;
+  `docker compose pull clickhouse` moves a stack to a newer one. Set
+  `LOOM_CLICKHOUSE_IMAGE` in `.env` to pin another, such as a release tag or
   `clickhouse/clickhouse-server:head` for a build of ClickHouse master. CI does not test
   master, and Loom uses experimental features master can change. A newer server can also
-  write data in a format an older release cannot read, so switching back to the release may
+  write data in a format an older release cannot read, so switching back to an older release may
   need a fresh ClickHouse volume.
 - **ClickHouse Cloud.** Loom's DDL uses plain `MergeTree` engines, which Cloud runs as
   `SharedMergeTree`, so replication and durability come with the service. The one

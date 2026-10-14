@@ -24,13 +24,14 @@ def _default_image(value: str) -> str:
     return m.group(1)
 
 
-def test_same_pinned_image() -> None:
+def test_same_image_the_latest_release() -> None:
     image = re.search(r"^\s*(clickhouse/clickhouse-server:\S+)\s*$", SCRIPT, re.M)
     assert image and image.group(1) == _default_image(CH["image"])
-    assert re.fullmatch(r"clickhouse/clickhouse-server:\d+\.\d+\.\d+\.\d+", image.group(1))
+    assert image.group(1) == "clickhouse/clickhouse-server:latest"
+    assert "--pull always" in SCRIPT  # a cached `latest` would hold an older release
 
 
-def test_the_standalone_stack_defaults_to_the_tested_release() -> None:
+def test_the_standalone_stack_runs_the_same_image() -> None:
     standalone = yaml.safe_load(
         (ROOT / "deploy" / "standalone" / "compose.yaml").read_text(encoding="utf-8")
     )

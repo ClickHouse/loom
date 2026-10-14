@@ -14,7 +14,7 @@ set -euo pipefail
 ROOT="${GITHUB_WORKSPACE:-$(pwd)}"
 CFG="$ROOT/deploy/clickhouse-config"
 
-docker run -d --name loom-ch \
+docker run -d --pull always --name loom-ch \
   -p 8123:8123 -p 9000:9000 \
   -e CLICKHOUSE_DB=loom \
   -e CLICKHOUSE_USER=loom \
@@ -26,7 +26,7 @@ docker run -d --name loom-ch \
   -v "$CFG/nlp_user_settings.xml:/etc/clickhouse-server/users.d/nlp_user_settings.xml:ro" \
   -v "$CFG/merge_tree_settings.xml:/etc/clickhouse-server/config.d/merge_tree_settings.xml:ro" \
   -v "$CFG/keeper.xml:/etc/clickhouse-server/config.d/keeper.xml:ro" \
-  clickhouse/clickhouse-server:26.9.17.8
+  clickhouse/clickhouse-server:latest
 # named_collections.xml is intentionally omitted: it's gitignored (built from a
 # template against an operator secret) and only powers CH SQL ai* functions,
 # which the test suite doesn't exercise.
