@@ -29,7 +29,7 @@ def test_same_image_the_latest_release() -> None:
     assert image and _default_image(image.group(1)) == _default_image(CH["image"])
     assert _default_image(CH["image"]) == "clickhouse/clickhouse-server:latest"
     # A cached `latest` would hold an older release.
-    assert "PULL=always" in SCRIPT and '--pull "$PULL"' in SCRIPT
+    assert "*:latest | *:head) PULL=always" in SCRIPT and '--pull "$PULL"' in SCRIPT
     assert CH["pull_policy"] == "daily"
 
 

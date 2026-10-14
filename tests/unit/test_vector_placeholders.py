@@ -36,7 +36,7 @@ def test_pad_rows_replaces_only_empty_vectors_of_memory_embeddings(
             "memory_key_embedding_dim": 4,
         },
     ]
-    assert vp._pad_rows("loom.memory_embeddings", rows) == 3
+    assert len(vp.pad_rows("loom.memory_embeddings", rows)) == 3
     assert (
         rows[0]["embedding"] == [0.0] * 4 and rows[0]["embedding_dim"] == 0
     )  # dim stays the writer's truth
@@ -50,7 +50,7 @@ def test_pad_rows_replaces_only_empty_vectors_of_memory_embeddings(
     assert rows[2]["memory_key_embedding"] == [0.5] * 4
     # other tables are untouched
     other = [{"embedding": []}]
-    assert vp._pad_rows("loom.agent_events", other) == 0 and other[0]["embedding"] == []
+    assert len(vp.pad_rows("loom.agent_events", other)) == 0 and other[0]["embedding"] == []
 
 
 @pytest.mark.asyncio
@@ -97,7 +97,7 @@ def test_every_vector_table_has_a_placeholder_rule(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(settings, "embedding_dim", 3)
     for table, cols in vp.PLACEHOLDER_COLUMNS.items():
         rows = [{c: [] for c in cols}]
-        assert vp._pad_rows(table, rows) == len(cols), table
+        assert len(vp.pad_rows(table, rows)) == len(cols), table
         assert all(rows[0][c] == [0.0, 0.0, 0.0] for c in cols)
     assert (
         "loom.code_chunks" in vp.PLACEHOLDER_COLUMNS

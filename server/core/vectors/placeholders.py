@@ -73,38 +73,32 @@ def _placeholder_spec(table: str) -> tuple[str, tuple[str, ...], int]:
     return full, (), dim
 
 
-def _pad_rows(table: str, rows: list[dict[str, Any]]) -> int:
+def pad_rows(table: str, rows: list[dict[str, Any]]) -> list[tuple[int, str]]:
     """Replace empty vectors in `rows` (in place) for a table that has
-    placeholder columns. Returns the number of vectors replaced; 0 for every
-    other table or when nothing was empty."""
+    placeholder columns. Returns the (row index, column) of each placeholder."""
     full, cols, dim = _placeholder_spec(table)
-    n = 0
+    padded: list[tuple[int, str]] = []
     for c in cols:
         # A placeholder is never scored: it takes the width its coded column was
         # created at, so a write without a vector is never refused for its width.
         width = codes_state.stored_width(full, c) or dim
         if width <= 0:
             continue
-        for r in rows:
+        for i, r in enumerate(rows):
             if c in r and not r[c]:
                 r[c] = placeholder(width)
-                n += 1
-    return n
+                padded.append((i, c))
+    return padded
 
 
-def _pads_coded(table: str, rows: list[dict[str, Any]]) -> bool:
-    """Whether a placeholder would be sized from a coded column's width."""
-    full, cols, _ = _placeholder_spec(table)
-    return any(
-        codes_state.stored_width(full, c) and any(c in r and not r[c] for r in rows) for c in cols
-    )
+def unpad(rows: list[dict[str, Any]], padded: list[tuple[int, str]]) -> None:
+    """Empty the placeholders `pad_rows` wrote, to size them again."""
+    for i, c in padded:
+        rows[i][c] = []
 
 
-async def fit_vectors(table: str, rows: list[dict[str, Any]]) -> None:
+async def fit_vectors(table: str, rows: list[dict[str, Any]]) -> list[tuple[int, str]]:
     """Refuse a vector its coded column cannot take, then pad the empty ones
-    (in place). A placeholder for a coded column is sized from a recent reading;
-    a vector that misses the reading re-reads it before it is refused."""
-    if _pads_coded(table, rows):
-        await codes_state.recheck()
+    (in place); returns where the placeholders went."""
     await codes_state.refuse_other_widths(table, rows)  # skips the empty vectors
-    _pad_rows(table, rows)
+    return pad_rows(table, rows)

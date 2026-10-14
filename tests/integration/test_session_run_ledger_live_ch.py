@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -54,6 +55,7 @@ async def _ledger_call(
                 "request_id": uuid.uuid4().hex,
                 "latency_ms": 1,
                 "success": True,
+                "ts": datetime.now(UTC),  # the web process's clock, as the ledger writes it
             }
         ],
         settings={"async_insert": 0},

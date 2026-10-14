@@ -34,7 +34,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from typing import Any
 
 from server.core.schema.vector_codec_ddl import CODED_TABLES, codec_width
@@ -145,13 +145,13 @@ def _coded_of(table: str) -> list[tuple[str, str, int]]:
     return [(c, c[len(prefix) :], w) for c, w in _widths.items() if c.startswith(prefix)]
 
 
-# A vector that misses the reading, or a placeholder for a coded column, is
-# judged against a reading at most this old, so a table rebuilt outside Loom
-# is not written at its old width for a whole probe interval.
+# A write that embeds is judged against a reading at most this old before any
+# part of it lands, so a table rebuilt outside Loom does not leave half a write
+# behind for a whole probe interval.
 FRESH_READING_S = 5.0
 
 
-async def recheck() -> None:
+async def _recheck() -> None:
     """Re-read the widths when the reading is older than FRESH_READING_S;
     concurrent writers wait on one re-read."""
     if _ch is None or (_probed_at is not None and time.monotonic() - _probed_at <= FRESH_READING_S):
@@ -165,32 +165,48 @@ async def refuse_other_widths(table: str, rows: list[dict[str, Any]]) -> None:
     await _refuse_if(lambda: _row_mismatch(table, rows))
 
 
-async def refuse_after_width_error(
-    table: str, rows: list[dict[str, Any]], error: Exception
-) -> None:
-    """After ClickHouse refused the insert of `rows` with code 190, re-read the
-    widths and refuse by name when a vector misses them: a table rebuilt outside
-    Loom since the last reading."""
-    from server.core.ch_errors import error_code
+async def only_placeholders_missed(
+    table: str, rows: list[dict[str, Any]], padded: list[tuple[int, str]], error: Exception
+) -> bool:
+    """After ClickHouse refused `rows` with code 190 (a table rebuilt at another
+    width since the last reading): read the widths afresh and refuse by name when
+    a vector the caller wrote misses them. True when only the placeholders at
+    `padded` miss them, so the caller sizes them again and retries."""
+    from server.core.ch_errors import WIDTH_MISMATCH_CODE, error_code
 
-    if _ch is None or error_code(error) != 190:
-        return
-    await asyncio.shield(_start_refresh())
-    if (found := _row_mismatch(table, rows)) is not None:
+    if _ch is None or error_code(error) != WIDTH_MISMATCH_CODE:
+        return False
+    await asyncio.shield(_start_refresh(fresh=True))
+    if (found := _row_mismatch(table, rows, skip=set(padded))) is not None:
         _refuse(*found)
+    return any(
+        len(rows[i][name]) != stored
+        for _, name, stored in _coded_of(table)
+        for i, c in padded
+        if c == name
+    )
 
 
 async def refuse_width(table: str, dim: int) -> None:
     """The same check for a write whose vectors will be `dim` wide, made before
-    any part of it is written."""
-    await _refuse_if(lambda: _width_mismatch(table, dim))
+    any part of it is written, against a recent reading."""
+    await _recheck()
+    if (found := _width_mismatch(table, dim)) is not None:
+        _refuse(*found)
 
 
-def _row_mismatch(table: str, rows: list[dict[str, Any]]) -> tuple[str, int, int] | None:
+def _row_mismatch(
+    table: str, rows: list[dict[str, Any]], skip: Collection[tuple[int, str]] = ()
+) -> tuple[str, int, int] | None:
     for column, name, stored in _coded_of(table):
-        for row in rows:
+        for i, row in enumerate(rows):
             vector = row.get(name)
-            if vector is not None and len(vector) and len(vector) != stored:
+            if (
+                vector is not None
+                and len(vector)
+                and len(vector) != stored
+                and (i, name) not in skip
+            ):
                 return column, stored, len(vector)
     return None
 
@@ -205,7 +221,7 @@ def _width_mismatch(table: str, dim: int) -> tuple[str, int, int] | None:
 async def _refuse_if(mismatch: Callable[[], tuple[str, int, int] | None]) -> None:
     if mismatch() is None:
         return
-    await recheck()
+    await _recheck()
     if (found := mismatch()) is not None:
         _refuse(*found)
 
@@ -297,10 +313,11 @@ def _maybe_refresh() -> None:
     _start_refresh()
 
 
-def _start_refresh() -> asyncio.Task[Any]:
-    """The re-probe in flight, started when there is none."""
+def _start_refresh(*, fresh: bool = False) -> asyncio.Task[Any]:
+    """The re-probe in flight, started when there is none; with `fresh`, a new
+    one even then, since one that started earlier may predate what it must see."""
     global _refresh
-    if _refresh is None or _refresh.done():
+    if fresh or _refresh is None or _refresh.done():
         from server.core.background import detached_task, register_deferred_task
 
         # Process work a statement happened to trigger: its system-table reads
@@ -328,8 +345,7 @@ __all__ = [
     "ensure_probed",
     "is_coded",
     "probe",
-    "recheck",
-    "refuse_after_width_error",
+    "only_placeholders_missed",
     "refuse_other_widths",
     "refuse_width",
     "reset",

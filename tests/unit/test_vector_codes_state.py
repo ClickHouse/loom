@@ -226,60 +226,18 @@ async def test_placeholders_take_the_width_a_refusal_reread(
 
 
 @pytest.mark.asyncio
-async def test_a_vector_at_the_old_width_beside_a_placeholder_is_refused(
+async def test_a_write_that_embeds_is_judged_on_a_recent_reading(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Refused by name, not left to ClickHouse's code 190."""
+    """Before any part of it lands, even when the old reading would let it by."""
     from server.core.errors import CodedWidthMismatchError
-    from server.core.vectors.placeholders import fit_vectors
 
-    columns = [("memory_embeddings", "embedding"), ("memory_embeddings", "memory_key_embedding")]
-    ch = _FakeCH(coded=columns, patches={}, width=3072)
+    ch = _FakeCH(coded=[("chunks", "embedding")], patches={}, width=3072)
     await vector_codes_state.probe(ch)
     ch.width = 1024  # rebuilt outside Loom
     _age_reading(monkeypatch)
-    row = {"embedding": [0.1] * 3072, "memory_key_embedding": []}
     with pytest.raises(CodedWidthMismatchError):
-        await fit_vectors("memory_embeddings", [row])
-
-
-@pytest.mark.asyncio
-async def test_full_vectors_at_the_old_width_are_refused_by_name(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """They match the stale reading, so ClickHouse refuses them (code 190); the
-    re-read then names the mismatch instead of a 500."""
-    from server.core.errors import CodedWidthMismatchError
-    from server.core.vectors.placeholders import fit_vectors
-
-    columns = [("memory_embeddings", "embedding"), ("memory_embeddings", "memory_key_embedding")]
-    ch = _FakeCH(coded=columns, patches={}, width=3072)
-    await vector_codes_state.probe(ch)
-    ch.width = 1024  # rebuilt outside Loom
-    rows = [{"embedding": [0.1] * 3072, "memory_key_embedding": [0.1] * 3072}]
-    n = len(ch.calls)
-    await fit_vectors("memory_embeddings", rows)  # a full batch costs no probe
-    assert len(ch.calls) == n
-    refused = RuntimeError("Code: 190. DB::Exception: Elements of array are not of the same size")
-    with pytest.raises(CodedWidthMismatchError):
-        await vector_codes_state.refuse_after_width_error("memory_embeddings", rows, refused)
-    other = RuntimeError("Code: 241. DB::Exception: Memory limit exceeded")
-    await vector_codes_state.refuse_after_width_error("memory_embeddings", rows, other)
-
-
-@pytest.mark.asyncio
-async def test_a_batch_of_stubs_is_padded_from_a_recent_reading(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from server.core.vectors.placeholders import fit_vectors
-
-    ch = _FakeCH(coded=[("memory_embeddings", "embedding")], patches={}, width=3072)
-    await vector_codes_state.probe(ch)
-    ch.width = 1024
-    _age_reading(monkeypatch)
-    rows = [{"embedding": []}, {"embedding": []}]
-    await fit_vectors("memory_embeddings", rows)
-    assert [len(r["embedding"]) for r in rows] == [1024, 1024]
+        await vector_codes_state.refuse_width("chunks", 3072)
 
 
 @pytest.mark.asyncio

@@ -30,6 +30,7 @@ from server.core.ch_class_settings import is_read_statement, traffic_class_setti
 from server.core.ch_errors import (
     QUANTIZED_SETTING,
     REPLICA_BOUND_RETRIES,
+    WIDTH_MISMATCH_CODE,
     error_code,
     is_replica_bound_error,
     is_transient_network_error,
@@ -865,9 +866,26 @@ class CHClient:
         # to raise code 60 against a table the service does not have yet.
         await guard_pending_schema("insert", "", "write", insert_table=table)
         # A coded vector column needs every row at full length.
-        from server.core.vectors.placeholders import fit_vectors
+        from server.core.vectors import codes_state, placeholders
 
-        await fit_vectors(table, rows)
+        padded = await placeholders.fit_vectors(table, rows)
+        try:
+            await self._insert_rows(table, rows, settings, project_onto_table)
+        except Exception as e:
+            if not await codes_state.only_placeholders_missed(table, rows, padded, e):
+                raise
+            # The table was rebuilt at another width since the last reading.
+            placeholders.unpad(rows, padded)
+            placeholders.pad_rows(table, rows)
+            await self._insert_rows(table, rows, settings, project_onto_table)
+
+    async def _insert_rows(
+        self,
+        table: str,
+        rows: list[dict[str, Any]],
+        settings: dict[str, Any] | None,
+        project_onto_table: bool | None,
+    ) -> None:
         columns = list(rows[0].keys())
         if project_onto_table is None:
             project_onto_table = table in PROJECTED_TABLES
@@ -929,11 +947,8 @@ class CHClient:
 
             # The re-describe ladder below re-runs the INSERT; never for a
             # refused slot or a cut deadline.
-            if isinstance(e, LoomServerError):
+            if isinstance(e, LoomServerError) or error_code(e) == WIDTH_MISMATCH_CODE:
                 raise
-            from server.core.vectors.codes_state import refuse_after_width_error
-
-            await refuse_after_width_error(table, rows, e)
             had_cache = type_names is not None or table in _COLUMN_TYPES
             _COLUMN_TYPES.pop(table, None)
             if project_onto_table:

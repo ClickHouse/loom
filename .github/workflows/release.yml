@@ -121,28 +121,20 @@ jobs:
         run: |
           uv sync --locked --python "${{ steps.python.outputs.python-path }}"
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
-      # A re-run keeps the release a published bundle of this version names, so
-      # rerunning the installer for it never moves ClickHouse. A release without
-      # the bundle (an upload that failed) was never installable and resolves
-      # anew; an answer other than "release not found" stops the run.
+      # A re-run keeps the release this version's published bundle names, so
+      # rerunning the installer for it never moves ClickHouse.
       - id: resolve
         env:
           VERSION: ${{ needs.version.outputs.version }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          if assets=$(gh release view "v$VERSION" --json assets -q '.assets[].name' 2>gh.err); then
-            if grep -qx loom-stack.tar.gz <<<"$assets"; then
-              gh release download "v$VERSION" --pattern loom-stack.tar.gz --dir published
-              image=$(python scripts/release/build_stack_bundle.py pinned-in published/loom-stack.tar.gz)
-            else
-              image=$(bash dev/clickhouse_release.sh)
-            fi
-          elif grep -q "release not found" gh.err; then
-            image=$(bash dev/clickhouse_release.sh)
-          else
-            cat gh.err >&2
-            exit 1
-          fi
+          status=0
+          bash scripts/release/published_bundle.sh "$VERSION" published || status=$?
+          case $status in
+            0) image=$(python scripts/release/build_stack_bundle.py pinned-in published/loom-stack.tar.gz) ;;
+            3) image=$(bash dev/clickhouse_release.sh) ;;
+            *) exit "$status" ;;
+          esac
           echo "image=$image" >> "$GITHUB_OUTPUT"
       - name: Migrate a fresh server of that release and check schema.sql
         env:
@@ -448,12 +440,33 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: release-files
           path: release
-      # An existing release for the tag is updated and its files replaced, so
-      # a re-run or the later dispatch leaves the published bytes attached.
+      # Replacing an asset deletes it first: a failed upload would leave an
+      # installed version without its bundle, and its pin with it. A published
+      # bundle stays; only its checksum file is written again.
+      - name: Keep a bundle this version already published
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          status=0
+          bash scripts/release/published_bundle.sh "$VERSION" published || status=$?
+          case $status in
+            0)
+              rm release/stack/loom-stack.tar.gz
+              (cd published && sha256sum loom-stack.tar.gz) >release/stack/loom-stack.tar.gz.sha256
+              ;;
+            3) ;;
+            *) exit "$status" ;;
+          esac
+      # An existing release for the tag is updated and its other files replaced,
+      # so a re-run or the later dispatch leaves the published bytes attached.
       - name: Create or update the release with notes and files
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:

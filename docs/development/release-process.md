@@ -85,8 +85,9 @@ A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not mov
 2. `clickhouse` names the ClickHouse release the Compose bundle runs: the release
    `clickhouse/clickhouse-server:latest` names now (`dev/clickhouse_release.sh`), or, on a
    re-run, the one this version's published bundle already names, so rerunning the
-   installer for a version never moves ClickHouse (a release whose bundle upload failed
-   resolves anew: nobody can have installed it). It migrates a fresh server of that
+   installer for a version never moves ClickHouse (`scripts/release/published_bundle.sh`;
+   a release without a bundle resolves anew, as `github-release` never replaces one, so
+   nobody can have installed it). It migrates a fresh server of that
    release and runs `make schema-check` before `build` may pin it. Each tag resolves
    its own, so a final release can name a newer ClickHouse than its release candidates;
 3. `build` writes the version into the Python and TypeScript SDK sources and builds the
@@ -96,15 +97,17 @@ A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not mov
    SHA-256 file, naming that ClickHouse release;
 4. `verify` checks those exact files: their names and embedded versions, the plugin
    manifests, no tests in the Claude Code zip, the executable bits git records, and
-   that the bundle names the ClickHouse release the `clickhouse` job checked, and smoke-tests the wheel in a
-   clean venv with `scripts/gates/sdk_wheel_smoke.py`;
+   that the bundle names the ClickHouse release the `clickhouse` job checked, and
+   smoke-tests the wheel in a clean venv with `scripts/gates/sdk_wheel_smoke.py`;
 5. `docker` publishes `ghcr.io/clickhouse/loom` for linux/amd64 and linux/arm64, with
    provenance and an SBOM;
 6. `docker-smoke` installs the bundle with that image, on the ClickHouse release it
    names, on amd64 and arm64;
 7. `github-release` creates the GitHub Release only after that image exists, or updates it
    on a re-run, with notes generated from the commits since the previous tag, and attaches
-   the verified files.
+   the verified files. A bundle the release already carries is kept, with its checksum
+   written again: replacing an asset deletes it first, and a failed upload would leave an
+   installed version without its bundle.
 
 The server image is published before the GitHub Release, so an installer shown on the
 release page never points at a missing image.
