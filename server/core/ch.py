@@ -19,6 +19,7 @@ import uuid
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from datetime import UTC, datetime
 from types import FrameType
 from typing import Any
 
@@ -467,6 +468,21 @@ async def _probe_vector_state(client: CHClient) -> None:
     await ensure_probed(client)
 
 
+def _insert_data(rows: list[dict[str, Any]], columns: list[str]) -> list[list[Any]]:
+    return [[_as_utc_instant(r[c]) for c in columns] for r in rows]
+
+
+def _as_utc_instant(value: Any) -> Any:
+    """A naive datetime, UTC by Loom's convention, marked UTC: the driver
+    inserts a naive one as the host's local time. One level of
+    `Array(DateTime)` too; anything else passes through."""
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
+    if isinstance(value, list) and value and isinstance(value[0], datetime):
+        return [_as_utc_instant(v) for v in value]
+    return value
+
+
 class CHClient:
     """Singleton-ish wrapper. Use `get_client()` to fetch."""
 
@@ -912,7 +928,7 @@ class CHClient:
                     f"insert {table}: row {i} keys differ from row 0 — "
                     f"missing {missing}, extra {extra}"
                 )
-        data = [[r[c] for c in columns] for r in rows]
+        data = _insert_data(rows, columns)
 
         # The driver asks the server for the column types of
         # every insert it is not told them for — one `DESCRIBE TABLE` round
@@ -965,7 +981,7 @@ class CHClient:
                 reprojected = await self._project_columns(table, list(rows[0].keys()))
                 if reprojected != columns:
                     columns = reprojected
-                    data = [[r[c] for c in columns] for r in rows]
+                    data = _insert_data(rows, columns)
                     type_names = await self._column_type_names(table, columns)
                     await _run()
                     return
