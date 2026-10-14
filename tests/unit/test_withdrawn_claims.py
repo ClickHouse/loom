@@ -409,7 +409,7 @@ def test_a_newer_cutoff_from_another_process_stands_over_this_ones(ch: _CH) -> N
 
 
 def test_a_cutoff_refuses_rather_than_cut_short_past_its_spelling_bound(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     from server.auth import aliases
 
@@ -420,8 +420,10 @@ def test_a_cutoff_refuses_rather_than_cut_short_past_its_spelling_bound(
             assert "DISTINCT" in sql and params["lim"] == 3
             return [{"owner_email": f"u{i}", "contact_email": "a@x.io"} for i in range(3)]
 
-    with pytest.raises(aliases.TooManySpellings, match="more than 2 accounts tie spellings"):
+    with pytest.raises(aliases.TooManySpellings, match="ask your Loom operator"):
         asyncio.run(aliases.cutoff_spellings(ORG, "a@x.io", ch=_Directory()))
+    # The command that fixes it is for the operator, who reads the log.
+    assert f"loom claim-release --org {ORG}" in caplog.text
 
 
 def test_a_slash_in_an_org_or_namespace_cannot_make_two_scopes_share_a_key() -> None:
