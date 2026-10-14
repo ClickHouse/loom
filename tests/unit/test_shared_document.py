@@ -203,6 +203,10 @@ def test_a_lasting_read_failure_warns_once_and_recovers(
     assert sum("unreadable" in r.getMessage() for r in caplog.records) == 1
     monkeypatch.undo()
     assert reader.poll() == {"x": 1}
+    monkeypatch.setattr(shared_document, "open_private", denied)
+    with caplog.at_level(logging.WARNING):
+        assert reader.poll() is None  # the same failure again, after a good read
+    assert sum("unreadable" in r.getMessage() for r in caplog.records) == 2
 
 
 def test_a_document_of_the_wrong_shape_is_corrupt_and_replaced(tmp_path: Path) -> None:

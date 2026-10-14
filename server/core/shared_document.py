@@ -61,7 +61,8 @@ class SharedDocument[T]:
         self._decode, self._encode = decode, encode
         # The generation last adopted or published; None when none was.
         self._seen: int | None = None
-        # The last read failure warned about, so a lasting one is logged once.
+        # The read failure warned about since the last good read, so a lasting
+        # one is logged once and one that comes back is logged again.
         self._warned = ""
 
     def _file(self, *, now: bool) -> str:
@@ -135,6 +136,7 @@ class SharedDocument[T]:
                 if not isinstance(generation, int) or isinstance(generation, bool):
                     raise TypeError(f"generation {generation!r} is not a whole number")
                 if generation == self._seen:
+                    self._warned = ""
                     return None
                 state = self._decode(json.loads(fh.read()))
         except (ValueError, LookupError, TypeError, AttributeError, RecursionError) as e:
@@ -143,7 +145,7 @@ class SharedDocument[T]:
                 log.warning("%s is corrupt (%s); ignored until it is replaced", path, e)
             self._seen = None
             return None
-        self._seen = generation
+        self._seen, self._warned = generation, ""
         return state
 
 
