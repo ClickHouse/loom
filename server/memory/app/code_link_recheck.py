@@ -591,7 +591,7 @@ async def _relink(
     rows, gone, unparsed = (
         await links.link_each(org, cns, served, existing, files) if served else ([], [], [])
     )
-    waiting = {m["mid"] for m in unparsed}  # their markers stay
+    waiting = {m["mid"] for m, _ in unparsed}  # their markers stay
     read = {m["memory_id"]: m["version"] for m in markers}
     for r in rows:
         r["version"] = read[r["memory_id"]] + 1

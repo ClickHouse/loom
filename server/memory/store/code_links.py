@@ -423,15 +423,16 @@ async def lost(
 
 
 async def policy_due(
-    org: str, code_namespace: str, *, limit: int, ch: _CHClient | None = None
+    org: str, code_namespace: str, version: str, *, limit: int, ch: _CHClient | None = None
 ) -> list[str]:
-    """Up to `limit` memories with a link of `code_namespace` whose policy has yet to run,
-    the longest unchecked first."""
+    """Up to `limit` memories with a link of `code_namespace` hashed under rules `version`
+    whose policy has yet to run, the longest unchecked first."""
     rows = await (ch or _default_client()).query_all(
         f"SELECT toString(memory_id) AS mid, max(checked_at) AS last_checked {_LIVE} "
         "AND org = {org:String} AND code_namespace = {cns:String} AND policy_due = 1 "
+        "AND fingerprint_version = {version:String} "
         "GROUP BY memory_id ORDER BY last_checked, mid LIMIT {lim:UInt32}",
-        params={"org": org, "cns": code_namespace, "lim": int(limit)},
+        params={"org": org, "cns": code_namespace, "version": version, "lim": int(limit)},
     )
     return [str(r["mid"]) for r in rows]
 

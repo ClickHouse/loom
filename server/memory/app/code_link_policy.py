@@ -55,7 +55,7 @@ async def apply_policies(
     """Run the policy of each memory a change in `cns` left due and clear the marks it
     settled; what fails or is past the judgement budget stays due."""
     # a page a few times the budget: what is left over is read by the next pass
-    due = await store.policy_due(org, cns, limit=4 * budget.judgements + 100)
+    due = await store.policy_due(org, cns, fingerprint_version(), limit=4 * budget.judgements + 100)
     if not due:
         return
     links: dict[str, list[LinkRow]] = defaultdict(list)

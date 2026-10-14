@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from server.code.app import memory_links as code
+from server.code.domain.anchor import NO_BASELINE
 from server.code.domain.declaration import fingerprint_version
 from server.memory.app import code_link_pass as link_pass
 from server.memory.app import code_link_policy as policy
@@ -19,8 +20,8 @@ async def refingerprint(
     org: str, cns: str, files: link_pass.RepoReads, result: link_pass.PassResult
 ) -> None:
     """Re-hash the links hashed under other rules or grammars than these, a page at a
-    time, each page written as it is done. A link whose old text does not parse, or is
-    gone from git, stays under its rules and out of rechecks, and is reported."""
+    time, each page written as it is done. A link whose old text does not parse stays
+    under its rules, out of rechecks and policies, and is reported."""
     version = fingerprint_version()
     after: tuple[str, ...] | None = None
     failed: set[str] = set()
@@ -49,7 +50,7 @@ async def refingerprint(
         if (after := nxt) is None:
             break
     if failed:
-        result.errors.append(f"re-hash {org}/{cns}: not re-hashed: {', '.join(sorted(failed))}")
+        result.errors.append(f"re-hash {org}/{cns}: did not parse: {', '.join(sorted(failed))}")
 
 
 async def _rehashed(a: LinkRow, files: link_pass.RepoReads) -> dict[str, Any]:
@@ -88,8 +89,9 @@ async def _rehashed(a: LinkRow, files: link_pass.RepoReads) -> dict[str, Any]:
     elif out["anchored_hash"]:
         out |= {"body_hash": out["anchored_hash"], "baseline_commit": ""}
     else:
-        # no text to take a baseline from under these rules: the old hash is no baseline
-        raise code.ParseFailed(link.anchored_path, "baseline text not readable")
+        # no baseline text left to hash: a link that matched it adopts what the next
+        # check finds, a changed one stays changed
+        out |= {"body_hash": "" if link.matched_baseline() else NO_BASELINE, "baseline_commit": ""}
     baseline = out["body_hash"]
     if a["state"] in ("fresh", "moved") and out["checked_hash"] not in ("", baseline):
         # these rules see a change the old ones did not

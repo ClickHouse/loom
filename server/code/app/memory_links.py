@@ -76,8 +76,8 @@ async def kept_paths(org: str, namespace: str, base: str, head: str) -> dict[str
 
 
 async def descends(org: str, namespace: str, ancestor: str, descendant: str) -> bool:
-    """Whether `descendant` has `ancestor` in its history; False for a commit git does
-    not know, a GitError when git fails."""
+    """Whether `descendant` has `ancestor` in its history; False also when git cannot
+    tell (a commit it does not know, an unreadable mirror)."""
     cfg = repo_for_namespace(org, namespace)
     if cfg is None or not ancestor or not descendant:
         return False

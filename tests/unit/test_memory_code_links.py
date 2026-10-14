@@ -15,8 +15,7 @@ from typing import Any
 
 import pytest
 
-from server.code.app.memory_links import ParseFailed
-from server.code.domain.anchor import Definition, Shape
+from server.code.domain.anchor import NO_BASELINE, Definition, Shape
 from server.code.domain.declaration import edit_pattern, fingerprint_version
 from server.memory.app import (
     code_link_pass,
@@ -96,7 +95,7 @@ def world(monkeypatch):
     judged: list[str] = []
     cleared: list[dict[str, Any]] = []
 
-    async def policy_due(org, cns, *, limit):
+    async def policy_due(org, cns, version, *, limit):
         return list(states)
 
     async def for_memories(org, ids):
@@ -632,7 +631,7 @@ async def test_links_name_only_repositories_the_caller_may_read(monkeypatch) -> 
 
     monkeypatch.setattr(code_links.store, "for_memories", for_memories)
     monkeypatch.setattr(code_links.code, "code_namespaces", lambda: ["code-a"])
-    monkeypatch.setattr(code_link_reads, "readable", readable)
+    monkeypatch.setattr(code_link_reads, "readable_namespaces", readable)
     monkeypatch.setattr(code_link_reads, "code_namespace_for", lambda org, ns, tags: "code-a")
     links = await code_link_reads.links_of("o", _row("m"))
     assert [x.code_namespace for x in links] == ["code-open"]
@@ -727,7 +726,7 @@ def served(monkeypatch):
     monkeypatch.setattr(code_links.store, "served_heads", served_heads)
     monkeypatch.setattr(code_links.code, "code_namespaces", lambda: ["code-a"])
     monkeypatch.setattr(code_links.store, "code_change_policies", policies)
-    monkeypatch.setattr(code_link_reads, "readable", readable)
+    monkeypatch.setattr(code_link_reads, "readable_namespaces", readable)
     monkeypatch.setattr(code_link_reads, "code_namespace_for", lambda org, ns, tags: "code-a")
     return SimpleNamespace(heads=heads, links=links, policy=policy)
 
@@ -795,12 +794,16 @@ async def test_the_heads_policies_and_readability_are_read_at_once(served, monke
 
     for name in ("served_heads", "code_change_policies"):
         monkeypatch.setattr(code_links.store, name, waits(name, getattr(code_links.store, name)))
-    monkeypatch.setattr(code_link_reads, "readable", waits("readable", code_link_reads.readable))
+    monkeypatch.setattr(
+        code_link_reads,
+        "readable_namespaces",
+        waits("readable_namespaces", code_link_reads.readable_namespaces),
+    )
     served.heads.append(_row("m", memory_key="k"))
     served.links["m"] = [_link("m", "changed")]
     hits = [_hit("k")]
     await code_link_reads.annotate_hits(_search(), hits)
-    assert sorted(started) == ["code_change_policies", "readable", "served_heads"]
+    assert sorted(started) == ["code_change_policies", "readable_namespaces", "served_heads"]
     assert hits[0].code_state == "changed"
 
 
@@ -837,7 +840,7 @@ async def test_code_the_caller_may_not_read_never_hides_a_hit(served, monkeypatc
     async def readable(org, nss):
         return set()
 
-    monkeypatch.setattr(code_link_reads, "readable", readable)
+    monkeypatch.setattr(code_link_reads, "readable_namespaces", readable)
     served.heads.append(_row("gone", memory_key="gone"))
     served.links["gone"] = [_link("gone", "missing")]
     hits = [_hit("gone")]
@@ -1220,7 +1223,7 @@ async def test_a_missing_link_named_in_a_changed_file_and_every_unresolved_one_a
 
 
 @pytest.mark.asyncio
-async def test_a_hash_whose_code_is_gone_is_cleared_or_reported_on_every_page(
+async def test_a_hash_whose_code_is_gone_is_cleared_and_every_page_is_rehashed(
     monkeypatch,
 ) -> None:
     from server.code.domain.declaration import fingerprint_version
@@ -1273,10 +1276,14 @@ async def test_a_hash_whose_code_is_gone_is_cleared_or_reported_on_every_page(
     result = code_link_pass.PassResult()
     await code_link_rehash.refingerprint("o", "code-a", files, result)
     # a link that last matched its baseline adopts what the next check finds; one that
-    # had changed has no baseline under these rules, so it keeps its own and is reported
-    assert {r["memory_id"]: r["body_hash"] for r in written} == {"m1": ""}
+    # had changed keeps a baseline no fingerprint matches, whatever it reads now
+    assert {r["memory_id"]: r["body_hash"] for r in written} == {
+        "m1": "",
+        "m2": NO_BASELINE,
+        "m3": NO_BASELINE,
+    }
     assert {r["fingerprint_version"] for r in written} == {fingerprint_version()}
-    assert result.errors == ["re-hash o/code-a: not re-hashed: src/a.py"]
+    assert result.errors == []
     assert starts == [None, ("m1",)]  # each page starts at the last one's end
 
 
@@ -1297,7 +1304,7 @@ async def test_stale_links_read_only_repositories_the_caller_may_read(monkeypatc
         SimpleNamespace(org="o", repo="acme/s", git_remote="", namespace="code-secret"),
     ]
     monkeypatch.setattr(code_links.store, "stale_of_served", stale_of_served)
-    monkeypatch.setattr(code_link_reads, "readable", readable)
+    monkeypatch.setattr(code_link_reads, "readable_namespaces", readable)
     monkeypatch.setattr(code_link_reads, "configured_repos", lambda: cfgs)
     monkeypatch.setattr(code_link_reads, "repo_tag", lambda r: f"repo:{r}")
     monkeypatch.setattr(
@@ -1307,7 +1314,7 @@ async def test_stale_links_read_only_repositories_the_caller_may_read(monkeypatc
     assert asked["states"] == ["changed", "unresolved", "missing"] and asked["keys"] == ["k"]
     assert asked["trunk"] == "" and asked["readable"] == ["code-a"] and asked["limit"] == 3
     assert asked["tag_namespaces"] == [("repo:acme/a", "code-a"), ("repo:acme/s", "code-secret")]
-    monkeypatch.setattr(code_link_reads, "readable", lambda org, nss: _async(set()))
+    monkeypatch.setattr(code_link_reads, "readable_namespaces", lambda org, nss: _async(set()))
     assert await code_link_reads.stale_links("o", "ns", limit=3) == []  # nothing readable
 
 
@@ -1328,7 +1335,12 @@ async def test_stale_links_read_served_heads_and_only_the_columns_they_need() ->
             return []
 
     ch = _Rec()
-    kw: dict[str, Any] = {"trunk": "", "tag_namespaces": [], "readable": ["c"], "limit": 0}
+    kw: dict[str, Any] = {
+        "trunk": "",
+        "tag_namespaces": [],
+        "readable": ["c"],
+        "limit": 0,
+    }
     assert await store.stale_of_served("o", "ns", ["missing"], ["k"], ch=ch, **kw) == []
     assert "SELECT *" not in ch.sql and "value" not in ch.sql
     assert "status IN ('active', 'conflicted')" in ch.sql and "tombstoned_at IS NULL" in ch.sql
@@ -1726,7 +1738,7 @@ async def test_a_search_with_no_linked_hits_reads_no_memory_heads(monkeypatch) -
     monkeypatch.setattr(code_links.store, "live_links", live_links)
     for name in ("served_heads", "code_change_policies"):
         monkeypatch.setattr(code_links.store, name, no_read)
-    monkeypatch.setattr(code_link_reads, "readable", no_read)
+    monkeypatch.setattr(code_link_reads, "readable_namespaces", no_read)
     monkeypatch.setattr(code_links.code, "code_namespaces", lambda: ["code-a"])
     hits = [_hit("k1"), _hit("k2", who=None)]  # the second hit's leg read no identity
     assert await code_link_reads.hit_memories(_search(), hits) == [None, None]
@@ -1965,7 +1977,7 @@ async def test_the_mirror_tells_a_commit_it_lost_from_a_mirror_it_cannot_read(tm
 
 
 @pytest.mark.asyncio
-async def test_a_rehash_with_no_baseline_text_left_keeps_the_link_under_its_rules(
+async def test_a_rehash_with_no_baseline_text_left_adopts_the_next_check(
     monkeypatch,
 ) -> None:
     async def has(self, commit):
@@ -1988,9 +2000,10 @@ async def test_a_rehash_with_no_baseline_text_left_keeps_the_link_under_its_rule
         }
     )
     assert (await code_link_rehash._rehashed(link, files))["body_hash"] == "new-c1"
-    gone = link | {"anchored_commit": "c0"}  # both lost: no baseline under these rules
-    with pytest.raises(ParseFailed):
-        await code_link_rehash._rehashed(gone, files)
+    gone = link | {"anchored_commit": "c0"}  # both lost: the next check finds its baseline
+    assert (await code_link_rehash._rehashed(gone, files))["body_hash"] == ""
+    changed = gone | {"checked_hash": "older", "state": "changed"}
+    assert (await code_link_rehash._rehashed(changed, files))["body_hash"] == NO_BASELINE
 
 
 def _judged_files(monkeypatch, texts: dict[str, str], path: str = "a.ts"):

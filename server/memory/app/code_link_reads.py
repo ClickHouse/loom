@@ -90,7 +90,7 @@ async def stale_links(
     the number of memories they are of."""
     trunk = code.trunk_namespace(org, namespace)
     tagged = [] if trunk else _tag_namespaces(org)
-    seen = await readable(org, {trunk, *(cns for _, cns in tagged)} - {""})
+    seen = await readable_namespaces(org, {trunk, *(cns for _, cns in tagged)} - {""})
     if not seen:
         return []
     return await store.stale_of_served(
@@ -115,7 +115,7 @@ def _tag_namespaces(org: str) -> list[tuple[str, str]]:
     ]
 
 
-async def readable(org: str, namespaces: set[str]) -> set[str]:
+async def readable_namespaces(org: str, namespaces: set[str]) -> set[str]:
     """The namespaces among `namespaces` the caller may read."""
     from server.auth.authz import row_in_scope
     from server.operations.base import Role
@@ -159,7 +159,7 @@ async def links_of(org: str, memory: dict[str, Any]) -> list[CodeLink]:
         return []  # no link is made from a memory that names no repository
     try:
         rows = current(org, memory, await store.for_memories(org, [str(memory["mid"])]))
-        seen = await readable(org, {a["code_namespace"] for a in rows})
+        seen = await readable_namespaces(org, {a["code_namespace"] for a in rows})
     except Exception as e:  # noqa: BLE001 — the links are additive to the read
         log.debug("code links unavailable: %s", e)
         return []
@@ -249,7 +249,7 @@ async def _annotation_reads(
         return [None] * len(hits), set(), {}
     heads, seen, policies = await asyncio.gather(
         store.served_heads(input.org, _linked_keys(links)),
-        readable(input.org, {a["code_namespace"] for v in links.values() for a in v}),
+        readable_namespaces(input.org, {a["code_namespace"] for v in links.values() for a in v}),
         store.code_change_policies(input.org, sorted({i[0] for i in links})),
     )
     return _heads_of(input.org, idents, links, heads), seen, policies
@@ -273,11 +273,11 @@ async def annotate_hits(input: Any, hits: list[Any]) -> None:
         # a pending link keeps the memory: its code may yet exist
         if m and _hidden(m, judged, policies):
             continue
-        readable = [
+        shown = [
             a for a in links if a["state"] in code_change.STATE_RANK and a["code_namespace"] in seen
         ]
-        h._code_links = readable
-        h.code_state = code_change.worst([a["state"] for a in readable])
+        h._code_links = shown
+        h.code_state = code_change.worst([a["state"] for a in shown])
         kept.append(h)
     hits[:] = kept
 

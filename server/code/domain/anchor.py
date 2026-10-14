@@ -46,6 +46,8 @@ class Shape(NamedTuple):
 
 
 NO_SHAPE = Shape("", "", "")
+# the baseline of a changed link whose original text is gone: no fingerprint matches it
+NO_BASELINE = "-"
 
 
 @dataclass(frozen=True)

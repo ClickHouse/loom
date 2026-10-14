@@ -575,7 +575,7 @@ async def _annotate_stale_code_memories(memories: list[Any], search_input: Any) 
     (`server.memory.app.code_links`); synthesis then prefers the current code. None
     when no such memory is in the pool. Fail-open."""
     from server.memory.api.models_search import _MemorySearchHit
-    from server.memory.app.code_link_reads import hit_memories, readable
+    from server.memory.app.code_link_reads import hit_memories, readable_namespaces
 
     pool = [m for m in memories[:8] if str(getattr(m, "memory_type", "")) != "code"]
     # the search read most hits' links: read only the rest's
@@ -586,7 +586,7 @@ async def _annotate_stale_code_memories(memories: list[Any], search_input: Any) 
             heads = await hit_memories(search_input, [pool[i] for i in unread])
             read: list[list[LinkRow]] = [(m or {}).get("links", []) for m in heads]
             cns = {a["code_namespace"] for v in read for a in v}
-            seen = await readable(str(search_input.org), cns)
+            seen = await readable_namespaces(str(search_input.org), cns)
         except Exception as e:  # noqa: BLE001 — grounding is advisory
             _warn_once("code staleness: links unreadable: %s", e)
             return None

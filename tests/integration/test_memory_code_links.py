@@ -3813,3 +3813,29 @@ async def test_stale_fingerprints_page_by_key_each_link_once(env) -> None:
             break
     seen = [m for page in pages for m in page]
     assert sorted(seen) == sorted(a["memory_id"] for a in stale) and len(pages) == 5
+
+
+async def test_only_links_under_these_rules_are_due_for_policy(env) -> None:
+    import uuid
+
+    from server.core.ch import get_client
+    from server.memory.store import code_links as store
+
+    cns = "due-rules"
+
+    def link(version: str) -> Any:
+        return store.link_row(
+            org=ORG,
+            code_namespace=cns,
+            namespace=MEM,
+            memory_id=str(uuid.uuid4()),
+            path="a.py",
+            qualified_name="a::f",
+            state="changed",
+            policy_due=1,
+            fingerprint_version=version,
+        )
+
+    now, old = link("now"), link("0-old")
+    await get_client().insert(store.TABLE, [now, old])
+    assert await store.policy_due(ORG, cns, "now", limit=10) == [now["memory_id"]]

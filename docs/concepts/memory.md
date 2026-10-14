@@ -296,8 +296,8 @@ name is related to the old), and its class's rename within the file. A namesake 
 another class or namespace never inherits a link, and a `missing` link comes back only
 when its own name does. A file the parser fails on keeps its links as they were until it
 parses. When the fingerprint rules change, every link is re-hashed from the commits its
-hashes were taken at; one whose old text no longer parses, or is gone from git, keeps its
-last state and is reported by the worker until it can be re-hashed.
+hashes were taken at. A changed link whose old text is gone from git stays `changed`; one
+whose old text no longer parses keeps its last state, and the worker reports it.
 
 Loom never writes the memory. The namespace's `code_change_policy`
 (`namespace.register`) decides what reads make of a change:

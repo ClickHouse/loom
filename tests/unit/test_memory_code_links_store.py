@@ -122,7 +122,7 @@ async def test_reads_are_scoped_as_their_callers_rely_on() -> None:
         )
     await store.pending("o", "c", days=14, ch=ch)
     assert ch.sql[-1][1]["days"] == 14
-    assert await store.policy_due("o", "c", limit=50, ch=ch) == ["m"]
+    assert await store.policy_due("o", "c", "v", limit=50, ch=ch) == ["m"]
     assert ch.sql[-1][1]["lim"] == 50
     assert await store.code_namespaces(ch=ch) == [("o", "c")]
     assert await store.served_heads("o", [], ch=ch) == []

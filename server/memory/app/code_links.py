@@ -131,9 +131,10 @@ async def _link_org(
             out += [_awaiting(r, cns) for r in memories]
             continue
         if unparsed:
-            result.errors.append(f"link {org}/{cns}: a file did not parse")
-            out += [_awaiting(r, cns) for r in unparsed]
-            waiting = {r["mid"] for r in unparsed}
+            paths = ", ".join(sorted({path for _, path in unparsed}))
+            result.errors.append(f"link {org}/{cns}: did not parse: {paths}")
+            out += [_awaiting(r, cns) for r, _ in unparsed]
+            waiting = {r["mid"] for r, _ in unparsed}
             memories = [r for r in memories if r["mid"] not in waiting]
         out += rows_out + store.tombstones(gone)
         result.linked += len(rows_out)
@@ -169,21 +170,21 @@ async def link_each(
     memories: list[dict[str, Any]],
     existing: dict[str, list[LinkRow]],
     files: link_pass.RepoReads,
-) -> tuple[list[LinkRow], list[LinkRow], list[dict[str, Any]]]:
-    """`_link`, and the memories it could not link because a file they name does not
-    parse; the others are linked all the same."""
+) -> tuple[list[LinkRow], list[LinkRow], list[tuple[dict[str, Any], str]]]:
+    """`_link`, and the memories it could not link, each with the file it names that does
+    not parse; the others are linked all the same."""
     try:
         return *await _link(org, cns, memories, existing, files), []
     except code.ParseFailed:
         pass
     rows: list[LinkRow] = []
     gone: list[LinkRow] = []
-    unparsed: list[dict[str, Any]] = []
+    unparsed: list[tuple[dict[str, Any], str]] = []
     for m in memories:
         try:
             made, dropped = await _link(org, cns, [m], existing, files)
-        except code.ParseFailed:
-            unparsed.append(m)
+        except code.ParseFailed as e:
+            unparsed.append((m, e.path))
             continue
         rows += made
         gone += dropped

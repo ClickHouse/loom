@@ -20,7 +20,7 @@ from server.erasure.store.mutations import (
 )
 from server.erasure.store.predicates import NS_EQ, ORG_NS, UID, USER_CHUNKS
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
-from server.memory.domain.code_link_keys import IDENTITY, LINK_KEY, QUEUE_PREFIX
+from server.memory.domain.code_link_keys import IDENTITY, LINK_KEY
 
 
 async def purge_code_index_by_namespace(
@@ -553,7 +553,7 @@ _LINK_CURSOR_KEYS = ("queue", "backfill", "sweep")
 _NO_MEMORY = "00000000-0000-0000-0000-000000000000"
 # A queue position is (queued_at, version, *IDENTITY); backfill's `after` is an IDENTITY,
 # sweep's a link key.
-_QUEUED = len(QUEUE_PREFIX)
+_QUEUED = 2
 _ORG, _NS, _UID = (IDENTITY.index(c) for c in ("org", "namespace", "user_id"))
 _LINK_ORG, _LINK_NS = (LINK_KEY.index(c) for c in ("org", "namespace"))
 
