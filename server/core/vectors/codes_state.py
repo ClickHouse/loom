@@ -47,11 +47,10 @@ CODED_COLUMNS_SQL = (
     "WHERE database = {db:String} AND compression_codec LIKE '%Quantized(%'"
 )
 CODEC_SETTING_SQL = "SELECT count() AS n FROM system.settings WHERE name = 'enable_quantized_codec'"
+# Every table's count, so it runs beside the columns read instead of after it.
 PATCH_PARTS_SQL = (
     "SELECT table, countIf(startsWith(name, 'patch')) AS patch_parts "
-    "FROM system.parts "
-    "WHERE database = {db:String} AND active AND table IN {tables:Array(String)} "
-    "GROUP BY table"
+    "FROM system.parts WHERE database = {db:String} AND active GROUP BY table"
 )
 
 # "loom.table.column" of every coded vector column; None = never read.
@@ -157,7 +156,7 @@ def _coded_of(table: str) -> list[tuple[str, str, int]]:
 # rebuilt outside Loom takes half a write: its version row or document lands and
 # its vectors are refused.
 FRESH_READING_S = 5.0
-# A write is refused only on a reading taken at most this long before it began.
+# A write is refused only on a reading at most this old when it is judged.
 REFUSAL_READING_S = 1.0
 
 
@@ -175,11 +174,11 @@ async def refuse_width(table: str, dim: int) -> None:
     await _refuse_if(lambda: _width_mismatch(table, dim))
 
 
-async def refuse_on_fresh_widths(table: str, rows: list[dict[str, Any]]) -> None:
-    """After ClickHouse refused `rows` with code 190: read the widths again and
-    refuse by name a vector the table no longer takes."""
-    await _reading_since(time.monotonic())
-    if (found := _row_mismatch(table, rows)) is not None:
+async def refuse_on_fresh_widths(table: str, rows: list[dict[str, Any]], since: float) -> None:
+    """After ClickHouse refused `rows` with code 190: read the widths as they
+    are since the insert began at monotonic `since`, and refuse by name a vector
+    the table no longer takes. Inserts refused together share one probe."""
+    if await _reading_since(since) and (found := _row_mismatch(table, rows)) is not None:
         _refuse(*found)
 
 
@@ -200,20 +199,24 @@ def _width_mismatch(table: str, dim: int) -> tuple[str, int, int] | None:
 
 
 async def _refuse_if(mismatch: Callable[[], tuple[str, int, int] | None]) -> None:
+    """Refuse on a mismatch only when a recent reading confirms it; without one
+    (ClickHouse did not answer), ClickHouse judges the write itself."""
     if mismatch() is None:
         return
-    await _reading_since(time.monotonic() - REFUSAL_READING_S)
-    if (found := mismatch()) is not None:
+    if await _reading_since(time.monotonic() - REFUSAL_READING_S) and (found := mismatch()):
         _refuse(*found)
 
 
-async def _reading_since(t: float) -> None:
+async def _reading_since(t: float) -> bool:
     """Wait for a reading whose probe started at or after monotonic time `t`:
-    the current one, the probe in flight, or a new one. Concurrent writers wait
-    on one probe."""
-    if _ch is None or (_probed_at is not None and _probed_at >= t):
-        return
-    await asyncio.shield(_start_refresh(since=t))
+    the current one, the probe in flight, or a new one; concurrent writers wait
+    on one probe. False when no such reading came (the probe failed). A process
+    with no client has only the reading it was given."""
+    if _ch is None:
+        return True
+    if _probed_at is None or _probed_at < t:
+        await asyncio.shield(_start_refresh(since=t))
+    return _probed_at is not None and _probed_at >= t
 
 
 def is_coded(table: str, column: str) -> bool | None:
@@ -237,43 +240,38 @@ def codes_apply(table: str, column: str = "embedding") -> bool:
 
 
 async def probe(ch: Any) -> None:
-    """Read both facts once. A failed read keeps the previous reading. A probe
-    publishes only while no later-started probe has: each answer is applied
+    """Read both facts once. A failed read publishes nothing, and neither does a
+    probe that a later-started one has answered before: each answer is applied
     together with its start time."""
     global _probed_at, _ch, _widths, _codec_available
     from server.core.vectors import patch_parts
 
     started = time.monotonic()
     _ch = ch
-    if _codec_available is None:
+    if not _codec_available:  # asked again: ClickHouse may be upgraded under Loom
         _codec_available = await _has_codec(ch)
-    try:
-        rows = await ch.query_all(CODED_COLUMNS_SQL, {"db": "loom"})
-    except Exception as e:  # noqa: BLE001 — advisory; the previous reading stands
-        log.info("coded-column probe failed: %s", str(e)[:160])
-        rows = None
+    columns, parts = await asyncio.gather(
+        ch.query_all(CODED_COLUMNS_SQL, {"db": "loom"}),
+        ch.query_all(PATCH_PARTS_SQL, {"db": "loom"}),
+        return_exceptions=True,
+    )
+    if isinstance(columns, BaseException):
+        log.info("coded-column probe failed: %s", str(columns)[:160])
+        return
     if _probed_at is not None and _probed_at > started:
         return
     _probed_at = started
-    if rows is not None:
-        set_coded({f"loom.{r['table']}.{r['name']}" for r in rows})
-        _widths = {
-            f"loom.{r['table']}.{r['name']}": width
-            for r in rows
-            if (width := codec_width(str(r.get("compression_codec") or ""))) is not None
-        }
-    tables = sorted({c.rsplit(".", 1)[0].split(".", 1)[1] for c in (_coded or ())})
-    if not tables:
+    set_coded({f"loom.{r['table']}.{r['name']}" for r in columns})
+    _widths = {
+        f"loom.{r['table']}.{r['name']}": width
+        for r in columns
+        if (width := codec_width(str(r.get("compression_codec") or ""))) is not None
+    }
+    if isinstance(parts, BaseException):
+        log.info("patch-part probe failed: %s", str(parts)[:160])  # the last reading stands
         return
-    try:
-        rows = await ch.query_all(PATCH_PARTS_SQL, {"db": "loom", "tables": tables})
-    except Exception as e:  # noqa: BLE001 — keeps the last patch-part reading
-        log.info("patch-part probe failed: %s", str(e)[:160])
-        return
-    if _probed_at != started:
-        return
-    seen = {str(r["table"]): int(r.get("patch_parts") or 0) for r in rows}
-    for t in tables:
+    seen = {str(r["table"]): int(r.get("patch_parts") or 0) for r in parts}
+    for t in sorted({c.rsplit(".", 1)[0].split(".", 1)[1] for c in (_coded or ())}):
         # a coded table with no active part at all has no patch part
         patch_parts.set_reading(seen.get(t, 0), f"loom.{t}")
 
@@ -318,7 +316,10 @@ def _maybe_refresh() -> None:
     """Schedule one background re-probe when the reading is stale. Only in a
     process that probed once (it holds a client) and has a running loop; a
     statement is never delayed by it."""
-    if _ch is None or _probed_at is None or time.monotonic() - _probed_at < _ttl():
+    now = time.monotonic()
+    if _ch is None or _probed_at is None or now - _probed_at < _ttl():
+        return
+    if now - _refresh_started < _ttl():  # one that failed lately: wait a TTL before the next
         return
     try:
         asyncio.get_running_loop()

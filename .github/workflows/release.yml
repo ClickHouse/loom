@@ -461,7 +461,9 @@ jobs:
           case $status in
             0)
               rm release/stack/loom-stack.tar.gz release/stack/loom-stack.tar.gz.sha256
-              if [ ! -f published/loom-stack.tar.gz.sha256 ]; then
+              if [ -f published/loom-stack.tar.gz.sha256 ]; then
+                (cd published && sha256sum -c loom-stack.tar.gz.sha256)
+              else
                 (cd published && sha256sum loom-stack.tar.gz) >release/stack/loom-stack.tar.gz.sha256
               fi
               ;;

@@ -12,7 +12,9 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 
 - `CODED_WIDTH_MISMATCH` (503): a write whose vector is not the width its coded column was
   created at; `memory.set`, `bulk_set`, `update` and the `knowledge.*` writes are refused before
-  any of their rows lands, and `/v1/health` reports `coded_width_mismatch` with the fix.
+  any of their rows lands, and `/v1/health` reports `coded_width_mismatch` with the fix. A table
+  rebuilt at another width outside Loom is noticed within a few seconds; in that window a
+  write's version row or document can land while its vectors are refused.
 - `OVERRIDE_NOT_SHARED` (503): a budget or rate-limit override the server's web processes could
   not share is refused and changes nothing; the server log says what failed.
 - `LOOM_RUNTIME_DIR`: the directory one server's web processes share files in.

@@ -82,3 +82,9 @@ def test_the_pin_is_the_compose_default_not_a_release_a_comment_names(tmp_path: 
     with tarfile.open(edited, "w:gz") as bundle:
         bundle.add(stage / "loom-stack", arcname="loom-stack")
     assert module.pinned_image(edited) == "clickhouse/clickhouse-server:26.9.18.11"
+
+
+def test_the_pin_pattern_reads_what_build_writes() -> None:
+    module = _module()
+    written = module._image_default("clickhouse/clickhouse-server:26.9.18.11")
+    assert module._PINNED.fullmatch(written).group(1) == "clickhouse/clickhouse-server:26.9.18.11"

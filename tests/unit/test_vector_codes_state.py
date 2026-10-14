@@ -6,6 +6,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -63,11 +64,7 @@ class _FakeCH:
                 for t, c in self.coded
             ]
         if "system.parts" in sql:
-            return [
-                {"table": t, "patch_parts": n}
-                for t, n in self.patches.items()
-                if t in params["tables"]
-            ]
+            return [{"table": t, "patch_parts": n} for t, n in self.patches.items()]
         if "clusterAllReplicas" in sql:
             return [{"replicas": 3, "with_setting": 3}]
         return []
@@ -278,6 +275,31 @@ async def test_a_probe_that_finishes_last_keeps_the_later_reading() -> None:
     gate.set()
     await older
     assert vector_codes_state.stored_width("chunks", "embedding") == 3072
+
+
+@pytest.mark.asyncio
+async def test_a_failed_probe_is_no_reading_to_refuse_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The old widths are not published as fresh; ClickHouse judges the write."""
+    ch = _FakeCH(coded=[("chunks", "embedding")], patches={}, width=1024)
+    await vector_codes_state.probe(ch)
+    _age_reading(monkeypatch)
+    before = vector_codes_state._probed_at
+    ch.fail = True
+    await vector_codes_state.refuse_width("chunks", 3072)
+    assert vector_codes_state._probed_at == before
+
+
+@pytest.mark.asyncio
+async def test_inserts_refused_together_share_one_probe() -> None:
+    ch = _FakeCH(coded=[("chunks", "embedding")], patches={}, width=1024)
+    await vector_codes_state.probe(ch)
+    began = time.monotonic()
+    n = len(ch.calls)
+    rows = [{"embedding": [0.1] * 1024}]
+    await asyncio.gather(
+        *(vector_codes_state.refuse_on_fresh_widths("chunks", rows, since=began) for _ in range(10))
+    )
+    assert len(ch.calls) - n == 2  # one columns read, one patch-parts read
 
 
 @pytest.mark.asyncio

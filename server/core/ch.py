@@ -869,16 +869,17 @@ class CHClient:
         from server.core.vectors import codes_state, placeholders
 
         padded = await placeholders.fit_vectors(table, rows)
+        began = time.monotonic()
         try:
             await self._insert_rows(table, rows, settings, project_onto_table)
         except Exception as e:
             if error_code(e) != WIDTH_MISMATCH_CODE:
                 raise
             # A table rebuilt at another width since the last reading: refuse a
-            # vector the caller wrote, else size the placeholders again.
+            # vector the caller wrote, else size the placeholders again (one retry).
             sized = [len(rows[i][c]) for i, c in padded]
             placeholders.unpad(rows, padded)
-            await codes_state.refuse_on_fresh_widths(table, rows)
+            await codes_state.refuse_on_fresh_widths(table, rows, since=began)
             padded = placeholders.pad_rows(table, rows)
             if [len(rows[i][c]) for i, c in padded] == sized:
                 raise  # the fresh reading does not explain it
