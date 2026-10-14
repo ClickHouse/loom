@@ -20,7 +20,28 @@ from fastapi.testclient import TestClient
 from server.auth import login, oauth
 from tests.unit.oauth_store_fake import MemoryOAuthStore
 
-pytestmark = pytest.mark.usefixtures("ended_grant_claims")
+pytestmark = pytest.mark.usefixtures("ended_grant_claims", "no_restricted_grants")
+
+
+@pytest.fixture
+def no_restricted_grants(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The restricted-grant read a refresh makes; a test that needs one patches it."""
+
+    async def _none(subject: str, org: str, namespaces: list[str], **_k: object) -> list[str]:
+        return list(namespaces)
+
+    monkeypatch.setattr(login, "widen_with_restricted_grants", _none)
+
+
+def _revoke_subject(monkeypatch: pytest.MonkeyPatch, cutoff: int | None) -> None:
+    """`loom revoke-token --subject`, as the exchange reads it from ClickHouse:
+    every token, or those issued before `cutoff`."""
+    from server.auth import revocation
+
+    async def _revoked(subject: str, *, issued_at: int) -> bool:
+        return cutoff is None or issued_at < cutoff
+
+    monkeypatch.setattr(revocation, "subject_revoked", _revoked)
 
 
 def _challenge(verifier: str) -> str:
@@ -295,23 +316,17 @@ def test_ch_store_writes_token_hashes(monkeypatch) -> None:
 def test_refresh_refused_for_subject_revoked_after_issue(monkeypatch) -> None:
     """`revoke-token --subject S --issued-before T` must not be undone by one
     refresh: a refresh token minted before T can no longer mint."""
-    from server.auth import revocation
-
     c = _client()
     rt = _refresh_token_for_alice(c)
-    monkeypatch.setattr(revocation, "_revoked_jtis", frozenset())
-    monkeypatch.setattr(revocation, "_revoked_before", {"alice@example.com": int(time.time()) + 5})
+    _revoke_subject(monkeypatch, int(time.time()) + 5)
     r = _refresh(c, rt)
     assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
 
 
 def test_refresh_refused_for_fully_revoked_subject(monkeypatch) -> None:
-    from server.auth import revocation
-
     c = _client()
     rt = _refresh_token_for_alice(c)
-    monkeypatch.setattr(revocation, "_revoked_jtis", frozenset({"alice@example.com"}))
-    monkeypatch.setattr(revocation, "_revoked_before", {})
+    _revoke_subject(monkeypatch, None)
     r = _refresh(c, rt)
     assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
 
@@ -329,17 +344,35 @@ def test_refresh_allowed_when_cutoff_predates_issue(monkeypatch) -> None:
     assert r.status_code == 200 and r.json()["access_token"]
 
 
-def test_refresh_waits_for_revocation_snapshot(monkeypatch) -> None:
-    """Before the revocation list has loaded, refresh refuses retryably and
-    does not burn the refresh token."""
+@pytest.mark.parametrize("grant_type", ["authorization_code", "refresh_token"])
+def test_a_failed_revocation_read_leaves_the_credential_for_the_retry(
+    monkeypatch: pytest.MonkeyPatch, grant_type: str
+) -> None:
+    """A 503 says retry, so the code or refresh token must still work once
+    the store is back; the exchange that succeeds uses it up."""
     from server.auth import revocation
 
+    async def _down(subject: str, *, issued_at: int) -> bool:
+        raise RuntimeError("replica away")
+
     c = _client()
-    rt = _refresh_token_for_alice(c)
-    monkeypatch.setattr(revocation, "_loaded", False)
-    assert _refresh(c, rt).status_code == 503
-    monkeypatch.setattr(revocation, "_loaded", True)
-    assert _refresh(c, rt).status_code == 200
+    code, verifier = _seed_code()
+    if grant_type == "authorization_code":
+
+        def exchange():
+            return _exchange(c, code, verifier)
+    else:
+        rt = _exchange(c, code, verifier).json()["refresh_token"]
+
+        def exchange():
+            return _refresh(c, rt)
+
+    with monkeypatch.context() as outage:
+        outage.setattr(revocation, "subject_revoked", _down)
+        failed = exchange()
+    assert failed.status_code == 503 and failed.headers["retry-after"] == "5"
+    assert exchange().status_code == 200
+    assert exchange().status_code == 400
 
 
 def test_unsupported_grant_rejected() -> None:
@@ -599,7 +632,9 @@ def test_a_refresh_keeps_a_cut_restricted_namespace_still_granted(
     viewer grant, the person still reads it, so the refresh keeps it."""
     from server.auth.jwt import verify_token
 
-    async def _still_granted(subject: str, org: str, namespaces: list[str]) -> list[str]:
+    async def _still_granted(
+        subject: str, org: str, namespaces: list[str], **_k: object
+    ) -> list[str]:
         return [*namespaces, "restricted-qa"]
 
     monkeypatch.setattr(login, "widen_with_restricted_grants", _still_granted)
@@ -608,5 +643,32 @@ def test_a_refresh_keeps_a_cut_restricted_namespace_still_granted(
     oauth._store.codes[oauth._token_id(code)]["namespaces"] = ["alice-ns", "restricted-qa"]
     rt = _exchange(c, code, verifier).json()["refresh_token"]
     ended_grant_claims["restricted-qa"] = int(time.time()) + 5
+    tok = _refresh(c, rt).json()
+    assert verify_token(tok["access_token"]).namespaces == ("alice-ns", "restricted-qa")
+
+
+def test_a_failed_restricted_grant_read_does_not_narrow_the_session(
+    ended_grant_claims: dict[str, int], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A lookup that failed is not a grant that ended: the refresh answers
+    503 and keeps the restricted namespace once the lookup works again."""
+    from server.auth.jwt import verify_token
+
+    calls = {"n": 0}
+
+    async def _flaky(subject: str, org: str, namespaces: list[str], **kw: object) -> list[str]:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            assert kw.get("strict") is True
+            raise RuntimeError("replica away")
+        return [*namespaces, "restricted-qa"]
+
+    monkeypatch.setattr(login, "widen_with_restricted_grants", _flaky)
+    c = _client()
+    code, verifier = _seed_code()
+    oauth._store.codes[oauth._token_id(code)]["namespaces"] = ["alice-ns", "restricted-qa"]
+    rt = _exchange(c, code, verifier).json()["refresh_token"]
+    ended_grant_claims["restricted-qa"] = int(time.time()) + 5
+    assert _refresh(c, rt).status_code == 503
     tok = _refresh(c, rt).json()
     assert verify_token(tok["access_token"]).namespaces == ("alice-ns", "restricted-qa")

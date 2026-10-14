@@ -33,16 +33,21 @@ class MemoryOAuthStore:
     async def save_refresh(self, token: str, g: dict[str, Any]) -> None:
         self.refresh[token_id(token)] = dict(g)
 
-    async def take_code(self, code: str) -> dict[str, Any] | None:
-        g = self.codes.pop(token_id(code), None)
-        return None if (g is None or g["exp"] < int(time.time())) else g
+    async def find_code(self, code: str) -> dict[str, Any] | None:
+        g = self.codes.get(token_id(code))
+        return None if (g is None or g["exp"] < int(time.time())) else dict(g)
 
-    async def take_refresh(self, token: str, client_id: str) -> dict[str, Any] | None:
+    async def find_refresh(self, token: str, client_id: str) -> dict[str, Any] | None:
         g = self.refresh.get(token_id(token))
-        if g is None or g["client_id"] != client_id:
+        if g is None or g["client_id"] != client_id or g["exp"] < int(time.time()):
             return None
-        del self.refresh[token_id(token)]
-        return None if g["exp"] < int(time.time()) else g
+        return dict(g)
+
+    async def consume_code(self, code: str, grant: dict[str, Any]) -> None:
+        self.codes.pop(token_id(code), None)
+
+    async def consume_refresh(self, token: str, grant: dict[str, Any]) -> None:
+        self.refresh.pop(token_id(token), None)
 
     async def save_pending(self, state: str, data: dict[str, Any]) -> None:
         self.pending[state] = dict(data)

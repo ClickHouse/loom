@@ -149,3 +149,13 @@ async def test_an_unreadable_cutoff_store_leaves_every_owned_namespace_out(
 
     monkeypatch.setattr(revocation, "ended_claims", _down)
     assert await login._without_taken_away("jdoe", "clickhouse", ["home", "team"]) == []
+
+
+@pytest.mark.asyncio
+async def test_a_strict_widening_raises_instead_of_leaving_the_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ch = _FakeCH(_own("home"), RuntimeError("replica away"))
+    monkeypatch.setattr(login, "get_client", lambda: ch)
+    with pytest.raises(RuntimeError):
+        await login.widen_with_restricted_grants("jdoe", "clickhouse", ["home"], strict=True)

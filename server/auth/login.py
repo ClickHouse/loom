@@ -169,19 +169,22 @@ async def _without_taken_away(subject: str, org: str, namespaces: list[str]) -> 
     return [ns for ns in namespaces if ns not in ended]
 
 
-async def widen_with_restricted_grants(subject: str, org: str, namespaces: list[str]) -> list[str]:
+async def widen_with_restricted_grants(
+    subject: str, org: str, namespaces: list[str], *, strict: bool = False
+) -> list[str]:
     """`namespaces` (the person's own, first — their order is
     the read priority) followed by every restricted namespace in `org` the
     subject holds an active, unrevoked direct grant on, sorted, deduplicated.
     Only restricted rows are added — see the module docstring. A failed read
     leaves the set as it was: a login must never fail on this lookup, and
-    the owned namespaces alone are the safe fallback."""
+    the owned namespaces alone are the safe fallback. `strict` raises instead,
+    for a caller whose answer persists (an OAuth refresh grant)."""
     ch = get_client()
     try:
         from server.auth.aliases import subject_aliases
         from server.core.grant_sql import LIVE_GRANT
 
-        subjects = [s.lower() for s in await subject_aliases(org, subject, ch=ch)]
+        subjects = [s.lower() for s in await subject_aliases(org, subject, ch=ch, strict=strict)]
         # LIVE_GRANT's columns are the grant row's: the namespaces side
         # selects none of them.
         rows = await ch.query_all(
@@ -201,6 +204,8 @@ async def widen_with_restricted_grants(subject: str, org: str, namespaces: list[
             params={"org": org, "subs": subjects},
         )
     except Exception:
+        if strict:
+            raise
         log.warning(
             "login: restricted-grant lookup failed for %r in %r; token names owned namespaces only",
             subject,

@@ -89,7 +89,9 @@ it. Two consequences hold the design together:
 - The paths that mint a token (sign-in, OAuth code exchange and refresh) read the
   cutoffs and the subject's revocation from ClickHouse with sequential consistency, not
   from the snapshot: a token minted past a revocation it has not seen keeps the access
-  for its whole life, while a request check catches up on the next refresh.
+  for its whole life, while a request check catches up on the next refresh. When those
+  reads fail, `/oauth/token` answers 503 and leaves the code or refresh token unused, so
+  the client's retry works; a decided exchange, a token or a refusal, uses it up.
 
 ## Authorization
 

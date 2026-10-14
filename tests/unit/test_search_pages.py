@@ -147,7 +147,8 @@ async def test_serve_parked_page_slices_and_hands_back_the_next_handle(monkeypat
     from server.memory.api.models_search import MemorySearchInput
     from server.memory.app import search as h
 
-    tail = [_hit("b", 0.8), _hit("c", 0.6), _hit("d", 0.5)]
+    tail = [_hit("b", 0.8, ns="n"), _hit("c", 0.6, ns="n"), _hit("d", 0.5, ns="n")]
+    _callers_namespaces(monkeypatch, ["work", "home"])
     content = _encode(2, 5, tail, namespaces_searched=["n", "work"], namespaces_skipped=["home"])
     key = sp.page_blob_key(content)
     ch = _CH(content)
@@ -186,14 +187,25 @@ async def test_serve_parked_page_slices_and_hands_back_the_next_handle(monkeypat
     assert bad.abstain_code == "page_expired"
 
 
+def _callers_namespaces(monkeypatch: pytest.MonkeyPatch, mine: list[str]) -> list[str]:
+    """A caller whose fan-out is `mine` now; returns the orgs each read of it
+    was made for."""
+    import server.auth.fanout as fanout
+
+    reads: list[str] = []
+
+    async def _mine(org: str) -> fanout.Fanout:
+        reads.append(org)
+        return fanout.Fanout(org=org, namespaces=tuple(mine), cap=32)
+
+    monkeypatch.setattr(fanout, "resolve_fanout", _mine)
+    return reads
+
+
 @pytest.mark.asyncio
 async def test_a_parked_page_drops_hits_the_caller_can_no_longer_read(monkeypatch) -> None:
-    import server.auth.authz as authz
     from server.memory.api.models_search import MemorySearchInput
     from server.memory.app import search as h
-
-    async def _only_home(org: str, namespace: str, *_a: Any, **_k: Any) -> bool:
-        return namespace == "home"
 
     tail = [_hit("b", 0.8, ns="n"), _hit("c", 0.7, ns="team"), _hit("d", 0.6, ns="home")]
     content = _encode(
@@ -201,7 +213,7 @@ async def test_a_parked_page_drops_hits_the_caller_can_no_longer_read(monkeypatc
     )
     key = sp.page_blob_key(content)
     patch_handler_name(monkeypatch, "get_client", lambda: _CH(content))
-    monkeypatch.setattr(authz, "row_in_scope", _only_home)
+    reads = _callers_namespaces(monkeypatch, ["n", "home"])
     page = MemorySearchInput(
         org="o", namespace="n", agent="*", query="q", top_k=3, page=sp.make_handle(key, 0)
     )
@@ -210,25 +222,22 @@ async def test_a_parked_page_drops_hits_the_caller_can_no_longer_read(monkeypatc
     assert out.candidates_total == 2
     assert out.namespaces_searched == ["n", "home"]
     assert out.namespaces_skipped == [], "neither a lost namespace nor one never readable"
+    assert reads == ["o"], "one read of the caller's namespaces per page, however many"
 
 
 @pytest.mark.asyncio
 async def test_a_page_reads_on_past_withheld_hits(monkeypatch) -> None:
     """A page whose rows all came from a namespace the caller lost is not the
     end of the list: the page slices on until it has readable hits."""
-    import server.auth.authz as authz
     from server.memory.api.models_search import MemorySearchInput
     from server.memory.app import search as h
-
-    async def _not_team(org: str, namespace: str, *_a: Any, **_k: Any) -> bool:
-        return namespace != "team"
 
     tail = [_hit("a", 0.9, ns="team"), _hit("b", 0.8, ns="team"), _hit("c", 0.7, ns="n")]
     tail += [_hit("d", 0.6, ns="n")]
     content = _encode(2, 4, tail)
     key = sp.page_blob_key(content)
     patch_handler_name(monkeypatch, "get_client", lambda: _CH(content))
-    monkeypatch.setattr(authz, "row_in_scope", _not_team)
+    _callers_namespaces(monkeypatch, ["n"])
     page = MemorySearchInput(
         org="o", namespace="n", agent="*", query="q", top_k=1, page=sp.make_handle(key, 0)
     )

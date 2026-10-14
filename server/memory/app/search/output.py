@@ -4,7 +4,6 @@ serving a parked page."""
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -114,15 +113,18 @@ async def _serve_parked_page(input: MemorySearchInput) -> MemorySearchOutput:
 async def _readable_namespaces(org: str, namespace: str, payload: dict[str, Any]) -> set[str]:
     """The namespaces of a parked list the caller may still read. The page was
     parked under the addressed `namespace`, which the transport authorized
-    again, but its hits can come from any namespace the first call fanned out
-    over, and a grant there may have been taken away since."""
-    from server.auth.authz import row_in_scope
+    again, but its other namespaces are the fan-out of the first call, and a
+    grant there may have been taken away since: they stay while they are in
+    the caller's fan-out now, read once for the page."""
+    from server.auth.fanout import resolve_fanout
 
     named = {str(h.get("namespace", "")) for h in payload.get("hits") or []}
-    named |= {*payload.get("namespaces_searched", []), *payload.get("namespaces_skipped", [])}
-    foreign = sorted(named - {"", namespace})
-    allowed = await asyncio.gather(*(row_in_scope(org, ns) for ns in foreign))
-    return {"", namespace} | {ns for ns, ok in zip(foreign, allowed, strict=True) if ok}
+    named |= {
+        *(payload.get("namespaces_searched") or []),
+        *(payload.get("namespaces_skipped") or []),
+    }
+    mine = (await resolve_fanout(org)).namespaces
+    return (named & set(mine)) | {"", namespace}
 
 
 def _readable_slice(

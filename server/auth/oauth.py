@@ -25,6 +25,7 @@ import json
 import logging
 import secrets
 import time
+from collections.abc import Awaitable, Callable
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
 
@@ -50,10 +51,11 @@ _PENDING_TTL = 600  # OIDC pending-login record: time to complete IdP sign-in
 #
 # Async interface (both impls):
 #   save_client(client_id, redirect_uris, client_name) / get_client(client_id)
-#   save_code(code, grant)   / take_code(code)    — single-use
-#   save_refresh(token, gr)  / take_refresh(token, client_id) — rotating
-#     (single-use) and bound to the issuee: another client_id gets None and
-#     the token is left unconsumed, so a wrong presenter can't burn it.
+#   save_code(code, grant)   / find_code(code), consume_code(code, grant)
+#   save_refresh(token, gr)  / find_refresh(token, client_id),
+#     consume_refresh(token, grant) — single-use, consumed once the exchange
+#     is decided; a refresh is bound to the issuee: another client_id finds
+#     nothing, so a wrong presenter can't burn it.
 # Codes and refresh tokens are bearer secrets, so the store keys them by
 # _token_id(token) (sha256 hex), never the token itself: a row read out of
 # loom.oauth_state (a backup, a SELECT grant) is not a working credential.
@@ -151,17 +153,22 @@ class _CHStore:
             ],
         )
 
-    async def take_code(self, code: str) -> dict[str, Any] | None:
-        return await self._take("code", _token_id(code))
+    async def find_code(self, code: str) -> dict[str, Any] | None:
+        return await self._find("code", _token_id(code))
 
-    async def take_refresh(self, token: str, client_id: str) -> dict[str, Any] | None:
-        return await self._take("refresh", _token_id(token), client_id)
+    async def find_refresh(self, token: str, client_id: str) -> dict[str, Any] | None:
+        return await self._find("refresh", _token_id(token), client_id)
 
-    async def _take(
+    async def consume_code(self, code: str, grant: dict[str, Any]) -> None:
+        await self._consume("code", _token_id(code), grant)
+
+    async def consume_refresh(self, token: str, grant: dict[str, Any]) -> None:
+        await self._consume("refresh", _token_id(token), grant)
+
+    async def _find(
         self, rtype: str, rid: str, client_id: str | None = None
     ) -> dict[str, Any] | None:
-        ch = self._ch()
-        row = await ch.query_one(
+        row = await self._ch().query_one(
             f"""SELECT client_id, redirect_uri, code_challenge, subject, org,
                        namespaces, roles, expires_at
                 FROM {self._T} FINAL
@@ -175,27 +182,7 @@ class _CHStore:
         if exp and exp < int(time.time()):
             return None
         if client_id is not None and row["client_id"] != client_id:
-            return None  # checked before the consume: see take_refresh
-        # Mark consumed: a new full-row version (RMT collapses to it).
-        await ch.insert(
-            self._T,
-            [
-                {
-                    "record_type": rtype,
-                    "id": rid,
-                    "client_id": row["client_id"],
-                    "redirect_uri": row.get("redirect_uri", ""),
-                    "code_challenge": row.get("code_challenge", ""),
-                    "subject": row["subject"],
-                    "org": row["org"],
-                    "namespaces": list(row["namespaces"]),
-                    "roles": list(row["roles"]),
-                    "expires_at": exp,
-                    "consumed": 1,
-                    "version": time.time_ns(),
-                }
-            ],
-        )
+            return None
         return {
             "client_id": row["client_id"],
             "redirect_uri": row.get("redirect_uri", ""),
@@ -206,6 +193,28 @@ class _CHStore:
             "roles": list(row["roles"]),
             "exp": exp or (int(time.time()) + _REFRESH_TTL),
         }
+
+    async def _consume(self, rtype: str, rid: str, grant: dict[str, Any]) -> None:
+        """Mark consumed: a new full-row version (RMT collapses to it)."""
+        await self._ch().insert(
+            self._T,
+            [
+                {
+                    "record_type": rtype,
+                    "id": rid,
+                    "client_id": grant["client_id"],
+                    "redirect_uri": grant["redirect_uri"],
+                    "code_challenge": grant["code_challenge"],
+                    "subject": grant["subject"],
+                    "org": grant["org"],
+                    "namespaces": list(grant["namespaces"]),
+                    "roles": list(grant["roles"]),
+                    "expires_at": int(grant["exp"]),
+                    "consumed": 1,
+                    "version": time.time_ns(),
+                }
+            ],
+        )
 
     async def save_pending(self, state: str, data: dict[str, Any]) -> None:
         # OIDC in-flight login: stash the MCP client's params + nonce keyed by
@@ -681,66 +690,89 @@ async def token(request: Request) -> JSONResponse:
     code_verifier = f.get("code_verifier", "")
     refresh_token = f.get("refresh_token", "")
     if grant_type == "authorization_code":
-        grant = await _store.take_code(code)  # single-use: marks consumed
+        grant = await _store.find_code(code)
         if grant is None:
             raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
-        if grant["client_id"] != client_id or grant["redirect_uri"] != redirect_uri:
-            raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
-        if not verify_pkce_s256(code_verifier, grant["code_challenge"]):
-            raise HTTPException(
-                status_code=400,
-                detail={"error": "invalid_grant", "error_description": "PKCE failed"},
-            )
-        code_issued_at = int(grant["exp"]) - _CODE_TTL
-        grant = {**grant, "namespaces": await _mint_namespaces(grant, code_issued_at)}
-        return JSONResponse(await _issue_tokens(grant, client_id))
+        decided = _decide_code(grant, client_id, redirect_uri, code_verifier)
+        issued = await _used_up_unless_retryable(decided, lambda: _store.consume_code(code, grant))
+        return JSONResponse(await _issue_tokens(issued, client_id))
 
     if grant_type == "refresh_token":
-        from server.auth.revocation import is_revoked, loaded
-
-        # A refresh mints a token with a fresh iat, which would pass any
-        # `revoke-token --issued-before` cutoff — so the revocation check must
-        # run here, against the refresh token's own issue time. Before the
-        # first snapshot load that check can't be answered: refuse without
-        # consuming the token so the client can retry.
-        if not loaded():
-            raise HTTPException(
-                status_code=503,
-                detail={"error": "temporarily_unavailable"},
-                headers={"Retry-After": "5"},
-            )
-        # take_refresh rotates: returns the grant + invalidates the old token.
         # A public client identifies itself on refresh (RFC 6749 §6), and the
-        # token refreshes only for the client it was issued to; a mismatch is
-        # refused unconsumed.
+        # token refreshes only for the client it was issued to; a mismatch
+        # finds nothing and leaves the token for its owner.
         if not client_id:
             raise HTTPException(
                 status_code=400,
                 detail={"error": "invalid_request", "error_description": "client_id required"},
             )
-        grant = await _store.take_refresh(refresh_token, client_id)
+        grant = await _store.find_refresh(refresh_token, client_id)
         if grant is None:
             raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
-        # exp is always saved as mint time + _REFRESH_TTL.
-        issued_at = int(grant["exp"]) - _REFRESH_TTL
-        if is_revoked(str(grant["subject"]), issued_at=issued_at):
-            raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
-        # The grant is a sign-in snapshot; each refresh re-checks the account
-        # is still active and re-derives its roles, so neither a released
-        # account nor a removed host rides a rolling 30-day chain.
-        from server.auth.login import refreshed_roles
-
-        roles = await refreshed_roles(grant["subject"], grant["org"], list(grant["roles"]))
-        if roles is None:
-            raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
-        # A namespace whose grant was taken away since sign-in leaves the
-        # snapshot for good: the new token's iat would pass the cutoff, and so
-        # would every later refresh of it.
-        namespaces = await _mint_namespaces(grant, issued_at)
-        refreshed = {**grant, "roles": roles, "namespaces": namespaces}
-        return JSONResponse(await _issue_tokens(refreshed, grant["client_id"]))
+        decided = _decide_refresh(grant)
+        issued = await _used_up_unless_retryable(
+            decided, lambda: _store.consume_refresh(refresh_token, grant)
+        )
+        return JSONResponse(await _issue_tokens(issued, grant["client_id"]))
 
     raise HTTPException(status_code=400, detail={"error": "unsupported_grant_type"})
+
+
+async def _used_up_unless_retryable(
+    decided: Awaitable[dict[str, Any]], consume: Callable[[], Awaitable[None]]
+) -> dict[str, Any]:
+    """Await the exchange's decision, then use the code or refresh token up.
+    A refusal uses it up too; a 503 leaves it, so the client's retry works."""
+    try:
+        grant = await decided
+    except HTTPException as e:
+        if e.status_code != 503:
+            await consume()
+        raise
+    await consume()
+    return grant
+
+
+async def _decide_code(
+    grant: dict[str, Any], client_id: str, redirect_uri: str, code_verifier: str
+) -> dict[str, Any]:
+    if grant["client_id"] != client_id or grant["redirect_uri"] != redirect_uri:
+        raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
+    if not verify_pkce_s256(code_verifier, grant["code_challenge"]):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "invalid_grant", "error_description": "PKCE failed"},
+        )
+    code_issued_at = int(grant["exp"]) - _CODE_TTL
+    return {**grant, "namespaces": await _mint_namespaces(grant, code_issued_at)}
+
+
+async def _decide_refresh(grant: dict[str, Any]) -> dict[str, Any]:
+    """The grant a refresh mints from. The grant is a sign-in snapshot; each
+    refresh re-checks the account is still active and re-derives its roles,
+    so neither a released account nor a removed host rides a rolling 30-day
+    chain, and drops a namespace a grant was taken away on for good: the new
+    token's iat would pass the cutoff, and so would every later refresh."""
+    from server.auth.login import refreshed_roles
+
+    # exp is always saved as mint time + _REFRESH_TTL.
+    issued_at = int(grant["exp"]) - _REFRESH_TTL
+    try:
+        roles = await refreshed_roles(grant["subject"], grant["org"], list(grant["roles"]))
+    except Exception as e:  # an account that could not be read mints nothing
+        raise _unavailable("account read", grant, e) from e
+    if roles is None:
+        raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
+    return {**grant, "roles": roles, "namespaces": await _mint_namespaces(grant, issued_at)}
+
+
+def _unavailable(what: str, grant: dict[str, Any], e: Exception) -> HTTPException:
+    log.warning("oauth: %s failed for %r in %r: %s", what, grant["subject"], grant["org"], e)
+    return HTTPException(
+        status_code=503,
+        detail={"error": "temporarily_unavailable"},
+        headers={"Retry-After": "5"},
+    )
 
 
 async def _mint_namespaces(grant: dict[str, Any], issued_at: int) -> list[str]:
@@ -759,17 +791,12 @@ async def _mint_namespaces(grant: dict[str, Any], issued_at: int) -> list[str]:
         if await subject_revoked(subject, issued_at=issued_at):
             raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
         ended = await ended_claims(org, subject, namespaces, issued_at=issued_at)
+        if ended:
+            ended -= set(await widen_with_restricted_grants(subject, org, [], strict=True))
     except HTTPException:
         raise
     except Exception as e:  # no token is minted past a revocation it could not read
-        log.warning("oauth: revocation read failed for %r in %r: %s", subject, org, e)
-        raise HTTPException(
-            status_code=503,
-            detail={"error": "temporarily_unavailable"},
-            headers={"Retry-After": "5"},
-        ) from e
-    if ended:
-        ended -= set(await widen_with_restricted_grants(subject, org, []))
+        raise _unavailable("revocation read", grant, e) from e
     return [ns for ns in namespaces if ns not in ended]
 
 
