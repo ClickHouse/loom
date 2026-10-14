@@ -509,7 +509,8 @@ async def authorize_submit(request: Request) -> RedirectResponse:
     from server.auth.login import LoginThrottled, resolve_user_credentials
 
     # The code's issue time is taken before the grant cutoffs are read, so a
-    # cutoff landing after the read postdates it (`end_grant_claims`).
+    # cutoff landing after the read postdates it (`end_grant_claims`). Its
+    # 60 s lifetime counts from here, so the password check comes out of it.
     issued_at = int(time.time())
     try:
         resolved = await resolve_user_credentials(
@@ -614,7 +615,9 @@ async def oidc_callback(request: Request) -> RedirectResponse:
             status_code=403,
             detail={"error": "access_denied", "error_description": "verified email required"},
         )
-    issued_at = int(time.time())  # before the cutoff read, as in authorize_submit
+    # Before the cutoff read, as in authorize_submit; the code's lifetime counts
+    # from here, so the account lookup (and a JIT provisioning) comes out of it.
+    issued_at = int(time.time())
     resolved = await resolve_identity_for_email(email)
     if resolved is None:
         # No account — auto-provision one if JIT is on (else stay fail-closed).

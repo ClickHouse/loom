@@ -25,7 +25,7 @@ from tests.unit.oauth_store_fake import MemoryOAuthStore
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from server.auth import login, oauth, oidc, self_signup  # noqa: E402
+from server.auth import login, oauth, oidc, revocation, self_signup  # noqa: E402
 from server.settings import settings  # noqa: E402
 
 pytestmark = pytest.mark.usefixtures("ended_grant_claims")
@@ -232,23 +232,27 @@ def _jit_on(monkeypatch) -> dict[str, Any]:
     async def fake_resolve(email: str) -> tuple[str, str, list[str], list[str]]:
         return ("someone", "acme", ["someone"], ["admin"])
 
+    async def not_revoked(subject: str, *, issued_at: int) -> bool:
+        return False
+
     monkeypatch.setattr(self_signup, "provision_account", fake_provision)
     monkeypatch.setattr(login, "resolve_identity_for_email", fake_resolve)
+    monkeypatch.setattr(revocation, "subject_revoked", not_revoked)
     return provisioned
 
 
 @pytest.mark.parametrize(
     "taken",
     [
-        {"active": False, "contact_email": "bob@acme.com"},  # released or deleted
+        {"active": False, "contact_email": ""},  # released: claim-release clears the contact
         {"active": True, "contact_email": "mallory@acme.com"},  # another's
     ],
 )
 async def test_jit_never_rebuilds_a_taken_name_and_takes_the_next(
     monkeypatch, taken: dict[str, Any]
 ) -> None:
-    # Rebuilding a released or deleted account would hand back its data and an
-    # admin grant; one another account registered is theirs.
+    # Rebuilding a released account would hand back its data and an admin
+    # grant; one another account registered is theirs.
     provisioned = _jit_on(monkeypatch)
     rows: dict[str, dict[str, Any]] = {}
 
@@ -261,6 +265,57 @@ async def test_jit_never_rebuilds_a_taken_name_and_takes_the_next(
     assert await login.jit_provision_for_email("bob@acme.com") is not None
     (first,) = rows
     assert provisioned["namespace"] == f"{first}-2"
+
+
+async def test_jit_refuses_a_deleted_account_of_this_person(monkeypatch) -> None:
+    # namespace.delete keeps the contact: an operator offboarded this person,
+    # and a fresh name would be a new subject past any revoke of the old one.
+    provisioned = _jit_on(monkeypatch)
+
+    async def registry_row(org: str, namespace: str) -> dict[str, Any] | None:
+        return {"active": False, "contact_email": "bob@acme.com"}
+
+    monkeypatch.setattr(login, "_registry_row", registry_row)
+    assert await login.jit_provision_for_email("bob@acme.com") is None
+    assert provisioned == {}
+
+
+async def test_jit_refuses_when_a_released_earlier_account_is_revoked(monkeypatch) -> None:
+    provisioned = _jit_on(monkeypatch)
+    seen: list[str] = []
+
+    async def registry_row(org: str, namespace: str) -> dict[str, Any] | None:
+        if seen:
+            return None
+        seen.append(namespace)
+        return {"active": False, "contact_email": ""}
+
+    async def revoked(subject: str, *, issued_at: int) -> bool:
+        return subject == seen[0]
+
+    monkeypatch.setattr(login, "_registry_row", registry_row)
+    monkeypatch.setattr(revocation, "subject_revoked", revoked)
+    assert await login.jit_provision_for_email("bob@acme.com") is None
+    assert provisioned == {}
+
+
+async def test_jit_takes_a_random_name_once_the_predictable_ones_are_taken(
+    monkeypatch,
+) -> None:
+    # Someone registered every name a sign-up would try: a random one cannot
+    # be registered ahead of it, so the person is not locked out.
+    provisioned = _jit_on(monkeypatch)
+    tried: list[str] = []
+
+    async def registry_row(org: str, namespace: str) -> dict[str, Any] | None:
+        tried.append(namespace)
+        return {"active": True, "contact_email": "mallory@acme.com"}
+
+    monkeypatch.setattr(login, "_registry_row", registry_row)
+    assert await login.jit_provision_for_email("bob@acme.com") is not None
+    assert len(tried) == login._JIT_NAME_TRIES + 1
+    name = provisioned["namespace"]
+    assert name.startswith(tried[0] + "-") and name not in tried
 
 
 async def test_jit_resolves_a_name_a_concurrent_first_sign_in_wrote(monkeypatch) -> None:

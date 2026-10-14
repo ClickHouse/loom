@@ -6,7 +6,6 @@ carry a time from before the read for that second cutoff to postdate it."""
 
 from __future__ import annotations
 
-import asyncio
 import time
 from typing import Any
 
@@ -19,15 +18,28 @@ from server.auth.jwt import verify_token
 from tests.unit.oauth_store_fake import MemoryOAuthStore
 
 _IDENTITY = ("alice", "acme", ["alice"], ["writer"])
+_READ_TAKES = 100  # seconds the cutoff read takes on the fake clock
 
 
-async def _slow_identity(*_a: Any, **_k: Any) -> tuple[str, str, list[str], list[str]]:
-    await asyncio.sleep(2.1)  # the cutoff read: an issue time after it is >= before + 2
-    return _IDENTITY
+@pytest.fixture(autouse=True)
+def _clock(monkeypatch: pytest.MonkeyPatch) -> dict[str, float]:
+    """`time.time` that moves only when the cutoff read runs."""
+    now = {"t": float(int(time.time()))}
+    monkeypatch.setattr(time, "time", lambda: now["t"])
+    return now
+
+
+@pytest.fixture
+def _slow_identity(_clock: dict[str, float]) -> Any:
+    async def _read(*_a: Any, **_k: Any) -> tuple[str, str, list[str], list[str]]:
+        _clock["t"] += _READ_TAKES  # an issue time taken after the read shows it
+        return _IDENTITY
+
+    return _read
 
 
 def test_a_password_sign_in_is_issued_before_its_cutoff_read(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, _slow_identity: Any
 ) -> None:
     monkeypatch.setattr(login, "resolve_user_credentials", _slow_identity)
     app = FastAPI()
@@ -35,11 +47,11 @@ def test_a_password_sign_in_is_issued_before_its_cutoff_read(
     before = int(time.time())
     r = TestClient(app).post("/v1/auth/login", json={"identifier": "alice", "password": "pw"})
     assert r.status_code == 200
-    assert verify_token(r.json()["token"]).issued_at - before <= 1
+    assert verify_token(r.json()["token"]).issued_at == before
 
 
 def test_an_authorize_issues_its_code_before_its_cutoff_read(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, _slow_identity: Any
 ) -> None:
     store = MemoryOAuthStore()
 
@@ -64,11 +76,11 @@ def test_an_authorize_issues_its_code_before_its_cutoff_read(
     )
     assert r.status_code == 302
     (code,) = store.codes.values()
-    assert int(code["exp"]) - oauth._CODE_TTL - before <= 1
+    assert int(code["exp"]) - oauth._CODE_TTL == before
 
 
 async def test_an_oidc_callback_issues_its_code_before_its_cutoff_read(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, _slow_identity: Any
 ) -> None:
     store = MemoryOAuthStore()
     await store.save_pending(
@@ -94,4 +106,4 @@ async def test_an_oidc_callback_issues_its_code_before_its_cutoff_read(
     r = await oauth.oidc_callback(_Req())  # type: ignore[arg-type]
     assert r.status_code == 302
     (code,) = store.codes.values()
-    assert int(code["exp"]) - oauth._CODE_TTL - before <= 1
+    assert int(code["exp"]) - oauth._CODE_TTL == before

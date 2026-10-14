@@ -362,24 +362,37 @@ async def jit_provision_for_email(
     slug = "".join(c if c.isalnum() else "-" for c in local).strip("-")[:40] or "user"
     base = f"u-{slug}-{hashlib.sha256(ident.encode()).hexdigest()[:8]}"
     org = _settings.oidc_jit_org
+    from server.auth.revocation import subject_revoked
     from server.core.ch import own_write_reads
 
+    released: list[str] = []  # inactive names, this person's earlier accounts
     for ns in [base, *(f"{base}-{n}" for n in range(2, _JIT_NAME_TRIES + 2))]:
         row = await _registry_row(org, ns)
         if row is None:
             break
-        if bool(row.get("active")) and str(row.get("contact_email") or "") == ident:
+        mine = str(row.get("contact_email") or "") == ident
+        if mine and bool(row.get("active")):
             # This person's, written by a concurrent first sign-in or missed by
             # a replica the first read reached: resolve it as written.
             with own_write_reads():
                 return await resolve_identity_for_email(ident)
-        # Released or deleted (it is inactive), or another account's: never
-        # rebuilt, which would hand back its data and an admin grant.
-        log.info("oidc jit: %s/%s is taken (released, deleted or another's); next", org, ns)
+        if mine:
+            # Deleted, still naming this person: an operator offboarded them.
+            # A fresh name would be a new subject, past any revoke of the old.
+            log.info("oidc jit: %s/%s of %r is deleted; not provisioning", org, ns, ident)
+            return None
+        # Released (its contact cleared) or another's: never rebuilt, which
+        # would hand back its data and an admin grant.
+        if not bool(row.get("active")):
+            released.append(ns)
+        log.info("oidc jit: %s/%s is taken (released or another's); next", org, ns)
     else:
-        log.warning(
-            "oidc jit: no free name for %r in %s after %d tries", ident, org, _JIT_NAME_TRIES + 1
-        )
+        # Every predictable name is taken, perhaps on purpose: a random one
+        # cannot be registered ahead of this sign-in.
+        ns = f"{base}-{secrets.token_hex(4)}"
+    if any([await subject_revoked(name, issued_at=int(time.time())) for name in released]):
+        # A revoke-token of an earlier account of this person's outlives it.
+        log.info("oidc jit: an earlier account of %r is revoked; not provisioning", ident)
         return None
     await provision_account(
         org=org,

@@ -126,11 +126,13 @@ async def claim(ch: Any, key: str) -> tuple[Claim, str]:
             attempted = True
             with statement_timeout(5):
                 held = await _claim(ch, key, me)
-    except Exception:
-        # An insert or takeover that answered late may still have landed; a
-        # claim left behind would lock the credential out until it went stale.
+    except BaseException:
+        # An insert or takeover that answered late, or whose wait was
+        # cancelled, may still have landed; a claim left behind would lock the
+        # credential out until it went stale. Shielded, so a cancellation of
+        # this request does not cancel the release too.
         if attempted:
-            await release(ch, key, me)
+            await asyncio.shield(release(ch, key, me))
         raise
     return (Claim.HELD, me) if held else (Claim.TAKEN, "")
 

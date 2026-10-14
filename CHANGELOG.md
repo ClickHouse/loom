@@ -79,11 +79,12 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   where a failed account read on refresh used to answer 500 and burn the token. The
   exchange is bounded well inside the age its claim is taken over at. Without a
   Keeper, `/v1/health` reports `oauth_claims_not_atomic`.
-- **Security:** OIDC just-in-time provisioning no longer rebuilds an account that was
-  released (`loom claim-release`) or deleted, or one another account registered under the
-  name it derives: the person's next sign-in recreated it with default settings and an
-  admin grant, its data included. It provisions the next free name (`<name>-2`, ...)
-  instead.
+- **Security:** OIDC just-in-time provisioning no longer rebuilds an existing account: the
+  person's next sign-in recreated a released or deleted one, or one another account
+  registered under the derived name, with default settings and an admin grant, its data
+  included. A released or foreign name is skipped for the next free one (`<name>-2`, ...,
+  then a random suffix); a deleted account of the person's, or a revoked earlier one, is
+  refused.
 - **Security:** `namespace.restore` into an existing namespace needs an admin of it. The
   owner a first write auto-registered, who holds no grant there, could restore a payload
   whose grants made them, or anyone, admin.

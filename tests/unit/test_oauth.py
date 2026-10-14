@@ -757,7 +757,6 @@ def test_an_exchange_issues_its_tokens_at_the_time_before_its_cutoff_read(
     """A cutoff can land while the exchange runs, after its read: the tokens
     carry the time taken before the read, so the cutoff, written again once
     its insert returned, still postdates them and cuts them."""
-    import asyncio
 
     from server.auth import revocation
     from server.auth.jwt import verify_token
@@ -767,17 +766,20 @@ def test_an_exchange_issues_its_tokens_at_the_time_before_its_cutoff_read(
     if grant_type == "refresh_token":
         rt = _exchange(c, code, verifier).json()["refresh_token"]
 
+    before = int(time.time())
+    now = {"t": float(before)}
+    monkeypatch.setattr(time, "time", lambda: now["t"])
+
     async def _slow(subject: str, *, issued_at: int) -> bool:
-        await asyncio.sleep(2.1)  # an issue time taken after this read is >= before + 2
+        now["t"] += 100  # the read takes 100 s on the fake clock
         return False
 
     monkeypatch.setattr(revocation, "subject_revoked", _slow)
-    before = int(time.time())
     r = _exchange(c, code, verifier) if grant_type == "authorization_code" else _refresh(c, rt)
     tok = r.json()
-    assert verify_token(tok["access_token"]).issued_at - before <= 1
+    assert verify_token(tok["access_token"]).issued_at == before
     saved = oauth._store.refresh[oauth._token_id(tok["refresh_token"])]
-    assert int(saved["exp"]) - oauth._REFRESH_TTL - before <= 1
+    assert int(saved["exp"]) - oauth._REFRESH_TTL == before
 
 
 def test_a_find_past_its_bound_is_told_to_retry(monkeypatch: pytest.MonkeyPatch) -> None:

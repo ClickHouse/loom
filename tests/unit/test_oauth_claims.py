@@ -189,3 +189,27 @@ def test_an_acquisition_past_its_wall_clock_bound_is_refused_and_released(
     with pytest.raises(TimeoutError):
         _claim(keeper)
     assert released == ["code:abc"] and keeper.rows == {}
+
+
+async def test_a_cancelled_acquisition_releases_what_it_may_have_claimed() -> None:
+    # A client disconnect after the insert landed: the claim is dropped, not
+    # left to lock the credential out until it goes stale.
+    keeper = _Keeper()
+    await oc.probe(keeper)
+    execute = keeper.execute
+    inserted = asyncio.Event()
+
+    async def _hang(sql: str, params: dict[str, Any]) -> None:
+        await execute(sql, params)
+        if sql.startswith("INSERT"):
+            inserted.set()
+            await asyncio.sleep(30)  # the reply never comes
+
+    keeper.execute = _hang  # type: ignore[method-assign]
+    task = asyncio.create_task(oc.claim(keeper, "code:abc"))
+    await inserted.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.sleep(0)
+    assert keeper.rows == {}
