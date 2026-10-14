@@ -54,7 +54,9 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   and an extra producer moves its tier, to a new working tree, filled once from the mirror
   (a TypeScript tier also reinstalls its dependencies there). The old directories are no
   longer used and can be deleted. `loom code scip-full` now runs in the C/C++ tier's own
-  tree and moves the C/C++ watermark where `clang` is an extra producer.
+  tree and moves the C/C++ watermark where `clang` is an extra producer. A
+  `LOOM_CODE_REPOS_JSON` entry whose namespace is not a valid namespace name (lowercase
+  letters, digits and hyphens) is skipped and counted in `loom.code.repos_config_errors`.
 - The server probes the repository-job sandbox at boot, so `/v1/health` reports
   `repo_jobs_unsandboxed` before any repository job runs. The Repositories page hides
   **Add repository** and **Add branch** when it does, where the server refuses both.
