@@ -16,10 +16,11 @@ async def _auth(ch: RecordingCH, c: dict[str, Any]) -> None:
 
     # One shape whether deactivated accounts count or not: it is a parameter.
     await aliases._read_spellings(ORG, "alice@x.io", ch, include_inactive=True)
-    await revocation._read_revocations(["grant:o/n/k1", "alice"])
+    await revocation._read_revocations([revocation.grant_claim_key(ORG, NS, "alice"), "alice"])
     await revocation.list_active()
     await jit._registry_row(ORG, NS)
     await jit._accounts_naming(ORG, "alice@x.io")
+    await jit._ever_granted(ORG, {"namespace": NS, "owner": "alice"})
     await G.active_roles(ORG, NS, ["alice"], ch=ch)
     await G.find_active_grant(ORG, NS, "alice", ch=ch)
     await G.find_any_grant(ORG, NS, "alice", ch=ch)

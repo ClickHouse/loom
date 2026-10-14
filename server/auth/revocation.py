@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import math
 import time
@@ -252,12 +253,13 @@ _GRANT_CLAIM_PREFIX = "grant:"
 
 def grant_claim_key(org: str, namespace: str, subject: str) -> str:
     """The revocation key that withdraws (org, namespace) from `subject`'s
-    token claims. The subject is case-folded, as alias lookup matches it, and
-    hashed so the key does not spell out an email; the hash is unsalted, so a
-    guessed email can be tested against it. Never a jti or a subject verify
-    checks."""
+    token claims: `grant:["<org>","<namespace>","<subject hash>"]`. A JSON
+    array, so an org or namespace holding `/` cannot make two scopes share a
+    key. The subject is case-folded, as alias lookup matches it, and hashed
+    so the key does not spell out an email; the hash is unsalted, so a guessed
+    email can be tested against it. Never a jti or a subject verify checks."""
     digest = hashlib.sha256(subject.lower().encode()).hexdigest()[:32]
-    return f"{_GRANT_CLAIM_PREFIX}{org}/{namespace}/{digest}"
+    return _GRANT_CLAIM_PREFIX + json.dumps([org, namespace, digest], separators=(",", ":"))
 
 
 def grant_cutoff_applies(org: str, namespace: str, subject: str, issued_at: int) -> bool:

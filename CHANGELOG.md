@@ -65,7 +65,7 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   refresh) leave it out for good; a later grant gives access back through itself, not
   through the old claim. A restricted namespace, read only by a token naming it, is named
   again while a live grant covers the person. The cutoff is a `loom.revoked_tokens` row
-  keyed `grant:<org>/<namespace>/<hash of the case-folded subject>`, and
+  keyed `grant:["<org>","<namespace>","<hash of the case-folded subject>"]`, and
   `loom revoke-token --list --grants` shows them. A namespace never granted to the
   subject (named by an operator at mint) keeps its claim. A refresh token saved before
   this release can carry a cutoff that landed while it was minted until it expires.
@@ -98,7 +98,9 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   registered under the derived name, with default settings and an admin grant, its data
   included. Now a person with an active account in the org is signed in to it, one with an
   account revoked outright (`loom revoke-token --subject`) is refused, and anyone else
-  gets the next free name (`<name>-2`, ..., then a random suffix).
+  gets the next free name (`<name>-2`, ..., then a random suffix). A first sign-in whose owner grant failed to land is finished at the
+  next sign-in, from a new `oidc-jit` tag on the account; a grant revoked or lowered since
+  is never given back.
 - **Security:** `namespace.restore` into an existing namespace needs an admin of it. The
   owner a first write auto-registered, who holds no grant there, could restore a payload
   whose grants made them, or anyone, admin.

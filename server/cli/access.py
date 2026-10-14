@@ -405,7 +405,7 @@ def _add_revoke_token_parser(sub: Any) -> None:
         "--grants",
         action="store_true",
         help="With --list, also print the cutoffs revoked and lowered grants leave "
-        "(grant:<org>/<namespace>/<subject hash>).",
+        "(grant:[org, namespace, subject hash]).",
     )
     p_revoke.add_argument(
         "--issued-before",

@@ -465,7 +465,7 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     ),
     "loom.revoked_tokens": (
         "auth plane: revoked JWT ids, revoked subjects, and grant cutoffs keyed "
-        "grant:<org>/<namespace>/<subject hash> (pseudonymous), kept 10 years; an erasure "
+        "grant:[org, namespace, subject hash] (pseudonymous), kept 10 years; an erasure "
         "leaves them, since dropping one would hand a revoked claim back."
     ),
     "loom.oauth_state": "auth plane: OAuth client registrations and codes; no memory rows.",

@@ -203,6 +203,7 @@
 24edbaad24b0	SELECT chunk_id, path, scope, kind, start_line, end_line, content, symbol_ids, context_description, arraySum( arrayMap( (tok, idf) -> idf * countSubstrings( concat(?, lexemes, ?), concat(?, tok, ?) ),
 252bf570c8cf	ALTER TABLE loom.memory DELETE WHERE (org = {org:String} AND has(tags, ?) AND hasAny(tags, (SELECT groupArray(concat(?, memory_key)) FROM loom.memory WHERE org = {org:String} AND user_id = {uid:String
 256eac206d73	SELECT count() AS n FROM loom.memory_extraction_queue WHERE org = {org:String} AND namespace = {ns:String} AND ?
+2586ce7689b8	SELECT ? AS x FROM loom.namespace_grants WHERE org = {org:String} AND namespace = {ns:String} AND subject = {sub:String} LIMIT ?
 25b9ded67ddd	SELECT memory_key, memory_type, content_excerpt, ? - cosineDistance(embedding, {qv:Array(Float32)}) AS similarity, toString(coalesce(temporal_anchor, toDateTime(?))) AS temporal_anchor, temporal_confi
 25ec5ad61cad	SELECT count() AS n FROM loom.memory_term_freq WHERE org = {org:String} AND namespace = {ns:String}
 2602243148c9	SELECT count() AS n FROM loom.memory_doc_stats WHERE org = {org:String} AND namespace IN {ns:Array(String)}
@@ -900,6 +901,7 @@
 948ef2d049e7	SELECT schema_name, memory_key, field_name, prior_value, incoming_value, toString(prior_record_id) AS prid, toString(incoming_record_id) AS irid, toString(prior_memory_id) AS pmid, toString(incoming_m
 94abbb1ffba3	SELECT toString(evidence_id) AS eid, session_id, role, actor, toString(observed_at) AS observed, content, matched FROM ( SELECT evidence_id, session_id, role, actor, observed_at, content, tombstoned_a
 94b96185bd0c	SELECT from_key, to_key, relation FROM loom.operator_edges FINAL WHERE org = {org:String} AND namespace = {ns:String} AND to_key IN {keys:Array(String)} AND relation IN {rels:Array(String)} AND tombst
+9520fbd49d0a	SELECT namespace, toString(owner_email) AS owner, active, tags FROM loom.namespaces FINAL WHERE org = {org:String} AND contact_email = {ident:String}
 954e90f6a11a	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 956295581aed	SELECT count() AS n FROM loom.entity_summaries FINAL WHERE org = {org:String} AND namespace IN {ns:Array(String)} AND tombstoned_at IS NULL
 9568a0ca0e47	ALTER TABLE loom.conversation_threads DELETE WHERE (org = {org:String} AND user_id = {uid:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
@@ -1530,7 +1532,6 @@ ed30af4d157c	SELECT term, df, avgdl FROM loom.code_term_df WHERE org = {org:Stri
 ed650bd034d5	SELECT chunk_id, path, scope, kind, start_line, end_line, content, symbol_ids, context_description, cosineDistance(embedding, {q:Array(Float32)}) AS distance FROM loom.code_chunks FINAL WHERE org = {o
 ed7542958aa8	SELECT count() AS n FROM loom.entity_edge_memories WHERE org = {org:String} AND namespace IN {ns:Array(String)} AND ?
 edbfaec0aa75	SELECT count() AS n FROM loom.search_trace_log WHERE org = {org:String} AND namespace IN {ns:Array(String)} AND ?
-edc97580faa3	SELECT namespace, toString(owner_email) AS owner, active FROM loom.namespaces FINAL WHERE org = {org:String} AND contact_email = {ident:String}
 ee05802b196f	SELECT canonical_text FROM loom.entity_canonical_map FINAL WHERE org = {org:String} AND namespace IN {namespaces:Array(String)} AND mention_text IN {mentions:Array(String)} AND tombstoned_at IS NULL
 ee38d5700ad9	SELECT memory_key, memory_type, content_excerpt, toString(created_at) AS created_at, toString(valid_at) AS valid_at FROM loom.memory_embeddings FINAL WHERE org = {org:String} AND namespace = {ns:Strin
 ee7adc747f6e	SELECT b.*, parts.received AS received_parts FROM loom.code_scip_batches AS b FINAL INNER JOIN ( SELECT org, namespace, batch_id, toUInt32(countDistinct(seq)) AS received FROM loom.code_scip_parts GRO

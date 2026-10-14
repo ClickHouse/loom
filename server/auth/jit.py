@@ -44,13 +44,46 @@ async def _accounts_naming(org: str, ident: str) -> list[dict[str, Any]]:
     with own_write_reads():
         rows = await get_client().query_all(
             """
-            SELECT namespace, toString(owner_email) AS owner, active
+            SELECT namespace, toString(owner_email) AS owner, active, tags
             FROM loom.namespaces FINAL
             WHERE org = {org:String} AND contact_email = {ident:String}
             """,
             params={"org": org, "ident": ident},
         )
     return [dict(r) for r in rows]
+
+
+# Marks an account JIT provisioned, so a sign-in can finish one whose owner
+# grant never landed.
+JIT_TAG = "oidc-jit"
+
+
+async def _finish_provisioning(org: str, accounts: list[dict[str, Any]]) -> None:
+    """Write the owner grant of an active JIT account that never got one: its
+    provisioning wrote the namespace row and failed before the grant. A grant
+    revoked or lowered since leaves a row, so it is never given back here."""
+    from server.auth.self_signup import insert_owner_grant
+
+    for a in accounts:
+        if a["active"] and JIT_TAG in a["tags"] and not await _ever_granted(org, a):
+            log.info("oidc jit: finishing %s/%s, whose owner grant never landed", org, a["owner"])
+            await insert_owner_grant(org, a["namespace"], a["owner"])
+
+
+async def _ever_granted(org: str, account: dict[str, Any]) -> bool:
+    """Whether any grant row, live, revoked or pending, names the owner."""
+    from server.core.ch import own_write_reads
+
+    with own_write_reads():
+        row = await get_client().query_one(
+            """
+            SELECT 1 AS x FROM loom.namespace_grants
+            WHERE org = {org:String} AND namespace = {ns:String} AND subject = {sub:String}
+            LIMIT 1
+            """,
+            params={"org": org, "ns": account["namespace"], "sub": account["owner"]},
+        )
+    return row is not None
 
 
 # The names a JIT sign-up tries past the first: `<name>-2` to `<name>-6`, then
@@ -117,6 +150,7 @@ async def _provision_jit(
 
     accounts = await _accounts_naming(org, ident)
     if any(a["active"] for a in accounts):
+        await _finish_provisioning(org, accounts)
         return await _resolve_as_written(ident)  # their account, whatever its name
     if await _any_revoked(accounts):
         # Offboarded: a fresh name would be a new subject past the revoke.
@@ -135,6 +169,7 @@ async def _provision_jit(
         contact_email=ident,
         password_hash="",  # SSO-only account
         description="Auto-provisioned via OIDC SSO.",
+        tags=[JIT_TAG],
     )
     # Two processes that both found the name free write the same row, and
     # ReplacingMergeTree keeps one.

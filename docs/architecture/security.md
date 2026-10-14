@@ -76,7 +76,7 @@ token on every fresh process, which is when an operator restarts the fleet after
 revoking a leaked token. The cost is a short 503 window at boot.
 
 **Grant cutoffs.** Taking a grant away or lowering it writes a row of the same table,
-keyed `grant:<org>/<namespace>/<hash of the case-folded subject>` (one per spelling of the
+keyed `grant:["<org>","<namespace>","<hash of the case-folded subject>"]` (one per spelling of the
 subject; the hash keeps an email out of the key but can be tested against a guessed one;
 it is not a keyed HMAC because a rotated key would orphan cutoffs kept for ten years), so
 tokens minted before it no longer reach the namespace through their own claim

@@ -86,6 +86,12 @@ async def provision_account(
             }
         ],
     )
+    await insert_owner_grant(org, namespace, subject, ch=ch)
+
+
+async def insert_owner_grant(org: str, namespace: str, subject: str, *, ch: Any = None) -> None:
+    """The owner's admin self-grant a provisioned account starts with."""
+    ch = ch or get_client()
     await ch.insert(
         "loom.namespace_grants",
         [
@@ -94,7 +100,7 @@ async def provision_account(
                 "namespace": namespace,
                 "subject": subject,
                 "role": "admin",
-                "granted_at": now,
+                "granted_at": naive_utc_now_seconds(),
                 "granted_by": subject,
                 "revoked_at": None,
                 "version": time.time_ns(),

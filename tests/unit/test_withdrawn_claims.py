@@ -422,3 +422,7 @@ def test_a_cutoff_refuses_rather_than_cut_short_past_its_spelling_bound(
 
     with pytest.raises(RuntimeError, match="more than 2 accounts"):
         asyncio.run(aliases.cutoff_spellings(ORG, "a@x.io", ch=_Directory()))
+
+
+def test_a_slash_in_an_org_or_namespace_cannot_make_two_scopes_share_a_key() -> None:
+    assert rev.grant_claim_key("a/b", "c", "alice") != rev.grant_claim_key("a", "b/c", "alice")

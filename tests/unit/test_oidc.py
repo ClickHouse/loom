@@ -353,7 +353,12 @@ async def test_an_active_account_of_the_person_is_resolved_never_provisioned_aga
 
     async def accounts(org: str, ident: str) -> list[dict[str, Any]]:
         return [
-            {"namespace": "u-bob-1234abcd-9f3e", "owner": "u-bob-1234abcd-9f3e", "active": True}
+            {
+                "namespace": "u-bob-1234abcd-9f3e",
+                "owner": "u-bob-1234abcd-9f3e",
+                "active": True,
+                "tags": [],
+            }
         ]
 
     async def resolve(email: str) -> tuple[str, str, list[str], list[str]] | None:
@@ -394,7 +399,7 @@ async def test_two_first_sign_ins_in_one_process_make_one_account(monkeypatch) -
         return written.get(namespace)
 
     async def accounts(org: str, ident: str) -> list[dict[str, Any]]:
-        return [{**r, "namespace": ns, "owner": ns} for ns, r in written.items()]
+        return [{**r, "namespace": ns, "owner": ns, "tags": []} for ns, r in written.items()]
 
     async def provision(**kw: Any) -> None:
         await asyncio.sleep(0.01)  # the insert takes a moment
@@ -524,3 +529,28 @@ async def test_a_jit_read_that_fails_is_a_retryable_sign_in_failure(monkeypatch)
     monkeypatch.setattr(jit, "_accounts_naming", down)
     with pytest.raises(login.SignInUnavailable):
         await jit.jit_provision_for_email("bob@acme.com")
+
+
+@pytest.mark.parametrize("granted_before", [False, True])
+async def test_signing_in_finishes_a_jit_account_whose_owner_grant_never_landed(
+    monkeypatch, granted_before: bool
+) -> None:
+    # Provisioning wrote the namespace row, then failed on the grant. A grant
+    # revoked or lowered since leaves a row, and is never given back.
+    _jit_on(monkeypatch)
+    granted: list[tuple[str, str]] = []
+
+    async def accounts(org: str, ident: str) -> list[dict[str, Any]]:
+        return [{"namespace": "u-bob", "owner": "u-bob", "active": True, "tags": [jit.JIT_TAG]}]
+
+    async def ever_granted(org: str, account: dict[str, Any]) -> bool:
+        return granted_before
+
+    async def grant(org: str, namespace: str, subject: str, **_k: Any) -> None:
+        granted.append((namespace, subject))
+
+    monkeypatch.setattr(jit, "_accounts_naming", accounts)
+    monkeypatch.setattr(jit, "_ever_granted", ever_granted)
+    monkeypatch.setattr(self_signup, "insert_owner_grant", grant)
+    assert await jit.jit_provision_for_email("bob@acme.com") is not None
+    assert granted == ([] if granted_before else [("u-bob", "u-bob")])
