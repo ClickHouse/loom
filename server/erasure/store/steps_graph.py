@@ -214,18 +214,32 @@ USER_SRC_TAGS = (
 )
 
 
+_CONSOLIDATED = f"has(tags, 'consolidated') AND hasAny(tags, {USER_SRC_TAGS})"
+
+
 async def tombstone_consolidated_dependents_by_user(
     org: str, user_id: str, *, ch: _CHClient | None = None
 ) -> int:
+    """The consolidated rows the user's memories fed, under another identity. Their code
+    links go too: a link's `suggestion` holds a rewrite of the row's text, and this
+    tombstone is a mutation, so the link queue never sees it."""
     total = 0
     for t in ("loom.memory", "loom.memory_embeddings"):
         total += await tombstone_scoped(
-            t,
-            org=org,
-            scope_where=f"has(tags, 'consolidated') AND hasAny(tags, {USER_SRC_TAGS})",
-            params={"uid": user_id},
-            ch=ch,
+            t, org=org, scope_where=_CONSOLIDATED, params={"uid": user_id}, ch=ch
         )
+    # after the tombstones, as every link delete: a link written meanwhile for a row read
+    # as live goes too
+    total += await delete_scoped(
+        "loom.memory_code_links",
+        org=org,
+        scope_where=(
+            "memory_id IN (SELECT memory_id FROM loom.memory "
+            f"WHERE org = {{org:String}} AND {_CONSOLIDATED})"
+        ),
+        params={"uid": user_id},
+        ch=ch,
+    )
     return total
 
 

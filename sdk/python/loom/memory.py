@@ -222,6 +222,10 @@ class MemorySearchHit:
     # the number to threshold on.
     similarity: float = 0.0
     namespace: str = ""
+    # The hit's worst link to code ('' when it names no indexed code): `fresh`,
+    # `moved`, `changed` (check the code before relying on it), `unresolved` (gone
+    # where it was, maybe renamed) or `missing`.
+    code_state: str = ""
     # Final blended rank score: the fused value the served order follows,
     # mode-dependent (about 0.03 under rrf), not a similarity. The terms that
     # moved the row are itemised in `score_components`.
@@ -430,6 +434,7 @@ def _parse_search_hit(r: dict[str, Any]) -> MemorySearchHit:
         distance=float(r["distance"]),
         similarity=float(r["similarity"]),
         namespace=str(r.get("namespace") or ""),
+        code_state=str(r.get("code_state") or ""),
         rank_score=float(r.get("rank_score") or 0.0),
         below_threshold=bool(r.get("below_threshold") or False),
         temporal_anchor=str(r.get("temporal_anchor") or ""),

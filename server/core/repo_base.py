@@ -12,6 +12,7 @@ back to it, so tests inject a fake and production gets the real one.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any, Protocol
 
 from clickhouse_connect.driver.external import ExternalData
@@ -48,3 +49,33 @@ def _default_client() -> _CHClient:
     from server.core.ch import get_client
 
     return get_client()
+
+
+# a bound parameter travels as one HTTP form field, which the server caps at 128 KiB
+_PARAM_BYTES = 64 << 10
+
+
+def param_slices(values: Sequence[Any]) -> list[list[Any]]:
+    """`values` cut into lists that each bind as one array parameter well under the
+    server's form-field cap."""
+    out: list[list[Any]] = []
+    size = 0
+    for v in values:
+        n = len(str(v).encode()) + 4  # quotes, comma, the odd escape
+        if not out or size + n > _PARAM_BYTES:
+            out.append([])
+            size = 0
+        out[-1].append(v)
+        size += n
+    return out
+
+
+async def query_all_sliced(
+    ch: _CHClient, sql: str, params: dict[str, Any], key: str
+) -> list[dict[str, Any]]:
+    """`query_all` with the list `params[key]` bound a slice at a time: every slice's
+    rows, in order. An empty list sends no statement and reads no row."""
+    rows: list[dict[str, Any]] = []
+    for part in param_slices(params[key]):
+        rows += await ch.query_all(sql, params | {key: part})
+    return rows

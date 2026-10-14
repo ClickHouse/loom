@@ -32,6 +32,7 @@ from server.identity.api.models import (
 from server.identity.domain import join_policy as _jp
 from server.identity.store import namespaces as namespaces_repo
 from server.memory.app import namespace_retrieval_defaults as _rd
+from server.memory.domain import code_change
 from server.operations.base import Role
 
 if TYPE_CHECKING:
@@ -215,6 +216,9 @@ def registry_row(
             _serialize_proposal_policy(input.proposal_policy)
             if input.proposal_policy is not None
             else str((existing or {}).get("proposal_policy") or "")
+        ),
+        "code_change_policy": _set_or_stored(
+            input.code_change_policy, existing, "code_change_policy", ""
         ),
         # Preserve auth fields written by self_signup, else a
         # settings-only update wipes the user's login silently.
@@ -457,6 +461,7 @@ async def handle_namespace_get(input: NamespaceGetInput) -> NamespaceGetOutput:
                ifNull(classify_endpoint, '') AS classify_endpoint,
                ifNull(default_conflict_policy, '') AS default_conflict_policy,
                proposal_policy,
+               code_change_policy,
                toString(classification) AS classification,
                created_at, updated_at
         FROM loom.namespaces FINAL
@@ -513,6 +518,7 @@ async def handle_namespace_get(input: NamespaceGetInput) -> NamespaceGetOutput:
         classify_endpoint=row.get("classify_endpoint") or "",
         default_conflict_policy=row.get("default_conflict_policy") or "auto_reinforce",
         proposal_policy=_parse_proposal_policy(row.get("proposal_policy")),
+        code_change_policy=code_change.policy_of(str(row.get("code_change_policy") or "")),
         tag_registry=tag_registry,
         # Only on the found branch: the transport's restricted gate has already admitted the
         # caller to this row, so the word says nothing the caller could not read.

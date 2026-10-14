@@ -33,7 +33,13 @@ from server.memory.app.retrieval.side_legs import (
 )
 from server.memory.domain.search_parsing import _iso_date
 from server.memory.domain.search_sql import _build_where, _plane_enabled
-from server.memory.domain.search_types import SearchHit, SearchQuery, SearchTraceHit, _CHClient
+from server.memory.domain.search_types import (
+    SearchHit,
+    SearchQuery,
+    SearchTraceHit,
+    _CHClient,
+    row_identity,
+)
 
 log = logging.getLogger("server.memory.app.retrieval")
 
@@ -235,6 +241,7 @@ def _fact_rows_to_hits(
             source_class=str(r.get("source_class") or ""),
             verified=bool(int(r.get("verified") or 0)),
             session_id=str(r.get("session_id") or ""),
+            identity=row_identity(r),
             speaker=speaker_from_tags(r.get("tags")),
             about_other="about:other" in [str(t) for t in (r.get("tags") or [])],
             tags=[str(t) for t in (r.get("tags") or []) if t],

@@ -38,10 +38,11 @@ def test_code_search_returns_pointers_and_code_symbol_the_definition_over_mcp() 
 
     assert mcp_default_arguments("code.search", {"query": "x"})["bodies"] == "none"
     args = mcp_default_arguments("code.symbol", {"name": "X"})
-    assert args["include_lessons"] is False and args["include_history"] is False
-    asked = mcp_default_arguments("code.symbol", {"name": "X", "include_lessons": True})
-    assert asked["include_lessons"] is True
-    assert CodeSymbolInput(name="X").include_lessons is True  # HTTP keeps the full answer
+    # the linked memories stay; the recent PRs serve a review, not a lookup
+    assert "include_lessons" not in args and args["include_history"] is False
+    asked = mcp_default_arguments("code.symbol", {"name": "X", "include_history": True})
+    assert asked["include_history"] is True
+    assert CodeSymbolInput(name="X").include_history is True  # HTTP keeps the full answer
     assert mcp_default_arguments("code.grep", {"pattern": "x"})["limit"] == 10
     assert mcp_default_arguments("code.grep", {"pattern": "x", "limit": 50})["limit"] == 50
 

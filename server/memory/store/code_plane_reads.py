@@ -1,4 +1,4 @@
-"""The memory rows the code plane reads: lesson excerpts for a symbol card and
+"""The memory rows the code plane reads: the memories linked to a symbol card and
 the files a user's memories name. The code plane reaches them through
 `server.memory.app.code_plane_reads`, never with its own SQL over memory tables."""
 
@@ -7,63 +7,37 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from server.core.repo_base import _CHClient, _default_client
+from server.core.repo_base import _CHClient, _default_client, query_all_sliced
 from server.identity.domain.read_scope import ReadFilters, scope_and
 
 
-async def lesson_corpus(
-    org: str, namespaces: Sequence[str], *, cap: int, ch: _CHClient | None = None
-) -> list[dict[str, Any]]:
-    """Up to `cap` live excerpt rows of the lesson namespaces, shortest first,
-    with the lower-cased excerpt and the files facet the matcher indexes."""
-    ch = ch or _default_client()
-    return list(
-        await ch.query_all(
-            """
-            SELECT memory_key, namespace, content_excerpt, content_excerpt_lc, files
-            FROM loom.memory_embeddings FINAL
-            WHERE org = {org:String} AND namespace IN {nss:Array(String)}
-              AND tombstoned_at IS NULL
-            ORDER BY length(content_excerpt) ASC
-            LIMIT {cap:UInt32}
-            """,
-            {"org": org, "nss": list(namespaces), "cap": int(cap)},
-        )
-    )
-
-
-async def lessons_matching(
+async def served_excerpts(
     org: str,
     namespaces: Sequence[str],
+    memory_ids: Sequence[str],
     *,
-    token: str,
-    paths: Sequence[str],
-    limit: int,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
-    """Live excerpt rows of the lesson namespaces whose excerpt holds `token` or
-    whose files facet names one of `paths`, shortest first."""
-    ch = ch or _default_client()
-    return list(
-        await ch.query_all(
-            """
-            SELECT memory_key, namespace, content_excerpt, files
-            FROM loom.memory_embeddings FINAL
-            WHERE org = {org:String} AND namespace IN {nss:Array(String)}
-              AND tombstoned_at IS NULL
-              AND (hasToken(content_excerpt_lc, {tok:String})
-                   OR hasAny(files, {paths:Array(String)}))
-            ORDER BY length(content_excerpt) ASC
-            LIMIT {limit:UInt32}
-            """,
-            {
-                "org": org,
-                "nss": list(namespaces),
-                "tok": token,
-                "paths": list(paths),
-                "limit": int(limit),
-            },
-        )
+    """The served rows of `namespaces` among `memory_ids` (live, unexpired, not `high`),
+    with the first 200 characters of the value as text (a JSON string value decoded),
+    for a code read's lessons."""
+    if not memory_ids or not namespaces:
+        return []
+    return await query_all_sliced(
+        ch or _default_client(),
+        """
+        SELECT toString(memory_id) AS mid, memory_key, namespace,
+               substringUTF8(
+                   if(startsWith(value, '"'), JSONExtractString(value), value), 1, 200
+               ) AS excerpt, pinned, confidence
+        FROM loom.memory FINAL
+        WHERE org = {org:String} AND namespace IN {nss:Array(String)}
+          AND memory_id IN {ids:Array(UUID)}
+          AND tombstoned_at IS NULL AND status IN ('active', 'conflicted')
+          AND (expires_at IS NULL OR expires_at > now()) AND sensitivity != 'high'
+        """,
+        {"org": org, "nss": sorted(set(namespaces)), "ids": sorted({str(i) for i in memory_ids})},
+        "ids",
     )
 
 

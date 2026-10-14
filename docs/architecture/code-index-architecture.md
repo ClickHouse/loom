@@ -96,7 +96,7 @@ So `coverage_floor: true` on a grep means every admitted chunk, not every byte.
 
 ### Choosing a parser
 
-`ingest_parse._parse_for_ingest` tries these in order. The order keeps new file kinds out of
+`ingest_parse.parse_for_ingest` tries these in order. The order keeps new file kinds out of
 the extractor stamp:
 
 1. `treesitter.lang_for_path`: the stamped core (C/C++ with `.h` through the C++ grammar,
@@ -348,19 +348,19 @@ Every column is in the generated [schema reference](../reference/schema.md).
 
 ## Source entry points
 
-| Path                                                                                                                               | What                                                                                           |
-| ---------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `server/code/app/index/ingest_pass.py`                                                                                             | The fast-tier pass.                                                                            |
-| `server/code/app/index/ingest.py`                                                                                                  | `ingest_file`, the per-file stages.                                                            |
-| `server/code/app/index/ingest_parse.py`, `ingest_chunks.py`, `ingest_edges.py`, `ingest_resolve.py`, `ingest_reconcile.py`         | `_parse_for_ingest` and `_PARSERS`, chunks, edges, edge-resolution reads, the key-diff writes. |
-| `server/code/domain/extract/treesitter.py`, `lang_detect.py`, `lang_*.py`, `lane_units.py`                                         | Languages.                                                                                     |
-| `server/code/domain/extract/chunker.py`, `edges_treesitter.py`, `call_guards.py`; `server/code/app/index/dependents.py`            | Chunks and edges.                                                                              |
-| `server/code/domain/extract/extractor_stamp.py`                                                                                    | The stamp.                                                                                     |
-| `server/code/app/index/reconcile.py`, `commit_coverage.py`, `scip_delta.py`; `server/code/domain/index/compiler_tiers.py`          | Drift, coverage, tiers.                                                                        |
-| `server/code/workers/scip_*.py`, `scripts/scip_harness/`                                                                           | Compiler tier.                                                                                 |
-| `server/code/workers/embed_recovery.py`, `summary.py`, `graph_stats.py`, `pr_history.py`, `backport_gaps.py`, `coverage_notify.py` | Background workers.                                                                            |
-| `server/code/domain/index/repos.py`; `server/code/app/index/repo_registry.py`, `registry.py`, `retire.py`, `gitrepo.py`            | Entries, mirrors, namespaces.                                                                  |
-| `server/code/app/search/`, `server/code/store/index/`                                                                              | Reads and writes.                                                                              |
+| Path                                                                                                                               | What                                                                                          |
+| ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `server/code/app/index/ingest_pass.py`                                                                                             | The fast-tier pass.                                                                           |
+| `server/code/app/index/ingest.py`                                                                                                  | `ingest_file`, the per-file stages.                                                           |
+| `server/code/app/index/ingest_parse.py`, `ingest_chunks.py`, `ingest_edges.py`, `ingest_resolve.py`, `ingest_reconcile.py`         | `parse_for_ingest` and `_PARSERS`, chunks, edges, edge-resolution reads, the key-diff writes. |
+| `server/code/domain/extract/treesitter.py`, `lang_detect.py`, `lang_*.py`, `lane_units.py`                                         | Languages.                                                                                    |
+| `server/code/domain/extract/chunker.py`, `edges_treesitter.py`, `call_guards.py`; `server/code/app/index/dependents.py`            | Chunks and edges.                                                                             |
+| `server/code/domain/extract/extractor_stamp.py`                                                                                    | The stamp.                                                                                    |
+| `server/code/app/index/reconcile.py`, `commit_coverage.py`, `scip_delta.py`; `server/code/domain/index/compiler_tiers.py`          | Drift, coverage, tiers.                                                                       |
+| `server/code/workers/scip_*.py`, `scripts/scip_harness/`                                                                           | Compiler tier.                                                                                |
+| `server/code/workers/embed_recovery.py`, `summary.py`, `graph_stats.py`, `pr_history.py`, `backport_gaps.py`, `coverage_notify.py` | Background workers.                                                                           |
+| `server/code/domain/index/repos.py`; `server/code/app/index/repo_registry.py`, `registry.py`, `retire.py`, `gitrepo.py`            | Entries, mirrors, namespaces.                                                                 |
+| `server/code/app/search/`, `server/code/store/index/`                                                                              | Reads and writes.                                                                             |
 
 ## Related
 

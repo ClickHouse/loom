@@ -4,17 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Any
 
 from server.code.app.common import repo_relative
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
+from server.core.repo_base import query_all_sliced
 from server.memory.api.models_for_file import (
     MemoryForFileInput,
     MemoryForFileOutput,
     _MemoryForFileHit,
 )
+from server.memory.domain.code_change import STATE_RANK, worst
 
 log = logging.getLogger(__name__)
 
@@ -32,7 +35,7 @@ _FILE_MATCH = (
     "OR endsWith({p:String}, concat('/', f)))"
 )
 
-_SQL = f"""
+_SELECT = f"""
 SELECT
     memory_key, memory_type,
     substring(value, 1, {_VALUE_CHARS}) AS value,
@@ -47,10 +50,13 @@ WHERE org = {{org:String}} AND namespace = {{ns:String}}
   AND sensitivity != 'high'
   AND status IN {{statuses:Array(String)}}
   AND (length({{tags:Array(String)}}) = 0 OR hasAny(tags, {{tags:Array(String)}}))
-  AND arrayExists(f -> {_FILE_MATCH}, files)
-ORDER BY has(tags, 'constraint') DESC, pinned DESC, confidence DESC, updated_at DESC
-LIMIT {{lim:UInt32}}
 """
+_ORDER = """
+ORDER BY has(tags, 'constraint') DESC, pinned DESC, confidence DESC, updated_at DESC
+LIMIT {lim:UInt32}
+"""
+_FILES_SQL = f"{_SELECT}  AND arrayExists(f -> {_FILE_MATCH}, files){_ORDER}"
+_LINKED_SQL = f"{_SELECT}  AND memory_id IN {{linked:Array(UUID)}}{_ORDER}"
 
 
 def _one_line(text: str, limit: int) -> str:
@@ -139,6 +145,12 @@ def render_block(
         tags = [t for t in (h.get("tags") or []) if t in ("constraint", "decision", "gotcha")]
         marker = f" [{', '.join(tags)}]" if tags else ""
         pin = " (pinned)" if h.get("pinned") else ""
+        if h.get("code_state") == "changed":
+            pin += " (its code changed since it was written: check before relying on it)"
+        elif h.get("code_state") == "unresolved":
+            pin += " (its code was renamed or removed and could not be followed: check it)"
+        elif h.get("code_state") == "missing":
+            pin += " (the code it is about is gone: check before relying on it)"
         line = (
             _team_line(h, marker, pin, now)
             if _is_team(h, home)
@@ -199,23 +211,72 @@ def _supersede_order(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 async def _rows_for(
-    input: MemoryForFileInput, namespace: str, path: str, base: str, tags: list[str]
+    input: MemoryForFileInput,
+    namespace: str,
+    path: str,
+    base: str,
+    tags: list[str],
+    linked: asyncio.Task[dict[str, list[str]]],
 ) -> list[dict[str, Any]]:
-    """One namespace's matching rows, each stamped with its namespace."""
+    """One namespace's rows naming the file or linked to code still in it (`linked`:
+    memory_id -> the states of its links here, read alongside the files match), each
+    stamped with its namespace and the worst of those states."""
     statuses = ["active", "conflicted"] if input.include_conflicted else ["active"]
-    rows = await get_client().query_all(
-        _SQL,
-        params={
-            "org": input.org,
-            "ns": namespace,
-            "p": path,
-            "b": base,
-            "tags": tags,
-            "statuses": statuses,
-            "lim": int(input.top_k),
-        },
-    )
-    return [{**r, "namespace": namespace} for r in rows or []]
+    params = {
+        "org": input.org,
+        "ns": namespace,
+        "p": path,
+        "b": base,
+        "tags": tags,
+        "statuses": statuses,
+        "lim": int(input.top_k),
+    }
+    ch = get_client()
+    found, states_of = await asyncio.gather(ch.query_all(_FILES_SQL, params), linked)
+    ids = sorted(m for m, states in states_of.items() if set(states) != {"missing"})
+    # a hot file's links are bound a slice at a time; the best of the files match and
+    # of each slice's own top `lim` are the namespace's
+    if ids:
+        found = found + await query_all_sliced(ch, _LINKED_SQL, params | {"linked": ids}, "linked")
+    unique = {str(r["memory_id"]): r for r in found}.values()
+    rows = sorted(unique, key=_order_key)[: int(input.top_k)]
+    return [
+        {
+            **r,
+            "namespace": namespace,
+            "code_state": worst(states_of.get(str(r.get("memory_id")), [])),
+        }
+        for r in rows
+    ]
+
+
+async def _linked(input: MemoryForFileInput, path: str, nss: list[str]) -> dict[str, list[str]]:
+    """memory_id -> the code states of the links of the `nss` memories to code in `path`,
+    read from the trunk links of the repository the call is about: the one
+    `extra_namespaces` or the `repo:` tag names. None named: no links (a path alone
+    is in every repository)."""
+    from server.code.app.memory_links import namespace_for_tags, trunk_namespace
+    from server.memory.app.code_link_reads import current_links, readable_namespaces
+    from server.memory.store import code_links
+
+    trunks = [t for ns in input.extra_namespaces if (t := trunk_namespace(input.org, ns))]
+    trunks = trunks or [t for t in [namespace_for_tags(input.org, input.tags)] if t]
+    if not trunks:
+        return {}
+    try:
+        links = await code_links.for_paths(
+            input.org, trunks, [path], namespaces=nss, states=list(STATE_RANK)
+        )
+        links = await current_links(input.org, links)
+        seen = await readable_namespaces(input.org, {a["code_namespace"] for a in links})
+    except Exception as e:  # noqa: BLE001 — the links are additive; the files match stands
+        log.debug("memory.for_file: code links skipped: %s", e)
+        return {}
+    out: dict[str, list[str]] = defaultdict(list)
+    for a in links:
+        if a["code_namespace"] in seen:
+            out[a["memory_id"]].append(a["state"])
+    return out
 
 
 async def _readable_extras(input: MemoryForFileInput) -> list[str]:
@@ -252,12 +313,17 @@ async def _merged_rows(input: MemoryForFileInput, path: str, base: str) -> list[
     only), merged in constraint-first order, deduplicated by (namespace, memory_key), cut at
     top_k. An extra namespace's failed read is dropped; the caller's own raises."""
     extras = await _readable_extras(input)
-    own = await _rows_for(input, input.namespace, path, base, list(input.tags or []))
-    if not extras:
-        return _supersede_order(own)
-    got = await asyncio.gather(
-        *(_rows_for(input, ns, path, base, []) for ns in extras), return_exceptions=True
-    )
+    linked = asyncio.ensure_future(_linked(input, path, [input.namespace, *extras]))
+    try:
+        own = await _rows_for(input, input.namespace, path, base, list(input.tags or []), linked)
+        if not extras:
+            return _supersede_order(own)
+        got = await asyncio.gather(
+            *(_rows_for(input, ns, path, base, [], linked) for ns in extras),
+            return_exceptions=True,
+        )
+    finally:
+        linked.cancel()  # a no-op once read; the own read's error leaves it running
     rows = list(own)
     for ns, res in zip(extras, got, strict=True):
         if isinstance(res, BaseException):
@@ -297,6 +363,7 @@ async def handle_memory_for_file(input: MemoryForFileInput) -> MemoryForFileOutp
                 supersedes_key=str(r.get("supersedes_key") or ""),
                 supersedes=str(r.get("supersedes") or ""),
                 matched_files=[str(f) for f in (r.get("matched_files") or [])],
+                code_state=r.get("code_state", ""),
             )
         )
 

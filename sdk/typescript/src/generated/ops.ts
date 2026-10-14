@@ -1599,6 +1599,7 @@ export interface CodeSymbolInput {
   include_history?: boolean;
   include_examples?: boolean;
   include_lessons?: boolean;
+  lesson_namespaces?: string[];
   token_budget?: number;
   min_fan_in?: number;
   sort_by?: "score" | "fan_in";
@@ -3567,6 +3568,7 @@ export interface MemorySearchHit {
   version?: number;
   created_at?: string;
   namespace?: string;
+  code_state?: "fresh" | "moved" | "changed" | "unresolved" | "missing" | "";
   body_truncated?: boolean;
   next?: string;
   source_resource_id?: string;
@@ -3772,6 +3774,7 @@ export interface MemoryGetOutput {
   source_class?: string;
   agent?: string;
   status?: string | null;
+  code?: CodeLink[];
   superseded_by?: string;
   duplicate_of?: string;
   conflict_verdict?: string;
@@ -3792,6 +3795,15 @@ export interface MemoryGetOutput {
   locked_by?: string;
   recall_by_agent?: RecallByAgent[];
   sensitivity?: string;
+}
+
+export interface CodeLink {
+  code_namespace: string;
+  path: string;
+  symbol?: string;
+  state: "fresh" | "moved" | "changed" | "unresolved" | "missing";
+  changed_since?: string;
+  suggestion?: string;
 }
 
 export interface RecallByAgent {
@@ -4301,6 +4313,7 @@ export interface MemoryForFileHit {
   supersedes_key?: string;
   supersedes?: string;
   matched_files?: string[];
+  code_state?: "fresh" | "moved" | "changed" | "unresolved" | "missing" | "";
 }
 
 export interface MemoryForFileOutput {
@@ -6076,6 +6089,7 @@ export interface NamespaceGetOutput {
   classify_endpoint?: string | null;
   default_conflict_policy?: string | null;
   proposal_policy?: ProposalPolicy | null;
+  code_change_policy?: "retire_removed" | "flag" | "revise" | null;
   tag_registry?: Array<Record<string, unknown>> | null;
   classification?: "standard" | "restricted" | null;
   created_at?: string | null;
@@ -6263,6 +6277,7 @@ export interface NamespaceRegisterInput {
   tag_registry?: NamespaceTypeConfig[];
   default_conflict_policy?: "auto_reinforce" | "manual_review" | "newest_wins" | "append_only" | null;
   proposal_policy?: ProposalPolicy | null;
+  code_change_policy?: "retire_removed" | "flag" | "revise" | null;
 }
 
 export interface NamespaceRegisterOutput {

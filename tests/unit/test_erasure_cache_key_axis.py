@@ -297,9 +297,12 @@ async def test_redact_handler_reports_the_cache_and_precedent_rows_it_deleted(mo
     monkeypatch.setattr(memory_repo, "get_by_key", _head)
     scrubbed: list[tuple[Any, ...]] = []
 
-    async def _derivatives(*ident: Any, head_live: bool) -> list[str]:
-        scrubbed.append((*ident, head_live))
+    async def _derivatives(*ident: Any, head_live: bool, live_link_inputs: str) -> list[str]:
+        scrubbed.append((*ident, head_live, live_link_inputs))
         return ["scrub"]
+
+    async def _live_inputs(org: str, head: Any) -> str:
+        return "head-inputs"
 
     async def _run(scrubs: list[str], *, apply: bool) -> dict[str, int]:
         assert scrubs == ["scrub"] and apply is True
@@ -307,6 +310,7 @@ async def test_redact_handler_reports_the_cache_and_precedent_rows_it_deleted(mo
 
     monkeypatch.setattr(memory_repo, "redact_row", _redact_row)
     monkeypatch.setattr(memory_repo, "key_derivative_scrubs", _derivatives)
+    monkeypatch.setattr(cur, "_live_link_inputs", _live_inputs)
     monkeypatch.setattr(memory_repo, "run_scrubs", _run)
     monkeypatch.setattr("server.auth.authz.row_in_scope", _scope)
     monkeypatch.setattr("server.memory.domain.lock.assert_unlocked", lambda *a, **kw: None)
@@ -323,7 +327,7 @@ async def test_redact_handler_reports_the_cache_and_precedent_rows_it_deleted(mo
     assert out.redacted is True and out.cache_rows_deleted == 2 and out.precedent_rows_deleted == 1
     assert redacted == [("o", inp.memory_id, 7)]
     # The key's derived rows are scrubbed too; the head is live, so its text stays.
-    assert scrubbed == [("o", "n", "a", "u", "s", "user_employer", True)]
+    assert scrubbed == [("o", "n", "a", "u", "s", "user_employer", True, "head-inputs")]
     assert deleted == [
         ("cache", "o", "user_employer"),
         ("prec", "o", "user_employer"),

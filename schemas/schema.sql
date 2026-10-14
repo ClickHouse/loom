@@ -16,12 +16,12 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 137 tables + 16 materialized views.
+-- Counts: 139 tables + 17 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 
 -- ======================================================================
--- Tables (137)
+-- Tables (139)
 -- ======================================================================
 
 -- loom.agent_cost_rollup_daily
@@ -1829,6 +1829,78 @@ PARTITION BY toYYYYMM(created_at)
 ORDER BY (org, namespace, session_id, chunk_index, content_sha256)
 SETTINGS index_granularity = 256, min_bytes_for_wide_part = 134217728;
 
+-- loom.memory_code_link_queue
+CREATE TABLE IF NOT EXISTS loom.memory_code_link_queue
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `agent` LowCardinality(String),
+    `user_id` String,
+    `session_id` String,
+    `memory_key` String,
+    `version` UInt64,
+    `queued_at` DateTime64(6) DEFAULT now64(6)
+)
+ENGINE = MergeTree
+PARTITION BY toDate(queued_at)
+ORDER BY queued_at
+TTL toDateTime(queued_at) + toIntervalDay(7)
+SETTINGS ttl_only_drop_parts = 1, index_granularity = 8192;
+
+-- loom.memory_code_links
+CREATE TABLE IF NOT EXISTS loom.memory_code_links
+(
+    `org` LowCardinality(String),
+    `code_namespace` LowCardinality(String),
+    `path` String,
+    `qualified_name` String,
+    `namespace` LowCardinality(String),
+    `memory_id` UUID,
+    `memory_key` String,
+    `agent` LowCardinality(String) DEFAULT '',
+    `user_id` String DEFAULT '-',
+    `session_id` String DEFAULT '-',
+    `inputs_hash` String DEFAULT '',
+    `complete` UInt8 DEFAULT 1,
+    `body_hash` String DEFAULT '',
+    `checked_hash` String DEFAULT '',
+    `start_line` UInt32 DEFAULT 0,
+    `end_line` UInt32 DEFAULT 0,
+    `state` Enum8('fresh' = 1, 'moved' = 2, 'changed' = 3, 'missing' = 4, 'pending' = 5, 'unresolved' = 6),
+    `checked_commit` String DEFAULT '',
+    `checked_path` String DEFAULT '',
+    `anchored_commit` String DEFAULT '',
+    `anchored_path` String DEFAULT '',
+    `anchored_hash` String DEFAULT '',
+    `anchored_name` String DEFAULT '',
+    `baseline_commit` String DEFAULT '',
+    `baseline_path` String DEFAULT '',
+    `baseline_name` String DEFAULT '',
+    `changed_since` String DEFAULT '',
+    `former` Array(Tuple(
+        path String,
+        name String,
+        hash String,
+        baseline_commit String,
+        baseline_path String,
+        baseline_name String)) DEFAULT [],
+    `policy_due` UInt8 DEFAULT 0,
+    `suggestion` String DEFAULT '',
+    `judged_hash` String DEFAULT '',
+    `carried` UInt8 DEFAULT 0,
+    `fingerprint_version` LowCardinality(String) DEFAULT '',
+    `checked_at` DateTime DEFAULT now(),
+    `tombstoned_at` Nullable(DateTime) DEFAULT NULL,
+    `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9))),
+    INDEX idx_memory_code_links_memory_id memory_id TYPE bloom_filter GRANULARITY 1,
+    INDEX idx_memory_code_links_memory_key memory_key TYPE bloom_filter GRANULARITY 1,
+    INDEX idx_memory_code_links_former_paths former.path TYPE bloom_filter GRANULARITY 1,
+    INDEX idx_memory_code_links_anchored_path anchored_path TYPE bloom_filter GRANULARITY 1
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (org, code_namespace, path, qualified_name, namespace, memory_id)
+SETTINGS index_granularity = 1024;
+
 -- loom.memory_doc_stats
 CREATE TABLE IF NOT EXISTS loom.memory_doc_stats
 (
@@ -2524,7 +2596,8 @@ CREATE TABLE IF NOT EXISTS loom.namespaces
     `classification` Enum8('standard' = 0, 'restricted' = 1) DEFAULT 'standard',
     `join_policy` Enum8('inherit' = 0, 'open' = 1, 'approval' = 2, 'closed' = 3) DEFAULT 'inherit',
     `retrieval_defaults` String DEFAULT '',
-    `proposal_policy` String DEFAULT ''
+    `proposal_policy` String DEFAULT '',
+    `code_change_policy` LowCardinality(String) DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(updated_at)
 PARTITION BY org
@@ -3268,7 +3341,7 @@ ORDER BY (org, namespace, agent, user_id, session_id, run_id, block_key)
 SETTINGS index_granularity = 8192;
 
 -- ======================================================================
--- Materialized views (16)
+-- Materialized views (17)
 -- ======================================================================
 
 -- loom.agent_cost_rollup_refresh
@@ -3478,6 +3551,27 @@ AS SELECT
     arrayJoin([entity_a, entity_b]) AS entity,
     co_occur AS degree
 FROM loom.entity_edges;
+
+-- loom.memory_code_link_queue_mv
+CREATE MATERIALIZED VIEW IF NOT EXISTS loom.memory_code_link_queue_mv TO loom.memory_code_link_queue
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `agent` LowCardinality(String),
+    `user_id` String,
+    `session_id` String,
+    `memory_key` String,
+    `version` UInt64
+)
+AS SELECT
+    org,
+    namespace,
+    agent,
+    user_id,
+    session_id,
+    memory_key,
+    version
+FROM loom.memory;
 
 -- loom.memory_doc_stats_refresh
 CREATE MATERIALIZED VIEW IF NOT EXISTS loom.memory_doc_stats_refresh

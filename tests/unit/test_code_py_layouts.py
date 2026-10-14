@@ -13,7 +13,7 @@ pytest.importorskip("tree_sitter_python")
 
 from server.code.app.index import ingest_parse, ingest_resolve
 from server.code.app.index.ingest_chunks import _chunks_for
-from server.code.app.index.ingest_parse import _parse_for_ingest, parse_file
+from server.code.app.index.ingest_parse import parse_file, parse_for_ingest
 from server.code.domain.extract import py_layouts as pl
 from server.code.domain.extract import py_notebooks as nb
 from server.code.domain.extract.edges_treesitter import extract_edges_and_misses
@@ -369,7 +369,7 @@ def test_a_parser_fault_keeps_the_file_as_text_chunks_with_the_error_recorded(mo
 
     monkeypatch.setitem(ingest_parse._PARSERS, "python", boom)
     src = b"# -*- coding: latin-1 -*-\n" + b"x = '\xe9'\n" * 40
-    pf, err = _parse_for_ingest("legacy/old.py", src)
+    pf, err = parse_for_ingest("legacy/old.py", src)
     assert pf is not None and pf.lang == "python" and pf.tree is None and pf.symbols == []
     assert err.startswith("parse: RecursionError:")
     chunks, _p, facets = _chunks_for(pf, pf.path, src, 6000, None)

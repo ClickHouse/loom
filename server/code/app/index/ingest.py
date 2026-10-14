@@ -29,8 +29,8 @@ from server.code.app.index.ingest_chunks import (
 from server.code.app.index.ingest_headers import forget_header
 from server.code.app.index.ingest_parse import (
     _facets_ride_symbols,
-    _parse_for_ingest,
     _statement_records_on,
+    parse_for_ingest,
 )
 from server.code.app.index.ingest_reconcile import (
     _maybe_write_call_guards,
@@ -171,7 +171,7 @@ async def ingest_file(
     if refused:
         return stats
 
-    pf, stats.error = parsed if parsed is not None else _parse_for_ingest(path, source)
+    pf, stats.error = parsed if parsed is not None else parse_for_ingest(path, source)
     if pf is None:
         stats.skipped = True
         return stats

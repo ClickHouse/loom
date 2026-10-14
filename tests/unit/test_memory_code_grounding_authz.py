@@ -179,5 +179,4 @@ async def test_each_leg_authorizes_when_called_alone(legs, monkeypatch) -> None:
         )
         == pool
     )
-    assert await g._annotate_stale_code_memories(pool, _input(), _settings()) is None
     assert legs == {"search": 0, "symbol": 0, "prs": 0}

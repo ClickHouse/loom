@@ -294,18 +294,21 @@ async def test_consolidated_dependents_of_an_erased_user_are_tombstoned_in_both_
     """A topic memory synthesised from an erased user's rows lives under
     another identity and carries the content verbatim (tag `src:<key>`); the
     per-user tombstone never reaches it. The step retires any summary whose
-    sources overlap the erased keys, on loom.memory AND loom.memory_embeddings."""
+    sources overlap the erased keys, on loom.memory AND loom.memory_embeddings,
+    and deletes its code links (a suggestion rewrites its text)."""
     ch = StubCH()
-    ch.query_one_returns.extend([{"n": 2}, {"n": 2}])
+    ch.query_one_returns.extend([{"n": 2}, {"n": 2}, {"n": 1}])
     n = await graph_steps.tombstone_consolidated_dependents_by_user("o", "alice", ch=ch)
-    assert n == 4
+    assert n == 5
     tables = [sql.split("ALTER TABLE ")[1].split()[0] for sql, _ in ch.execute_calls]
-    assert tables == ["loom.memory", "loom.memory_embeddings"]
+    assert tables == ["loom.memory", "loom.memory_embeddings", "loom.memory_code_links"]
     for sql, params in ch.execute_calls:
         assert "has(tags, 'consolidated')" in sql
         assert "hasAny(tags, (SELECT groupArray(concat('src:', memory_key)) FROM loom.memory" in sql
         assert "user_id = {uid:String}" in sql and params["uid"] == "alice"
-        assert "UPDATE tombstoned_at = {now:DateTime}" in sql
+    *tombstones, links = (sql for sql, _ in ch.execute_calls)
+    assert "DELETE" in links and "memory_id IN (SELECT memory_id FROM loom.memory" in links
+    assert all("UPDATE tombstoned_at = {now:DateTime}" in sql for sql in tombstones)
 
 
 @pytest.mark.asyncio

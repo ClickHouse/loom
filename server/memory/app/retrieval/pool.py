@@ -12,7 +12,13 @@ from typing import Any
 
 from server.memory.domain.search_parsing import _iso_date
 from server.memory.domain.search_sql import _build_where
-from server.memory.domain.search_types import SearchHit, SearchQuery, _CHClient, hit_sort_key
+from server.memory.domain.search_types import (
+    SearchHit,
+    SearchQuery,
+    _CHClient,
+    hit_sort_key,
+    row_identity,
+)
 
 log = logging.getLogger("server.memory.app.retrieval")
 
@@ -56,6 +62,8 @@ async def _recency_backfill(
             ifNull(e.source_resource_id, '') AS source_resource_id,
             e.source_class AS source_class,
             e.verified AS verified,
+            e.agent AS agent,
+            e.user_id AS user_id,
             e.session_id AS session_id,
             e.tags AS tags
         FROM loom.memory_embeddings AS e FINAL
@@ -87,6 +95,7 @@ async def _recency_backfill(
                 source_class=str(r.get("source_class") or ""),
                 verified=bool(int(r.get("verified") or 0)),
                 session_id=str(r.get("session_id") or ""),
+                identity=row_identity(r),
                 tags=[str(t) for t in (r.get("tags") or []) if t],
                 score_components={"recency_backfill": 1.0, "rank_score": float(floor)},
             )

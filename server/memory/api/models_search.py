@@ -13,6 +13,7 @@ from pydantic import (
 )
 
 from server.memory.api.models_common import MemoryType, _Identity
+from server.memory.domain.code_change import CodeState
 from server.memory.domain.rerank_names import RerankName
 from server.operations.base import MCP_HIDDEN
 
@@ -507,6 +508,12 @@ class _MemorySearchHit(BaseModel):
     # read them (the belt leaves the row alone).
     _row_agent: str | None = None
     _row_scope: str | None = None
+    # The stored memory's (agent, user_id, session_id) as the leg read them, private and
+    # never on the wire: the code annotation reads that memory's links. None = not read.
+    _row_identity: tuple[str, str, str] | None = None
+    # The hit's code links in repositories the caller may read, as the search's code
+    # annotation read them; None = not read (memory.ask reads them itself then).
+    _code_links: list[dict[str, Any]] | None = None
 
     memory_key: str
     memory_type: MemoryType
@@ -593,6 +600,10 @@ class _MemorySearchHit(BaseModel):
     # arrival-order recency in memory.ask reads it.
     created_at: str = ""
     namespace: str = ""  # source namespace; populated on cross-namespace search
+    # The hit's worst link to code ('' when it names no indexed code): `fresh`, `moved`,
+    # `changed` (that code changed since the memory was written: check it), `unresolved`
+    # (renamed or removed, and not followed: check it) or `missing`.
+    code_state: CodeState | Literal[""] = ""
     # bodies="unit": true when the whole value did not fit the budget and
     # content_excerpt is still the clip; `next` is the one call that fetches it.
     body_truncated: bool = False

@@ -13,6 +13,7 @@ from server.memory.app.search.scoring import _anchor_rank_score
 from server.memory.app.search.sql import _anchor_pool_where, anchor_pool_sql
 from server.memory.app.search_tag_filter import stamp_row_tags as _stamp_row_tags
 from server.memory.domain.search_sql import agent_filter
+from server.memory.domain.search_types import row_identity
 
 log = logging.getLogger(__package__)
 
@@ -155,6 +156,7 @@ async def _run_anchor_pool(ctx: SearchContext) -> None:
                     ),
                     row.get("tags"),
                 )
+                hit._row_identity = row_identity(row)
                 ctx.all_hits.append(_stamp_row_owner(hit, row.get("agent"), row.get("scope")))
     except Exception as e:  # noqa: BLE001 — the anchor pool is an optional recall stage
         log.warning("anchor-pool stage failed (non-fatal): %s", e)
