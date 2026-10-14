@@ -277,25 +277,43 @@ async def ended_claims(
     the token's iat is past every cutoff, so a cutoff this process's snapshot
     has not caught up with yet would never apply to it."""
     from server.auth.aliases import subject_aliases
-    from server.core.ch import get_client
 
     spellings = await subject_aliases(org, subject, strict=True)
     by_key = {grant_claim_key(org, ns, s): ns for ns in namespaces for s in spellings}
     if not by_key:
         return set()
-    rows = await get_client().query_all(
-        """
-        SELECT jti, issued_before FROM loom.revoked_tokens FINAL
-        WHERE jti IN {keys:Array(String)} AND expires_at > now()
-        """,
-        params={"keys": sorted(by_key)},
-    )
-    ended = set()
+    rows = await _read_revocations(sorted(by_key))
+    ended: set[str] = set()
     for r in rows:
         cutoff = _cutoff_seconds(r.get("issued_before"))
         if cutoff is not None and (issued_at is None or issued_at < cutoff):
             ended.add(by_key[str(r["jti"])])
     return ended
+
+
+async def subject_revoked(subject: str, *, issued_at: int) -> bool:
+    """`is_revoked` for a subject, read from ClickHouse: a token minting path
+    cannot wait for this process's snapshot to see a `revoke-token`."""
+    for r in await _read_revocations([subject]):
+        cutoff = _cutoff_seconds(r.get("issued_before"))
+        if cutoff is None or issued_at < cutoff:
+            return True
+    return False
+
+
+async def _read_revocations(keys: list[str]) -> list[dict[str, Any]]:
+    """The unexpired revocation rows for `keys`, read as of every write that
+    landed, on whichever replica the read reaches."""
+    from server.core.ch import get_client, own_write_reads
+
+    with own_write_reads():
+        return await get_client().query_all(
+            """
+            SELECT jti, issued_before FROM loom.revoked_tokens FINAL
+            WHERE jti IN {keys:Array(String)} AND expires_at > now()
+            """,
+            params={"keys": keys},
+        )
 
 
 async def list_active() -> list[dict[str, Any]]:

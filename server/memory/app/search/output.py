@@ -99,7 +99,7 @@ async def _serve_parked_page(input: MemorySearchInput) -> MemorySearchOutput:
         namespaces_searched=[
             ns for ns in payload.get("namespaces_searched") or [input.namespace] if ns in readable
         ],
-        namespaces_skipped=list(payload.get("namespaces_skipped") or []),
+        namespaces_skipped=[ns for ns in payload.get("namespaces_skipped") or [] if ns in readable],
         page_offset=int(offset),
         next_page=_pages.make_handle(blob_key, nxt) if nxt >= 0 else "",
         abstain=not hits,
@@ -119,7 +119,7 @@ async def _readable_namespaces(org: str, namespace: str, payload: dict[str, Any]
     from server.auth.authz import row_in_scope
 
     named = {str(h.get("namespace", "")) for h in payload.get("hits") or []}
-    named |= set(payload.get("namespaces_searched") or [])
+    named |= {*payload.get("namespaces_searched", []), *payload.get("namespaces_skipped", [])}
     foreign = sorted(named - {"", namespace})
     allowed = await asyncio.gather(*(row_in_scope(org, ns) for ns in foreign))
     return {"", namespace} | {ns for ns, ok in zip(foreign, allowed, strict=True) if ok}

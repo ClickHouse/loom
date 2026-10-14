@@ -681,15 +681,27 @@ def grant_cutoffs(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, list[
 
 
 @pytest.fixture
-def no_grant_cutoffs(monkeypatch: pytest.MonkeyPatch) -> set[str]:
-    """Token-minting paths (sign-in, OAuth) read the grant cutoffs from
-    ClickHouse; answer from this set instead, empty unless a test adds to it."""
+def ended_grant_claims(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    """Token-minting paths (sign-in, OAuth) read the revocations from
+    ClickHouse; answer from this map instead: namespace -> the cutoff (unix
+    seconds) a grant taken away there left, empty unless a test adds one. No
+    subject is revoked."""
     import server.auth.revocation as revocation
 
-    ended: set[str] = set()
+    cutoffs: dict[str, int] = {}
 
-    async def _ended(org: str, subject: str, namespaces: list[str], **_k: Any) -> set[str]:
-        return ended & set(namespaces)
+    async def _ended(
+        org: str, subject: str, namespaces: list[str], *, issued_at: int | None
+    ) -> set[str]:
+        return {
+            ns
+            for ns in namespaces
+            if ns in cutoffs and (issued_at is None or issued_at < cutoffs[ns])
+        }
+
+    async def _not_revoked(subject: str, *, issued_at: int) -> bool:
+        return False
 
     monkeypatch.setattr(revocation, "ended_claims", _ended)
-    return ended
+    monkeypatch.setattr(revocation, "subject_revoked", _not_revoked)
+    return cutoffs

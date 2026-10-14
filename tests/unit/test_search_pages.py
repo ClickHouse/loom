@@ -196,7 +196,9 @@ async def test_a_parked_page_drops_hits_the_caller_can_no_longer_read(monkeypatc
         return namespace == "home"
 
     tail = [_hit("b", 0.8, ns="n"), _hit("c", 0.7, ns="team"), _hit("d", 0.6, ns="home")]
-    content = _encode(3, 3, tail, namespaces_searched=["n", "team", "home"])
+    content = _encode(
+        3, 3, tail, namespaces_searched=["n", "team", "home"], namespaces_skipped=["team", "far"]
+    )
     key = sp.page_blob_key(content)
     patch_handler_name(monkeypatch, "get_client", lambda: _CH(content))
     monkeypatch.setattr(authz, "row_in_scope", _only_home)
@@ -207,6 +209,7 @@ async def test_a_parked_page_drops_hits_the_caller_can_no_longer_read(monkeypatc
     assert [(r.memory_key, r.namespace) for r in out.results] == [("b", "n"), ("d", "home")]
     assert out.candidates_total == 2
     assert out.namespaces_searched == ["n", "home"]
+    assert out.namespaces_skipped == [], "neither a lost namespace nor one never readable"
 
 
 @pytest.mark.asyncio

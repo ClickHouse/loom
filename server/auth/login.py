@@ -1,10 +1,10 @@
 """Password-based sign-in: verify email-or-namespace + password, mint a JWT
 with the user's full namespace set.
 
-The namespace set is the namespaces the person owns (by
-contact email) plus every *restricted* namespace they hold an active direct
-grant on. A restricted namespace is read only by a token
-that names it, and the live grant is re-checked on every call, so naming
+The namespace set is the namespaces the person owns (by contact email), less
+those a grant of theirs was taken away on, plus every *restricted* namespace
+they hold an active direct grant on. A restricted namespace is read only by a
+token that names it, and the live grant is re-checked on every call, so naming
 it here removes the "sign in with a different token" dead end for the
 maintainers and approved readers of a restricted repository without
 widening anything a revoked grant would still have to close. Standard
@@ -157,10 +157,15 @@ async def _without_taken_away(subject: str, org: str, namespaces: list[str]) -> 
     """The owned `namespaces` minus those a grant of the person's was taken
     away on. Owning the registry row is not access once a co-admin revoked or
     lowered it: whatever grant the person holds there now still applies, and
-    a namespace comes back into the claim only when the cutoff expires."""
+    the namespace does not come back into the claim (the cutoff outlives any
+    token a sign-in mints). A failed read leaves every owned one out."""
     from server.auth.revocation import ended_claims
 
-    ended = await ended_claims(org, subject, namespaces, issued_at=None)
+    try:
+        ended = await ended_claims(org, subject, namespaces, issued_at=None)
+    except Exception as e:  # noqa: BLE001 — a sign-in goes on through the live grants
+        log.warning("login: grant cutoff read failed for %r in %r: %s", subject, org, e)
+        return []
     return [ns for ns in namespaces if ns not in ended]
 
 

@@ -691,9 +691,8 @@ async def token(request: Request) -> JSONResponse:
                 status_code=400,
                 detail={"error": "invalid_grant", "error_description": "PKCE failed"},
             )
-        # A grant taken away since authorize leaves the token it mints now.
         code_issued_at = int(grant["exp"]) - _CODE_TTL
-        grant = {**grant, "namespaces": await _still_claimed(grant, code_issued_at)}
+        grant = {**grant, "namespaces": await _mint_namespaces(grant, code_issued_at)}
         return JSONResponse(await _issue_tokens(grant, client_id))
 
     if grant_type == "refresh_token":
@@ -737,20 +736,40 @@ async def token(request: Request) -> JSONResponse:
         # A namespace whose grant was taken away since sign-in leaves the
         # snapshot for good: the new token's iat would pass the cutoff, and so
         # would every later refresh of it.
-        namespaces = await _still_claimed(grant, issued_at)
+        namespaces = await _mint_namespaces(grant, issued_at)
         refreshed = {**grant, "roles": roles, "namespaces": namespaces}
         return JSONResponse(await _issue_tokens(refreshed, grant["client_id"]))
 
     raise HTTPException(status_code=400, detail={"error": "unsupported_grant_type"})
 
 
-async def _still_claimed(grant: dict[str, Any], issued_at: int) -> list[str]:
-    """The grant's namespaces minus those a grant was taken away on since
-    `issued_at`, the time the grant's namespace set was decided."""
-    from server.auth.revocation import ended_claims
+async def _mint_namespaces(grant: dict[str, Any], issued_at: int) -> list[str]:
+    """The namespaces a token minted from `grant` may claim, `issued_at` being
+    when the grant was decided. Refused when the subject was revoked since;
+    without the namespaces a grant was taken away on since, unless restricted
+    and still granted (a restricted namespace is read only by a token naming
+    it, and the live grant is checked on every call). Read from ClickHouse:
+    a token minted past a revocation this process has not seen keeps it."""
+    from server.auth.login import widen_with_restricted_grants
+    from server.auth.revocation import ended_claims, subject_revoked
 
+    org, subject = grant["org"], grant["subject"]
     namespaces = list(grant["namespaces"])
-    ended = await ended_claims(grant["org"], grant["subject"], namespaces, issued_at=issued_at)
+    try:
+        if await subject_revoked(subject, issued_at=issued_at):
+            raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
+        ended = await ended_claims(org, subject, namespaces, issued_at=issued_at)
+    except HTTPException:
+        raise
+    except Exception as e:  # no token is minted past a revocation it could not read
+        log.warning("oauth: revocation read failed for %r in %r: %s", subject, org, e)
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "temporarily_unavailable"},
+            headers={"Retry-After": "5"},
+        ) from e
+    if ended:
+        ended -= set(await widen_with_restricted_grants(subject, org, []))
     return [ns for ns in namespaces if ns not in ended]
 
 

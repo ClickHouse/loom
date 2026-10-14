@@ -11,7 +11,7 @@ import pytest
 
 import server.auth.login as login
 
-pytestmark = pytest.mark.usefixtures("no_grant_cutoffs")
+pytestmark = pytest.mark.usefixtures("ended_grant_claims")
 
 
 class _FakeCH:
@@ -130,9 +130,22 @@ async def test_widening_reads_the_gates_live_grant_predicate(
 
 @pytest.mark.asyncio
 async def test_a_login_leaves_out_an_owned_namespace_whose_grant_was_taken_away(
-    no_grant_cutoffs: set[str],
+    ended_grant_claims: dict[str, int],
 ) -> None:
     """Owning the registry row is not access once a co-admin revoked or
     lowered the grant; whatever grant is left applies through the grant itself."""
-    no_grant_cutoffs.add("team")
+    ended_grant_claims["team"] = 1
     assert await login._without_taken_away("jdoe", "clickhouse", ["home", "team"]) == ["home"]
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_cutoff_store_leaves_every_owned_namespace_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import server.auth.revocation as revocation
+
+    async def _down(*_a: Any, **_k: Any) -> set[str]:
+        raise RuntimeError("replica away")
+
+    monkeypatch.setattr(revocation, "ended_claims", _down)
+    assert await login._without_taken_away("jdoe", "clickhouse", ["home", "team"]) == []

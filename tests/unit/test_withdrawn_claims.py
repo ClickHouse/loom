@@ -232,3 +232,13 @@ def test_a_minting_path_reads_the_cutoffs_from_clickhouse(ch: _CH) -> None:
     assert asyncio.run(rev.ended_claims(ORG, "alice", ["team"], issued_at=BEFORE)) == {"team"}
     later = int(datetime.now(UTC).timestamp()) + 2
     assert asyncio.run(rev.ended_claims(ORG, "alice", ["team"], issued_at=later)) == set()
+
+
+def test_a_subject_revocation_is_read_from_clickhouse(ch: _CH) -> None:
+    now = int(datetime.now(UTC).timestamp())
+    ch.revoked["alice"] = {"jti": "alice", "issued_before": now}
+    assert asyncio.run(rev.subject_revoked("alice", issued_at=now - 10))
+    assert not asyncio.run(rev.subject_revoked("alice", issued_at=now + 10))
+    ch.revoked["alice"] = {"jti": "alice", "issued_before": None}
+    assert asyncio.run(rev.subject_revoked("alice", issued_at=now + 10)), "revoked outright"
+    assert not asyncio.run(rev.subject_revoked("bob", issued_at=now))

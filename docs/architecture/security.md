@@ -75,6 +75,22 @@ boot and refreshes it every `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` (30 s), thro
 token on every fresh process, which is when an operator restarts the fleet after
 revoking a leaked token. The cost is a short 503 window at boot.
 
+**Grant cutoffs.** Taking a grant away or lowering it writes a row of the same table,
+keyed `grant:<org>/<namespace>/<subject>` (each spelling of the subject), so tokens
+minted before it no longer reach the namespace through their own claim
+(`revocation.end_grant_claims`, `authz.withdrawn_claims`). The row is the only record:
+the grant row is replaced by the subject's next one, so a cutoff is never derived from
+it. Two consequences hold the design together:
+
+- A cutoff lives as long as the longest token it must outlive. Rows are kept for
+  `NEVER_EXPIRES_DAYS` (ten years) because tokens without `exp` exist and a sign-in
+  leaves an ever-cut owned namespace out of every token it mints; shortening that to a
+  token lifetime would hand the namespace back.
+- The paths that mint a token (sign-in, OAuth code exchange and refresh) read the
+  cutoffs and the subject's revocation from ClickHouse with sequential consistency, not
+  from the snapshot: a token minted past a revocation it has not seen keeps the access
+  for its whole life, while a request check catches up on the next refresh.
+
 ## Authorization
 
 ### Roles
