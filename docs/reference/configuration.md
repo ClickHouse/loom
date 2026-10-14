@@ -91,7 +91,7 @@ Source: `server/settings/_clickhouse.py`
 | `LOOM_VECTOR_SEARCH_INDEX_FETCH_MULTIPLIER` | `float` | `10.0` | Post-filter over-fetch for a `vector_similarity` (HNSW) index: the index returns top-N before the tenant predicate drops rows. Sent on uncoded vector reads; coded reads use `vector_search_quantized_fetch_multiplier`. |
 | `LOOM_VECTOR_SEARCH_QUANTIZED_CODES` | `bool` | `True` | Send `vector_search_use_quantized_codes = 1` on vector-ranked reads whose column has a `Quantized(...)` codec and whose table has no patch parts: a codes-first scan plus full-precision rescore. A replica that rejects the setting (code 115) drops the fragment and retries. |
 | `LOOM_VECTOR_SEARCH_QUANTIZED_FETCH_MULTIPLIER` | `float` | `3.0` | Over-fetch for the codes-first read: stage 1 keeps LIMIT × this by code distance, stage 2 rescores. Only read when the codes setting is sent. |
-| `LOOM_VECTOR_CODES_STATE_PROBE_SECONDS` | `int` | `60` | Seconds between re-reads of which vector columns are coded and which coded tables carry patch parts. A write that embeds re-reads a reading older than a few seconds first, and a write is refused only on a reading under a second old. |
+| `LOOM_VECTOR_CODES_STATE_PROBE_SECONDS` | `int` | `5` | Seconds between re-reads of which vector columns are coded and which coded tables carry patch parts. A write that embeds re-reads a reading older than this first, and a write is refused only on a reading under a second old. |
 
 ## Code
 
