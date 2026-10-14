@@ -678,3 +678,18 @@ def grant_cutoffs(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, list[
     for module in (maintainers, claim_release, grants, membership, snapshot):
         monkeypatch.setattr(module, "end_grant_claims", _record)
     return calls
+
+
+@pytest.fixture
+def no_grant_cutoffs(monkeypatch: pytest.MonkeyPatch) -> set[str]:
+    """Token-minting paths (sign-in, OAuth) read the grant cutoffs from
+    ClickHouse; answer from this set instead, empty unless a test adds to it."""
+    import server.auth.revocation as revocation
+
+    ended: set[str] = set()
+
+    async def _ended(org: str, subject: str, namespaces: list[str], **_k: Any) -> set[str]:
+        return ended & set(namespaces)
+
+    monkeypatch.setattr(revocation, "ended_claims", _ended)
+    return ended

@@ -40,7 +40,8 @@ class _CH:
 
     async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[dict]:
         if "revoked_tokens" in sql:
-            return list(self.revoked.values())
+            keys = (params or {}).get("keys")
+            return [r for k, r in self.revoked.items() if keys is None or k in keys]
         if "namespace_grants" in sql:
             return [{"namespace": ns} for ns in self.live]
         return []
@@ -219,3 +220,15 @@ def test_revoking_ends_claims_only_when_the_grant_was_active(
     revoke = GrantsRevokeInput(org=ORG, namespace="team", subject="alice")
     assert asyncio.run(grants_mod.handle_grants_revoke(revoke)).revoked
     assert grant_cutoffs == ([(ORG, "team", ["alice"])] if cut else [])
+
+
+def test_a_minting_path_reads_the_cutoffs_from_clickhouse(ch: _CH) -> None:
+    # The snapshot of this process may not have the cutoff yet; ClickHouse has.
+    _end("team")
+    rev._revoked_before.clear()
+    assert asyncio.run(rev.ended_claims(ORG, "alice", ["team", "notes"], issued_at=None)) == {
+        "team"
+    }
+    assert asyncio.run(rev.ended_claims(ORG, "alice", ["team"], issued_at=BEFORE)) == {"team"}
+    later = int(datetime.now(UTC).timestamp()) + 2
+    assert asyncio.run(rev.ended_claims(ORG, "alice", ["team"], issued_at=later)) == set()

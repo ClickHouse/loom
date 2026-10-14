@@ -228,3 +228,12 @@ def test_signing_in_again_does_not_bring_back_a_revoked_owner(base: str) -> None
     given_back = _call(base, "grants.create", _admin(), namespace=ns, subject=owner, role="writer")
     assert given_back.status_code == 200, given_back.text
     assert _writes(base, _login(), ns) == 200
+    # Lowered to viewer: the next sign-in reads through the viewer grant, no more.
+    lowered = _call(
+        base, "grants.create", _admin(), namespace=ns, subject=owner, role="viewer", replace=True
+    )
+    assert lowered.status_code == 200, lowered.text
+    time.sleep(1.1)
+    token = _login()
+    assert _writes(base, token, ns) == 403
+    assert _reads(base, token, ns) == 200

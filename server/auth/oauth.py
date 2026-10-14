@@ -691,10 +691,13 @@ async def token(request: Request) -> JSONResponse:
                 status_code=400,
                 detail={"error": "invalid_grant", "error_description": "PKCE failed"},
             )
+        # A grant taken away since authorize leaves the token it mints now.
+        code_issued_at = int(grant["exp"]) - _CODE_TTL
+        grant = {**grant, "namespaces": await _still_claimed(grant, code_issued_at)}
         return JSONResponse(await _issue_tokens(grant, client_id))
 
     if grant_type == "refresh_token":
-        from server.auth.revocation import claim_ended, is_revoked, loaded
+        from server.auth.revocation import is_revoked, loaded
 
         # A refresh mints a token with a fresh iat, which would pass any
         # `revoke-token --issued-before` cutoff — so the revocation check must
@@ -734,15 +737,21 @@ async def token(request: Request) -> JSONResponse:
         # A namespace whose grant was taken away since sign-in leaves the
         # snapshot for good: the new token's iat would pass the cutoff, and so
         # would every later refresh of it.
-        namespaces = [
-            ns
-            for ns in grant["namespaces"]
-            if not claim_ended(grant["org"], ns, grant["subject"], issued_at)
-        ]
+        namespaces = await _still_claimed(grant, issued_at)
         refreshed = {**grant, "roles": roles, "namespaces": namespaces}
         return JSONResponse(await _issue_tokens(refreshed, grant["client_id"]))
 
     raise HTTPException(status_code=400, detail={"error": "unsupported_grant_type"})
+
+
+async def _still_claimed(grant: dict[str, Any], issued_at: int) -> list[str]:
+    """The grant's namespaces minus those a grant was taken away on since
+    `issued_at`, the time the grant's namespace set was decided."""
+    from server.auth.revocation import ended_claims
+
+    namespaces = list(grant["namespaces"])
+    ended = await ended_claims(grant["org"], grant["subject"], namespaces, issued_at=issued_at)
+    return [ns for ns in namespaces if ns not in ended]
 
 
 def attach(app: Any) -> None:

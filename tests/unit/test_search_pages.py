@@ -206,6 +206,7 @@ async def test_a_parked_page_drops_hits_the_caller_can_no_longer_read(monkeypatc
     out = await h.handle_memory_search(page)
     assert [(r.memory_key, r.namespace) for r in out.results] == [("b", "n"), ("d", "home")]
     assert out.candidates_total == 2
+    assert out.namespaces_searched == ["n", "home"]
 
 
 @pytest.mark.asyncio

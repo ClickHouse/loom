@@ -11,6 +11,8 @@ import pytest
 
 import server.auth.login as login
 
+pytestmark = pytest.mark.usefixtures("no_grant_cutoffs")
+
 
 class _FakeCH:
     """Answers the owned-namespace read with `ns_rows` and the grant join
@@ -128,21 +130,9 @@ async def test_widening_reads_the_gates_live_grant_predicate(
 
 @pytest.mark.asyncio
 async def test_a_login_leaves_out_an_owned_namespace_whose_grant_was_taken_away(
-    monkeypatch: pytest.MonkeyPatch,
+    no_grant_cutoffs: set[str],
 ) -> None:
-    """Owning the registry row is not access once a co-admin revoked it; a
-    grant given back afterwards brings the namespace back."""
-    import server.auth.revocation as rev
-
-    keys = {rev.grant_claim_key("clickhouse", ns, "jdoe"): 1 for ns in ("team", "back")}
-    monkeypatch.setattr(rev, "_revoked_before", keys)
-    ch = _FakeCH(_own("home", "team", "back"), [{"namespace": "back"}])
-    monkeypatch.setattr(login, "get_client", lambda: ch)
-    assert await login._without_taken_away("jdoe", "clickhouse", ["back", "home", "team"]) == [
-        "back",
-        "home",
-    ]
-    ch.grant_rows = RuntimeError("replica away")
-    assert await login._without_taken_away("jdoe", "clickhouse", ["back", "home", "team"]) == [
-        "home"
-    ]
+    """Owning the registry row is not access once a co-admin revoked or
+    lowered the grant; whatever grant is left applies through the grant itself."""
+    no_grant_cutoffs.add("team")
+    assert await login._without_taken_away("jdoe", "clickhouse", ["home", "team"]) == ["home"]

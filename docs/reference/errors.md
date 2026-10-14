@@ -564,6 +564,10 @@ Raised in `server/code/app/repo_admin.py`.
 
 Raised in `server/code/app/repo_admin.py`.
 
+#### `RESERVED_BLOB_KEY`
+
+Raised in `server/memory/app/context_offload.py`.
+
 #### `RESOURCE_NOT_FOUND`
 
 HTTP 404, raised as `server.core.errors.NotFoundError`. What to do: [common errors](#common-errors-and-what-to-do).

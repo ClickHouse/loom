@@ -96,7 +96,9 @@ async def _serve_parked_page(input: MemorySearchInput) -> MemorySearchOutput:
         results=hits,
         embedding_model=embedder_name,
         candidates_total=total,
-        namespaces_searched=list(payload.get("namespaces_searched") or [input.namespace]),
+        namespaces_searched=[
+            ns for ns in payload.get("namespaces_searched") or [input.namespace] if ns in readable
+        ],
         namespaces_skipped=list(payload.get("namespaces_skipped") or []),
         page_offset=int(offset),
         next_page=_pages.make_handle(blob_key, nxt) if nxt >= 0 else "",
@@ -116,9 +118,9 @@ async def _readable_namespaces(org: str, namespace: str, payload: dict[str, Any]
     over, and a grant there may have been taken away since."""
     from server.auth.authz import row_in_scope
 
-    foreign = sorted(
-        {str(h.get("namespace", "")) for h in payload.get("hits") or []} - {"", namespace}
-    )
+    named = {str(h.get("namespace", "")) for h in payload.get("hits") or []}
+    named |= set(payload.get("namespaces_searched") or [])
+    foreign = sorted(named - {"", namespace})
     allowed = await asyncio.gather(*(row_in_scope(org, ns) for ns in foreign))
     return {"", namespace} | {ns for ns, ok in zip(foreign, allowed, strict=True) if ok}
 

@@ -154,31 +154,14 @@ async def _with_restricted_grants(
 
 
 async def _without_taken_away(subject: str, org: str, namespaces: list[str]) -> list[str]:
-    """The owned `namespaces` minus those the person's grant was taken away on
-    and not given back: owning the registry row is not access once a co-admin
-    revoked it. A failed read leaves those out; the login itself goes on."""
-    from server.auth.revocation import claim_was_cut
+    """The owned `namespaces` minus those a grant of the person's was taken
+    away on. Owning the registry row is not access once a co-admin revoked or
+    lowered it: whatever grant the person holds there now still applies, and
+    a namespace comes back into the claim only when the cutoff expires."""
+    from server.auth.revocation import ended_claims
 
-    cut = [ns for ns in namespaces if claim_was_cut(org, ns, subject)]
-    if not cut:
-        return namespaces
-    try:
-        from server.auth.aliases import subject_aliases
-        from server.core.grant_sql import LIVE_GRANT
-
-        rows = await get_client().query_all(
-            """
-            SELECT DISTINCT namespace FROM loom.namespace_grants FINAL
-            WHERE org = {org:String} AND namespace IN {nss:Array(String)}
-              AND subject IN {subs:Array(String)} AND {live}
-            """.replace("{live}", LIVE_GRANT),
-            params={"org": org, "nss": cut, "subs": await subject_aliases(org, subject)},
-        )
-        given_back = {str(r["namespace"]) for r in rows}
-    except Exception:
-        log.warning("login: grant lookup failed for %r in %r", subject, org, exc_info=True)
-        given_back = set()
-    return [ns for ns in namespaces if ns not in cut or ns in given_back]
+    ended = await ended_claims(org, subject, namespaces, issued_at=None)
+    return [ns for ns in namespaces if ns not in ended]
 
 
 async def widen_with_restricted_grants(subject: str, org: str, namespaces: list[str]) -> list[str]:

@@ -17,6 +17,8 @@ from fastapi.testclient import TestClient
 from server.auth import login, revocation
 from server.auth.passwords import hash_password
 
+pytestmark = pytest.mark.usefixtures("no_grant_cutoffs")
+
 _HASH = hash_password("correct horse battery staple")
 _ROW = {
     "namespace": "alice",
