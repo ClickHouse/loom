@@ -49,7 +49,11 @@ def test_repo_cfg_names_why_an_entry_was_skipped(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(settings, "code_repos_json", json.dumps(entries))
     with pytest.raises(SystemExit) as ex:
         code_run._repo_cfg(_args("code-a.python"))
-    assert "code repo code-a.python skipped: a namespace has no '.' or '/'" in str(ex.value)
+    assert "code-a.python skipped: a namespace may not contain '.' or '/'" in str(ex.value)
+
+    with pytest.raises(SystemExit) as ex:
+        code_run._repo_cfg(_args("code-typo"))
+    assert "code-a.python" not in str(ex.value) and "Check LOOM_CODE_REPOS_JSON" in str(ex.value)
 
 
 def test_no_default_code_namespace_is_a_clear_refusal(monkeypatch: pytest.MonkeyPatch) -> None:

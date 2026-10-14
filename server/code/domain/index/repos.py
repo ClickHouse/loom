@@ -256,10 +256,10 @@ def _publish_config_errors(errors: dict[str, str]) -> None:
     _config_evaluated = True
 
 
-def config_errors() -> list[str]:
-    """What this process could not use in the repository configuration, as of its last
+def config_errors_for(namespace: str) -> list[str]:
+    """Why this process could not use the entry for `namespace`, as of its last
     `configured_repos()` call."""
-    return list(_config_errors.values())
+    return [msg for key, msg in _config_errors.items() if key.split(":", 1)[-1] == namespace]
 
 
 def config_error_count() -> int | None:
@@ -372,7 +372,9 @@ def _configured_from_env() -> list[RepoConfig]:
         ns = str(e["namespace"])
         if "." in ns or "/" in ns:
             # a tier's working tree is `<checkout>.<producer>`
-            errors[f"namespace:{ns}"] = f"code repo {ns} skipped: a namespace has no '.' or '/'"
+            errors[f"namespace:{ns}"] = (
+                f"code repo {ns} skipped: a namespace may not contain '.' or '/'"
+            )
             continue
         if ns in seen:
             errors[f"duplicate:{ns}"] = f"duplicate code repo namespace {ns} skipped"

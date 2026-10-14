@@ -42,8 +42,9 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 - **Breaking:** a `LOOM_CODE_REPOS_JSON` entry (or the scalar `LOOM_CODE_REPO`) that names
   no `scip_producer` gets the compiler tiers its tree's build files call for, as a
   dashboard entry does, instead of `clang`. An entry relying on the old default can gain a
-  tier (a C++ repository with a root `pyproject.toml` also gets scip-python) or lose
-  scip-clang (no root `CMakeLists.txt`); add `"scip_producer":"clang"` to keep it as it was.
+  tier (a C++ repository with a root `pyproject.toml` also gets scip-python), lose
+  scip-clang (no root `CMakeLists.txt`), or lose the host cron's scip-python pass (no root
+  Python build file); add `"scip_producer":"clang"` to keep it as it was.
   The Python, TypeScript and Go tiers now create a missing working tree for these entries
   too; the C/C++ tier still needs the configured build tree.
 - Each compiler tier of an entry has its own working tree, so two tiers never move one

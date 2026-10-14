@@ -41,7 +41,7 @@ def _repo_cfg(args: argparse.Namespace) -> Any:
     parse, configured_repos() degrades to the scalar entry, and falling back
     would index one branch's tree under another branch's namespace."""
     from server.code.domain.index.repos import (
-        config_errors,
+        config_errors_for,
         configured_repos,
         repo_for_namespace,
     )
@@ -58,9 +58,9 @@ def _repo_cfg(args: argparse.Namespace) -> Any:
             "LOOM_CODE_REPOS_JSON, or add the repository from the Repositories page."
         )
     if getattr(args, "namespace", None) and ns != repos[0].namespace:
-        errors = config_errors()
+        errors = config_errors_for(ns)
         why = (
-            "The configuration has errors: " + "; ".join(errors) + "."
+            "; ".join(errors) + "."
             if errors
             else "Check LOOM_CODE_REPOS_JSON — a JSON parse failure degrades it to the "
             "scalar entry; quote the value with single quotes in .env."

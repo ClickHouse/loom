@@ -167,15 +167,26 @@ def _ident_snippet() -> str:
 
 
 @pytest.mark.parametrize(
-    ("tree", "owner"),
-    [(["go.mod"], "none"), (["go.mod", "pyproject.toml"], "cron")],
-    ids=["go-only", "go-and-python"],
+    ("tree", "producer", "extras", "py_worker", "owner"),
+    [
+        (["go.mod"], "", (), False, "none"),
+        (["go.mod", "pyproject.toml"], "", (), False, "cron"),
+        (["pyproject.toml"], "", (), False, "cron"),
+        (["CMakeLists.txt"], "", (), False, "none"),
+        (["go.mod", "pyproject.toml"], "go", (), False, "go"),
+        (["go.mod", "pyproject.toml"], "go", ("python",), False, "go"),
+        (["CMakeLists.txt"], "clang", (), False, "cron"),
+        (["go.mod"], "", (), True, "none"),
+        (["go.mod", "pyproject.toml"], "", (), True, "worker"),
+        (["go.mod", "pyproject.toml"], "go", ("python",), True, "worker"),
+    ],
 )
-def test_an_entry_naming_no_producer_gets_the_cron_python_pass_its_tree_calls_for(
-    monkeypatch, capsys, tree, owner
+def test_the_cron_python_pass_goes_where_the_entry_and_its_tree_say(
+    monkeypatch, capsys, tree, producer, extras, py_worker, owner
 ) -> None:
-    """With the Python worker off, the cron indexes Python wherever the tree has a Python
-    build file; the Go worker works in its own tree, so it never stands in the way."""
+    """The Python worker takes what it owns; a Go or TypeScript entry's worker moves its
+    checkout; an entry naming no producer gets the cron pass only where its tree has a
+    Python build file (its Go and TypeScript tiers work in their own trees)."""
     from unittest.mock import AsyncMock
 
     from server.code.domain.index import repos
@@ -189,8 +200,10 @@ def test_an_entry_naming_no_producer_gets_the_cron_python_pass_its_tree_calls_fo
     repo.live_paths_present.return_value = tree
     monkeypatch.setattr(store_index, "CodeRepo", lambda: repo)
     monkeypatch.setattr(ch, "get_client", lambda: AsyncMock())
-    monkeypatch.setattr(settings, "code_scip_py_delta_enabled", False)
-    cfg = repo_config(org="org", namespace="code-x", scip_producer="")
+    monkeypatch.setattr(settings, "code_scip_py_delta_enabled", py_worker)
+    cfg = repo_config(
+        org="org", namespace="code-x", scip_producer=producer, scip_extra_producers=extras
+    )
     monkeypatch.setattr(repos, "configured_repos", lambda: [cfg])
     monkeypatch.setenv("ORG_ARG", "org")
     monkeypatch.setenv("NS_ARG", "code-x")
