@@ -236,7 +236,7 @@ def test_revoking_ends_claims_only_when_the_grant_was_active(
         return 0
 
     monkeypatch.setattr(grants_repo, "find_any_grant", _find)
-    monkeypatch.setattr(grants_repo, "insert_row", _ignore)
+    monkeypatch.setattr(grants_repo, "insert_rows", _ignore)
     monkeypatch.setattr(
         "server.identity.app.token_grants.cascade_revoke_to_created_tokens", _ignore
     )
@@ -269,7 +269,10 @@ def test_a_lowering_whose_row_landed_after_its_cutoff_is_stamped_again(
     stamp = ch.revoked[key]["issued_before"]
     landed = stamp + timedelta(seconds=landed_after_s)
     ch.log = [_logged_at("admin", stamp - timedelta(hours=1)), _logged_at("writer", landed)]
-    asyncio.run(rev.cut_where_lowered(ORG, [("team", "alice")], revoked_by="boss"))
+    landed_ns = ch.log[-1]["version"]
+    asyncio.run(
+        rev.cut_where_lowered(ORG, [("team", "alice")], landed_ns=landed_ns, revoked_by="boss")
+    )
     assert (ch.revoked[key]["reason"] == "grant lowered") is stamped_again
 
 
@@ -527,25 +530,27 @@ def _logged(role: str, at: int, *, revoked: bool = False, status: str = "active"
 
 
 @pytest.mark.parametrize(
-    ("history", "cutoff", "lowered"),
+    ("history", "cutoff", "landed", "lowered"),
     [
         # A raise between a writer's read and its write, then the write: lowered.
-        ([_logged("viewer", 10), _logged("admin", 11), _logged("writer", 12)], None, True),
-        ([_logged("viewer", 10), _logged("writer", 11)], None, False),
-        # A lowering whose own cutoff predates every later row.
-        ([_logged("admin", 10), _logged("writer", 11)], 12, False),
+        ([_logged("viewer", 10), _logged("admin", 11), _logged("writer", 12)], None, 12, True),
+        ([_logged("viewer", 10), _logged("writer", 11)], None, 11, False),
+        # A lowering that landed before its own cutoff's stamp.
+        ([_logged("admin", 10), _logged("writer", 11)], 12, 11, False),
         # The admin row was still in force when the cutoff passed: tokens minted then.
-        ([_logged("admin", 10), _logged("writer", 13)], 12, True),
-        ([_logged("admin", 10), _logged("admin", 11, revoked=True)], 12, False),
+        ([_logged("admin", 10), _logged("writer", 13)], 12, 13, True),
+        # Its version predates the cutoff, but its insert returned after it.
+        ([_logged("admin", 10), _logged("writer", 11)], 12, 13, True),
+        ([_logged("admin", 10), _logged("admin", 11, revoked=True)], 12, 11, False),
         # A request grants nothing, so approving it raises from nothing.
-        ([_logged("admin", 10, status="pending"), _logged("writer", 11)], None, False),
-        ([], None, False),
+        ([_logged("admin", 10, status="pending"), _logged("writer", 11)], None, 11, False),
+        ([], None, 0, False),
     ],
 )
 def test_a_grant_is_lowered_when_it_ranks_below_a_role_held_since_its_cutoff(
-    history: list[dict], cutoff: int | None, lowered: bool
+    history: list[dict], cutoff: int | None, landed: int, lowered: bool
 ) -> None:
-    assert rev._lowered_since(history, cutoff) is lowered
+    assert rev._lowered_since(history, cutoff, landed * 1_000_000_000) is lowered
 
 
 def test_a_grant_cutoff_acknowledged_late_does_not_move_this_process_back() -> None:

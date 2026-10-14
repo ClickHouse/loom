@@ -12,10 +12,10 @@ across the configured branch namespaces of one repository:
   row is not re-added. Called after an admin grant is created or approved
   on a code namespace, when a branch is added, and once per process per
   namespace by the registrar (so environment-registered branches inherit).
-* ``plan_revoke`` / ``write_revokes`` — a revoked admin leaves every branch,
-  except a branch where they are the only active admin (the handler's own
-  guard). ``grants.revoke`` plans first, writes the cutoffs for every branch
-  in one call, then writes the grant rows.
+* ``plan_revoke`` — a revoked admin leaves every branch, except a branch
+  where they are the only active admin (the handler's own guard).
+  ``grants.revoke`` plans first, writes the cutoffs for every branch in one
+  call, then the grant rows in one insert.
 
 Readers stay per branch: the approval fan-out already turns a person's branch requests
 into one decision. Restricted branches also need the token to name them — a person's
@@ -198,35 +198,6 @@ async def _plan_revoke(
             )
         )
     return out
-
-
-async def write_revokes(org: str, namespace: str, subject: str, rows: list[dict[str, Any]]) -> None:
-    """Write the planned revoke rows. A failure is logged, not raised: the
-    sibling admin grants then stay live, reachable through a flat token's
-    grant check, until an operator revokes them; their cutoffs, written
-    first, still end older tokens' claims there."""
-    if not rows:
-        return
-    from server.identity.app import grant_writes
-
-    try:
-        await grant_writes.insert_rows(rows)
-    except Exception:  # the fan-out never fails the revoke that caused it
-        log.warning(
-            "repo maintainers: revoke fan-out, or its cutoff check, failed for %s/%s/%s",
-            org,
-            namespace,
-            subject,
-            exc_info=True,
-        )
-        return
-    log.info(
-        "repo maintainers: %s/%s — %r revoked on %d sibling branch(es)",
-        org,
-        namespace,
-        subject,
-        len(rows),
-    )
 
 
 async def sync_quietly(org: str, namespace: str, *, ch: Any | None = None) -> None:

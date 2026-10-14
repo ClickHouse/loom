@@ -185,11 +185,11 @@ async def test_grants_revoke_handler_calls_the_cascade(
 
     inserted: list[dict[str, Any]] = []
 
-    async def _insert(row: dict[str, Any], **_kw: Any) -> None:
-        inserted.append(row)
+    async def _insert(rows: list[dict[str, Any]], **_kw: Any) -> None:
+        inserted.extend(rows)
 
     monkeypatch.setattr(grants_repo, "find_any_grant", _find)
-    monkeypatch.setattr(grants_repo, "insert_row", _insert)
+    monkeypatch.setattr(grants_repo, "insert_rows", _insert)
     monkeypatch.setattr(tg, "cascade_revoke_to_created_tokens", _cascade)
     out = await grants_mod.handle_grants_revoke(
         GrantsRevokeInput(org=ORG, namespace="code-private", subject="alice@x")

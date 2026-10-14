@@ -272,7 +272,9 @@ async def _live_grant_row(org: str, namespace: str, subject: str) -> tuple[str, 
     canonical = await canonical_subject(org, subject)
     row = await grants_repo.find_any_grant(org, namespace, canonical)
     if row is None and canonical != subject:
-        return subject, await grants_repo.find_any_grant(org, namespace, subject)
+        other = await grants_repo.find_any_grant(org, namespace, subject)
+        if other is not None:
+            return subject, other
     return canonical, row
 
 
@@ -282,13 +284,16 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
     Refuses to revoke a namespace's last active admin — that would leave it
     ownerless; promote a replacement first. The cutoffs that end older tokens'
     claims, here and on a maintainer's sibling branches, are written before
-    any grant row, so a failed cutoff write fails the revoke. A sibling's grant
-    row that then fails to land is logged and left for an operator to revoke.
+    any grant row, so a failed cutoff write fails the revoke. The sibling rows
+    land in the same insert as this one.
     """
+    from server.code.app.index import maintainers
 
     subject, row = await _live_grant_row(input.org, input.namespace, input.subject)
     if row is None:
-        await grant_writes.recheck(input.org, input.namespace, subject)
+        # A retry: the revoke may have landed with its check failing after it.
+        branches = maintainers.branch_namespaces(input.org, input.namespace) or [input.namespace]
+        await grant_writes.recheck(input.org, [(ns, subject) for ns in branches])
         return GrantsRevokeOutput(revoked=False)
 
     active = (row.status or "active") == "active"
@@ -302,8 +307,6 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
                 f"{input.namespace!r}; promote another member to admin "
                 f"first (grants.create role=admin)"
             )
-
-    from server.code.app.index import maintainers
 
     siblings: list[dict[str, Any]] = []
     if row.role == "admin" and active:
@@ -320,24 +323,20 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
             revoked_by=_actor(),
         )
     now = datetime.now(UTC).replace(tzinfo=None)
-    await grant_writes.insert_row(
-        {
-            "org": input.org,
-            "namespace": input.namespace,
-            "subject": subject,
-            "role": row.role,
-            "status": row.status or "active",
-            "granted_at": now,
-            "granted_by": row.granted_by,
-            "revoked_at": now,
-            "version": _version(),
-        }
-    )
-    if siblings:
-        await maintainers.write_revokes(input.org, input.namespace, subject, siblings)
-    # The tokens this person minted lose their own grants here. Best-effort like the
-    # maintainer fan-out above: the person's revoke has landed; a failed cascade is logged,
-    # never a 500.
+    revoked = {
+        "org": input.org,
+        "namespace": input.namespace,
+        "subject": subject,
+        "role": row.role,
+        "status": row.status or "active",
+        "granted_at": now,
+        "granted_by": row.granted_by,
+        "revoked_at": now,
+        "version": _version(),
+    }
+    await grant_writes.insert_rows([revoked, *siblings])
+    # The tokens this person minted lose their own grants here. Best-effort: the
+    # person's revoke has landed; a failed cascade is logged, never a 500.
     from server.identity.app import token_grants
 
     try:
@@ -366,7 +365,7 @@ async def handle_grants_approve(input: GrantsApproveInput) -> GrantsApproveOutpu
     # last-admin guards grants.create / grants.revoke apply.
     if row is None or (row.status != "pending" and not row.pending_role):
         # Raced with a concurrent revoke/approve, or nothing pending — no-op, no role.
-        await grant_writes.recheck(input.org, input.namespace, input.subject)
+        await grant_writes.recheck(input.org, [(input.namespace, input.subject)])
         return GrantsApproveOutput(
             subject=input.subject,
             namespace=input.namespace,

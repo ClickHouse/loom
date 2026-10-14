@@ -7,8 +7,10 @@ is what lets the write see it lowered admin and write the cutoff.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -91,3 +93,30 @@ async def test_namespace_grant_log_mv_keeps_every_row_the_grants_table_replaces(
         params={"org": org},
     )
     assert [r["role"] for r in rows] == ["viewer", "admin", "writer"]
+
+
+async def test_a_revoke_row_stamped_before_its_cutoff_but_landing_after_is_cut_again(
+    ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A maintainer's sibling rows take their version when the revoke is planned,
+    # before the cutoff; a slow insert lands them after its stamp.
+    from server.identity.app import grant_writes
+
+    org = unique_org("lowering-race")
+    await grants_repo.insert_row(_grant(org, "dave", "admin"))
+    planned = {**_grant(org, "dave", "admin"), "revoked_at": datetime.now(UTC).replace(tzinfo=None)}
+    await revocation.write_grant_cutoffs(org, ["team"], ["dave"], reason="test", revoked_by="t")
+    insert = grants_repo.insert_rows
+
+    async def _slow(rows: list[dict[str, Any]], **k: Any) -> None:
+        await asyncio.sleep(2.1)
+        await insert(rows, **k)
+
+    monkeypatch.setattr(grants_repo, "insert_rows", _slow)
+    await grant_writes.insert_rows([planned])
+
+    key = revocation.grant_claim_key(org, "team", "dave")
+    (row,) = await ch.query_all(
+        "SELECT reason FROM loom.revoked_tokens FINAL WHERE jti = {k:String}", params={"k": key}
+    )
+    assert row["reason"] == "grant lowered"

@@ -339,15 +339,17 @@ async def _write_cutoffs(
     _tighten_locally(keys, cutoff)
 
 
-async def cut_where_lowered(org: str, pairs: list[tuple[str, str]], *, revoked_by: str) -> None:
+async def cut_where_lowered(
+    org: str, pairs: list[tuple[str, str]], *, landed_ns: int, revoked_by: str
+) -> None:
     """Cut each (namespace, subject) whose grant now ranks below a role it
-    held since its last cutoff, in one write.
+    held since its last cutoff, in one write. `landed_ns` is when the grant
+    write returned.
 
     Run after a grant write that read the grant first. It finds a raise that
     landed between that read and the write, and a lowering whose own cutoff
     was stamped before the row landed: a token minted in between still claims
-    the old role. Every op that wrote through `grant_writes` runs it again on
-    a retry, so a cut that failed here is written then."""
+    the old role."""
     from server.core.ch import get_client, own_write_reads
 
     namespaces = sorted({ns for ns, _ in pairs})
@@ -372,15 +374,35 @@ async def cut_where_lowered(org: str, pairs: list[tuple[str, str]], *, revoked_b
     for r in rows:
         history.setdefault((str(r["namespace"]), str(r["subject"])), []).append(r)
     lowered = [
-        pair for pair in pairs if _lowered_since(history.get(pair, []), cutoffs.get(keys[pair]))
+        pair
+        for pair in pairs
+        if _lowered_since(history.get(pair, []), cutoffs.get(keys[pair]), landed_ns)
     ]
     if lowered:
         await _write_cutoffs(org, lowered, reason="grant lowered", revoked_by=revoked_by)
 
 
-def _lowered_since(rows: list[dict[str, Any]], cutoff: int | None) -> bool:
+async def logged_subjects(org: str, namespace: str) -> list[str]:
+    """The subjects the grant log holds for `namespace`: every grant written
+    there in the last week."""
+    from server.core.ch import get_client, own_write_reads
+
+    with own_write_reads():
+        rows = await get_client().query_all(
+            """
+            SELECT DISTINCT subject FROM loom.namespace_grant_log
+            WHERE org = {org:String} AND namespace = {ns:String}
+            """,
+            params={"org": org, "ns": namespace},
+        )
+    return sorted(str(r["subject"]) for r in rows)
+
+
+def _lowered_since(rows: list[dict[str, Any]], cutoff: int | None, landed_ns: int) -> bool:
     """Whether the last of `rows`, one subject's grant history oldest first,
-    ranks below the row in force at `cutoff` (unix seconds) or any later one."""
+    ranks below the row in force at `cutoff` (unix seconds) or any later one.
+    The last row counts as landed no earlier than `landed_ns`: its version is
+    taken before its insert, and the row before it is in force until it lands."""
     from server.operations.base import grant_rank
 
     if not rows:
@@ -389,9 +411,11 @@ def _lowered_since(rows: list[dict[str, Any]], cutoff: int | None) -> bool:
         grant_rank(r["role"]) if r["revoked_at"] is None and r["status"] == "active" else 0
         for r in rows
     ]
+    versions = [int(r["version"]) for r in rows]
+    versions[-1] = max(versions[-1], landed_ns)
     first = 0
     if cutoff is not None:
-        after = [i for i, r in enumerate(rows) if int(r["version"]) >= cutoff * 1_000_000_000]
+        after = [i for i, v in enumerate(versions) if v >= cutoff * 1_000_000_000]
         first = max(after[0] - 1, 0) if after else len(rows) - 1
     return max(ranks[first:]) > ranks[-1]
 
