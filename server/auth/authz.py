@@ -148,33 +148,8 @@ async def check_authorized(
         org is not None and namespace is not None and bool(withdrawn_claims(auth, org, [namespace]))
     )
     if auth.has_ns_roles() and org is not None and namespace is not None:
-        eff = None if withdrawn else auth.effective_role(org, namespace)
-        # An `ns_write` claim (inherited by a delegated child) binds writes too.
-        outside_write_claim = (
-            required_role.value >= Role.WRITER.value
-            and bool(auth.write_namespaces)
-            and not auth.can_write(org, namespace)
-        )
-        if eff is not None and eff.value >= required_role.value and not outside_write_claim:
+        if _scoped_allows(auth, required_role, org, namespace, withdrawn=withdrawn):
             return
-        # On a repository the join IS the read. A scoped
-        # token's map caps what it writes and which memory it reads; a code
-        # index is read-only reference data a maintainer admits people to by
-        # grant, so a reader grant — the subject's own, or the creator's for
-        # a service account — widens READS of a configured code namespace and
-        # nothing else. Without it, every agent token minted before a person
-        # joined a repository would need a re-mint to follow them in.
-        if not (required_role.value <= Role.VIEWER.value and _is_code_namespace(org, namespace)):
-            if withdrawn:
-                raise _refused(
-                    _withdrawn_message(org, namespace, "mint a new token"), org, namespace
-                )
-            raise _refused(
-                f"scoped token: {required_role.name} required on {org}/{namespace}; "
-                f"token grants {eff.name if eff else 'no access'} there",
-                org,
-                namespace,
-            )
 
     # Reads check the readable set; writes (WRITER+) check the narrower
     # writable set, so a token can read an inherited parent namespace
@@ -337,6 +312,40 @@ def names_namespace(auth: AuthInfo, org: str, namespace: str) -> bool:
     if namespace in auth.namespaces:
         return True
     return any(ns == namespace for ns, _role in auth.ns_roles)
+
+
+def _scoped_allows(
+    auth: AuthInfo, required_role: Role, org: str, namespace: str, *, withdrawn: bool
+) -> bool:
+    """Whether a scoped token's own role on (org, namespace) allows
+    `required_role`. Raises when it does not, except for a read of a code
+    namespace, which goes on to the grant check (False)."""
+    eff = None if withdrawn else auth.effective_role(org, namespace)
+    # An `ns_write` claim (inherited by a delegated child) binds writes too.
+    outside_write_claim = (
+        required_role.value >= Role.WRITER.value
+        and bool(auth.write_namespaces)
+        and not auth.can_write(org, namespace)
+    )
+    if eff is not None and eff.value >= required_role.value and not outside_write_claim:
+        return True
+    # On a repository the join IS the read. A scoped
+    # token's map caps what it writes and which memory it reads; a code
+    # index is read-only reference data a maintainer admits people to by
+    # grant, so a reader grant — the subject's own, or the creator's for
+    # a service account — widens READS of a configured code namespace and
+    # nothing else. Without it, every agent token minted before a person
+    # joined a repository would need a re-mint to follow them in.
+    if not (required_role.value <= Role.VIEWER.value and _is_code_namespace(org, namespace)):
+        if withdrawn:
+            raise _refused(_withdrawn_message(org, namespace, "mint a new token"), org, namespace)
+        raise _refused(
+            f"scoped token: {required_role.name} required on {org}/{namespace}; "
+            f"token grants {eff.name if eff else 'no access'} there",
+            org,
+            namespace,
+        )
+    return False
 
 
 def _withdrawn_message(org: str, namespace: str, then: str) -> str:
