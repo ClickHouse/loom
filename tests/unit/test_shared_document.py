@@ -31,11 +31,6 @@ def _doc(path: Path) -> SharedDocument[dict[str, Any]]:
 NONE: dict[str, Any] = {"none": True}
 
 
-@pytest.fixture(autouse=True)
-def _poll_every_time(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(shared_document, "POLL_INTERVAL_S", 0.0)
-
-
 def test_poll_returns_a_document_once_per_version(tmp_path: Path) -> None:
     a, b = _doc(tmp_path / "d.json"), _doc(tmp_path / "d.json")
     assert b.poll() is None  # no file yet
@@ -70,19 +65,12 @@ def test_a_version_that_looks_unchanged_to_stat_is_still_adopted(tmp_path: Path)
     assert b.poll() == {"x": 2}
 
 
-def test_a_poll_reads_at_most_once_an_interval(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    now = [100.0]
-    monkeypatch.setattr(shared_document.time, "monotonic", lambda: now[0])
-    monkeypatch.setattr(shared_document, "POLL_INTERVAL_S", 1.0)
-    path = tmp_path / "d.json"
-    a, b = _doc(path), _doc(path)
-    assert b.poll() is None
+def test_a_poll_sees_a_sibling_update_at_once(tmp_path: Path) -> None:
+    a, b = _doc(tmp_path / "d.json"), _doc(tmp_path / "d.json")
     a.update(lambda _: {"x": 1}, NONE)
-    assert b.poll() is None  # inside the interval: not read
-    now[0] += 1.0
     assert b.poll() == {"x": 1}
+    a.update(lambda _: {"x": 2}, NONE)
+    assert b.poll() == {"x": 2}  # an override binds the next request
 
 
 def test_an_edit_starts_from_the_latest_version(tmp_path: Path) -> None:

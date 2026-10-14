@@ -1,7 +1,7 @@
 """A small JSON document the web processes of one server share.
 
 Runtime overrides set through one worker must bind its siblings. Each keeps its
-own copy and `poll`s the file, reading it at most every POLL_INTERVAL_S; `update`
+own copy and `poll`s the file, which re-reads the small document; `update`
 re-reads the latest version under an exclusive lock, bumps the document's
 generation and replaces the file atomically, so concurrent updates never drop
 each other's change. A sibling adopts a version whose generation it has not seen.
@@ -26,9 +26,6 @@ from server.core.runtime_files import open_private, server_file
 
 log = logging.getLogger(__name__)
 
-# How often a poll reads the document; every request polls, and an override
-# binds the siblings within this.
-POLL_INTERVAL_S = 1.0
 # How long `waiting_out_siblings` retries an update a sibling's lock refused; an
 # update holds the lock for one read and one atomic replace.
 LOCK_WAIT_S = 1.0
@@ -63,7 +60,6 @@ class SharedDocument[T]:
         self._decode, self._encode = decode, encode
         # The generation last adopted or published; None when none was.
         self._seen: int | None = None
-        self._poll_at = 0.0
         # The last read failure warned about, so a lasting one is logged once.
         self._warned = ""
 
@@ -84,10 +80,6 @@ class SharedDocument[T]:
     def poll(self) -> T | None:
         """The document if it changed since the last poll or update, else None.
         A version that cannot be read is skipped with a warning."""
-        now = time.monotonic()
-        if now < self._poll_at:
-            return None
-        self._poll_at = now + POLL_INTERVAL_S
         try:
             return self._read_changed()
         except OSError as e:

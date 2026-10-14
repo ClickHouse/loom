@@ -29,7 +29,7 @@ consumer without listing them. The transport then applies the deployment's
 
 The runtime table binds every web process of one server: with more than one
 (`LOOM_WEB_WORKERS`) it lives in a per-server file in the runtime directory
-(`server/core/runtime_files.py`), read at most once a second and updated under a lock.
+(`server/core/runtime_files.py`), re-read on every op and updated under a lock.
 It is not shared across replicas; the settings map is the fleet-wide half.
 """
 

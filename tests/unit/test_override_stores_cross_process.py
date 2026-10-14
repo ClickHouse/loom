@@ -58,12 +58,6 @@ for i in range(int(sys.argv[3])):
 )
 
 
-@pytest.fixture(autouse=True)
-def _poll_every_request(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A sibling's update is read on the next request, not up to a second later."""
-    monkeypatch.setattr(shared_document, "POLL_INTERVAL_S", 0.0)
-
-
 def _document(path: Path | str) -> dict[str, object]:
     """The overrides a published file holds."""
     return json.loads(Path(path).read_text())["document"]
