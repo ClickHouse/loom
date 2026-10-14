@@ -20,7 +20,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from server.core.ch import get_client, sequential_reads
@@ -245,8 +245,8 @@ async def begin_session_run(input: RunBeginInput, *, started_at: datetime) -> No
         existing = await runs_store.fetch_run(ch, input.org, input.namespace, input.run_id)
     version = None
     if existing is None:
-        started_ms = int(started_at.replace(tzinfo=UTC).timestamp() * 1000)
-        version = _FIRST_BEGIN_VERSION_BASE - started_ms * 1_000_000
+        started_ns = (started_at - datetime(1970, 1, 1)) // timedelta(microseconds=1) * 1000
+        version = _FIRST_BEGIN_VERSION_BASE - started_ns
     else:
         input = input.model_copy(
             update={
