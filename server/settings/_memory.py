@@ -333,8 +333,10 @@ class MemorySettings(BaseModel):
     # Memory writes one pass links (at least 1).
     memory_code_links_batch: int = Field(default=500, ge=1)
     # Seconds the pass stays behind the newest queued memory write, so inserts running at
-    # the same moment are visible before the cursor passes them.
-    memory_code_links_settle_seconds: int = Field(default=60, ge=0)
+    # the same moment are visible before the cursor passes them (at least 10). A write
+    # visible later than this is passed and stays unlinked until a backfill reads it; a
+    # longer wait makes that rarer and links every write that much later.
+    memory_code_links_settle_seconds: int = Field(default=60, ge=10)
     # Days a code-shaped name that names nothing on trunk yet (unmerged code) is
     # retried before it is dropped.
     memory_code_links_pending_days: int = Field(default=14, ge=1)
