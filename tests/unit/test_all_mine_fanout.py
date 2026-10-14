@@ -120,6 +120,22 @@ def test_auth_off_applies_the_cap_too(
     assert _fanout().reads("work") == (["work", "local"], ["alpha-team"])
 
 
+def test_a_namespace_a_claim_repeats_is_read_once(
+    grants: dict[str, list[str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "memory_search_fanout_max_namespaces", 2)
+    scoped = AuthInfo(
+        subject="sa:bot",
+        org=ORG,
+        namespaces=("team", "team", "alice", "wiki"),
+        roles=(),
+        is_service_account=True,
+        ns_roles=(("team", "viewer"), ("alice", "writer"), ("wiki", "viewer")),
+    )
+    ctx.set_current_auth(scoped)
+    assert _fanout().reads("zed") == (["zed", "team", "alice"], ["wiki"])
+
+
 def test_the_cap_keeps_a_scoped_tokens_own_order(
     grants: dict[str, list[str]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -173,10 +189,16 @@ def test_namespaces_to_search_leads_with_the_addressed_namespace(
         return Fanout(org=org, namespaces=("team", "mine", "wiki"), cap=1)
 
     monkeypatch.setattr(fanout_mod, "resolve_fanout", _fanout)
-    assert asyncio.run(namespaces_to_search(ORG, "mine", "all_mine")) == ["mine", "team"]
-    assert asyncio.run(namespaces_to_search(ORG, "wiki", "all_mine")) == ["wiki", "team"]
-    assert asyncio.run(namespaces_to_search(ORG, "mine", "this")) == ["mine"]
-    assert asyncio.run(namespaces_to_search(ORG, "mine", None)) == ["mine"]
+    assert asyncio.run(namespaces_to_search(ORG, "mine", "all_mine")) == (
+        ["mine", "team"],
+        ["wiki"],
+    )
+    assert asyncio.run(namespaces_to_search(ORG, "wiki", "all_mine")) == (
+        ["wiki", "team"],
+        ["mine"],
+    )
+    assert asyncio.run(namespaces_to_search(ORG, "mine", "this")) == (["mine"], [])
+    assert asyncio.run(namespaces_to_search(ORG, "mine", None)) == (["mine"], [])
 
 
 def test_knowledge_reads_an_addressed_public_namespace_in_the_first_pass(

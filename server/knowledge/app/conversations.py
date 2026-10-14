@@ -491,7 +491,9 @@ async def handle_conversation_search(
     if query_vec is None:
         return await _search_substring_fallback(input)
 
-    namespaces = await namespaces_to_search(input.org, input.namespace, input.namespace_scope)
+    namespaces, skipped = await namespaces_to_search(
+        input.org, input.namespace, input.namespace_scope
+    )
 
     async def _search_one(ns: str) -> tuple[str, list[ConversationHit]]:
         return ns, await vector_search(
@@ -530,7 +532,9 @@ async def handle_conversation_search(
                 )
             )
     scored.sort(key=lambda pair: pair[0], reverse=True)
-    return ConversationSearchOutput(hits=[h for _, h in scored[: input.top_k]])
+    return ConversationSearchOutput(
+        hits=[h for _, h in scored[: input.top_k]], namespaces_skipped=skipped
+    )
 
 
 async def _search_substring_fallback(

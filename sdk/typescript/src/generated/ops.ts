@@ -2208,6 +2208,7 @@ export interface ConversationHit {
 
 export interface ConversationSearchOutput {
   hits: ConversationHit[];
+  namespaces_skipped?: string[];
 }
 
 export interface ConversationSetLoggingInput {
@@ -3194,6 +3195,7 @@ export interface SearchHit {
 export interface KnowledgeSearchOutput {
   results: SearchHit[];
   embedding_model: string;
+  namespaces_skipped?: string[];
 }
 
 export interface KnowledgeSynthesizeInput {

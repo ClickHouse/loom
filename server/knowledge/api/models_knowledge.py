@@ -178,6 +178,9 @@ class KnowledgeSearchOutput(BaseModel):
     results: list[_SearchHit]
     # Embedding model the query was embedded with; only chunks of this model are searched.
     embedding_model: str
+    # Namespaces of the caller an all_mine search did not read because it stops
+    # at `memory_search_fanout_max_namespaces`; address one by name to search it.
+    namespaces_skipped: list[str] = Field(default_factory=list)
 
 
 class _KnowledgeBulkEntry(BaseModel):

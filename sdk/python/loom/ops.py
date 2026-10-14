@@ -7343,6 +7343,7 @@ class ConversationSearchBody(TypedDict, total=False):
 
 class ConversationSearchOutput(TypedDict, total=False):
     hits: Required[list["ConversationHit"]]
+    namespaces_skipped: NotRequired[list[str]]
 
 
 class ConversationHit(TypedDict, total=False):
@@ -8825,6 +8826,7 @@ class KnowledgeSearchBody(TypedDict, total=False):
 class KnowledgeSearchOutput(TypedDict, total=False):
     results: Required[list["SearchHit"]]
     embedding_model: Required[str]
+    namespaces_skipped: NotRequired[list[str]]
 
 
 class SearchHit(TypedDict, total=False):

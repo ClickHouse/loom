@@ -43,13 +43,14 @@ class Fanout:
         return [namespace, *read], [ns for ns in others if ns not in keep]
 
 
-async def namespaces_to_search(org: str, namespace: str, namespace_scope: str | None) -> list[str]:
-    """The namespaces one search leg reads: the addressed `namespace`, and
+async def namespaces_to_search(
+    org: str, namespace: str, namespace_scope: str | None
+) -> tuple[list[str], list[str]]:
+    """(read, skipped) for one search leg: the addressed `namespace`, and
     under `all_mine` the caller's fan-out besides."""
     if namespace_scope != "all_mine":
-        return [namespace]
-    read, _skipped = (await resolve_fanout(org)).reads(namespace)
-    return read
+        return [namespace], []
+    return (await resolve_fanout(org)).reads(namespace)
 
 
 async def resolve_fanout(org: str) -> Fanout:
@@ -64,7 +65,8 @@ async def resolve_fanout(org: str) -> Fanout:
     auth = context.current_auth()
     subject = auth_off_subject() if auth is None else None
     readable = await context.resolve_my_namespaces(org, subject)
-    mine = await directory().fanout_namespaces(org, readable)
+    # A scoped or delegated claim may repeat a namespace; it is read once.
+    mine = list(dict.fromkeys(await directory().fanout_namespaces(org, readable)))
     cap = settings.memory_search_fanout_max_namespaces
     ordered = auth is not None and auth.has_ns_roles()
     public: set[str] = set()

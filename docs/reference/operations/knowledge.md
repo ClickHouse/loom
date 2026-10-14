@@ -244,6 +244,7 @@ Search the user's uploaded document library — bills, contracts, receipts, resu
 | --- | --- | --- |
 | `results` | `list[_SearchHit]` | Hits ranked by `score` (then similarity), best first; empty when nothing matched. |
 | `embedding_model` | `str` | Embedding model the query was embedded with; only chunks of this model are searched. |
+| `namespaces_skipped` | `list[str]` | Namespaces of the caller an all_mine search did not read because it stops at `memory_search_fanout_max_namespaces`; address one by name to search it. |
 
 ## `knowledge.synthesize`
 

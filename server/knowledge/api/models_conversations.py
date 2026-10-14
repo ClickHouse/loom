@@ -253,6 +253,9 @@ class _ConversationHit(BaseModel):
 class ConversationSearchOutput(BaseModel):
     # Matching messages, most similar first; empty when none clears the similarity floor.
     hits: list[_ConversationHit]
+    # Namespaces of the caller an all_mine search did not read because it stops
+    # at `memory_search_fanout_max_namespaces`; address one by name to search it.
+    namespaces_skipped: list[str] = Field(default_factory=list)
 
 
 # conversation.threads — recent thread list (grouped over loom.conversations),

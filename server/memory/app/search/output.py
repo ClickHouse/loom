@@ -98,6 +98,8 @@ async def _serve_parked_page(input: MemorySearchInput) -> MemorySearchOutput:
         results=hits,
         embedding_model=embedder_name,
         candidates_total=total,
+        namespaces_searched=list(payload.get("namespaces_searched") or [input.namespace]),
+        namespaces_skipped=list(payload.get("namespaces_skipped") or []),
         page_offset=int(offset),
         next_page=_pages.make_handle(blob_key, nxt) if nxt >= 0 else "",
         abstain=not hits,
@@ -263,6 +265,8 @@ async def _finish_search_output(
                 top_k=int(input.top_k),
                 candidates_total=_output.candidates_total,
                 tail=ctx.page_tail,
+                namespaces_searched=_output.namespaces_searched,
+                namespaces_skipped=_output.namespaces_skipped,
             )
             _blob_key = await _pages.store_page(
                 get_client(),

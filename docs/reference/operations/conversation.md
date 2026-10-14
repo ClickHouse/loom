@@ -176,6 +176,7 @@ Text search across a namespace's conversation history (ILIKE over message conten
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `hits` | `list[_ConversationHit]` | Matching messages, most similar first; empty when none clears the similarity floor. |
+| `namespaces_skipped` | `list[str]` | Namespaces of the caller an all_mine search did not read because it stops at `memory_search_fanout_max_namespaces`; address one by name to search it. |
 
 ## `conversation.set_logging`
 
