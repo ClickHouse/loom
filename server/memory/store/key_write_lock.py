@@ -87,10 +87,8 @@ class KeyWriteLocks:
         name = lock_name(org, namespace, agent, user_id, session_id, memory_key)
         me, until = default_holder(), time.monotonic() + self._wait_s
         async with self._process_lock(name, until):
-            if not await self._keeper_acquire(name, me, until):
-                yield
-                return
-            try:
+            try:  # released however it ends: a cancelled insert may have landed
+                await self._keeper_acquire(name, me, until)
                 yield
             finally:
                 await self._keeper_release(name, me)
@@ -108,15 +106,15 @@ class KeyWriteLocks:
         async with AsyncExitStack() as stack:
             try:
                 await stack.enter_async_context(self._process_lock(name, until))
+                # released however it ends: a failed or cancelled insert may have landed
+                stack.push_async_callback(self._keeper_release, name, me)
                 stamped = await self._acquire(name, me, until)
             except PreconditionFailedError:
                 raise LeaseBusy(name) from None
             except Exception as e:  # a lease Keeper cannot confirm is not held
                 degradations.note("memory_key_lock", "lease_unconfirmed", e)
-                await self._keeper_release(name, me)  # an insert that landed before the error
                 raise LeaseBusy(name) from e
             if stamped is not None and body is not None:
-                stack.push_async_callback(self._keeper_release, name, me)
                 deadline = stamped + self._ttl_s
                 renewing = asyncio.create_task(self._renew(name, me, body, lost, deadline))
                 stack.callback(renewing.cancel)
@@ -197,12 +195,14 @@ class KeyWriteLocks:
             started = time.monotonic()
             if await self._attempt(name, me):
                 return started
-            if time.monotonic() >= until:
+            if (left := until - time.monotonic()) <= 0:
                 raise _busy()
-            await asyncio.sleep(poll)
+            await asyncio.sleep(min(poll, left))  # no attempt starts after `until`
             poll = min(poll * 1.5, 0.5)
 
     async def _keeper_release(self, name: str, me: str) -> None:
+        if self._keeper is False:
+            return  # no Keeper, no key
         try:
             await self.ch.execute(LOCK_RELEASE, params={"name": name, "me": me})
         except Exception as e:  # noqa: BLE001 — the key expires after its TTL

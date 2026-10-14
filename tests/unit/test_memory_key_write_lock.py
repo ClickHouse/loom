@@ -110,7 +110,11 @@ async def test_keeper_failure_degrades_to_the_process_lock(
     monkeypatch.setattr(kl.degradations, "note", lambda p, e, r="": notes.append((p, e)))
     async with _locks(FakeKeeper(fail=True), monkeypatch).hold(*_IDENT):
         pass
-    assert notes == [("memory_key_lock", "process_lock_only")]
+    # the insert may have landed before the failure: its release is tried too
+    assert notes == [
+        ("memory_key_lock", "process_lock_only"),
+        ("memory_key_lock", "release_left_to_ttl"),
+    ]
 
 
 async def test_racing_conditional_sets_let_one_through(
@@ -388,3 +392,65 @@ async def test_an_attempt_that_ends_past_the_wait_is_the_last(
         async with locks.lease("job", wait_s=0.5):
             pytest.fail("took the lease after its wait")
     assert attempts == 1
+
+
+class SlowReplyKeeper(FakeKeeper):
+    """A lock table whose INSERT lands, then answers only once `reply` is set."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.landed, self.reply = asyncio.Event(), asyncio.Event()
+
+    async def execute(self, sql: str, params: dict[str, Any]) -> None:
+        await super().execute(sql, params)
+        if sql.startswith("INSERT"):
+            self.landed.set()
+            await self.reply.wait()
+
+
+@pytest.mark.parametrize("how", ["lease", "hold"])
+async def test_a_wait_cancelled_after_its_insert_landed_releases_the_key(
+    how: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ch = SlowReplyKeeper()
+    locks = _locks(ch, monkeypatch)
+
+    async def take() -> None:
+        async with locks.lease("job") if how == "lease" else locks.hold(*_IDENT):
+            pytest.fail("entered before the insert answered")
+
+    taking = asyncio.create_task(take())
+    await ch.landed.wait()
+    assert ch.rows  # the key is in Keeper, its reply still on the way
+    taking.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await taking
+    assert not ch.rows
+
+
+async def test_no_attempt_starts_after_the_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = [100.0]
+    slept: list[float] = []
+
+    async def sleep(s: float) -> None:
+        slept.append(s)
+        now[0] += s
+
+    monkeypatch.setattr(kl, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    monkeypatch.setattr(kl.asyncio, "sleep", sleep)
+    ch = FakeKeeper()
+    ch.rows["job"] = {"holder": "other", "stale": False}
+    locks = kl.KeyWriteLocks(ch, wait_s=0.5, poll_s=0.5)  # type: ignore[arg-type]
+    starts: list[float] = []
+    attempt = locks._attempt
+
+    async def timed(name: str, me: str) -> bool:
+        starts.append(now[0])
+        now[0] += 0.45  # each attempt takes most of the wait
+        return await attempt(name, me)
+
+    monkeypatch.setattr(locks, "_attempt", timed)
+    with pytest.raises(kl.LeaseBusy):
+        async with locks.lease("job"):
+            pytest.fail("took the lease after its wait")
+    assert max(starts) <= 100.5
