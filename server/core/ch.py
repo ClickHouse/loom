@@ -872,11 +872,16 @@ class CHClient:
         try:
             await self._insert_rows(table, rows, settings, project_onto_table)
         except Exception as e:
-            if not await codes_state.only_placeholders_missed(table, rows, padded, e):
+            if error_code(e) != WIDTH_MISMATCH_CODE:
                 raise
-            # The table was rebuilt at another width since the last reading.
+            # A table rebuilt at another width since the last reading: refuse a
+            # vector the caller wrote, else size the placeholders again.
+            sized = [len(rows[i][c]) for i, c in padded]
             placeholders.unpad(rows, padded)
-            placeholders.pad_rows(table, rows)
+            await codes_state.refuse_on_fresh_widths(table, rows)
+            padded = placeholders.pad_rows(table, rows)
+            if [len(rows[i][c]) for i, c in padded] == sized:
+                raise  # the fresh reading does not explain it
             await self._insert_rows(table, rows, settings, project_onto_table)
 
     async def _insert_rows(

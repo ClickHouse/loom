@@ -88,6 +88,7 @@ async def test_a_set_on_a_table_rebuilt_since_the_reading_writes_nothing(
     """The old reading matches the model; a recent one does not."""
     _coded_at(monkeypatch, FixedEmbedder.dim)
     monkeypatch.setattr(codes_state, "_ch", _Rebuilt(FixedEmbedder.dim * 2))
+    monkeypatch.setattr(codes_state, "_codec_available", True)
     stale = time.monotonic() - codes_state.FRESH_READING_S - 1
     monkeypatch.setattr(codes_state, "_probed_at", stale)
     with pytest.raises(CodedWidthMismatchError):

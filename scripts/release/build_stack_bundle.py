@@ -43,8 +43,9 @@ def _image_default(image: str) -> str:
 LATEST_CLICKHOUSE = _image_default("clickhouse/clickhouse-server:latest")
 # One exact release, as dev/clickhouse_release.sh prints it.
 EXACT_CLICKHOUSE = re.compile(r"clickhouse/clickhouse-server:\d+(?:\.\d+){3}")
-_HEAD, _TAIL = _image_default("\0").split("\0")
-_PINNED = re.compile(re.escape(_HEAD) + f"({EXACT_CLICKHOUSE.pattern})" + re.escape(_TAIL))
+_PINNED = re.compile(
+    re.escape("${LOOM_CLICKHOUSE_IMAGE:-") + f"({EXACT_CLICKHOUSE.pattern})" + re.escape("}")
+)
 
 
 def pinned_image(archive: Path) -> str:

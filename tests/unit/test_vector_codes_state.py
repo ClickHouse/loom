@@ -39,8 +39,10 @@ class _FakeCH:
         patches: dict[str, int],
         fail: bool = False,
         width: int = 1024,
+        codec: bool = True,
     ):
         self.coded, self.patches, self.fail, self.width = coded, patches, fail, width
+        self.codec = codec
         self.calls: list[str] = []
 
     async def query_all(
@@ -49,6 +51,8 @@ class _FakeCH:
         self.calls.append(sql)
         if self.fail:
             raise RuntimeError("boom")
+        if "system.settings" in sql:
+            return [{"n": int(self.codec)}]
         if "system.columns" in sql:
             return [
                 {
@@ -135,7 +139,9 @@ async def test_probe_reads_codecs_then_patch_parts_of_coded_tables_only() -> Non
     assert patch_parts.last_reading("loom.memory_chunks") == 0
     # an uncoded table is not asked about
     assert patch_parts.last_reading("loom.code_summaries") is None
-    assert len(ch.calls) == 2
+    assert len(ch.calls) == 3  # the codec, asked once per process, then the two facts
+    await vector_codes_state.probe(ch)
+    assert len(ch.calls) == 5
     assert vector_codes_state.stored_width("chunks", "embedding") == 1024
     assert vector_codes_state.stored_width("loom.memory_chunks", "embedding") == 1024
     assert vector_codes_state.stored_width("code_summaries", "embedding") is None
@@ -238,6 +244,40 @@ async def test_a_write_that_embeds_is_judged_on_a_recent_reading(
     _age_reading(monkeypatch)
     with pytest.raises(CodedWidthMismatchError):
         await vector_codes_state.refuse_width("chunks", 3072)
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_rereads_a_reading_a_second_old(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Even inside FRESH_READING_S: the table went back to the served width."""
+    ch = _FakeCH(coded=[("chunks", "embedding")], patches={}, width=1024)
+    await vector_codes_state.probe(ch)
+    ch.width = 3072
+    old = vector_codes_state._probed_at - vector_codes_state.REFUSAL_READING_S - 0.5
+    monkeypatch.setattr(vector_codes_state, "_probed_at", old)
+    await vector_codes_state.refuse_width("chunks", 3072)
+
+
+@pytest.mark.asyncio
+async def test_a_probe_that_finishes_last_keeps_the_later_reading() -> None:
+    ch = _FakeCH(coded=[("chunks", "embedding")], patches={}, width=1024)
+    gate = asyncio.Event()
+    first_read = ch.query_all
+
+    async def held(sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        rows = await first_read(sql, params)
+        if "system.columns" in sql:
+            await gate.wait()
+        return rows
+
+    ch.query_all = held  # type: ignore[method-assign]
+    older = asyncio.create_task(vector_codes_state.probe(ch))
+    await asyncio.sleep(0)
+    ch.query_all = first_read  # type: ignore[method-assign]
+    ch.width = 3072
+    await vector_codes_state.probe(ch)
+    gate.set()
+    await older
+    assert vector_codes_state.stored_width("chunks", "embedding") == 3072
 
 
 @pytest.mark.asyncio

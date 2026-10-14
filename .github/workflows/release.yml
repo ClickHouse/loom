@@ -449,7 +449,8 @@ jobs:
           path: release
       # Replacing an asset deletes it first: a failed upload would leave an
       # installed version without its bundle, and its pin with it. A published
-      # bundle stays; only its checksum file is written again.
+      # bundle and its checksum stay; a checksum file the release lost is
+      # written again from the published bundle.
       - name: Keep a bundle this version already published
         env:
           VERSION: ${{ needs.version.outputs.version }}
@@ -459,8 +460,10 @@ jobs:
           bash scripts/release/published_bundle.sh "$VERSION" published || status=$?
           case $status in
             0)
-              rm release/stack/loom-stack.tar.gz
-              (cd published && sha256sum loom-stack.tar.gz) >release/stack/loom-stack.tar.gz.sha256
+              rm release/stack/loom-stack.tar.gz release/stack/loom-stack.tar.gz.sha256
+              if [ ! -f published/loom-stack.tar.gz.sha256 ]; then
+                (cd published && sha256sum loom-stack.tar.gz) >release/stack/loom-stack.tar.gz.sha256
+              fi
               ;;
             3) ;;
             *) exit "$status" ;;

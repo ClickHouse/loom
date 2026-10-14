@@ -105,9 +105,9 @@ A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not mov
    names, on amd64 and arm64;
 7. `github-release` creates the GitHub Release only after that image exists, or updates it
    on a re-run, with notes generated from the commits since the previous tag, and attaches
-   the verified files. A bundle the release already carries is kept, with its checksum
-   written again: replacing an asset deletes it first, and a failed upload would leave an
-   installed version without its bundle.
+   the verified files. A bundle the release already carries is kept, and so is its checksum
+   (one the release lost is written again from it): replacing an asset deletes it first,
+   and a failed upload would leave an installed version without its bundle.
 
 The server image is published before the GitHub Release, so an installer shown on the
 release page never points at a missing image.

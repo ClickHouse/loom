@@ -34,7 +34,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Callable, Collection
+from collections.abc import Callable
 from typing import Any
 
 from server.core.schema.vector_codec_ddl import CODED_TABLES, codec_width
@@ -46,6 +46,7 @@ CODED_COLUMNS_SQL = (
     "SELECT table, name, compression_codec FROM system.columns "
     "WHERE database = {db:String} AND compression_codec LIKE '%Quantized(%'"
 )
+CODEC_SETTING_SQL = "SELECT count() AS n FROM system.settings WHERE name = 'enable_quantized_codec'"
 PATCH_PARTS_SQL = (
     "SELECT table, countIf(startsWith(name, 'patch')) AS patch_parts "
     "FROM system.parts "
@@ -58,10 +59,14 @@ _coded: frozenset[str] | None = None
 # "loom.table.column" -> the vector width its codec fixes; a write of any other
 # length fails.
 _widths: dict[str, int] = {}
-# monotonic time of the last completed probe; None = never probed
+# monotonic start of the probe the reading came from; None = never probed
 _probed_at: float | None = None
 _ch: Any = None
+# The probe in flight, and when it started.
 _refresh: asyncio.Task[Any] | None = None
+_refresh_started = 0.0
+# Whether the server has the Quantized codec at all; None = not asked yet.
+_codec_available: bool | None = None
 
 
 def _qualify(table: str) -> str:
@@ -70,12 +75,14 @@ def _qualify(table: str) -> str:
 
 def reset() -> None:
     """Test seam."""
-    global _coded, _widths, _probed_at, _ch, _refresh
+    global _coded, _widths, _probed_at, _ch, _refresh, _refresh_started, _codec_available
     _coded = None
     _widths = {}
     _probed_at = None
     _ch = None
     _refresh = None
+    _refresh_started = 0.0
+    _codec_available = None
 
 
 def set_coded(columns: set[str] | frozenset[str] | None) -> None:
@@ -145,18 +152,13 @@ def _coded_of(table: str) -> list[tuple[str, str, int]]:
     return [(c, c[len(prefix) :], w) for c, w in _widths.items() if c.startswith(prefix)]
 
 
-# A write that embeds is judged against a reading at most this old before any
-# part of it lands, so a table rebuilt outside Loom does not leave half a write
-# behind for a whole probe interval.
+# A write that embeds is checked against a reading at most this old before any
+# part of it lands. That narrows, not closes, the window in which a table
+# rebuilt outside Loom takes half a write: its version row or document lands and
+# its vectors are refused.
 FRESH_READING_S = 5.0
-
-
-async def _recheck() -> None:
-    """Re-read the widths when the reading is older than FRESH_READING_S;
-    concurrent writers wait on one re-read."""
-    if _ch is None or (_probed_at is not None and time.monotonic() - _probed_at <= FRESH_READING_S):
-        return
-    await asyncio.shield(_start_refresh())
+# A write is refused only on a reading taken at most this long before it began.
+REFUSAL_READING_S = 1.0
 
 
 async def refuse_other_widths(table: str, rows: list[dict[str, Any]]) -> None:
@@ -165,48 +167,27 @@ async def refuse_other_widths(table: str, rows: list[dict[str, Any]]) -> None:
     await _refuse_if(lambda: _row_mismatch(table, rows))
 
 
-async def only_placeholders_missed(
-    table: str, rows: list[dict[str, Any]], padded: list[tuple[int, str]], error: Exception
-) -> bool:
-    """After ClickHouse refused `rows` with code 190 (a table rebuilt at another
-    width since the last reading): read the widths afresh and refuse by name when
-    a vector the caller wrote misses them. True when only the placeholders at
-    `padded` miss them, so the caller sizes them again and retries."""
-    from server.core.ch_errors import WIDTH_MISMATCH_CODE, error_code
-
-    if _ch is None or error_code(error) != WIDTH_MISMATCH_CODE:
-        return False
-    await asyncio.shield(_start_refresh(fresh=True))
-    if (found := _row_mismatch(table, rows, skip=set(padded))) is not None:
-        _refuse(*found)
-    return any(
-        len(rows[i][name]) != stored
-        for _, name, stored in _coded_of(table)
-        for i, c in padded
-        if c == name
-    )
-
-
 async def refuse_width(table: str, dim: int) -> None:
     """The same check for a write whose vectors will be `dim` wide, made before
-    any part of it is written, against a recent reading."""
-    await _recheck()
-    if (found := _width_mismatch(table, dim)) is not None:
+    any part of it is written, against a reading at most FRESH_READING_S old."""
+    if _codec_available:
+        await _reading_since(time.monotonic() - FRESH_READING_S)
+    await _refuse_if(lambda: _width_mismatch(table, dim))
+
+
+async def refuse_on_fresh_widths(table: str, rows: list[dict[str, Any]]) -> None:
+    """After ClickHouse refused `rows` with code 190: read the widths again and
+    refuse by name a vector the table no longer takes."""
+    await _reading_since(time.monotonic())
+    if (found := _row_mismatch(table, rows)) is not None:
         _refuse(*found)
 
 
-def _row_mismatch(
-    table: str, rows: list[dict[str, Any]], skip: Collection[tuple[int, str]] = ()
-) -> tuple[str, int, int] | None:
+def _row_mismatch(table: str, rows: list[dict[str, Any]]) -> tuple[str, int, int] | None:
     for column, name, stored in _coded_of(table):
-        for i, row in enumerate(rows):
+        for row in rows:
             vector = row.get(name)
-            if (
-                vector is not None
-                and len(vector)
-                and len(vector) != stored
-                and (i, name) not in skip
-            ):
+            if vector is not None and len(vector) and len(vector) != stored:
                 return column, stored, len(vector)
     return None
 
@@ -221,9 +202,18 @@ def _width_mismatch(table: str, dim: int) -> tuple[str, int, int] | None:
 async def _refuse_if(mismatch: Callable[[], tuple[str, int, int] | None]) -> None:
     if mismatch() is None:
         return
-    await _recheck()
+    await _reading_since(time.monotonic() - REFUSAL_READING_S)
     if (found := mismatch()) is not None:
         _refuse(*found)
+
+
+async def _reading_since(t: float) -> None:
+    """Wait for a reading whose probe started at or after monotonic time `t`:
+    the current one, the probe in flight, or a new one. Concurrent writers wait
+    on one probe."""
+    if _ch is None or (_probed_at is not None and _probed_at >= t):
+        return
+    await asyncio.shield(_start_refresh(since=t))
 
 
 def is_coded(table: str, column: str) -> bool | None:
@@ -247,32 +237,56 @@ def codes_apply(table: str, column: str = "embedding") -> bool:
 
 
 async def probe(ch: Any) -> None:
-    """Read both facts once. A failed read keeps the previous reading."""
-    global _probed_at, _ch, _widths
+    """Read both facts once. A failed read keeps the previous reading. A probe
+    publishes only while no later-started probe has: each answer is applied
+    together with its start time."""
+    global _probed_at, _ch, _widths, _codec_available
     from server.core.vectors import patch_parts
 
+    started = time.monotonic()
     _ch = ch
+    if _codec_available is None:
+        _codec_available = await _has_codec(ch)
     try:
         rows = await ch.query_all(CODED_COLUMNS_SQL, {"db": "loom"})
+    except Exception as e:  # noqa: BLE001 — advisory; the previous reading stands
+        log.info("coded-column probe failed: %s", str(e)[:160])
+        rows = None
+    if _probed_at is not None and _probed_at > started:
+        return
+    _probed_at = started
+    if rows is not None:
         set_coded({f"loom.{r['table']}.{r['name']}" for r in rows})
         _widths = {
             f"loom.{r['table']}.{r['name']}": width
             for r in rows
             if (width := codec_width(str(r.get("compression_codec") or ""))) is not None
         }
-    except Exception as e:  # noqa: BLE001 — advisory; the previous reading stands
-        log.info("coded-column probe failed: %s", str(e)[:160])
     tables = sorted({c.rsplit(".", 1)[0].split(".", 1)[1] for c in (_coded or ())})
-    if tables:
-        try:
-            rows = await ch.query_all(PATCH_PARTS_SQL, {"db": "loom", "tables": tables})
-            seen = {str(r["table"]): int(r.get("patch_parts") or 0) for r in rows}
-            for t in tables:
-                # a coded table with no active part at all has no patch part
-                patch_parts.set_reading(seen.get(t, 0), f"loom.{t}")
-        except Exception as e:  # noqa: BLE001 — keeps the last patch-part reading
-            log.info("patch-part probe failed: %s", str(e)[:160])
-    _probed_at = time.monotonic()
+    if not tables:
+        return
+    try:
+        rows = await ch.query_all(PATCH_PARTS_SQL, {"db": "loom", "tables": tables})
+    except Exception as e:  # noqa: BLE001 — keeps the last patch-part reading
+        log.info("patch-part probe failed: %s", str(e)[:160])
+        return
+    if _probed_at != started:
+        return
+    seen = {str(r["table"]): int(r.get("patch_parts") or 0) for r in rows}
+    for t in tables:
+        # a coded table with no active part at all has no patch part
+        patch_parts.set_reading(seen.get(t, 0), f"loom.{t}")
+
+
+async def _has_codec(ch: Any) -> bool | None:
+    """Whether the server knows the Quantized codec (26.8 or later); None when
+    the question failed, so it is asked again."""
+    try:
+        rows = await ch.query_all(CODEC_SETTING_SQL)
+    except Exception as e:  # noqa: BLE001 — advisory; asked again on the next probe
+        log.info("codec probe failed: %s", str(e)[:160])
+        return None
+    return bool(rows and int(rows[0].get("n") or 0))
 
 
 async def ensure_probed(ch: Any, *, reread: bool = False) -> None:
@@ -310,16 +324,16 @@ def _maybe_refresh() -> None:
         asyncio.get_running_loop()
     except RuntimeError:
         return
-    _start_refresh()
+    _start_refresh(since=0.0)
 
 
-def _start_refresh(*, fresh: bool = False) -> asyncio.Task[Any]:
-    """The re-probe in flight, started when there is none; with `fresh`, a new
-    one even then, since one that started earlier may predate what it must see."""
-    global _refresh
-    if fresh or _refresh is None or _refresh.done():
+def _start_refresh(*, since: float) -> asyncio.Task[Any]:
+    """A probe that started at or after `since`: the one in flight, or a new one."""
+    global _refresh, _refresh_started
+    if _refresh is None or _refresh.done() or _refresh_started < since:
         from server.core.background import detached_task, register_deferred_task
 
+        _refresh_started = time.monotonic()
         # Process work a statement happened to trigger: its system-table reads
         # carry their own tag, not the request's.
         _refresh = register_deferred_task(detached_task(_reprobe(_ch), name="vector-codes-reprobe"))
@@ -345,7 +359,7 @@ __all__ = [
     "ensure_probed",
     "is_coded",
     "probe",
-    "only_placeholders_missed",
+    "refuse_on_fresh_widths",
     "refuse_other_widths",
     "refuse_width",
     "reset",

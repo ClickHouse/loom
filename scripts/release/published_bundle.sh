@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Download the loom-stack.tar.gz the GitHub Release v<version> carries into <dir>.
+# Download the loom-stack.tar.gz the GitHub Release v<version> carries, and its
+# checksum file when it has one, into <dir>.
 #
 #   scripts/release/published_bundle.sh <version> <dir>
 #
@@ -24,4 +25,4 @@ fi
 if ! grep -qx loom-stack.tar.gz <<<"$assets"; then
   exit 3
 fi
-gh release download "v$version" --repo "$GITHUB_REPOSITORY" --pattern loom-stack.tar.gz --dir "$dir"
+gh release download "v$version" --repo "$GITHUB_REPOSITORY" --pattern 'loom-stack.tar.gz*' --dir "$dir" || exit 1
