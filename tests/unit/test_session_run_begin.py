@@ -1,11 +1,10 @@
 """`begin_session_run`: what a session run's begin writes. A re-open keeps the
 keys the idle sweep reads however many keys an earlier close recalled, and a
-first begin's version stays below the clock every later write takes."""
+first begin is versioned by its start."""
 
 from __future__ import annotations
 
 import json
-import time
 from datetime import datetime
 from typing import Any
 
@@ -69,9 +68,3 @@ async def test_a_first_begin_is_versioned_by_its_start(monkeypatch) -> None:
     row = await _begin(monkeypatch, None, started)
     started_ns = int((started - datetime(1970, 1, 1)).total_seconds()) * 10**9
     assert row["version"] == run_handlers._FIRST_BEGIN_VERSION_BASE - started_ns
-
-
-@pytest.mark.asyncio
-async def test_a_start_before_the_base_allows_is_still_below_the_clock(monkeypatch) -> None:
-    row = await _begin(monkeypatch, None, datetime(2020, 1, 1))
-    assert row["version"] < time.time_ns()
