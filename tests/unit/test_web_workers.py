@@ -51,14 +51,12 @@ def test_host_memory_bounds_the_count(tmp_path: Path) -> None:
     assert default_workers(cpus=6, proc_cgroup="0::/\n", meminfo=meminfo, root=tmp_path) == 2
 
 
-def test_host_memory_counts_whole_gib_as_nominal(tmp_path: Path) -> None:
-    """MemTotal reads a little under the size the host was sold with."""
-    meminfo = "MemTotal:        8029428 kB\n"  # an 8 GiB host
-    assert default_workers(cpus=8, proc_cgroup="0::/\n", meminfo=meminfo, root=tmp_path) == 8
-    crash = "MemTotal:        7767284 kB\n"  # an 8 GiB host with a 256 MiB crash kernel
-    assert default_workers(cpus=8, proc_cgroup="0::/\n", meminfo=crash, root=tmp_path) == 8
-    short = f"MemTotal:       {int(6.2 * GB) // 1024} kB\n"  # 6.2 GiB is not 7
-    assert default_workers(cpus=8, proc_cgroup="0::/\n", meminfo=short, root=tmp_path) == 6
+def test_host_memory_counts_as_read(tmp_path: Path) -> None:
+    """A small host gets no worker its memory cannot hold."""
+    small = f"MemTotal:       {int(3.3 * GB) // 1024} kB\n"
+    assert default_workers(cpus=8, proc_cgroup="0::/\n", meminfo=small, root=tmp_path) == 3
+    eight = "MemTotal:        8029428 kB\n"  # an 8 GiB host, a little under nominal
+    assert default_workers(cpus=8, proc_cgroup="0::/\n", meminfo=eight, root=tmp_path) == 7
 
 
 def test_a_cgroup_value_that_does_not_parse_is_no_limit(tmp_path: Path) -> None:
