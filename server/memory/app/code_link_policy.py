@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.code.domain.anchor import Definition
+from server.code.domain.declaration import fingerprint_version
 from server.core.datetimes import naive_utc_now
 from server.memory.app import code_link_judge
 from server.memory.app import code_link_pass as link_pass
@@ -130,9 +131,11 @@ async def _revise(
     if budget.judgements <= 0:
         return None
     out = _Revised()
+    version = fingerprint_version()
     for a in changed:
         key = (a["path"], a["qualified_name"])
-        if budget.judgements <= 0:
+        if budget.judgements <= 0 or a["fingerprint_version"] != version:
+            # past the budget, or hashed under other rules: due until it is re-hashed
             out.due.add(key)
             continue
         texts = await _texts(files, claim, a, head)

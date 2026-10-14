@@ -19,6 +19,7 @@ from server.code.domain.anchor import (
     recheck,
     resolve,
 )
+from server.code.domain.declaration import fingerprint_version
 from server.code.domain.index.repos import repo_for_namespace
 from server.code.domain.successor import Side, Successor, close_to, successor
 from server.core.datetimes import naive_utc_now
@@ -216,8 +217,13 @@ async def _recheck_paths(
     failed: set[str],
 ) -> list[Move]:
     """The moves of the links on `paths`. A path whose own file does not parse keeps its
-    links as they were and joins `unparsed`, to be retried; the file read joins `failed`."""
-    rows = [a for p in paths for a in by_path[p]]
+    links as they were and joins `unparsed`, to be retried; the file read joins `failed`.
+    So does the path of a link the re-hash could not bring to these rules: no hash is
+    compared with one made under other rules."""
+    version = fingerprint_version()
+    unparsed |= {p for p in paths for a in by_path[p] if a["fingerprint_version"] != version}
+    ours = {p: [a for a in by_path[p] if a["fingerprint_version"] == version] for p in paths}
+    rows = [a for p in paths for a in ours[p]]
     try:
         return await _recheck(org, cns, rows, changed, head, files)
     except code.ParseFailed:
@@ -225,7 +231,7 @@ async def _recheck_paths(
     moves: list[Move] = []
     for p in paths:
         try:
-            moves += await _recheck(org, cns, by_path[p], changed, head, files)
+            moves += await _recheck(org, cns, ours[p], changed, head, files)
         except code.ParseFailed as e:
             unparsed.add(p)
             failed.add(e.path)
@@ -548,6 +554,7 @@ async def _resolve_pending(
             "anchored_hash": here.body_hash,
             "anchored_name": here.qualified_name,
             "baseline_commit": "",  # the baseline is the new anchor
+            "fingerprint_version": fingerprint_version(),  # hashed just now
         }
         link = Link(
             path=here.path,
@@ -595,12 +602,14 @@ async def _relink(
 
 
 async def _current_moves(org: str, moves: list[Move]) -> list[Move]:
-    """The moves of links made from their memory as it is now: a link the queue replaced
-    since the recheck read it is not moved back in."""
+    """The moves of links made from their memory as it is now, still served: a link the
+    queue replaced or dropped since the recheck read it is not moved back in."""
     if not moves:
         return []
     heads = {
-        h["mid"]: h for h in await store.memory_heads(org, [m.row["memory_id"] for m in moves])
+        h["mid"]: h
+        for h in await store.memory_heads(org, [m.row["memory_id"] for m in moves])
+        if h.get("tombstoned_at") is None and h["status"] in SERVED
     }
     out = []
     for m in moves:

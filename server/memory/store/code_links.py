@@ -371,25 +371,28 @@ async def stale_fingerprints(
     code_namespace: str,
     version: str,
     *,
+    after: tuple[str, ...] | None,
     limit: int,
-    offset: int = 0,
     ch: _CHClient | None = None,
-) -> list[LinkRow]:
+) -> tuple[list[LinkRow], tuple[str, ...] | None]:
     """Up to `limit` live links of the namespace fingerprinted under another `version`,
-    in key order, past the first `offset`."""
-    rows = await (ch or _default_client()).query_all(
-        f"SELECT * {_LIVE} AND org = {{org:String}} AND code_namespace = {{cns:String}} "
-        "AND state != 'pending' AND fingerprint_version != {v:String} "
-        f"ORDER BY {_KEY} LIMIT {{lim:UInt32}} OFFSET {{off:UInt32}}",
-        params={
-            "org": org,
-            "cns": code_namespace,
-            "v": version,
-            "lim": int(limit),
-            "off": int(offset),
-        },
+    in key order after `after`, and the next page's start (None at the end)."""
+    since = f"AND {_past(_KEY_COLUMNS, _KEY_TYPES)} " if after else ""
+    rows = _links(
+        await (ch or _default_client()).query_all(
+            f"SELECT * {_LIVE} AND org = {{org:String}} AND code_namespace = {{cns:String}} "
+            f"AND state != 'pending' AND fingerprint_version != {{v:String}} {since}"
+            f"ORDER BY {_KEY} LIMIT {{lim:UInt32}}",
+            params={
+                "org": org,
+                "cns": code_namespace,
+                "v": version,
+                "lim": int(limit),
+                **_past_params(after or ()),
+            },
+        )
     )
-    return _links(rows)
+    return rows, _key(rows[-1]) if len(rows) == int(limit) else None
 
 
 async def pending(

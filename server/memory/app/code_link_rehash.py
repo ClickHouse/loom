@@ -22,17 +22,17 @@ async def refingerprint(
     time, each page written as it is done; a link whose code does not parse stays due
     for the next pass."""
     version = fingerprint_version()
-    unparsed = 0  # links whose code did not parse: they stay due, first in key order
-    while rows := await store.stale_fingerprints(
-        org, cns, version, limit=_REFINGERPRINT_PAGE, offset=unparsed
-    ):
+    after: tuple[str, ...] | None = None
+    while True:
+        rows, nxt = await store.stale_fingerprints(
+            org, cns, version, after=after, limit=_REFINGERPRINT_PAGE
+        )
         rehashed = []
         for a in rows:
             try:
                 fields = await _rehashed(a, files) if a["qualified_name"] else {}
             except code.ParseFailed:
-                unparsed += 1
-                continue
+                continue  # stays under its rules, kept out of rechecks, till it parses
             rehashed.append((a, fields, _owes(a, fields)))
         revised = await policy.revised_namespaces([a for a, _, owed in rehashed if owed])
         out = []
@@ -44,7 +44,7 @@ async def refingerprint(
             )
         await store.insert(out)
         result.rechecked += len(out)
-        if len(rows) < _REFINGERPRINT_PAGE:
+        if (after := nxt) is None:
             break
 
 
