@@ -94,11 +94,15 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 
 ### Fixed
 
-- On a host whose time zone is not UTC, every timestamp Loom wrote was shifted by the host's
-  offset (seven hours later on the US west coast): the ClickHouse driver reads a naive
-  datetime as local time. Writes now carry the UTC instant. The images default to UTC, so a
-  container that sets no `TZ` was not affected; a server run on a laptop was. A spend-ledger
-  turn time with an offset is now converted to UTC, not truncated.
+- On a host whose time zone is not UTC, a timestamp written through the driver's insert path
+  was shifted by the host's offset (seven or eight hours on the US west coast): the driver
+  reads a naive datetime as local time. Those writes now carry the UTC instant, and
+  conversation threads, which wrote local time to make up for it, now write UTC. Rows
+  written before the upgrade keep their shift: west of UTC, a row versioned by such a time
+  can sit up to the offset in the future, and a newer version may lose to it under `FINAL`
+  until the clock passes it. The images default to UTC, so a container that sets no `TZ` was
+  not affected; a server run on a laptop was. A spend-ledger turn time with an offset is now
+  converted to UTC, not truncated.
 - A request whose body holds a number JSON cannot carry back (`1e400` parses to infinity) gets
   a 422 that echoes it as the string `"Infinity"`, instead of a 500.
 - `admin/budget.set` refuses an integer too large for a float with a 422; it was stored, and

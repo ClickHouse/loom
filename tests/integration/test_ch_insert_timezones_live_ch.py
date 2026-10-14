@@ -1,6 +1,7 @@
 """A naive UTC datetime written through `CHClient.insert` is stored as that UTC
-instant whatever the client host's time zone, and reads back as it was written.
-Each zone runs in its own process: the driver reads the local zone at import.
+instant whatever the client host's time zone, and reads back as it was written;
+a handler that stamps a row with the time stores the present. Each zone runs in
+its own process: the driver reads the local zone at import.
 
 Skips cleanly when LOOM_CH_HOST is unset.
 """
@@ -47,6 +48,48 @@ asyncio.run(main(sys.argv[1]))
 """
 
 
+CONVERSATION = """
+import asyncio, sys, uuid
+from server.core.ch import get_client
+from server.knowledge.api.models_conversations import ConversationCreateInput
+from server.knowledge.app.conversations import handle_conversation_create
+
+async def main(org: str) -> None:
+    ch = get_client()
+    await ch.connect()
+    thread = uuid.uuid4().hex
+    await handle_conversation_create(
+        ConversationCreateInput(org=org, namespace="ns", agent="a", thread_id=thread)
+    )
+    row = await ch.query_one(
+        "SELECT dateDiff('second', created_at, now()) AS lag FROM loom.conversation_threads "
+        "WHERE org = {org:String} AND thread_id = {t:String}",
+        params={"org": org, "t": thread},
+    )
+    print(row["lag"])
+    await ch.disconnect()
+
+asyncio.run(main(sys.argv[1]))
+"""
+
+ZONES = ["America/Los_Angeles", "UTC", "Asia/Kolkata"]
+
+
+async def _run_in(zone: str, script: str, *args: str) -> str:
+    env = {**os.environ, "TZ": zone, "PYTHONPATH": str(ROOT)}
+    done = await asyncio.to_thread(
+        subprocess.run,
+        [sys.executable, "-c", script, *args],
+        env=env,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert done.returncode == 0, done.stderr[-2000:]
+    return done.stdout
+
+
 @pytest.fixture
 async def table() -> Any:
     from server.core.ch import get_client
@@ -66,19 +109,27 @@ async def table() -> Any:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("zone", ["America/Los_Angeles", "UTC", "Asia/Kolkata"])
+@pytest.mark.parametrize("zone", ZONES)
 async def test_a_naive_utc_write_keeps_its_instant_in_any_host_zone(table: str, zone: str) -> None:
-    env = {**os.environ, "TZ": zone, "PYTHONPATH": str(ROOT)}
-    done = await asyncio.to_thread(
-        subprocess.run,
-        [sys.executable, "-c", ROUND_TRIP, table, WRITTEN],
-        env=env,
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    assert done.returncode == 0, done.stderr[-2000:]
-    ms, s, h, read_back = done.stdout.split()[-4:]
+    out = await _run_in(zone, ROUND_TRIP, table, WRITTEN)
+    ms, s, h, read_back = out.split()[-4:]
     assert (int(ms), int(s), int(h)) == (EPOCH_MS, EPOCH_MS // 1000, EPOCH_MS // 1000)
     assert read_back == "True"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("zone", ZONES)
+async def test_a_thread_is_stored_created_now_in_any_host_zone(zone: str) -> None:
+    from server.core.ch import get_client
+
+    org = f"itest-tz-{uuid.uuid4().hex[:8]}"
+    try:
+        lag = int((await _run_in(zone, CONVERSATION, org)).split()[-1])
+        assert abs(lag) < 60  # an offset would be hours
+    finally:
+        ch = get_client()
+        await ch.connect()
+        await ch.execute(
+            "DELETE FROM loom.conversation_threads WHERE org = {org:String}", params={"org": org}
+        )
+        await ch.disconnect()
