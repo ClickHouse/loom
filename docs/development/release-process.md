@@ -96,10 +96,11 @@ A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not mov
    The dispatch passes only if that release dumps the tag's `schemas/schema.sql`;
    otherwise regenerate it on that release (the
    [schema dump](./migrations.md#schema-dump-and-check) commands with
-   `LOOM_CLICKHOUSE_IMAGE=clickhouse/clickhouse-server:A.B.C.D`), commit it, and re-tag. A new bundle never names an older release than any of the 30 newest
-   published bundles (prereleases included) does, since an install upgrading to it would
-   start an older server on data a newer one wrote; the job fails instead, unless the
-   dispatch adds `-f allow_clickhouse_downgrade=true`;
+   `LOOM_CLICKHOUSE_IMAGE=clickhouse/clickhouse-server:A.B.C.D`), commit it, and re-tag.
+   A new bundle never names an older release than the bundles of the 30 newest releases
+   (prereleases included) do, since an install upgrading to it would start an older
+   server on data a newer one wrote; the job fails instead, unless the dispatch adds
+   `-f allow_clickhouse_downgrade=true`;
 3. `build` writes the version into the Python and TypeScript SDK sources and builds the
    Python SDK wheel and sdist, the npm tarball (after the TypeScript SDK's `check:dist`),
    and zips of the two plugins (`loom-claude-code-plugin-vX.Y.Z.zip`,
