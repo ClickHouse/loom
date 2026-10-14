@@ -604,3 +604,15 @@ def test_a_delete_closes_against_the_callers_quota(ledger: _Ledger, monkeypatch)
 
     asyncio.run(_run())
     assert seen == ["tenant-a"]
+
+
+def test_the_idle_window_is_no_shorter_than_a_processs_check() -> None:
+    """A run closed sooner than a web process re-checks it would still be stamped."""
+    from pydantic import ValidationError
+
+    from server.settings import Settings
+
+    assert Settings(mcp_session_run_idle_seconds=60).mcp_session_run_idle_seconds == 60
+    with pytest.raises(ValidationError):
+        Settings(mcp_session_run_idle_seconds=59)
+    assert mcp_runs.CHECK_INTERVAL_S == 60
