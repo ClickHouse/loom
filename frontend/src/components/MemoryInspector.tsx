@@ -23,6 +23,7 @@ import {
   CornerDownRight,
 } from "lucide-react";
 import type {
+  CodeLink,
   Identity,
   MemoryDetail,
   MemoryHistoryEntry,
@@ -636,6 +637,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
             {!loading && detail && detail.found && (
               <>
                 <TrustPanel detail={detail} conflictCount={conflictCount} />
+                <CodeLinks links={detail.code ?? []} />
                 {renaming && (
                   <RenameForm
                     identity={identity}
@@ -1325,6 +1327,44 @@ function TrustPanel({ detail, conflictCount }: { detail: MemoryDetail; conflictC
           Judge also flagged this as uncertain at extraction.
         </div>
       )}
+    </section>
+  );
+}
+
+const CODE_STATE: Record<CodeLink["state"], { tone: "accent" | "warn" | "danger" | "muted"; label: string }> = {
+  fresh: { tone: "muted", label: "Current" },
+  moved: { tone: "accent", label: "Moved" },
+  changed: { tone: "warn", label: "Code changed" },
+  unresolved: { tone: "warn", label: "Possibly renamed" },
+  missing: { tone: "danger", label: "Code removed" },
+};
+
+/** The code the memory is linked to, each with whether that code still matches it. */
+function CodeLinks({ links }: { links: CodeLink[] }) {
+  if (links.length === 0) return null;
+  return (
+    <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
+      <div className="text-xs font-medium text-[var(--color-text-muted)] mb-2">Linked code</div>
+      <ul className="space-y-1.5">
+        {links.map((l) => {
+          const state = CODE_STATE[l.state] ?? CODE_STATE.fresh;
+          const since = l.state === "changed" && l.changed_since ? ` since ${l.changed_since.slice(0, 7)}` : "";
+          return (
+            <li key={`${l.code_namespace}:${l.path}:${l.symbol}`} className="min-w-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <span
+                  className="font-mono text-xs truncate"
+                  title={`${l.code_namespace} · ${l.path}${l.symbol ? ` · ${l.symbol}` : ""}`}
+                >
+                  {l.symbol || l.path}
+                </span>
+                <Badge tone={state.tone} label={state.label + since} />
+              </div>
+              {l.suggestion && <p className="mt-1 text-xs text-[var(--color-text-muted)]">Suggested: {l.suggestion}</p>}
+            </li>
+          );
+        })}
+      </ul>
     </section>
   );
 }

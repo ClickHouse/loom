@@ -54,6 +54,7 @@ def llm_setup_settings(
             "memory_ask_mid_model",
             "profile_consolidation_model",
             "reflection_distill_model",
+            "code_link_revise_model",
             "session_brief_llm_model",
             "code_ask_llm_model",
             "code_search_hyde_model",

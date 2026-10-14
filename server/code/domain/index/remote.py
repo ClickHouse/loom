@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from urllib.parse import urlsplit, urlunsplit
@@ -84,3 +85,17 @@ def provider_for(remote: str) -> str:
         return parse_remote(remote).provider
     except ValueError:
         return "git"
+
+
+def repo_tag(remote: str) -> str:
+    """The `repo:<id>` tag the coding plugins stamp on session memories for this remote:
+    10 hex of sha256 over `host/owner/name`, lower-cased, with the scheme, user, port and
+    `.git` dropped (the plugins' `repoIdentity`). '' when the remote has no owner/name."""
+    u = re.sub(r"^[a-z+]+://", "", (remote or "").strip(), flags=re.I)
+    u = re.sub(r"^[^@/]+@", "", u)
+    u = re.sub(r":(\d+)?/", "/", u, count=1).replace(":", "/", 1)
+    u = re.sub(r"\.git$", "", u.rstrip("/"), flags=re.I).rstrip("/").lower()
+    parts = [p for p in u.split("/") if p]
+    if len(parts) < 3:
+        return ""
+    return "repo:" + hashlib.sha256("/".join(parts[:3]).encode()).hexdigest()[:10]

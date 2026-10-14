@@ -6,7 +6,7 @@ just finished writing whether it left its own namespace consistent. This
 handler is that call: the same class of invariants, scoped to one
 (org, namespace), returned with samples the caller can act on.
 
-Thirteen checks, each an independent query over existing tables. No mutation,
+Fourteen checks, each an independent query over existing tables. No mutation,
 no new storage. A check that fails to run is reported in `skipped` and the
 rest still return — the report closes a task, it must never fail one.
 
@@ -312,6 +312,39 @@ def _sample_rows(rows: list[dict[str, Any]], limit: int) -> tuple[int, list[dict
     return total, out
 
 
+# Read from the code links rather than with SQL of its own: the links decide what is
+# stale and which repositories the caller may read.
+_CODE_LINKS_STALE = (
+    "warning",
+    "A memory whose linked code changed after it was written, was renamed or removed "
+    "without a clear successor, or is gone (search "
+    "leaves out one whose code is all gone, unless the namespace's code_change_policy "
+    "is `flag` or a person holds it). Check it against the code and memory.update it, "
+    "or memory.delete it when it no longer holds. Only repositories you may read "
+    "are counted, and only links made from the memory as it is now.",
+)
+
+
+async def _code_links_stale(params: dict[str, Any]) -> list[dict[str, Any]]:
+    """`code_links_stale`'s rows, newest check first, in the shape the SQL checks give."""
+    from server.memory.app.code_link_reads import stale_links
+
+    links = await stale_links(
+        params["org"], params["ns"], params["keys"] or None, limit=params["lim"]
+    )
+    return [
+        {
+            "total": a["total"],
+            "memory_key": a["memory_key"],
+            "symbol": a["qualified_name"],
+            "path": a["path"],
+            "state": a["state"],
+            "since": a["changed_since"],
+        }
+        for a in links
+    ]
+
+
 async def handle_namespace_validate(input: NamespaceValidateInput) -> NamespaceValidateOutput:
     ch = get_client()
     params: dict[str, Any] = {
@@ -354,6 +387,7 @@ async def handle_namespace_validate(input: NamespaceValidateInput) -> NamespaceV
     # CH client is per-call; checks run sequentially like namespace.summary.
     for name, (severity, detail, sql) in _CHECKS.items():
         await run(name, severity, detail, functools.partial(ch.query_all, sql, params=params))
+    await run("code_links_stale", *_CODE_LINKS_STALE, functools.partial(_code_links_stale, params))
 
     errors = sum(f.count for f in findings if f.severity == "error")
     warnings = sum(f.count for f in findings if f.severity == "warning")

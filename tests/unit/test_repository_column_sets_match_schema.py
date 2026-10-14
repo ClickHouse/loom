@@ -36,6 +36,7 @@ CASES: list[tuple[str, str, str, frozenset[str]]] = [
         "loom.qa_rollup_days",
         frozenset(),
     ),
+    ("server.memory.store.code_links", "LINK_COLS", "loom.memory_code_links", frozenset()),
     ("server.tasks.store.repo", "INBOX_COLS", "loom.task_inboxes", frozenset()),
     ("server.tasks.store.repo", "POLICY_COLS", "loom.task_poster_policies", frozenset()),
     ("server.tasks.store.repo", "TASK_COLS", "loom.tasks", frozenset()),

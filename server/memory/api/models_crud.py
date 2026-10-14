@@ -18,6 +18,7 @@ from pydantic import (
 )
 
 from server.memory.api.models_common import MemorySetPeer, MemoryType, _Identity
+from server.memory.domain.code_change import CodeState
 from server.operations.base import MCP_HIDDEN
 from server.operations.read_projection import ProjectedRow
 from server.operations.read_projection import project as _project_fields
@@ -59,6 +60,22 @@ class _RecallByAgent(BaseModel):
     agent: str
     count: int
     last_at: datetime | None = None
+
+
+class CodeLink(BaseModel):
+    """A memory's link to code.
+
+    `state`: `fresh`, `moved` (followed to a new place), `changed` (its code changed
+    since commit `changed_since`), `unresolved` (renamed or removed and not followed)
+    or `missing` (the code is gone)."""
+
+    code_namespace: str
+    path: str
+    symbol: str = ""  # '' for a file link
+    state: CodeState
+    changed_since: str = ""
+    # the `revise` policy's corrected claim; '' when none
+    suggestion: str = ""
 
 
 class MemoryGetOutput(ProjectedRow):
@@ -133,6 +150,9 @@ class MemoryGetOutput(ProjectedRow):
     agent: str = ""
     # Lifecycle state from loom.memory.status.
     status: str | None = None
+    # The code this memory is linked to: each link's path, symbol, state (`fresh`,
+    # `moved`, `changed`, `unresolved` or `missing`) and the `revise` policy's suggestion.
+    code: list[CodeLink] = Field(default_factory=list)
     # For a `status='superseded'` row, the memory_id of the row
     # that replaced it ('' otherwise) — the bundle turns it into a
     # `supersedes` edge on the newer row.

@@ -101,6 +101,8 @@ _KNOWN_STAGES: frozenset[str] = frozenset(
         "extract_relations",
         "extract_coverage_sweep",
         "judge_facts",
+        # A code-linked memory's claim re-checked against its changed code.
+        "code_link_revise",
         "consolidate_merge",
         # knowledge.synthesize: one map call per window, then
         # the fold(s) into the answer.

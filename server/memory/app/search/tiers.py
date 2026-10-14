@@ -96,20 +96,26 @@ async def _prepend_tier(hits: list[Any], input: Any, tier: str) -> list[Any]:
         val = getattr(r, "value", "")
         text = val if isinstance(val, str) else json.dumps(val, ensure_ascii=False, default=str)
         try:
-            tier_rows.append(
-                _MemorySearchHit(
-                    memory_key=key,
-                    memory_type=str(getattr(r, "memory_type", "semantic") or "semantic"),
-                    content_excerpt=text[:1200],
-                    distance=1.0,
-                    similarity=0.0,
-                    rank_score=0.0,
-                    created_at=str(getattr(r, "created_at", "") or ""),
-                    score_components={tier: 1.0},
-                )
+            hit = _MemorySearchHit(
+                memory_key=key,
+                memory_type=str(getattr(r, "memory_type", "semantic") or "semantic"),
+                content_excerpt=text[:1200],
+                distance=1.0,
+                similarity=0.0,
+                rank_score=0.0,
+                created_at=str(getattr(r, "created_at", "") or ""),
+                score_components={tier: 1.0},
             )
         except Exception:  # noqa: BLE001 — a row the hit model refuses is left out
             continue
+        who = [getattr(r, c, None) for c in ("agent", "user_id", "session_id")]
+        if None not in who:
+            hit._row_identity = (str(who[0]), str(who[1]), str(who[2]))
+        tier_rows.append(hit)
+    # the tiers join after the pool's code annotation: theirs is read here
+    from server.memory.app.code_link_reads import annotate_hits
+
+    await annotate_hits(input, tier_rows)
     return _tier_window(tier_rows, hits, input)
 
 

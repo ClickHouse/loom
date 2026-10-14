@@ -90,8 +90,8 @@ def _anchor_pool_where(input: Any, params: dict[str, Any]) -> list[str]:
 
 
 def anchor_pool_sql(where_sql: str) -> str:
-    """The entity / temporal anchor pool's statement: tags selected, plus the row's agent and
-    scope so the post-fusion belt can judge the row in process. `where_sql` is
+    """The entity / temporal anchor pool's statement: tags selected, plus the row's identity
+    and scope so the post-fusion belt can judge the row in process. `where_sql` is
     `_anchor_pool_where` plus the anchor terms."""
     return f"""
                 SELECT e.memory_key AS memory_key,
@@ -105,6 +105,7 @@ def anchor_pool_sql(where_sql: str) -> str:
                        ifNull(e.source_resource_id, '') AS source_resource_id,
                        e.tags AS tags,
                        e.agent AS agent,
+                       e.user_id AS user_id,
                        e.scope AS scope
                 FROM loom.memory_embeddings AS e FINAL
                 WHERE {where_sql}
@@ -177,6 +178,8 @@ def key_match_sql(where_sql: str) -> str:
                toString(coalesce(e.temporal_anchor, toDateTime(0))) AS temporal_anchor,
                e.temporal_confidence AS temporal_confidence,
                toString(coalesce(e.valid_at, toDateTime(0))) AS valid_at,
+               e.agent AS agent,
+               e.user_id AS user_id,
                e.session_id AS session_id,
                ifNull(e.source_resource_id, '') AS source_resource_id,
                toString(e.created_at) AS created_at,
@@ -333,7 +336,7 @@ def digest_descent_sql(where_sql: str) -> str:
                        toString(coalesce(valid_at, toDateTime(0))) AS valid_at,
                        ifNull(source_resource_id, '') AS source_resource_id,
                        toString(created_at) AS created_at,
-                       tags
+                       tags, agent, user_id, session_id
                 FROM loom.memory_embeddings FINAL
                 WHERE {where_sql}
                 ORDER BY cosineDistance(embedding, {{qv:Array(Float32)}}) ASC

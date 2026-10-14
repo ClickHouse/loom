@@ -78,6 +78,14 @@ _CENSUS: tuple[Substrate, ...] = (
         "memory_versions.delete",
     ),
     Substrate(
+        "loom.memory_code_links",
+        LIVE,
+        UID,
+        "code_links.delete",
+        "code_links.delete",
+    ),
+    Substrate("loom.memory_code_link_queue", "1", UID, "code_links.delete", "code_links.delete"),
+    Substrate(
         "loom.working_memory",
         LIVE,
         UID,
@@ -313,9 +321,9 @@ _CENSUS: tuple[Substrate, ...] = (
 #   agent_events.scrub               — identity scrubbed, rows kept for cost.
 #   shared*.tombstone                — org-wide promoted rows, matched by
 #                                       provenance not by scope.
-#   consolidated.tombstone           — loom.memory rows under another identity;
-#                                       counted by the memory row for the
-#                                       namespace scope only.
+#   consolidated.tombstone           — loom.memory rows under another identity,
+#                                       and their code links; counted by the
+#                                       memory row for the namespace scope only.
 #   procedure_runs / query_nodes / session_outcomes / term_aggregates .delete
 #                                    — derived ledgers without a read path
 #                                       into memory content; not censused.
@@ -364,7 +372,7 @@ STEP_ONLY_TABLES: dict[str, tuple[str, ...]] = {
     "agent_events.scrub": ("loom.agent_events",),
     "shared.tombstone": ("loom.shared",),
     "shared_embeddings.tombstone": ("loom.memory_embeddings",),
-    "consolidated.tombstone": ("loom.memory", "loom.memory_embeddings"),
+    "consolidated.tombstone": ("loom.memory", "loom.memory_embeddings", "loom.memory_code_links"),
     "procedure_runs.delete": ("loom.procedure_runs",),
     "query_nodes.delete": ("loom.query_nodes",),
     "session_outcomes.delete": SESSION_OUTCOME_TABLES,

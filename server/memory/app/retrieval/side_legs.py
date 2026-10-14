@@ -12,7 +12,7 @@ from server.memory.app.retrieval.retry import _call_retrying_empty_block
 from server.memory.domain.search_parsing import _iso_date, _record_excerpt, _record_query_tokens
 from server.memory.domain.search_sql import _build_where
 from server.memory.domain.search_text import _GENERIC_ENTITY_FILTER
-from server.memory.domain.search_types import SearchHit, SearchQuery, _CHClient
+from server.memory.domain.search_types import SearchHit, SearchQuery, _CHClient, row_identity
 
 log = logging.getLogger("server.memory.app.retrieval")
 
@@ -97,6 +97,8 @@ async def _lexical_recall_fallback(
             ifNull(e.source_resource_id, '') AS source_resource_id,
             e.source_class AS source_class,
             e.verified AS verified,
+            e.agent AS agent,
+            e.user_id AS user_id,
             e.session_id AS session_id,
             e.tags AS tags
         FROM loom.memory_embeddings AS e FINAL
@@ -141,6 +143,7 @@ async def _lexical_recall_fallback(
                 source_class=str(r.get("source_class") or ""),
                 verified=bool(int(r.get("verified") or 0)),
                 session_id=str(r.get("session_id") or ""),
+                identity=row_identity(r),
                 # The row's tags ride so the post-fusion belt
                 # can check the hard filter without a second read.
                 tags=[str(t) for t in (r.get("tags") or []) if t],
@@ -416,6 +419,9 @@ async def _fetch_unmatched_candidates(
             e.confidence AS confidence,
             e.reinforcement_count AS reinforcement_count,
             coalesce(e.mentioned_at, e.last_reinforced_at, e.created_at) AS freshness,
+            e.agent AS agent,
+            e.user_id AS user_id,
+            e.session_id AS session_id,
             e.tags AS tags
         FROM loom.memory_embeddings AS e FINAL
         {where_sql}
@@ -450,6 +456,7 @@ async def _fetch_unmatched_candidates(
                 source_resource_id=str(r.get("source_resource_id") or ""),
                 source_class=str(r.get("source_class") or ""),
                 verified=bool(int(r.get("verified") or 0)),
+                identity=row_identity(r),
                 tags=[str(t) for t in (r.get("tags") or []) if t],
                 score_components={
                     "unmatched_confidence": 0.05 * confidence,

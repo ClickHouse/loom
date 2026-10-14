@@ -118,7 +118,6 @@ def _intel_on(monkeypatch):
     monkeypatch.setattr(settings, "code_intel_enabled", True)
     monkeypatch.setattr(settings, "code_org", "o")
     monkeypatch.setattr(settings, "code_namespace", "n")
-    monkeypatch.setattr(settings, "code_lesson_namespaces", "lessons-public")
 
 
 def _run(clock: _Clock, *, lessons: Any, **fields: Any) -> tuple[Any, float]:
@@ -133,7 +132,7 @@ def _run(clock: _Clock, *, lessons: Any, **fields: Any) -> tuple[Any, float]:
         await clock.hold("body")
         return f"<body {sym['symbol_id']}>"
 
-    async def lessons_for_symbol(org, nss, *, symbol_name, paths, limit=3):
+    async def lessons_for_symbol(org, ns, *, symbol_name, paths, extra_namespaces):
         await clock.hold("lessons")
         if isinstance(lessons, Exception):
             raise lessons

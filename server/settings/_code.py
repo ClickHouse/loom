@@ -546,21 +546,12 @@ class CodeSettings(BaseModel):
     # rows, at the row count below, or at round end). Buffered rows at which a
     # round writes a table early.
     code_ingest_round_write_rows: int = Field(default=2000, ge=1, le=100_000)
-    # --- lessons and bot authors ----------------------------------------------
-    # CSV of public memory namespaces whose lessons enrich code.symbol results
-    # (read-only lexical+facet fusion); empty = off.
-    code_lesson_namespaces: str = ""
+    # --- bot authors -----------------------------------------------------------
     # Comma-separated GitHub logins of autonomous agents that author pull requests
     # or issues in the indexed repositories, beyond the generic bots (dependabot,
     # github-actions, …). They are never suggested as owners, their names are not
     # tracker entities, and bisect ignores the lines they sign.
     code_bot_authors: str = ""
-    # Seconds the per-process lesson corpus (matched locally instead of a
-    # memory_embeddings FINAL scan per code.symbol call) is kept before it is
-    # reloaded.
-    code_lesson_corpus_ttl_seconds: int = 300
-    # Max lesson rows loaded into that corpus, shortest excerpts first.
-    code_lesson_corpus_max_rows: int = 50_000
     # --- search ranking, legs and caches (code.search) ------------------------
     # Fire-and-forget code_search_trace/code_search_outcome telemetry.
     code_trace_log_enabled: bool = True
