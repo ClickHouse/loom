@@ -64,7 +64,8 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   through the subject's current grant, and a grant made later does not restore the claim.
   Signing in again, an OAuth code exchange and an OAuth refresh leave the namespace out of
   the token they mint, for good: a later grant, an admin one included, gives access back
-  through itself, not the old claim. A token minted while the cutoff was being written is
+  through itself, not the old claim (a restricted namespace, read only by a token naming
+  it, is named again while a live grant covers the person). A token minted while the cutoff was being written is
   cut as well (each mint is issued at the time before its cutoff read, and the cutoff is
   written again once its first write returned). A refresh token saved before this release
   carries the time after its read, so a cutoff that landed in that window rides its chain
@@ -82,9 +83,9 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 - **Security:** OIDC just-in-time provisioning no longer rebuilds an existing account: the
   person's next sign-in recreated a released or deleted one, or one another account
   registered under the derived name, with default settings and an admin grant, its data
-  included. A released or foreign name is skipped for the next free one (`<name>-2`, ...,
-  then a random suffix); a deleted account of the person's, or a revoked earlier one, is
-  refused.
+  included. A released, deleted or foreign name is skipped for the next free one
+  (`<name>-2`, ..., then a random suffix), and a person with an account revoked outright
+  (`loom revoke-token --subject`) is refused.
 - **Security:** `namespace.restore` into an existing namespace needs an admin of it. The
   owner a first write auto-registered, who holds no grant there, could restore a payload
   whose grants made them, or anyone, admin.

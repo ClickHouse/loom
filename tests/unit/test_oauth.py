@@ -758,8 +758,9 @@ def test_an_exchange_issues_its_tokens_at_the_time_before_its_cutoff_read(
     carry the time taken before the read, so the cutoff, written again once
     its insert returned, still postdates them and cuts them."""
 
+    import jwt as pyjwt
+
     from server.auth import revocation
-    from server.auth.jwt import verify_token
 
     c = _client()
     code, verifier = _seed_code()
@@ -777,7 +778,9 @@ def test_an_exchange_issues_its_tokens_at_the_time_before_its_cutoff_read(
     monkeypatch.setattr(revocation, "subject_revoked", _slow)
     r = _exchange(c, code, verifier) if grant_type == "authorization_code" else _refresh(c, rt)
     tok = r.json()
-    assert verify_token(tok["access_token"]).issued_at == before
+    # Unverified: a verify would refuse an iat past the real clock first.
+    claims = pyjwt.decode(tok["access_token"], options={"verify_signature": False})
+    assert claims["iat"] == before
     saved = oauth._store.refresh[oauth._token_id(tok["refresh_token"])]
     assert int(saved["exp"]) - oauth._REFRESH_TTL == before
 

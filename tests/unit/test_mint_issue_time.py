@@ -9,15 +9,23 @@ from __future__ import annotations
 import time
 from typing import Any
 
+import jwt as pyjwt
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from server.auth import login, oauth, oidc
-from server.auth.jwt import verify_token
 from tests.unit.oauth_store_fake import MemoryOAuthStore
 
 _IDENTITY = ("alice", "acme", ["alice"], ["writer"])
+
+
+def _iat(token: str) -> int:
+    """The token's iat, unverified: a verify would refuse an iat past the real
+    clock and hide what the assertion checks."""
+    return int(pyjwt.decode(token, options={"verify_signature": False})["iat"])
+
+
 _READ_TAKES = 100  # seconds the cutoff read takes on the fake clock
 
 
@@ -47,7 +55,7 @@ def test_a_password_sign_in_is_issued_before_its_cutoff_read(
     before = int(time.time())
     r = TestClient(app).post("/v1/auth/login", json={"identifier": "alice", "password": "pw"})
     assert r.status_code == 200
-    assert verify_token(r.json()["token"]).issued_at == before
+    assert _iat(r.json()["token"]) == before
 
 
 def test_an_authorize_issues_its_code_before_its_cutoff_read(

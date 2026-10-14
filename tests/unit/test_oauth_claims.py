@@ -213,3 +213,35 @@ async def test_a_cancelled_acquisition_releases_what_it_may_have_claimed() -> No
         await task
     await asyncio.sleep(0)
     assert keeper.rows == {}
+
+
+async def test_a_release_outlives_a_second_cancellation() -> None:
+    # The request is cancelled again while it releases (anyio repeats it): the
+    # shielded release still drops the claim.
+    keeper = _Keeper()
+    await oc.probe(keeper)
+    execute = keeper.execute
+    inserted, releasing = asyncio.Event(), asyncio.Event()
+
+    async def _slow(sql: str, params: dict[str, Any]) -> None:
+        if sql.startswith("INSERT"):
+            await execute(sql, params)
+            inserted.set()
+            await asyncio.sleep(30)
+        elif " DELETE " in sql:
+            releasing.set()
+            await asyncio.sleep(0.05)
+            await execute(sql, params)
+        else:
+            await execute(sql, params)
+
+    keeper.execute = _slow  # type: ignore[method-assign]
+    task = asyncio.create_task(oc.claim(keeper, "code:abc"))
+    await inserted.wait()
+    task.cancel()
+    await releasing.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.sleep(0.1)
+    assert keeper.rows == {}

@@ -23,6 +23,7 @@ import logging
 import uuid
 from typing import Any
 
+from server.core.background import TaskSet
 from server.core.ch import statement_timeout
 from server.core.schema.migrate_lease import (
     OAUTH_CLAIMS_TABLE_SQL,
@@ -69,6 +70,9 @@ _RELEASE = (
     "ALTER TABLE loom.oauth_claims DELETE "
     f"WHERE claim_key = {{k:String}} AND holder = {{me:String}} {_STRICT}"
 )
+
+# Releases a cancelled acquisition shields, held until each is done.
+_releases = TaskSet()
 
 # Whether loom.oauth_claims exists here: None until the boot probe or the
 # first exchange asks.
@@ -132,7 +136,7 @@ async def claim(ch: Any, key: str) -> tuple[Claim, str]:
         # credential out until it went stale. Shielded, so a cancellation of
         # this request does not cancel the release too.
         if attempted:
-            await asyncio.shield(release(ch, key, me))
+            await asyncio.shield(_releases.spawn(release(ch, key, me), name="oauth_claims.release"))
         raise
     return (Claim.HELD, me) if held else (Claim.TAKEN, "")
 

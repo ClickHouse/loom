@@ -213,6 +213,11 @@ async def test_jit_provisions_when_enabled(monkeypatch) -> None:
     monkeypatch.setattr(login, "resolve_identity_for_email", fake_resolve)
     monkeypatch.setattr(login, "_registry_row", none_registered)
 
+    async def not_revoked(org: str, ident: str) -> bool:
+        return False
+
+    monkeypatch.setattr(login, "_revoked_account", not_revoked)
+
     out = await login.jit_provision_for_email("Bob@Acme.com")
     assert out == ("u-bob-xxxx", "acme", ["u-bob-xxxx"], ["writer"])
     assert calls["org"] == "acme"
@@ -232,12 +237,12 @@ def _jit_on(monkeypatch) -> dict[str, Any]:
     async def fake_resolve(email: str) -> tuple[str, str, list[str], list[str]]:
         return ("someone", "acme", ["someone"], ["admin"])
 
-    async def not_revoked(subject: str, *, issued_at: int) -> bool:
+    async def not_revoked(org: str, ident: str) -> bool:
         return False
 
     monkeypatch.setattr(self_signup, "provision_account", fake_provision)
     monkeypatch.setattr(login, "resolve_identity_for_email", fake_resolve)
-    monkeypatch.setattr(revocation, "subject_revoked", not_revoked)
+    monkeypatch.setattr(login, "_revoked_account", not_revoked)
     return provisioned
 
 
@@ -245,14 +250,15 @@ def _jit_on(monkeypatch) -> dict[str, Any]:
     "taken",
     [
         {"active": False, "contact_email": ""},  # released: claim-release clears the contact
+        {"active": False, "contact_email": "bob@acme.com"},  # deleted, by its owner perhaps
         {"active": True, "contact_email": "mallory@acme.com"},  # another's
     ],
 )
 async def test_jit_never_rebuilds_a_taken_name_and_takes_the_next(
     monkeypatch, taken: dict[str, Any]
 ) -> None:
-    # Rebuilding a released account would hand back its data and an admin
-    # grant; one another account registered is theirs.
+    # Rebuilding a released or deleted account would hand back its data and an
+    # admin grant; one another account registered is theirs.
     provisioned = _jit_on(monkeypatch)
     rows: dict[str, dict[str, Any]] = {}
 
@@ -267,36 +273,37 @@ async def test_jit_never_rebuilds_a_taken_name_and_takes_the_next(
     assert provisioned["namespace"] == f"{first}-2"
 
 
-async def test_jit_refuses_a_deleted_account_of_this_person(monkeypatch) -> None:
-    # namespace.delete keeps the contact: an operator offboarded this person,
-    # and a fresh name would be a new subject past any revoke of the old one.
+async def test_jit_refuses_a_person_whose_account_was_revoked(monkeypatch) -> None:
+    # Offboarding is a revoke-token of the subject: a fresh name would be a
+    # new subject past it.
     provisioned = _jit_on(monkeypatch)
 
-    async def registry_row(org: str, namespace: str) -> dict[str, Any] | None:
-        return {"active": False, "contact_email": "bob@acme.com"}
+    async def revoked(org: str, ident: str) -> bool:
+        return True
 
-    monkeypatch.setattr(login, "_registry_row", registry_row)
+    monkeypatch.setattr(login, "_revoked_account", revoked)
     assert await login.jit_provision_for_email("bob@acme.com") is None
     assert provisioned == {}
 
 
-async def test_jit_refuses_when_a_released_earlier_account_is_revoked(monkeypatch) -> None:
-    provisioned = _jit_on(monkeypatch)
-    seen: list[str] = []
+async def test_a_revoked_account_is_any_inactive_row_naming_the_email(monkeypatch) -> None:
+    # Whatever its name (a random JIT suffix, a password sign-up's), read by
+    # contact; a released row has its contact cleared and is no one's.
+    queries: list[dict[str, Any]] = []
 
-    async def registry_row(org: str, namespace: str) -> dict[str, Any] | None:
-        if seen:
-            return None
-        seen.append(namespace)
-        return {"active": False, "contact_email": ""}
+    class _CH:
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            assert "active = 0" in sql and "contact_email = {ident:String}" in sql
+            queries.append(params)
+            return [{"namespace": "u-bob-1234abcd-9f3e", "owner": "u-bob-1234abcd-9f3e"}]
 
     async def revoked(subject: str, *, issued_at: int) -> bool:
-        return subject == seen[0]
+        return subject == "u-bob-1234abcd-9f3e"
 
-    monkeypatch.setattr(login, "_registry_row", registry_row)
+    monkeypatch.setattr(login, "get_client", lambda: _CH())
     monkeypatch.setattr(revocation, "subject_revoked", revoked)
-    assert await login.jit_provision_for_email("bob@acme.com") is None
-    assert provisioned == {}
+    assert await login._revoked_account("acme", "bob@acme.com")
+    assert queries == [{"org": "acme", "ident": "bob@acme.com"}]
 
 
 async def test_jit_takes_a_random_name_once_the_predictable_ones_are_taken(
@@ -309,13 +316,15 @@ async def test_jit_takes_a_random_name_once_the_predictable_ones_are_taken(
 
     async def registry_row(org: str, namespace: str) -> dict[str, Any] | None:
         tried.append(namespace)
-        return {"active": True, "contact_email": "mallory@acme.com"}
+        if len(tried) <= login._JIT_NAME_TRIES + 2:  # the predictable ones, then one random
+            return {"active": True, "contact_email": "mallory@acme.com"}
+        return None
 
     monkeypatch.setattr(login, "_registry_row", registry_row)
     assert await login.jit_provision_for_email("bob@acme.com") is not None
-    assert len(tried) == login._JIT_NAME_TRIES + 1
     name = provisioned["namespace"]
-    assert name.startswith(tried[0] + "-") and name not in tried
+    assert name == tried[-1], "the random name is checked before it is used"
+    assert name.startswith(tried[0] + "-") and name not in tried[:-1]
 
 
 async def test_jit_resolves_a_name_a_concurrent_first_sign_in_wrote(monkeypatch) -> None:

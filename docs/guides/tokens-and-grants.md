@@ -189,7 +189,9 @@ curl -s "$LOOM_BASE_URL/v1/grants.create" -H "Authorization: Bearer $ADMIN_TOKEN
   spelling of the subject, kept ten years). A flat or scoped token minted before it reaches
   the namespace only through the subject's current grant, and every token minted later
   (sign-in, an OAuth exchange or refresh) leaves the namespace out of its claim for good:
-  a later grant, an admin one included, gives access back through itself. A namespace an
+  a later grant, an admin one included, gives access back through itself. A restricted
+  namespace is the exception: a token reads one only by naming it, so a sign-in or a
+  refresh names it again while a live grant there covers the person. A namespace an
   operator named at mint that was never granted to the subject keeps its claim; revoke the
   token for that. `loom revoke-token --list --grants` shows the cutoffs.
 - **Registering is owning.** `namespace.register` makes the caller the namespace's `admin`.
@@ -388,11 +390,13 @@ sign-in to an external IdP (`LOOM_OIDC_ISSUER`, `LOOM_OIDC_CLIENT_ID`,
 `LOOM_OIDC_CLIENT_SECRET`); Loom maps the verified email to an account and still mints its
 own token. `LOOM_OIDC_JIT_PROVISION=true` creates a personal namespace in `LOOM_OIDC_JIT_ORG`
 for a first sign-in with no account (`LOOM_OIDC_JIT_EMAIL_DOMAINS` restricts it); off, such
-a sign-in is refused. JIT never rebuilds an existing name: a released one (or another
-account's) is skipped for the next free name, `<name>-2` and on, then a random suffix. It
-refuses when the person's account was deleted (the row still names them) or an earlier
-account of theirs is revoked with `loom revoke-token --subject`. To offboard a JIT user for
-good, remove them at the IdP or from `LOOM_OIDC_JIT_EMAIL_DOMAINS`.
+a sign-in is refused. JIT never rebuilds an existing name: a released, deleted or another
+account's one is skipped for the next free name, `<name>-2` and on, then a random suffix.
+Deleting an account is not offboarding (its owner can do it). To offboard a JIT user, revoke
+their subject (`loom revoke-token --subject <namespace>`): JIT refuses while any inactive
+account in the org still naming their email is revoked outright. Removing them at the IdP
+or from `LOOM_OIDC_JIT_EMAIL_DOMAINS` works too. `loom claim-release` clears the contact, so
+a released account names no one and does not block a sign-up.
 
 **An aggregator acting for its users.** A subject listed in `LOOM_TRUSTED_CALLERS` may send
 `X-Loom-On-Behalf-Of: <subject>`: the call runs as that subject and every ledger row records

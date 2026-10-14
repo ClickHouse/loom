@@ -330,6 +330,30 @@ async def _registry_row(org: str, namespace: str) -> dict[str, Any] | None:
     return None if row is None else dict(row)
 
 
+async def _revoked_account(org: str, ident: str) -> bool:
+    """Whether an inactive account in `org` still naming `ident` (deleted;
+    a released one has its contact cleared) has its subject revoked outright,
+    read as of every write that landed."""
+    from server.auth.revocation import subject_revoked
+    from server.core.ch import own_write_reads
+
+    with own_write_reads():
+        rows = await get_client().query_all(
+            """
+            SELECT namespace, toString(owner_email) AS owner
+            FROM loom.namespaces FINAL
+            WHERE org = {org:String} AND contact_email = {ident:String} AND active = 0
+            """,
+            params={"org": org, "ident": ident},
+        )
+    now = int(time.time())
+    for r in rows:
+        for subject in {str(r["namespace"]), str(r.get("owner") or "")} - {""}:
+            if await subject_revoked(subject, issued_at=now):
+                return True
+    return False
+
+
 # How many suffixed names (`<name>-2`, ...) a JIT sign-up tries past the first.
 _JIT_NAME_TRIES = 5
 
@@ -362,38 +386,36 @@ async def jit_provision_for_email(
     slug = "".join(c if c.isalnum() else "-" for c in local).strip("-")[:40] or "user"
     base = f"u-{slug}-{hashlib.sha256(ident.encode()).hexdigest()[:8]}"
     org = _settings.oidc_jit_org
-    from server.auth.revocation import subject_revoked
     from server.core.ch import own_write_reads
 
-    released: list[str] = []  # inactive names, this person's earlier accounts
+    if await _revoked_account(org, ident):
+        # Offboarding is `revoke-token --subject` of an account of theirs (or
+        # the IdP): a fresh name would be a new subject past it. Deleting an
+        # account is not offboarding; its owner may have done it.
+        log.info("oidc jit: an account of %r in %s is revoked; not provisioning", ident, org)
+        return None
     for ns in [base, *(f"{base}-{n}" for n in range(2, _JIT_NAME_TRIES + 2))]:
         row = await _registry_row(org, ns)
         if row is None:
             break
-        mine = str(row.get("contact_email") or "") == ident
-        if mine and bool(row.get("active")):
+        if bool(row.get("active")) and str(row.get("contact_email") or "") == ident:
             # This person's, written by a concurrent first sign-in or missed by
             # a replica the first read reached: resolve it as written.
             with own_write_reads():
                 return await resolve_identity_for_email(ident)
-        if mine:
-            # Deleted, still naming this person: an operator offboarded them.
-            # A fresh name would be a new subject, past any revoke of the old.
-            log.info("oidc jit: %s/%s of %r is deleted; not provisioning", org, ns, ident)
-            return None
-        # Released (its contact cleared) or another's: never rebuilt, which
-        # would hand back its data and an admin grant.
-        if not bool(row.get("active")):
-            released.append(ns)
-        log.info("oidc jit: %s/%s is taken (released or another's); next", org, ns)
+        # Deleted, released or another's: never rebuilt, which would hand back
+        # its data and an admin grant.
+        log.info("oidc jit: %s/%s is taken; next", org, ns)
     else:
         # Every predictable name is taken, perhaps on purpose: a random one
         # cannot be registered ahead of this sign-in.
-        ns = f"{base}-{secrets.token_hex(4)}"
-    if any([await subject_revoked(name, issued_at=int(time.time())) for name in released]):
-        # A revoke-token of an earlier account of this person's outlives it.
-        log.info("oidc jit: an earlier account of %r is revoked; not provisioning", ident)
-        return None
+        for _ in range(_JIT_NAME_TRIES):
+            ns = f"{base}-{secrets.token_hex(4)}"
+            if await _registry_row(org, ns) is None:
+                break
+        else:
+            log.warning("oidc jit: no free name for %r in %s", ident, org)
+            return None
     await provision_account(
         org=org,
         namespace=ns,
