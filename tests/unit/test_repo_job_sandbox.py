@@ -253,19 +253,24 @@ def test_prlimit_sets_the_rlimits_in_front_of_bwrap_and_nproc_inside(monkeypatch
     assert argv[-5:] == ["--", "/usr/bin/prlimit", "--nproc=64:64", "--", "true"]
 
 
+_SYSCTL_REFUSED = b"bwrap: sysctl user.max_user_namespaces = 1: Permission denied"
+
+
 @pytest.mark.parametrize(
-    ("help_text", "fails_with", "available", "tried"),
+    ("help_text", "stderr", "available", "tried"),
     [
         # An AppArmor profile may refuse the sysctl write --disable-userns makes;
         # the seccomp filter still refuses the job new user namespaces.
-        ("--disable-userns", {True}, True, [True, False]),
-        ("--disable-userns", set(), True, [True]),
-        ("--disable-userns", {True, False}, False, [True, False]),
-        ("--unshare-user", set(), True, [False]),
+        ("--disable-userns", {True: _SYSCTL_REFUSED}, True, [True, False]),
+        ("--disable-userns", {}, True, [True]),
+        ("--disable-userns", {True: _SYSCTL_REFUSED, False: b"bwrap: x"}, False, [True, False]),
+        # any other failure is not the flag's: no retry
+        ("--disable-userns", {True: b"bwrap: mount: Permission denied"}, False, [True]),
+        ("--unshare-user", {}, True, [False]),
     ],
 )
-def test_the_probe_drops_disable_userns_only_when_it_alone_fails(
-    monkeypatch, help_text: str, fails_with: set[bool], available: bool, tried: list[bool]
+def test_the_probe_retries_without_disable_userns_when_the_sysctl_is_refused(
+    monkeypatch, help_text: str, stderr: dict[bool, bytes], available: bool, tried: list[bool]
 ) -> None:
     monkeypatch.setattr(sandbox.shutil, "which", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr(sandbox.platform, "machine", lambda: "x86_64")
@@ -278,7 +283,8 @@ def test_the_probe_drops_disable_userns_only_when_it_alone_fails(
 
     def job():
         runs.append(sandbox._disable_userns)
-        return subprocess.CompletedProcess([], int(sandbox._disable_userns in fails_with), b"", b"")
+        err = stderr.get(sandbox._disable_userns, b"")
+        return subprocess.CompletedProcess([], int(bool(err)), b"", err)
 
     monkeypatch.setattr(sandbox, "_probe_job", job)
     monkeypatch.setattr(sandbox, "_disable_userns", False)

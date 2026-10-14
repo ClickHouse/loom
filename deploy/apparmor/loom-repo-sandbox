@@ -13,6 +13,9 @@
 #     exec transition into //bwrap.
 #   - the child keeps docker-default's /proc and /sys denials, so it refuses
 #     bwrap's --disable-userns sysctl write; Loom runs bwrap without the flag.
+#   - the template's `signal (receive) peer=<dockerd profile>` line is left out:
+#     dockerd runs unconfined here, so it would repeat `peer=unconfined`. A
+#     confined dockerd (snap Docker) needs it back.
 #
 # Installation, what this opens and to whom: "Repository-job sandbox" in
 # docs/operations/code-index-operations.md.

@@ -128,12 +128,16 @@ def test_redeploy_runs_the_check_before_the_preflight() -> None:
     assert check < text.index("dev/redeploy_preflight.sh")
 
 
-def test_redeploy_probes_both_new_containers_before_the_swap_and_stops_them_on_failure() -> None:
+def test_redeploy_probes_both_new_containers_before_the_swap_and_removes_them_on_failure() -> None:
     text = (ROOT / "redeploy.sh").read_text(encoding="utf-8")
     loop = text.index('for c in "loom-$idle" "loom-$idle-workers"; do')
     block = text[loop : text.index("done", loop)]
     # decided from the running container, not the compose text (comments included)
     assert "{{.HostConfig.SecurityOpt}}" in block and "*apparmor=loom-repo-sandbox*" in block
     assert 'docker exec "$c" python -c' in block and "s.sandbox_available()" in block
-    assert 'docker stop -t 45 "loom-$idle" "loom-$idle-workers"' in block
+    # removed, not stopped: the up already replaced the previous build in that colour, and
+    # --rollback starts a stopped colour without probing it
+    assert 'docker rm -f "loom-$idle" "loom-$idle-workers"' in block and "docker stop" not in block
+    rollback = text[text.index("rollback() {") : text.index("# ---- arguments")]
+    assert "the previous build is gone" in rollback
     assert text.index('wait_workers "$idle"') < loop < text.index('swap_to "$idle"')

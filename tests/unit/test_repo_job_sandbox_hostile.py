@@ -263,8 +263,9 @@ async def test_a_fork_bomb_is_bounded_per_job_and_nothing_survives(monkeypatch) 
     for done in results:
         forks, eagain = done.stdout.split()
         assert eagain == b"True", done.stdout
-        # the limit counts the job's python and the sandbox's init too
-        assert 0 < int(forks) <= 64, done.stdout
+        # Each job gets the whole limit, less its python and the sandbox's init:
+        # a budget the two shared would leave one of them near half.
+        assert 60 <= int(forks) <= 62, done.stdout
     await asyncio.sleep(0.5)
     assert _running(marker) == []
 

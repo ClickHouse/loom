@@ -19,7 +19,8 @@ fs=${LOOM_APPARMOR_FS:-/sys/kernel/security/apparmor}
 # Every profile the file names, in any of Compose's spellings (quoted or not,
 # `apparmor=` or `apparmor:`, block or flow lists), comments dropped first.
 # A name that is not a plain profile name (`${PROFILE}`, empty) stops the
-# check rather than passing it. POSIX sed and grep only: this runs on macOS too.
+# check rather than passing it. BSD- and BusyBox-portable sed and grep: this
+# runs on macOS too.
 code=$(sed 's/#.*//' "$compose")
 options=$(grep -oE "apparmor[=:][^]\"',[:space:]]*" <<<"$code" || true)
 if [[ -z "$options" ]]; then

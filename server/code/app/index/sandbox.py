@@ -181,11 +181,11 @@ def _probe() -> bool:
         ).stdout
         _disable_userns = "--disable-userns" in help_text
         done = _probe_job()
-        if done.returncode != 0 and _disable_userns:
+        if _disable_userns and b"max_user_namespaces" in done.stderr:
             # --disable-userns writes user.max_user_namespaces, which an AppArmor
-            # profile may refuse (loom-repo-sandbox's /proc/sys and /sys rules do).
-            # It is a second lock only: the seccomp filter already refuses the job
-            # new user namespaces.
+            # profile may refuse (loom-repo-sandbox's /proc/sys rules do). It is
+            # a second lock only: the seccomp filter already refuses the job new
+            # user namespaces.
             logger.info(
                 "bwrap --disable-userns refused here (%s); jobs run without it, the "
                 "seccomp filter refusing new user namespaces",

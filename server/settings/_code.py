@@ -112,7 +112,8 @@ class CodeSettings(BaseModel):
     # MiB. Not address space: node reserves far more of that than it uses.
     code_sandbox_memory_mb: int = 16384
     # Processes and threads one job may run at once (RLIMIT_NPROC, set inside
-    # the job's user namespace, so other jobs and the server do not count).
+    # the job's user namespace, so other jobs and the server do not count;
+    # Linux 5.14+, older kernels count the uid's tasks host-wide).
     code_sandbox_max_pids: int = 2048
     # Largest file a process may write, in MiB (a pack or index.scip).
     code_sandbox_max_file_mb: int = 32768

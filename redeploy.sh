@@ -374,9 +374,10 @@ for c in "loom-$idle" "loom-$idle-workers"; do
     'from server.code.app.index import sandbox as s; raise SystemExit(0 if s.sandbox_available() else 1)' \
     && continue
   echo "!!! $c cannot run the repository-job sandbox (the warning above says why); not swapping."
-  echo "    Stopping loom-$idle so its workers cannot take the lease and run jobs unsandboxed;"
-  echo "    the proxy still points at loom-${active:-nothing}. See \"Repository-job sandbox\" in docs/operations/code-index-operations.md"
-  docker stop -t 45 "loom-$idle" "loom-$idle-workers" >/dev/null || true
+  echo "    Removing loom-$idle so its workers cannot take the lease and run jobs unsandboxed, and so"
+  echo "    --rollback never starts it: the up above already replaced the previous build there."
+  echo "    The proxy still points at loom-${active:-nothing}. See \"Repository-job sandbox\" in docs/operations/code-index-operations.md"
+  docker rm -f "loom-$idle" "loom-$idle-workers" >/dev/null || true
   exit 1
 done
 

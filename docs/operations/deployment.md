@@ -594,8 +594,8 @@ sudo apparmor_parser -r -W /etc/apparmor.d/loom-repo-sandbox
    to report `status: ok` with an empty `schema.pending`, and for its workers container
    to be healthy;
 6. runs the repository-job sandbox probe in both new containers; when the sandbox does
-   not run under the profile it stops the new colour and exits, the old one still
-   serving;
+   not run under the profile it removes the new colour's containers and exits, the old
+   one still serving;
 7. rewrites `upstream.conf` and reloads nginx;
 8. tags the old colour's image `loom:prev` and stops the old colour (uvicorn drains for
    up to 10 s; `docker stop -t 45`). The old containers are **stopped, not removed**;
