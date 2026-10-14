@@ -327,9 +327,9 @@ requirements.
 ABI, but the profile is untested there. Hosts without AppArmor, such as Docker Desktop
 (on any OS) or SELinux distributions like Fedora and RHEL, cannot use the colours'
 options safely: Docker ignores `apparmor=` there, so nothing replaces the `/proc` masks
-that `systempaths=unconfined` drops (see **`/proc`** below). Older parsers (Ubuntu 22.04,
+that `systempaths=unconfined` drops (see _`/proc`_ below). Older parsers (Ubuntu 22.04,
 Debian 12) reject the profile; those hosts are left with `seccomp=unconfined` and
-`apparmor=unconfined` (the paragraph before **Without the sandbox**), which lose the same
+`apparmor=unconfined` (the paragraph before _Without the sandbox_), which lose the same
 `/proc` protection. All of these hosts run Loom without the sandbox.
 
 Unless `LOOM_CODE_SANDBOX_REQUIRED` is set, every host still indexes the repositories
