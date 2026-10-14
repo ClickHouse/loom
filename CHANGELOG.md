@@ -22,7 +22,7 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   several workers.
 - `LOOM_LISTEN_HOST`: the address `scripts/serve.sh` binds; loopback by default, every
   interface in the image.
-- Migration `026` adds `run_id` skip indexes to `agent_events` and `agent_runs`.
+- Migration `027` adds `run_id` skip indexes to `agent_events` and `agent_runs`.
 
 ### Changed
 

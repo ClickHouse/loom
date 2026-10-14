@@ -194,8 +194,9 @@ async def test_placeholders_are_sized_from_a_probe_after_the_refusal(table, monk
 
 @pytest.mark.asyncio
 async def test_inserts_in_flight_at_a_rebuild_are_each_refused_by_name(table, monkeypatch) -> None:
-    """Refused one after another, each reads once and is refused by name; an insert
-    after them is refused by the published reading before it reaches ClickHouse."""
+    """Refused one after another, each reads at most once and is refused by name;
+    an insert after them is refused by the published reading before it reaches
+    ClickHouse."""
     real_insert = table.insert
 
     async def slow(t: str, data: Any, **kw: Any) -> None:
@@ -204,11 +205,13 @@ async def test_inserts_in_flight_at_a_rebuild_are_each_refused_by_name(table, mo
 
     table.insert = slow  # type: ignore[method-assign]
     client = _client(table, monkeypatch)
+    probes = table.probes
     results = await asyncio.gather(
         *(client.insert("loom.memory_embeddings", [_full(3072)]) for _ in range(4)),
         return_exceptions=True,
     )
     assert all(isinstance(r, CodedWidthMismatchError) for r in results)
+    assert 1 <= table.probes - probes <= 4
     attempts = table.attempts
     with pytest.raises(CodedWidthMismatchError):
         await client.insert("loom.memory_embeddings", [_full(3072)])
