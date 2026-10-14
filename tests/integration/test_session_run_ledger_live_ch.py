@@ -10,13 +10,14 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 
-from server.core.datetimes import naive_utc_now
+from server.core.datetimes import naive_utc_now, to_naive_utc
 from server.tasks.app import run as run_handlers
 from server.tasks.domain.session_runs import session_run_id
 
@@ -75,9 +76,9 @@ async def test_the_idle_sweep_closes_a_run_its_own_calls_did_not_keep_busy(
     namespace, elsewhere = (f"itest-{uuid.uuid4().hex[:12]}" for _ in range(2))
     busy = [session_run_id(org, "sa:a", uuid.uuid4().hex) for _ in range(3)]
     quiet, borrowed = (session_run_id(org, "sa:a", uuid.uuid4().hex) for _ in range(2))
-    explicit = f"itest-run-{uuid.uuid4().hex[:12]}"
+    explicit = f"mcp-{uuid.uuid4().hex[:12]}"  # the prefix, but begun by hand
     legacy = f"mcp-{uuid.uuid4().hex}"
-    long_ago = int((naive_utc_now().timestamp() - 7200) * 1e9)
+    long_ago = time.time_ns() - 7200 * 10**9
     try:
         await ch.insert(
             "loom.agent_runs",
@@ -127,7 +128,7 @@ async def test_the_idle_sweep_reads_any_number_of_active_runs(
     from server.tasks.app.run import close_idle_session_runs
 
     org = f"itest-many-{uuid.uuid4().hex[:8]}"
-    long_ago = int((naive_utc_now().timestamp() - 7200) * 1e9)
+    long_ago = time.time_ns() - 7200 * 10**9
     ids = [session_run_id(org, "sa:a", str(i)) for i in range(3500)]
     try:
         await ch.insert(
@@ -162,7 +163,7 @@ async def test_the_idle_sweep_closes_a_run_however_long_ago_it_was_written(ch: A
 
     org = f"itest-old-{uuid.uuid4().hex[:8]}"
     run_id = session_run_id(org, "sa:a", uuid.uuid4().hex)
-    long_ago = int((naive_utc_now().timestamp() - 31 * 86400) * 1e9)
+    long_ago = time.time_ns() - 31 * 86400 * 10**9
     try:
         await ch.insert(
             "loom.agent_runs",
@@ -195,7 +196,7 @@ async def test_a_run_that_records_no_subject_stays_open_while_it_is_called(ch: A
 
     org = f"itest-nosub-{uuid.uuid4().hex[:8]}"
     busy, quiet = f"mcp-{uuid.uuid4().hex}", f"mcp-{uuid.uuid4().hex}"
-    long_ago = int((naive_utc_now().timestamp() - 7200) * 1e9)
+    long_ago = time.time_ns() - 7200 * 10**9
     try:
         await ch.insert(
             "loom.agent_runs",
@@ -242,7 +243,7 @@ async def test_a_run_reopened_or_called_within_the_window_is_busy(ch: Any) -> No
         "environment": "mcp",
         "metadata": '{"implicit":true,"subject":"sa:a"}',
     }
-    long_ago = int((naive_utc_now().timestamp() - 7200) * 1e9)
+    long_ago = time.time_ns() - 7200 * 10**9
     try:
         await ch.insert(
             "loom.agent_runs", [{**row, "version": long_ago}], settings={"async_insert": 0}
@@ -424,7 +425,7 @@ async def test_a_session_run_starts_before_a_call_that_lands_before_its_begin(ch
             "SELECT max(ts) AS ts FROM loom.agent_events WHERE run_id = {rid:String}",
             params={"rid": run.run_id},
         )
-        assert row is not None and row["started_at"] <= call["ts"].replace(tzinfo=None)
+        assert row is not None and row["started_at"] <= to_naive_utc(call["ts"])
     finally:
         mcp_runs.reset()
         for table in ("agent_runs", "agent_events"):
