@@ -468,17 +468,27 @@ async def _probe_vector_state(client: CHClient) -> None:
     await ensure_probed(client)
 
 
-def _insert_data(rows: list[dict[str, Any]], columns: list[str]) -> list[list[Any]]:
-    return [[_as_utc_instant(r[c]) for c in columns] for r in rows]
+def _insert_data(
+    rows: list[dict[str, Any]], columns: list[str], type_names: list[str] | None
+) -> list[list[Any]]:
+    """The rows as value lists, with naive datetimes (UTC by Loom's convention)
+    marked UTC: the driver inserts a naive one as the host's local time. Only
+    the DateTime columns are walked, or every cell when the types are unknown."""
+    data = [[r[c] for c in columns] for r in rows]
+    if type_names is None:
+        timed = range(len(columns))
+    else:
+        timed = [i for i, t in enumerate(type_names) if "DateTime" in t]
+    for i in timed:
+        for values in data:
+            values[i] = _as_utc_instant(values[i])
+    return data
 
 
 def _as_utc_instant(value: Any) -> Any:
-    """A naive datetime, UTC by Loom's convention, marked UTC: the driver
-    inserts a naive one as the host's local time. One level of
-    `Array(DateTime)` too; anything else passes through."""
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=UTC)
-    if isinstance(value, list) and value and isinstance(value[0], datetime):
+    if isinstance(value, list) and any(isinstance(v, datetime | list) for v in value):
         return [_as_utc_instant(v) for v in value]
     return value
 
@@ -888,19 +898,21 @@ class CHClient:
         padded = placeholders.pad_rows(table, rows)
         try:
             await self._insert_rows(table, rows, settings, project_onto_table)
+            return
         except Exception as e:
             if error_code(e) != WIDTH_MISMATCH_CODE:
                 raise
-            refused_at = time.monotonic()
-            # A table rebuilt at another width since the last reading: refuse a
-            # vector the caller wrote, else size the placeholders again (one retry).
-            sized = [len(rows[i][c]) for i, c in padded]
-            placeholders.unpad(rows, padded)
-            await codes_state.refuse_on_fresh_widths(table, rows, since=refused_at)
-            padded = placeholders.pad_rows(table, rows)
-            if [len(rows[i][c]) for i, c in padded] == sized:
-                raise  # the fresh reading does not explain it
-            await self._insert_rows(table, rows, settings, project_onto_table)
+            refused = e
+        # A table rebuilt at another width since the last reading: refuse a
+        # vector the caller wrote, else size the placeholders again (one retry).
+        refused_at = time.monotonic()
+        widths = {c: codes_state.stored_width(table, c) for _, c in padded}
+        placeholders.unpad(rows, padded)
+        await codes_state.refuse_on_fresh_widths(table, rows, since=refused_at)
+        placeholders.pad_rows(table, rows)
+        if all(codes_state.stored_width(table, c) == w for c, w in widths.items()):
+            raise refused  # the fresh reading does not explain it
+        await self._insert_rows(table, rows, settings, project_onto_table)
 
     async def _insert_rows(
         self,
@@ -928,8 +940,6 @@ class CHClient:
                     f"insert {table}: row {i} keys differ from row 0 — "
                     f"missing {missing}, extra {extra}"
                 )
-        data = _insert_data(rows, columns)
-
         # The driver asks the server for the column types of
         # every insert it is not told them for — one `DESCRIBE TABLE` round
         # trip per insert (thousands an hour for the ledgers, each a pooled
@@ -938,6 +948,7 @@ class CHClient:
         # a schema that has changed under the cache fails the insert once,
         # the entry is dropped, and the insert runs again the old way.
         type_names = await self._column_type_names(table, columns)
+        data = _insert_data(rows, columns, type_names)
 
         settings = normalize_insert_settings(settings)
         # One token per batch, drawn once here, so every
@@ -981,8 +992,8 @@ class CHClient:
                 reprojected = await self._project_columns(table, list(rows[0].keys()))
                 if reprojected != columns:
                     columns = reprojected
-                    data = _insert_data(rows, columns)
                     type_names = await self._column_type_names(table, columns)
+                    data = _insert_data(rows, columns, type_names)
                     await _run()
                     return
             if not had_cache:
