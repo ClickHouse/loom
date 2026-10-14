@@ -12,6 +12,7 @@ from typing import Any, TypedDict, cast, get_origin, get_type_hints
 
 from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client, param_slices, query_all_sliced
+from server.memory.domain.code_link_keys import IDENTITY, LINK_KEY, QueuePosition
 
 TABLE = "loom.memory_code_links"
 
@@ -94,7 +95,6 @@ def _links(rows: list[dict[str, Any]]) -> list[LinkRow]:
 
 
 _LIVE = f"FROM {TABLE} FINAL WHERE tombstoned_at IS NULL"
-IDENTITY = ("org", "namespace", "agent", "user_id", "session_id", "memory_key")
 
 
 def link_row(base: LinkRow | None = None, *, follows: int | None = None, **fields: Any) -> LinkRow:
@@ -140,7 +140,7 @@ async def _erasing(ch: _CHClient, orgs: list[str]) -> set[str]:
     return {str(r["org"]) for r in rows}
 
 
-_KEY = "org, code_namespace, path, qualified_name, namespace, memory_id"
+_KEY = LINK_KEY
 _KEY_COLUMNS = _KEY.split(", ")
 
 
@@ -471,7 +471,6 @@ async def served_heads(
     )
 
 
-QueuePosition = tuple[int, int, str, str, str, str, str, str]
 _QUEUE_KEY = (
     "(toUnixTimestamp64Micro(queued_at), version, "
     "org, namespace, agent, user_id, session_id, memory_key)"

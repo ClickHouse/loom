@@ -35,6 +35,7 @@ from server.memory.app.code_link_reads import (
     inputs_now,
     memory_inputs,
 )
+from server.memory.domain.code_link_keys import IDENTITY, QueuePosition
 from server.memory.store import code_links as store
 from server.memory.store.code_links import LinkRow
 from server.settings import settings
@@ -47,8 +48,8 @@ AWAITING_INDEX = "*"
 
 
 async def link_queued(
-    after: store.QueuePosition | None, limit: int, result: link_pass.PassResult
-) -> store.QueuePosition | None:
+    after: QueuePosition | None, limit: int, result: link_pass.PassResult
+) -> QueuePosition | None:
     """Link the memories queued after `after`: a new or rewritten memory gets the links
     its text and files name, a deleted or no longer served one loses them. Returns the
     cursor: the last position read, or the read's cutoff when nothing was queued."""
@@ -78,7 +79,7 @@ async def backfill(
     that fell behind the queue's TTL), and drop the links of memories no longer stored.
     Returns where the next page starts; None when the scan is done."""
     idents, heads = await store.backfill_page(after, limit, code.code_namespaces())
-    stored = {tuple(str(h[c]) for c in store.IDENTITY) for h in heads}
+    stored = {tuple(str(h[c]) for c in IDENTITY) for h in heads}
     gone = await store.for_identities([i for i in idents if i not in stored])
     await store.insert(store.tombstones(gone))
     result.unlinked += len(gone)
