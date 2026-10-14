@@ -117,6 +117,21 @@ async def test_an_oidc_callback_issues_its_code_before_its_cutoff_read(
     assert int(code["exp"]) - oauth._CODE_TTL == before
 
 
+def test_a_sign_in_no_retry_fixes_answers_its_409(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.core.errors import TooManySpellingsError, register_exception_handler
+
+    async def _too_many(*_a: Any, **_k: Any) -> Any:
+        raise TooManySpellingsError("too many accounts")
+
+    monkeypatch.setattr(login, "resolve_user_credentials", _too_many)
+    app = FastAPI()
+    register_exception_handler(app)
+    app.include_router(login.router)
+    r = TestClient(app).post("/v1/auth/login", json={"identifier": "alice", "password": "pw"})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "TOO_MANY_SPELLINGS"
+    assert "retry-after" not in r.headers and "#too_many_spellings" in r.headers["link"]
+
+
 def test_a_sign_in_that_cannot_read_the_cutoffs_answers_503(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

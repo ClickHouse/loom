@@ -532,8 +532,8 @@ async def test_a_jit_read_that_fails_is_a_retryable_sign_in_failure(monkeypatch)
 
 
 async def test_a_jit_sign_up_no_retry_fixes_is_not_turned_into_a_retry(monkeypatch) -> None:
-    # The person's account another sign-in just wrote resolves past the
-    # spelling bound: the refusal is not turned into a 503 to retry forever.
+    # The person's active account resolves past the spelling bound: the
+    # refusal is not turned into a 503 to retry forever.
     from server.core.errors import TooManySpellingsError
 
     _jit_on(monkeypatch)

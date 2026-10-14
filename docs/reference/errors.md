@@ -131,19 +131,28 @@ deduplicates; a `Retry-After` honoured up to 60 s. Each op's kind is in the
 
 ### Too many spellings
 
-`/v1/auth/login` and the grant ops answer 409 `TOO_MANY_SPELLINGS`; `/oauth/authorize`
-and the OIDC callback answer 403 `access_denied`, and `/oauth/token` 400 `invalid_grant`,
-each with the message as `error_description`. The server log names the email. List its
-accounts with
+`/v1/auth/login`, and any op that takes a grant away from that person (`grants.revoke`, a
+lowering `grants.create`, `namespace.leave`, `namespace.restore`, `claim-release`),
+answer 409 `TOO_MANY_SPELLINGS` with the text in `detail.message`. `/oauth/authorize` and
+the OIDC callback answer 403 `access_denied`, and `/oauth/token` 400 `invalid_grant`, with
+the text in `error_description`.
+
+The server log names the email. Its accounts are the distinct `(owner_email,
+contact_email)` pairs this lists:
 
 ```sql
-SELECT namespace FROM loom.namespaces FINAL
+SELECT namespace, owner_email, active, password_hash != '' AS has_password, created_at
+FROM loom.namespaces FINAL
 WHERE org = '<org>' AND contact_email != ''
   AND (owner_email = '<email>' OR lower(contact_email) = lower('<email>'))
+ORDER BY created_at
 ```
 
-and release the extra ones with `loom claim-release --org <org> --namespace <account>`;
-a release clears the account's contact, so it stops counting.
+Keep the account the person signs in with and release the others with
+`loom claim-release --org <org> --namespace <account>`; a release clears the account's
+contact, so it stops counting. A release cuts its grantees' tokens first, so releasing an
+account the person holds a grant on refuses too: release those last, once fewer than
+1000 remain.
 
 ## How the entries below are generated
 
@@ -195,11 +204,11 @@ Raised in `server/auth/bearer.py`, `server/auth/login.py`, `server/auth/routes.p
 
 #### `BACKEND_TIMEOUT`
 
-HTTP 504, raised as `server.core.errors.BackendTimeoutError`. 504 — a ClickHouse statement ran past its class deadline (reads 30 s, writes 60 s, DDL 300 s). What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 504, raised as `server.core.errors.BackendTimeoutError`. A ClickHouse statement ran past its class deadline (reads 30 s, writes 60 s, DDL 300 s). What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `BACKEND_UNAVAILABLE`
 
-HTTP 503, raised as `server.core.errors.BackendUnavailableError`. 503 — ClickHouse could not be reached after the bounded reconnect.
+HTTP 503, raised as `server.core.errors.BackendUnavailableError`. ClickHouse could not be reached after the bounded reconnect.
 
 #### `BAD_BRANCH`
 
@@ -371,7 +380,7 @@ Raised in `server/auth/self_signup.py`.
 
 #### `EMBED_TIMEOUT`
 
-HTTP 503, raised as `server.core.errors.EmbedTimeoutError`. 503 — the query embedding did not answer within `memory_search_embed_bound_s` on any attempt. What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 503, raised as `server.core.errors.EmbedTimeoutError`. The query embedding did not answer within `memory_search_embed_bound_s` on any attempt. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `EMPTY_PREDICATE`
 
@@ -399,7 +408,7 @@ Raised in `server/memory/app/verify.py`.
 
 #### `GRANT_WOULD_DOWNGRADE`
 
-HTTP 409, raised as `server.core.errors.GrantWouldDowngradeError`. 409 — `grants.create` asked for a role below the subject's current active grant on that namespace.
+HTTP 409, raised as `server.core.errors.GrantWouldDowngradeError`. `grants.create` asked for a role below the subject's current active grant on that namespace.
 
 #### `HANDLER_HTTP_ERROR`
 
@@ -539,11 +548,7 @@ Raised in `server/transport/mcp_auth.py`.
 
 #### `OVERLOADED`
 
-HTTP 503, raised as `server.core.errors.OverloadedError`. 503 — too busy, retry: every pooled ClickHouse connection was busy past `ch_pool_wait_ms`, or a sibling held an override's lock past its wait. What to do: [common errors](#common-errors-and-what-to-do).
-
-#### `OVERRIDE_NOT_SHARED`
-
-HTTP 503, raised as `server.core.errors.OverrideNotSharedError`. 503 — a runtime override (budget or rate limit) could not be shared with the server's other web processes, so none of them took it.
+HTTP 503, raised as `server.core.errors.OverloadedError`. Every pooled ClickHouse connection of this process was busy for longer than `ch_pool_wait_ms`. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `PINNED_CONFLICT`
 
@@ -555,11 +560,11 @@ HTTP 403, raised as `server.identity.app.policy_gate.PolicyForbiddenError`. 403 
 
 #### `PRECONDITION_FAILED`
 
-HTTP 409, raised as `server.core.errors.PreconditionFailedError`. 409 — `if_match_sha256` mismatch. What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 409, raised as `server.core.errors.PreconditionFailedError`. `if_match_sha256` mismatch. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `RATE_LIMITED`
 
-HTTP 429, raised as `server.core.errors.RateLimitedError`. 429 — the caller is over one of its admission limits (the org's in-flight requests); `retry_after_s` is the hint the SDK's retry layer honours. What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 429, raised as `server.core.errors.RateLimitedError`. The caller is over one of its admission limits (the org's in-flight requests); `retry_after_s` is the hint the SDK's retry layer honours. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `RECALL_REQUIRES_FILTER`
 
@@ -611,7 +616,7 @@ Raised in `server/memory/app/records.py`.
 
 #### `SCHEMA_PENDING`
 
-HTTP 503, raised as `server.core.errors.SchemaPendingError`. 503 — the statement names a table that a migration this build carries but the service has not applied would create. What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 503, raised as `server.core.errors.SchemaPendingError`. The statement names a table that a migration this build carries but the service has not applied would create. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `SCHEMA_REQUIRES_KEY`
 
@@ -683,7 +688,7 @@ Raised in `server/memory/app/curation.py`.
 
 #### `TOO_MANY_SPELLINGS`
 
-HTTP 409, raised as `server.core.errors.TooManySpellingsError`. More accounts tie spellings to a subject than a grant cutoff may read (`server.auth.aliases`). What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 409, raised as `server.core.errors.TooManySpellingsError`. More accounts tie spellings to a subject than a grant cutoff may read. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `UNKNOWN_ARGUMENT`
 

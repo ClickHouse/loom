@@ -160,3 +160,22 @@ def test_cli_confirmation_names_the_owner_from_the_registry_row(
 
     assert "currently owned by 'alice@acme.test'" in capsys.readouterr().out
     assert fake.inserts == []
+
+
+def test_a_release_its_grantee_has_too_many_spellings_for_says_what_to_release_first(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from server.core.errors import TooManySpellingsError
+
+    async def _too_many(*_a: Any, **_k: Any) -> None:
+        raise TooManySpellingsError("too many accounts")
+
+    fake = _FakeCH()
+    monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
+    monkeypatch.setattr(cr, "write_grant_cutoffs", _too_many)
+
+    assert _cmd_claim_release(_args()) == 1
+    assert fake.inserts == []
+    assert (
+        "Release first the accounts naming it that it holds no grant on" in capsys.readouterr().err
+    )

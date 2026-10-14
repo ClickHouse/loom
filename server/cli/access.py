@@ -28,6 +28,7 @@ def _cmd_claim_release(args: argparse.Namespace) -> int:
     stays reserved even then.
     """
 
+    from server.core.errors import TooManySpellingsError
     from server.identity.app.claim_release import release_claim
 
     async def _lookup_owner(ch: Any) -> str | None:
@@ -63,13 +64,22 @@ def _cmd_claim_release(args: argparse.Namespace) -> int:
             return 1
 
     async def _go(ch: Any) -> int:
-        out = await release_claim(
-            org=args.org,
-            namespace=args.namespace,
-            reason="",
-            actor_subject="loom-cli",
-            ch=ch,
-        )
+        try:
+            out = await release_claim(
+                org=args.org,
+                namespace=args.namespace,
+                reason="",
+                actor_subject="loom-cli",
+                ch=ch,
+            )
+        except TooManySpellingsError:
+            print(
+                f"cannot release {args.org}/{args.namespace}: more than 1000 accounts name the"
+                " email of one of its grantees (the log above names it). Release first the"
+                " accounts naming it that it holds no grant on, then run this again.",
+                file=sys.stderr,
+            )
+            return 1
         if out is None:
             print(f"no claim found for {args.org}/{args.namespace}", file=sys.stderr)
             return 1
