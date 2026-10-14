@@ -191,9 +191,9 @@ curl -s "$LOOM_BASE_URL/v1/grants.create" -H "Authorization: Bearer $ADMIN_TOKEN
   Every token minted later (sign-in, an OAuth exchange or refresh) leaves the namespace out
   of its claim for good: a later grant, an admin one included, gives access back through
   itself. A restricted namespace is the exception: a token reads one only by naming it,
-  so a sign-in or a refresh names it again while a live grant there covers the person. A namespace an
-  operator named at mint that was never granted to the subject keeps its claim; revoke the
-  token for that. `loom revoke-token --list --grants` shows the cutoffs.
+  so a sign-in or a refresh names it again while a live grant there covers the person. A
+  namespace an operator named at mint that was never granted to the subject keeps its
+  claim; revoke the token for that. `loom revoke-token --list --grants` shows the cutoffs.
 - **Registering is owning.** `namespace.register` makes the caller the namespace's `admin`.
   With self-signup (`LOOM_IDENTITY_PROVIDER=trust-network`) the first principal to claim a
   name owns it; `loom claim-release --org <org> --namespace <ns>` revokes its grants (and

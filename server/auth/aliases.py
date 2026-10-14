@@ -32,6 +32,10 @@ log = logging.getLogger("loom.auth.aliases")
 TTL_S = 60.0
 _CACHE: dict[tuple[str, str], tuple[float, tuple[str, ...]]] = {}
 _CACHE_MAX = 10_000
+# Accounts a lookup reads per subject; a cutoff reads many more, and refuses
+# rather than cut short when even that is not all of them.
+_LOOKUP_SPELLINGS = 8
+_CUTOFF_SPELLINGS = 1000
 
 
 def _is_human_subject(subject: str) -> bool:
@@ -81,22 +85,28 @@ async def cutoff_spellings(org: str, subject: str, *, ch: object | None = None) 
 async def _read_spellings(
     org: str, subject: str, ch: object | None, *, include_inactive: bool
 ) -> list[str]:
+    """The spellings tied to `subject`. A cutoff (`include_inactive`) must
+    reach all of them, so it reads up to `_CUTOFF_SPELLINGS` and raises past
+    that rather than cut short."""
     from server.core.ch import get_client
 
+    limit = _CUTOFF_SPELLINGS if include_inactive else _LOOKUP_SPELLINGS
     client = ch or get_client()
     rows = await client.query_all(  # type: ignore[attr-defined]
         """
-        SELECT owner_email, contact_email
+        SELECT DISTINCT owner_email, contact_email
         FROM loom.namespaces FINAL
         WHERE org = {org:String} AND ({all:Bool} OR ifNull(active, true) = true)
           AND contact_email != ''
           AND (owner_email = {sub:String} OR lower(contact_email) = lower({sub:String}))
-        LIMIT 8
+        LIMIT {lim:UInt32}
         """,
-        params={"org": org, "sub": subject, "all": include_inactive},
+        params={"org": org, "sub": subject, "all": include_inactive, "lim": limit + 1},
     )
+    if include_inactive and len(rows) > limit:
+        raise RuntimeError(f"more than {limit} accounts tie spellings to {subject!r} in {org!r}")
     out = [subject]
-    for r in rows:
+    for r in rows[:limit]:
         for spelling in (str(r.get("owner_email") or ""), str(r.get("contact_email") or "")):
             if spelling and spelling.lower() not in {s.lower() for s in out}:
                 out.append(spelling)

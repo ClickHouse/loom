@@ -163,7 +163,7 @@ def test_the_addressed_namespace_always_leads() -> None:
 
 
 def test_private_first_passes_put_the_addressed_namespace_first() -> None:
-    def _passes(namespace: str, answer: dict[str, str]) -> tuple[list[str], list[str]]:
+    def _passes(namespace: str, answer: dict[str, str]) -> tuple[list[str], list[str]] | None:
         return private_first_passes(namespace, ["team", "home", "wiki"], answer)
 
     visibility = {"home": "private", "team": "public", "wiki": "public"}
@@ -172,9 +172,9 @@ def test_private_first_passes_put_the_addressed_namespace_first() -> None:
         ["team", "home"],
         ["wiki"],
     ), "a namespace without an answer counts as private"
-    assert _passes("team", {}) == ([], []), "no answer: one flat pass"
+    assert _passes("team", {}) is None, "no answer: one flat pass"
     everyone = {"team": "public", "home": "public", "wiki": "public"}
-    assert _passes("team", everyone) == ([], []), "nothing private: one flat pass"
+    assert _passes("team", everyone) is None, "nothing private: one flat pass"
 
 
 def test_namespaces_to_search_leads_with_the_addressed_namespace(

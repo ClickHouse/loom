@@ -38,6 +38,7 @@ async def ch() -> AsyncIterator[Any]:
         oauth_claims._atomic = None
         yield client
     finally:
+        oauth_claims._atomic = None
         await client.disconnect()
 
 

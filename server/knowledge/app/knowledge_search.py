@@ -21,6 +21,10 @@ from server.knowledge.api.models_knowledge import (
 
 log = logging.getLogger(__name__)
 
+# A first-pass hit this close (cosine similarity) ends a private-first search
+# before its public pass.
+PRIVATE_HIT_THRESHOLD = 0.30
+
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -120,7 +124,12 @@ async def _search_private_first(
         return traced("ch.query.chunks", op=op, top_k=input.top_k, namespaces=n)
 
     return await search_private_first(
-        input.namespace, namespaces, visibility, search_one, threshold=0.30, span=span
+        input.namespace,
+        namespaces,
+        visibility,
+        search_one,
+        threshold=PRIVATE_HIT_THRESHOLD,
+        span=span,
     )
 
 

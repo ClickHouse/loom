@@ -144,9 +144,7 @@ async def check_authorized(
     # NOT fall through to grant lookup — the token was deliberately scoped
     # (and possibly downgraded), so it is its own ceiling. Non-namespace
     # (org-level) ops fall through to the flat-role check below.
-    withdrawn = (
-        org is not None and namespace is not None and bool(withdrawn_claims(auth, org, [namespace]))
-    )
+    withdrawn = org is not None and namespace is not None and claim_withdrawn(auth, org, namespace)
     if auth.has_ns_roles() and org is not None and namespace is not None:
         if _scoped_allows(auth, required_role, org, namespace, withdrawn=withdrawn):
             return
@@ -355,19 +353,22 @@ def _withdrawn_message(org: str, namespace: str, then: str) -> str:
     )
 
 
+def claim_withdrawn(auth: AuthInfo, org: str, namespace: str) -> bool:
+    """Whether this token names `namespace` and a grant of its subject there
+    was taken away after it was minted (`revocation.write_grant_cutoffs`). A
+    namespace the subject never held a grant on (an operator's `loom
+    mint-token`) and a token minted after the cutoff keep their claim. No
+    I/O: the revocation snapshot."""
+    return (
+        auth.issued_at is not None
+        and names_namespace(auth, org, namespace)
+        and grant_cutoff_applies(org, namespace, auth.subject, auth.issued_at)
+    )
+
+
 def withdrawn_claims(auth: AuthInfo, org: str, namespaces: list[str]) -> set[str]:
-    """The `namespaces` this token names whose grant was taken away after it
-    was minted (`revocation.write_grant_cutoffs`). A namespace the subject never
-    held a grant on (an operator's `loom mint-token`) and a token minted after
-    the revocation keep their claim. No I/O: the revocation snapshot."""
-    if not namespaces or auth.issued_at is None:
-        return set()
-    issued_at = auth.issued_at
-    return {
-        ns
-        for ns in namespaces
-        if names_namespace(auth, org, ns) and grant_cutoff_applies(org, ns, auth.subject, issued_at)
-    }
+    """The `namespaces` whose claim this token lost (`claim_withdrawn`)."""
+    return {ns for ns in namespaces if claim_withdrawn(auth, org, ns)}
 
 
 def live_claims(auth: AuthInfo, org: str, namespaces: Iterable[str]) -> list[str]:
@@ -543,9 +544,11 @@ __all__ = [
     "GRANT_ROLES",
     "Role",
     "check_authorized",
+    "claim_withdrawn",
     "grant_rank",
     "grant_role",
     "grant_role_for",
+    "live_claims",
     "names_namespace",
     "restricted_allows",
     "row_in_scope",

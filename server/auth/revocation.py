@@ -213,21 +213,27 @@ async def revoke(
 
 def _apply_locally(keys: list[str], cutoff: int | None) -> None:
     """Apply revocations this process just wrote, now and in every refresh
-    for a while. They are the newest rows for their keys, so they replace any
-    earlier state of them. `loaded()` is left as it is: rows this process
-    wrote are not a snapshot."""
+    for a while (`_fold_written`). Just written, they are the newest rows for
+    their keys, so they replace what the snapshot holds. `loaded()` is left as
+    it is: rows this process wrote are not a snapshot."""
     global _revoked_jtis, _revoked_before
     now = time.monotonic()
+    full, before = set(_revoked_jtis), dict(_revoked_before)
     for key in keys:
         _written[key] = (cutoff, now)
-    full, before = set(_revoked_jtis), dict(_revoked_before)
-    _fold_written(full, before)
+        if cutoff is None:
+            full.add(key)
+            before.pop(key, None)
+        else:
+            full.discard(key)
+            before[key] = cutoff
     _revoked_jtis, _revoked_before = frozenset(full), before
 
 
 def _fold_written(full: set[str], before: dict[str, int]) -> None:
     """Apply what this process wrote in the last `_WRITTEN_KEEP_S` to a
-    snapshot being built, dropping older entries."""
+    snapshot being built, dropping older entries. A key never moves back: a
+    newer cutoff, or a full revocation, from another process stands."""
     now = time.monotonic()
     for key, (cutoff, at) in list(_written.items()):
         if now - at > _WRITTEN_KEEP_S:
@@ -235,9 +241,8 @@ def _fold_written(full: set[str], before: dict[str, int]) -> None:
         elif cutoff is None:
             full.add(key)
             before.pop(key, None)
-        else:
-            full.discard(key)
-            before[key] = cutoff
+        elif key not in full:
+            before[key] = max(cutoff, before.get(key, cutoff))
 
 
 _GRANT_CLAIM_PREFIX = "grant:"

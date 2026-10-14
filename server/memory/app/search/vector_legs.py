@@ -8,7 +8,7 @@ import asyncio
 import logging
 from typing import Any
 
-from server.core.vectors.private_first import search_private_first
+from server.core.vectors.private_first import best_similarity, search_private_first
 from server.identity.app import namespace_visibility
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app.search.context import SearchContext
@@ -180,11 +180,7 @@ async def _run_vector_legs(
             ):
                 tier = await asyncio.gather(_search_one(ctx, ns))
             results_per_ns = list(results_per_ns) + list(tier)
-            best_tier_similarity = max(
-                (1.0 - getattr(h, "distance", 1.0) for _n, hits in tier for h in hits),
-                default=0.0,
-            )
-            if best_tier_similarity >= TIER_HIT_THRESHOLD:
+            if best_similarity(tier) >= TIER_HIT_THRESHOLD:
                 break
     else:
         # ---- unscoped path (no scoped-token order): visibility-based private-first

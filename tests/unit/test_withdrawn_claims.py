@@ -386,3 +386,30 @@ def test_a_refresh_that_read_before_the_cutoff_keeps_it(ch: _CH) -> None:
     ch.revoked = stale_rows
     asyncio.run(rev.refresh())
     assert not _admits(_flat("team"), "team")
+
+
+def test_a_newer_cutoff_from_another_process_stands_over_this_ones(ch: _CH) -> None:
+    # This process cut at C1; another cut again later at C2. A token minted
+    # between the two must be cut here too, not let back in by the older C1.
+    _end("team")
+    key = rev.grant_claim_key(ORG, "team", "alice")
+    ch.revoked[key] = {**ch.revoked[key], "issued_before": datetime(2030, 1, 1)}
+    asyncio.run(rev.refresh())
+    between = int(datetime(2029, 1, 1, tzinfo=UTC).timestamp())
+    assert rev.grant_cutoff_applies(ORG, "team", "alice", between)
+
+
+def test_a_cutoff_refuses_rather_than_cut_short_past_its_spelling_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.auth import aliases
+
+    monkeypatch.setattr(aliases, "_CUTOFF_SPELLINGS", 2)
+
+    class _Directory:
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict]:
+            assert "DISTINCT" in sql and params["lim"] == 3
+            return [{"owner_email": f"u{i}", "contact_email": "a@x.io"} for i in range(3)]
+
+    with pytest.raises(RuntimeError, match="more than 2 accounts"):
+        asyncio.run(aliases.cutoff_spellings(ORG, "a@x.io", ch=_Directory()))

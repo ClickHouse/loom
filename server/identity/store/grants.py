@@ -139,12 +139,12 @@ async def find_active_grant(
     with own_write_reads():
         row = await ch.query_one(
             """
-        SELECT role, granted_by, status, pending_role, pending_since
-        FROM loom.namespace_grants FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND subject = {sub:String} AND {live}
-        LIMIT 1
-        """.replace("{live}", LIVE_GRANT),
+            SELECT role, granted_by, status, pending_role, pending_since
+            FROM loom.namespace_grants FINAL
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND subject = {sub:String} AND {live}
+            LIMIT 1
+            """.replace("{live}", LIVE_GRANT),
             params={"org": org, "ns": namespace, "sub": subject},
         )
     return None if row is None else GrantState.from_row(row)
@@ -164,10 +164,10 @@ async def active_roles(
     with own_write_reads():
         rows = await ch.query_all(
             """
-        SELECT subject, role FROM loom.namespace_grants FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND subject IN {subs:Array(String)} AND {live}
-        """.replace("{live}", LIVE_GRANT),
+            SELECT subject, role FROM loom.namespace_grants FINAL
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND subject IN {subs:Array(String)} AND {live}
+            """.replace("{live}", LIVE_GRANT),
             params={"org": org, "ns": namespace, "subs": subjects},
         )
     return {str(r["subject"]): str(r["role"]) for r in rows}
