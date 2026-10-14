@@ -6,11 +6,11 @@ shifted by the host's offset on any host not in UTC. Use `naive_utc_now()` or
 `datetime.now(UTC)`.
 
 The check is by call shape, whatever the receiver is named: `.now()`,
-`.today()` and `.astimezone()` with no zone, `.fromtimestamp(x)` with none, and
-the calls that are local or deprecated outright. It cannot see
-`naive.timestamp()`, which reads a naive value as local (use `time.time_ns()`
-for a version), nor `time.ctime()` / `asctime()` / `strftime(fmt)`, whose
-names a datetime's own methods share.
+`.today()` and `.astimezone()` with no zone, `.fromtimestamp(x)` and
+`.asctime()` with none, and the calls that are local or deprecated outright. It
+cannot see `naive.timestamp()`, which reads a naive value as local (use
+`time.time_ns()` for a version), nor `time.ctime()` / `strftime(fmt)`, whose
+shapes a datetime's own methods share.
 """
 
 from __future__ import annotations
@@ -20,7 +20,8 @@ from pathlib import Path
 
 SERVER = Path(__file__).resolve().parents[2] / "server"
 BANNED = {"utcnow", "utcfromtimestamp", "localtime", "mktime"}
-TZ_POSITION = {"now": 0, "today": 0, "fromtimestamp": 1, "astimezone": 0}  # the zone, by position
+# Where each call takes its zone (or time tuple) by position; none there is local.
+TZ_POSITION = {"now": 0, "today": 0, "astimezone": 0, "asctime": 0, "fromtimestamp": 1}
 
 
 def _reads_local_clock(call: ast.Call) -> bool:
@@ -60,6 +61,7 @@ def test_the_check_tells_local_readings_from_utc_ones() -> None:
         "date.today()",
         "datetime.fromtimestamp(t)",
         "x.astimezone()",
+        "time.asctime()",
         "datetime.utcnow()",
         "time.localtime()",
         "time.mktime(t)",
@@ -70,6 +72,7 @@ def test_the_check_tells_local_readings_from_utc_ones() -> None:
         "datetime.fromtimestamp(t, UTC)",
         "datetime.fromtimestamp(t, tz=UTC)",
         "x.astimezone(UTC)",
+        "time.asctime(time.gmtime())",
         "naive_utc_now()",
         "time.time_ns()",
     ]
