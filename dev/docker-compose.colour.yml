@@ -141,6 +141,9 @@ services:
       # The web tier serves requests and nothing else; the
       # workers container beside it holds the lease.
       LOOM_BACKGROUND_WORKERS: "off"
+      # One process unless .env names a count: the image's own default (one per
+      # CPU) would change an existing deployment's size on upgrade.
+      LOOM_WEB_WORKERS: "${LOOM_WEB_WORKERS:-1}"
       LOOM_DEPLOYMENT: "1"
       LOOM_INSTANCE_LABEL: "deploy:web:${LOOM_COLOUR}"
       # The host proxy publishes :7777 on every interface, so this colour is

@@ -50,9 +50,8 @@ def test_web_tier_runs_no_workers_and_the_worker_service_runs_only_them() -> Non
     assert web["LOOM_BACKGROUND_WORKERS"] == "off"
     assert workers["LOOM_BACKGROUND_WORKERS"] == "on"
     assert workers["LOOM_WEB_WORKERS"] == "1"
-    # The web tier inherits LOOM_WEB_WORKERS from .env; it must
-    # not pin it here or the operator's value is silently shadowed.
-    assert "LOOM_WEB_WORKERS" not in web
+    # The operator's count from .env, else one process.
+    assert web["LOOM_WEB_WORKERS"] == "${LOOM_WEB_WORKERS:-1}"
 
 
 def test_worker_service_publishes_no_port_and_healthchecks_its_own() -> None:
@@ -123,6 +122,7 @@ def test_each_colour_is_a_web_tier_and_a_workers_container() -> None:
     assert env["LOOM_BACKGROUND_WORKERS"] == "off"
     assert wenv["LOOM_BACKGROUND_WORKERS"] == "auto"
     assert wenv["LOOM_WEB_WORKERS"] == "1"
+    assert env["LOOM_WEB_WORKERS"] == "${LOOM_WEB_WORKERS:-1}"
     assert "ports" not in workers and web["ports"]
     assert (
         wenv["LOOM_SUPERVISOR_LOCK_PATH"]

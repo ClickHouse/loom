@@ -81,6 +81,9 @@ services:
       LOOM_BLOB_DIR: /app/var/blobs
       # The web tier serves requests and nothing else.
       LOOM_BACKGROUND_WORKERS: "off"
+      # One process unless .env names a count: the image's own default (one per
+      # CPU) would change an existing deployment's size on upgrade.
+      LOOM_WEB_WORKERS: "${LOOM_WEB_WORKERS:-1}"
       LOOM_SUPERVISOR_LOCK_PATH: /app/var/run/supervisor.lock
       # Graph-write marks shared by the web workers and the workers container.
       LOOM_GRAPH_WRITE_MARKS_DIR: /app/var/run/graph-marks
