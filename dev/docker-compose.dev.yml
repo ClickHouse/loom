@@ -102,6 +102,9 @@ services:
       LOOM_CH_PASSWORD: loomdev
       LOOM_CH_DATABASE: loom
       LOOM_CH_SECURE: "false"
+      # Two processes unless .env names a count: ClickHouse shares this host,
+      # and the image's own default (one per host CPU and GiB) leaves it no room.
+      LOOM_WEB_WORKERS: "${LOOM_WEB_WORKERS:-2}"
       # Trust-network (self-signup) by default. For a no-login local box,
       # set LOOM_IDENTITY_PROVIDER=single-user in .env: this disables auth
       # on its own (see Settings.auth_actually_required), regardless of
