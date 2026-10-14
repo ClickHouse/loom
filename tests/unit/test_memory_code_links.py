@@ -2006,6 +2006,36 @@ async def test_a_rehash_with_no_baseline_text_left_adopts_the_next_check(
     assert (await code_link_rehash._rehashed(changed, files))["body_hash"] == NO_BASELINE
 
 
+@pytest.mark.asyncio
+async def test_a_rehash_that_finds_no_anchor_definition_keeps_a_fresh_link_fresh(
+    monkeypatch,
+) -> None:
+    async def has(commit):
+        return True
+
+    async def defs(commit, path, qn):
+        return [] if commit == "c1" else await _differs_by_commit(commit, path, qn)
+
+    files = code_link_pass.RepoReads("o", "code-a")
+    monkeypatch.setattr(files, "has", has)
+    monkeypatch.setattr(files, "defs", defs)
+    link = _full(
+        {
+            "path": "a.py",
+            "qualified_name": "a::f",
+            "anchored_name": "a::f",
+            "anchored_path": "a.py",
+            "anchored_commit": "c1",
+            "checked_commit": "c2",
+            "body_hash": "old",
+            "checked_hash": "old",
+            "state": "fresh",
+        }
+    )
+    out = await code_link_rehash._rehashed(link, files)
+    assert out["body_hash"] == "new-c2" and "state" not in out
+
+
 def _judged_files(monkeypatch, texts: dict[str, str], path: str = "a.ts"):
     """`RepoReads` reading `texts` (commit -> source of `path`), and the judge's calls."""
     from server.memory.app import code_link_judge

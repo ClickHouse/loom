@@ -127,6 +127,6 @@ def _owes(a: LinkRow, fields: dict[str, Any]) -> bool:
 def _agree(anchored: tuple[str, str] | None, checked: tuple[str, str]) -> bool:
     """Whether the checked text is still the anchored one under the current rules: the
     same hash or the same rename shape. True when either side cannot be read."""
-    if not checked[0] or anchored is None:
+    if not checked[0] or not anchored or not anchored[0]:
         return True
     return anchored[0] == checked[0] or anchored[1] == checked[1] != ""
