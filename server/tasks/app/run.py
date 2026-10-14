@@ -239,7 +239,8 @@ def _user_of(input: RunBeginInput) -> str:
 
 async def begin_session_run(input: RunBeginInput, *, started_at: datetime) -> None:
     """Open, or re-open, an MCP session's implicit run under the transport's id,
-    with no claim (run.begin cannot name that id); a re-opened run keeps its start and owner."""
+    with no claim (run.begin cannot name that id); a re-opened run keeps its start,
+    owner and metadata (an earlier close's `recalled_keys` and `closed_by`)."""
     ch = get_client()
     with sequential_reads():
         existing = await runs_store.fetch_run(ch, input.org, input.namespace, input.run_id)
@@ -252,6 +253,7 @@ async def begin_session_run(input: RunBeginInput, *, started_at: datetime) -> No
             update={
                 "user_id": str(existing.get("user_id") or input.user_id),
                 "session_id": str(existing.get("session_id") or input.session_id),
+                "metadata": {**_parse_metadata(existing.get("metadata")), **input.metadata},
             }
         )
     await _open_run(ch, input, input.run_id, existing, started_at=started_at, version=version)

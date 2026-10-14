@@ -693,3 +693,54 @@ async def test_a_check_after_an_erasure_begins_a_new_run_not_the_erased_one(ch: 
             "DELETE FROM loom.agent_runs WHERE org = {org:String} AND namespace = {ns:String}",
             params={"org": ORG, "ns": namespace},
         )
+
+
+@pytest.mark.asyncio
+async def test_a_reopened_session_run_keeps_what_its_close_recorded(ch: Any) -> None:
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.tasks.api.models_run import RunBeginInput, RunCompleteInput
+    from server.tasks.app.run import _complete, _parse_metadata, begin_session_run
+    from server.tasks.store.runs import fetch_run
+
+    namespace = f"itest-{uuid.uuid4().hex[:12]}"
+    run_id = session_run_id(ORG, "sub", uuid.uuid4().hex)
+    begin = RunBeginInput(
+        org=ORG,
+        namespace=namespace,
+        agent=AGENT,
+        run_id=run_id,
+        goal="mcp session (itest)",
+        environment="mcp",
+        metadata={"implicit": True, "subject": "sub"},
+    )
+    try:
+        await begin_session_run(begin, started_at=naive_utc_now())
+        row = await fetch_run(ch, ORG, namespace, run_id)
+        assert row is not None
+        await _complete(
+            ch,
+            RunCompleteInput(
+                org=ORG,
+                namespace=namespace,
+                run_id=run_id,
+                status="completed",
+                outcome="none",
+                recalled_keys=["user/fact/one"],
+                metadata={"closed_by": "mcp_idle"},
+            ),
+            row,
+            drop_claim=False,
+            scope=WHOLE_NAMESPACE,
+        )
+        await begin_session_run(begin, started_at=naive_utc_now())
+        row = await fetch_run(ch, ORG, namespace, run_id)
+        assert row is not None and row["status"] == "active"
+        meta = _parse_metadata(row["metadata"])
+        assert meta["recalled_keys"] == ["user/fact/one"]
+        assert meta["closed_by"] == "mcp_idle"
+        assert meta["subject"] == "sub"
+    finally:
+        await ch.execute(
+            "DELETE FROM loom.agent_runs WHERE org = {org:String} AND namespace = {ns:String}",
+            params={"org": ORG, "ns": namespace},
+        )
