@@ -24,6 +24,13 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      clickhouse_image:
+        description: >-
+          An exact ClickHouse release for a bundle not yet published (e.g.
+          clickhouse/clickhouse-server:26.9.18.11), when `latest` names a bad one
+        required: false
+        default: ""
 
 # One release run per tag at a time; a second run waits instead of cancelling
 # a publish halfway.
@@ -123,16 +130,35 @@ jobs:
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       # A re-run keeps the release this version's published bundle names, so
       # rerunning the installer for it never moves ClickHouse.
+      # A dispatch may name the release in place of `latest`; a published
+      # bundle keeps its own either way.
       - id: resolve
         env:
           VERSION: ${{ needs.version.outputs.version }}
           GH_TOKEN: ${{ github.token }}
+          CLICKHOUSE_IMAGE: ${{ inputs.clickhouse_image }}
         run: |
+          if [ -n "$CLICKHOUSE_IMAGE" ]; then
+            python - <<'PY'
+          import os, sys
+          sys.path.insert(0, "scripts/release")
+          from build_stack_bundle import EXACT_CLICKHOUSE
+          image = os.environ["CLICKHOUSE_IMAGE"]
+          if not EXACT_CLICKHOUSE.fullmatch(image):
+              sys.exit(f"::error::not one ClickHouse release: {image!r}")
+          PY
+          fi
           status=0
           bash scripts/release/published_bundle.sh "$VERSION" published || status=$?
           case $status in
             0) image=$(python scripts/release/build_stack_bundle.py pinned-in published/loom-stack.tar.gz) ;;
-            3) image=$(bash dev/clickhouse_release.sh) ;;
+            3)
+              if [ -n "$CLICKHOUSE_IMAGE" ]; then
+                image=$CLICKHOUSE_IMAGE
+              else
+                image=$(bash dev/clickhouse_release.sh)
+              fi
+              ;;
             *) exit "$status" ;;
           esac
           echo "image=$image" >> "$GITHUB_OUTPUT"

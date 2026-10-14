@@ -77,3 +77,10 @@ def test_the_release_checks_its_clickhouse_before_pinning_it() -> None:
     script = "\n".join(step.get("run", "") for step in job["steps"])
     assert "server.core.schema.migrate" in script and "make schema-check" in script
     assert "clickhouse" in _needs(_jobs("release.yml")["verify"])
+
+
+def test_a_dispatch_names_its_clickhouse_through_the_environment() -> None:
+    """The input reaches the shell as data, and is checked as one exact release."""
+    (step,) = [s for s in _jobs("release.yml")["clickhouse"]["steps"] if s.get("id") == "resolve"]
+    assert step["env"]["CLICKHOUSE_IMAGE"] == "${{ inputs.clickhouse_image }}"
+    assert "inputs." not in step["run"] and "EXACT_CLICKHOUSE.fullmatch" in step["run"]
