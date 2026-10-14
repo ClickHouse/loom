@@ -41,7 +41,12 @@ class _FakeCH:
     async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
         self.sql.append(sql)
         wanted = set(params["ns"])
-        return [r for r in self.rows if r["namespace"] in wanted]
+        admins_only = "role = 'admin'" in sql
+        return [
+            r
+            for r in self.rows
+            if r["namespace"] in wanted and (r["role"] == "admin" or not admins_only)
+        ]
 
     async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
         assert table == "loom.namespace_grants"
@@ -58,10 +63,12 @@ def _admin(
     at: datetime = T0,
     status: str = "active",
     revoked_at: datetime | None = None,
+    role: str = "admin",
 ) -> dict[str, Any]:
     return {
         "namespace": ns,
         "subject": subject,
+        "role": role,
         "status": status,
         "revoked_at": revoked_at,
         "granted_at": at,
@@ -261,3 +268,18 @@ async def test_grants_revoke_admin_fans_out(
     )
     assert out.revoked and _handler_env["revoke"] == [("clickhouse", "code-x", "alice")]
     assert _handler_env["cutoffs"] == [("clickhouse", "code-x", ["alice"])]
+
+
+async def test_sync_respects_a_lowering_newer_than_the_sibling_grant() -> None:
+    # Lowered to viewer on 26-6 after their admin grant on code-x: the sync
+    # must not copy admin back (it would also lift the lowering's cutoff).
+    # A viewer row older than the sibling grant is no lowering.
+    ch = _FakeCH(
+        [
+            _admin("code-x", "alice"),
+            _admin("code-x-26-5", "alice", at=T0 - timedelta(hours=1), role="viewer"),
+            _admin("code-x-26-6", "alice", at=T0 + timedelta(hours=1), role="viewer"),
+        ]
+    )
+    assert await maintainers.sync_repo_maintainers("clickhouse", "code-x", ch=ch) == 1
+    assert [(r["namespace"], r["subject"]) for r in ch.inserted] == [("code-x-26-5", "alice")]

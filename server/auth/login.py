@@ -17,6 +17,7 @@ import asyncio
 import functools
 import logging
 import secrets
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
@@ -311,6 +312,23 @@ async def resolve_identity_for_email(
     return await _with_restricted_grants(_identity_from_rows(rows, verified_email=ident))
 
 
+async def _registered(org: str, namespace: str) -> bool:
+    """Whether a registry row exists for `namespace`, active or not, read as of
+    every write that landed."""
+    from server.core.ch import own_write_reads
+
+    with own_write_reads():
+        row = await get_client().query_one(
+            """
+            SELECT 1 AS x FROM loom.namespaces FINAL
+            WHERE org = {org:String} AND namespace = {ns:String}
+            LIMIT 1
+            """,
+            params={"org": org, "ns": namespace},
+        )
+    return row is not None
+
+
 async def jit_provision_for_email(
     email: str,
 ) -> tuple[str, str, list[str], list[str]] | None:
@@ -338,6 +356,17 @@ async def jit_provision_for_email(
     local = ident.split("@", 1)[0]
     slug = "".join(c if c.isalnum() else "-" for c in local).strip("-")[:40] or "user"
     ns = f"u-{slug}-{hashlib.sha256(ident.encode()).hexdigest()[:8]}"
+    if await _registered(_settings.oidc_jit_org, ns):
+        # Released or deleted (the sign-in found no active row for the email):
+        # provisioning it again would rebuild the row with default settings and
+        # an admin grant, handing back what an operator took away. Self-signup
+        # refuses a taken name the same way.
+        log.info(
+            "oidc jit: %s/%s is registered but inactive; not provisioning",
+            _settings.oidc_jit_org,
+            ns,
+        )
+        return None
     await provision_account(
         org=_settings.oidc_jit_org,
         namespace=ns,
@@ -354,6 +383,8 @@ async def jit_provision_for_email(
 
 @router.post("/v1/auth/login", response_model=LoginOutput)
 async def login(input: LoginInput, request: Request) -> LoginOutput:
+    # Before the grant cutoffs are read: a cutoff landing after the read postdates the token.
+    issued_at = int(time.time())
     try:
         resolved = await resolve_user_credentials(
             input.identifier, input.password, address=client_address(request)
@@ -377,8 +408,9 @@ async def login(input: LoginInput, request: Request) -> LoginOutput:
         roles=roles,
         ttl_seconds=_JWT_TTL_SECONDS,
         is_service_account=False,
+        issued_at=issued_at,
     )
-    expires_at = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(
+    expires_at = datetime.fromtimestamp(issued_at, UTC).replace(tzinfo=None) + timedelta(
         seconds=_JWT_TTL_SECONDS
     )
     return LoginOutput(

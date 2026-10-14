@@ -508,6 +508,9 @@ async def authorize_submit(request: Request) -> RedirectResponse:
     from server.auth.attempts import client_address
     from server.auth.login import LoginThrottled, resolve_user_credentials
 
+    # The code's issue time is taken before the grant cutoffs are read, so a
+    # cutoff landing after the read postdates it (`end_grant_claims`).
+    issued_at = int(time.time())
     try:
         resolved = await resolve_user_credentials(
             f.get("identifier", ""), f.get("password", ""), address=client_address(request)
@@ -533,7 +536,7 @@ async def authorize_submit(request: Request) -> RedirectResponse:
             "org": org,
             "namespaces": namespaces,
             "roles": roles,
-            "exp": int(time.time()) + _CODE_TTL,
+            "exp": issued_at + _CODE_TTL,
         },
     )
     params = {"code": code}
@@ -611,6 +614,7 @@ async def oidc_callback(request: Request) -> RedirectResponse:
             status_code=403,
             detail={"error": "access_denied", "error_description": "verified email required"},
         )
+    issued_at = int(time.time())  # before the cutoff read, as in authorize_submit
     resolved = await resolve_identity_for_email(email)
     if resolved is None:
         # No account — auto-provision one if JIT is on (else stay fail-closed).
@@ -636,7 +640,7 @@ async def oidc_callback(request: Request) -> RedirectResponse:
             "org": org,
             "namespaces": namespaces,
             "roles": roles,
-            "exp": int(time.time()) + _CODE_TTL,
+            "exp": issued_at + _CODE_TTL,
         },
     )
     params = {"code": code_out}
@@ -650,7 +654,9 @@ async def oidc_callback(request: Request) -> RedirectResponse:
 # --------------------------------------------------------------------------
 # Token endpoint
 # --------------------------------------------------------------------------
-async def _issue_tokens(grant: dict[str, Any], client_id: str) -> dict[str, Any]:
+async def _issue_tokens(grant: dict[str, Any], client_id: str, issued_at: int) -> dict[str, Any]:
+    """The tokens for a decided grant, both issued at `issued_at`: the time
+    the exchange took before it read the grant cutoffs."""
     access = mint_token(
         subject=grant["subject"],
         org=grant["org"],
@@ -658,6 +664,7 @@ async def _issue_tokens(grant: dict[str, Any], client_id: str) -> dict[str, Any]
         roles=list(grant["roles"]),
         ttl_seconds=_ACCESS_TTL,
         is_service_account=False,
+        issued_at=issued_at,
     )
     refresh = secrets.token_urlsafe(32)
     await _store.save_refresh(
@@ -668,7 +675,7 @@ async def _issue_tokens(grant: dict[str, Any], client_id: str) -> dict[str, Any]
             "org": grant["org"],
             "namespaces": list(grant["namespaces"]),
             "roles": list(grant["roles"]),
-            "exp": int(time.time()) + _REFRESH_TTL,
+            "exp": issued_at + _REFRESH_TTL,
         },
     )
     return {
@@ -753,6 +760,9 @@ async def _exchange(
         raise _unavailable("exchange claim", RuntimeError("another exchange holds it"))
     keep_claim = False
     grant: dict[str, Any] | None = None
+    # Before the decision reads the grant cutoffs: one landing after that read
+    # postdates the tokens, so it still cuts them (`end_grant_claims`).
+    issued_at = int(time.time())
     try:
         try:
             async with asyncio.timeout(oauth_claims.EXCHANGE_TIMEOUT_S):
@@ -760,7 +770,7 @@ async def _exchange(
                 if grant is None:
                     raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
                 decided = await decide(grant)
-                issued = await _issue_tokens(decided, decided["client_id"])
+                issued = await _issue_tokens(decided, decided["client_id"], issued_at)
         except HTTPException as e:
             if grant is not None and e.status_code != 503:
                 keep_claim = not await _used_up(consume, grant)
@@ -769,8 +779,9 @@ async def _exchange(
             raise _unavailable("exchange", e, grant) from e
         if not await _used_up(consume, grant):
             keep_claim = True
-            # A retry is told the credential is in use until the kept claim
-            # goes stale; a code is likely expired by then, and starts over.
+            # Wait out the kept claim: a retry before it goes stale finds it
+            # held and, like any presenter beside a live exchange, is told to
+            # retry in 5 s. A code is likely expired by then, and starts over.
             raise _unavailable(
                 "consume", RuntimeError("did not finish"), grant, retry_after=oauth_claims.STALE_S
             )

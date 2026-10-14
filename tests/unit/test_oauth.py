@@ -750,6 +750,36 @@ def test_a_slow_consume_that_landed_is_never_answered_with_a_retry(
     assert _exchange(c, code, verifier).status_code == 200
 
 
+@pytest.mark.parametrize("grant_type", ["authorization_code", "refresh_token"])
+def test_an_exchange_issues_its_tokens_at_the_time_before_its_cutoff_read(
+    monkeypatch: pytest.MonkeyPatch, grant_type: str
+) -> None:
+    """A cutoff can land while the exchange runs, after its read: the tokens
+    carry the time taken before the read, so the cutoff, written again once
+    its insert returned, still postdates them and cuts them."""
+    import asyncio
+
+    from server.auth import revocation
+    from server.auth.jwt import verify_token
+
+    c = _client()
+    code, verifier = _seed_code()
+    if grant_type == "refresh_token":
+        rt = _exchange(c, code, verifier).json()["refresh_token"]
+
+    async def _slow(subject: str, *, issued_at: int) -> bool:
+        await asyncio.sleep(1.1)
+        return False
+
+    monkeypatch.setattr(revocation, "subject_revoked", _slow)
+    before = int(time.time())
+    r = _exchange(c, code, verifier) if grant_type == "authorization_code" else _refresh(c, rt)
+    tok = r.json()
+    assert verify_token(tok["access_token"]).issued_at == before
+    saved = oauth._store.refresh[oauth._token_id(tok["refresh_token"])]
+    assert int(saved["exp"]) - oauth._REFRESH_TTL == before
+
+
 def test_a_find_past_its_bound_is_told_to_retry(monkeypatch: pytest.MonkeyPatch) -> None:
     """The credential read is inside the exchange's deadline: a find that
     stalls (its retries, a pool wait) cannot carry a live exchange past the

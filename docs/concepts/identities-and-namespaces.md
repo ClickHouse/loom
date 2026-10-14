@@ -162,10 +162,12 @@ operation's role, or a live grant does.
   old claim. Signing in again, an OAuth code exchange and an OAuth refresh leave the
   namespace out of the token they mint (they read the cutoffs from ClickHouse, not the
   server's snapshot), so whatever grant the person holds there now is what applies, until
-  they are given an admin grant there after it: only another admin gives one (a self-join
-  stops below it, and a restore into an existing namespace needs an admin), and the claim
-  confers no more, so a new token carries it. Approving a request never lowers a grant. A namespace the subject never held a grant on
-  keeps its claim; revoke the token to take that away. The server that took the grant away
+  they are given an admin grant there in a later second: only another admin gives one (a
+  self-join stops below it, a restore into an existing namespace needs an admin, OIDC
+  sign-up does not rebuild a released or deleted account, and a repository's maintainer
+  sync does not undo a lowering), and the claim confers no more, so a new token carries
+  it. Approving a request never lowers a grant. A namespace the subject never held a grant
+  on keeps its claim; revoke the token to take that away. The server that took the grant away
   applies it at once, every other within `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` (default
   30 s). A service
   account with no grant of its own on a namespace uses its creator's grant there, so a

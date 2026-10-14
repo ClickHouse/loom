@@ -206,14 +206,38 @@ async def test_jit_provisions_when_enabled(monkeypatch) -> None:
     async def fake_resolve(email: str) -> tuple[str, str, list[str], list[str]]:
         return ("u-bob-xxxx", "acme", ["u-bob-xxxx"], ["writer"])
 
+    async def none_registered(org: str, namespace: str) -> bool:
+        return False
+
     monkeypatch.setattr(self_signup, "provision_account", fake_provision)
     monkeypatch.setattr(login, "resolve_identity_for_email", fake_resolve)
+    monkeypatch.setattr(login, "_registered", none_registered)
 
     out = await login.jit_provision_for_email("Bob@Acme.com")
     assert out == ("u-bob-xxxx", "acme", ["u-bob-xxxx"], ["writer"])
     assert calls["org"] == "acme"
     assert calls["contact_email"] == "bob@acme.com"  # normalized
     assert calls["namespace"].startswith("u-bob-") and calls["password_hash"] == ""
+
+
+async def test_jit_does_not_rebuild_a_released_or_deleted_account(monkeypatch) -> None:
+    # The sign-in found no active row: one that exists inactive was released
+    # or deleted, and provisioning it again would hand back an admin grant.
+    monkeypatch.setattr(settings, "oidc_jit_provision", True)
+    monkeypatch.setattr(settings, "oidc_jit_org", "acme")
+    monkeypatch.setattr(settings, "oidc_jit_email_domains", "")
+    called = {"n": 0}
+
+    async def fake_provision(**kw: Any) -> None:
+        called["n"] += 1
+
+    async def registered(org: str, namespace: str) -> bool:
+        return True
+
+    monkeypatch.setattr(self_signup, "provision_account", fake_provision)
+    monkeypatch.setattr(login, "_registered", registered)
+    assert await login.jit_provision_for_email("bob@acme.com") is None
+    assert called["n"] == 0
 
 
 async def test_jit_rejects_disallowed_domain(monkeypatch) -> None:

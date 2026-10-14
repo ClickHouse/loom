@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -229,6 +229,36 @@ def test_revoking_ends_claims_only_when_the_grant_was_active(
     revoke = GrantsRevokeInput(org=ORG, namespace="team", subject="alice")
     assert asyncio.run(grants_mod.handle_grants_revoke(revoke)).revoked
     assert grant_cutoffs == ([(ORG, "team", ["alice"])] if cut else [])
+
+
+def test_the_cutoff_is_written_again_once_the_first_write_has_returned(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A committed insert takes seconds: a mint that read before the first row
+    # landed took its issue time before that read, so only a cutoff stamped
+    # after the write returned is sure to postdate its token.
+    clock = {"t": datetime(2026, 5, 1, 12, 0, 0)}
+
+    class _Clock(datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> datetime:  # type: ignore[override]
+            return clock["t"].replace(tzinfo=tz) if tz else clock["t"]
+
+    written: list[datetime] = []
+    insert = ch.insert
+
+    async def _slow(table: str, rows: list[dict[str, Any]], **k: Any) -> None:
+        written.extend(r["issued_before"] for r in rows)
+        clock["t"] += timedelta(seconds=3)
+        await insert(table, rows, **k)
+
+    monkeypatch.setattr(rev, "datetime", _Clock)
+    monkeypatch.setattr(ch, "insert", _slow)
+    _end("team")
+    first, second = written
+    assert second - first == timedelta(seconds=3)
+    key = rev.grant_claim_key(ORG, "team", "alice")
+    assert ch.revoked[key]["issued_before"] == second, "the newest row governs"
 
 
 def test_a_minting_path_reads_the_cutoffs_from_clickhouse(ch: _CH) -> None:

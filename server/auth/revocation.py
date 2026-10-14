@@ -252,8 +252,12 @@ async def end_grant_claims(
     the subject's next one (a join request, a self-join), so only a row of
     its own keeps the revocation. A later grant does not lift it. The cutoff
     is the next whole second, so a token minted in the second of the
-    revocation is cut too. Raises on a ClickHouse failure, so the caller's
-    grant write does not land without it."""
+    revocation is cut too, and it is written again once the first write has
+    returned: a mint whose read ran before the row landed took its issue
+    time before that read (`mint_token(issued_at=...)`), so the second
+    cutoff postdates it, and its token is cut at verify and its refresh at
+    the next exchange. Raises on a ClickHouse failure, so the caller's grant
+    write does not land without it."""
     from server.auth.aliases import subject_aliases
     from server.core.ch import get_client
 
@@ -268,22 +272,23 @@ async def end_grant_claims(
     )
     if not keys:
         return
-    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
-    cutoff = now + timedelta(seconds=1)
-    rows = [
-        {
-            "jti": key,
-            "revoked_at": now,
-            "expires_at": revocation_expiry(None, now),
-            "reason": reason,
-            "revoked_by": revoked_by,
-            "issued_before": cutoff,
-        }
-        for key in keys
-    ]
-    await get_client().insert("loom.revoked_tokens", rows)
+    for _ in ("written", "landed"):
+        now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+        rows = [
+            {
+                "jti": key,
+                "revoked_at": now,
+                "expires_at": revocation_expiry(None, now),
+                "reason": reason,
+                "revoked_by": revoked_by,
+                "issued_before": now + timedelta(seconds=1),
+                "version": time.time_ns(),
+            }
+            for key in keys
+        ]
+        await get_client().insert("loom.revoked_tokens", rows)
     await refresh()
-    _apply_locally(keys, _cutoff_seconds(cutoff))
+    _apply_locally(keys, _cutoff_seconds(now + timedelta(seconds=1)))
 
 
 async def ended_claims(
@@ -298,8 +303,9 @@ async def ended_claims(
 
     A namespace the subject was given a live admin grant on since its cutoff
     is not ended: only another admin can give that (a self-join stops below
-    it, a restore grants no admin over an existing namespace), and a claim
-    confers no more than it, so an owner an operator reinstated is not kept
+    it, a restore grants no admin over an existing namespace, OIDC JIT does
+    not rebuild a released or deleted account, and the maintainer sync does
+    not undo a lowering on a branch), and a claim confers no more than it, so an owner an operator reinstated is not kept
     out of their claim. An admin row granted before the cutoff is the one the
     revoke is replacing (the cutoff lands first), so it lifts nothing."""
     from server.auth.aliases import subject_aliases

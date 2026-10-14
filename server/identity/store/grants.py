@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from server.core.ch import own_write_reads
 from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.grants import GrantState, PendingGrant
@@ -131,18 +132,21 @@ async def find_active_grant(
 ) -> GrantState | None:
     """Look up the current ACTIVE grant for (org, ns, subject), if any.
     Pending grants are intentionally excluded — they don't authorize
-    action yet."""
+    action yet. Read as of every write that landed: a grant change decides
+    from it whether it lowers the grant (and so ends older tokens' claims),
+    and a lagging replica would miss a higher grant just written."""
     ch = ch or _default_client()
-    row = await ch.query_one(
-        """
+    with own_write_reads():
+        row = await ch.query_one(
+            """
         SELECT role, granted_by, status, pending_role, pending_since
         FROM loom.namespace_grants FINAL
         WHERE org = {org:String} AND namespace = {ns:String}
           AND subject = {sub:String} AND {live}
         LIMIT 1
         """.replace("{live}", LIVE_GRANT),
-        params={"org": org, "ns": namespace, "sub": subject},
-    )
+            params={"org": org, "ns": namespace, "sub": subject},
+        )
     return None if row is None else GrantState.from_row(row)
 
 
@@ -153,16 +157,19 @@ async def active_roles(
     *,
     ch: _CHClient | None = None,
 ) -> dict[str, str]:
-    """subject -> role of the ACTIVE grants on (org, ns) among `subjects`."""
+    """subject -> role of the ACTIVE grants on (org, ns) among `subjects`, read
+    as of every write that landed (a restore decides from it which grants it
+    lowers)."""
     ch = ch or _default_client()
-    rows = await ch.query_all(
-        """
+    with own_write_reads():
+        rows = await ch.query_all(
+            """
         SELECT subject, role FROM loom.namespace_grants FINAL
         WHERE org = {org:String} AND namespace = {ns:String}
           AND subject IN {subs:Array(String)} AND {live}
         """.replace("{live}", LIVE_GRANT),
-        params={"org": org, "ns": namespace, "subs": subjects},
-    )
+            params={"org": org, "ns": namespace, "subs": subjects},
+        )
     return {str(r["subject"]): str(r["role"]) for r in rows}
 
 
@@ -175,18 +182,21 @@ async def find_any_grant(
 ) -> GrantState | None:
     """Look up ANY non-revoked grant — active OR pending. Used by the
     join handler to detect already-requested-but-not-yet-approved
-    self-joins so they aren't duplicated."""
+    self-joins so they aren't duplicated, and by `grants.revoke`, which
+    ends older tokens' claims when the grant it finds is active: read as of
+    every write that landed, so a just-approved grant is not missed."""
     ch = ch or _default_client()
-    row = await ch.query_one(
-        """
-        SELECT role, granted_by, status, pending_role, pending_since
-        FROM loom.namespace_grants FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND subject = {sub:String} AND revoked_at IS NULL
-        LIMIT 1
-        """,
-        params={"org": org, "ns": namespace, "sub": subject},
-    )
+    with own_write_reads():
+        row = await ch.query_one(
+            """
+            SELECT role, granted_by, status, pending_role, pending_since
+            FROM loom.namespace_grants FINAL
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND subject = {sub:String} AND revoked_at IS NULL
+            LIMIT 1
+            """,
+            params={"org": org, "ns": namespace, "sub": subject},
+        )
     return None if row is None else GrantState.from_row(row)
 
 
