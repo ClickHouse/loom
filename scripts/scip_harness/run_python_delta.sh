@@ -74,11 +74,11 @@ async def m():
     head = await repo.get_state(org, ns, "git_head")
     cfg = next((r for r in configured_repos() if r.org == org and r.namespace == ns), None)
     bare = os.path.abspath(cfg.git_dir or settings.code_git_dir) if cfg else ""
-    producer = cfg.scip_producer if cfg else ""
+    others = [p for p in ("go", "typescript") if cfg and await worker_owns(repo, cfg, p)]
     if cfg and settings.code_scip_py_delta_enabled and await worker_owns(repo, cfg, "python"):
         owner = "worker"
-    elif producer in ("go", "typescript"):
-        owner = producer  # its in-process worker moves this checkout, outside the cron lock
+    elif others:
+        owner = others[0]  # its in-process worker owns this entry, outside the cron lock
     else:
         owner = "cron"
     print(org, ns, wm or "-", head or "-", bare or "-", owner)

@@ -40,6 +40,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
+from server.core.naming import validate_namespace_name
 from server.settings import settings
 
 logger = logging.getLogger("loom.code_index.repos")
@@ -363,7 +364,11 @@ def _configured_from_env() -> list[RepoConfig]:
         if not isinstance(e, dict) or not e.get("namespace"):
             errors[f"entry:{i}"] = f"code repo entry missing 'namespace', skipped: {e!r}"
             continue
-        ns = str(e["namespace"])
+        try:
+            ns = validate_namespace_name(str(e["namespace"]))
+        except ValueError as err:
+            errors[f"namespace:{i}"] = f"code repo entry {i} skipped: {err}"
+            continue
         if ns in seen:
             errors[f"duplicate:{ns}"] = f"duplicate code repo namespace {ns} skipped"
             continue

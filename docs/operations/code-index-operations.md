@@ -107,13 +107,13 @@ An entry that names no `scip_producer` keeps `scip_checkout_dir` for C/C++ (see
 [Compiler tier](#compiler-tier)), so name the producer when you prepare that tree for
 another language.
 
-The repository's `.gitattributes` `linguist-generated` / `linguist-vendored` patterns and
-a `.loomignore` file at the indexed commit are honoured as excludes. A dependency
+The repository's `.gitattributes` `linguist-generated` / `linguist-vendored` patterns
+and a `.loomignore` file at the indexed commit are honoured as excludes. A dependency
 vendored as a git submodule is not in the bare mirror; give it its own entry and name it
 in `depends_on`. The gauge `loom.code.repos_config_errors` reports entries the server
-could not use (invalid JSON, a nameless entry, a duplicate namespace); 0 means the value
-parsed clean. Validate the JSON before a restart with
-`docker compose --env-file .env -f dev/docker-compose.cloud.yml config`.
+could not use (invalid JSON, a nameless entry, a namespace that is not a valid name, a
+duplicate namespace); 0 means the value parsed clean. Validate the JSON before a restart
+with `docker compose --env-file .env -f dev/docker-compose.cloud.yml config`.
 
 Who can read an index is governed by the namespace's join policy and grants
 ([tokens and grants](../guides/tokens-and-grants.md)). `LOOM_CODE_ORG_READABLE=true`

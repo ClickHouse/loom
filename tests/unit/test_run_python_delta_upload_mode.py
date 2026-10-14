@@ -148,3 +148,35 @@ def test_scip_python_runs_with_the_wildcard_import_stubs_on_its_path(repos) -> N
     first = Path(line.split(" ", 1)[1].split(":")[0])
     assert first.is_absolute() and first.name == "python_stubs"
     assert (first / "delta" / "__init__.pyi").is_file()
+
+
+def _ident_snippet() -> str:
+    """The Python the script runs for the entry's identity, as written in it."""
+    text = _SCRIPT.read_text()
+    start = text.index('"$PYTHON" - <<PYEOF\n') + len('"$PYTHON" - <<PYEOF\n')
+    return text[start : text.index("\nPYEOF", start)]
+
+
+def test_an_entry_whose_tree_calls_for_go_is_left_to_the_go_worker(monkeypatch, capsys) -> None:
+    """An entry naming no producer is owned by what its tree calls for, the same test the
+    workers apply: a Go module gets no cron Python pass."""
+    from unittest.mock import AsyncMock
+
+    from server.code.domain.index import repos
+    from server.code.store import index as store_index
+    from server.core import ch
+    from tests.unit.code_fixtures import repo_config
+
+    repo = AsyncMock()
+    repo.get_state.return_value = ""
+    repo.live_paths_present.return_value = ["go.mod"]
+    monkeypatch.setattr(store_index, "CodeRepo", lambda: repo)
+    monkeypatch.setattr(ch, "get_client", lambda: AsyncMock())
+    cfg = repo_config(org="org", namespace="code-x", scip_producer="")
+    monkeypatch.setattr(repos, "configured_repos", lambda: [cfg])
+    monkeypatch.setenv("ORG_ARG", "org")
+    monkeypatch.setenv("NS_ARG", "code-x")
+
+    exec(_ident_snippet(), {})
+
+    assert capsys.readouterr().out.split()[-1] == "go"
