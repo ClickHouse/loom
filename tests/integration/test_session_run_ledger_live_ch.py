@@ -8,6 +8,7 @@ Skips cleanly when LOOM_CH_HOST is unset.
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import os
 import time
@@ -27,6 +28,15 @@ pytestmark = pytest.mark.skipif(
 )
 
 ORG, AGENT = "itest-org", "itest-mcp"
+
+
+def _sweep_only(monkeypatch: pytest.MonkeyPatch, org: str) -> None:
+    """The live tests share a database: the sweep reads this test's org only."""
+    monkeypatch.setattr(
+        run_handlers.runs_store,
+        "idle_session_runs",
+        functools.partial(run_handlers.runs_store.idle_session_runs, org=org),
+    )
 
 
 @pytest.fixture
@@ -79,6 +89,7 @@ async def test_the_idle_sweep_closes_a_run_its_own_calls_did_not_keep_busy(
     explicit = f"mcp-{uuid.uuid4().hex[:12]}"  # the prefix, but begun by hand
     legacy = f"mcp-{uuid.uuid4().hex}"
     long_ago = time.time_ns() - 7200 * 10**9
+    _sweep_only(monkeypatch, org)
     try:
         await ch.insert(
             "loom.agent_runs",
@@ -105,8 +116,8 @@ async def test_the_idle_sweep_closes_a_run_its_own_calls_did_not_keep_busy(
             await _ledger_call(ch, elsewhere, run_id, subject="sa:a", org=org)
         await _ledger_call(ch, namespace, borrowed, subject="sa:eve", org=org)  # another token
         monkeypatch.setattr(run_handlers, "IDLE_CLOSE_BATCH", 2)
-        assert await close_idle_session_runs(1800, org=org) == 2
-        assert await close_idle_session_runs(1800, org=org) == 1
+        assert await close_idle_session_runs(1800) == 2
+        assert await close_idle_session_runs(1800) == 1
         assert all([await active_session_runs(org, run_id) for run_id in busy])
         assert await active_session_runs(org, quiet) == []
         assert await active_session_runs(org, borrowed) == []
@@ -130,6 +141,7 @@ async def test_the_idle_sweep_reads_any_number_of_active_runs(
     org = f"itest-many-{uuid.uuid4().hex[:8]}"
     long_ago = time.time_ns() - 7200 * 10**9
     ids = [session_run_id(org, "sa:a", str(i)) for i in range(3500)]
+    _sweep_only(monkeypatch, org)
     try:
         await ch.insert(
             "loom.agent_runs",
@@ -149,7 +161,7 @@ async def test_the_idle_sweep_reads_any_number_of_active_runs(
             settings={"async_insert": 0},
         )
         monkeypatch.setattr(run_handlers, "IDLE_CLOSE_BATCH", 5)
-        assert await close_idle_session_runs(60, org=org) == 5
+        assert await close_idle_session_runs(60) == 5
     finally:
         await ch.execute(
             "DELETE FROM loom.agent_runs WHERE org = {org:String}", params={"org": org}
@@ -157,13 +169,16 @@ async def test_the_idle_sweep_reads_any_number_of_active_runs(
 
 
 @pytest.mark.asyncio
-async def test_the_idle_sweep_closes_a_run_however_long_ago_it_was_written(ch: Any) -> None:
+async def test_the_idle_sweep_closes_a_run_however_long_ago_it_was_written(
+    ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A run an earlier server, or a month without workers, left open."""
     from server.tasks.app.run import active_session_runs, close_idle_session_runs
 
     org = f"itest-old-{uuid.uuid4().hex[:8]}"
     run_id = session_run_id(org, "sa:a", uuid.uuid4().hex)
     long_ago = time.time_ns() - 31 * 86400 * 10**9
+    _sweep_only(monkeypatch, org)
     try:
         await ch.insert(
             "loom.agent_runs",
@@ -181,7 +196,7 @@ async def test_the_idle_sweep_closes_a_run_however_long_ago_it_was_written(ch: A
             ],
             settings={"async_insert": 0},
         )
-        assert await close_idle_session_runs(1800, org=org) == 1
+        assert await close_idle_session_runs(1800) == 1
         assert await active_session_runs(org, run_id) == []
     finally:
         await ch.execute(
@@ -190,13 +205,16 @@ async def test_the_idle_sweep_closes_a_run_however_long_ago_it_was_written(ch: A
 
 
 @pytest.mark.asyncio
-async def test_a_run_that_records_no_subject_stays_open_while_it_is_called(ch: Any) -> None:
+async def test_a_run_that_records_no_subject_stays_open_while_it_is_called(
+    ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """An earlier server's run: its calls carry a subject it never recorded."""
     from server.tasks.app.run import active_session_runs, close_idle_session_runs
 
     org = f"itest-nosub-{uuid.uuid4().hex[:8]}"
     busy, quiet = f"mcp-{uuid.uuid4().hex}", f"mcp-{uuid.uuid4().hex}"
     long_ago = time.time_ns() - 7200 * 10**9
+    _sweep_only(monkeypatch, org)
     try:
         await ch.insert(
             "loom.agent_runs",
@@ -216,7 +234,7 @@ async def test_a_run_that_records_no_subject_stays_open_while_it_is_called(ch: A
             settings={"async_insert": 0},
         )
         await _ledger_call(ch, "ns", busy, subject="sa:still-working", org=org)
-        assert await close_idle_session_runs(1800, org=org) == 1
+        assert await close_idle_session_runs(1800) == 1
         assert await active_session_runs(org, busy) != []
         assert await active_session_runs(org, quiet) == []
     finally:
@@ -501,3 +519,68 @@ async def test_a_close_completes_every_row_under_the_run_id(ch: Any) -> None:
             "AND namespace IN {ns:Array(String)}",
             params={"org": ORG, "ns": [first, other]},
         )
+
+
+@pytest.mark.asyncio
+async def test_a_close_under_an_unpinned_scoped_token_counts_all_the_runs_writes(
+    ch: Any,
+) -> None:
+    """The run id binds the org, token and session, so a close counts every write
+    under it whatever auth its context carries: here an `own_user` token pinned to
+    no user, which has no read scope of its own."""
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app.write import handle_memory_set
+    from server.tasks.api.models_run import RunBeginInput
+    from server.tasks.app.run import begin_session_run, close_session_run
+    from server.tasks.store.runs import fetch_run
+
+    namespace = f"itest-{uuid.uuid4().hex[:12]}"
+    run_id = session_run_id(ORG, "sa:bot", uuid.uuid4().hex)
+    try:
+        await begin_session_run(
+            RunBeginInput(
+                org=ORG,
+                namespace=namespace,
+                agent=AGENT,
+                run_id=run_id,
+                goal="mcp session (itest)",
+                environment="mcp",
+                metadata={"implicit": True, "subject": "sa:bot"},
+            ),
+            started_at=naive_utc_now(),
+        )
+        for user in ("u1", "u2"):
+            await handle_memory_set(
+                MemorySetInput(
+                    org=ORG,
+                    namespace=namespace,
+                    agent=AGENT,
+                    user_id=user,
+                    run_id=run_id,
+                    memory_key=f"t/fact/{user}",
+                    value=f"{user} noted a fact",
+                )
+            )
+        set_current_auth(
+            AuthInfo(
+                subject="sa:bot",
+                org=ORG,
+                namespaces=(namespace,),
+                roles=("writer",),
+                is_service_account=True,
+                read_scope="own_user",
+            )
+        )
+        assert await close_session_run(ORG, run_id, reason="session_end") is True
+        row = await fetch_run(ch, ORG, namespace, run_id)
+        assert row is not None and row["status"] == "completed"
+        assert sorted(row["memories_written"]) == ["t/fact/u1", "t/fact/u2"]
+    finally:
+        set_current_auth(None)
+        for table in ("agent_runs", "memory"):
+            await ch.execute(
+                f"DELETE FROM loom.{table} WHERE org = {{org:String}} AND namespace = {{ns:String}}",
+                params={"org": ORG, "ns": namespace},
+            )

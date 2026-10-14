@@ -114,6 +114,8 @@ class _Worker:
     # WorkerSpec.max_pass_seconds: pinned here, or float() of a settings field.
     max_pass_seconds: float | None = None
     max_pass_setting: str | None = None
+    # WorkerSpec.max_pass_seconds from this module attribute.
+    max_pass_attr: str | None = None
     # WorkerSpec.first_pass_due from this module attribute.
     first_pass_due: str | None = None
     # WorkerSpec.owned_tables / due_scope from the module's OWNED_TABLES +
@@ -130,6 +132,8 @@ def _spec_for(row: _Worker) -> WorkerSpec:
     max_pass = row.max_pass_seconds
     if row.max_pass_setting is not None:
         max_pass = float(getattr(settings, row.max_pass_setting))
+    if row.max_pass_attr is not None:
+        max_pass = float(getattr(mod, row.max_pass_attr))
     return WorkerSpec(
         row.name,
         interval,
@@ -380,8 +384,7 @@ _WORKERS: tuple[_Worker, ...] = (
         None,
         "INTERVAL_SECONDS",
         interval_in_module=True,
-        # twice IDLE_CLOSE_BUDGET_S, so closes begun just before it ends can finish
-        max_pass_seconds=240.0,
+        max_pass_attr="MAX_PASS_SECONDS",
     ),
     _Worker(
         "task_webhook_deliver",

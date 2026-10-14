@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.tasks.app import run as run_handlers
 
 
@@ -62,8 +63,8 @@ def _ledger(monkeypatch, *run_ids: str) -> _Ledger:
 @pytest.mark.asyncio
 async def test_an_idle_run_is_completed_with_outcome_none(monkeypatch) -> None:
     ledger = _ledger(monkeypatch, "a")
-    assert await run_handlers.close_idle_session_runs(1800, org="o") == 1
-    assert ledger.params == [{"org": "o", "idle": 1800, "lim": 500}]
+    assert await run_handlers.close_idle_session_runs(1800) == 1
+    assert ledger.params == [{"org": "", "idle": 1800, "lim": 500}]
     (c,) = ledger.completes
     assert (c.org, c.namespace, c.run_id) == ("o", "n", "a")
     assert (c.status, c.outcome, c.metadata) == ("completed", "none", {"closed_by": "mcp_idle"})
@@ -129,11 +130,10 @@ async def test_the_worker_pass_closes_with_the_idle_window(monkeypatch) -> None:
 
 
 def test_the_pass_deadline_leaves_room_for_the_close_budget() -> None:
-    from server.workers.registry import _WORKERS
+    from server.workers.registry import _WORKERS, _spec_for
 
     (row,) = [w for w in _WORKERS if w.name == "mcp_session_run_sweep"]
-    assert row.max_pass_seconds is not None
-    assert row.max_pass_seconds >= 2 * run_handlers.IDLE_CLOSE_BUDGET_S
+    assert _spec_for(row).deadline_seconds() == 2 * run_handlers.IDLE_CLOSE_BUDGET_S
 
 
 @pytest.mark.asyncio
@@ -148,8 +148,10 @@ async def test_closes_racing_for_one_run_judge_nothing(monkeypatch) -> None:
     )
     assert ledger.completes and {c.run_id for c in ledger.completes} == {"a"}
     assert {(c.outcome, c.retain) for c in ledger.completes} == {("none", "keep")}
-    # A session's run holds no Keeper claim to drop.
-    assert all(options == {"drop_claim": False} for options in ledger.complete_options)
+    # A session's run holds no Keeper claim to drop, and every close counts the
+    # run's writes alike, whoever closes it.
+    closes = {"drop_claim": False, "scope": WHOLE_NAMESPACE}
+    assert all(options == closes for options in ledger.complete_options)
 
 
 @pytest.mark.asyncio

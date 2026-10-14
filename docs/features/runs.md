@@ -105,6 +105,23 @@ its outcome is `none` and its memories are kept whatever the server's default
 retain mode, so two closes racing for it (the sweep on two hosts, a `DELETE`)
 at worst write the same completion twice.
 
+How the run spans web processes. Its id is a hash of the caller's org, the
+token's subject and the `Mcp-Session-Id`, so every process of the server names
+the same run for the session and no other token can name it by sending the same
+session id. A process registers the run on the session's first admitted
+run-scoped call and writes the begin row in the background (an awaited insert
+would hold that call for seconds on ClickHouse Cloud); a call the gates refuse
+writes no run row. Each process checks a cached run with the ledger at most once
+a minute and re-opens it when a `DELETE` or the sweep closed it in the meantime.
+A `DELETE` closes the run whichever process it reaches, by its id; the close
+counts every write under that id, whoever closes it. A `DELETE` that reaches
+another process before the begin row has landed finds nothing to close, and the
+begin then lands an open run that the sweep closes once it goes idle: a short
+retry would not cover a begin that takes seconds, and would delay the `DELETE`
+of every session that never took a run. A re-opened run keeps its original
+`started_at`, so a run closed by the sweep and re-opened later reports a
+`duration_ms` counted from the session's first call, gaps included.
+
 ## Operations
 
 | Operation      | Role   | Does                                                                                                                                                                                                                                                                      |

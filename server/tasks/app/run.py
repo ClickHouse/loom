@@ -27,7 +27,7 @@ from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now as _now
 from server.core.errors import AuthInsufficientError, IdentityIncompleteError, NotFoundError
 from server.identity.app.request_scope import request_narrowed, request_scope
-from server.identity.domain.read_scope import WHOLE_NAMESPACE, row_in_read_scope
+from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, row_in_read_scope
 from server.memory.app import run_feedback, run_retention
 from server.operations.read_projection import project_rows
 from server.tasks.api.models_run import (
@@ -51,6 +51,12 @@ from server.tasks.store.rows import RunLedgerRow
 log = logging.getLogger(__name__)
 
 _METADATA_LIMIT = 8_000
+
+# One idle-sweep pass: how many session runs it closes at most, how many at once,
+# and how long it starts new closes for (the worker's deadline is twice this).
+IDLE_CLOSE_BATCH = 500
+IDLE_CLOSES_AT_ONCE = 8
+IDLE_CLOSE_BUDGET_S = 120.0
 
 
 def _iso(value: Any) -> str:
@@ -228,11 +234,8 @@ def _user_of(input: RunBeginInput) -> str:
 
 
 async def begin_session_run(input: RunBeginInput, *, started_at: datetime) -> None:
-    """Open, or re-open, an MCP session's implicit run under the id the transport
-    made for it. The id binds the token (`session_run_id`) and an explicit
-    run.begin cannot name it, so it takes no claim, and the id the session's calls
-    carry is the one stored. A new row starts at `started_at`, when the transport
-    registered the run; a re-opened one keeps its start and owner."""
+    """Open, or re-open, an MCP session's implicit run under the transport's id,
+    with no claim (run.begin cannot name that id); a re-opened run keeps its start and owner."""
     ch = get_client()
     with sequential_reads():
         existing = await runs_store.fetch_run(ch, input.org, input.namespace, input.run_id)
@@ -262,22 +265,12 @@ async def close_session_run(org: str, run_id: str, *, reason: str) -> bool:
     return closed
 
 
-# One idle-sweep pass: how many runs it closes at most, how many at once, and
-# how long it starts new closes for (inside the worker's pass deadline).
-IDLE_CLOSE_BATCH = 500
-IDLE_CLOSES_AT_ONCE = 8
-IDLE_CLOSE_BUDGET_S = 120.0
-
-
-async def close_idle_session_runs(idle_seconds: int, *, org: str = "") -> int:
+async def close_idle_session_runs(idle_seconds: int) -> int:
     """Complete the implicit session runs no call of their token reached within
-    the idle window, from the ledger alone, so a run closes whichever web
-    process served it and after any restart; the next pass takes what one pass
-    leaves. Returns how many closed. `org` narrows the sweep to one org for the
-    live tests, which share a database with the rest of the suite."""
+    the idle window; the next pass takes what one pass leaves. Returns how many closed."""
     deadline = time.monotonic() + IDLE_CLOSE_BUDGET_S
     stale = await runs_store.idle_session_runs(
-        get_client(), idle_seconds=idle_seconds, limit=IDLE_CLOSE_BATCH, org=org
+        get_client(), idle_seconds=idle_seconds, limit=IDLE_CLOSE_BATCH
     )
     slots = asyncio.Semaphore(IDLE_CLOSES_AT_ONCE)
 
@@ -297,9 +290,8 @@ async def close_idle_session_runs(idle_seconds: int, *, org: str = "") -> int:
 async def _complete_session_run(
     row: RunLedgerRow, *, reason: str, idle_seconds: int | None = None
 ) -> bool:
-    """Complete one row of a session run while it is still active, and for the
-    sweep (`idle_seconds`, which picked it a while ago) still idle. Outcome none,
-    memories kept: a close racing another for the run only repeats the completion."""
+    """Complete one row of a session run while it is active (and, for the sweep,
+    still idle), judging nothing, so racing closes only repeat the completion."""
     ch = get_client()
     org, namespace, run_id = str(row["org"]), str(row["namespace"]), str(row["run_id"])
     with sequential_reads():
@@ -327,6 +319,9 @@ async def _complete_session_run(
         ),
         existing,
         drop_claim=False,  # begin_session_run takes no claim
+        # The run id already binds the org, token and session: count every write
+        # under it, whoever closes the run.
+        scope=WHOLE_NAMESPACE,
     )
     return True
 
@@ -533,9 +528,15 @@ async def handle_run_complete(input: RunCompleteInput) -> RunCompleteOutput:
 
 
 async def _complete(
-    ch: Any, input: RunCompleteInput, existing: RunLedgerRow, *, drop_claim: bool = True
+    ch: Any,
+    input: RunCompleteInput,
+    existing: RunLedgerRow,
+    *,
+    drop_claim: bool = True,
+    scope: ReadFilters | None = None,
 ) -> RunCompleteOutput:
-    """Close the run from its stored row `existing`; the caller checked access."""
+    """Close the run from its stored row `existing`; the caller checked access.
+    `scope` bounds what it counts as written (default: the request's read scope)."""
     now = _now()
     started = existing.get("started_at")
     duration_ms = int(input.duration_ms or 0)
@@ -581,7 +582,8 @@ async def _complete(
     if outcome in ("positive", "negative") and session_id != "-":
         await _label_session(ch, existing, input, outcome, session_id)
 
-    scope = request_scope()
+    if scope is None:
+        scope = request_scope()
     written = await runs_store.written_keys(
         ch, input.org, input.namespace, input.run_id, scope=scope
     )

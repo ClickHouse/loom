@@ -10,12 +10,15 @@ from __future__ import annotations
 
 import logging
 
+from server.tasks.app.run import IDLE_CLOSE_BUDGET_S
 from server.workers import pass_context
 from server.workers.status import record_pass
 
 log = logging.getLogger(__name__)
 
 INTERVAL_SECONDS = 60
+# Twice the close budget, so closes begun just before it ends can finish.
+MAX_PASS_SECONDS = 2 * IDLE_CLOSE_BUDGET_S
 
 
 async def run_pass() -> int:
