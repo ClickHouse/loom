@@ -7,6 +7,7 @@ column does; the probe reads the same width from system.columns."""
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -126,3 +127,31 @@ async def test_a_retry_that_fails_again_is_raised(table, monkeypatch) -> None:
 
 def _full(width: int) -> dict[str, list[float]]:
     return {c: [0.1] * width for c in COLUMNS}
+
+
+@pytest.mark.asyncio
+async def test_an_older_probe_answering_after_the_refusal_keeps_the_new_width(
+    table, monkeypatch
+) -> None:
+    """A probe that read the old width before the rebuild answers only after the
+    one the 190 started has published: the insert is refused by name, and the
+    new width stays."""
+    table.width = 3072  # the background probe below reads the table before the rebuild
+    old_answer = asyncio.Event()
+    read = table.query_all
+
+    async def held(sql: str, params: Any = None) -> list[dict[str, Any]]:
+        rows = await read(sql, params)
+        await old_answer.wait()
+        return rows
+
+    table.query_all = held  # type: ignore[method-assign]
+    older = asyncio.create_task(codes_state.probe(table))
+    await asyncio.sleep(0)
+    table.query_all = read  # type: ignore[method-assign]
+    table.width = 1024  # rebuilt outside Loom
+    with pytest.raises(CodedWidthMismatchError, match="stores 1024-dim vectors"):
+        await _client(table, monkeypatch).insert("loom.memory_embeddings", [_full(3072)])
+    old_answer.set()
+    await older
+    assert codes_state.stored_width("memory_embeddings", "embedding") == 1024
