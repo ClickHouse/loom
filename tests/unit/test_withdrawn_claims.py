@@ -428,6 +428,16 @@ def test_a_cutoff_refuses_rather_than_cut_short_past_its_spelling_bound(
     assert "errors.md#too-many-spellings" in caplog.text
 
 
+def test_the_documented_spelling_bound_is_the_one_a_cutoff_reads() -> None:
+    from server.auth import aliases
+    from server.core.errors import TooManySpellingsError
+    from server.core.paths import REPO_ROOT
+
+    bound = f"more than {aliases._CUTOFF_SPELLINGS} accounts"
+    assert bound in " ".join((TooManySpellingsError.__doc__ or "").split())
+    assert bound.capitalize() in (REPO_ROOT / "docs/reference/errors.md").read_text()
+
+
 def test_a_slash_in_an_org_or_namespace_cannot_make_two_scopes_share_a_key() -> None:
     assert rev.grant_claim_key("a/b", "c", "alice") != rev.grant_claim_key("a", "b/c", "alice")
 

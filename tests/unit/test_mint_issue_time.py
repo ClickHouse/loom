@@ -123,7 +123,7 @@ def test_login_answers_409_too_many_spellings_with_its_link(
     from server.core.errors import TooManySpellingsError, register_exception_handler
 
     async def _too_many(*_a: Any, **_k: Any) -> Any:
-        raise TooManySpellingsError("too many accounts")
+        raise TooManySpellingsError("too many accounts", subject="alice", limit=1000)
 
     monkeypatch.setattr(login, "resolve_user_credentials", _too_many)
     app = FastAPI()

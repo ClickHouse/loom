@@ -178,4 +178,34 @@ def test_a_release_refused_for_too_many_spellings_says_what_to_release_first(
     assert fake.inserts == []
     err = capsys.readouterr().err
     assert "more than 1000 accounts name its grantee 'bob@acme.test'" in err
-    assert "those 'bob@acme.test' holds no grant on, then this one" in err
+    assert "the ones 'bob@acme.test' holds no grant on first, then this one" in err
+    assert "errors.md#too-many-spellings" in err
+
+
+def test_an_endpoint_release_refused_for_too_many_spellings_answers_409(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from server.core.errors import TooManySpellingsError, register_exception_handler
+
+    async def _too_many(*_a: Any, **_k: Any) -> None:
+        raise TooManySpellingsError("too many accounts", subject="bob@acme.test", limit=1000)
+
+    fake = _FakeCH()
+    monkeypatch.setattr(settings, "auth_required", False)
+    monkeypatch.setattr(cr, "get_client", lambda: fake)
+    monkeypatch.setattr(cr, "write_grant_cutoffs", _too_many)
+    app = FastAPI()
+    register_exception_handler(app)
+    cr.attach(app)
+
+    r = TestClient(app).post("/v1/admin/claim_release", json={"org": "acme", "namespace": "vault"})
+
+    assert r.status_code == 409
+    detail = r.json()["detail"]
+    assert detail["code"] == "TOO_MANY_SPELLINGS"
+    assert "more than 1000 accounts name its grantee 'bob@acme.test'" in detail["message"]
+    assert "#too_many_spellings" in r.headers["link"]
+    assert fake.inserts == []

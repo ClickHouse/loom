@@ -542,7 +542,7 @@ async def test_a_jit_sign_up_no_retry_fixes_is_not_turned_into_a_retry(monkeypat
         return [{"namespace": "u-bob", "owner": "u-bob", "active": True, "tags": []}]
 
     async def too_many(email: str) -> login.Identity:
-        raise TooManySpellingsError("too many accounts")
+        raise TooManySpellingsError("too many accounts", subject="alice", limit=1000)
 
     monkeypatch.setattr(jit, "_accounts_naming", theirs)
     monkeypatch.setattr(login, "resolve_identity_for_email", too_many)
@@ -570,7 +570,7 @@ async def test_an_oidc_sign_in_no_retry_fixes_is_refused_in_the_oauth_envelope(
         return {"email": "alice@acme.io", "email_verified": True}
 
     async def too_many(email: str) -> login.Identity:
-        raise TooManySpellingsError("too many accounts")
+        raise TooManySpellingsError("too many accounts", subject="alice", limit=1000)
 
     class _Req:
         query_params = {"code": "c", "state": "s"}

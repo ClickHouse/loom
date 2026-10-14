@@ -9,6 +9,7 @@ dev stack keeps every other tenant's rows.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import secrets
@@ -122,6 +123,7 @@ def purge(client: Any, database: str, orgs: frozenset[str]) -> dict[str, int]:
     if not orgs:
         return {}
     _delete(client, database, _org_tables(client, database), orgs)
+    _delete_grant_cutoffs(client, database, orgs)
     left = residue(client, database, orgs)
     # A response's follow-up work can still be writing when the run ends, so
     # one retry isn't always past the last flush.
@@ -132,6 +134,16 @@ def purge(client: Any, database: str, orgs: frozenset[str]) -> dict[str, int]:
         _delete(client, database, sorted(left), orgs)
         left = residue(client, database, orgs)
     return left
+
+
+def _delete_grant_cutoffs(client: Any, database: str, orgs: frozenset[str]) -> None:
+    """`revoked_tokens` has no org column: a grant cutoff's key names its org."""
+    client.command(
+        f"ALTER TABLE `{database}`.`revoked_tokens` "
+        "DELETE WHERE arrayExists(p -> startsWith(jti, p), %(prefixes)s)",
+        parameters={"prefixes": [f"grant:[{json.dumps(o)}," for o in sorted(orgs)]},
+        settings={"mutations_sync": 2},
+    )
 
 
 def _delete(client: Any, database: str, tables: list[str], orgs: frozenset[str]) -> None:

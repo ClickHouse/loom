@@ -1038,7 +1038,7 @@ def test_too_many_spellings_refuses_the_exchange_for_good(
         released.append(key)
 
     async def _too_many(*_a: object, **_k: object) -> set[str]:
-        raise TooManySpellingsError("too many accounts")
+        raise TooManySpellingsError("too many accounts", subject="alice", limit=1000)
 
     monkeypatch.setattr(oauth_claims, "claim", _claim)
     monkeypatch.setattr(oauth_claims, "release", _release)
@@ -1061,7 +1061,7 @@ def test_a_password_sign_in_no_retry_fixes_is_refused_in_the_oauth_envelope(
         return None
 
     async def _too_many(*_a: object, **_k: object) -> login.Identity:
-        raise TooManySpellingsError("too many accounts")
+        raise TooManySpellingsError("too many accounts", subject="alice", limit=1000)
 
     monkeypatch.setattr(oauth, "_validate_authorize_params", _valid)
     monkeypatch.setattr(login, "resolve_user_credentials", _too_many)

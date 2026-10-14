@@ -79,4 +79,8 @@ def test_purge_refuses_an_org_the_suite_did_not_mint() -> None:
 def test_purge_deletes_from_every_org_table_and_reports_no_residue() -> None:
     client = _RecordingClient()
     assert purge(client, "loom", frozenset({"it-ok-0123abcd"})) == {}
-    assert client.commands == ["ALTER TABLE `loom`.`memory` DELETE WHERE org IN %(orgs)s"]
+    assert client.commands == [
+        "ALTER TABLE `loom`.`memory` DELETE WHERE org IN %(orgs)s",
+        "ALTER TABLE `loom`.`revoked_tokens` "
+        "DELETE WHERE arrayExists(p -> startsWith(jti, p), %(prefixes)s)",
+    ]

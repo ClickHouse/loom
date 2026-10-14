@@ -174,7 +174,7 @@ async def test_too_many_spellings_is_no_retryable_sign_in_failure(
     from server.core.errors import TooManySpellingsError
 
     async def _too_many(*_a: Any, **_k: Any) -> set[str]:
-        raise TooManySpellingsError("more than 1000 accounts")
+        raise TooManySpellingsError("more than 1000 accounts", subject="alice", limit=1000)
 
     monkeypatch.setattr(revocation, "read_grant_cutoffs", _too_many)
     with pytest.raises(TooManySpellingsError):

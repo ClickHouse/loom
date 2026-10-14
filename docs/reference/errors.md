@@ -119,7 +119,7 @@ deduplicates; a `Retry-After` honoured up to 60 s. Each op's kind is in the
 | `PRECONDITION_FAILED`               | 409  | `if_match_sha256` does not match the live row: another writer changed it.                                                                                                                               | `detail.current_sha256` is the live hash. Re-read if your change depends on the new value, then resend with that hash; no separate read is needed to retry a blind overwrite.                                                                                                                                                                                         |
 | `PINNED_CONFLICT`                   | 409  | `memory.set` on a key, or close to a fact, that is pinned. A write that does not pin never replaces a pinned memory. `detail.pinned_blocker_id` names the blocking row.                                 | Change it with `memory.update` (keeps the pin) or `memory.pin` (re-pins), or store the new fact under its own key.                                                                                                                                                                                                                                                    |
 | `IDEMPOTENT_CONFLICT`               | 409  | An `Idempotency-Key` (or MCP `_idempotency_key`) reused with a different body for the same op and caller.                                                                                               | Use a new key per distinct request. Resending the original body with the old key replays the stored answer.                                                                                                                                                                                                                                                           |
-| `TOO_MANY_SPELLINGS`                | 409  | More than 1000 accounts in the org name the person's email, more than a grant cutoff reads. Sign-in and taking a grant away from that person refuse; OAuth answers in its own envelope.                 | Not retryable. An operator releases the extra accounts; see [Too many spellings](#too-many-spellings).                                                                                                                                                                                                                                                                |
+| `TOO_MANY_SPELLINGS`                | 409  | More than 1000 accounts in the org name the person's email, past what a grant cutoff reads. Sign-in and taking a grant away from that person refuse; OAuth answers in its own envelope.                 | Not retryable. An operator releases the extra accounts; see [Too many spellings](#too-many-spellings).                                                                                                                                                                                                                                                                |
 | `BLACKLISTED`                       | 422  | The value matches a refuse pattern registered with `blacklist.add` (`pattern_id`, `scope`, `reason`).                                                                                                   | Do not retry the value. If the pattern is wrong, an admin removes it (`blacklist.remove`).                                                                                                                                                                                                                                                                            |
 | `LOCKED`                            | 423  | The row carries a `memory.lock` that refuses this write.                                                                                                                                                | Wait for `lock_until` to pass, or have a namespace admin release it with `memory.unlock`.                                                                                                                                                                                                                                                                             |
 | `RATE_LIMITED`                      | 429  | A namespace, org or actor token bucket is empty for the op's class.                                                                                                                                     | Wait `Retry-After`. Sustained 429s mean the caller needs pacing or a batch op (`memory.bulk_set`); limits are in [HTTP API](./http-api.md#rate-limits).                                                                                                                                                                                                               |
@@ -131,22 +131,23 @@ deduplicates; a `Retry-After` honoured up to 60 s. Each op's kind is in the
 
 ### Too many spellings
 
-`/v1/auth/login`, and any op that takes a grant away from that person (`grants.revoke`, a
-lowering `grants.create`, `namespace.leave`, `namespace.restore`), answer 409
-`TOO_MANY_SPELLINGS` with the text in `detail.message`, as do `loom claim-release` and
-`POST /v1/admin/claim_release`. `/oauth/authorize` and the OIDC callback answer 403
-`access_denied`, and `/oauth/token` 400 `invalid_grant`, with the text in
+`/v1/auth/login`, any op that takes a grant away from that person (`grants.revoke`, a
+lowering `grants.create`, `namespace.leave`, `namespace.restore`) and
+`POST /v1/admin/claim_release` answer 409 `TOO_MANY_SPELLINGS` with the text in
+`detail.message`, and the subject and bound in `detail.subject` and `detail.limit`;
+`loom claim-release` prints the text and exits 1. `/oauth/authorize` and the OIDC callback
+answer 403 `access_denied`, and `/oauth/token` 400 `invalid_grant`, with the text in
 `detail.error_description`.
 
-The server log names the email. The bound counts its accounts' distinct
-`(owner_email, contact_email)` pairs:
+The cutoff counts the distinct `(owner_email, contact_email)` pairs of the accounts that
+name the subject the server log names (`'<subject>'` below):
 
 ```sql
 SELECT namespace, owner_email, contact_email, active,
        password_hash != '' AS has_password, created_at
 FROM loom.namespaces FINAL
 WHERE org = '<org>' AND contact_email != ''
-  AND (owner_email = '<email>' OR lower(contact_email) = lower('<email>'))
+  AND (owner_email = '<subject>' OR lower(contact_email) = lower('<subject>'))
 ORDER BY created_at
 ```
 
@@ -157,14 +158,20 @@ releasing an account the person holds a grant on refuses too: release those last
 most 1000 remain.
 
 When the person holds a grant on too many of them for that, clear just their contact,
-which changes no grant and so cuts no token, then release them:
+which changes no grant and so cuts no token, then re-run the query above and release them:
 
 ```sql
 INSERT INTO loom.namespaces
-SELECT * REPLACE ('' AS contact_email, now() AS updated_at)
-FROM loom.namespaces FINAL
-WHERE org = '<org>' AND namespace IN ('<account>', ...)
+SELECT * REPLACE ('' AS contact_email, greatest(updated_at, now()) AS updated_at)
+FROM (
+    SELECT * FROM loom.namespaces FINAL
+    WHERE org = '<org>' AND namespace IN ('<account>', ...)
+      AND (owner_email = '<subject>' OR lower(contact_email) = lower('<subject>'))
+)
 ```
+
+The filter sits in the subquery because `REPLACE` would otherwise rename `contact_email`
+under it, and `greatest` keeps the new row from losing to one stamped later.
 
 ## How the entries below are generated
 
@@ -700,7 +707,7 @@ Raised in `server/memory/app/curation.py`.
 
 #### `TOO_MANY_SPELLINGS`
 
-HTTP 409, raised as `server.core.errors.TooManySpellingsError`. More than 1000 accounts in the org name the person's email, more than a grant cutoff reads. What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 409, raised as `server.core.errors.TooManySpellingsError`. More than 1000 accounts in the org name the person's email, past what a grant cutoff reads. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `UNKNOWN_ARGUMENT`
 

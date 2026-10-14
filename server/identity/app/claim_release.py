@@ -123,7 +123,7 @@ async def release_claim(
                 org, [namespace], subjects, reason="claim released", revoked_by=actor_subject
             )
         except TooManySpellingsError as e:
-            raise _release_these_first(org, namespace, e) from e
+            raise _release_refusal(org, namespace, e) from e
         tombstones = [
             {
                 "org": org,
@@ -175,6 +175,21 @@ async def release_claim(
     )
 
 
+def _release_refusal(
+    org: str, namespace: str, refusal: TooManySpellingsError
+) -> TooManySpellingsError:
+    """The refusal for releasing `namespace` when a grantee has more spellings
+    than a cutoff reads."""
+    subject, limit = refusal.extra["subject"], refusal.extra["limit"]
+    return TooManySpellingsError(
+        f"cannot release {org}/{namespace}: more than {limit} accounts name its grantee "
+        f"{subject!r}. Release the ones {subject!r} holds no grant on first, then this "
+        "one; if that is not enough, see docs/reference/errors.md#too-many-spellings.",
+        subject=subject,
+        limit=limit,
+    )
+
+
 async def _may_release(info: AuthInfo, org: str, namespace: str) -> bool:
     """False for a restricted namespace the caller holds no direct admin grant
     on; an unreadable directory counts as restricted."""
@@ -191,18 +206,3 @@ async def _may_release(info: AuthInfo, org: str, namespace: str) -> bool:
 
 def attach(app: Any) -> None:
     app.include_router(router)
-
-
-def _release_these_first(
-    org: str, namespace: str, refusal: TooManySpellingsError
-) -> TooManySpellingsError:
-    """The refusal of a release whose grantee more than the bound of accounts
-    name: releasing those of them it holds no grant on first lowers the count."""
-    subject, limit = refusal.extra["subject"], refusal.extra["limit"]
-    return TooManySpellingsError(
-        f"cannot release {org}/{namespace}: more than {limit} accounts name its grantee "
-        f"{subject!r}. Release first the other accounts naming {subject!r}, those "
-        f"{subject!r} holds no grant on, then this one.",
-        subject=subject,
-        limit=limit,
-    )
