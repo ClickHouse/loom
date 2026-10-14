@@ -60,11 +60,10 @@ class _FakeCH:
                     "table": t,
                     "name": c,
                     "compression_codec": f"CODEC(Quantized('rabitq', {self.width}, 0))",
+                    "patch_parts": self.patches.get(t, 0),
                 }
                 for t, c in self.coded
             ]
-        if "system.parts" in sql:
-            return [{"table": t, "patch_parts": n} for t, n in self.patches.items()]
         if "clusterAllReplicas" in sql:
             return [{"replicas": 3, "with_setting": 3}]
         return []
@@ -136,9 +135,9 @@ async def test_probe_reads_codecs_then_patch_parts_of_coded_tables_only() -> Non
     assert patch_parts.last_reading("loom.memory_chunks") == 0
     # an uncoded table is not asked about
     assert patch_parts.last_reading("loom.code_summaries") is None
-    assert len(ch.calls) == 3  # the codec, asked once per process, then the two facts
+    assert len(ch.calls) == 2  # the codec, asked until it answers, then one statement
     await vector_codes_state.probe(ch)
-    assert len(ch.calls) == 5
+    assert len(ch.calls) == 3
     assert vector_codes_state.stored_width("chunks", "embedding") == 1024
     assert vector_codes_state.stored_width("loom.memory_chunks", "embedding") == 1024
     assert vector_codes_state.stored_width("code_summaries", "embedding") is None
@@ -216,7 +215,7 @@ async def test_placeholders_take_the_width_a_refusal_reread(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A row with a vector at the rebuilt width and an empty key vector lands."""
-    from server.core.vectors.placeholders import fit_vectors
+    from server.core.vectors.placeholders import pad_rows
 
     columns = [("memory_embeddings", "embedding"), ("memory_embeddings", "memory_key_embedding")]
     ch = _FakeCH(coded=columns, patches={}, width=3072)
@@ -224,7 +223,8 @@ async def test_placeholders_take_the_width_a_refusal_reread(
     ch.width = 1024  # rebuilt outside Loom
     _age_reading(monkeypatch)
     row = {"embedding": [0.1] * 1024, "memory_key_embedding": []}
-    await fit_vectors("memory_embeddings", [row])
+    await vector_codes_state.refuse_other_widths("memory_embeddings", [row])
+    pad_rows("memory_embeddings", [row])
     assert len(row["memory_key_embedding"]) == 1024
 
 
@@ -283,23 +283,45 @@ async def test_a_failed_probe_is_no_reading_to_refuse_on(monkeypatch: pytest.Mon
     ch = _FakeCH(coded=[("chunks", "embedding")], patches={}, width=1024)
     await vector_codes_state.probe(ch)
     _age_reading(monkeypatch)
-    before = vector_codes_state._probed_at
     ch.fail = True
-    await vector_codes_state.refuse_width("chunks", 3072)
-    assert vector_codes_state._probed_at == before
+    await vector_codes_state.refuse_width("chunks", 3072)  # a mismatch, but not refused
+    await vector_codes_state.refuse_other_widths("chunks", [{"embedding": [0.1] * 3072}])
+    assert vector_codes_state.stored_width("chunks", "embedding") == 1024
+
+
+@pytest.mark.asyncio
+async def test_a_process_whose_first_probes_fail_reads_once_clickhouse_answers() -> None:
+    """A worker that booted while ClickHouse was down is not left without a reading."""
+    from server.core.errors import CodedWidthMismatchError
+
+    ch = _FakeCH(coded=[("chunks", "embedding")], patches={}, width=1024, fail=True)
+    await vector_codes_state.probe(ch)
+    assert vector_codes_state._probed_at is None and vector_codes_state._codec_available is None
+    ch.fail = False
+    with pytest.raises(CodedWidthMismatchError):
+        await vector_codes_state.refuse_width("chunks", 3072)
+    assert vector_codes_state.stored_width("chunks", "embedding") == 1024
 
 
 @pytest.mark.asyncio
 async def test_inserts_refused_together_share_one_probe() -> None:
+    from server.core.errors import CodedWidthMismatchError
+
     ch = _FakeCH(coded=[("chunks", "embedding")], patches={}, width=1024)
     await vector_codes_state.probe(ch)
     began = time.monotonic()
     n = len(ch.calls)
+    ch.width = 3072  # rebuilt outside Loom
     rows = [{"embedding": [0.1] * 1024}]
-    await asyncio.gather(
-        *(vector_codes_state.refuse_on_fresh_widths("chunks", rows, since=began) for _ in range(10))
+    results = await asyncio.gather(
+        *(
+            vector_codes_state.refuse_on_fresh_widths("chunks", rows, since=began)
+            for _ in range(10)
+        ),
+        return_exceptions=True,
     )
-    assert len(ch.calls) - n == 2  # one columns read, one patch-parts read
+    assert all(isinstance(r, CodedWidthMismatchError) for r in results)
+    assert len(ch.calls) - n == 1
 
 
 @pytest.mark.asyncio
@@ -314,7 +336,7 @@ async def test_concurrent_refusals_share_one_reread(monkeypatch: pytest.MonkeyPa
         *(vector_codes_state.refuse_width("chunks", 8) for _ in range(5)), return_exceptions=True
     )
     assert all(isinstance(r, CodedWidthMismatchError) for r in results)
-    assert len(ch.calls) - n == 2  # one columns read, one patch-parts read
+    assert len(ch.calls) - n == 1
 
 
 @pytest.mark.asyncio

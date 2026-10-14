@@ -155,7 +155,10 @@ def build() -> tuple[str, str]:
     from server.core.schema.migrate import client
 
     c = client()
-    return dump(c), str(c.query("SELECT version()").result_rows[0][0])
+    try:
+        return dump(c), str(c.query("SELECT version()").result_rows[0][0])
+    finally:
+        c.close()
 
 
 def main(argv: list[str] | None = None) -> int:

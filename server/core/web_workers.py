@@ -98,9 +98,10 @@ def _v1_mem(d: Path) -> float | None:
     return None if limit is None or limit >= _UNLIMITED else limit
 
 
-# MemTotal reads a little under a host's nominal size (the kernel keeps some):
-# a reading this close to the next whole GiB counts as that GiB.
-MEMTOTAL_SHORTFALL = 0.05
+# MemTotal reads a little under a host's nominal size: the kernel keeps a
+# roughly fixed amount (its image, a crash kernel). A reading this close to the
+# next whole GiB counts as that GiB.
+MEMTOTAL_SHORTFALL_GIB = 0.75
 
 
 def _mem_total(meminfo: str) -> float:
@@ -110,7 +111,7 @@ def _mem_total(meminfo: str) -> float:
             if kib is not None:
                 gib = kib / 1024**2
                 whole = math.ceil(gib)
-                return (whole if gib >= whole * (1 - MEMTOTAL_SHORTFALL) else gib) * 1024.0**3
+                return (whole if gib >= whole - MEMTOTAL_SHORTFALL_GIB else gib) * 1024.0**3
     return math.inf
 
 

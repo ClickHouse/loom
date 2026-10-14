@@ -14,15 +14,18 @@ table the statement reads:
    memory_embeddings 304 vs 177 ms.
 
 This module holds both facts per table, read from `system.columns` and
-`system.parts` in two statements, and refreshes them in the background every
+`system.parts` in one statement, and refreshes them in the background every
 `vector_codes_state_probe_seconds`. `codes_apply(table, column)` is what
 `search_settings.vector_search_settings(table=...)` asks.
 
 The same read records the width each coded column was created at, which the
 write guards check (`refuse_width`, `refuse_other_widths`): ClickHouse refuses
-a whole insert that carries a vector of another width.
+a whole insert that carries a vector of another width. A write that embeds
+reads again first when the reading is older than FRESH_READING_S, and a write
+is refused only on a reading under REFUSAL_READING_S old.
 
-An unknown state (never probed, or the last probe failed) answers "apply":
+A failed probe keeps the previous reading. A table never read (never probed,
+or every probe failed) answers "apply":
 the flag is right on every coded, patch-free table, and the cost of sending it
 to a patched one (a few percent) is far below the cost of withholding it from a
 patch-free one (several times the bytes read). The main fact
@@ -42,16 +45,23 @@ from server.core.vectors.code_tables import vector_dim_for_table
 
 log = logging.getLogger(__name__)
 
-CODED_COLUMNS_SQL = (
-    "SELECT table, name, compression_codec FROM system.columns "
-    "WHERE database = {db:String} AND compression_codec LIKE '%Quantized(%'"
-)
+# Each coded vector column, with its codec and its table's active patch parts.
+CODED_COLUMNS_SQL = """
+SELECT c.table AS table, c.name AS name, c.compression_codec AS compression_codec,
+       p.patch_parts AS patch_parts
+FROM system.columns AS c
+LEFT JOIN (
+    SELECT table, countIf(startsWith(name, 'patch')) AS patch_parts
+    FROM system.parts
+    WHERE database = {db:String} AND active AND table IN (
+        SELECT table FROM system.columns
+        WHERE database = {db:String} AND compression_codec LIKE '%Quantized(%'
+    )
+    GROUP BY table
+) AS p ON p.table = c.table
+WHERE c.database = {db:String} AND c.compression_codec LIKE '%Quantized(%'
+"""
 CODEC_SETTING_SQL = "SELECT count() AS n FROM system.settings WHERE name = 'enable_quantized_codec'"
-# Every table's count, so it runs beside the columns read instead of after it.
-PATCH_PARTS_SQL = (
-    "SELECT table, countIf(startsWith(name, 'patch')) AS patch_parts "
-    "FROM system.parts WHERE database = {db:String} AND active GROUP BY table"
-)
 
 # "loom.table.column" of every coded vector column; None = never read.
 _coded: frozenset[str] | None = None
@@ -169,7 +179,7 @@ async def refuse_other_widths(table: str, rows: list[dict[str, Any]]) -> None:
 async def refuse_width(table: str, dim: int) -> None:
     """The same check for a write whose vectors will be `dim` wide, made before
     any part of it is written, against a reading at most FRESH_READING_S old."""
-    if _codec_available:
+    if _codec_available is not False:
         await _reading_since(time.monotonic() - FRESH_READING_S)
     await _refuse_if(lambda: _width_mismatch(table, dim))
 
@@ -248,39 +258,31 @@ async def probe(ch: Any) -> None:
 
     started = time.monotonic()
     _ch = ch
-    if not _codec_available:  # asked again: ClickHouse may be upgraded under Loom
+    if _codec_available is None:
         _codec_available = await _has_codec(ch)
-    columns: list[dict[str, Any]] | BaseException
-    parts: list[dict[str, Any]] | BaseException
-    columns, parts = await asyncio.gather(
-        ch.query_all(CODED_COLUMNS_SQL, {"db": "loom"}),
-        ch.query_all(PATCH_PARTS_SQL, {"db": "loom"}),
-        return_exceptions=True,
-    )
-    if isinstance(columns, BaseException):
-        log.info("coded-column probe failed: %s", str(columns)[:160])
+    try:
+        rows = await ch.query_all(CODED_COLUMNS_SQL, {"db": "loom"})
+    except Exception as e:  # noqa: BLE001 — advisory; the previous reading stands
+        log.info("coded-column probe failed: %s", str(e)[:160])
         return
     if _probed_at is not None and _probed_at > started:
         return
     _probed_at = started
-    set_coded({f"loom.{r['table']}.{r['name']}" for r in columns})
+    set_coded({f"loom.{r['table']}.{r['name']}" for r in rows})
     _widths = {
         f"loom.{r['table']}.{r['name']}": width
-        for r in columns
+        for r in rows
         if (width := codec_width(str(r.get("compression_codec") or ""))) is not None
     }
-    if isinstance(parts, BaseException):
-        log.info("patch-part probe failed: %s", str(parts)[:160])  # the last reading stands
-        return
-    seen = {str(r["table"]): int(r.get("patch_parts") or 0) for r in parts}
-    for t in sorted({c.rsplit(".", 1)[0].split(".", 1)[1] for c in (_coded or ())}):
+    for r in rows:
         # a coded table with no active part at all has no patch part
-        patch_parts.set_reading(seen.get(t, 0), f"loom.{t}")
+        patch_parts.set_reading(int(r.get("patch_parts") or 0), f"loom.{r['table']}")
 
 
 async def _has_codec(ch: Any) -> bool | None:
     """Whether the server knows the Quantized codec (26.8 or later); None when
-    the question failed, so it is asked again."""
+    the question failed, so the next probe asks again. A "no" stands until a
+    restart: a server upgraded under Loom has no coded table until a rebuild."""
     try:
         rows = await ch.query_all(CODEC_SETTING_SQL)
     except Exception as e:  # noqa: BLE001 — advisory; asked again on the next probe
@@ -319,7 +321,7 @@ def _maybe_refresh() -> None:
     process that probed once (it holds a client) and has a running loop; a
     statement is never delayed by it."""
     now = time.monotonic()
-    if _ch is None or _probed_at is None or now - _probed_at < _ttl():
+    if _ch is None or (_probed_at is not None and now - _probed_at < _ttl()):
         return
     if now - _refresh_started < _ttl():  # one that failed lately: wait a TTL before the next
         return
@@ -352,7 +354,6 @@ async def _reprobe(ch: Any) -> None:
 
 __all__ = [
     "CODED_COLUMNS_SQL",
-    "PATCH_PARTS_SQL",
     "codes_apply",
     "coded_columns",
     "served_model_writes_coded",

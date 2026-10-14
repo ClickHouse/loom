@@ -95,10 +95,3 @@ def unpad(rows: list[dict[str, Any]], padded: list[tuple[int, str]]) -> None:
     """Empty the placeholders `pad_rows` wrote, to size them again."""
     for i, c in padded:
         rows[i][c] = []
-
-
-async def fit_vectors(table: str, rows: list[dict[str, Any]]) -> list[tuple[int, str]]:
-    """Refuse a vector its coded column cannot take, then pad the empty ones
-    (in place); returns where the placeholders went."""
-    await codes_state.refuse_other_widths(table, rows)  # skips the empty vectors
-    return pad_rows(table, rows)

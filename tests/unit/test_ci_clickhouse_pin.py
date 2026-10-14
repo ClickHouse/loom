@@ -52,6 +52,11 @@ def test_no_ci_job_names_a_clickhouse_image_itself() -> None:
     assert "clickhouse/clickhouse-server:" not in (WORKFLOWS / "ci.yml").read_text()
 
 
+def test_both_docker_smoke_architectures_take_one_release() -> None:
+    job = _jobs("docker-smoke.yml")["quickstart"]
+    assert "clickhouse" in _needs(job) and RESOLVED in _env(job).values()
+
+
 def test_the_release_bundle_and_its_smoke_take_the_checked_release() -> None:
     jobs = _jobs("release.yml")
     for name in ("build", "docker-smoke"):

@@ -868,7 +868,8 @@ class CHClient:
         # A coded vector column needs every row at full length.
         from server.core.vectors import codes_state, placeholders
 
-        padded = await placeholders.fit_vectors(table, rows)
+        await codes_state.refuse_other_widths(table, rows)  # skips the empty vectors
+        padded = placeholders.pad_rows(table, rows)
         began = time.monotonic()
         try:
             await self._insert_rows(table, rows, settings, project_onto_table)
