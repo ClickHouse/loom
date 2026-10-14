@@ -1,12 +1,15 @@
 """Files one server's web processes share, in a per-user runtime directory, and
 how they are opened (`open_private`).
 
-The workers of one `uvicorn --workers N` share a parent, so a file is named by
-the parent's pid namespace, pid and start time: two servers on one host get two
-files, a later server that reuses the pid (a restarted container) starts afresh,
-and two containers sharing the directory never take each other's. Files of a
-server provably gone from this pid namespace are removed the first time this
-process names one; files of other namespaces are left alone.
+The workers of one `uvicorn --workers N` (`LOOM_WEB_WORKERS` > 1) share a
+parent, so a file is named by the pid namespace and the parent's pid and start
+time. A single-process server is named by its own pid instead: its parent may be
+pid 1 (systemd, an init), which unrelated servers share. Either way two servers
+on one host get two files, a later server that reuses the pid (a restarted
+container) starts afresh, and two containers sharing the directory never take
+each other's. Files of a server provably gone from this pid namespace are
+removed the first time this process names one; files of other namespaces are
+left alone.
 """
 
 from __future__ import annotations
@@ -97,14 +100,17 @@ def _pid_namespace() -> str:
 
 
 def server_file(name: str) -> str:
-    """`<runtime dir>/loom-<name>-<pid namespace>-<parent pid>-<parent start time>`."""
+    """`<runtime dir>/loom-<name>-<pid namespace>-<owner pid>-<owner start time>`,
+    the owner being the parent of `LOOM_WEB_WORKERS` > 1 workers, else this process."""
+    from server.settings import settings
+
     base = runtime_dir()
     namespace = _pid_namespace()
     if namespace and base not in _pruned:
         _pruned.add(base)
         _prune(base, namespace)
-    ppid = os.getppid()
-    return os.path.join(base, f"loom-{name}-{namespace or 0}-{ppid}-{_started(ppid) or 0}")
+    owner = os.getppid() if settings.web_workers > 1 else os.getpid()
+    return os.path.join(base, f"loom-{name}-{namespace or 0}-{owner}-{_started(owner) or 0}")
 
 
 def _prune(base: str, namespace: str) -> None:

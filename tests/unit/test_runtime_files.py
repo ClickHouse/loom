@@ -28,16 +28,37 @@ def _prune_again(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(runtime_files, "_pruned", set())
 
 
-def test_a_name_carries_the_namespace_the_parent_and_its_start_time(run_dir: Path) -> None:
+@pytest.fixture
+def workers(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "web_workers", 4)
+
+
+def test_a_worker_is_named_by_the_namespace_the_parent_and_its_start_time(
+    run_dir: Path, workers: None
+) -> None:
     ppid = os.getppid()
     expected = f"loom-budgets-{NS or 0}-{ppid}-{runtime_files._started(ppid) or 0}"
     assert server_file("budgets") == str(run_dir / expected)
 
 
-def test_a_parent_with_no_start_time_is_named_0(
+def test_single_process_servers_under_one_init_get_their_own_files(
     run_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A container's pid 1 has parent pid 0, which /proc does not list."""
+    """Two servers started by systemd both have parent pid 1."""
+    monkeypatch.setattr(os, "getppid", lambda: 1)
+    pid = os.getpid()
+    expected = f"loom-budgets-{NS or 0}-{pid}-{runtime_files._started(pid)}"
+    assert server_file("budgets") == str(run_dir / expected)
+    monkeypatch.setattr(os, "getpid", lambda: pid + 1)
+    assert server_file("budgets") != str(run_dir / expected)
+
+
+def test_a_parent_with_no_start_time_is_named_0(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch, workers: None
+) -> None:
+    """A process whose parent /proc does not list (pid 0) is named 0-0."""
     monkeypatch.setattr(os, "getppid", lambda: 0)
     assert runtime_files._started(0) == ""
     assert server_file("budgets") == str(run_dir / f"loom-budgets-{NS or 0}-0-0")
