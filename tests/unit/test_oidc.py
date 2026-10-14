@@ -308,7 +308,7 @@ async def test_a_deleted_account_alone_is_no_offboarding(monkeypatch) -> None:
         return False
 
     async def registry_row(org: str, namespace: str) -> dict[str, Any] | None:
-        return {"active": False} if namespace.count("-") == 2 else None
+        return {"active": False, "contact_email": "bob@acme.com"} if namespace.count("-") == 2 else None
 
     monkeypatch.setattr(login, "_accounts_naming", accounts)
     monkeypatch.setattr(revocation, "subjects_revoked", not_revoked)
@@ -327,7 +327,7 @@ async def test_jit_takes_a_random_name_once_the_predictable_ones_are_taken(
 
     async def registry_row(org: str, namespace: str) -> dict[str, Any] | None:
         tried.append(namespace)
-        if len(tried) <= login._JIT_NAME_TRIES + 2:  # the predictable ones, then one random
+        if len(tried) <= login._JIT_SUFFIX_TRIES + 2:  # the predictable ones, then one random
             return {"active": True, "contact_email": "mallory@acme.com"}
         return None
 

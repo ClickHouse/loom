@@ -190,6 +190,25 @@ def test_every_spelling_of_the_subject_is_cut(ch: _CH, monkeypatch: pytest.Monke
     assert not _admits(by_email, "team")
 
 
+def test_a_spelling_in_another_case_is_cut_too(ch: _CH, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Alias lookup matches emails case-insensitively but returns the stored
+    # spelling; a token minted for the lowercase one must not keep the claim.
+    async def _aliases(org: str, subject: str, **_k: Any) -> list[str]:
+        return [subject, "Alice@Acme.com"]
+
+    monkeypatch.setattr("server.auth.aliases.subject_aliases", _aliases)
+    _end("team")
+    lowercase = AuthInfo(
+        subject="alice@acme.com",
+        org=ORG,
+        namespaces=("team",),
+        roles=(Role.WRITER,),
+        is_service_account=False,
+        issued_at=BEFORE,
+    )
+    assert not _admits(lowercase, "team")
+
+
 def test_the_callers_namespaces_leave_out_a_withdrawn_claim(ch: _CH) -> None:
     _end("team")
     ctx.set_current_auth(_flat("team", "notes"))

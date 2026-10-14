@@ -262,3 +262,30 @@ async def test_the_auto_registered_owner_completes_a_registration_but_cannot_res
         NamespaceRegisterInput(org=ORG, namespace=NS, owner_email="alice@x")
     )
     assert ch.rows_for("loom.namespace_grants") == []
+
+
+@pytest.mark.asyncio
+async def test_a_failed_cutoff_write_fails_a_restore_with_nothing_written(
+    wire, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _down(*_a: Any, **_k: Any) -> None:
+        raise RuntimeError("replica away")
+
+    async def _lowered(org: str, namespace: str, subjects: list[str], **_k: Any) -> dict:
+        return {"alice@x": "admin"}
+
+    from server.identity.store import grants as grants_repo
+
+    monkeypatch.setattr(namespace_snapshot, "end_grant_claims", _down)
+    monkeypatch.setattr(grants_repo, "active_roles", _lowered)
+    install, grants = wire
+    grants[(ORG, NS, "owner@x")] = Role.ADMIN
+    ch = install(_deleted_row(), "owner@x", Role.ADMIN)
+    restore = _restore_input()
+    lowering = {"subject": "alice@x", "role": "viewer", "granted_by": "ops"}
+    restore.payload = NamespaceSnapshotOutput.model_validate(
+        {**restore.payload.model_dump(), "grants": [lowering], "grant_count": 1}
+    )
+    with pytest.raises(RuntimeError):
+        await namespace_snapshot.handle_namespace_restore(restore)
+    assert ch.inserts == []

@@ -9,7 +9,8 @@ import dataclasses
 import logging
 from typing import TYPE_CHECKING
 
-from server.auth.fanout import namespaces_to_search, private_first_passes
+from server.auth.fanout import namespaces_to_search
+from server.core.vectors.private_first import private_first_passes
 from server.embedding import get_embedder
 from server.identity.app import namespace_visibility
 from server.knowledge.api.models_knowledge import (

@@ -228,9 +228,10 @@ _GRANT_CLAIM_PREFIX = "grant:"
 
 def grant_claim_key(org: str, namespace: str, subject: str) -> str:
     """The revocation key that withdraws (org, namespace) from `subject`'s
-    token claims. The subject is hashed: the key outlives the account, and
-    an email has no business in it. Never a jti or a subject verify checks."""
-    digest = hashlib.sha256(subject.encode()).hexdigest()[:32]
+    token claims. The subject is case-folded, as alias lookup matches it, and
+    hashed: the key outlives the account, and an email has no business in it.
+    Never a jti or a subject verify checks."""
+    digest = hashlib.sha256(subject.lower().encode()).hexdigest()[:32]
     return f"{_GRANT_CLAIM_PREFIX}{org}/{namespace}/{digest}"
 
 
@@ -250,8 +251,9 @@ async def end_grant_claims(
     """Withdraw `namespaces` from the claims of every token `subjects` hold
     that was minted before now, under each spelling of each subject.
 
-    Callers write this before the grant row it is about, and a failure here
-    fails their change. Raises on a ClickHouse failure."""
+    Callers write this before the grant row it is about, so a failure fails
+    their change. Raises on a ClickHouse failure; a second write that fails
+    leaves the first cutoff, which only cuts."""
     from server.auth.aliases import subject_aliases
     from server.core.ch import get_client
 
@@ -273,7 +275,7 @@ async def end_grant_claims(
     # this second cutoff is sure to postdate its token.
     rows = _cutoff_rows(keys, reason, revoked_by)
     await ch.insert("loom.revoked_tokens", rows)
-    await refresh()
+    # This process applies them now; every other at its next refresh.
     _apply_locally(keys, _cutoff_seconds(rows[0]["issued_before"]))
 
 

@@ -45,7 +45,11 @@ class Fanout:
         of the others in their own order. When the cap cuts, it drops public
         namespaces before private ones."""
         others = [ns for ns in self.namespaces if ns != namespace]
-        keep = set(sorted(others, key=lambda ns: ns in self.public)[: self.cap])
+
+        def dropped_first(ns: str) -> bool:
+            return not self.ordered and ns in self.public
+
+        keep = set(sorted(others, key=dropped_first)[: self.cap])
         read = [ns for ns in others if ns in keep]
         return Split([namespace, *read], [ns for ns in others if ns not in keep])
 
@@ -77,24 +81,11 @@ async def resolve_fanout(org: str) -> Fanout:
     public: set[str] = set()
     if len(mine) > cap and not ordered:
         # Only a scoped token's order is a priority. For anyone else the cut
-        # keeps the private namespaces, the ones the search reads first.
+        # keeps the private namespaces, the ones the search reads first. With
+        # the addressed namespace among `mine` this may look up one too many.
         public = await directory().public_namespaces(org, mine)
     fanout = Fanout(
         org=org, namespaces=tuple(mine), cap=cap, ordered=ordered, public=frozenset(public)
     )
     context.fanout_memo.set(fanout)
     return fanout
-
-
-def private_first_passes(
-    namespace: str, namespaces: list[str], visibility: dict[str, str]
-) -> tuple[list[str], list[str]]:
-    """The two passes of a private-first search over `namespaces`: the
-    addressed `namespace` and the private ones, then the public ones. Both are
-    empty when `visibility` is empty or names no private namespace: read them
-    all at once. A namespace without an answer counts as private."""
-    private = {ns for ns in namespaces if visibility.get(ns, "private") == "private"}
-    if not visibility or not private:
-        return [], []
-    first = [ns for ns in namespaces if ns in private or ns == namespace]
-    return first, [ns for ns in namespaces if ns not in first]

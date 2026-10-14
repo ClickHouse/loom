@@ -838,28 +838,33 @@ def test_a_decided_exchange_releases_its_claim(held_claims: list[str]) -> None:
     assert held_claims == [f"code:{oauth._token_id(code)}"]
 
 
-@pytest.mark.parametrize("outcome", ["issued", "refused"])
+@pytest.mark.parametrize("outcome", ["code", "refused", "refresh"])
 def test_a_consume_that_did_not_finish_keeps_the_claim(
     held_claims: list[str], monkeypatch: pytest.MonkeyPatch, outcome: str
 ) -> None:
     """A consume that failed may still land, so the claim is kept until it
-    goes stale and no retry reads the credential meanwhile. A refusal still
-    answers invalid_grant; an issue answers 503, never a 500."""
+    goes stale and no retry reads the credential meanwhile. A code expires
+    before that, so its tokens are answered; a refresh token answers 503."""
     store = oauth._store
 
-    async def _down(code: str, grant: dict) -> None:
+    async def _down(token: str, grant: dict) -> None:
         raise RuntimeError("replica away")
 
-    monkeypatch.setattr(store, "consume_code", _down)
     c = _client()
     code, verifier = _seed_code()
-    if outcome == "issued":
-        r = _exchange(c, code, verifier)
-        # A retry before the kept claim goes stale is told it is in use.
+    if outcome == "refresh":
+        rt = _exchange(c, code, verifier).json()["refresh_token"]
+        held_claims.clear()
+        monkeypatch.setattr(store, "consume_refresh", _down)
+        r = _refresh(c, rt)
         assert r.status_code == 503 and r.headers["retry-after"] == "120"
     else:
-        r = _exchange(c, code, "not-the-verifier")
-        assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
+        monkeypatch.setattr(store, "consume_code", _down)
+        if outcome == "code":
+            assert _exchange(c, code, verifier).status_code == 200
+        else:
+            r = _exchange(c, code, "not-the-verifier")
+            assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
     assert held_claims == []
 
 
@@ -954,7 +959,12 @@ async def test_an_exchange_cancelled_before_its_consume_still_releases(
     monkeypatch.setattr(oauth_claims, "claim", _held)
     monkeypatch.setattr(oauth_claims, "release", _release)
 
+    reads: list[str] = []
+
     async def _find(code: str) -> dict | None:
+        reads.append(code)
+        if len(reads) == 1:
+            return {"subject": "alice@example.com", "org": "test-org"}  # the pre-claim read
         finding.set()
         await asyncio.sleep(30)
         return None
@@ -1004,3 +1014,16 @@ def test_without_a_keeper_the_credential_is_used_up_before_the_decision(
     assert _exchange(c, code, verifier).status_code == 503
     assert order == ["consume", "issue"]
     assert _exchange(c, code, verifier).status_code == 400
+
+
+def test_a_made_up_credential_is_refused_before_any_keeper_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.auth import oauth_claims
+
+    async def _no_claim(ch: object, key: str) -> tuple[oauth_claims.Claim, str]:
+        raise AssertionError("claimed a credential that does not exist")
+
+    monkeypatch.setattr(oauth_claims, "claim", _no_claim)
+    r = _exchange(_client(), "no-such-code", "v")
+    assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"

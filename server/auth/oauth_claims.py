@@ -66,7 +66,7 @@ _RELEASE = (
     f"WHERE claim_key = {{k:String}} AND holder = {{me:String}} {_STRICT}"
 )
 
-# Releases a cancelled acquisition shields, held until each is done.
+# Release tasks run under a shield, kept referenced until they finish.
 _releases = TaskSet()
 
 # Whether loom.oauth_claims exists here: None until the boot probe or the

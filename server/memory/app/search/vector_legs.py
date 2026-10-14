@@ -8,7 +8,7 @@ import asyncio
 import logging
 from typing import Any
 
-from server.auth.fanout import private_first_passes
+from server.core.vectors.private_first import private_first_passes
 from server.identity.app import namespace_visibility
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app.search.context import SearchContext

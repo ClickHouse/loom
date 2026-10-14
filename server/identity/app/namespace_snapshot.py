@@ -197,6 +197,11 @@ async def handle_namespace_restore(
             },
         )
 
+    # The cutoffs for the grants this restore lowers come before any row, as
+    # in every other grant change: a failure then writes nothing.
+    if payload.grants:
+        await _end_lowered_claims(input.org, input.target_namespace, payload.grants, caller, ch)
+
     now = naive_utc_now_seconds()
 
     # Only CREATE the namespace row when absent — an RMT insert over an
@@ -269,7 +274,6 @@ async def handle_namespace_restore(
     # Grants. granted_by = caller so the restore is traceable; the
     # original granted_by stays in the snapshot payload.
     if payload.grants:
-        await _end_lowered_claims(input.org, input.target_namespace, payload.grants, caller, ch)
         await ch.insert(
             "loom.namespace_grants",
             [
@@ -325,8 +329,10 @@ async def _end_lowered_claims(
     org: str, namespace: str, grants: Sequence[Any], caller: str, ch: Any
 ) -> None:
     """A restore writes its grants over the live ones. A subject it lowers
-    loses the claims of older tokens there, as any other downgrade does."""
+    loses the claims of older tokens there, as any other downgrade does. The
+    caller counts as admin: the restore makes them one before its grants."""
     live = await grants_repo.active_roles(org, namespace, [g.subject for g in grants], ch=ch)
+    live[caller] = "admin"
     lowered = [
         g.subject
         for g in grants

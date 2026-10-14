@@ -15,8 +15,9 @@ import server.auth.context as ctx
 import server.auth.fanout as fanout_mod
 import server.identity.app.namespace_kinds as nk
 import server.identity.app.namespace_visibility as nv
-from server.auth.fanout import Fanout, namespaces_to_search, private_first_passes
+from server.auth.fanout import Fanout, namespaces_to_search
 from server.auth.jwt import AuthInfo
+from server.core.vectors.private_first import private_first_passes
 from server.knowledge.api.models_knowledge import KnowledgeSearchInput
 from server.knowledge.app import knowledge_search
 from server.knowledge.app.search import ChunkHit

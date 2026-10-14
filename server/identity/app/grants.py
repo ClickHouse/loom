@@ -155,7 +155,8 @@ async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
     if pending_role is not None and grant_rank(input.role) >= grant_rank(str(pending_role)):
         pending_role, pending_since = None, None
     if existing is not None and grant_rank(existing.role) > grant_rank(input.role):
-        # Older tokens claim the role being taken away; they fall back to the new grant.
+        # Older tokens claim the role being taken away: a flat one falls back to
+        # the new grant, a scoped one must be minted again.
         await end_grant_claims(
             input.org,
             [input.namespace],
@@ -279,10 +280,9 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
 
     Refuses to revoke a namespace's last active admin — that would leave it
     ownerless; promote a replacement first. The cutoffs that end older tokens'
-    claims (here and on a maintainer's sibling branches) are written before
-    any grant row: a failure there fails the revoke with nothing written, and
-    a failure after them leaves the grant standing but no longer reachable
-    through an older token's claim, which a retry finishes.
+    claims, here and on a maintainer's sibling branches, are written before
+    any grant row, so a failed cutoff write fails the revoke. A sibling's grant
+    row that then fails to land is logged and left for an operator to revoke.
     """
 
     subject, row = await _live_grant_row(input.org, input.namespace, input.subject)

@@ -95,25 +95,26 @@ it. Two consequences hold the design together:
   the client's retry works; a decided exchange, a token or a refusal, uses it up.
 
 **One exchange per credential** (`server/auth/oauth_claims.py`). The OAuth store marks a
-code or refresh token used with a new ReplacingMergeTree version, and a read-then-mark
-cannot keep two concurrent exchanges of one credential apart. So `/oauth/token` first
-inserts the credential's key into `loom.oauth_claims`, a KeeperMap table, under
-`keeper_map_strict_mode`: Keeper refuses the second insert, so of two concurrent
-presenters exactly one runs. The other gets a retryable 503 rather than a final
-`invalid_grant` (it may be the owner retrying after a reply that never arrived), and its
-retry, after the release, reads the credential (with sequential consistency) as
-consumed. A live exchange is done within 80 s of its claim landing, each phase under a
-wall-clock deadline that counts retries, reconnects and pool waits: ten seconds to
-acquire the claim, one minute for its credential read, decision and tokens, ten seconds
-for its consume. A claim a dead one left is taken over after two minutes,
-by a compare-and-swap, so of two takers one wins. A consume that did not finish may
-still land, as may a cancelled one, so its claim is kept until it goes stale and the reply is a 503 with
-`Retry-After: 120`; each server boot sweeps the claims older than two minutes. Every
-token an exchange or a sign-in mints is issued at the time taken before it read the
-grant cutoffs, and a cutoff is written again once its first write returned, so a
-cutoff that landed while a mint ran still postdates the token. A
-server without a Keeper skips the table, runs exchanges unclaimed and reports
-`oauth_claims_not_atomic`.
+code or refresh token used by writing a new ReplacingMergeTree version, so reading and then
+marking cannot keep two concurrent exchanges apart. With a Keeper, `/oauth/token` first
+inserts the credential's key into `loom.oauth_claims`, a KeeperMap table, in strict mode.
+Keeper refuses the second insert, so exactly one presenter runs.
+
+- **The other presenter** gets a retryable 503, not `invalid_grant`: it may be the owner
+  retrying after a lost reply. Its retry, after the release, finds the credential used.
+- **Time limits.** Each phase has a wall-clock limit that counts retries and pool waits:
+  10 s to take the claim, 60 s to read the credential and decide, 10 s to use it up. A
+  claim older than 120 s was left by a dead exchange, and the next presenter takes it over
+  with a compare-and-swap.
+- **A consume that did not finish** (failed or cancelled) may still land, so the claim is
+  kept until it goes stale. A refresh answers 503 with `Retry-After: 120`; a code, which
+  expires sooner, answers with its tokens. Each server boot deletes stale claims.
+- **Without a Keeper** there is no table. The credential is used up before the decision,
+  as before the claim existed, and `/v1/health` reports `oauth_claims_not_atomic`.
+
+Every token a sign-in or an exchange mints takes its issue time before it reads the grant
+cutoffs, and a cutoff is written again once its first write returned, so a cutoff that
+landed while a mint ran still postdates the token.
 
 ## Authorization
 
