@@ -214,6 +214,8 @@ async def refuse_on_fresh_widths(table: str, rows: list[dict[str, Any]], since: 
     reading before they reach ClickHouse."""
     shared = _state.refusal_probe
     if shared is not None and not shared.done():
+        # The shared probe may predate this refusal's rebuild (two rebuilds within one
+        # probe); then this insert keeps ClickHouse's raw 190 instead of the named error.
         since = min(since, _state.refusal_probe_started)
     elif _state.ch is not None:
         _state.refusal_probe, _state.refusal_probe_started = _start_refresh(since=since), since
