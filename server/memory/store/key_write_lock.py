@@ -86,7 +86,7 @@ class KeyWriteLocks:
     ) -> AsyncIterator[None]:
         name = lock_name(org, namespace, agent, user_id, session_id, memory_key)
         me = default_holder()
-        async with self._process_lock(name):
+        async with self._process_lock(name, self._wait_s):
             if not await self._keeper_acquire(name, me):
                 yield
                 return
@@ -96,18 +96,19 @@ class KeyWriteLocks:
                 await self._keeper_release(name, me)
 
     @asynccontextmanager
-    async def lease(self, name: str) -> AsyncIterator[None]:
+    async def lease(self, name: str, *, wait_s: float | None = None) -> AsyncIterator[None]:
         """Hold `name` across hosts while the body runs, renewed every third of the TTL.
-        LeaseBusy when another holder keeps it or Keeper fails; LeaseLost, from the body,
-        once the lease cannot be confirmed ours before it expires. Without Keeper it is
-        held in this process."""
+        LeaseBusy when another holder keeps it past `wait_s` (the instance's wait by
+        default) or Keeper fails; LeaseLost, from the body, once the lease cannot be
+        confirmed ours before it expires. Without Keeper it is held in this process."""
         me, lost = default_holder(), asyncio.Event()
         body = asyncio.current_task()
+        wait = self._wait_s if wait_s is None else wait_s
         async with AsyncExitStack() as stack:
             try:
-                await stack.enter_async_context(self._process_lock(name))
+                await stack.enter_async_context(self._process_lock(name, wait))
                 started = time.monotonic()
-                held = await self._acquire(name, me)
+                held = await self._acquire(name, me, wait)
             except PreconditionFailedError:
                 raise LeaseBusy(name) from None
             except Exception as e:  # a lease Keeper cannot confirm is not held
@@ -131,9 +132,10 @@ class KeyWriteLocks:
     ) -> None:
         """Re-stamp the lease every third of its TTL; cancel `body` once it is lost.
         `deadline` is when the last confirmed stamp expires: a renewal that fails is
-        retried until then, and the lease is lost there if none is confirmed."""
+        retried, sooner, until then, and the lease is lost there if none is confirmed."""
+        wait = self._ttl_s / 3
         while True:
-            await asyncio.sleep(max(0.0, min(self._ttl_s / 3, deadline - time.monotonic())))
+            await asyncio.sleep(max(0.0, min(wait, deadline - time.monotonic())))
             started = time.monotonic()
             if started >= deadline:
                 break
@@ -141,10 +143,11 @@ class KeyWriteLocks:
                 ours = await asyncio.wait_for(self._renewed(name, me), deadline - started)
             except Exception as e:  # noqa: BLE001 — retried while the lease lasts
                 degradations.note("memory_key_lock", "renew_failed", e)
+                wait = max(self._poll_s, (deadline - time.monotonic()) / 4)
                 continue
             if not ours:
                 break
-            deadline = started + self._ttl_s
+            deadline, wait = started + self._ttl_s, self._ttl_s / 3
         lost.set()
         body.cancel()
 
@@ -154,12 +157,12 @@ class KeyWriteLocks:
         return await self._holder(name) == (me, False)
 
     @asynccontextmanager
-    async def _process_lock(self, name: str) -> AsyncIterator[None]:
+    async def _process_lock(self, name: str, wait_s: float) -> AsyncIterator[None]:
         lock, users = self._local.get(name, (asyncio.Lock(), 0))
         self._local[name] = (lock, users + 1)
         try:
             try:
-                await asyncio.wait_for(lock.acquire(), timeout=self._wait_s)
+                await asyncio.wait_for(lock.acquire(), timeout=wait_s)
             except TimeoutError:
                 raise _busy() from None
             try:
@@ -176,17 +179,17 @@ class KeyWriteLocks:
     async def _keeper_acquire(self, name: str, me: str) -> bool:
         """True once held; False without a usable Keeper."""
         try:
-            return await self._acquire(name, me)
+            return await self._acquire(name, me, self._wait_s)
         except PreconditionFailedError:
             raise
         except Exception as e:  # noqa: BLE001 — Keeper trouble must not fail the write
             degradations.note("memory_key_lock", "process_lock_only", e)
             return False
 
-    async def _acquire(self, name: str, me: str) -> bool:
+    async def _acquire(self, name: str, me: str, wait_s: float) -> bool:
         """True once held; False when the server has no Keeper. Raises
-        PreconditionFailedError once the wait is over, and what a Keeper read raises."""
-        deadline = time.monotonic() + self._wait_s
+        PreconditionFailedError once `wait_s` is over, and what a Keeper read raises."""
+        deadline = time.monotonic() + wait_s
         poll = self._poll_s
         if not await self._has_keeper():
             return False

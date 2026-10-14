@@ -75,18 +75,20 @@ async def _step_purge_code_index_by_ns(org: str, namespace: _NS) -> int:
     )
 
 
-# A memory's code links leave under the link worker's queue lease, which its every cursor
-# write is under: no pass can then publish a cursor it read before the erasure. While a
-# pass holds it the step fails with LeaseBusy, and the recovery worker retries it.
+# how long a code-link erasure waits for a linking pass to give up the queue lease
+_LINK_PASS_WAIT_S = 900.0
 
 
 async def _step_delete_code_links_by_user(org: str, user_id: str) -> int:
-    async with queue_lease():
+    """The user's code links, erased under the link worker's queue lease, which every
+    cursor write is under: no pass then publishes a cursor it read before the erasure."""
+    async with queue_lease(wait_s=_LINK_PASS_WAIT_S):
         return await memory_steps.delete_code_links_by_user(org, user_id)
 
 
 async def _step_delete_code_links_by_ns(org: str, namespace: _NS) -> int:
-    async with queue_lease():
+    """The namespace's code links, as `_step_delete_code_links_by_user`."""
+    async with queue_lease(wait_s=_LINK_PASS_WAIT_S):
         return await memory_steps.delete_code_links_by_namespace(org, namespace)
 
 

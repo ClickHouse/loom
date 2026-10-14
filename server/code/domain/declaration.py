@@ -1145,6 +1145,7 @@ def _unparenthesized(node: Any, grammar: str) -> Any:
     Python, JS or TS expression (not one that ends an optional chain, `(a?.b).c`, nor a
     JS / TS statement's lone string) or an arrow's one untyped parameter, a TS union's
     leading `|`."""
+    statement = node.parent is not None and node.parent.type == "expression_statement"
     while True:
         inner = None
         if node.type == "parenthesized_expression" and grammar in _UNPARENTHESIZED:
@@ -1153,9 +1154,8 @@ def _unparenthesized(node: Any, grammar: str) -> Any:
             chained = parent is not None and parent.type in _CHAINS
             if chained and inner is not None and b"?." in inner.text:
                 inner = None
-            lone = grammar in _ECMA and inner is not None and inner.type == "string"
-            if lone and parent is not None and parent.type == "expression_statement":
-                inner = None  # `("use strict");` is no directive
+            if statement and grammar in _ECMA and inner is not None and inner.type == "string":
+                inner = None  # `("use strict");` is no directive, at any depth
         elif node.type == "formal_parameters" and grammar in _ECMA:
             arrow = node.parent is not None and node.parent.type == "arrow_function"
             inner = _sole_child(node) if arrow else None

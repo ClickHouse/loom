@@ -295,3 +295,29 @@ async def test_a_renewal_that_recovers_inside_the_ttl_keeps_the_lease() -> None:
         await asyncio.sleep(1.2)  # two TTLs past the last stamp before the outage
         assert ch.rows["job"]["holder"]
     assert "job" not in ch.rows
+
+
+async def test_a_renewal_that_fails_is_retried_before_the_next_third_of_the_ttl() -> None:
+    ch = FlakyKeeper()
+    locks = kl.KeyWriteLocks(ch, wait_s=0.3, ttl_s=0.9)  # type: ignore[arg-type]
+    async with locks.lease("job"):
+        ch.down = True  # the renewals at a third and two thirds of the TTL both fail
+        await asyncio.sleep(0.7)
+        ch.down = False  # a retry before the deadline is confirmed
+        await asyncio.sleep(0.6)
+        assert ch.rows["job"]["holder"]
+
+
+async def test_a_lease_waits_as_long_as_its_caller_asks(monkeypatch: pytest.MonkeyPatch) -> None:
+    ch = FakeKeeper()
+    ch.rows["job"] = {"holder": "other", "stale": False}
+    locks = _locks(ch, monkeypatch)
+
+    async def release() -> None:
+        await asyncio.sleep(0.5)  # past the instance's wait of 0.3 s
+        del ch.rows["job"]
+
+    releasing = asyncio.create_task(release())
+    async with locks.lease("job", wait_s=3):
+        assert ch.rows["job"]["holder"] != "other"
+    await releasing

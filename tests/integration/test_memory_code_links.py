@@ -3848,7 +3848,6 @@ async def test_a_user_erasure_waits_out_a_pass_about_to_publish_its_cursor(
     from server.code.app import memory_links
     from server.erasure.api.erasure import ErasureRequestInput
     from server.erasure.app.handlers import handle_erasure_request
-    from server.erasure.app.saga import request_row_template, run_saga
     from server.memory.store import code_links as store
     from server.memory.workers.code_links import run_pass
     from server.settings import settings
@@ -3876,28 +3875,15 @@ async def test_a_user_erasure_waits_out_a_pass_about_to_publish_its_cursor(
     request = ErasureRequestInput(
         org=ORG, scope_type="user_id", scope_value=user, requester="it@example.com"
     )
-    first = await handle_erasure_request(request)
+    erasing = asyncio.create_task(handle_erasure_request(request))
+    await asyncio.sleep(2)
+    assert not erasing.done()  # it waits for the pass to give up the queue lease
     resume.set()
     await worker
-    out = first
-    if first.status != "completed":  # as the recovery worker resumes it
-        out = await run_saga(
-            input=request,
-            row=request_row_template(
-                erasure_id=first.erasure_id,
-                input=request,
-                requested_at=first.requested_at,
-                attempts=2,
-            ),
-            erasure_id=first.erasure_id,
-            requested_at=first.requested_at,
-            previously_completed=set(first.steps_completed),
-        )
+    out = await asyncio.wait_for(erasing, 60)
     cursors = ch_client.query(
         "SELECT state_value FROM loom.code_index_state "
         "WHERE org = '' AND namespace = 'memory_code_links'"
     ).result_rows
     assert out.status == "completed"
     assert not [v for (v,) in cursors if user in v]
-    # the pass held the queue: the erasure failed and was retried, never ran beside it
-    assert first.status == "failed" and "LeaseBusy" in first.failure_reason

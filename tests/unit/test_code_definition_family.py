@@ -1135,6 +1135,9 @@ def test_what_makes_a_string_a_directive_changes_it(path: str) -> None:
     bodies = ['"use strict";', '("use strict");', '; "use strict";', ';/* a */ ;"use strict";']
     values = {_value(path, _STRICT % b) for b in bodies}
     assert len(values) == len(bodies)
+    # parentheses a formatter collapses are still parentheses round a lone string
+    doubled = _value(path, _STRICT % '(("use strict"));')
+    assert doubled == _value(path, _STRICT % '("use strict");') not in (values - {doubled})
 
 
 @pytest.mark.parametrize(

@@ -353,6 +353,7 @@ async def sweep_erased(
     return {"after": list(nxt)} if nxt else {"done_at": time.time()}
 
 
-def queue_lease() -> AbstractAsyncContextManager[None]:
-    """The lease on reading the memory queue; LeaseBusy while another host holds it."""
-    return link_pass.repository_locks.lease("code_links/queue")
+def queue_lease(*, wait_s: float | None = None) -> AbstractAsyncContextManager[None]:
+    """The lease on reading the memory queue; LeaseBusy while another host holds it past
+    `wait_s`."""
+    return link_pass.repository_locks.lease("code_links/queue", wait_s=wait_s)
