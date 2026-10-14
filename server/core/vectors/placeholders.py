@@ -22,6 +22,7 @@ carries an empty vector.
 
 from __future__ import annotations
 
+from functools import cache
 from typing import Any
 
 from server.core.vectors import codes_state
@@ -58,6 +59,12 @@ def placeholder(dim: int) -> list[float]:
     return [0.0] * int(dim)
 
 
+@cache
+def _shared_placeholder(dim: int) -> list[float]:
+    # One list per width for every padded row; nothing writes into it.
+    return placeholder(dim)
+
+
 def _placeholder_spec(table: str) -> tuple[str, tuple[str, ...], int]:
     """(qualified table, placeholder columns, width when not coded)."""
     from server.settings import settings
@@ -86,7 +93,7 @@ def pad_rows(table: str, rows: list[dict[str, Any]]) -> list[tuple[int, str]]:
             continue
         for i, r in enumerate(rows):
             if c in r and not r[c]:
-                r[c] = placeholder(width)
+                r[c] = _shared_placeholder(width)
                 padded.append((i, c))
     return padded
 
