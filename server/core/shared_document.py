@@ -1,10 +1,11 @@
 """A small JSON document the web processes of one server share.
 
 Runtime overrides set through one worker must bind its siblings. Each keeps its
-own copy and `poll`s the file, which re-reads the small document; `update`
-re-reads the latest version under an exclusive lock, bumps the document's
-generation and replaces the file atomically, so concurrent updates never drop
-each other's change. A sibling adopts a version whose generation it has not seen.
+own copy and `poll`s the file; `update` re-reads the latest version under an
+exclusive lock, bumps the document's generation and replaces the file
+atomically, so concurrent updates never drop each other's change. The file's
+first line is `{"generation": N}` and the document follows it, so a poll reads
+one short line and parses the document only for a generation it has not seen.
 """
 
 from __future__ import annotations
@@ -104,7 +105,7 @@ class SharedDocument[T]:
                 # A new or replaced corrupt document starts at the clock, a
                 # generation no sibling can have seen.
                 generation = time.time_ns() if self._seen is None else self._seen + 1
-                _publish(path, {"generation": generation, "document": self._encode(new)})
+                _publish(path, generation, self._encode(new))
                 self._seen = generation
             except BaseException:
                 self._seen = None  # the caller kept its state, so the next poll adopts `latest`
@@ -129,13 +130,13 @@ class SharedDocument[T]:
             raise
         try:
             with fh:
-                raw = json.load(fh)  # an OSError here is not corruption: tried again
-            generation = raw["generation"]
-            if not isinstance(generation, int) or isinstance(generation, bool):
-                raise TypeError(f"generation {generation!r} is not a whole number")
-            if generation == self._seen:
-                return None
-            state = self._decode(raw["document"])
+                # An OSError while reading is not corruption: tried again.
+                generation = json.loads(fh.readline())["generation"]
+                if not isinstance(generation, int) or isinstance(generation, bool):
+                    raise TypeError(f"generation {generation!r} is not a whole number")
+                if generation == self._seen:
+                    return None
+                state = self._decode(json.loads(fh.read()))
         except (ValueError, LookupError, TypeError, AttributeError, RecursionError) as e:
             if f"corrupt: {e}" != self._warned:
                 self._warned = f"corrupt: {e}"
@@ -200,15 +201,16 @@ def _try_lock(fd: int, path: str) -> None:
         raise LockBusy(errno.EWOULDBLOCK, f"{path}.lock is held by another process") from None
 
 
-def _publish(path: str, data: object) -> None:
-    """Replace `path` atomically."""
+def _publish(path: str, generation: int, document: object) -> None:
+    """Replace `path` atomically with the generation's line, then the document."""
     # Named after the document, so a file left by a killed worker is pruned with it.
     fd, tmp = tempfile.mkstemp(
         dir=os.path.dirname(path) or ".", prefix=f"{os.path.basename(path)}.tmp-"
     )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(data, fh)
+            fh.write(json.dumps({"generation": generation}) + "\n")
+            json.dump(document, fh)
         os.replace(tmp, path)
     except BaseException:
         with contextlib.suppress(OSError):

@@ -60,12 +60,12 @@ for i in range(int(sys.argv[3])):
 
 def _document(path: Path | str) -> dict[str, object]:
     """The overrides a published file holds."""
-    return json.loads(Path(path).read_text())["document"]
+    return json.loads(Path(path).read_text().split("\n", 1)[1])
 
 
 def _sibling_publishes(path: Path, document: object) -> None:
     """A sibling's update, as `SharedDocument.update` writes it."""
-    path.write_text(json.dumps({"generation": time.time_ns(), "document": document}))
+    path.write_text(json.dumps({"generation": time.time_ns()}) + "\n" + json.dumps(document))
 
 
 @pytest.fixture(autouse=True)

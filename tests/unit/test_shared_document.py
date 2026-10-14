@@ -31,6 +31,16 @@ def _doc(path: Path) -> SharedDocument[dict[str, Any]]:
 NONE: dict[str, Any] = {"none": True}
 
 
+def _file_text(generation: int, document: object) -> str:
+    """A version as `SharedDocument.update` writes it: the generation's line, then the document."""
+    return json.dumps({"generation": generation}) + "\n" + json.dumps(document)
+
+
+def _read(path: Path) -> tuple[int, Any]:
+    first, rest = path.read_text().split("\n", 1)
+    return json.loads(first)["generation"], json.loads(rest)
+
+
 def test_poll_returns_a_document_once_per_version(tmp_path: Path) -> None:
     a, b = _doc(tmp_path / "d.json"), _doc(tmp_path / "d.json")
     assert b.poll() is None  # no file yet
@@ -50,11 +60,9 @@ def test_a_version_that_looks_unchanged_to_stat_is_still_adopted(tmp_path: Path)
     a.update(lambda _: {"x": 1}, NONE)
     assert b.poll() == {"x": 1}
     before = os.stat(path)
-    raw = json.loads(path.read_text())
-    raw["generation"] ^= 1  # another generation of the same length
-    raw["document"] = {"v": {"x": 2}}
+    generation, _ = _read(path)
     with open(path, "r+") as fh:  # in place, the same length
-        fh.write(json.dumps(raw))
+        fh.write(_file_text(generation ^ 1, {"v": {"x": 2}}))  # another generation
     os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
     after = os.stat(path)
     assert (after.st_ino, after.st_size, after.st_mtime_ns) == (
@@ -63,6 +71,21 @@ def test_a_version_that_looks_unchanged_to_stat_is_still_adopted(tmp_path: Path)
         before.st_mtime_ns,
     )
     assert b.poll() == {"x": 2}
+
+
+def test_a_poll_of_a_version_it_has_seen_reads_only_the_generation(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Every request polls, so an unchanged document is never parsed again."""
+    path = tmp_path / "d.json"
+    a, b = _doc(path), _doc(path)
+    a.update(lambda _: {"x": 1}, NONE)
+    assert b.poll() == {"x": 1}
+    generation, _ = _read(path)
+    path.write_text(json.dumps({"generation": generation}) + "\n{not json")
+    with caplog.at_level(logging.WARNING):
+        assert b.poll() is None
+    assert not caplog.records
 
 
 def test_a_poll_sees_a_sibling_update_at_once(tmp_path: Path) -> None:
@@ -94,7 +117,7 @@ def test_a_corrupt_document_is_warned_once_and_replaced_by_the_next_edit(
         assert doc.poll() is None
     assert sum("is corrupt" in r.getMessage() for r in caplog.records) == 1
     assert doc.update(lambda latest: {"x": 1} if latest is NONE else latest, NONE) == {"x": 1}
-    assert json.loads(path.read_text())["document"] == {"v": {"x": 1}}
+    assert _read(path)[1] == {"v": {"x": 1}}
 
 
 def test_an_edit_refuses_a_document_it_cannot_read(
@@ -121,7 +144,7 @@ def test_an_edit_refuses_a_document_it_cannot_read(
 
 def test_a_symlinked_document_is_refused(tmp_path: Path) -> None:
     planted = tmp_path / "planted.json"
-    planted.write_text(json.dumps({"generation": 1, "document": {"v": {"x": 9}}}))
+    planted.write_text(_file_text(1, {"v": {"x": 9}}))
     (tmp_path / "d.json").symlink_to(planted)
     doc = _doc(tmp_path / "d.json")
     assert doc.poll() is None
@@ -185,7 +208,7 @@ def test_a_lasting_read_failure_warns_once_and_recovers(
 def test_a_document_of_the_wrong_shape_is_corrupt_and_replaced(tmp_path: Path) -> None:
     path = tmp_path / "d.json"
     # decoding calls .items() on a list
-    path.write_text(json.dumps({"generation": 1, "document": {"v": []}}))
+    path.write_text(_file_text(1, {"v": []}))
     os.chmod(path, 0o600)
     doc = SharedDocument(str(path), lambda data: dict(data["v"].items()), _encode)
     assert doc.poll() is None
@@ -200,15 +223,15 @@ def test_a_read_that_fails_after_opening_is_retried(
     writer.update(lambda _: {"x": 30}, NONE)
     assert reader.poll() == {"x": 30}
     writer.update(lambda _: {"x": 1}, NONE)
-    real = json.load
+    real = json.loads
     failures = [OSError(errno.EIO, "injected read error")]
 
-    def load(fh: Any) -> Any:
+    def loads(text: str) -> Any:
         if failures:
             raise failures.pop()
-        return real(fh)
+        return real(text)
 
-    monkeypatch.setattr(shared_document.json, "load", load)
+    monkeypatch.setattr(shared_document.json, "loads", loads)
     assert reader.poll() is None
     assert reader.poll() == {"x": 1}  # the same version, read again
 
@@ -261,7 +284,7 @@ def test_a_busy_lock_is_a_retry_and_an_unwritable_document_is_not(
         shared_document.share_override(doc, lambda d: d, {}, what="budget override")
 
 
-def _refuse_publish(path: str, data: object) -> object:
+def _refuse_publish(path: str, generation: int, document: object) -> object:
     raise OSError(28, "No space left on device")
 
 
