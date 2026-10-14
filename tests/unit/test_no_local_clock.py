@@ -1,17 +1,4 @@
-"""Server code does not ask for the host's local time.
-
-Loom's naive datetimes are UTC: `CHClient.insert` writes them as UTC instants,
-and query parameters reach ClickHouse as UTC wall time. A local reading lands
-shifted by the host's offset on any host not in UTC. Use `naive_utc_now()` or
-`datetime.now(UTC)`.
-
-The check is by call shape, whatever the receiver is named: `.now()`,
-`.today()` and `.astimezone()` with no zone, `.fromtimestamp(x)` and
-`.asctime()` with none, and the calls that are local or deprecated outright. It
-cannot see `naive.timestamp()`, which reads a naive value as local (use
-`time.time_ns()` for a version), nor `time.ctime()` / `strftime(fmt)`, whose
-shapes a datetime's own methods share.
-"""
+"""Catches local-clock calls by shape; misses naive .timestamp(), time.ctime(), time.strftime()."""
 
 from __future__ import annotations
 
@@ -20,8 +7,9 @@ from pathlib import Path
 
 SERVER = Path(__file__).resolve().parents[2] / "server"
 BANNED = {"utcnow", "utcfromtimestamp", "localtime", "mktime"}
-# Where each call takes its zone (or time tuple) by position; none there is local.
-TZ_POSITION = {"now": 0, "today": 0, "astimezone": 0, "asctime": 0, "fromtimestamp": 1}
+# Where each call takes the argument that makes it UTC by position (a zone, or
+# asctime's time tuple); none there reads the local clock.
+UTC_ARG_POSITION = {"now": 0, "today": 0, "astimezone": 0, "asctime": 0, "fromtimestamp": 1}
 
 
 def _reads_local_clock(call: ast.Call) -> bool:
@@ -30,10 +18,10 @@ def _reads_local_clock(call: ast.Call) -> bool:
     name = call.func.attr
     if name in BANNED:
         return True
-    if name not in TZ_POSITION:
+    if name not in UTC_ARG_POSITION:
         return False
-    zones = call.args[TZ_POSITION[name] :] + [k.value for k in call.keywords if k.arg == "tz"]
-    return all(isinstance(z, ast.Constant) and z.value is None for z in zones)  # none, or None
+    args = call.args[UTC_ARG_POSITION[name] :] + [k.value for k in call.keywords if k.arg == "tz"]
+    return all(isinstance(z, ast.Constant) and z.value is None for z in args)  # none, or None
 
 
 def test_no_server_module_reads_the_local_clock() -> None:

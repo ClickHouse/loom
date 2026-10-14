@@ -67,7 +67,9 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   mount as a tmpfs); with none, as on a read-only root without one, the image starts one
   process and says so, and an explicit `LOOM_WEB_WORKERS` above 1 refuses to start, as does a
   pinned `LOOM_RUNTIME_DIR` the server cannot use or that others can enter (a mode looser than
-  0700). With `docker run`, mount `--tmpfs /run/loom:uid=999,gid=999,mode=0700`.
+  0700). With `docker run`, mount `--tmpfs /run/loom:uid=999,gid=999,mode=0700`. The
+  repository's cloud and blue/green compose files keep their web tier at one process unless
+  `.env` sets `LOOM_WEB_WORKERS`, and `scripts/serve.sh` takes a count that only `.env` names.
 - **Operators:** the image owns `/run/loom` (uid 999) and the compose files mount it as a
   tmpfs. Runtime files under the earlier names (`loom-ratelimit-<pid>.buckets`,
   `loom-graph-marks-<pid>/`) are not removed automatically; delete them once the old server is
@@ -99,11 +101,9 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   reads a naive datetime as local time. Those writes now carry the UTC instant. Conversation
   threads, which wrote local time to make up for it, now write UTC, so `conversation.create`
   and `conversation.update` answer UTC times, as `conversation.get` does. Other rows written
-  before the upgrade keep their shift: west of UTC, a row versioned by such a time can sit up
-  to the offset in the future, and a newer version may lose to it under `FINAL` until the
-  clock passes it. The images default to UTC, so a container that sets no `TZ` was not
-  affected; a server run on a laptop was. A spend-ledger turn time with an offset is now
-  converted to UTC, not truncated.
+  before the upgrade keep their shift. The images default to UTC, so a container that sets no
+  `TZ` was not affected; a server run on a laptop was. A spend-ledger turn time with an offset
+  is now converted to UTC, not truncated.
 - A request whose body holds a number JSON cannot carry back (`1e400` parses to infinity) gets
   a 422 that echoes it as the string `"Infinity"`, instead of a 500.
 - `admin/budget.set` refuses an integer too large for a float with a 422; it was stored, and
