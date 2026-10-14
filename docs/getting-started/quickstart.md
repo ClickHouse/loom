@@ -382,27 +382,28 @@ The rest is in [Dashboard](../features/dashboard.md).
 
 Adding a repository from the dashboard is refused on this stack with `SANDBOX_UNAVAILABLE`:
 it needs the [repository-job sandbox](../operations/code-index-operations.md#repository-job-sandbox),
-which this stack leaves off because Docker's default confinement blocks it. List the
-repository in `~/.loom/.env` instead. Only list repositories you trust: their build steps
-(TypeScript installs, Go module downloads, CMake) run without the sandbox, inside the
-`loom` container.
+which this stack leaves off because Docker's default confinement blocks it. Only list
+repositories you trust: their build steps (TypeScript installs, Go module downloads,
+CMake) run without the sandbox, in the `loom` container, whose environment holds the JWT
+secret and provider keys.
 
 `LOOM_CODE_REPOS_JSON` is one line holding every repository as a JSON array
 ([Configure the entry](../operations/code-index-operations.md#configure-the-entry)).
 Add it to `~/.loom/.env`, or add an entry to the array if the line is already there.
-`dev` is the org a single-user stack runs as:
+`dev` is the org a single-user stack runs as; in multi-user mode use your account's org,
+here and in `--org` below:
 
-```bash
-LOOM_CODE_REPOS_JSON=[{"org":"dev","namespace":"code-myrepo","repo":"acme/myrepo","git_branch":"main","scip_producer":"python","scip_checkout_dir":"/app/var/code_repos/checkout-code-myrepo","public":true}]
+```dotenv
+LOOM_CODE_REPOS_JSON=[{"org":"dev","namespace":"code-myrepo","repo":"acme/myrepo","git_branch":"main","scip_producer":"python","public":true}]
 ```
 
 - `scip_producer` picks the compiler-tier indexer: `typescript`, `python`, `go` or
   `clang`. Without it the entry gets `clang`, which needs a configured build tree
   ([Compiler tier](../operations/code-index-operations.md#compiler-tier)), so other
   languages get only the parser tier.
-- `scip_checkout_dir` is the working tree that indexer runs in (the default is
-  `/app/var/code_repos/checkout-<namespace>`, the path above). Loom creates it only for
-  repositories added from the dashboard, so create it yourself. For `typescript`, `python`
+- The indexer runs in a working tree, `/app/var/code_repos/checkout-<namespace>` unless
+  the entry sets `scip_checkout_dir`. Loom creates it only for repositories added from
+  the dashboard, so create it yourself (below). For `typescript`, `python`
   and `go` an empty Git repository is enough: the tier fetches each commit into it from
   Loom's own clone.
 - For a private repository, add a GitHub token (`LOOM_CODE_GITHUB_TOKEN` in `.env`, or
@@ -420,8 +421,8 @@ docker compose --project-directory "$HOME/.loom" exec loom loom code backfill --
 
 `backfill --embed` needs an embedding provider ([Models and keys](./models-and-keys.md)).
 On the stock keyless stack it refuses the fallback embedder and exits. To try the wiring
-anyway, add `--allow-fake-embedder` on a namespace you will throw away: its vectors stay
-fake after you configure a provider, so index the repository under a new namespace then.
+anyway, add `--allow-fake-embedder`; [Models and keys](./models-and-keys.md) says what
+switching to a real provider later rebuilds.
 
 ## Optional: ask a question about a document
 

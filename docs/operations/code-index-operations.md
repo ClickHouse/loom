@@ -321,10 +321,12 @@ _Without the sandbox_). To run it there, once the host has the profile:
 A source run (`make server`) has the sandbox only where the host passes the same
 requirements.
 
-**Which hosts can run it.** The shipped profile targets AppArmor 4.0 or later
+**Which hosts can load the profile.** The shipped profile targets AppArmor 4.0 or later
 (`abi <abi/4.0>`). Only Ubuntu 24.04 is tested, by the CI `sandbox-profile` job with
-`kernel.apparmor_restrict_unprivileged_userns=1`; Debian 13 ships a 4.x parser and should
-load it. Older parsers (Ubuntu 22.04, Debian 12) reject that ABI. Hosts without
+`kernel.apparmor_restrict_unprivileged_userns=1`; Debian 13's 4.x parser accepts the
+ABI, but the profile is untested there. Older parsers (Ubuntu 22.04, Debian 12) reject
+it, which leaves those hosts only the `unconfined` options below; they drop the same
+`/proc` protection, so treat those hosts like hosts without AppArmor. Hosts without
 AppArmor, such as Docker Desktop (on any OS) or SELinux distributions like Fedora and
 RHEL, cannot use the colours' options safely: Docker ignores `apparmor=` there, so nothing
 replaces the `/proc` masks that `systempaths=unconfined` drops (see **`/proc`** below).
