@@ -913,11 +913,13 @@ class CHClient:
         # A table rebuilt at another width since the last reading: refuse a
         # vector the caller wrote, else size the placeholders again (one retry).
         refused_at = time.monotonic()
-        widths = {c: codes_state.stored_width(table, c) for _, c in padded}
+        sized = {c: len(rows[i][c]) for i, c in padded}
         placeholders.unpad(rows, padded)
         await codes_state.refuse_on_fresh_widths(table, rows, since=refused_at)
         placeholders.pad_rows(table, rows)
-        if all(codes_state.stored_width(table, c) == w for c, w in widths.items()):
+        # Compare with the lengths the refused attempt sent, not the reading
+        # before it: a background probe may have published the new width mid-insert.
+        if all(codes_state.stored_width(table, c) == n for c, n in sized.items()):
             raise refused  # the fresh reading does not explain it
         await self._insert_rows(table, rows, settings, project_onto_table)
 

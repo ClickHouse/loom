@@ -217,3 +217,23 @@ async def test_inserts_in_flight_at_a_rebuild_are_each_refused_by_name(table, mo
     with pytest.raises(CodedWidthMismatchError):
         await client.insert("loom.memory_embeddings", [_full(3072)])
     assert table.attempts == attempts
+
+
+@pytest.mark.asyncio
+async def test_a_probe_that_lands_mid_insert_still_resizes_the_placeholders(
+    table, monkeypatch
+) -> None:
+    """A background probe publishes the new width while the first attempt, padded
+    at the old one, is in flight: the retry pads at the new width and lands."""
+    real_insert = table.insert
+
+    async def insert(t: str, data: Any, **kw: Any) -> None:
+        if table.attempts == 0:
+            await codes_state.probe(table)
+        await real_insert(t, data, **kw)
+
+    table.insert = insert  # type: ignore[method-assign]
+    rows = [{"embedding": [], "memory_key_embedding": []}]
+    await _client(table, monkeypatch).insert("loom.memory_embeddings", rows)
+    assert table.attempts == 2
+    assert [len(rows[0][c]) for c in COLUMNS] == [1024, 1024]
