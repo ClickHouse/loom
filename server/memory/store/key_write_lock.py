@@ -193,11 +193,11 @@ class KeyWriteLocks:
             return None
         while True:
             started = time.monotonic()
+            if started >= until:  # no attempt starts after the wait, however late we woke
+                raise _busy()
             if await self._attempt(name, me):
                 return started
-            if (left := until - time.monotonic()) <= 0:
-                raise _busy()
-            await asyncio.sleep(min(poll, left))  # no attempt starts after `until`
+            await asyncio.sleep(min(poll, until - time.monotonic()))
             poll = min(poll * 1.5, 0.5)
 
     async def _keeper_release(self, name: str, me: str) -> None:

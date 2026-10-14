@@ -483,3 +483,58 @@ async def test_a_lock_whose_engine_cannot_be_read_sends_nothing_to_release(
         async with _locks(ch, monkeypatch).lease("job"):
             pytest.fail("held a lease no Keeper confirmed")
     assert ch.sql == [] and notes == ["process_lock_only", "lease_unconfirmed"]
+
+
+def _late_clock(monkeypatch: pytest.MonkeyPatch, *, late_by: float) -> list[float]:
+    """A clock at 100.0 whose sleeps wake `late_by` seconds after they were due."""
+    now = [100.0]
+
+    async def sleep(s: float) -> None:
+        now[0] += max(0.0, s) + late_by
+
+    monkeypatch.setattr(kl, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    monkeypatch.setattr(kl.asyncio, "sleep", sleep)
+    return now
+
+
+async def test_a_poll_that_wakes_past_the_wait_makes_no_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = _late_clock(monkeypatch, late_by=0.06)
+    ch = FakeKeeper()
+    ch.rows["job"] = {"holder": "other", "stale": False}
+    locks = kl.KeyWriteLocks(ch, wait_s=0.5, poll_s=0.05)  # type: ignore[arg-type]
+    starts: list[float] = []
+    attempt = locks._attempt
+
+    async def timed(name: str, me: str) -> bool:
+        starts.append(now[0])
+        if now[0] >= 100.5:
+            ch.rows.pop("job", None)  # free by then: a late attempt would take it
+        now[0] += 0.45 if len(starts) == 1 else 0.0  # the first ends just before the wait
+        return await attempt(name, me)
+
+    monkeypatch.setattr(locks, "_attempt", timed)
+    with pytest.raises(kl.LeaseBusy):
+        async with locks.lease("job"):
+            pytest.fail("took the lease after its wait")
+    assert starts == [100.0]
+
+
+async def test_a_keeper_probe_that_uses_up_the_wait_makes_no_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = _late_clock(monkeypatch, late_by=0.0)
+    ch = FakeKeeper()
+    locks = kl.KeyWriteLocks(ch, wait_s=0.5)  # type: ignore[arg-type]
+    probe = locks._has_keeper
+
+    async def slow_probe() -> bool:
+        now[0] += 0.6  # the engine read alone outlasts the wait
+        return await probe()
+
+    monkeypatch.setattr(locks, "_has_keeper", slow_probe)
+    with pytest.raises(kl.LeaseBusy):
+        async with locks.lease("job"):
+            pytest.fail("took the lease after its wait")
+    assert "job" not in ch.rows and not any(s.startswith("INSERT") for s in ch.sql)
