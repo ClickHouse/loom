@@ -25,6 +25,7 @@ class FakeKeeper:
         self.engine = engine
         self.fail = fail
         self.rows: dict[str, dict[str, Any]] = {}
+        self.sql: list[str] = []
 
     async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, Any] | None:
         if "system.tables" in sql:
@@ -32,6 +33,7 @@ class FakeKeeper:
         return self.rows.get(params["name"])
 
     async def execute(self, sql: str, params: dict[str, Any]) -> None:
+        self.sql.append(sql)
         if self.fail:
             raise RuntimeError("Code: 999. Coordination error: connection loss")
         name, row = params["name"], self.rows.get(params["name"])
@@ -241,9 +243,13 @@ async def test_a_lease_keeper_cannot_confirm_is_busy_and_one_without_keeper_runs
     with pytest.raises(kl.LeaseBusy):
         async with _locks(FakeKeeper(fail=True), monkeypatch).lease("job"):
             ran.append("keeper failing")
-    async with _locks(FakeKeeper(engine=""), monkeypatch).lease("job"):
+    keeperless = FakeKeeper(engine="")
+    async with _locks(keeperless, monkeypatch).lease("job"):
         ran.append("no keeper")
-    assert ran == ["no keeper"]
+    async with _locks(keeperless, monkeypatch).hold(*_IDENT):
+        ran.append("no keeper")
+    assert ran == ["no keeper", "no keeper"]
+    assert keeperless.sql == []  # nothing to take, nothing to release
 
 
 class FlakyKeeper(FakeKeeper):

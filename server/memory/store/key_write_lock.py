@@ -201,8 +201,8 @@ class KeyWriteLocks:
             poll = min(poll * 1.5, 0.5)
 
     async def _keeper_release(self, name: str, me: str) -> None:
-        if self._keeper is False:
-            return  # no Keeper, no key
+        if not self._keeper:
+            return  # no insert was sent: no Keeper, or none known yet
         try:
             await self.ch.execute(LOCK_RELEASE, params={"name": name, "me": me})
         except Exception as e:  # noqa: BLE001 — the key expires after its TTL
