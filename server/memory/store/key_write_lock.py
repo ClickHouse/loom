@@ -97,7 +97,7 @@ class KeyWriteLocks:
     async def lease(self, name: str, *, wait_s: float | None = None) -> AsyncIterator[None]:
         """Hold `name` across hosts while the body runs, renewed every third of the TTL.
         LeaseBusy when it is held, in this process or by another host, past `wait_s` (the
-        instance's wait by default) or Keeper fails; LeaseLost, from the body, once the
+        instance's wait by default; positive) or Keeper fails; LeaseLost, from the body, once the
         lease cannot be confirmed ours before it expires. Without Keeper it is held in
         this process."""
         me, lost = default_holder(), asyncio.Event()

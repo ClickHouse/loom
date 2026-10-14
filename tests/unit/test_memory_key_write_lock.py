@@ -459,7 +459,7 @@ async def test_no_attempt_starts_after_the_wait(monkeypatch: pytest.MonkeyPatch)
     with pytest.raises(kl.LeaseBusy):
         async with locks.lease("job"):
             pytest.fail("took the lease after its wait")
-    assert max(starts) <= 100.5
+    assert starts == [100.0]  # the next would start at the deadline
 
 
 class EngineUnreadable(FakeKeeper):
