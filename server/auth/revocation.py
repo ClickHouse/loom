@@ -13,6 +13,9 @@ The table is ReplacingMergeTree ORDER BY jti: the newest row per key governs.
   fills it, and the supervisor worker (lease holder) or `start_refresh_loop`
   (every other process) re-reads it each `jwt_revocation_cache_ttl_seconds`.
 - `is_revoked` is a frozenset/dict lookup — no I/O, safe from sync verify.
+- The same refresh reads when each namespace last had a grant revoked
+  (`grant_revoked_since`), so a check of a token's own claim stays free of
+  I/O until a revocation could touch it.
 
 Failure semantics: until the first successful read `loaded()` is False and
 `verify_token` refuses every token (503, retryable) — an empty set would let
@@ -61,6 +64,10 @@ _revoked_jtis: frozenset[str] = frozenset()
 # Keys revoked only for tokens issued before the cutoff (unix seconds);
 # replaced together with `_revoked_jtis` on every refresh.
 _revoked_before: dict[str, int] = {}
+# The newest grant revocation per (org, namespace), unix seconds, read with
+# the token sets: a token minted before it may name a namespace its grant
+# no longer backs (`authz.withdrawn_claims`).
+_grants_revoked: dict[tuple[str, str], int] = {}
 # False until one refresh has succeeded in this process.
 _loaded = False
 # time.monotonic() of the last successful refresh; 0.0 = never.
@@ -92,11 +99,18 @@ def is_revoked(jti: str, *, issued_at: int | None = None) -> bool:
     return cutoff is not None and issued_at is not None and issued_at < cutoff
 
 
+def grant_revoked_since(org: str, namespace: str, issued_at: int) -> bool:
+    """True if a grant on (org, namespace) was revoked at or after
+    `issued_at` (unix seconds). Sync, hot-path safe."""
+    revoked = _grants_revoked.get((org, namespace))
+    return revoked is not None and revoked >= issued_at
+
+
 async def refresh() -> None:
     """Re-read the revocation set from CH and replace the in-memory copy."""
     from server.core.ch import get_client
 
-    global _revoked_jtis, _revoked_before, _loaded, _loaded_at
+    global _revoked_jtis, _revoked_before, _grants_revoked, _loaded, _loaded_at
     try:
         ch = get_client()
         rows = await ch.query_all(
@@ -113,8 +127,21 @@ async def refresh() -> None:
                 full.add(str(r["jti"]))
             else:
                 before[str(r["jti"])] = cutoff
+        grants = await ch.query_all(
+            """
+            SELECT org, namespace, max(revoked_at) AS last_revoked
+            FROM loom.namespace_grants FINAL
+            WHERE revoked_at IS NOT NULL
+            GROUP BY org, namespace
+            """,
+        )
         _revoked_jtis = frozenset(full)
         _revoked_before = before
+        _grants_revoked = {
+            (str(r["org"]), str(r["namespace"])): cutoff
+            for r in grants
+            if (cutoff := _cutoff_seconds(r.get("last_revoked"))) is not None
+        }
         _loaded = True
         _loaded_at = time.monotonic()
     except Exception as e:  # noqa: BLE001 — keep the last revocation set on a CH glitch

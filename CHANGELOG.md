@@ -50,7 +50,8 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   namespaces a `namespace_scope=all_mine` search reads besides the addressed one.
   For anyone but a scoped token the cut drops public namespaces before private ones.
   `memory.search` names the rest in a new output field, `namespaces_skipped`, and the
-  `loom_search` text lists them.
+  `loom_search` text lists them. `knowledge.search` and `conversation.search` carry the
+  same field, and every page of a paged `memory.search` repeats the first call's lists.
 
 ### Changed
 
@@ -58,6 +59,11 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   and a namespace's `rerank_endpoint` take a name, not a URL: `none`, `builtin:openai[:model]`,
   `builtin:cohere[:model]`, or an endpoint the operator names in `LOOM_RERANK_ENDPOINTS_JSON`.
   A URL or an unknown name is a 422. A namespace that still stores a URL is no longer reranked.
+- **Security:** revoking a grant now ends what the subject's older tokens claim on that
+  namespace. A flat or scoped token minted before the revocation no longer reaches a
+  namespace it names unless a live grant remains; a namespace never granted to the subject
+  (named by an operator at mint) keeps its claim. Servers pick a revocation up within
+  `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS`.
 - With auth off, an `all_mine` search also reads every namespace the single user registered,
   not only the addressed one.
 - The addressed namespace is always searched first. A scoped token's other namespaces follow

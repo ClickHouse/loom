@@ -152,8 +152,12 @@ operation's role, or a live grant does.
   ```
 
 - **Grants** (`loom.namespace_grants`, one row per `(org, namespace, subject)`) add a role
-  on one namespace above what the token carries. Grants only add, so revoking a grant
-  does not take away a namespace a flat token names itself: revoke the token. A service
+  on one namespace above what the token carries. Revoking one also ends what the subject's
+  older tokens claim there: a token minted before the revocation no longer reaches a
+  namespace it names, unless the subject still holds a live grant on it. A namespace the
+  subject never held a grant on (one an operator named at mint) keeps its claim; revoke the
+  token to take that away. Every server sees a revocation within
+  `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` (default 30 s). A service
   account with no grant of its own on a namespace uses its creator's grant there, so a
   token minted from the dashboard follows the person who made it, except on a restricted
   namespace.
@@ -194,8 +198,9 @@ Then the list is narrowed:
   `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES` (default 32) are read, in the caller's list
   order: a scoped token's order, or a delegated token's named list; otherwise by name. A
   scoped token keeps its first ones; for anyone else the cut drops public namespaces
-  before private ones. Memory search names the rest in `namespaces_skipped`, and
-  `loom_search` says so in its text; address one by name to read it.
+  before private ones. Memory, knowledge and conversation search name the rest in
+  `namespaces_skipped` (every page of a paged memory search too), and `loom_search` says
+  so in its text; address one by name to read it.
 
 The addressed namespace is always searched, and first: the fan-out only widens a search.
 Memory search then reads in tiers. For a scoped token the other namespaces follow in its
@@ -205,8 +210,9 @@ that first pass comes up short.
 
 Some namespaces a caller can read are not its own and are never swept: those reached
 through a `*` claim or an org or platform role, public namespaces it has not joined, and
-namespaces it created by writing into them (they get an owner row but no grant). Address
-them by name. A search covers one org.
+namespaces it created by writing into them (they get an owner row but no grant, so a
+harness that writes a namespace per task does not widen every later search). Address
+them by name. A search covers one org, the token's own.
 
 ## Read scope inside a namespace
 

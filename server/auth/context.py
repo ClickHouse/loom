@@ -80,12 +80,15 @@ async def resolve_my_namespaces(org: str, subject: str | None = None) -> list[st
       `namespaces` claim and active `loom.namespace_grants` rows (grants
       widen), returned sorted.
 
+    Either way a claimed namespace whose grant was revoked after the token
+    was minted is left out (`authz.withdrawn_claims`).
+
     A delegated token (a `creator` claim) is neither: its claim narrowed to
     the creator's live grants (`_delegated_namespaces`).
 
     `subject` lets dev mode pass an explicit identity when no JWT is present.
     """
-    from server.auth.authz import may_act_in_org
+    from server.auth.authz import may_act_in_org, withdrawn_claims
     from server.auth.service_accounts import inheriting_creator
 
     auth = current_auth()
@@ -104,17 +107,18 @@ async def resolve_my_namespaces(org: str, subject: str | None = None) -> list[st
     # Scoped token: the ordered namespace claim is authoritative. Preserve
     # order (= read priority); do not union other grants (= subset restrict).
     if auth is not None and auth.has_ns_roles():
+        claimed = [ns for ns in auth.namespaces if ns and ns != "*"]
+        withdrawn = await withdrawn_claims(auth, org, claimed)
         return await _without_unreadable_restricted(
-            org, [ns for ns in auth.namespaces if ns and ns != "*"]
+            org, [ns for ns in claimed if ns not in withdrawn]
         )
 
     jwt_namespaces: set[str] = set()
     resolved_subject: str | None = None
     if auth is not None and auth.subject:
         resolved_subject = auth.subject
-        for ns in auth.namespaces:
-            if ns and ns != "*":
-                jwt_namespaces.add(ns)
+        jwt_namespaces = {ns for ns in auth.namespaces if ns and ns != "*"}
+        jwt_namespaces -= await withdrawn_claims(auth, org, sorted(jwt_namespaces))
     if not resolved_subject:
         resolved_subject = subject
 
