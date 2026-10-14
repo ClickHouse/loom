@@ -108,17 +108,16 @@ class KeyWriteLocks:
         async with AsyncExitStack() as stack:
             try:
                 await stack.enter_async_context(self._process_lock(name, until))
-                started = time.monotonic()
-                held = await self._acquire(name, me, until)
+                stamped = await self._acquire(name, me, until)
             except PreconditionFailedError:
                 raise LeaseBusy(name) from None
             except Exception as e:  # a lease Keeper cannot confirm is not held
                 degradations.note("memory_key_lock", "lease_unconfirmed", e)
                 await self._keeper_release(name, me)  # an insert that landed before the error
                 raise LeaseBusy(name) from e
-            if held and body is not None:
+            if stamped is not None and body is not None:
                 stack.push_async_callback(self._keeper_release, name, me)
-                deadline = started + self._ttl_s
+                deadline = stamped + self._ttl_s
                 renewing = asyncio.create_task(self._renew(name, me, body, lost, deadline))
                 stack.callback(renewing.cancel)
             try:
@@ -180,25 +179,28 @@ class KeyWriteLocks:
     async def _keeper_acquire(self, name: str, me: str, until: float) -> bool:
         """True once held; False without a usable Keeper."""
         try:
-            return await self._acquire(name, me, until)
+            return await self._acquire(name, me, until) is not None
         except PreconditionFailedError:
             raise
         except Exception as e:  # noqa: BLE001 — Keeper trouble must not fail the write
             degradations.note("memory_key_lock", "process_lock_only", e)
             return False
 
-    async def _acquire(self, name: str, me: str, until: float) -> bool:
-        """True once held; False when the server has no Keeper. Raises
-        PreconditionFailedError at `until` (monotonic), and what a Keeper read raises."""
+    async def _acquire(self, name: str, me: str, until: float) -> float | None:
+        """When the attempt that took the lock began (its stamp is no older), once held;
+        None when the server has no Keeper. Raises PreconditionFailedError at `until`
+        (monotonic), and what a Keeper read raises."""
         poll = self._poll_s
         if not await self._has_keeper():
-            return False
-        while not await self._attempt(name, me):
-            if time.monotonic() >= until:
+            return None
+        while True:
+            started = time.monotonic()
+            if await self._attempt(name, me):
+                return started
+            if started >= until:
                 raise _busy()
             await asyncio.sleep(poll)
             poll = min(poll * 1.5, 0.5)
-        return True
 
     async def _keeper_release(self, name: str, me: str) -> None:
         try:

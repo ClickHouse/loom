@@ -345,3 +345,19 @@ async def test_a_lease_waits_once_for_this_process_and_another_host_together(
             pytest.fail("entered a held lease")
     assert loop.time() - started < 1.4  # one wait of 1 s for both holders, not two
     await passing
+
+
+async def test_a_lease_taken_after_a_wait_lasts_its_whole_ttl() -> None:
+    ch = FakeKeeper()
+    ch.rows["job"] = {"holder": "other", "stale": False}
+    locks = kl.KeyWriteLocks(ch, wait_s=2.0, ttl_s=0.6)  # type: ignore[arg-type]
+
+    async def hand_over() -> None:
+        await asyncio.sleep(0.5)  # most of the new lease's TTL spent waiting for it
+        del ch.rows["job"]
+
+    handing = asyncio.create_task(hand_over())
+    async with locks.lease("job"):
+        await asyncio.sleep(0.45)  # work after the hand-over, inside the TTL
+        assert ch.rows["job"]["holder"] != "other"
+    await handing
