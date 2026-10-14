@@ -37,7 +37,8 @@ async def run_pass() -> dict[str, Any]:
         except LeaseBusy:
             pass  # another host is linking them
         except Exception as e:  # a linking failure never stops the recheck
-            # LeaseLost among them: another host took the queue over, its cursors written
+            # LeaseLost among them: the queue lease lapsed; the next pass reads on from the
+            # cursors last written
             log.exception("memory_code_links: linking failed")
             result.errors.append(f"link: {e!r}")
         await code_link_recheck.recheck_all(result)

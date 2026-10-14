@@ -48,7 +48,7 @@ class LeaseBusy(Exception):
 
 
 class LeaseLost(Exception):
-    """Another holder took the lease while it was held."""
+    """The lease could not be confirmed ours before it expired, or another holder has it."""
 
 
 class KeyWriteLocks:
@@ -99,12 +99,14 @@ class KeyWriteLocks:
     async def lease(self, name: str) -> AsyncIterator[None]:
         """Hold `name` across hosts while the body runs, renewed every third of the TTL.
         LeaseBusy when another holder keeps it or Keeper fails; LeaseLost, from the body,
-        when another holder takes it meanwhile. Without Keeper it is held in this process."""
+        once the lease cannot be confirmed ours before it expires. Without Keeper it is
+        held in this process."""
         me, lost = default_holder(), asyncio.Event()
         body = asyncio.current_task()
         async with AsyncExitStack() as stack:
             try:
                 await stack.enter_async_context(self._process_lock(name))
+                started = time.monotonic()
                 held = await self._acquire(name, me)
             except PreconditionFailedError:
                 raise LeaseBusy(name) from None
@@ -114,7 +116,8 @@ class KeyWriteLocks:
                 raise LeaseBusy(name) from e
             if held and body is not None:
                 stack.push_async_callback(self._keeper_release, name, me)
-                renewing = asyncio.create_task(self._renew(name, me, body, lost))
+                deadline = started + self._ttl_s
+                renewing = asyncio.create_task(self._renew(name, me, body, lost, deadline))
                 stack.callback(renewing.cancel)
             try:
                 yield
@@ -124,25 +127,31 @@ class KeyWriteLocks:
                 raise
 
     async def _renew(
-        self, name: str, me: str, body: asyncio.Task[Any], lost: asyncio.Event
+        self, name: str, me: str, body: asyncio.Task[Any], lost: asyncio.Event, deadline: float
     ) -> None:
-        """Re-stamp the lease every third of its TTL; cancel `body` once another holder
-        has it. A renewal or a read that fails is retried: the TTL bounds how long."""
+        """Re-stamp the lease every third of its TTL; cancel `body` once it is lost.
+        `deadline` is when the last confirmed stamp expires: a renewal that fails is
+        retried until then, and the lease is lost there if none is confirmed."""
         while True:
-            await asyncio.sleep(self._ttl_s / 3)
+            await asyncio.sleep(max(0.0, min(self._ttl_s / 3, deadline - time.monotonic())))
+            started = time.monotonic()
+            if started >= deadline:
+                break
             try:
-                await self.ch.execute(LOCK_RENEW, params={"name": name, "me": me})
-            except Exception as e:  # noqa: BLE001 — retried at the next third of the TTL
-                degradations.note("memory_key_lock", "renew_failed", e)
-            try:
-                holder = await self._holder(name)
-            except Exception as e:  # noqa: BLE001 — likewise
+                ours = await asyncio.wait_for(self._renewed(name, me), deadline - started)
+            except Exception as e:  # noqa: BLE001 — retried while the lease lasts
                 degradations.note("memory_key_lock", "renew_failed", e)
                 continue
-            if holder is None or holder[0] != me:
-                lost.set()
-                body.cancel()
-                return
+            if not ours:
+                break
+            deadline = started + self._ttl_s
+        lost.set()
+        body.cancel()
+
+    async def _renewed(self, name: str, me: str) -> bool:
+        """Re-stamp the lease; True when the store then shows it ours and unexpired."""
+        await self.ch.execute(LOCK_RENEW, params={"name": name, "me": me})
+        return await self._holder(name) == (me, False)
 
     @asynccontextmanager
     async def _process_lock(self, name: str) -> AsyncIterator[None]:

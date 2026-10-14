@@ -240,3 +240,58 @@ async def test_a_lease_keeper_cannot_confirm_is_busy_and_one_without_keeper_runs
     async with _locks(FakeKeeper(engine=""), monkeypatch).lease("job"):
         ran.append("no keeper")
     assert ran == ["no keeper"]
+
+
+class FlakyKeeper(FakeKeeper):
+    """A lock table whose renewals and reads fail while `down` holds."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.down = False
+
+    async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, Any] | None:
+        if self.down and "system.tables" not in sql:
+            raise RuntimeError("Code: 999. Coordination error: connection loss")
+        return await super().query_one(sql, params)
+
+    async def execute(self, sql: str, params: dict[str, Any]) -> None:
+        if self.down and not sql.startswith("INSERT"):
+            raise RuntimeError("Code: 999. Coordination error: connection loss")
+        await super().execute(sql, params)
+
+
+async def _run_past_ttl(locks: kl.KeyWriteLocks, ch: FlakyKeeper, *, stale: bool) -> float:
+    """Seconds the body ran before its lease was lost."""
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    with pytest.raises(kl.LeaseLost):
+        async with locks.lease("job"):
+            ch.down = not stale
+            ch.rows["job"]["stale"] = stale
+            await asyncio.sleep(5)
+            pytest.fail("the body ran on past its lease")
+    return loop.time() - started
+
+
+async def test_a_lease_whose_renewals_fail_is_lost_at_its_deadline() -> None:
+    ch = FlakyKeeper()
+    locks = kl.KeyWriteLocks(ch, wait_s=0.3, ttl_s=0.3)  # type: ignore[arg-type]
+    assert 0.25 <= await _run_past_ttl(locks, ch, stale=False) < 1.5
+
+
+async def test_an_expired_lease_is_lost_though_it_names_this_holder() -> None:
+    ch = FlakyKeeper()
+    locks = kl.KeyWriteLocks(ch, wait_s=0.3, ttl_s=0.3)  # type: ignore[arg-type]
+    assert await _run_past_ttl(locks, ch, stale=True) < 1.5
+
+
+async def test_a_renewal_that_recovers_inside_the_ttl_keeps_the_lease() -> None:
+    ch = FlakyKeeper()
+    locks = kl.KeyWriteLocks(ch, wait_s=0.3, ttl_s=0.6)  # type: ignore[arg-type]
+    async with locks.lease("job"):
+        ch.down = True  # the first renewal, at a third of the TTL, fails
+        await asyncio.sleep(0.3)
+        ch.down = False  # the second, at two thirds, is confirmed
+        await asyncio.sleep(1.2)  # two TTLs past the last stamp before the outage
+        assert ch.rows["job"]["holder"]
+    assert "job" not in ch.rows
