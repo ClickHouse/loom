@@ -254,6 +254,7 @@ def _logged_at(role: str, at: datetime) -> dict[str, Any]:
         "status": "active",
         "revoked_at": None,
         "version": ns,
+        "logged_s": ns // 1_000_000_000,
     }
 
 
@@ -520,12 +521,16 @@ def test_a_lowered_scoped_token_still_lists_the_namespace_its_gate_admits(ch: _C
     assert asyncio.run(ctx.resolve_my_namespaces(ORG)) == []
 
 
-def _logged(role: str, at: int, *, revoked: bool = False, status: str = "active") -> dict:
+def _logged(
+    role: str, at: int, *, landed: int | None = None, revoked: bool = False, status: str = "active"
+) -> dict:
+    """A grant log row versioned at `at`, landed at `landed` (unix seconds)."""
     return {
         "role": role,
         "status": status,
         "revoked_at": datetime(2030, 1, 1) if revoked else None,
         "version": at * 1_000_000_000,
+        "logged_s": at if landed is None else landed,
     }
 
 
@@ -541,6 +546,15 @@ def _logged(role: str, at: int, *, revoked: bool = False, status: str = "active"
         ([_logged("admin", 10), _logged("writer", 13)], 12, 13, True),
         # Its version predates the cutoff, but its insert returned after it.
         ([_logged("admin", 10), _logged("writer", 11)], 12, 13, True),
+        # A retry, long after: the log says the row landed before the cutoff.
+        ([_logged("admin", 10), _logged("writer", 11)], 12, 0, False),
+        # Two lowerings in flight across the cutoff: admin stayed in force until they landed.
+        (
+            [_logged("admin", 5), _logged("viewer", 11, landed=12), _logged("viewer", 11)],
+            12,
+            0,
+            True,
+        ),
         ([_logged("admin", 10), _logged("admin", 11, revoked=True)], 12, 11, False),
         # A request grants nothing, so approving it raises from nothing.
         ([_logged("admin", 10, status="pending"), _logged("writer", 11)], None, 11, False),

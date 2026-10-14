@@ -35,22 +35,44 @@ def rechecked(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, list[tuple[str
         return "alice" if subject == "alice@x.io" else subject
 
     monkeypatch.setattr(grant_writes, "recheck", _recheck)
+    monkeypatch.setattr(
+        "server.identity.app.token_grants.cascade_revoke_to_created_tokens", _nothing
+    )
     monkeypatch.setattr(grants_repo, "find_any_grant", _nothing)
     monkeypatch.setattr(grants_repo, "find_active_grant", _nothing)
     monkeypatch.setattr("server.auth.aliases.canonical_subject", _canonical)
     return calls
 
 
-def test_a_retried_revoke_rechecks_the_canonical_subject_on_every_branch(
+def test_a_retried_revoke_rechecks_both_spellings_on_every_branch_and_cascades(
     rechecked: list[Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    cascaded: list[str] = []
+
+    async def _cascade(org: str, namespace: str, subject: str) -> None:
+        cascaded.append(subject)
+
     monkeypatch.setattr(
         "server.code.app.index.maintainers.branch_namespaces",
         lambda org, ns: ["code-x", "code-x-26-5"],
     )
+    monkeypatch.setattr(
+        "server.identity.app.token_grants.cascade_revoke_to_created_tokens", _cascade
+    )
     revoke = GrantsRevokeInput(org=ORG, namespace="code-x", subject="alice@x.io")
     assert not asyncio.run(grants_app.handle_grants_revoke(revoke)).revoked
-    assert rechecked == [(ORG, [("code-x", "alice"), ("code-x-26-5", "alice")])]
+    assert rechecked == [
+        (
+            ORG,
+            [
+                ("code-x", "alice"),
+                ("code-x", "alice@x.io"),
+                ("code-x-26-5", "alice"),
+                ("code-x-26-5", "alice@x.io"),
+            ],
+        )
+    ]
+    assert cascaded == ["alice", "alice@x.io"]
 
 
 def test_a_retried_approve_rechecks(rechecked: list[Any]) -> None:

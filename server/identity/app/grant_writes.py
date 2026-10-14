@@ -22,7 +22,7 @@ from server.identity.store import grants as grants_repo
 
 async def insert_row(row: dict[str, Any]) -> None:
     await grants_repo.insert_row(row)
-    await _check(row["org"], [(row["namespace"], row["subject"])])
+    await _check(row["org"], [(row["namespace"], row["subject"])], time.time_ns())
 
 
 async def insert_rows(rows: list[dict[str, Any]], *, ch: Any | None = None) -> None:
@@ -30,14 +30,15 @@ async def insert_rows(rows: list[dict[str, Any]], *, ch: Any | None = None) -> N
     by_org: dict[str, set[tuple[str, str]]] = {}
     for row in rows:
         by_org.setdefault(row["org"], set()).add((row["namespace"], row["subject"]))
+    landed_ns = time.time_ns()
     for org, pairs in by_org.items():
-        await _check(org, sorted(pairs))
+        await _check(org, sorted(pairs), landed_ns)
 
 
 async def recheck(org: str, pairs: list[tuple[str, str]]) -> None:
-    """The check alone, for a retried op that finds its rows already written.
-    When they landed is unknown, so it counts as now."""
-    await _check(org, pairs)
+    """The check alone, for a retried op that finds its rows already written;
+    the grant log says when they landed."""
+    await _check(org, pairs, 0)
 
 
 async def recheck_namespace(org: str, namespace: str) -> None:
@@ -46,10 +47,10 @@ async def recheck_namespace(org: str, namespace: str) -> None:
     await recheck(org, [(namespace, s) for s in subjects])
 
 
-async def _check(org: str, pairs: list[tuple[str, str]]) -> None:
+async def _check(org: str, pairs: list[tuple[str, str]], landed_ns: int) -> None:
     if not pairs:
         return
     auth = current_auth()
     await cut_where_lowered(
-        org, pairs, landed_ns=time.time_ns(), revoked_by=auth.subject if auth else ""
+        org, pairs, landed_ns=landed_ns, revoked_by=auth.subject if auth else ""
     )

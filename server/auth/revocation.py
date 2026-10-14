@@ -344,7 +344,7 @@ async def cut_where_lowered(
 ) -> None:
     """Cut each (namespace, subject) whose grant now ranks below a role it
     held since its last cutoff, in one write. `landed_ns` is when the grant
-    write returned.
+    write returned, 0 when unknown.
 
     Run after a grant write that read the grant first. It finds a raise that
     landed between that read and the write, and a lowering whose own cutoff
@@ -357,7 +357,8 @@ async def cut_where_lowered(
     with own_write_reads():
         rows = await get_client().query_all(
             """
-            SELECT namespace, subject, role, status, revoked_at, version
+            SELECT namespace, subject, role, status, revoked_at, version,
+                   toUnixTimestamp(logged_at) AS logged_s
             FROM loom.namespace_grant_log
             WHERE org = {org:String} AND namespace IN {ns:Array(String)}
               AND subject IN {subs:Array(String)}
@@ -401,8 +402,10 @@ async def logged_subjects(org: str, namespace: str) -> list[str]:
 def _lowered_since(rows: list[dict[str, Any]], cutoff: int | None, landed_ns: int) -> bool:
     """Whether the last of `rows`, one subject's grant history oldest first,
     ranks below the row in force at `cutoff` (unix seconds) or any later one.
-    The last row counts as landed no earlier than `landed_ns`: its version is
-    taken before its insert, and the row before it is in force until it lands."""
+
+    A row's version is taken before its insert, so it counts from when it
+    landed: the later of its version and the log's own stamp, and for the
+    last row no earlier than `landed_ns`. The row before is in force until then."""
     from server.operations.base import grant_rank
 
     if not rows:
@@ -411,11 +414,11 @@ def _lowered_since(rows: list[dict[str, Any]], cutoff: int | None, landed_ns: in
         grant_rank(r["role"]) if r["revoked_at"] is None and r["status"] == "active" else 0
         for r in rows
     ]
-    versions = [int(r["version"]) for r in rows]
-    versions[-1] = max(versions[-1], landed_ns)
+    landed = [max(int(r["version"]), int(r["logged_s"]) * 1_000_000_000) for r in rows]
+    landed[-1] = max(landed[-1], landed_ns)
     first = 0
     if cutoff is not None:
-        after = [i for i, v in enumerate(versions) if v >= cutoff * 1_000_000_000]
+        after = [i for i, at in enumerate(landed) if at >= cutoff * 1_000_000_000]
         first = max(after[0] - 1, 0) if after else len(rows) - 1
     return max(ranks[first:]) > ranks[-1]
 

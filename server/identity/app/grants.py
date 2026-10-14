@@ -291,9 +291,13 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
 
     subject, row = await _live_grant_row(input.org, input.namespace, input.subject)
     if row is None:
-        # A retry: the revoke may have landed with its check failing after it.
+        # A retry: the revoke may have landed, under either spelling, with its
+        # check or cascade failing after it.
         branches = maintainers.branch_namespaces(input.org, input.namespace) or [input.namespace]
-        await grant_writes.recheck(input.org, [(ns, subject) for ns in branches])
+        spellings = sorted({subject, input.subject})
+        await grant_writes.recheck(input.org, [(ns, s) for ns in branches for s in spellings])
+        for spelling in spellings:
+            await _cascade_quietly(input.org, input.namespace, spelling)
         return GrantsRevokeOutput(revoked=False)
 
     active = (row.status or "active") == "active"
@@ -335,21 +339,19 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
         "version": _version(),
     }
     await grant_writes.insert_rows([revoked, *siblings])
-    # The tokens this person minted lose their own grants here. Best-effort: the
-    # person's revoke has landed; a failed cascade is logged, never a 500.
+    await _cascade_quietly(input.org, input.namespace, subject)
+    return GrantsRevokeOutput(revoked=True, revoked_at=now)
+
+
+async def _cascade_quietly(org: str, namespace: str, subject: str) -> None:
+    """The tokens this person minted lose their own grants here. Best-effort: the
+    person's revoke has landed; a failed cascade is logged, never a 500."""
     from server.identity.app import token_grants
 
     try:
-        await token_grants.cascade_revoke_to_created_tokens(input.org, input.namespace, subject)
+        await token_grants.cascade_revoke_to_created_tokens(org, namespace, subject)
     except Exception as e:  # noqa: BLE001 - the revoke itself succeeded
-        log.warning(
-            "token grant cascade failed for %s/%s %s: %s",
-            input.org,
-            input.namespace,
-            subject,
-            e,
-        )
-    return GrantsRevokeOutput(revoked=True, revoked_at=now)
+        log.warning("token grant cascade failed for %s/%s %s: %s", org, namespace, subject, e)
 
 
 async def handle_grants_approve(input: GrantsApproveInput) -> GrantsApproveOutput:

@@ -799,7 +799,6 @@
 8445e6363129	SELECT pr_number, any(title) AS title, any(author) AS author, min(merged_at) AS merged_at, max(opened_at) AS opened_at, any(files) AS files, any(linked_issues) AS linked_issues FROM loom.code_pr_histo
 84503eca22ec	ALTER TABLE loom.memory UPDATE tombstoned_at = {now:DateTime} WHERE (org = {org:String} AND tombstoned_at IS NULL AND has(tags, ?) AND hasAny(tags, (SELECT groupArray(concat(?, memory_key)) FROM loom.
 8452df8453eb	DELETE FROM loom.memory_embeddings WHERE (org = {org:String} AND user_id = {uid:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS lightweight_deletes_sync = ?
-845fd4252270	SELECT namespace, subject, role, status, revoked_at, version FROM loom.namespace_grant_log WHERE org = {org:String} AND namespace IN {ns:Array(String)} AND subject IN {subs:Array(String)} ORDER BY nam
 8499dcb5bf9a	SELECT path, scope, symbol_ids, start_line, end_line, content FROM ( SELECT path, scope, symbol_ids, start_line, end_line, content, chunk_id, tombstoned_at FROM loom.code_chunks WHERE org = {org:Strin
 84df5144d637	SELECT count() AS n FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL AND agent = {agent:String} AND user_id = {uid:String} AND session_id = {sid:St
 850f03574fca	ALTER TABLE loom.memory_records UPDATE tombstoned_at = {now:DateTime} WHERE (org = {org:String} AND tombstoned_at IS NULL AND user_id = {uid:String}) AND ({erasure_mutation_tag:String} = {erasure_muta
@@ -1196,6 +1195,7 @@ bee252fc856c	SELECT count() AS n FROM loom.session_briefs WHERE org = {org:Strin
 bee758c06f29	SELECT neighbor, role, sum(co_occur) AS co_occur FROM ( SELECT object AS neighbor, ? AS role, sum(co_occur) AS co_occur FROM loom.entity_triples WHERE org = {org:String} AND namespace = {ns:String} AN
 bef8fe4e58b7	SELECT tier, edge_kind, to_symbol_id, from_symbol_id, path, line, argMax(from_qualified_name, version) AS from_qualified_name, argMax(to_qualified_name, version) AS to_qualified_name, argMax(confidenc
 bf193ac927b4	SELECT count() AS n FROM loom.memory_record_conflicts FINAL WHERE org = {org:String} AND namespace = {ns:String}
+bf64699e9886	SELECT DISTINCT sa_subject FROM loom.service_accounts FINAL WHERE org = {org:String} AND created_by IN {subs:Array(String)} AND revoked_at IS NULL
 bf9632cf0b8c	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 bfbdb1dc9399	SELECT namespace, count() AS turns, uniqExact(session_id) AS sessions, sum(toUInt64(input_tokens)) AS input_tokens, sum(toUInt64(cache_read_tokens)) AS cache_read_tokens, sum(toUInt64(cache_creation_5
 bfd5743c4304	SELECT count() AS n FROM loom.conflict_allowlist FINAL WHERE org = {org:String} AND tombstoned_at IS NULL AND namespace IN {ns:Array(String)}
@@ -1250,6 +1250,7 @@ c6fedc654be3	SELECT count() AS n FROM loom.code_context_packs FINAL WHERE org = 
 c72e7e6dceb9	SELECT count() AS n FROM loom.working_memory FINAL WHERE org = {org:String} AND tombstoned_at IS NULL AND namespace = {ns:String}
 c785437b00cf	ALTER TABLE loom.entity_edges DELETE WHERE (org = {org:String} AND (namespace, entity_a, entity_b) IN (SELECT namespace, entity_a, entity_b FROM loom.entity_edge_memories FINAL WHERE org = {org:String
 c7914fc052d6	SELECT revision, count() AS samples, quantileExact(?)(steps_taken) AS p50_steps, quantileExact(?)(duration_ms) AS p50_duration_ms, quantileExact(?)(tokens) AS p50_tokens FROM loom.procedure_runs WHERE
+c7b3955dfd9f	SELECT namespace, subject, role, status, revoked_at, version, toUnixTimestamp(logged_at) AS logged_s FROM loom.namespace_grant_log WHERE org = {org:String} AND namespace IN {ns:Array(String)} AND subj
 c7d96433646a	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 c7f72fd867b4	SELECT qualified_name, argMaxIf(symbol_id, version, tier = ?) AS scip_id, argMaxIf(symbol_id, version, tier = ?) AS ts_id, argMaxIf(signature, version, tier = ?) AS signature, any(path) AS path FROM l
 c85b7e038508	SELECT namespace, kind FROM loom.namespaces FINAL WHERE org = {org:String}
