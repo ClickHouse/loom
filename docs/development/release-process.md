@@ -93,9 +93,13 @@ A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not mov
    When `latest` names a bad release, dispatch the tag with an exact one instead
    (`gh workflow run release.yml --ref vX.Y.Z -f clickhouse_image=clickhouse/clickhouse-server:A.B.C.D`);
    a bundle already published keeps its own, and the run warns that it ignored the input.
-   A new bundle never names an older release than the latest published bundle does,
-   since an install upgrading to it would start an older server on data a newer one wrote;
-   the job fails instead, unless the dispatch adds `-f allow_clickhouse_downgrade=true`;
+   The dispatch passes only if that release dumps the tag's `schemas/schema.sql`;
+   otherwise regenerate it on that release (the
+   [schema dump](./migrations.md#schema-dump-and-check) commands with
+   `LOOM_CLICKHOUSE_IMAGE=clickhouse/clickhouse-server:A.B.C.D`), commit it, and re-tag. A new bundle never names an older release than any of the 30 newest
+   published bundles (prereleases included) does, since an install upgrading to it would
+   start an older server on data a newer one wrote; the job fails instead, unless the
+   dispatch adds `-f allow_clickhouse_downgrade=true`;
 3. `build` writes the version into the Python and TypeScript SDK sources and builds the
    Python SDK wheel and sdist, the npm tarball (after the TypeScript SDK's `check:dist`),
    and zips of the two plugins (`loom-claude-code-plugin-vX.Y.Z.zip`,

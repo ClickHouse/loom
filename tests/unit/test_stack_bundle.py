@@ -128,9 +128,18 @@ def test_a_new_bundle_never_names_an_older_clickhouse_than_the_last(
     published, _ = module.build("1.2.3", tmp_path, "clickhouse/clickhouse-server:26.9.18.11")
     if older:
         with pytest.raises(ValueError, match="older than clickhouse/clickhouse-server:26.9.18.11"):
-            module.refuse_older(image, published)
+            module.refuse_older(image, [published])
     else:
-        module.refuse_older(image, published)
+        module.refuse_older(image, [published])
+
+
+def test_a_new_bundle_is_checked_against_the_newest_of_several(tmp_path: Path) -> None:
+    """A prerelease can name a newer ClickHouse than the latest final release."""
+    module = _module()
+    final, _ = module.build("1.2.3", tmp_path / "a", "clickhouse/clickhouse-server:26.8.2.1")
+    rc, _ = module.build("1.3.0-rc.1", tmp_path / "b", "clickhouse/clickhouse-server:26.9.18.11")
+    with pytest.raises(ValueError, match="older than clickhouse/clickhouse-server:26.9.18.11"):
+        module.refuse_older("clickhouse/clickhouse-server:26.9.1.5", [final, rc])
 
 
 def test_the_release_checks_a_new_bundle_against_the_latest_published_one() -> None:
@@ -140,6 +149,6 @@ def test_the_release_checks_a_new_bundle_against_the_latest_published_one() -> N
         (Path(__file__).parents[2] / ".github" / "workflows" / "release.yml").read_text()
     )
     (resolve,) = [s for s in workflow["jobs"]["clickhouse"]["steps"] if s.get("id") == "resolve"]
-    assert "published_bundle.sh latest" in resolve["run"]
+    assert "published_bundle.sh recent" in resolve["run"]
     assert "build_stack_bundle.py not-older" in resolve["run"]
     assert "::warning::clickhouse_image=" in resolve["run"]

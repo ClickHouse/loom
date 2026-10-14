@@ -23,6 +23,8 @@ if [ "$1" = api ]; then
     denied) echo "gh: Bad credentials (HTTP 401)" >&2; exit 1 ;;
     unbundled) printf 'v1.2.3\\ninstall.sh\\n' ;;
     bundled) printf 'v1.2.3\\ninstall.sh\\nloom-stack.tar.gz\\n' ;;
+    listed) printf 'v1.3.0-rc.1\\nv1.2.3\\n' ;;
+    none) ;;
   esac
   exit 0
 fi
@@ -62,11 +64,23 @@ def test_a_published_bundle_is_downloaded(tmp_path: Path) -> None:
     assert (tmp_path / "published" / "loom-stack.tar.gz").read_text() == "bundle\n"
 
 
-def test_latest_downloads_the_latest_releases_bundle(tmp_path: Path) -> None:
-    """What the release compares a new bundle's ClickHouse with."""
-    assert _run(tmp_path, "bundled", version="latest").returncode == 0
-    assert (tmp_path / "gh.log").read_text().split() == ["repos/o/r/releases/latest", "v1.2.3"]
-    assert (tmp_path / "published" / "loom-stack.tar.gz").read_text() == "bundle\n"
+def test_recent_downloads_each_recent_releases_bundle(tmp_path: Path) -> None:
+    """What the release compares a new bundle's ClickHouse with, prereleases included."""
+    assert _run(tmp_path, "listed", version="recent").returncode == 0
+    assert (tmp_path / "gh.log").read_text().split() == [
+        "repos/o/r/releases?per_page=30",
+        "v1.3.0-rc.1",
+        "v1.2.3",
+    ]
+    for tag in ("v1.3.0-rc.1", "v1.2.3"):
+        assert (tmp_path / "published" / tag / "loom-stack.tar.gz").read_text() == "bundle\n"
+
+
+@pytest.mark.parametrize(("release", "status"), [("none", 3), ("denied", 1)])
+def test_recent_tells_no_bundle_from_a_failed_lookup(
+    tmp_path: Path, release: str, status: int
+) -> None:
+    assert _run(tmp_path, release, version="recent").returncode == status
 
 
 def test_the_release_never_replaces_a_published_bundle() -> None:

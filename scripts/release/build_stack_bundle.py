@@ -68,13 +68,13 @@ def release_number(image: str) -> tuple[int, ...]:
     return tuple(int(part) for part in image.rsplit(":", 1)[1].split("."))
 
 
-def refuse_older(image: str, published: Path) -> None:
-    """Raise when `image` is an older release than the bundle at `published`
-    names: an install upgrading to it would start an older ClickHouse on data a
-    newer one wrote, which it may not open."""
-    last = pinned_image(published)
-    if release_number(image) < release_number(last):
-        raise ValueError(f"{image} is older than {last}, which the last published bundle names")
+def refuse_older(image: str, published: list[Path]) -> None:
+    """Raise when `image` is an older release than any of the `published`
+    bundles names: an install upgrading to it would start an older ClickHouse
+    on data a newer one wrote, which it may not open."""
+    newest = max((pinned_image(p) for p in published), key=release_number)
+    if release_number(image) < release_number(newest):
+        raise ValueError(f"{image} is older than {newest}, which a published bundle names")
 
 
 def build(version: str, output_dir: Path, clickhouse_image: str) -> tuple[Path, Path]:
@@ -115,16 +115,16 @@ def main() -> None:
     read = commands.add_parser("pinned-in", help="print the ClickHouse image a bundle names")
     read.add_argument("archive", type=Path)
     newer = commands.add_parser(
-        "not-older", help="fail when an image is older than the one a bundle names"
+        "not-older", help="fail when an image is older than one a bundle names"
     )
     newer.add_argument("image")
-    newer.add_argument("archive", type=Path)
+    newer.add_argument("archives", type=Path, nargs="+")
     args = parser.parse_args()
     if args.command == "pinned-in":
         print(pinned_image(args.archive))
     elif args.command == "not-older":
         try:
-            refuse_older(args.image, args.archive)
+            refuse_older(args.image, args.archives)
         except ValueError as e:
             raise SystemExit(f"::error::{e}") from None
     else:
