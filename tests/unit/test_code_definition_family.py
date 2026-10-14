@@ -546,9 +546,10 @@ _PINNED = [
     ),
     (
         "l.py",
-        'def value():\n    """Three.\n\n        Always.\n    """\n    return 3  # tail\n',
-        "6b1a2b541d435510",
-        "854786c5ce006211",
+        'def value():\n    """Three. \n\n        Always.\n    """\n'
+        "    a = []  # type: list[int]\n    return 3  # tail\n",
+        "232234011fc6cdcd",
+        "24e1f2445820c51b",
     ),
 ]
 
