@@ -426,3 +426,14 @@ def test_a_cutoff_refuses_rather_than_cut_short_past_its_spelling_bound(
 
 def test_a_slash_in_an_org_or_namespace_cannot_make_two_scopes_share_a_key() -> None:
     assert rev.grant_claim_key("a/b", "c", "alice") != rev.grant_claim_key("a", "b/c", "alice")
+
+
+def test_a_lowered_scoped_token_still_lists_the_namespace_its_gate_admits(ch: _CH) -> None:
+    # The gate caps it at the live grant; the caller's namespaces must agree,
+    # or all_mine and namespace.list_mine stop seeing what it may read.
+    _end("team")
+    ch.live["team"] = "viewer"
+    ctx.set_current_auth(_scoped("team"))
+    assert asyncio.run(ctx.resolve_my_namespaces(ORG)) == ["team"]
+    ch.live.clear()
+    assert asyncio.run(ctx.resolve_my_namespaces(ORG)) == []

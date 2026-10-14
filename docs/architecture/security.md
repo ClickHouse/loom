@@ -87,7 +87,10 @@ from it. Three consequences hold the design together:
 - A cutoff lives as long as the longest token it must outlive. Rows are kept for
   `NEVER_EXPIRES_DAYS` (ten years) because tokens without `exp` exist and a sign-in
   leaves an ever-cut owned namespace out of every token it mints; shortening that to a
-  token lifetime would hand the namespace back.
+  token lifetime would hand the namespace back. So every process holds, and re-reads each
+  `jwt_revocation_cache_ttl_seconds`, one snapshot row per (namespace, subject spelling)
+  that ever lost a grant: memory that grows with the deployment's history, not its tokens.
+  Past `SNAPSHOT_WARN_ROWS` (100,000) it logs a warning.
 - The paths that mint a token (sign-in, OAuth code exchange and refresh) read the
   cutoffs and the subject's revocation from ClickHouse with sequential consistency, not
   from the snapshot: a token minted past a revocation it has not seen keeps the access

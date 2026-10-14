@@ -80,15 +80,16 @@ async def resolve_my_namespaces(org: str, subject: str | None = None) -> list[st
       `namespaces` claim and active `loom.namespace_grants` rows (grants
       widen), returned sorted.
 
-    Either way a claimed namespace whose grant was revoked after the token
-    was minted is left out (`authz.withdrawn_claims`).
+    Either way a claimed namespace whose grant was revoked or lowered after
+    the token was minted is left out (`authz.withdrawn_claims`), unless a
+    scoped token's subject still holds a grant there (`authz.scoped_claims`).
 
     A delegated token (a `creator` claim) is neither: its claim narrowed to
     the creator's live grants (`_delegated_namespaces`).
 
     `subject` lets dev mode pass an explicit identity when no JWT is present.
     """
-    from server.auth.authz import live_claims, may_act_in_org
+    from server.auth.authz import live_claims, may_act_in_org, scoped_claims
     from server.auth.service_accounts import inheriting_creator
 
     auth = current_auth()
@@ -107,7 +108,7 @@ async def resolve_my_namespaces(org: str, subject: str | None = None) -> list[st
     # Scoped token: the ordered namespace claim is authoritative. Preserve
     # order (= read priority); do not union other grants (= subset restrict).
     if auth is not None and auth.has_ns_roles():
-        return await _without_unreadable_restricted(org, live_claims(auth, org, auth.namespaces))
+        return await _without_unreadable_restricted(org, await scoped_claims(auth, org))
 
     jwt_namespaces: set[str] = set()
     resolved_subject: str | None = None

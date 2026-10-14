@@ -289,3 +289,24 @@ async def test_a_failed_cutoff_write_fails_a_restore_with_nothing_written(
     with pytest.raises(RuntimeError):
         await namespace_snapshot.handle_namespace_restore(restore)
     assert ch.inserts == []
+
+
+@pytest.mark.asyncio
+async def test_a_restore_compares_the_last_row_of_each_subject(
+    monkeypatch: pytest.MonkeyPatch, recorded_cutoff_writes: list[tuple[str, list[str], list[str]]]
+) -> None:
+    # The last row lands, so an earlier, lower duplicate lowers nothing.
+    from types import SimpleNamespace
+
+    from server.identity.store import grants as grants_repo
+
+    async def _active(org: str, namespace: str, subjects: list[str], **_k: object) -> dict:
+        return {"alice": "writer"}
+
+    monkeypatch.setattr(grants_repo, "active_roles", _active)
+    restored = [
+        SimpleNamespace(subject="alice", role="viewer"),
+        SimpleNamespace(subject="alice", role="writer"),
+    ]
+    await namespace_snapshot._end_lowered_claims("o", "ns", restored, "boss", ch=None)
+    assert recorded_cutoff_writes == []

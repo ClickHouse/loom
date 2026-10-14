@@ -66,8 +66,8 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   an OAuth code exchange or refresh) leave it out for good; a later grant gives access
   back through itself, not through the old claim. A restricted namespace, read only by a
   token naming it, is named again while a live grant covers the person. The cutoff is a
-  `loom.revoked_tokens` row keyed `grant:["<org>","<namespace>","<hash of the lower-cased
-subject>"]`, and `loom revoke-token --list --grants` shows them. A namespace never
+  `loom.revoked_tokens` row keyed by org, namespace and a hash of the lower-cased
+  subject, and `loom revoke-token --list --grants` shows them. A namespace never
   granted to the subject (named by an operator at mint) keeps its claim. A refresh token
   saved before this release can carry a cutoff that landed while it was minted until it
   expires.

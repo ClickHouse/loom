@@ -4,12 +4,13 @@ rebuilt (that would hand back its data and an admin grant)."""
 
 from __future__ import annotations
 
+import enum
 import hashlib
 import itertools
 import logging
 import secrets
 import time
-from typing import Any, NamedTuple
+from typing import Any
 
 from server.auth import login
 from server.core.ch import get_client
@@ -92,13 +93,12 @@ _JIT_SUFFIX_TRIES = 5
 _JIT_RANDOM_TRIES = 5
 
 
-class _FreeName(NamedTuple):
-    """A name for a new JIT account, None when none is free. With
-    `existing_account`, a first sign-in elsewhere has just written the
-    person's account there."""
+class _Name(enum.Enum):
+    """What the walk over a JIT sign-up's names found."""
 
-    namespace: str | None
-    existing_account: bool = False
+    FREE = "free"  # a name for the new account
+    THEIRS = "theirs"  # the person's account, which a first sign-in elsewhere just wrote
+    NONE_FREE = "none_free"  # every name tried is taken
 
 
 async def jit_provision_for_email(
@@ -156,16 +156,16 @@ async def _provision_jit(
         # Offboarded: a fresh name would be a new subject past the revoke.
         log.info("oidc jit: an account of %r in %s is revoked; not provisioning", ident, org)
         return None
-    name = await _free_name(org, ident, base)
-    if name.existing_account:
+    found, name = await _free_name(org, ident, base)
+    if found is _Name.THEIRS:
         return await _resolve_as_written(ident)
-    if name.namespace is None:
+    if found is _Name.NONE_FREE:
         log.warning("oidc jit: no free name for %r in %s", ident, org)
         return None
     await provision_account(
         org=org,
-        namespace=name.namespace,
-        subject=name.namespace,
+        namespace=name,
+        subject=name,
         contact_email=ident,
         password_hash="",  # SSO-only account
         description="Auto-provisioned via OIDC SSO.",
@@ -176,7 +176,7 @@ async def _provision_jit(
     return await _resolve_as_written(ident)
 
 
-async def _free_name(org: str, ident: str, base: str) -> _FreeName:
+async def _free_name(org: str, ident: str, base: str) -> tuple[_Name, str]:
     """The first name free for a new account: `base`, `base-2` and on, then
     random suffixes, so taking every predictable name cannot lock the person
     out. A taken name is never rebuilt: that would hand back its data and an
@@ -186,10 +186,10 @@ async def _free_name(org: str, ident: str, base: str) -> _FreeName:
     for ns in itertools.chain(predictable, random_names):
         row = await _registry_row(org, ns)
         if row is None:
-            return _FreeName(ns)
+            return _Name.FREE, ns
         if row["active"] and row["contact_email"] == ident:
-            return _FreeName(ns, existing_account=True)
-    return _FreeName(None)
+            return _Name.THEIRS, ns
+    return _Name.NONE_FREE, ""
 
 
 async def _any_revoked(accounts: list[dict[str, Any]]) -> bool:

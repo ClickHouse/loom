@@ -25,6 +25,7 @@ async def _auth(ch: RecordingCH, c: dict[str, Any]) -> None:
     await G.find_active_grant(ORG, NS, "alice", ch=ch)
     await G.find_any_grant(ORG, NS, "alice", ch=ch)
     claim = {"k": "code:abc", "me": "h1", "stale": oauth_claims.STALE_S}
+    await ch.execute(oauth_claims._INSERT, params=claim)
     await ch.query_one(oauth_claims._HOLDER, params=claim)
     await ch.execute(oauth_claims._TAKE_OVER, params=claim)
     await ch.execute(oauth_claims._RELEASE, params=claim)

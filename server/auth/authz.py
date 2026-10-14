@@ -376,6 +376,17 @@ def withdrawn_claims(auth: AuthInfo, org: str, namespaces: list[str]) -> set[str
     return {ns for ns in namespaces if claim_withdrawn(auth, org, ns)}
 
 
+async def scoped_claims(auth: AuthInfo, org: str) -> list[str]:
+    """A scoped token's named namespaces, in order, that its gate still
+    admits: a withdrawn claim stays while its subject holds a live grant
+    there, as `_check_scoped` caps it at that grant."""
+    out = []
+    for ns in (ns for ns in auth.namespaces if ns and ns != "*"):
+        if not claim_withdrawn(auth, org, ns) or await _lookup_grant(org, ns, auth.subject):
+            out.append(ns)
+    return out
+
+
 def live_claims(auth: AuthInfo, org: str, namespaces: Iterable[str]) -> list[str]:
     """The named `namespaces` (no `*`) whose claim still stands, in order."""
     named = [ns for ns in namespaces if ns and ns != "*"]
@@ -556,6 +567,7 @@ __all__ = [
     "live_claims",
     "names_namespace",
     "restricted_allows",
+    "scoped_claims",
     "row_in_scope",
     "scope_flags",
     "withdrawn_claims",

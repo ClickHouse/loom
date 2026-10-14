@@ -45,11 +45,11 @@ class Fanout:
         of the others in their own order. When the cap cuts, it drops public
         namespaces before private ones."""
         others = [ns for ns in self.namespaces if ns != namespace]
-
-        def dropped_first(ns: str) -> bool:
-            return not self.ordered and ns in self.public
-
-        keep = set(sorted(others, key=dropped_first)[: self.cap])
+        ranked = others
+        if not self.ordered:
+            ranked = [ns for ns in others if ns not in self.public]
+            ranked += [ns for ns in others if ns in self.public]
+        keep = set(ranked[: self.cap])
         read = [ns for ns in others if ns in keep]
         return Split([namespace, *read], [ns for ns in others if ns not in keep])
 

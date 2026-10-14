@@ -330,13 +330,15 @@ async def _end_lowered_claims(
 ) -> None:
     """A restore writes its grants over the live ones. A subject it lowers
     loses the claims of older tokens there, as any other downgrade does. The
-    caller counts as admin: the restore makes them one before its grants."""
-    live = await grants_repo.active_roles(org, namespace, [g.subject for g in grants], ch=ch)
+    caller counts as admin: the restore makes them one before its grants.
+    Of a subject's rows, the last is the one that lands."""
+    restored = {g.subject: g.role for g in grants}
+    live = await grants_repo.active_roles(org, namespace, list(restored), ch=ch)
     live[caller] = "admin"
     lowered = [
-        g.subject
-        for g in grants
-        if g.subject in live and grant_rank(live[g.subject]) > grant_rank(g.role)
+        subject
+        for subject, role in restored.items()
+        if subject in live and grant_rank(live[subject]) > grant_rank(role)
     ]
     if lowered:
         await write_grant_cutoffs(
