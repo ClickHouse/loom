@@ -250,6 +250,8 @@ async def probe(ch: Any) -> None:
     _ch = ch
     if not _codec_available:  # asked again: ClickHouse may be upgraded under Loom
         _codec_available = await _has_codec(ch)
+    columns: list[dict[str, Any]] | BaseException
+    parts: list[dict[str, Any]] | BaseException
     columns, parts = await asyncio.gather(
         ch.query_all(CODED_COLUMNS_SQL, {"db": "loom"}),
         ch.query_all(PATCH_PARTS_SQL, {"db": "loom"}),
