@@ -44,6 +44,16 @@ x-colour-common: &colour-common
     nofile:
       soft: 65536
       hard: 65536
+  # The repository-job sandbox (bubblewrap) needs user namespaces, mounts and a
+  # fresh /proc, which Docker's defaults refuse. Narrow profiles, not
+  # `unconfined`: the seccomp file is Docker's default plus one rule, and the
+  # AppArmor profile is docker-default plus `userns, mount, pivot_root`. Load
+  # deploy/apparmor/loom-repo-sandbox on the host first (redeploy.sh checks);
+  # "Repository-job sandbox" in docs/operations/code-index-operations.md.
+  security_opt:
+    - seccomp=./seccomp/loom-repo-sandbox.json
+    - apparmor=loom-repo-sandbox
+    - systempaths=unconfined
   env_file:
     - ../.env
   networks:

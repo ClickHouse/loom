@@ -8,6 +8,18 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 
 ## [Unreleased]
 
+### Added
+
+- The blue/green colours (`dev/docker-compose.colour.yml`) run the bubblewrap
+  repository-job sandbox, so `/v1/health` no longer reports `repo_jobs_unsandboxed` there.
+  They use narrow profiles instead of `unconfined`: `dev/seccomp/loom-repo-sandbox.json`
+  (Docker's default plus `clone`, `unshare`, `mount`, `umount2`, `pivot_root`),
+  the AppArmor profile `deploy/apparmor/loom-repo-sandbox` (`docker-default` plus
+  `userns, mount, pivot_root`) and `systempaths=unconfined`. Load the AppArmor profile on
+  the host before the next redeploy; `redeploy.sh` stops when it is missing. The other
+  Compose stacks are unchanged. See "Repository-job sandbox" in
+  docs/operations/code-index-operations.md.
+
 ### Changed
 
 - **Breaking:** `rerank` (`memory.search`, `memory.search_trace`, `code.search`, `code.ask`)

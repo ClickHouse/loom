@@ -294,22 +294,57 @@ refused, so are URL rewrites. The entry's access token reaches only its clone an
 fetches, never a build or `go mod download`. Inside the sandbox an `ssh` remote has no
 host SSH key: use an HTTPS remote with an access token.
 
-**No shipped stack runs the sandbox by default.** The image installs `bwrap`, but none
-of the Compose files (`dev/docker-compose*.yml`, `deploy/standalone/compose.yaml`) sets
-the container options below, so under Docker's defaults the probe fails and every
-repository job runs as a plain process (see _Without the sandbox_). A source run
-(`make server`) has the sandbox only where the host passes the same requirements.
+**Which stacks run the sandbox.** The blue/green colours `redeploy.sh` deploys
+(`dev/docker-compose.colour.yml`) set the container options below. The other Compose
+files (`dev/docker-compose.cloud.yml`, `dev/docker-compose.dev.yml`,
+`dev/docker-compose.read-replica.yml`, `deploy/standalone/compose.yaml`) do not: an
+AppArmor profile the host has not loaded stops a container from starting, so they keep
+Docker's defaults, the probe fails and every repository job runs as a plain process (see
+_Without the sandbox_). Copy the colour file's `security_opt` block into them once the
+host has the profile. A source run (`make server`) has the sandbox only where the host
+passes the same requirements.
 
 **Requirements.** `bwrap` and `prlimit` (util-linux) on `PATH` (the image has both) and
-unprivileged user namespaces. Docker's default seccomp profile blocks user namespaces,
-so a container needs a seccomp profile that permits them
-(`security_opt: [seccomp=unconfined]` is the blunt one), a profile that lets bwrap mount
-(`apparmor=unconfined` on AppArmor hosts), and an unmasked `/proc`
-(`systempaths=unconfined`) so the sandbox can mount its own. Ubuntu 23.10 and later also
-restrict unprivileged user namespaces through AppArmor
-(`kernel.apparmor_restrict_unprivileged_userns=1`): allow them for `bwrap` with an
-AppArmor profile, or the sandbox stays unavailable. These options weaken the container's
-own confinement; weigh them against running repository code without the sandbox.
+unprivileged user namespaces. Docker's defaults block bwrap three ways, and the colour
+compose relaxes each as narrowly as it can:
+
+```yaml
+security_opt:
+  - seccomp=./seccomp/loom-repo-sandbox.json
+  - apparmor=loom-repo-sandbox
+  - systempaths=unconfined
+```
+
+- **seccomp.** Docker's default profile allows `clone` with namespace flags, `unshare`,
+  `mount`, `umount2` and `pivot_root` only to a container with `CAP_SYS_ADMIN`.
+  `dev/seccomp/loom-repo-sandbox.json` is Docker's default profile (moby/profiles
+  `seccomp/v0.2.3`, the one Docker 29 ships) plus one rule allowing those five; bwrap
+  needs all of them. Inside the sandbox, Loom's own seccomp filter refuses them again.
+- **AppArmor.** `docker-default` has `deny mount`. `apparmor=unconfined` does not help
+  on hosts that restrict unprivileged user namespaces (Ubuntu 23.10 and later,
+  `kernel.apparmor_restrict_unprivileged_userns=1`): there an unconfined process that
+  creates a user namespace is moved into the `unprivileged_userns` profile, which
+  refuses the mounts. `deploy/apparmor/loom-repo-sandbox` is `docker-default` with
+  `userns, mount, pivot_root` in place of `deny mount` (the container still has no
+  `CAP_SYS_ADMIN`, so a mount works only inside the namespace bwrap creates). Load it
+  on the Docker host once; `/etc/apparmor.d` is loaded again at every boot:
+
+  ```bash
+  sudo install -m644 deploy/apparmor/loom-repo-sandbox /etc/apparmor.d/loom-repo-sandbox
+  sudo apparmor_parser -r -W /etc/apparmor.d/loom-repo-sandbox
+  ```
+
+  `redeploy.sh` stops before building a colour when the profile is not loaded. On a
+  host without AppArmor, Docker ignores the option.
+
+- **`/proc`.** Docker masks paths under `/proc`, and the kernel then refuses the fresh
+  procfs mount the sandbox makes; `systempaths=unconfined` unmasks them.
+
+These options still weaken the container's own confinement a little (mounts and user
+namespaces become reachable to code in the container); weigh them against running
+repository code without the sandbox. `seccomp=unconfined` and `apparmor=unconfined`
+also work where the host does not restrict user namespaces, but they drop the whole
+profile.
 
 **Without the sandbox** Loom probes once per process, logs a warning and reports
 `repo_jobs_unsandboxed` in `/v1/health` and `loom doctor`. Then:

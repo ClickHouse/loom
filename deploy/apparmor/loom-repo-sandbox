@@ -1,0 +1,71 @@
+# loom-repo-sandbox: the AppArmor profile for Loom containers that run the
+# bubblewrap repository-job sandbox (dev/docker-compose.colour.yml asks for it).
+#
+# It is Docker's docker-default (github.com/moby/profiles apparmor/v0.2.1,
+# template.go, the version Docker 29.x vendors), renamed, with these changes:
+#   - `userns,` `mount,` `pivot_root,` replace `deny mount,`: bwrap creates a
+#     user namespace and mounts its fresh root inside it. The container has no
+#     CAP_SYS_ADMIN, so a mount succeeds only inside that namespace. On hosts
+#     with kernel.apparmor_restrict_unprivileged_userns=1 (Ubuntu 23.10+) an
+#     unconfined process that creates a user namespace is moved into the
+#     restrictive `unprivileged_userns` profile, so `apparmor=unconfined` is
+#     not enough; an explicit `userns` rule is.
+#   - `abi <abi/4.0>` instead of 3.0, because `userns` needs it; `unix,` and
+#     `mqueue,` keep what ABI 3.0 left unmediated (4.0 mediates both).
+#   - no separate dockerd signal peer: dockerd runs unconfined, which the
+#     `peer=unconfined` line already covers.
+#
+# Load it on the Docker host, and on every boot (apparmor.service loads
+# /etc/apparmor.d at boot):
+#   sudo install -m644 deploy/apparmor/loom-repo-sandbox /etc/apparmor.d/loom-repo-sandbox
+#   sudo apparmor_parser -r -W /etc/apparmor.d/loom-repo-sandbox
+# See "Repository-job sandbox" in docs/operations/code-index-operations.md.
+
+abi <abi/4.0>,
+
+#include <tunables/global>
+
+profile loom-repo-sandbox flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  network,
+  # Disallow AF_ALG (Linux kernel crypto API); see https://copy.fail/
+  deny network alg,
+  unix,
+  mqueue,
+  capability,
+  file,
+  umount,
+  userns,
+  mount,
+  pivot_root,
+  # Host (privileged) processes may send signals to container processes.
+  signal (receive) peer=unconfined,
+  # runc may send signals to container processes (for "docker stop").
+  signal (receive) peer=runc,
+  # crun may send signals to container processes (for "docker stop" when used with crun OCI runtime).
+  signal (receive) peer=crun,
+  # Container processes may send signals amongst themselves.
+  signal (send,receive) peer=loom-repo-sandbox,
+
+  deny @{PROC}/* w,   # deny write for all files directly in /proc (not in a subdir)
+  # deny write to files not in /proc/<number>/** or /proc/sys/**
+  deny @{PROC}/{[^1-9/],[^1-9/][^0-9/],[^1-9s/][^0-9y/][^0-9s/],[^1-9/][^0-9/][^0-9/][^0-9/]*}/** w,
+  deny @{PROC}/sys/[^k]** w,  # deny /proc/sys except /proc/sys/k* (effectively /proc/sys/kernel)
+  deny @{PROC}/sys/kernel/{?,??,[^s][^h][^m]**} w,  # deny everything except shm* in /proc/sys/kernel/
+  deny @{PROC}/sysrq-trigger rwklx,
+  deny @{PROC}/kcore rwklx,
+
+  deny /sys/[^f]*/** wklx,
+  deny /sys/f[^s]*/** wklx,
+  deny /sys/fs/[^c]*/** wklx,
+  deny /sys/fs/c[^g]*/** wklx,
+  deny /sys/fs/cg[^r]*/** wklx,
+  deny /sys/firmware/** rwklx,
+  deny /sys/devices/virtual/powercap/** rwklx,
+  deny /sys/kernel/security/** rwklx,
+
+  # allow processes within the container to trace each other,
+  # provided all other LSM and yama setting allow it.
+  ptrace (trace,tracedby,read,readby) peer=loom-repo-sandbox,
+}

@@ -343,6 +343,18 @@ if [[ -n "$holder" ]] && [[ "$(container_state "$idle")" != "running" ]]; then
   exit 1
 fi
 
+# ---- AppArmor profile --------------------------------------------------------
+# The colour compose names an AppArmor profile for the repository-job sandbox;
+# Docker refuses to start a container whose profile the kernel has not loaded.
+# Profile names are readable without root under policy/profiles/*/name.
+aa_profile=$(sed -n 's/^ *- apparmor=\([A-Za-z0-9_.-]*\).*/\1/p' "$COLOUR_COMPOSE" | head -1)
+if [[ -n "$aa_profile" && -d /sys/kernel/security/apparmor/policy/profiles ]] \
+  && ! cat /sys/kernel/security/apparmor/policy/profiles/*/name 2>/dev/null | grep -qxF "$aa_profile"; then
+  echo "!!! AppArmor profile $aa_profile is not loaded; $COLOUR_COMPOSE needs it. Load it once (persists across boots):"
+  echo "    sudo install -m644 deploy/apparmor/$aa_profile /etc/apparmor.d/$aa_profile && sudo apparmor_parser -r -W /etc/apparmor.d/$aa_profile"
+  exit 1
+fi
+
 # ---- build + boot the idle colour ------------------------------------------
 
 echo "==> building and starting loom-$idle (CH untouched, data preserved; the old colour keeps serving)"
