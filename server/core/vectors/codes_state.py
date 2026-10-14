@@ -338,15 +338,16 @@ def _maybe_refresh() -> None:
 def _start_refresh(*, since: float) -> asyncio.Task[Any]:
     """The latest probe when it started at or after `since` (in flight, done or
     failed), else a new one."""
-    if _state.refresh_started is None or _state.refresh_started < since:
+    refresh = _state.refresh
+    if refresh is None or _state.refresh_started is None or _state.refresh_started < since:
         from server.core.background import detached_task, register_deferred_task
 
         _state.refresh_started = time.monotonic()
         # Process work a statement happened to trigger: its system-table reads
         # carry their own tag, not the request's.
         task = detached_task(_reprobe(_state.ch), name="vector-codes-reprobe")
-        _state.refresh = register_deferred_task(task)
-    return _state.refresh
+        refresh = _state.refresh = register_deferred_task(task)
+    return refresh
 
 
 async def _reprobe(ch: Any) -> None:

@@ -476,7 +476,7 @@ def _insert_data(
     the DateTime columns are walked, or every cell when the types are unknown."""
     data = [[r[c] for c in columns] for r in rows]
     if type_names is None:
-        timed = range(len(columns))
+        timed = list(range(len(columns)))
     else:
         timed = [i for i, t in enumerate(type_names) if "DateTime" in t]
     for i in timed:
