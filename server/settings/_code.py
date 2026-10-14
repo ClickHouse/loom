@@ -105,15 +105,21 @@ class CodeSettings(BaseModel):
     code_bootstrap_clone_timeout_s: float = 1800.0
     # rlimits for each process of a sandboxed repository job (clone, fetch,
     # dependency install, compiler-tier harness; code/app/index/sandbox.py).
-    # They bound each process, not a job's total: there is no cgroup.
+    # They bound each process, not a job's total (max_pids aside): there is no cgroup.
     # CPU seconds a process may use.
     code_sandbox_cpu_seconds: int = 7200
     # Data memory (heap and private mappings, RLIMIT_DATA) a process may use, in
     # MiB. Not address space: node reserves far more of that than it uses.
     code_sandbox_memory_mb: int = 16384
-    # Processes and threads the server's uid may run at once (RLIMIT_NPROC):
-    # shared by every job running at the time, not one job's own.
+    # Processes and threads one job may run at once (RLIMIT_NPROC, set inside
+    # the job's user namespace, so other jobs and the server do not count;
+    # Linux 5.14+, older kernels count the uid's tasks host-wide).
     code_sandbox_max_pids: int = 2048
+    # Set by deployments that ship the sandbox profiles: a repository job
+    # refuses to run rather than run unsandboxed, and /v1/health reports the
+    # missing sandbox as an error. False: without the sandbox, jobs fall back
+    # to plain processes as "Without the sandbox" in code-index-operations.md says.
+    code_sandbox_required: bool = False
     # Largest file a process may write, in MiB (a pack or index.scip).
     code_sandbox_max_file_mb: int = 32768
     # Bare clone the ingest worker fetches into (created by `loom code init`)

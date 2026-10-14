@@ -18,6 +18,12 @@ on:
         "dev/clickhouse_release.sh",
         "deploy/standalone/**",
         "deploy/clickhouse-config/**",
+        "deploy/apparmor/**",
+        "dev/seccomp/**",
+        "dev/docker-compose.colour.yml",
+        "dev/apparmor_check.sh",
+        "dev/sandbox_probe.sh",
+        "tests/unit/test_repo_job_sandbox*.py",
         "install.sh",
         "pyproject.toml",
         ".github/workflows/docker-smoke.yml",
@@ -39,6 +45,12 @@ on:
         "dev/clickhouse_release.sh",
         "deploy/standalone/**",
         "deploy/clickhouse-config/**",
+        "deploy/apparmor/**",
+        "dev/seccomp/**",
+        "dev/docker-compose.colour.yml",
+        "dev/apparmor_check.sh",
+        "dev/sandbox_probe.sh",
+        "tests/unit/test_repo_job_sandbox*.py",
         "install.sh",
         "pyproject.toml",
         ".github/workflows/docker-smoke.yml",
@@ -112,3 +124,46 @@ jobs:
         run: |
           python3 scripts/gates/docker_quickstart_smoke.py --image loom:docker-smoke \
             --clickhouse-image "$CLICKHOUSE_IMAGE"
+
+  sandbox-profile:
+    # Where the shipped AppArmor profile first runs: the colours' security
+    # options (dev/docker-compose.colour.yml) on Ubuntu 24.04 with its
+    # unprivileged user-namespace restriction left on, the probe and the
+    # hostile suite inside the production image. ci.yml's sandbox job runs on
+    # the host with that restriction off and tests bubblewrap, not the profile.
+    name: Repository-job sandbox under the shipped profiles
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build the production image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          tags: loom:sandbox-ci
+          platforms: linux/amd64
+          cache-from: type=gha,scope=docker-smoke-amd64
+      - name: Load the profile, keeping the user-namespace restriction on
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
+          sudo apparmor_parser -r -W deploy/apparmor/loom-repo-sandbox
+          dev/apparmor_check.sh dev/docker-compose.colour.yml
+      # The image has no test runner; the versions are uv.lock's.
+      - name: Install pytest for the container
+        run: python3 -m pip install --target "$RUNNER_TEMP/pylib" pytest==9.1.1 pytest-asyncio==1.4.0
+      - name: Probe and hostile suite under the profile
+        run: |
+          opts=(--rm --network none --user loom
+            --security-opt seccomp=dev/seccomp/loom-repo-sandbox.json
+            --security-opt apparmor=loom-repo-sandbox
+            --security-opt systempaths=unconfined)
+          docker run "${opts[@]}" -w /app --entrypoint python loom:sandbox-ci -c \
+            'from server.code.app.index import sandbox as s; raise SystemExit(0 if s.sandbox_available() else 1)'
+          docker run "${opts[@]}" -w /src -v "$PWD:/src:ro" -v "$RUNNER_TEMP/pylib:/pylib:ro" \
+            -e PYTHONPATH=/pylib -e PYTHONDONTWRITEBYTECODE=1 -e LOOM_ENV_FILE= -e LOOM_TEST_REQUIRE_SANDBOX=1 \
+            --entrypoint python loom:sandbox-ci \
+            -m pytest -q -p no:cacheprovider tests/unit/test_repo_job_sandbox.py tests/unit/test_repo_job_sandbox_hostile.py

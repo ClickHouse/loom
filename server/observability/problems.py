@@ -550,6 +550,19 @@ def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
     problems = _layout_problems(state)
     if state.repo_sandbox is not False:
         return problems
+    if settings.code_sandbox_required:
+        return [
+            *problems,
+            Problem(
+                "repo_jobs_unsandboxed",
+                "error",
+                "Repository jobs (clone, fetch, dependency installs, compiler tiers) are "
+                "refused: LOOM_CODE_SANDBOX_REQUIRED is set and the sandbox cannot run here.",
+                "Fix what the 'sandbox probe failed' warning names, or load the AppArmor "
+                "profile — 'Repository-job sandbox' in docs/operations/code-index-operations.md.",
+                source="runtime",
+            ),
+        ]
     return [
         *problems,
         Problem(

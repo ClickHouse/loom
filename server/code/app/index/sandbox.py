@@ -156,10 +156,15 @@ def sandbox_available() -> bool:
     global _available
     if _available is None:
         _available = _probe()
-        if not _available:
+        if not _available and settings.code_sandbox_required:
             logger.warning(
-                "repository jobs run UNSANDBOXED: bubblewrap is missing or cannot create "
-                "namespaces here; build-based tiers execute repository code on this host"
+                "repository jobs are REFUSED: LOOM_CODE_SANDBOX_REQUIRED is set and the "
+                "sandbox cannot run here (sandbox probe failed)"
+            )
+        elif not _available:
+            logger.warning(
+                "repository jobs run UNSANDBOXED: the sandbox cannot run here (sandbox "
+                "probe failed); build-based tiers execute repository code on this host"
             )
     return _available
 
@@ -173,31 +178,52 @@ def sandbox_state() -> bool | None:
 def _probe() -> bool:
     global _disable_userns
     bwrap = shutil.which("bwrap")
-    if not bwrap or not shutil.which("prlimit") or platform.machine() not in _AUDIT_ARCH:
+    missing = [name for name in ("bwrap", "prlimit") if not shutil.which(name)]
+    if not bwrap or missing or platform.machine() not in _AUDIT_ARCH:
+        if missing:
+            logger.warning("sandbox probe failed: %s not on PATH", " and ".join(missing))
+        else:
+            logger.warning("sandbox probe failed: no seccomp table for %s", platform.machine())
         return False
     try:
         help_text = subprocess.run(
             [bwrap, "--help"], capture_output=True, text=True, timeout=10
         ).stdout
         _disable_userns = "--disable-userns" in help_text
-        scratch = tempfile.mkdtemp(prefix="loom-probe-")
-        try:
-            fd = _seccomp_fd()
-            try:
-                argv = _bwrap_argv(["true"], scratch=scratch, binds=[], fd=fd)
-                done = subprocess.run(
-                    argv, pass_fds=(fd,), capture_output=True, timeout=10, env={"PATH": os.defpath}
-                )
-            finally:
-                os.close(fd)
-        finally:
-            shutil.rmtree(scratch, ignore_errors=True)
+        done = _probe_job()
+        if _disable_userns and b"max_user_namespaces" in done.stderr:
+            # --disable-userns writes user.max_user_namespaces, which an AppArmor
+            # profile may refuse (loom-repo-sandbox's /proc/sys rules do). It is
+            # a second lock only: the seccomp filter already refuses the job new
+            # user namespaces.
+            logger.info(
+                "bwrap --disable-userns refused here (%s); jobs run without it, the "
+                "seccomp filter refusing new user namespaces",
+                done.stderr.decode(errors="replace").strip()[-300:],
+            )
+            _disable_userns = False
+            done = _probe_job()
     except (OSError, subprocess.SubprocessError) as e:
-        logger.info("sandbox probe failed: %s", e)
+        logger.warning("sandbox probe failed: %s", e)
         return False
     if done.returncode != 0:
-        logger.info("sandbox probe failed: %s", done.stderr.decode(errors="replace")[-300:])
+        logger.warning("sandbox probe failed: %s", done.stderr.decode(errors="replace")[-300:])
     return done.returncode == 0
+
+
+def _probe_job() -> subprocess.CompletedProcess[bytes]:
+    scratch = tempfile.mkdtemp(prefix="loom-probe-")
+    try:
+        fd = _seccomp_fd()
+        try:
+            argv = _bwrap_argv(["true"], scratch=scratch, binds=[], fd=fd)
+            return subprocess.run(
+                argv, pass_fds=(fd,), capture_output=True, timeout=10, env={"PATH": os.defpath}
+            )
+        finally:
+            os.close(fd)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
 
 
 def _seccomp_fd() -> int:
@@ -240,7 +266,12 @@ def _bwrap_argv(argv: Sequence[str], *, scratch: str, binds: list[str], fd: int)
     args += ["--proc", "/proc", "--dev", "/dev", "--bind", scratch, "/tmp", "--dir", _HOME_INSIDE]
     args += binds
     args += ["--seccomp", str(fd)]
-    return [*args, "--", *argv]
+    # RLIMIT_NPROC is set here, inside bwrap's user namespace, where the kernel
+    # counts only the job's own tasks; outside it would count every task of the
+    # uid on the host. prlimit is under /usr, which the sandbox mounts.
+    nproc = settings.code_sandbox_max_pids
+    prlimit = shutil.which("prlimit") or "prlimit"
+    return [*args, "--", prlimit, f"--nproc={nproc}:{nproc}", "--", *argv]
 
 
 def tool_mounts(path: Path) -> list[Path]:
@@ -426,13 +457,13 @@ def _rlimits() -> list[tuple[str, int]]:
     return [
         ("--cpu", settings.code_sandbox_cpu_seconds),
         ("--data", settings.code_sandbox_memory_mb * mib),
-        ("--nproc", settings.code_sandbox_max_pids),
         ("--fsize", settings.code_sandbox_max_file_mb * mib),
     ]
 
 
 def _prlimit_argv() -> list[str]:
-    """`prlimit` setting the rlimits before it execs bwrap; the job inherits them."""
+    """`prlimit` setting the rlimits before it execs bwrap; the job inherits them
+    (all but RLIMIT_NPROC, which `_bwrap_argv` sets inside the sandbox)."""
     prlimit = shutil.which("prlimit") or "prlimit"
     return [prlimit, *(f"{option}={value}:{value}" for option, value in _rlimits()), "--"]
 
@@ -614,13 +645,24 @@ async def _drain_and_wait(proc: asyncio.subprocess.Process) -> None:
     await proc.wait()
 
 
+class SandboxRequiredError(RuntimeError):
+    """A repository job refused: LOOM_CODE_SANDBOX_REQUIRED is set and this host
+    cannot run the sandbox."""
+
+
 async def run_job(argv: Sequence[str], **job: Unpack[JobOptions]) -> JobResult:
     """A repository job: inside the sandbox when the host has one, else a plain
-    child process with the same environment, timeout and process-group kill.
-    Without the sandbox a process that left the job's session (setsid) is not
-    killed, and while it holds the job's output the job ends as a timeout."""
+    child process with the same environment, timeout and process-group kill,
+    unless LOOM_CODE_SANDBOX_REQUIRED says to refuse instead. Without the
+    sandbox a process that left the job's session (setsid) is not killed, and
+    while it holds the job's output the job ends as a timeout."""
     if sandbox_available():
         return await run_sandboxed(argv, **job)
+    if settings.code_sandbox_required:
+        raise SandboxRequiredError(
+            "repository job refused: LOOM_CODE_SANDBOX_REQUIRED is set and the sandbox "
+            "cannot run here (the 'sandbox probe failed' warning says why)"
+        )
     proc = await asyncio.create_subprocess_exec(
         *argv, env=dict(job["env"]), cwd=job.get("cwd"), **_pipes(job)
     )
@@ -631,6 +673,7 @@ __all__ = [
     "RELAY_URL",
     "JobOptions",
     "JobResult",
+    "SandboxRequiredError",
     "layout_refusal",
     "run_job",
     "run_sandboxed",

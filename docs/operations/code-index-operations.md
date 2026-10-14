@@ -269,13 +269,18 @@ dependency installs and the compiler-tier harnesses) inside one boundary built o
   `.git` and the harness scripts are read-only, and `/tmp` and `HOME` are a fresh
   directory removed after the job. No server environment, credentials, host `HOME`,
   Docker socket or other host paths;
-- rlimits, set by `prlimit` before bwrap starts: `LOOM_CODE_SANDBOX_CPU_SECONDS` (7200),
-  `LOOM_CODE_SANDBOX_MEMORY_MB` (16384) and `LOOM_CODE_SANDBOX_MAX_FILE_MB` (32768)
-  bound **each process** of a job (CPU time, data memory, file size), not the job's
-  total, and `LOOM_CODE_SANDBOX_MAX_PIDS` (2048) bounds the processes of the server's
-  uid, so one job's fork bomb can starve concurrent jobs of processes. Loom sets no
-  cgroup; give the container its own memory and pids limits for a hard total. Each job
-  also has a wall-clock timeout that kills its whole tree; the job's pid namespace
+- rlimits, set by `prlimit`: `LOOM_CODE_SANDBOX_CPU_SECONDS` (7200),
+  `LOOM_CODE_SANDBOX_MEMORY_MB` (16384) and `LOOM_CODE_SANDBOX_MAX_FILE_MB` (32768),
+  set before bwrap starts, bound **each process** of a job (CPU time, data memory, file
+  size), not the job's total. `LOOM_CODE_SANDBOX_MAX_PIDS` (2048) bounds the processes
+  and threads of **one job**: it is set inside the job's user namespace, where the
+  kernel counts only that job's tasks (Linux 5.14 and later; older kernels count the
+  uid's tasks host-wide). Outside it, RLIMIT_NPROC would count every task of the uid on
+  the host, other containers' included. The sandbox runs the `prlimit`
+  found on the server's `PATH`, so it must sit under a mounted system path such as
+  `/usr`. Loom sets no cgroup; give the container its own memory and pids limits for a
+  hard total. The colours set `pids_limit: 8192` on each container as that backstop.
+  Each job also has a wall-clock timeout that kills its whole tree; the job's pid namespace
   guarantees no process it started outlives it;
 - bounded output in the server: a job's stderr, and the stdout of a build, install or
   clone, keep only their last 1 MiB; a command whose stdout Loom parses (`ls-remote`,
@@ -294,25 +299,150 @@ refused, so are URL rewrites. The entry's access token reaches only its clone an
 fetches, never a build or `go mod download`. Inside the sandbox an `ssh` remote has no
 host SSH key: use an HTTPS remote with an access token.
 
-**No shipped stack runs the sandbox by default.** The image installs `bwrap`, but none
-of the Compose files (`dev/docker-compose*.yml`, `deploy/standalone/compose.yaml`) sets
-the container options below, so under Docker's defaults the probe fails and every
-repository job runs as a plain process (see _Without the sandbox_). A source run
-(`make server`) has the sandbox only where the host passes the same requirements.
+**Which stacks run the sandbox.** The blue/green colours `redeploy.sh` deploys
+(`dev/docker-compose.colour.yml`) set the container options below. The other Compose
+files (`dev/docker-compose.cloud.yml`, `dev/docker-compose.dev.yml`,
+`dev/docker-compose.read-replica.yml`, `deploy/standalone/compose.yaml`) do not: an
+AppArmor profile the host has not loaded stops a container from starting, so they keep
+Docker's defaults, the probe fails and every repository job runs as a plain process (see
+_Without the sandbox_). To run it there, once the host has the profile:
+
+- copy the colour file's `security_opt` block and its `pids_limit` (the container's
+  backstop). The `seccomp=` path is relative to the project directory (the compose
+  file's folder unless `--project-directory` says otherwise): `./seccomp/…` works
+  for the files in `dev/`, and `deploy/standalone/compose.yaml` needs
+  `../../dev/seccomp/loom-repo-sandbox.json`;
+- the release's standalone bundle (`loom-stack.tar.gz`) ships neither the seccomp file
+  nor the AppArmor profile: take both from the same release's source tree and point
+  `seccomp=` at where you put the JSON;
+- `redeploy.sh` checks only the colour compose. Run `dev/apparmor_check.sh <compose file>`
+  by hand before starting another stack, and the throwaway-container check below.
+
+A source run (`make server`) has the sandbox only where the host passes the same
+requirements.
 
 **Requirements.** `bwrap` and `prlimit` (util-linux) on `PATH` (the image has both) and
-unprivileged user namespaces. Docker's default seccomp profile blocks user namespaces,
-so a container needs a seccomp profile that permits them
-(`security_opt: [seccomp=unconfined]` is the blunt one), a profile that lets bwrap mount
-(`apparmor=unconfined` on AppArmor hosts), and an unmasked `/proc`
-(`systempaths=unconfined`) so the sandbox can mount its own. Ubuntu 23.10 and later also
-restrict unprivileged user namespaces through AppArmor
-(`kernel.apparmor_restrict_unprivileged_userns=1`): allow them for `bwrap` with an
-AppArmor profile, or the sandbox stays unavailable. These options weaken the container's
-own confinement; weigh them against running repository code without the sandbox.
+unprivileged user namespaces. Docker's defaults block bwrap three ways, and the colour
+compose relaxes each as narrowly as it can:
+
+```yaml
+security_opt:
+  - seccomp=./seccomp/loom-repo-sandbox.json
+  - apparmor=loom-repo-sandbox
+  - systempaths=unconfined
+```
+
+- **seccomp.** Docker's default profile allows `clone` with namespace flags, `unshare`,
+  `mount` and `umount2` only to a container with `CAP_SYS_ADMIN`, and `pivot_root` to no
+  container. `dev/seccomp/loom-repo-sandbox.json` is Docker's default profile
+  (moby/profiles `seccomp/v0.2.3`, the one Docker 29 ships) plus one rule allowing those
+  five to every process in the container; bwrap needs all of them. Inside the sandbox,
+  Loom's own filter refuses the job `unshare`, `mount`, `umount2`, `pivot_root` and a
+  `clone` with `CLONE_NEWUSER`. A `clone` asking for any other new namespace passes the
+  filter and fails for want of a capability, since bwrap runs the job with
+  `--cap-drop ALL`.
+- **AppArmor.** `docker-default` has `deny mount`. `apparmor=unconfined` does not help
+  on hosts that restrict unprivileged user namespaces (Ubuntu 23.10 and later,
+  `kernel.apparmor_restrict_unprivileged_userns=1`): there an unconfined process that
+  creates a user namespace is moved into the `unprivileged_userns` profile, which
+  refuses the mounts. In `deploy/apparmor/loom-repo-sandbox` every process in the
+  container runs under `docker-default`, renamed, with `deny mount` kept and, on ABI
+  4.0, no `userns` rule, so user namespaces are refused. Only an exec of
+  `/usr/bin/bwrap` moves into the child profile `loom-repo-sandbox//bwrap`, which is the
+  same plus `userns, mount, pivot_root`. bwrap and everything it starts stay in the
+  child profile, so a repository job is allowed those by AppArmor and refused them by
+  Loom's seccomp filter above. The boundary is the exec of bwrap: the server and the
+  tools it runs outside the sandbox cannot unshare or mount, but any process in the
+  container that can exec `/usr/bin/bwrap` can create user namespaces and mount inside
+  them, without Loom's filter.
+- **`/proc`.** Docker masks paths under `/proc` and `/sys`, and the kernel then refuses
+  the fresh procfs mount the sandbox makes; `systempaths=unconfined` unmasks them. That
+  also drops the read-only mounts over `/proc/sys`, `/proc/sysrq-trigger`, `/proc/irq`,
+  `/proc/bus` and `/proc/fs`, and the masks over `/proc/kcore`, `/proc/keys`,
+  `/sys/firmware` and the rest. In both profiles the `docker-default` rules still refuse
+  writes to `/proc/sys`, `sysrq-trigger` and the other system files under `/proc` and
+  `/sys`, and any access to `kcore` and `/sys/firmware`. On a host without AppArmor,
+  Docker ignores the `apparmor=` option and nothing takes the mounts' place, so
+  `redeploy.sh` refuses such a host.
+
+**`--disable-userns`.** The child profile keeps `docker-default`'s `/proc/sys` write
+denials, which refuse the sysctl write bwrap's `--disable-userns` makes. An allow rule
+cannot override a deny, and narrowing the deny globs for both forms the path can take
+would make them hard to review. So under this profile, production included, the probe is
+expected to see bwrap name `max_user_namespaces`, log it at INFO and run bwrap without
+the flag; Loom's filter refuses new user namespaces on its own. Any other probe failure
+is logged at WARNING and leaves the sandbox off.
+
+**Loading the profile.** Load it on the Docker host once; `/etc/apparmor.d` is loaded
+again at every boot:
+
+```bash
+sudo install -m644 deploy/apparmor/loom-repo-sandbox /etc/apparmor.d/loom-repo-sandbox
+sudo apparmor_parser -r -W /etc/apparmor.d/loom-repo-sandbox
+```
+
+**Checking it.** `apparmor_parser -Q -K` accepts the profile, but whether bwrap runs
+under it is known only once a host has loaded it. CI is where that first happens: the
+`sandbox-profile` job in `.github/workflows/docker-smoke.yml` loads the profile on
+Ubuntu 24.04 with `kernel.apparmor_restrict_unprivileged_userns=1` left on and runs the
+probe and the hostile suite in the production image with the colours' options. On a
+deploy host, check it in a throwaway container from the build about to be deployed, not
+the serving one: an image from before the `--disable-userns` fallback prints `False`
+under this profile (`True` means the sandbox runs):
+
+```bash
+docker build -q -t loom:sandbox-check .
+docker run --rm --network none --user loom -w /app --entrypoint python \
+  --security-opt seccomp=dev/seccomp/loom-repo-sandbox.json \
+  --security-opt apparmor=loom-repo-sandbox --security-opt systempaths=unconfined \
+  loom:sandbox-check -c 'from server.code.app.index import sandbox as s; print(s.sandbox_available())'
+docker image rm loom:sandbox-check
+```
+
+**What `redeploy.sh` checks.** Before building a colour it stops when the profile is
+not loaded, and on a host without AppArmor. After the new colour starts, and before the
+proxy is swapped to it, `dev/sandbox_probe.sh` runs the same probe in each of the
+colour's containers that runs under the profile (`loom-<colour>` and
+`loom-<colour>-workers`). When one fails, or cannot be inspected, it prints why, removes
+the new colour's containers and exits with the old colour still serving. Removed, not
+stopped: the build already replaced the previous build in that colour, so it is no
+rollback target, and its workers cannot take the lease and run jobs unsandboxed. That is
+the first check of the real profile on a deploy that skipped the one above.
+
+**Requiring the sandbox.** The probe gates the swap, but the new workers start before
+it and may take the supervisor lease (on a first deploy, or when the old lease is free)
+and start repository jobs. `LOOM_CODE_SANDBOX_REQUIRED=true`, which the colours set,
+closes that window: where the sandbox cannot run, no repository job (clone, fetch,
+dependency install, compiler tier, `loom code scip-full`'s harness) runs as a plain
+process. The ingest pass and the compiler tiers skip every entry, operator ones
+included, and name the skip on the pass note; `loom code scip-full` exits 1; any job
+that still reaches the runner fails with `SandboxRequiredError`. `/v1/health` reports
+`repo_jobs_unsandboxed` as an error. One command is outside it: `loom code init`, the
+operator's first bare clone of an entry they configured, runs `git clone` as a plain
+process (it runs no repository code; the remote is the operator's own).
+
+**Turning it off.** To run the colours without the sandbox again, remove both the
+`security_opt` block and `LOOM_CODE_SANDBOX_REQUIRED` from both services in
+`dev/docker-compose.colour.yml`, then redeploy. Removing only `security_opt` leaves
+every repository job refused and `/v1/health` degraded.
+
+No `no-new-privileges`: under it the kernel refuses the exec transition into the child
+profile, and bwrap would not start. The image's setuid binaries (`su`, `mount`,
+`passwd` and the like) therefore still work in the container, as under Docker's
+defaults; the profile's rules, not the read-only mounts, keep them off `/proc/sys`.
+
+These options still weaken the container's own confinement: seccomp lets every process
+in the container make the five calls (outside bwrap, AppArmor and the missing
+`CAP_SYS_ADMIN` still refuse them); AppArmor lets bwrap and what it runs create user
+namespaces and mount inside them, and any process that can exec bwrap gets that, a
+repository job excepted (Loom's filter); and `/proc` and `/sys` rely on the profile's
+rules instead of Docker's masks. Weigh that against running repository code without the
+sandbox. `seccomp=unconfined` and `apparmor=unconfined` also work where the host does not
+restrict user namespaces, but they drop the whole profile.
 
 **Without the sandbox** Loom probes once per process, logs a warning and reports
-`repo_jobs_unsandboxed` in `/v1/health` and `loom doctor`. Then:
+`repo_jobs_unsandboxed` in `/v1/health` and `loom doctor`. With
+`LOOM_CODE_SANDBOX_REQUIRED=true` every repository job is refused (above). Otherwise:
 
 - operator repositories (`LOOM_CODE_REPOS_JSON`) keep every tier, and their build steps
   run as plain processes on the host, as before;

@@ -1,0 +1,119 @@
+# loom-repo-sandbox: AppArmor profile for the Loom containers that run the
+# bubblewrap repository-job sandbox (dev/docker-compose.colour.yml).
+#
+# Based on Docker's docker-default (github.com/moby/profiles apparmor/v0.2.1,
+# template.go, as Docker 29.x vendors it). Every process in the container runs
+# under it, `deny mount` kept. Only an exec of /usr/bin/bwrap enters the child
+# profile //bwrap below, which adds `userns, mount, pivot_root`; what bwrap
+# runs inherits it. Constraints:
+#   - ABI 4.0, because `userns` needs it; under 4.0 a profile without `userns`
+#     cannot create a user namespace, and `unix, mqueue` keep what 3.0 left
+#     unmediated.
+#   - no `no-new-privileges` on the container: under it the kernel refuses the
+#     exec transition into //bwrap.
+#   - the child keeps docker-default's /proc and /sys denials, so it refuses
+#     bwrap's --disable-userns sysctl write; Loom runs bwrap without the flag.
+#   - the template's `signal (receive) peer=<dockerd profile>` line is left out:
+#     dockerd runs unconfined here, so it would repeat `peer=unconfined`. A
+#     confined dockerd (snap Docker) needs it back.
+#
+# Installation, what this opens and to whom: "Repository-job sandbox" in
+# docs/operations/code-index-operations.md.
+
+abi <abi/4.0>,
+
+#include <tunables/global>
+
+profile loom-repo-sandbox flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  network,
+  # Disallow AF_ALG (Linux kernel crypto API); see https://copy.fail/
+  deny network alg,
+  unix,
+  mqueue,
+  capability,
+  file,
+  umount,
+  deny mount,
+
+  # bubblewrap, whoever execs it (the server runs it under prlimit).
+  /usr/bin/bwrap Cx -> bwrap,
+
+  # Host (privileged) processes may send signals to container processes.
+  signal (receive) peer=unconfined,
+  # runc may send signals to container processes (for "docker stop").
+  signal (receive) peer=runc,
+  # crun may send signals to container processes (for "docker stop" when used with crun OCI runtime).
+  signal (receive) peer=crun,
+  # Container processes may send signals amongst themselves.
+  signal (send,receive) peer=loom-repo-sandbox,
+  # The server kills a timed-out job; the job only receives from it (below).
+  signal (send) peer=loom-repo-sandbox//bwrap,
+
+  deny @{PROC}/* w,   # deny write for all files directly in /proc (not in a subdir)
+  # deny write to files not in /proc/<number>/** or /proc/sys/**
+  deny @{PROC}/{[^1-9/],[^1-9/][^0-9/],[^1-9s/][^0-9y/][^0-9s/],[^1-9/][^0-9/][^0-9/][^0-9/]*}/** w,
+  deny @{PROC}/sys/[^k]** w,  # deny /proc/sys except /proc/sys/k* (effectively /proc/sys/kernel)
+  deny @{PROC}/sys/kernel/{?,??,[^s][^h][^m]**} w,  # deny everything except shm* in /proc/sys/kernel/
+  deny @{PROC}/sysrq-trigger rwklx,
+  deny @{PROC}/kcore rwklx,
+
+  deny /sys/[^f]*/** wklx,
+  deny /sys/f[^s]*/** wklx,
+  deny /sys/fs/[^c]*/** wklx,
+  deny /sys/fs/c[^g]*/** wklx,
+  deny /sys/fs/cg[^r]*/** wklx,
+  deny /sys/firmware/** rwklx,
+  deny /sys/devices/virtual/powercap/** rwklx,
+  deny /sys/kernel/security/** rwklx,
+
+  # allow processes within the container to trace each other,
+  # provided all other LSM and yama setting allow it.
+  ptrace (trace,tracedby,read,readby) peer=loom-repo-sandbox,
+  ptrace (trace,read) peer=loom-repo-sandbox//bwrap,
+
+  # bwrap and everything it runs: the profile above plus the user namespace
+  # and the mounts bwrap makes in it. `file,` gives inherit-exec (ix), so the
+  # job stays here; it could not move back anyway, as bwrap sets
+  # no_new_privs before it runs the job.
+  profile bwrap flags=(attach_disconnected,mediate_deleted) {
+    #include <abstractions/base>
+
+    network,
+    deny network alg,
+    unix,
+    mqueue,
+    capability,
+    file,
+    umount,
+    userns,
+    mount,
+    pivot_root,
+
+    signal (receive) peer=unconfined,
+    signal (receive) peer=runc,
+    signal (receive) peer=crun,
+    signal (receive) peer=loom-repo-sandbox,
+    signal (send,receive) peer=loom-repo-sandbox//bwrap,
+
+    deny @{PROC}/* w,
+    deny @{PROC}/{[^1-9/],[^1-9/][^0-9/],[^1-9s/][^0-9y/][^0-9s/],[^1-9/][^0-9/][^0-9/][^0-9/]*}/** w,
+    deny @{PROC}/sys/[^k]** w,
+    deny @{PROC}/sys/kernel/{?,??,[^s][^h][^m]**} w,
+    deny @{PROC}/sysrq-trigger rwklx,
+    deny @{PROC}/kcore rwklx,
+
+    deny /sys/[^f]*/** wklx,
+    deny /sys/f[^s]*/** wklx,
+    deny /sys/fs/[^c]*/** wklx,
+    deny /sys/fs/c[^g]*/** wklx,
+    deny /sys/fs/cg[^r]*/** wklx,
+    deny /sys/firmware/** rwklx,
+    deny /sys/devices/virtual/powercap/** rwklx,
+    deny /sys/kernel/security/** rwklx,
+
+    ptrace (readby,tracedby) peer=loom-repo-sandbox,
+    ptrace (trace,tracedby,read,readby) peer=loom-repo-sandbox//bwrap,
+  }
+}

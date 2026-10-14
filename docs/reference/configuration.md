@@ -126,9 +126,10 @@ Source: `server/settings/_code.py`
 | `LOOM_CODE_BOOTSTRAP_FILES_PER_PASS` | `int` | `400` | Files indexed per pass while a new entry's initial index builds; the cursor persists in code_index_state (400 ≈ 1 min at the live rate). |
 | `LOOM_CODE_REPOS_REFRESH_SECONDS` | `int` | `30` | Seconds between re-reads of loom.code_repos. |
 | `LOOM_CODE_BOOTSTRAP_CLONE_TIMEOUT_S` | `float` | `1800.0` | Seconds a bare clone may take before the worker gives up for the pass and retries next pass. |
-| `LOOM_CODE_SANDBOX_CPU_SECONDS` | `int` | `7200` | rlimits for each process of a sandboxed repository job (clone, fetch, dependency install, compiler-tier harness; code/app/index/sandbox.py). They bound each process, not a job's total: there is no cgroup. CPU seconds a process may use. |
+| `LOOM_CODE_SANDBOX_CPU_SECONDS` | `int` | `7200` | rlimits for each process of a sandboxed repository job (clone, fetch, dependency install, compiler-tier harness; code/app/index/sandbox.py). They bound each process, not a job's total (max_pids aside): there is no cgroup. CPU seconds a process may use. |
 | `LOOM_CODE_SANDBOX_MEMORY_MB` | `int` | `16384` | Data memory (heap and private mappings, RLIMIT_DATA) a process may use, in MiB. Not address space: node reserves far more of that than it uses. |
-| `LOOM_CODE_SANDBOX_MAX_PIDS` | `int` | `2048` | Processes and threads the server's uid may run at once (RLIMIT_NPROC): shared by every job running at the time, not one job's own. |
+| `LOOM_CODE_SANDBOX_MAX_PIDS` | `int` | `2048` | Processes and threads one job may run at once (RLIMIT_NPROC, set inside the job's user namespace, so other jobs and the server do not count; Linux 5.14+, older kernels count the uid's tasks host-wide). |
+| `LOOM_CODE_SANDBOX_REQUIRED` | `bool` | `False` | Set by deployments that ship the sandbox profiles: a repository job refuses to run rather than run unsandboxed, and /v1/health reports the missing sandbox as an error. False: without the sandbox, jobs fall back to plain processes as "Without the sandbox" in code-index-operations.md says. |
 | `LOOM_CODE_SANDBOX_MAX_FILE_MB` | `int` | `32768` | Largest file a process may write, in MiB (a pack or index.scip). |
 | `LOOM_CODE_GIT_DIR` | `str` | `''` | Bare clone the ingest worker fetches into (created by `loom code init`) and its remote. Empty = derived from code_repo: `var/code_repos/<name>.git` and `https://github.com/<owner>/<name>.git`. |
 | `LOOM_CODE_GIT_REMOTE` | `str` | `''` | The scalar entry's fetch remote; empty = `https://github.com/<owner>/<name>.git`. |

@@ -598,22 +598,41 @@ flowchart LR
   `var/proxy/upstream.conf` (template: `deploy/proxy/upstream.conf.example`). A swap is
   a file write plus `nginx -s reload`; no port is rebound.
 
+Once per host, before the first redeploy, load the AppArmor profile the colours run the
+repository-job sandbox under, then check it in a throwaway container built from the
+checkout about to be deployed
+([repository-job sandbox](./code-index-operations.md#repository-job-sandbox) has both
+commands):
+
+```bash
+sudo install -m644 deploy/apparmor/loom-repo-sandbox /etc/apparmor.d/loom-repo-sandbox
+sudo apparmor_parser -r -W /etc/apparmor.d/loom-repo-sandbox
+```
+
 [`redeploy.sh`](../../redeploy.sh), run from the deploy checkout:
 
 1. fetches `origin/main` and rebases onto it, refusing a dirty tree that is behind and
    asking before it ships changes to migrations, compose files, the proxy, the
    `Dockerfile`, `.env.example`, the dependency manifests or itself;
-2. runs [`dev/redeploy_preflight.sh`](../../dev/redeploy_preflight.sh): the running
+2. runs [`dev/apparmor_check.sh`](../../dev/apparmor_check.sh): the colour compose
+   names the AppArmor profile `loom-repo-sandbox`, so the host must run AppArmor and
+   have the profile loaded, or Docker would refuse to start the colour;
+3. runs [`dev/redeploy_preflight.sh`](../../dev/redeploy_preflight.sh): the running
    `build_commit` against the target (exit 3 means nothing to deploy), who holds the
    port, and `loom migrate --dry-run --strict`;
-3. builds and starts the idle colour while the active one serves;
-4. waits, within `LOOM_REDEPLOY_READY_TIMEOUT_S` (default 180 s), for its `/v1/health`
+4. builds and starts the idle colour while the active one serves;
+5. waits, within `LOOM_REDEPLOY_READY_TIMEOUT_S` (default 180 s), for its `/v1/health`
    to report `status: ok` with an empty `schema.pending`, and for its workers container
    to be healthy;
-5. rewrites `upstream.conf` and reloads nginx;
-6. tags the old colour's image `loom:prev` and stops the old colour (uvicorn drains for
+6. runs [`dev/sandbox_probe.sh`](../../dev/sandbox_probe.sh): the repository-job
+   sandbox probe in both new containers. When the sandbox does not run under the profile,
+   or a container cannot be inspected, it removes the new colour's containers and exits,
+   the old one still serving (until then `LOOM_CODE_SANDBOX_REQUIRED` keeps the new
+   workers from running a repository job unsandboxed);
+7. rewrites `upstream.conf` and reloads nginx;
+8. tags the old colour's image `loom:prev` and stops the old colour (uvicorn drains for
    up to 10 s; `docker stop -t 45`). The old containers are **stopped, not removed**;
-7. checks health through `:7777` and records the deploy in `var/deployed.json`.
+9. checks health through `:7777` and records the deploy in `var/deployed.json`.
 
 | Command                    | Does                                                                                     |
 | -------------------------- | ---------------------------------------------------------------------------------------- |
@@ -648,6 +667,7 @@ proxy (`docker compose -p loom-proxy -f dev/docker-compose.proxy.yml up -d`).
 | Proxy           | TLS terminator in front; container port not reachable directly; the nginx choices above; CORS off or listed.                                                                                                                                  |
 | Web and workers | Web tier `LOOM_BACKGROUND_WORKERS=off`; exactly one workers process. `.env` validated with `docker compose … config`.                                                                                                                         |
 | Deploys         | A pinned image or commit. With the pair, keep the stopped colour. Read the [upgrade procedure](./upgrades.md#upgrade-procedure) once before the first cut.                                                                                    |
+| Host            | For the pair, an AppArmor host with `deploy/apparmor/loom-repo-sandbox` loaded and its throwaway-container check passed ([repository-job sandbox](./code-index-operations.md#repository-job-sandbox)).                                        |
 | Backups         | Cloud's native backups, or `BACKUP DATABASE` / a backup tool on OSS ([choosing a backup](./backup-and-recovery.md#choosing-a-backup)). Rehearse with `./scripts/ops/backup_drill.sh`; after a restore run `python dev/verify_audit_chain.py`. |
 | Monitoring      | Probe `/v1/health`; run `loom doctor` after each configuration change; wire [the alerts](./monitoring.md#what-to-alert-on); set `LOOM_OTEL_EXPORTER` and `LOOM_LOG_FORMAT=json`.                                                              |
 | Size            | Scale web replicas and `LOOM_WEB_WORKERS` by signal; set `LOOM_REPLICA_COUNT` ([failure and recovery](../architecture/failure-and-recovery.md), [performance tuning](../guides/performance-tuning.md)).                                       |
