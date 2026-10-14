@@ -43,7 +43,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from server.core.ch_errors import error_code
@@ -162,9 +162,10 @@ class MigrationLease:
         ]
         if self._acquired_at is not None:
             # A renewal or release keeps the queue position; the first insert
-            # lets the server stamp acquired_at (and every renewed_at).
+            # lets the server stamp acquired_at (and every renewed_at). The value
+            # read back is naive UTC, and the driver reads a naive one as local.
             cols.append("acquired_at")
-            row.append(self._acquired_at)
+            row.append(self._acquired_at.replace(tzinfo=UTC))
         self.ch.insert(LEASE_TABLE, [row], column_names=cols)
         self._inserted = True
         self._last_renew = self.clock()
