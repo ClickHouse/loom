@@ -184,3 +184,24 @@ async def test_serve_parked_page_slices_and_hands_back_the_next_handle(monkeypat
     assert gone.results == [] and gone.abstain and gone.abstain_code == "page_expired"
     bad = await h.handle_memory_search(inp.model_copy(update={"page": "nonsense"}))
     assert bad.abstain_code == "page_expired"
+
+
+@pytest.mark.asyncio
+async def test_a_parked_page_drops_hits_the_caller_can_no_longer_read(monkeypatch) -> None:
+    import server.auth.authz as authz
+    from server.memory.api.models_search import MemorySearchInput
+    from server.memory.app import search as h
+
+    async def _only_home(org: str, namespace: str, *_a: Any, **_k: Any) -> bool:
+        return namespace == "home"
+
+    tail = [_hit("b", 0.8, ns="n"), _hit("c", 0.7, ns="team"), _hit("d", 0.6, ns="home")]
+    content = _encode(3, 3, tail, namespaces_searched=["n", "team", "home"])
+    key = sp.page_blob_key(content)
+    patch_handler_name(monkeypatch, "get_client", lambda: _CH(content))
+    monkeypatch.setattr(authz, "row_in_scope", _only_home)
+    page = MemorySearchInput(
+        org="o", namespace="n", agent="*", query="q", top_k=3, page=sp.make_handle(key, 0)
+    )
+    out = await h.handle_memory_search(page)
+    assert [(r.memory_key, r.namespace) for r in out.results] == [("b", "n"), ("d", "home")]

@@ -89,6 +89,7 @@ async def _serve_parked_page(input: MemorySearchInput) -> MemorySearchOutput:
             hits.append(_MemorySearchHit.model_validate(r))
         except Exception:  # noqa: BLE001 — a row this build cannot read is skipped
             continue
+    hits = await _still_readable(input.org, input.namespace, hits)
     total = int(payload.get("candidates_total") or 0)
     # A parked page was serialised without tags unless the first call asked; fill on this
     # call's own switch.
@@ -109,6 +110,20 @@ async def _serve_parked_page(input: MemorySearchInput) -> MemorySearchOutput:
         score_explanation=(f"parked page served at offset {offset}; no retrieval ran"),
     )
     return out
+
+
+async def _still_readable(
+    org: str, namespace: str, hits: list[_MemorySearchHit]
+) -> list[_MemorySearchHit]:
+    """The parked hits the caller may still read. A page was parked under the
+    addressed `namespace`, which the transport authorized again, but its hits
+    can come from any namespace the first call fanned out over, and a grant
+    there may have been taken away since."""
+    from server.auth.authz import row_in_scope
+
+    foreign = {h.namespace for h in hits} - {"", namespace}
+    readable = {"", namespace} | {ns for ns in foreign if await row_in_scope(org, ns)}
+    return [h for h in hits if h.namespace in readable]
 
 
 async def _shape_final_hits(
