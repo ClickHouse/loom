@@ -525,6 +525,31 @@ _PINNED = [
         "833cc756a2f30672",
         "c745fbc574ab7693",
     ),
+    # comments, directives and docstrings: a change to how they are read moves these
+    (
+        "i.rs",
+        "fn value() -> i32 {\n    /* outer /* inner */ still */ 3 // tail\n}\n",
+        "4857960e7b53878f",
+        "d1a6d50754acf60b",
+    ),
+    (
+        "j.cpp",
+        "int value() {\n  /* note */ return 3; // tail\n}\n",
+        "eb331d01323ddc03",
+        "8a58afdf3726bdbe",
+    ),
+    (
+        "k.go",
+        "package k\n\n//go:noinline\nfunc value() int {\n\t// plain\n\treturn 3\n}\n",
+        "3f0252996c2d939f",
+        "66edefd01a61f2c7",
+    ),
+    (
+        "l.py",
+        'def value():\n    """Three.\n\n        Always.\n    """\n    return 3  # tail\n',
+        "6b1a2b541d435510",
+        "854786c5ce006211",
+    ),
 ]
 
 
