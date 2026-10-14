@@ -25,6 +25,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 ORG, AGENT = "itest-org", "itest-mcp"
+IDLE_S = 5  # wide enough that a busy run's calls stay inside it across both passes
 
 
 @pytest.fixture
@@ -95,13 +96,13 @@ async def test_the_idle_sweep_closes_a_run_its_own_calls_did_not_keep_busy(
                 ),
                 started_at=naive_utc_now(),
             )
-        await asyncio.sleep(2)
+        await asyncio.sleep(IDLE_S + 1)
         for run_id in busy:  # calls in another namespace
             await _ledger_call(ch, elsewhere, run_id, subject="sa:a", org=org)
         await _ledger_call(ch, namespace, borrowed, subject="sa:eve", org=org)  # another token
         monkeypatch.setattr(run_handlers, "IDLE_CLOSE_BATCH", 2)
-        assert await close_idle_session_runs(1, org=org) == 2
-        assert await close_idle_session_runs(1, org=org) == 1
+        assert await close_idle_session_runs(IDLE_S, org=org) == 2
+        assert await close_idle_session_runs(IDLE_S, org=org) == 1
         assert all([await active_session_runs(org, run_id) for run_id in busy])
         assert await active_session_runs(org, quiet) == []
         assert await active_session_runs(org, borrowed) == []
