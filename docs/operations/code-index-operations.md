@@ -101,6 +101,12 @@ LOOM_CODE_REPOS_JSON='[
 | `git_extra_branches`                 | globs of other remote branches the shared mirror should carry                                                                 |
 | `github_token`                       | per-entry override of `LOOM_CODE_GITHUB_TOKEN`                                                                                |
 
+`public` is read when `loom code init` first registers the namespace; editing it later
+does not change the join policy, which a maintainer changes with `code.repo.set_access`.
+An entry that names no `scip_producer` keeps `scip_checkout_dir` for C/C++ (see
+[Compiler tier](#compiler-tier)), so name the producer when you prepare that tree for
+another language.
+
 The repository's `.gitattributes` `linguist-generated` / `linguist-vendored` patterns and
 a `.loomignore` file at the indexed commit are honoured as excludes. A dependency
 vendored as a git submodule is not in the bare mirror; give it its own entry and name it
@@ -204,7 +210,7 @@ carries: `go.mod` (at any depth) for Go; `tsconfig.json`, `jsconfig.json` or
 file is incidental, such as a C++ repository whose `pyproject.toml` only serves its test
 tooling; `scip_extra_producers` adds tiers beside a named one. Each tier works in its own
 tree: the named producer (C/C++ when the entry names none) in `scip_checkout_dir`, every
-other one in `<scip_checkout_dir>-<producer>`.
+other one in `<scip_checkout_dir>.<producer>`.
 
 All four workers are enabled by default. The Docker image includes the Python,
 TypeScript, and Go indexers. Their workers create a missing working tree as an empty

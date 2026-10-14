@@ -48,7 +48,7 @@ def test_registry_entry_initializes_checkout_for_its_bare_mirror(tmp_path: Path)
     actual, actual_bare, missing = resolve_checkout(cfg, "python")
 
     assert missing is None
-    assert actual == tmp_path / "checkouts" / "code-example-python"
+    assert actual == tmp_path / "checkouts" / "code-example.python"
     assert (actual / ".git").exists()
     assert actual_bare == bare.resolve()
 
@@ -66,7 +66,7 @@ def test_operator_entry_gets_its_checkout_unless_scip_clang_needs_a_build_tree(
 
     actual, _bare, missing = resolve_checkout(cfg, "python")
     assert missing is None
-    assert actual == tmp_path / "operator-owned-python" and (actual / ".git").exists()
+    assert actual == tmp_path / "operator-owned.python" and (actual / ".git").exists()
     assert not checkout.exists()  # the scip-clang build tree is left alone
 
 

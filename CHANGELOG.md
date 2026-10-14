@@ -46,12 +46,15 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   scip-clang (no root `CMakeLists.txt`); add `"scip_producer":"clang"` to keep it as it was.
   The Python, TypeScript and Go tiers now create a missing working tree for these entries
   too; the C/C++ tier still needs the configured build tree.
-- An entry that names no producer gives each tier its own working tree: C/C++ keeps
-  `scip_checkout_dir`, every other tier uses `<scip_checkout_dir>-<producer>`, so two tiers
-  never move one tree. A repository added from the dashboard therefore moves its Python,
-  TypeScript or Go tier to a new working tree, filled once from the mirror (a TypeScript
-  tier also reinstalls its dependencies there); the old `checkout-<namespace>` directory
-  is no longer used and can be deleted.
+- Each compiler tier of an entry has its own working tree, so two tiers never move one
+  tree: the producer the entry names (C/C++ when it names none) keeps `scip_checkout_dir`,
+  and every other tier, extra producers included, uses `<scip_checkout_dir>.<producer>`
+  (it was `-<producer>`, which could be another entry's `checkout-<namespace>`). A
+  repository added from the dashboard therefore moves its Python, TypeScript or Go tier,
+  and an extra producer moves its tier, to a new working tree, filled once from the mirror
+  (a TypeScript tier also reinstalls its dependencies there). The old directories are no
+  longer used and can be deleted. `loom code scip-full` now runs in the C/C++ tier's own
+  tree and moves the C/C++ watermark where `clang` is an extra producer.
 - The server probes the repository-job sandbox at boot, so `/v1/health` reports
   `repo_jobs_unsandboxed` before any repository job runs. The Repositories page hides
   **Add repository** and **Add branch** when it does, where the server refuses both.

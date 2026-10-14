@@ -59,7 +59,6 @@ async def _scip_apply_only(
     org: str,
     ns: str,
     git_head: str,
-    cfg: Any = None,
 ) -> int:
     """`scip-full --apply-delta`: apply a delta the harness already produced
     (`--keep-delta`). The apply is idempotent — a re-run key-diffs against
@@ -80,9 +79,9 @@ async def _scip_apply_only(
         )
     print(f"applying {args.apply_delta} ({len(delta.files)} files)…")
     stats = await apply_delta(repo, org, ns, delta)
-    # The watermark of the entry's own tier advances (a TypeScript delta moves
-    # the TypeScript watermark, never the C++ one).
-    key = watermark_key_for(cfg.scip_producer or "clang")
+    # scip-full runs scip-clang only, so its delta moves the C++ watermark, also
+    # where clang is an extra tier beside the entry's own.
+    key = watermark_key_for("clang")
     await repo.set_state(org, ns, key, delta.commit)
     print(f"applied: {stats.model_dump()}")
     print(f"{key} -> {delta.commit[:12]}")
@@ -126,6 +125,7 @@ async def _scip_full_locked(args: argparse.Namespace, org: str, ns: str, cfg: An
     import tempfile
 
     from server.code.app.index.scip_delta import ScipDelta, apply_delta
+    from server.code.domain.index.repos import checkout_for
     from server.code.store.index import CodeRepo
     from server.code.workers.scip_apply import watermark_key_for
     from server.settings import settings
@@ -137,13 +137,13 @@ async def _scip_full_locked(args: argparse.Namespace, org: str, ns: str, cfg: An
         return 2
 
     if getattr(args, "apply_delta", ""):
-        return await _scip_apply_only(args, repo, org, ns, git_head, cfg)
+        return await _scip_apply_only(args, repo, org, ns, git_head)
 
     def _paths() -> tuple[Path, Path, Path, Path, list[str]]:
         # Per-repo: each branch indexes in its own working tree and every
         # branch of one repo shares the bare clone. Absolute, as every path
         # the sandbox mounts must be: bwrap runs the job in another directory.
-        checkout = Path(args.checkout or cfg.scip_checkout_dir).resolve()
+        checkout = Path(args.checkout or checkout_for(cfg, "clang")).resolve()
         bare = Path(cfg.git_dir).resolve()
         scip_clang = Path(settings.code_scip_clang_path).resolve()
         missing = [str(p) for p in (checkout, bare, scip_clang) if not p.exists()]
@@ -182,7 +182,7 @@ async def _scip_full_locked(args: argparse.Namespace, org: str, ns: str, cfg: An
         delta = ScipDelta.model_validate(_json.loads(raw))
 
     stats = await apply_delta(repo, org, ns, delta)
-    key = watermark_key_for(cfg.scip_producer or "clang")
+    key = watermark_key_for("clang")
     await repo.set_state(org, ns, key, git_head)
     print(f"applied: {stats.model_dump()}")
     print(f"{key} -> {git_head[:12]}")
