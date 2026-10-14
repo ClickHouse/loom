@@ -307,18 +307,24 @@ async def test_a_process_whose_first_probes_fail_reads_once_clickhouse_answers()
 async def test_a_read_only_process_retries_failed_first_probes_once_a_ttl(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A worker that booted while ClickHouse was down is not left without a reading."""
+    """A worker that booted while ClickHouse was down, on a host up for less than
+    a TTL, probes at once, then once a TTL while ClickHouse stays down."""
+    now = [10.0]
+    monkeypatch.setattr(vector_codes_state.time, "monotonic", lambda: now[0])
     ch = _FakeCH(coded=[("chunks", "embedding")], patches={}, fail=True)
     await vector_codes_state.probe(ch)
-    ch.fail = False
     n = len(ch.calls)
     vector_codes_state.codes_apply("loom.chunks")
     await _the_refresh()
+    assert len(ch.calls) > n  # tried at once, and failed again
+    n = len(ch.calls)
+    vector_codes_state.codes_apply("loom.chunks")  # within a TTL of that try
+    assert len(ch.calls) == n
+    ch.fail = False
+    now[0] += vector_codes_state._ttl()
+    vector_codes_state.codes_apply("loom.chunks")
+    await _the_refresh()
     assert vector_codes_state.coded_columns() == {"loom.chunks.embedding"}
-    monkeypatch.setattr(vector_codes_state, "_probed_at", None)  # as if that one failed too
-    vector_codes_state.codes_apply("loom.chunks")  # within a TTL of the last start
-    assert len(ch.calls) == n + 2  # the codec question and one statement, once
-    assert vector_codes_state._refresh.done()
 
 
 @pytest.mark.asyncio

@@ -146,12 +146,13 @@ async def test_an_older_probe_answering_after_the_refusal_keeps_the_new_width(
         return rows
 
     table.query_all = held  # type: ignore[method-assign]
-    older = asyncio.create_task(codes_state.probe(table))
+    older = codes_state._start_refresh(since=0.0)  # as a stale reading starts it
     await asyncio.sleep(0)
     table.query_all = read  # type: ignore[method-assign]
     table.width = 1024  # rebuilt outside Loom
+    insert = _client(table, monkeypatch).insert("loom.memory_embeddings", [_full(3072)])
     with pytest.raises(CodedWidthMismatchError, match="stores 1024-dim vectors"):
-        await _client(table, monkeypatch).insert("loom.memory_embeddings", [_full(3072)])
+        await asyncio.wait_for(insert, 2)  # never wait on the older probe
     old_answer.set()
     await older
     assert codes_state.stored_width("memory_embeddings", "embedding") == 1024
