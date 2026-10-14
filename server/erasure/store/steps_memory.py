@@ -560,12 +560,13 @@ def _scrubbed(key: str, value: str, org: str, namespaces: set[str], user_id: str
     def names(ns: str, uid: str) -> bool:
         return ns in namespaces or bool(user_id) and uid == user_id
 
-    if key == "queue" and data and data[2] == org and names(data[3], data[5]):
+    if key == "queue" and isinstance(data, list) and data[2] == org and names(data[3], data[5]):
         return json.dumps([*data[:2], *[""] * 6])
-    after = data.get("after") if isinstance(data, dict) else None
-    if key == "backfill" and after and after[0] == org and names(after[1], after[3]):
+    if not isinstance(data, dict) or not (after := data.get("after")) or after[0] != org:
+        return None
+    if key == "backfill" and names(after[1], after[3]):
         return json.dumps({**data, "after": [*after[:2], *[""] * 4]})
-    if key == "sweep" and after and after[0] == org and (after[4] in namespaces or user_id):
+    if key == "sweep" and (after[4] in namespaces or user_id):
         return json.dumps({**data, "after": [*after[:5], _NO_MEMORY]})
     return None
 

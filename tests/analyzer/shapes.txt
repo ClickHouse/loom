@@ -95,6 +95,7 @@
 12afc1c1fde0	SELECT count() AS n FROM loom.memory_embeddings FINAL WHERE org = {org:String} AND has(tags, ?) AND hasAny(tags, (SELECT groupArray(concat(?, memory_key)) FROM loom.memory WHERE org = {org:String} AND
 12f5b49ce29b	SELECT agent AS key, sum(upstream_cost_usd) AS total_cost_usd, count() AS total_calls, uniqExact(operation) AS ops_distinct , uniqExact(namespace) AS namespaces_distinct FROM loom.agent_events WHERE t
 12fd2ac43350	SELECT count() AS n FROM loom.session_outcomes_by_user WHERE org = {org:String} AND namespace = {ns:String}
+1329322fadc8	SELECT state_key, state_value, version FROM loom.code_index_state FINAL WHERE org = ? AND namespace = {ns:String}
 132e3ac77086	ALTER TABLE loom.conversation_embeddings UPDATE tombstoned_at = parseDateTimeBestEffort({ts:String}) WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agent:String} AND thread_id = {ti
 134ccb7b6c2f	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.session_id AS session_
 136bc7ea7350	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
