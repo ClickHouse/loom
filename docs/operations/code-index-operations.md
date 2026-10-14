@@ -322,14 +322,14 @@ A source run (`make server`) has the sandbox only where the host passes the same
 requirements.
 
 **Which hosts can run it.** The shipped profile targets AppArmor 4.0 or later
-(`abi <abi/4.0>`): Ubuntu 24.04, where the CI `sandbox-profile` job tests it with
-`kernel.apparmor_restrict_unprivileged_userns=1`, and Debian 13. Older parsers
-(Ubuntu 22.04, Debian 12) reject that ABI. Hosts without AppArmor, such as Docker Desktop
-on macOS and Windows or SELinux distributions like Fedora and RHEL, have no AppArmor
+(`abi <abi/4.0>`). Only Ubuntu 24.04 is tested, by the CI `sandbox-profile` job with
+`kernel.apparmor_restrict_unprivileged_userns=1`; Debian 13 ships a 4.x parser and should
+load it. Older parsers (Ubuntu 22.04, Debian 12) reject that ABI. Hosts without
+AppArmor, such as Docker Desktop (on any OS) or SELinux distributions like Fedora and RHEL, have no AppArmor
 obstacle but no sandbox configuration shipped or tested for them either, so Loom runs
 there without the sandbox. Every host can still index the repositories the operator lists
 in `LOOM_CODE_REPOS_JSON` (see _Without the sandbox_ for what that runs, and the
-[quickstart](../getting-started/quickstart.md#index-a-repository-on-the-released-stack)
+[quickstart](../getting-started/quickstart.md#optional-index-a-repository-on-the-released-stack)
 for the released stack's commands); only adding a repository from the page needs the
 sandbox.
 

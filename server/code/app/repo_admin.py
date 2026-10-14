@@ -53,7 +53,7 @@ async def _require_sandbox() -> None:
         raise ValidationError(
             "adding repositories or branches from the page needs the repository-job sandbox, "
             "which this deployment cannot run; ask the operator to list the repository in "
-            "LOOM_CODE_REPOS_JSON instead (docs/operations/code-index-operations.md)",
+            "LOOM_CODE_REPOS_JSON instead",
             code="SANDBOX_UNAVAILABLE",
         )
 
