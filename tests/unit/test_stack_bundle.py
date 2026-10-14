@@ -54,6 +54,8 @@ def test_standalone_compose_uses_release_image_and_embeds_no_secret() -> None:
     assert "127.0.0.1" in env
     assert "LOOM_IDENTITY_PROVIDER=single-user" in env
     assert "__LOOM_JWT_SECRET__" in env
+    # ClickHouse shares the host, so Loom does not size itself to all of it.
+    assert 'LOOM_WEB_WORKERS: "${LOOM_WEB_WORKERS:-2}"' in compose
 
 
 @pytest.mark.parametrize(
