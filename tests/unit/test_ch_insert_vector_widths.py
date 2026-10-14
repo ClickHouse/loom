@@ -8,6 +8,7 @@ column does; the probe reads the same width from system.columns."""
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 
 import pytest
@@ -148,7 +149,7 @@ async def test_an_older_probe_answering_after_the_refusal_keeps_the_new_width(
         return rows
 
     table.query_all = held  # type: ignore[method-assign]
-    older = codes_state._start_refresh(since=0.0)  # as a stale reading starts it
+    older = codes_state._start_refresh(since=time.monotonic())  # as a stale reading starts it
     await asyncio.sleep(0)
     table.query_all = read  # type: ignore[method-assign]
     table.width = 1024  # rebuilt outside Loom
@@ -168,7 +169,7 @@ def _rebuilt_mid_insert(table: _Table) -> None:
     async def insert(t: str, data: Any, **kw: Any) -> None:
         if table.attempts == 0:
             table.width = 3072
-            await codes_state._start_refresh(since=0.0)
+            await codes_state._start_refresh(since=time.monotonic())
             table.width = 1024
         await real_insert(t, data, **kw)
 

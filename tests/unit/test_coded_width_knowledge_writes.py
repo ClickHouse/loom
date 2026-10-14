@@ -36,7 +36,7 @@ def ch(monkeypatch: pytest.MonkeyPatch) -> _Untouched:
     client = _Untouched()
     monkeypatch.setattr(ch_module, "get_client", lambda: client)
     monkeypatch.setattr(writes, "get_embedder", lambda: FixedEmbedder())
-    monkeypatch.setattr(codes_state, "_widths", {"loom.chunks.embedding": FixedEmbedder.dim * 2})
+    monkeypatch.setattr(codes_state._state, "widths", {"loom.chunks.embedding": FixedEmbedder.dim * 2})
     return client
 
 

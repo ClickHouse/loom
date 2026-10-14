@@ -76,8 +76,8 @@ def test_a_width_the_coded_tables_do_not_take_is_refused_before_any_read(monkeyp
             raise AssertionError(f"reembed read ClickHouse ({name}) before refusing")
 
     monkeypatch.setattr(
-        codes_state,
-        "_widths",
+        codes_state._state,
+        "widths",
         {"loom.memory_embeddings.embedding": 3072, "loom.code_chunks.embedding": 512},
     )
     embedder = SimpleNamespace(model_name="fake-ngram-512", dim=512)

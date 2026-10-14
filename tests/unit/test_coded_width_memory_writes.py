@@ -27,7 +27,7 @@ def store(monkeypatch: pytest.MonkeyPatch) -> MemoryStore:
 
 
 def _coded_at(monkeypatch: pytest.MonkeyPatch, width: int) -> None:
-    monkeypatch.setattr(codes_state, "_widths", {"loom.memory_embeddings.embedding": width})
+    monkeypatch.setattr(codes_state._state, "widths", {"loom.memory_embeddings.embedding": width})
 
 
 @pytest.mark.asyncio
@@ -87,10 +87,10 @@ async def test_a_set_on_a_table_rebuilt_since_the_reading_writes_nothing(
 ) -> None:
     """The old reading matches the model; a recent one does not."""
     _coded_at(monkeypatch, FixedEmbedder.dim)
-    monkeypatch.setattr(codes_state, "_ch", _Rebuilt(FixedEmbedder.dim * 2))
-    monkeypatch.setattr(codes_state, "_codec_available", True)
-    stale = time.monotonic() - codes_state.FRESH_READING_S - 1
-    monkeypatch.setattr(codes_state, "_probed_at", stale)
+    monkeypatch.setattr(codes_state._state, "ch", _Rebuilt(FixedEmbedder.dim * 2))
+    monkeypatch.setattr(codes_state._state, "codec_available", True)
+    stale = time.monotonic() - codes_state._ttl() - 1
+    monkeypatch.setattr(codes_state._state, "probed_at", stale)
     with pytest.raises(CodedWidthMismatchError):
         await write_mod.handle_memory_set(
             MemorySetInput(**IDENTITY, memory_key="rv/fact/sky", value="blue", classify=False)

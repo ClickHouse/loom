@@ -302,7 +302,7 @@ def test_a_placeholder_takes_its_coded_columns_width(monkeypatch) -> None:
     from server.core.vectors import placeholders as vp
     from server.settings import settings
 
-    monkeypatch.setattr(codes_state, "_widths", {"loom.memory_embeddings.embedding": 3072})
+    monkeypatch.setattr(codes_state._state, "widths", {"loom.memory_embeddings.embedding": 3072})
     with patch.object(settings, "embedding_dim", 1024):
         rows = [{"embedding": [], "memory_key_embedding": []}]
         assert len(vp.pad_rows("memory_embeddings", rows)) == 2

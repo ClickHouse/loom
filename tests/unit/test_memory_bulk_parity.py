@@ -430,7 +430,7 @@ async def test_a_batch_at_another_width_is_refused_before_it_embeds(
     embedder = _BatchEmbedder()
     captured: list[dict[str, Any]] = []
     _wire_stubs(monkeypatch, ch, embedder, captured)
-    monkeypatch.setattr(codes_state, "_widths", {"loom.memory_embeddings.embedding": 8})
+    monkeypatch.setattr(codes_state._state, "widths", {"loom.memory_embeddings.embedding": 8})
     with pytest.raises(CodedWidthMismatchError):
         await mem_extract.handle_memory_bulk_set(
             _bulk_input([_BulkSetEntry(memory_key="rv/fact/a", value="the sky is blue")])
