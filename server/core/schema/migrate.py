@@ -461,26 +461,22 @@ def _install_vector_width(ch: Client) -> int | None:
     return None if plain else int(settings.embedding_dim)
 
 
-def _new_table_codec_width(ch: Client, to_apply: list[Path]) -> int | None:
-    """The width new vector tables are coded at, or None to create them plain
-    (saying why when `to_apply` creates one)."""
-    from server.core.schema.vector_codec_ddl import codable, creates_coded_table
+def _new_table_layout(ch: Client) -> tuple[int | None, str]:
+    """The width new vector tables are coded at (None: plain), and a line saying
+    why ("" when the server has no codec)."""
+    from server.core.schema.vector_codec_ddl import codable
 
     if not _codec_supported(ch):
-        return None
+        return None, ""
     width = _install_vector_width(ch)
-    plain = width is None or not codable(width)
-    if any(creates_coded_table(f.read_text()) for f in to_apply):
-        if width is None:
-            print("  · vector tables created plain, as the install's existing ones are")
-        elif plain:
-            print(
-                f"  · vector tables created plain: width {width} is not a multiple of 8, "
-                "which the Quantized codec needs"
-            )
-        else:
-            print("  · Quantized codec available: fresh vector tables are created coded")
-    return None if plain else width
+    if width is None:
+        return None, "vector tables created plain, as the install's existing ones are"
+    if not codable(width):
+        return None, (
+            f"vector tables created plain: width {width} is not a multiple of 8, "
+            "which the Quantized codec needs"
+        )
+    return width, "Quantized codec available: fresh vector tables are created coded"
 
 
 DIMENSIONS_SETTING = "allow_dimensions_outside_sorting_key"
@@ -708,13 +704,17 @@ def _apply_pending(
     # Probe NLP support once: it decides whether the NLP experimental flag is
     # sent at all (ClickHouse Cloud forbids it).
     nlp_ok = _nlp_available(ch)
-    width = _new_table_codec_width(ch, to_apply)
+    width, layout = _new_table_layout(ch)
     coded, codec_dim = width is not None, width or 0
     dims = _dimensions_setting_known(ch)
     sync = NO_SYNC if dry else sync_policy(ch)
     if sync.accepted:
         scope = "active replicas" if sync.level == 3 else "all replicas"
         print(f"  · waits: level {sync.level} ({scope})")
+    from server.core.schema.vector_codec_ddl import creates_coded_table
+
+    if layout and any(creates_coded_table(f.read_text()) for f in to_apply):
+        print(f"  · {layout}")
     if dims:
         print(f"  · aggregating tables are created with {DIMENSIONS_SETTING} = 1")
     for f in to_apply:

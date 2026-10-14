@@ -55,6 +55,8 @@ def test_host_memory_counts_whole_gib_as_nominal(tmp_path: Path) -> None:
     """MemTotal reads a little under the size the host was sold with."""
     meminfo = "MemTotal:        8029428 kB\n"  # an 8 GiB host
     assert default_workers(cpus=8, proc_cgroup="0::/\n", meminfo=meminfo, root=tmp_path) == 8
+    half = f"MemTotal:       {15 * GB // 2048} kB\n"  # 7.5 GiB is not 8
+    assert default_workers(cpus=8, proc_cgroup="0::/\n", meminfo=half, root=tmp_path) == 7
 
 
 def test_a_cgroup_value_that_does_not_parse_is_no_limit(tmp_path: Path) -> None:

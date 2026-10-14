@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Build the source-free Docker Compose bundle attached to each release."""
+"""Build the source-free Docker Compose bundle attached to each release.
+
+The repository runs the latest ClickHouse release; a bundle names the one
+that was latest when it was built, so an installed Loom version keeps its
+ClickHouse until the operator moves it."""
 
 from __future__ import annotations
 
@@ -30,7 +34,10 @@ FILES = {
 }
 
 
-def build(version: str, output_dir: Path) -> tuple[Path, Path]:
+LATEST_CLICKHOUSE = "${LOOM_CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:latest}"
+
+
+def build(version: str, output_dir: Path, clickhouse_image: str | None = None) -> tuple[Path, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     archive = output_dir / "loom-stack.tar.gz"
     with tempfile.TemporaryDirectory(prefix="loom-stack-") as raw:
@@ -39,6 +46,13 @@ def build(version: str, output_dir: Path) -> tuple[Path, Path]:
             target = stage / destination
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / source, target)
+        if clickhouse_image:
+            compose = stage / "compose.yaml"
+            text = compose.read_text(encoding="utf-8")
+            if LATEST_CLICKHOUSE not in text:
+                raise ValueError(f"compose.yaml no longer defaults to {LATEST_CLICKHOUSE}")
+            pinned = f"${{LOOM_CLICKHOUSE_IMAGE:-{clickhouse_image}}}"
+            compose.write_text(text.replace(LATEST_CLICKHOUSE, pinned), encoding="utf-8")
         (stage / "VERSION").write_text(version + "\n", encoding="utf-8")
         with tarfile.open(archive, "w:gz", format=tarfile.PAX_FORMAT) as bundle:
             bundle.add(stage, arcname="loom-stack")
@@ -51,9 +65,12 @@ def build(version: str, output_dir: Path) -> tuple[Path, Path]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--version", required=True)
+    parser.add_argument(
+        "--clickhouse-image", required=True, help="e.g. clickhouse/clickhouse-server:26.9.18.11"
+    )
     parser.add_argument("--output-dir", type=Path, default=Path("release/stack"))
     args = parser.parse_args()
-    build(args.version, args.output_dir)
+    build(args.version, args.output_dir, args.clickhouse_image)
 
 
 if __name__ == "__main__":

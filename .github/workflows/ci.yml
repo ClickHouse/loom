@@ -113,7 +113,8 @@ jobs:
       # The clickhouse binary (as clickhouse-local and clickhouse-format) for the
       # unit tests that run production SQL locally, such as the pending-grant
       # checks. Taken from the image dev/ci_start_clickhouse.sh runs, so the
-      # parser and engine match the integration job's server.
+      # parser and engine are the integration job's release (unless a release
+      # lands between the two pulls).
       - name: Install the clickhouse binary
         run: |
           id=$(docker create --pull always clickhouse/clickhouse-server:latest)

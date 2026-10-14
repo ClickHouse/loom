@@ -141,7 +141,8 @@ def smoke_providers(base: str, compose: list[str]) -> None:
     try:
         configure(base, "docker-smoke-12", 12)
     except urllib.error.HTTPError as error:
-        assert error.code == 422 and b"unsupported_dimensions" in error.read(), error.code
+        body = error.read().decode()
+        assert error.code == 422 and "unsupported_dimensions" in body, (error.code, body)
     else:
         raise AssertionError("A coded install must refuse a 12-dimension model")
     control(compose, "docker-smoke-16")

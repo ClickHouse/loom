@@ -57,24 +57,36 @@ def placeholder(dim: int) -> list[float]:
     return [0.0] * int(dim)
 
 
+def _columns(table: str) -> tuple[str, tuple[str, ...], int]:
+    """(qualified table, placeholder columns, width when not coded)."""
+    from server.settings import settings
+
+    full = table if "." in table else f"loom.{table}"
+    dim = int(settings.embedding_dim)
+    if full in PLACEHOLDER_COLUMNS:
+        return full, PLACEHOLDER_COLUMNS[full], dim
+    if is_chunks_table(full):
+        # A second model's chunk table carries that model's
+        # width; the map says which, and the placeholder must match it.
+        return full, PLACEHOLDER_COLUMNS["loom.code_chunks"], vector_dim_for_table(full) or dim
+    return full, (), dim
+
+
+def _pads_coded(table: str, rows: list[dict[str, Any]]) -> bool:
+    """Whether `pad_rows` would size a placeholder from a coded column's width."""
+    from server.core.vectors.codes_state import stored_width
+
+    full, cols, _ = _columns(table)
+    return any(stored_width(full, c) and any(c in r and not r[c] for r in rows) for c in cols)
+
+
 def pad_rows(table: str, rows: list[dict[str, Any]]) -> int:
     """Replace empty vectors in `rows` (in place) for a table that has
     placeholder columns. Returns the number of vectors replaced; 0 for every
     other table or when nothing was empty."""
-    from server.settings import settings
-
-    full = table if "." in table else f"loom.{table}"
-    cols = PLACEHOLDER_COLUMNS.get(full)
-    dim = int(settings.embedding_dim)
-    if not cols:
-        # A second model's chunk table carries that model's
-        # width; the map says which, and the placeholder must match it.
-        if not is_chunks_table(full):
-            return 0
-        cols = PLACEHOLDER_COLUMNS["loom.code_chunks"]
-        dim = vector_dim_for_table(full) or dim
     from server.core.vectors.codes_state import stored_width
 
+    full, cols, dim = _columns(table)
     n = 0
     for c in cols:
         # A placeholder is never scored: it takes the width its coded column was
@@ -87,3 +99,14 @@ def pad_rows(table: str, rows: list[dict[str, Any]]) -> int:
                 r[c] = placeholder(width)
                 n += 1
     return n
+
+
+async def fit_vectors(table: str, rows: list[dict[str, Any]]) -> None:
+    """Refuse a vector its coded column cannot take, then pad the empty ones,
+    sized from a recent reading (in place)."""
+    from server.core.vectors import codes_state
+
+    await codes_state.refuse_other_widths(table, rows)  # before any placeholder
+    if _pads_coded(table, rows):
+        await codes_state.recheck()
+    pad_rows(table, rows)

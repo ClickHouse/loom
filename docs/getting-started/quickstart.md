@@ -56,6 +56,8 @@ LOOM_INSTALL_BUNDLE="$PWD/loom-stack.tar.gz" \
   LOOM_INSTALL_CHECKSUM="$PWD/loom-stack.tar.gz.sha256" sh install.sh
 ```
 
+Each release runs the ClickHouse release that was latest when it was built, so rerunning
+the same Loom version keeps its ClickHouse; installing a newer Loom version moves it.
 Rerunning the installer updates the managed Compose/configuration files and reconciles
 the containers. It preserves `~/.loom/.env` and the named Docker volumes. To stop without
 deleting data:

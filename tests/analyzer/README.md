@@ -76,7 +76,7 @@ Three more tests keep the case set honest, and none of them needs ClickHouse:
 
 ```
 # a migrated ClickHouse: the CI integration service, or a throwaway container
-docker run -d --name corpus-ch -p 127.0.0.1:18160:8123 -e CLICKHOUSE_DB=loom \
+docker run -d --pull always --name corpus-ch -p 127.0.0.1:18160:8123 -e CLICKHOUSE_DB=loom \
   -e CLICKHOUSE_USER=loom -e CLICKHOUSE_PASSWORD=loomdev \
   -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
   -v $PWD/deploy/lemmagen3:/var/lib/clickhouse/lemmagen3:ro \

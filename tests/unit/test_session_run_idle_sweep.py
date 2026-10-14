@@ -22,6 +22,7 @@ class _Ledger:
     def __init__(self, *run_ids: str) -> None:
         self.rows = [{"org": "o", "namespace": "n", "run_id": r} for r in run_ids]
         self.completes: list[Any] = []
+        self.complete_options: list[dict[str, Any]] = []
         self.params: list[Any] = []
 
     def _done(self, run_id: str) -> bool:
@@ -40,7 +41,8 @@ class _Ledger:
         await asyncio.sleep(0)
         return None if self._done(run_id) else {"status": "active", "metadata": "{}"}
 
-    async def complete(self, ch: Any, inp: Any, existing: Any, **_: Any) -> None:
+    async def complete(self, ch: Any, inp: Any, existing: Any, **options: Any) -> None:
+        self.complete_options.append(options)
         await asyncio.sleep(0.01)
         if inp.run_id.startswith("broken"):
             raise ValueError("the row is gone")
@@ -146,6 +148,8 @@ async def test_closes_racing_for_one_run_judge_nothing(monkeypatch) -> None:
     )
     assert ledger.completes and {c.run_id for c in ledger.completes} == {"a"}
     assert {(c.outcome, c.retain) for c in ledger.completes} == {("none", "keep")}
+    # A session's run holds no Keeper claim to drop.
+    assert all(options == {"drop_claim": False} for options in ledger.complete_options)
 
 
 @pytest.mark.asyncio

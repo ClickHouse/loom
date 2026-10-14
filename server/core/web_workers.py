@@ -98,14 +98,19 @@ def _v1_mem(d: Path) -> float | None:
     return None if limit is None or limit >= _UNLIMITED else limit
 
 
+# MemTotal reads a little under a host's nominal size (the kernel keeps some):
+# a reading this close to the next whole GiB counts as that GiB.
+MEMTOTAL_SHORTFALL = 0.05
+
+
 def _mem_total(meminfo: str) -> float:
-    """The host's memory to the nearest GiB: MemTotal reads a little under the
-    nominal size, which would cost an 8 GiB host a worker."""
     for line in meminfo.splitlines():
         if line.startswith("MemTotal:"):
             kib = _number(line.split()[1])
             if kib is not None:
-                return round(kib / 1024**2) * 1024.0**3
+                gib = kib / 1024**2
+                whole = math.ceil(gib)
+                return (whole if gib >= whole * (1 - MEMTOTAL_SHORTFALL) else gib) * 1024.0**3
     return math.inf
 
 

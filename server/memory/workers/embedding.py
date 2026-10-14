@@ -358,8 +358,7 @@ async def run_pass(
         embedder = get_embedder()
         # Stubs are marked by embedding_dim=0 (search filters embedding_dim>0
         # and the drain fills them), so the vector value is irrelevant. Empty:
-        # the insert pads it to the width its column takes, which a
-        # vector_similarity index and a coded column both need.
+        # the insert pads it to the width a coded column takes.
         stub_embedding: list[float] = []
 
         # Reconcile memories that have NO embedding row at all, so the stub drain

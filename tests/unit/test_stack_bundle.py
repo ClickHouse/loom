@@ -16,7 +16,9 @@ def _module():
 
 
 def test_release_stack_bundle_is_complete_and_checksummed(tmp_path: Path) -> None:
-    archive, checksum = _module().build("1.2.3", tmp_path)
+    archive, checksum = _module().build(
+        "1.2.3", tmp_path, "clickhouse/clickhouse-server:26.9.18.11"
+    )
     expected = checksum.read_text(encoding="utf-8").split()[0]
     assert hashlib.sha256(archive.read_bytes()).hexdigest() == expected
     with tarfile.open(archive) as bundle:
@@ -34,6 +36,9 @@ def test_release_stack_bundle_is_complete_and_checksummed(tmp_path: Path) -> Non
             "loom-stack/clickhouse-config/named_collections.xml",
         } <= names
         assert bundle.extractfile("loom-stack/VERSION").read() == b"1.2.3\n"
+        compose = bundle.extractfile("loom-stack/compose.yaml").read().decode()
+        assert "${LOOM_CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:26.9.18.11}" in compose
+        assert "clickhouse/clickhouse-server:latest" not in compose
         notices = bundle.extractfile("loom-stack/THIRD_PARTY_NOTICES").read().decode()
         assert "CC BY-SA 4.0" in notices
 

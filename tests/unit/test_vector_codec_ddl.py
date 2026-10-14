@@ -153,9 +153,13 @@ def test_the_plain_layout_is_noted_only_when_a_vector_table_is_created(
     from server.core.schema import migrate as mig
 
     (tmp_path / "1999_a.sql").write_text(sql + "\n")
+    monkeypatch.setattr(mig, "_nlp_available", lambda ch: True)
     monkeypatch.setattr(mig, "_codec_supported", lambda ch: True)
     monkeypatch.setattr(mig, "_install_vector_width", lambda ch: None)
-    assert mig._new_table_codec_width(object(), [tmp_path / "1999_a.sql"]) is None  # type: ignore[arg-type]
+    monkeypatch.setattr(mig, "_dimensions_setting_known", lambda ch: False)
+    monkeypatch.setattr(mig, "_apply_file", lambda ch, f, **kw: None)
+    files = [tmp_path / "1999_a.sql"]
+    assert mig._apply_pending(object(), files, dry=True, lease=None) == 0  # type: ignore[arg-type]
     assert ("created plain" in capsys.readouterr().out) is noted
 
 

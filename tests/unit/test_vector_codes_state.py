@@ -33,8 +33,14 @@ def _codes_supported(monkeypatch: pytest.MonkeyPatch):
 
 
 class _FakeCH:
-    def __init__(self, coded: list[tuple[str, str]], patches: dict[str, int], fail: bool = False):
-        self.coded, self.patches, self.fail = coded, patches, fail
+    def __init__(
+        self,
+        coded: list[tuple[str, str]],
+        patches: dict[str, int],
+        fail: bool = False,
+        width: int = 1024,
+    ):
+        self.coded, self.patches, self.fail, self.width = coded, patches, fail, width
         self.calls: list[str] = []
 
     async def query_all(
@@ -45,7 +51,11 @@ class _FakeCH:
             raise RuntimeError("boom")
         if "system.columns" in sql:
             return [
-                {"table": t, "name": c, "compression_codec": "CODEC(Quantized('rabitq', 1024, 0))"}
+                {
+                    "table": t,
+                    "name": c,
+                    "compression_codec": f"CODEC(Quantized('rabitq', {self.width}, 0))",
+                }
                 for t, c in self.coded
             ]
         if "system.parts" in sql:
@@ -189,12 +199,60 @@ async def test_a_refusal_rereads_a_reading_older_than_a_few_seconds(
     ch = _FakeCH(coded=[("chunks", "embedding")], patches={"chunks": 0})
     await vector_codes_state.probe(ch)
     ch.coded = []  # rebuilt plain by an operator's script
-    monkeypatch.setattr(
-        vector_codes_state,
-        "_probed_at",
-        vector_codes_state._probed_at - vector_codes_state.RECHECK_BEFORE_REFUSING_S - 1,
-    )
+    _age_reading(monkeypatch)
     await vector_codes_state.refuse_width("chunks", 8)  # re-read, then let through
+
+
+def _age_reading(monkeypatch: pytest.MonkeyPatch) -> None:
+    old = vector_codes_state._probed_at - vector_codes_state.RECHECK_BEFORE_REFUSING_S - 1
+    monkeypatch.setattr(vector_codes_state, "_probed_at", old)
+
+
+@pytest.mark.asyncio
+async def test_placeholders_take_the_width_a_refusal_reread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A row with a vector at the rebuilt width and an empty key vector lands."""
+    from server.core.vectors.placeholders import fit_vectors
+
+    columns = [("memory_embeddings", "embedding"), ("memory_embeddings", "memory_key_embedding")]
+    ch = _FakeCH(coded=columns, patches={}, width=3072)
+    await vector_codes_state.probe(ch)
+    ch.width = 1024  # rebuilt outside Loom
+    _age_reading(monkeypatch)
+    row = {"embedding": [0.1] * 1024, "memory_key_embedding": []}
+    await fit_vectors("memory_embeddings", [row])
+    assert len(row["memory_key_embedding"]) == 1024
+
+
+@pytest.mark.asyncio
+async def test_a_batch_of_stubs_is_padded_from_a_recent_reading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.core.vectors.placeholders import fit_vectors
+
+    ch = _FakeCH(coded=[("memory_embeddings", "embedding")], patches={}, width=3072)
+    await vector_codes_state.probe(ch)
+    ch.width = 1024
+    _age_reading(monkeypatch)
+    rows = [{"embedding": []}, {"embedding": []}]
+    await fit_vectors("memory_embeddings", rows)
+    assert [len(r["embedding"]) for r in rows] == [1024, 1024]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_refusals_share_one_reread(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.core.errors import CodedWidthMismatchError
+
+    ch = _FakeCH(coded=[("chunks", "embedding")], patches={})
+    await vector_codes_state.probe(ch)
+    _age_reading(monkeypatch)
+    n = len(ch.calls)
+    results = await asyncio.gather(
+        *(vector_codes_state.refuse_width("chunks", 8) for _ in range(5)), return_exceptions=True
+    )
+    assert all(isinstance(r, CodedWidthMismatchError) for r in results)
+    assert len(ch.calls) - n == 2  # one columns read, one patch-parts read
 
 
 @pytest.mark.asyncio

@@ -147,9 +147,15 @@ jobs:
           zip -q "release/plugins/loom-claude-code-plugin-v${VERSION}.zip" LICENSE NOTICE THIRD_PARTY_NOTICES
           zip -q "release/plugins/loom-codex-plugin-v${VERSION}.zip" LICENSE NOTICE THIRD_PARTY_NOTICES
           ls -la release/*
+      # The bundle names the ClickHouse release that is latest now, so an
+      # installed Loom version keeps its ClickHouse.
       - name: Build the source-free Compose installer bundle
         run: |
-          python scripts/release/build_stack_bundle.py --version "$VERSION"
+          docker pull -q clickhouse/clickhouse-server:latest
+          ch=$(docker run --rm --entrypoint clickhouse clickhouse/clickhouse-server:latest local --query "SELECT version()")
+          docker pull -q "clickhouse/clickhouse-server:$ch"
+          python scripts/release/build_stack_bundle.py --version "$VERSION" \
+            --clickhouse-image "clickhouse/clickhouse-server:$ch"
           cp install.sh release/stack/install.sh
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

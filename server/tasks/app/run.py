@@ -326,7 +326,7 @@ async def _complete_session_run(
             metadata={"closed_by": f"mcp_{reason}"},
         ),
         existing,
-        drop_claim=False,  # run.begin_session_run takes none
+        drop_claim=False,  # begin_session_run takes no claim
     )
     return True
 

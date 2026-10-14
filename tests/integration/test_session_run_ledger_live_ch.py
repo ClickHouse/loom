@@ -220,6 +220,45 @@ async def test_a_run_that_records_no_subject_stays_open_while_it_is_called(ch: A
 
 
 @pytest.mark.asyncio
+async def test_a_run_reopened_or_called_within_the_window_is_busy(ch: Any) -> None:
+    """The sweep's re-check before a close: a run re-opened or called since the
+    pick stays open."""
+    from server.tasks.store.runs import busy_lately
+
+    org = f"itest-busy-{uuid.uuid4().hex[:8]}"
+    run_id = session_run_id(org, "sa:a", uuid.uuid4().hex)
+    row = {
+        "org": org,
+        "namespace": "ns",
+        "agent": AGENT,
+        "run_id": run_id,
+        "goal": "g",
+        "environment": "mcp",
+        "metadata": '{"implicit":true,"subject":"sa:a"}',
+    }
+    long_ago = int((naive_utc_now().timestamp() - 7200) * 1e9)
+    try:
+        await ch.insert(
+            "loom.agent_runs", [{**row, "version": long_ago}], settings={"async_insert": 0}
+        )
+        assert not await busy_lately(ch, org, "ns", run_id, "sa:a", 60)
+        await _ledger_call(ch, "elsewhere", run_id, subject="sa:eve", org=org)
+        assert not await busy_lately(ch, org, "ns", run_id, "sa:a", 60)  # another token
+        await _ledger_call(ch, "elsewhere", run_id, subject="sa:a", org=org)
+        assert await busy_lately(ch, org, "ns", run_id, "sa:a", 60)
+        await ch.execute(
+            "DELETE FROM loom.agent_events WHERE org = {org:String}", params={"org": org}
+        )
+        await ch.insert("loom.agent_runs", [row], settings={"async_insert": 0})  # re-opened now
+        assert await busy_lately(ch, org, "ns", run_id, "sa:a", 60)
+    finally:
+        for table in ("agent_runs", "agent_events"):
+            await ch.execute(
+                f"DELETE FROM loom.{table} WHERE org = {{org:String}}", params={"org": org}
+            )
+
+
+@pytest.mark.asyncio
 async def test_closes_racing_for_one_session_run_leave_it_completed(
     ch: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:

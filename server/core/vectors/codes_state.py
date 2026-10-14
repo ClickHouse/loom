@@ -145,9 +145,20 @@ def _coded_of(table: str) -> list[tuple[str, str, int]]:
     return [(c, c[len(prefix) :], w) for c, w in _widths.items() if c.startswith(prefix)]
 
 
-# A refusal re-reads a reading older than this first, so a table rebuilt outside
-# Loom is not refused on its old width for a whole probe interval.
+# A refusal, or a placeholder sized for a coded column, uses a reading at most
+# this old, so a table rebuilt outside Loom is not written at its old width for
+# a whole probe interval.
 RECHECK_BEFORE_REFUSING_S = 5.0
+
+
+async def recheck() -> None:
+    """Re-read the widths when the reading is older than RECHECK_BEFORE_REFUSING_S;
+    concurrent writers wait on one re-read."""
+    if _ch is None or (
+        _probed_at is not None and time.monotonic() - _probed_at <= RECHECK_BEFORE_REFUSING_S
+    ):
+        return
+    await asyncio.shield(_start_refresh())
 
 
 async def refuse_other_widths(table: str, rows: list[dict[str, Any]]) -> None:
@@ -179,15 +190,10 @@ def _width_mismatch(table: str, dim: int) -> tuple[str, int, int] | None:
 
 
 async def _refuse_if(mismatch: Callable[[], tuple[str, int, int] | None]) -> None:
-    found = mismatch()
-    if found is None:
+    if mismatch() is None:
         return
-    if _ch is not None and (
-        _probed_at is None or time.monotonic() - _probed_at > RECHECK_BEFORE_REFUSING_S
-    ):
-        await probe(_ch)
-        found = mismatch()
-    if found is not None:
+    await recheck()
+    if (found := mismatch()) is not None:
         _refuse(*found)
 
 
@@ -269,20 +275,25 @@ def _maybe_refresh() -> None:
     """Schedule one background re-probe when the reading is stale. Only in a
     process that probed once (it holds a client) and has a running loop; a
     statement is never delayed by it."""
-    global _refresh
     if _ch is None or _probed_at is None or time.monotonic() - _probed_at < _ttl():
-        return
-    if _refresh is not None and not _refresh.done():
         return
     try:
         asyncio.get_running_loop()
     except RuntimeError:
         return
-    from server.core.background import detached_task, register_deferred_task
+    _start_refresh()
 
-    # Process work a statement happened to trigger: its system-table reads
-    # carry their own tag, not the request's.
-    _refresh = register_deferred_task(detached_task(_reprobe(_ch), name="vector-codes-reprobe"))
+
+def _start_refresh() -> asyncio.Task[Any]:
+    """The re-probe in flight, started when there is none."""
+    global _refresh
+    if _refresh is None or _refresh.done():
+        from server.core.background import detached_task, register_deferred_task
+
+        # Process work a statement happened to trigger: its system-table reads
+        # carry their own tag, not the request's.
+        _refresh = register_deferred_task(detached_task(_reprobe(_ch), name="vector-codes-reprobe"))
+    return _refresh
 
 
 async def _reprobe(ch: Any) -> None:
