@@ -6,10 +6,11 @@ import ast
 from pathlib import Path
 
 SERVER = Path(__file__).resolve().parents[2] / "server"
-BANNED = {"utcnow", "utcfromtimestamp", "localtime", "mktime"}
+# today() takes no zone at all.
+BANNED = {"utcnow", "utcfromtimestamp", "localtime", "mktime", "today"}
 # Where each call takes the argument that makes it UTC by position (a zone, or
 # asctime's time tuple); none there reads the local clock.
-UTC_ARG_POSITION = {"now": 0, "today": 0, "astimezone": 0, "asctime": 0, "fromtimestamp": 1}
+UTC_ARG_POSITION = {"now": 0, "astimezone": 0, "asctime": 0, "fromtimestamp": 1}
 
 
 def _reads_local_clock(call: ast.Call) -> bool:
@@ -47,6 +48,7 @@ def test_the_check_tells_local_readings_from_utc_ones() -> None:
         "datetime.now(None)",
         "datetime.now(tz=None)",
         "date.today()",
+        "datetime.today(UTC)",
         "datetime.fromtimestamp(t)",
         "x.astimezone()",
         "time.asctime()",
