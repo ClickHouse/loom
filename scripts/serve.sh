@@ -1,15 +1,18 @@
 #!/bin/sh
-# The image's web tier. LOOM_WEB_WORKERS unset or empty starts one uvicorn
-# process per CPU this container may use, bounded by its memory and at most 8
-# (server/core/web_workers.py). The count is exported so the server's rate
-# limiter divides by the same number. One of the processes takes the supervisor
-# lock and runs the background workers. This script reads its variables from
-# the environment only, never from an env file (compose's env_file sets them).
+# The image's web tier. LOOM_WEB_WORKERS comes from the environment, else from
+# the env file the server reads (.env outside Docker); unset in both, it starts
+# one uvicorn process per CPU this container may use, bounded by its memory and
+# at most 8 (server/core/web_workers.py). The count is exported so the server's
+# rate limiter divides by the same number. One of the processes takes the
+# supervisor lock and runs the background workers.
 set -eu
 
 chosen=""
 pinned=${LOOM_RUNTIME_DIR:-}
 if [ -z "${LOOM_WEB_WORKERS:-}" ]; then
+  LOOM_WEB_WORKERS=$(python -m server.core.env_file LOOM_WEB_WORKERS)
+fi
+if [ -z "$LOOM_WEB_WORKERS" ]; then
   LOOM_WEB_WORKERS=$(python -m server.core.web_workers)
   chosen=1
 fi

@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 _PYTHON = """#!/bin/sh
 case "$*" in
   "-m server.core.web_workers") echo 4 ;;
+  "-m server.core.env_file LOOM_WEB_WORKERS") echo "$STUB_ENV_FILE_WORKERS" ;;
   "-m server.core.runtime_files")
     [ "$STUB_RUNTIME_DIR" = none ] && { echo "loom: no private directory" >&2; exit 2; }
     [ "$STUB_RUNTIME_DIR" = broken ] && { echo "Traceback: settings invalid" >&2; exit 1; }
@@ -28,7 +29,7 @@ echo "$* runtime=${LOOM_RUNTIME_DIR:-}"
 
 
 def _launch(
-    tmp_path: Path, *, workers: str, runtime_dir: str, pinned: str = ""
+    tmp_path: Path, *, workers: str, runtime_dir: str, pinned: str = "", env_file: str = ""
 ) -> subprocess.CompletedProcess[str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
@@ -39,6 +40,7 @@ def _launch(
         "PATH": f"{bin_dir}:/usr/bin:/bin",
         "STUB_RUNTIME_DIR": runtime_dir,
         "LOOM_WEB_WORKERS": workers,
+        "STUB_ENV_FILE_WORKERS": env_file,
         "PORT": "1",
     }
     if pinned:
@@ -75,6 +77,31 @@ def test_the_launcher_starts_what_it_can_share(
     assert done.stdout.strip().endswith(f"runtime={shared}")
     if workers == "" and runtime_dir == "none":
         assert "starting one web process" in done.stderr
+
+
+@pytest.mark.parametrize(("workers", "started"), [("", "2"), ("3", "3")])
+def test_a_count_only_the_env_file_names_is_kept(
+    tmp_path: Path, workers: str, started: str
+) -> None:
+    """Outside Docker the server reads .env, so the launcher takes its count
+    too; the environment still wins."""
+    done = _launch(tmp_path, workers=workers, runtime_dir="/run/loom", env_file="2")
+    assert done.returncode == 0, done.stderr
+    assert _workers(done.stdout) == started
+
+
+def test_the_env_file_is_read_as_the_server_reads_it(tmp_path: Path) -> None:
+    env = tmp_path / "loom.env"
+    env.write_text("LOOM_WEB_WORKERS=5\n")
+    done = subprocess.run(
+        [sys.executable, "-m", "server.core.env_file", "LOOM_WEB_WORKERS"],
+        env={**os.environ, "LOOM_ENV_FILE": str(env)},
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert done.stdout.strip() == "5"
 
 
 def test_a_pin_it_cannot_use_refuses_even_one_process(tmp_path: Path) -> None:
