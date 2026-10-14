@@ -54,6 +54,12 @@ def test_web_tier_runs_no_workers_and_the_worker_service_runs_only_them() -> Non
     assert web["LOOM_WEB_WORKERS"] == "${LOOM_WEB_WORKERS:-1}"
 
 
+def test_the_read_replica_keeps_one_process_unless_env_names_a_count() -> None:
+    d = _load(ROOT / "dev" / "docker-compose.read-replica.yml")
+    (replica,) = d["services"].values()
+    assert _env(replica)["LOOM_WEB_WORKERS"] == "${LOOM_WEB_WORKERS:-1}"
+
+
 def test_worker_service_publishes_no_port_and_healthchecks_its_own() -> None:
     d = _load(CLOUD)
     web, workers = d["services"]["loom"], d["services"]["loom-workers"]
