@@ -361,7 +361,10 @@ def _stamp_session_run(
 
 
 async def _bind_session_run(
-    op: Operation, defaults: dict[str, str] | None, mcp_session_id: str, caller: Any
+    op: Operation,
+    defaults: dict[str, str] | None,
+    mcp_session_id: str,
+    caller: _mcp_runs.Caller | None,
 ) -> None:
     """Begin (or join) the session's implicit run for an admitted call and bind it
     for the ledger, so a refused call never writes a run row."""
