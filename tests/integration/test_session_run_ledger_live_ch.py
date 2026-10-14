@@ -8,6 +8,7 @@ Skips cleanly when LOOM_CH_HOST is unset.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import uuid
 from datetime import UTC, datetime
@@ -25,7 +26,6 @@ pytestmark = pytest.mark.skipif(
 )
 
 ORG, AGENT = "itest-org", "itest-mcp"
-IDLE_S = 5  # wide enough that a busy run's calls stay inside it across both passes
 
 
 @pytest.fixture
@@ -69,8 +69,7 @@ async def test_the_idle_sweep_closes_a_run_its_own_calls_did_not_keep_busy(
 ) -> None:
     """More busy runs than a pass closes do not hide a quiet one behind them, and
     a run an earlier server opened under `mcp-<session id>` closes too."""
-    from server.tasks.api.models_run import RunBeginInput
-    from server.tasks.app.run import active_session_runs, begin_session_run, close_idle_session_runs
+    from server.tasks.app.run import active_session_runs, close_idle_session_runs
 
     org = f"itest-sweep-{uuid.uuid4().hex[:8]}"
     namespace, elsewhere = (f"itest-{uuid.uuid4().hex[:12]}" for _ in range(2))
@@ -78,31 +77,35 @@ async def test_the_idle_sweep_closes_a_run_its_own_calls_did_not_keep_busy(
     quiet, borrowed = (session_run_id(org, "sa:a", uuid.uuid4().hex) for _ in range(2))
     explicit = f"itest-run-{uuid.uuid4().hex[:12]}"
     legacy = f"mcp-{uuid.uuid4().hex}"
+    long_ago = int((naive_utc_now().timestamp() - 7200) * 1e9)
     try:
-        for run_id in [*busy, quiet, borrowed, explicit, legacy]:
-            await begin_session_run(
-                RunBeginInput(
-                    org=org,
-                    namespace=namespace,
-                    agent=AGENT,
-                    run_id=run_id,
-                    goal="g",
-                    environment="mcp",
-                    metadata=(
-                        {"implicit": True, "transport": "mcp"}  # no subject recorded
+        await ch.insert(
+            "loom.agent_runs",
+            [
+                {
+                    "org": org,
+                    "namespace": namespace,
+                    "agent": AGENT,
+                    "run_id": run_id,
+                    "goal": "g",
+                    "environment": "mcp",
+                    "metadata": (
+                        '{"implicit":true,"transport":"mcp"}'  # no subject recorded
                         if run_id == legacy
-                        else {"implicit": run_id != explicit, "subject": "sa:a"}
+                        else json.dumps({"implicit": run_id != explicit, "subject": "sa:a"})
                     ),
-                ),
-                started_at=naive_utc_now(),
-            )
-        await asyncio.sleep(IDLE_S + 1)
+                    "version": long_ago,
+                }
+                for run_id in [*busy, quiet, borrowed, explicit, legacy]
+            ],
+            settings={"async_insert": 0},
+        )
         for run_id in busy:  # calls in another namespace
             await _ledger_call(ch, elsewhere, run_id, subject="sa:a", org=org)
         await _ledger_call(ch, namespace, borrowed, subject="sa:eve", org=org)  # another token
         monkeypatch.setattr(run_handlers, "IDLE_CLOSE_BATCH", 2)
-        assert await close_idle_session_runs(IDLE_S, org=org) == 2
-        assert await close_idle_session_runs(IDLE_S, org=org) == 1
+        assert await close_idle_session_runs(1800, org=org) == 2
+        assert await close_idle_session_runs(1800, org=org) == 1
         assert all([await active_session_runs(org, run_id) for run_id in busy])
         assert await active_session_runs(org, quiet) == []
         assert await active_session_runs(org, borrowed) == []
