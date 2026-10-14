@@ -399,8 +399,8 @@ LOOM_CODE_REPOS_JSON=[{"org":"dev","namespace":"code-myrepo","repo":"acme/myrepo
 
 - `scip_producer` picks the compiler-tier indexer: `typescript`, `python`, `go` or
   `clang`. Without it the entry gets `clang`, which needs a configured build tree
-  ([Compiler tier](../operations/code-index-operations.md#compiler-tier)), so other
-  languages get only the parser tier.
+  ([Compiler tier](../operations/code-index-operations.md#compiler-tier)), so a Python,
+  TypeScript or Go repository gets only the parser tier.
 - The indexer runs in a working tree, `/app/var/code_repos/checkout-<namespace>` unless
   the entry sets `scip_checkout_dir`. Loom creates it only for repositories added from
   the dashboard, so create it yourself (below). For `typescript`, `python`
@@ -421,8 +421,9 @@ docker compose --project-directory "$HOME/.loom" exec loom loom code backfill --
 
 `backfill --embed` needs an embedding provider ([Models and keys](./models-and-keys.md)).
 On the stock keyless stack it refuses the fallback embedder and exits. To try the wiring
-anyway, add `--allow-fake-embedder`; [Models and keys](./models-and-keys.md) says what
-switching to a real provider later rebuilds.
+anyway, add `--allow-fake-embedder`. Choosing a model later in **Settings → Models &
+keys** re-embeds the code index; after an `.env` change it needs its own re-embedding, as
+[Models and keys](./models-and-keys.md) describes.
 
 ## Optional: ask a question about a document
 

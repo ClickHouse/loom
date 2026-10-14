@@ -324,13 +324,13 @@ requirements.
 **Which hosts can load the profile.** The shipped profile targets AppArmor 4.0 or later
 (`abi <abi/4.0>`). Only Ubuntu 24.04 is tested, by the CI `sandbox-profile` job with
 `kernel.apparmor_restrict_unprivileged_userns=1`; Debian 13's 4.x parser accepts the
-ABI, but the profile is untested there. Older parsers (Ubuntu 22.04, Debian 12) reject
-it, which leaves those hosts only the `unconfined` options below; they drop the same
-`/proc` protection, so treat those hosts like hosts without AppArmor. Hosts without
-AppArmor, such as Docker Desktop (on any OS) or SELinux distributions like Fedora and
-RHEL, cannot use the colours' options safely: Docker ignores `apparmor=` there, so nothing
-replaces the `/proc` masks that `systempaths=unconfined` drops (see **`/proc`** below).
-Loom runs on those hosts without the sandbox.
+ABI, but the profile is untested there. Hosts without AppArmor, such as Docker Desktop
+(on any OS) or SELinux distributions like Fedora and RHEL, cannot use the colours'
+options safely: Docker ignores `apparmor=` there, so nothing replaces the `/proc` masks
+that `systempaths=unconfined` drops (see **`/proc`** below). Older parsers (Ubuntu 22.04,
+Debian 12) reject the profile; those hosts are left with `seccomp=unconfined` and
+`apparmor=unconfined` (end of this section), which lose the same `/proc` protection, so
+treat them the same way. Loom runs on all of these without the sandbox.
 
 Every host still indexes the repositories listed in `LOOM_CODE_REPOS_JSON`; only adding
 one from the page needs the sandbox. _Without the sandbox_ says what that runs, and the

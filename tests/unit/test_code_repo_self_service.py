@@ -353,6 +353,22 @@ async def test_code_repo_add_is_refused_without_the_sandbox(plane, monkeypatch) 
 
 
 @pytest.mark.asyncio
+async def test_a_required_sandbox_refusal_offers_no_unsandboxed_route(plane, monkeypatch) -> None:
+    from server.code.app.index import sandbox
+    from server.settings import settings
+
+    monkeypatch.setattr(sandbox, "_available", False)
+    monkeypatch.setattr(settings, "code_sandbox_required", True)
+    with pytest.raises(ValidationError) as ei:
+        await admin.handle_code_repo_add(
+            CodeRepoAddInput(org=ORG, repo="acme/widgets", branch="main")
+        )
+    detail = ei.value.to_detail()
+    assert detail["code"] == "SANDBOX_UNAVAILABLE"
+    assert "LOOM_CODE_REPOS_JSON" not in detail["message"]
+
+
+@pytest.mark.asyncio
 async def test_the_sandbox_probe_runs_off_the_event_loop(plane, monkeypatch) -> None:
     """The first probe runs bwrap for up to 20 s; on the loop it would stall every
     request the process serves."""

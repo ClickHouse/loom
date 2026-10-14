@@ -548,9 +548,10 @@ def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
             "this host; self-registered repositories get no build tier, those with a "
             "network remote are not cloned or fetched, and adding one from the page is "
             "refused.",
-            "On an AppArmor 4.0 host, load the loom-repo-sandbox profile and give the "
-            "container the security_opt of dev/docker-compose.colour.yml; elsewhere list "
-            "repositories in LOOM_CODE_REPOS_JSON — 'Repository-job sandbox' in "
+            "Fix what the 'sandbox probe failed' warning names (in a container on an "
+            "AppArmor 4.0 host: load the loom-repo-sandbox profile and copy the security_opt "
+            "of dev/docker-compose.colour.yml); where it cannot run, list repositories in "
+            "LOOM_CODE_REPOS_JSON — 'Repository-job sandbox' in "
             "docs/operations/code-index-operations.md.",
             source="runtime",
         ),

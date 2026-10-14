@@ -50,12 +50,14 @@ async def _require_sandbox() -> None:
     from server.code.app.index.sandbox import sandbox_available
 
     if not await asyncio.to_thread(sandbox_available):
-        raise ValidationError(
-            "adding repositories or branches from the page needs the repository-job sandbox, "
-            "which this deployment cannot run (`loom doctor` says why); ask the operator to "
-            "list the repository in LOOM_CODE_REPOS_JSON instead, as the quickstart shows",
-            code="SANDBOX_UNAVAILABLE",
+        message = (
+            "adding repositories or branches from the page needs the repository-job "
+            "sandbox, which this deployment cannot run (`loom doctor` says why)"
         )
+        # With the sandbox required, operator entries are skipped too.
+        if not settings.code_sandbox_required:
+            message += "; an operator can list the repository in LOOM_CODE_REPOS_JSON instead"
+        raise ValidationError(message, code="SANDBOX_UNAVAILABLE")
 
 
 def _require_same_org(org: str) -> None:
