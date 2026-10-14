@@ -218,11 +218,16 @@ async def _begin(run: SessionRun, *, now: float, first: bool) -> None:
     failed `first` begin forgets the run for CHECK_INTERVAL_S; a failed check keeps it."""
     _attribute(run.quota_key)
     try:
+        from server.core.datetimes import naive_utc_now
         from server.tasks.api.models_run import RunBeginInput
         from server.tasks.app.run import active_session_runs, begin_session_run
 
         if await active_session_runs(run.org, run.run_id):
             return
+        # A closed run re-opens with its own start. A check that finds no row
+        # at all (an erasure deleted it) begins a new run now, so no row dated
+        # before the erasure comes back.
+        started_at = run.started_at if first else naive_utc_now()
         await begin_session_run(
             RunBeginInput(
                 org=run.org,
@@ -243,7 +248,7 @@ async def _begin(run: SessionRun, *, now: float, first: bool) -> None:
                     "subject": ledger_subject(run.caller.subject),
                 },
             ),
-            started_at=run.started_at,
+            started_at=started_at,
         )
     except Exception as e:  # noqa: BLE001 — the ledger never fails a tool call
         log.warning("mcp session run: run.begin failed for %s (non-fatal): %s", run.run_id, e)

@@ -647,3 +647,49 @@ async def test_two_first_begins_that_both_found_no_run_keep_the_earlier(
             "DELETE FROM loom.agent_runs WHERE org = {org:String} AND namespace = {ns:String}",
             params={"org": ORG, "ns": namespace},
         )
+
+
+@pytest.mark.asyncio
+async def test_a_check_after_an_erasure_begins_a_new_run_not_the_erased_one(ch: Any) -> None:
+    """The minute check re-opens a closed run with its own start; once an erasure
+    has deleted the row, it begins a new run started now, not one dated before it."""
+    from server.tasks.app.run import close_session_run
+    from server.tasks.store.runs import fetch_run
+    from server.transport import mcp_runs
+
+    namespace = f"itest-{uuid.uuid4().hex[:12]}"
+    defaults = {"org": ORG, "namespace": namespace, "agent": AGENT}
+    session = uuid.uuid4().hex
+    mcp_runs.reset()
+    try:
+        run = await mcp_runs.ensure(session, defaults, mcp_runs.Caller(), now=10.0)
+        assert run is not None
+        await mcp_runs.drain_ledger_writes()
+        first = await fetch_run(ch, ORG, namespace, run.run_id)
+        assert first is not None
+        started = to_naive_utc(first["started_at"])
+
+        assert await close_session_run(ORG, run.run_id, reason="idle")
+        await mcp_runs.ensure(session, defaults, mcp_runs.Caller(), now=100.0)
+        await mcp_runs.drain_ledger_writes()
+        reopened = await fetch_run(ch, ORG, namespace, run.run_id)
+        assert reopened is not None and reopened["status"] == "active"
+        assert to_naive_utc(reopened["started_at"]) == started
+
+        await ch.execute(
+            "DELETE FROM loom.agent_runs WHERE org = {org:String} AND namespace = {ns:String}",
+            params={"org": ORG, "ns": namespace},
+        )
+        erased_at = naive_utc_now()
+        await asyncio.sleep(0.01)  # a new start is a later millisecond than the erasure
+        await mcp_runs.ensure(session, defaults, mcp_runs.Caller(), now=200.0)
+        await mcp_runs.drain_ledger_writes()
+        begun = await fetch_run(ch, ORG, namespace, run.run_id)
+        assert begun is not None and begun["status"] == "active"
+        assert started < erased_at < to_naive_utc(begun["started_at"])
+    finally:
+        mcp_runs.reset()
+        await ch.execute(
+            "DELETE FROM loom.agent_runs WHERE org = {org:String} AND namespace = {ns:String}",
+            params={"org": ORG, "ns": namespace},
+        )

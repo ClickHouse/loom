@@ -122,7 +122,9 @@ begin then lands an open run that the sweep closes once it goes idle: a short
 retry would not cover a begin that takes seconds, and would delay the `DELETE`
 of every session that never took a run. A re-opened run keeps its original
 `started_at`, so a run closed by the sweep and re-opened later reports a
-`duration_ms` counted from the session's first call, gaps included.
+`duration_ms` counted from the session's first call, gaps included. A check that
+finds no row at all, because an erasure deleted it, begins a new run started then,
+so no run dated before the erasure comes back.
 
 ## Operations
 
