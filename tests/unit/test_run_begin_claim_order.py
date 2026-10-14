@@ -437,5 +437,7 @@ def test_the_doctor_reads_the_same_claims_check(monkeypatch, rows, atomic) -> No
             raise RuntimeError("connection refused")
         return rows
 
+    from server.core.schema.migrate_lease import RUN_CLAIMS_TABLE_SQL
+
     monkeypatch.setattr(doctor, "_doctor_ch_query", query)
-    assert doctor._doctor_run_claims(settings) is atomic
+    assert doctor._doctor_keeper_table(settings, RUN_CLAIMS_TABLE_SQL) is atomic

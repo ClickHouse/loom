@@ -686,11 +686,12 @@ def test_a_failed_restricted_grant_read_does_not_narrow_the_session(
     assert verify_token(tok["access_token"]).namespaces == ("alice-ns", "restricted-qa")
 
 
-def test_a_concurrent_exchange_of_a_claimed_credential_is_refused(
+def test_a_concurrent_exchange_of_a_claimed_credential_is_told_to_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Another exchange of the code holds its Keeper claim: this one is refused
-    like a used code, and the code is left for the exchange that holds it."""
+    """Another exchange of the code holds its Keeper claim: this one may be
+    the owner retrying, so it gets a retryable 503, never a final
+    invalid_grant, and the code is left for the exchange that holds it."""
     from server.auth import oauth_claims
 
     async def _taken(ch: object, key: str) -> tuple[oauth_claims.Claim, str]:
@@ -701,5 +702,25 @@ def test_a_concurrent_exchange_of_a_claimed_credential_is_refused(
     with monkeypatch.context() as racing:
         racing.setattr(oauth_claims, "claim", _taken)
         refused = _exchange(c, code, verifier)
-    assert refused.status_code == 400 and refused.json()["detail"]["error"] == "invalid_grant"
+    assert refused.status_code == 503 and refused.headers["retry-after"] == "5"
+    assert _exchange(c, code, verifier).status_code == 200
+
+
+def test_an_exchange_past_its_bound_is_told_to_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An exchange is bounded below the age its claim is taken over at, so a
+    slow one never runs beside a taker; the code is left for the retry."""
+    import asyncio
+
+    from server.auth import oauth_claims, revocation
+
+    async def _slow(subject: str, *, issued_at: int) -> bool:
+        await asyncio.sleep(1)
+        return False
+
+    c = _client()
+    code, verifier = _seed_code()
+    with monkeypatch.context() as slow:
+        slow.setattr(oauth_claims, "EXCHANGE_TIMEOUT_S", 0.05)
+        slow.setattr(revocation, "subject_revoked", _slow)
+        assert _exchange(c, code, verifier).status_code == 503
     assert _exchange(c, code, verifier).status_code == 200

@@ -98,9 +98,11 @@ code or refresh token used with a new ReplacingMergeTree version, and a read-the
 cannot keep two concurrent exchanges of one credential apart. So `/oauth/token` first
 inserts the credential's key into `loom.oauth_claims`, a KeeperMap table, under
 `keeper_map_strict_mode`: Keeper refuses the second insert, so of two concurrent
-presenters exactly one runs and the other gets `invalid_grant`; one that comes after the
-release reads the credential (with sequential consistency) as consumed. The claim lives
-for one exchange, and one a crashed exchange left is taken over after two minutes. A
+presenters exactly one runs. The other gets a retryable 503 rather than a final
+`invalid_grant` (it may be the owner retrying after a reply that never arrived), and its
+retry, after the release, reads the credential (with sequential consistency) as
+consumed. An exchange is bounded at one minute; a claim a dead one left is taken over
+after two, by a compare-and-swap, so of two takers one wins. A
 server without a Keeper skips the table, runs exchanges unclaimed and reports
 `oauth_claims_not_atomic`.
 

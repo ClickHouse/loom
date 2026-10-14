@@ -5,9 +5,10 @@ version, and a read-then-mark cannot keep two concurrent exchanges of one
 credential apart. So /oauth/token claims the credential's key in
 `loom.oauth_claims` under keeper_map_strict_mode before it reads it, and
 releases the claim once the exchange is decided: Keeper refuses the second
-INSERT, so a concurrent presenter is refused, and one that comes after the
-release finds the credential consumed. A claim a crashed exchange left is
-taken over once older than `STALE_S`.
+INSERT, so a concurrent presenter is told to retry (it may be the owner
+retrying), and its retry, after the release, finds the credential consumed.
+A claim a crashed exchange left is taken over once older than `STALE_S`,
+with Keeper's compare-and-swap, so of two takers one wins.
 
 Without a Keeper the migration skipped the table, the exchange runs
 unclaimed (two presenters racing can both succeed) and /v1/health says so.
@@ -20,23 +21,33 @@ import logging
 import uuid
 from typing import Any
 
-from server.core.schema.migrate_lease import is_keeper_table, key_exists
+from server.core.ch import statement_timeout
+from server.core.schema.migrate_lease import (
+    OAUTH_CLAIMS_TABLE_SQL,
+    is_keeper_table,
+    key_exists,
+    lost_race,
+)
 
 log = logging.getLogger(__name__)
 
-# An exchange takes a few ClickHouse round trips; a claim older than this was
-# left by one that died.
+# A claim older than this was left by an exchange that died. Above the bound
+# /oauth/token puts on one exchange (`EXCHANGE_TIMEOUT_S`), so a live one is
+# never taken over.
 STALE_S = 120
+EXCHANGE_TIMEOUT_S = 60
 
-_TABLE_SQL = "SELECT engine FROM system.tables WHERE database = 'loom' AND name = 'oauth_claims'"
 _STRICT = "SETTINGS keeper_map_strict_mode = 1"
 _INSERT = (
-    "INSERT INTO loom.oauth_claims (claim_key, holder, claimed_at) "
-    f"{_STRICT}, async_insert = 0 "
+    f"INSERT INTO loom.oauth_claims (claim_key, holder, claimed_at) {_STRICT} "
     "VALUES ({k:String}, {me:String}, now64(3))"
 )
-_DROP_STALE = (
-    "ALTER TABLE loom.oauth_claims DELETE WHERE claim_key = {k:String} "
+_HOLDER = "SELECT holder FROM loom.oauth_claims WHERE claim_key = {k:String}"
+# The staleness test sits in the WHERE, so it is evaluated on the znode version
+# Keeper's compare-and-swap checks: of two takers one wins, the other loses the race.
+_TAKE_OVER = (
+    "ALTER TABLE loom.oauth_claims UPDATE holder = {me:String}, claimed_at = now64(3) "
+    "WHERE claim_key = {k:String} "
     f"AND claimed_at < now64(3) - toIntervalSecond({{stale:UInt32}}) {_STRICT}"
 )
 _RELEASE = (
@@ -75,31 +86,43 @@ async def claim(ch: Any, key: str) -> tuple[Claim, str]:
     if not await _available(ch):
         return Claim.UNCLAIMED, ""
     me = uuid.uuid4().hex
-    for _ in range(2):
+    params = {"k": key, "me": me, "stale": STALE_S}
+    try:
+        await ch.execute(_INSERT, params=params)
+        return Claim.HELD, me
+    except Exception as e:
+        if not key_exists(e):
+            raise
+    # Held: by this call when a retried insert found its own first one, else
+    # by an exchange that is running, or by one that died and is taken over.
+    if await _holder(ch, key) != me:
         try:
-            await ch.execute(_INSERT, params={"k": key, "me": me})
-            return Claim.HELD, me
+            await ch.execute(_TAKE_OVER, params=params)
         except Exception as e:
-            if not key_exists(e):
+            if not lost_race(e):
                 raise
-        await ch.execute(_DROP_STALE, params={"k": key, "stale": STALE_S})
-    return Claim.TAKEN, ""
+    return (Claim.HELD, me) if await _holder(ch, key) == me else (Claim.TAKEN, "")
 
 
 async def release(ch: Any, key: str, holder: str) -> None:
-    """Drop this exchange's claim; a claim that outlived `STALE_S` and was
-    taken over is the taker's and stays. A release that fails leaves the claim
-    to go stale."""
+    """Drop this exchange's claim; one taken over since is the taker's and
+    stays. A release that fails or stalls leaves the claim to go stale."""
     try:
-        await ch.execute(_RELEASE, params={"k": key, "me": holder})
+        with statement_timeout(5):
+            await ch.execute(_RELEASE, params={"k": key, "me": holder})
     except Exception as e:  # noqa: BLE001 — the exchange is decided; a kept claim goes stale
         log.warning("oauth claims: release of %s failed: %s", key, e)
+
+
+async def _holder(ch: Any, key: str) -> str:
+    row = await ch.query_one(_HOLDER, params={"k": key})
+    return str(row["holder"]) if row else ""
 
 
 async def _available(ch: Any) -> bool:
     global _atomic
     if _atomic is None:
-        _atomic = is_keeper_table(await ch.query_one(_TABLE_SQL))
+        _atomic = is_keeper_table(await ch.query_one(OAUTH_CLAIMS_TABLE_SQL))
         if not _atomic:
             log.info("oauth: no loom.oauth_claims (no Keeper); exchanges are not claimed")
     return _atomic

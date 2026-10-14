@@ -21,22 +21,28 @@ class _Keeper:
         self.rows: dict[str, str] = {}
         self.stale: set[str] = set()
         self.down = False
+        self.lose_race = False
 
     async def query_one(self, sql: str, params: Any = None) -> dict[str, str] | None:
-        return {"engine": "KeeperMap"} if self.table else None
+        if "system.tables" in sql:
+            return {"engine": "KeeperMap"} if self.table else None
+        holder = self.rows.get(params["k"])
+        return {"holder": holder} if holder else None
 
     async def execute(self, sql: str, params: dict[str, Any]) -> None:
         if self.down:
             raise RuntimeError("Keeper away")
         key = params["k"]
+        assert "keeper_map_strict_mode = 1" in sql
         if sql.startswith("INSERT"):
-            assert "keeper_map_strict_mode = 1" in sql
             if key in self.rows:
                 raise RuntimeError("Code: 999. Coordination::Exception: Node exists")
             self.rows[key] = params["me"]
-        elif "claimed_at <" in sql:
+        elif " UPDATE " in sql:
+            if self.lose_race:
+                raise RuntimeError("Code: 999. Coordination::Exception: Bad version")
             if key in self.stale:
-                self.rows.pop(key, None)
+                self.rows[key] = params["me"]
                 self.stale.discard(key)
         elif self.rows.get(key) == params["me"]:
             del self.rows[key]
@@ -75,6 +81,33 @@ def test_a_release_leaves_a_claim_that_was_taken_over() -> None:
     _, new = _claim(keeper)
     asyncio.run(oc.release(keeper, "code:abc", old))
     assert keeper.rows == {"code:abc": new}
+
+
+def test_of_two_takers_of_a_stale_claim_one_wins() -> None:
+    # Keeper's compare-and-swap: the second taker's UPDATE fails on the version.
+    keeper = _Keeper()
+    _claim(keeper)
+    keeper.stale.add("code:abc")
+    assert _claim(keeper)[0] is oc.Claim.HELD
+    keeper.stale.add("code:abc")
+    keeper.lose_race = True
+    assert _claim(keeper)[0] is oc.Claim.TAKEN
+
+
+def test_a_retried_insert_that_finds_its_own_claim_holds_it(monkeypatch) -> None:
+    # The first insert committed but its reply was lost; the client's retry
+    # gets "Node exists" for the claim this call made.
+    keeper = _Keeper()
+    first = keeper.execute
+
+    async def _retried(sql: str, params: dict[str, Any]) -> None:
+        await first(sql, params)
+        if sql.startswith("INSERT"):
+            await first(sql, params)
+
+    monkeypatch.setattr(keeper, "execute", _retried)
+    outcome, holder = _claim(keeper)
+    assert outcome is oc.Claim.HELD and keeper.rows["code:abc"] == holder
 
 
 def test_no_claims_table_runs_the_exchange_unclaimed() -> None:

@@ -18,6 +18,7 @@ when `LOOM_OAUTH_LOGIN_PROVIDER=oidc` (see oidc.py). Grants persist in
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import html
@@ -725,7 +726,9 @@ async def token(request: Request) -> JSONResponse:
 @asynccontextmanager
 async def _one_exchange(record_type: str, credential: str) -> AsyncIterator[None]:
     """Hold the credential's Keeper claim while its exchange runs
-    (`oauth_claims`): a concurrent exchange of it is refused like a used one."""
+    (`oauth_claims`), bounded below the age a claim is taken over at. A
+    concurrent exchange of it is told to retry, not that the credential is
+    used: it may be the owner retrying after a reply that never arrived."""
     from server.auth import oauth_claims
     from server.core.ch import get_client
 
@@ -736,9 +739,12 @@ async def _one_exchange(record_type: str, credential: str) -> AsyncIterator[None
     except Exception as e:  # an exchange Keeper could not keep apart does not run
         raise _unavailable("exchange claim", e) from e
     if outcome is oauth_claims.Claim.TAKEN:
-        raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
+        raise _unavailable("exchange claim", RuntimeError("another exchange holds it"))
     try:
-        yield
+        async with asyncio.timeout(oauth_claims.EXCHANGE_TIMEOUT_S):
+            yield
+    except TimeoutError as e:
+        raise _unavailable("exchange", e) from e
     finally:
         if outcome is oauth_claims.Claim.HELD:
             await oauth_claims.release(ch, key, holder)
