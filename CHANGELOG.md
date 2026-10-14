@@ -42,9 +42,12 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 
 ### Fixed
 
-- `loom code scip-full` runs its harness (the repository's CMake) as a repository job, in
-  the sandbox like the delta worker, instead of as a plain process; its output is printed
-  when the harness ends.
+- `loom code scip-full` moves its checkout and runs its harness (the repository's CMake)
+  as repository jobs, in the sandbox like the delta worker, instead of as plain processes.
+  The checkout fetch now names the bare clone and the submodule update gets the network,
+  without which neither worked under the sandbox. The last MiB of the harness output is
+  printed when it ends, and a harness past its 6 h bound (inside the cron's 8 h) is
+  reported as a timeout, exit 124.
 - `LOOM_CODE_SANDBOX_MAX_PIDS` bounds each repository job: it is set inside the job's
   user namespace, so on Linux 5.14 and later it no longer counts every task of the
   server's uid on the host.

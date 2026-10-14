@@ -644,3 +644,41 @@ async def test_scip_full_runs_its_harness_as_a_gated_repository_job(
     assert harness.await_count == int(ran)
     if ran:
         assert harness.await_args.args[2] == ["--full", "", "-"]
+
+
+@pytest.mark.asyncio
+async def test_scip_full_moves_its_checkout_as_sandboxed_jobs(tmp_path: Path, monkeypatch) -> None:
+    """The fetch reads the bare clone, which the sandbox mounts only when named,
+    and the submodule pins come from the network."""
+    from server.cli import code_scip
+    from server.code.app.index import compiler_tier
+
+    calls: list[tuple[tuple[str, ...], dict]] = []
+
+    async def _git(cwd: Path, *args: str, **kw: object) -> None:
+        calls.append((args, kw))
+
+    monkeypatch.setattr(compiler_tier, "git", _git)
+    bare = tmp_path / "bare.git"
+    await code_scip._scip_move_checkout(tmp_path / "checkout", bare, "a" * 40)
+    fetch, _checkout, submodules = calls
+    assert fetch[0][0] == "fetch" and fetch[1]["local_remote"] == bare
+    assert submodules[0][0] == "submodule" and submodules[1]["network"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_scip_full_harness_timeout_is_reported_as_one(tmp_path: Path, monkeypatch) -> None:
+    import argparse
+
+    from server.cli import code_scip
+    from server.code.app.index import compiler_tier
+
+    async def _timed_out(*_a: object, **_k: object) -> tuple[int, str]:
+        raise RuntimeError("harness timed out after 21600s")
+
+    monkeypatch.setattr(compiler_tier, "run_harness", _timed_out)
+    args = argparse.Namespace(jobs=0)
+    rc = await code_scip._run_full_harness(
+        args, tmp_path / "h.sh", tmp_path, tmp_path / "scip-clang", tmp_path / "delta.json"
+    )
+    assert rc == 124
