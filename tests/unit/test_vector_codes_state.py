@@ -561,3 +561,28 @@ def test_the_boot_probe_reads_the_tables_the_boot_migrations_created(monkeypatch
     ch.coded = [("memory_embeddings", "embedding")]
     asyncio.run(boot.probe_vector_capabilities(ch))
     assert vector_codes_state.stored_width("loom.memory_embeddings", "embedding") == 1024
+
+
+@pytest.mark.asyncio
+async def test_a_model_change_rereads_widths_an_older_probe_published(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A background probe that started before the rebuild can land after the
+    reset; the model change still reads the rebuilt widths."""
+    import time
+
+    from server.insights.app import provider_runtime
+
+    ch = _FakeCH(coded=[("chunks", "embedding")], patches={}, width=1024)  # rebuilt at 1024
+    real_reset = vector_codes_state.reset
+
+    def reset_then_an_old_probe_lands() -> None:
+        real_reset()
+        vector_codes_state._state.probed_at = time.monotonic()
+        vector_codes_state._state.widths = {"loom.chunks.embedding": 3072}
+
+    monkeypatch.setattr(vector_codes_state, "reset", reset_then_an_old_probe_lands)
+    monkeypatch.setattr(provider_runtime, "get_client", lambda: ch)
+    monkeypatch.setattr(provider_runtime.settings, "adaptive_thresholds", False)
+    await provider_runtime._refresh_calibration()
+    assert vector_codes_state.stored_width("chunks", "embedding") == 1024
