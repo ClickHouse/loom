@@ -23,7 +23,7 @@ a repository added here gets compiler tiers that execute its own build code, and
 clone talks to a host the person chose, so without the sandbox the add is refused
 (`SANDBOX_UNAVAILABLE`) and entries already added are no longer fetched or indexed.
 Of the shipped Compose stacks only the blue/green one (`dev/docker-compose.colour.yml`)
-runs it. On the others, the released stack included, index a repository through
+runs it, on a host with the AppArmor profile loaded. On the others, the released stack included, index a repository through
 `LOOM_CODE_REPOS_JSON` ([quickstart](../../getting-started/quickstart.md#optional-index-a-repository-on-the-released-stack)).
 
 Each org holds at most `LOOM_CODE_SELF_SERVICE_MAX_REPOS` (20) entries.

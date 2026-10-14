@@ -400,12 +400,14 @@ LOOM_CODE_REPOS_JSON=[{"org":"dev","namespace":"code-myrepo","repo":"acme/myrepo
   `clang`. Without it the entry gets `clang`, which needs a configured build tree
   ([Compiler tier](../operations/code-index-operations.md#compiler-tier)), so other
   languages get only the parser tier.
-- `scip_checkout_dir` is the working tree that indexer runs in. For `typescript`,
-  `python` and `go` an empty Git repository is enough: the tier fetches each commit into
-  it from Loom's own clone.
+- `scip_checkout_dir` is the working tree that indexer runs in (the default is
+  `/app/var/code_repos/checkout-<namespace>`, the path above). Loom creates it only for
+  repositories added from the dashboard, so create it yourself. For `typescript`, `python`
+  and `go` an empty Git repository is enough: the tier fetches each commit into it from
+  Loom's own clone.
 - For a private repository, add a GitHub token (`LOOM_CODE_GITHUB_TOKEN` in `.env`, or
-  `github_token` on the entry) and drop `"public":true`, which lets anyone in the org read
-  the index.
+  `github_token` on the entry) and drop `"public":true`: it is for repositories public on
+  their host, and lets anyone in the org read the index at once.
 
 Then recreate the `loom` container, create the working tree and run the first index:
 
@@ -417,8 +419,9 @@ docker compose --project-directory "$HOME/.loom" exec loom loom code backfill --
 ```
 
 `backfill --embed` needs an embedding provider ([Models and keys](./models-and-keys.md)).
-On the stock keyless stack it stops; add `--allow-fake-embedder` to try the wiring, not
-for real use.
+On the stock keyless stack it refuses the fallback embedder and exits. To try the wiring
+anyway, add `--allow-fake-embedder` on a namespace you will throw away: its vectors stay
+fake after you configure a provider, so index the repository under a new namespace then.
 
 ## Optional: ask a question about a document
 

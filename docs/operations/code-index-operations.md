@@ -325,13 +325,15 @@ requirements.
 (`abi <abi/4.0>`). Only Ubuntu 24.04 is tested, by the CI `sandbox-profile` job with
 `kernel.apparmor_restrict_unprivileged_userns=1`; Debian 13 ships a 4.x parser and should
 load it. Older parsers (Ubuntu 22.04, Debian 12) reject that ABI. Hosts without
-AppArmor, such as Docker Desktop (on any OS) or SELinux distributions like Fedora and RHEL, have no AppArmor
-obstacle but no sandbox configuration shipped or tested for them either, so Loom runs
-there without the sandbox. Every host can still index the repositories the operator lists
-in `LOOM_CODE_REPOS_JSON` (see _Without the sandbox_ for what that runs, and the
+AppArmor, such as Docker Desktop (on any OS) or SELinux distributions like Fedora and
+RHEL, cannot use the colours' options safely: Docker ignores `apparmor=` there, so nothing
+replaces the `/proc` masks that `systempaths=unconfined` drops (see **`/proc`** below).
+Loom runs on those hosts without the sandbox.
+
+Every host still indexes the repositories listed in `LOOM_CODE_REPOS_JSON`; only adding
+one from the page needs the sandbox. _Without the sandbox_ says what that runs, and the
 [quickstart](../getting-started/quickstart.md#optional-index-a-repository-on-the-released-stack)
-for the released stack's commands); only adding a repository from the page needs the
-sandbox.
+has the released stack's commands.
 
 **Requirements.** `bwrap` and `prlimit` (util-linux) on `PATH` (the image has both) and
 unprivileged user namespaces. Docker's defaults block bwrap three ways, and the colour
