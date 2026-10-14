@@ -814,11 +814,16 @@ def test_a_find_past_its_bound_is_told_to_retry(monkeypatch: pytest.MonkeyPatch)
     assert _exchange(c, code, verifier).status_code == 200
 
 
-def test_a_decided_exchange_releases_its_claim(keeper: list[str]) -> None:
+@pytest.mark.parametrize(("verifier", "status"), [(None, 200), ("not-the-verifier", 400)])
+def test_a_decided_exchange_releases_its_claim(
+    keeper: list[str], verifier: str | None, status: int
+) -> None:
+    """Issued or refused, the credential is used up, so its claim goes."""
     c = _client()
-    code, verifier = _seed_code()
-    assert _exchange(c, code, verifier).status_code == 200
+    code, seeded = _seed_code()
+    assert _exchange(c, code, verifier or seeded).status_code == status
     assert keeper == [f"code:{oauth._token_id(code)}"]
+    assert _exchange(c, code, seeded).status_code == 400
 
 
 @pytest.mark.parametrize("outcome", ["code", "refused", "refresh"])
@@ -1012,3 +1017,19 @@ def test_a_made_up_credential_is_refused_before_any_keeper_write(
     monkeypatch.setattr(oauth_claims, "claim", _no_claim)
     r = _exchange(_client(), "no-such-code", "v")
     assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
+
+
+def test_too_many_spellings_refuses_the_exchange_for_good(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A retry cannot fix it, so the client gets invalid_grant, not a 503."""
+    from server.auth import revocation
+    from server.auth.aliases import TooManySpellings
+
+    async def _too_many(*_a: object, **_k: object) -> set[str]:
+        raise TooManySpellings("more than 1000 accounts")
+
+    monkeypatch.setattr(revocation, "read_grant_cutoffs", _too_many)
+    c = _client()
+    code, verifier = _seed_code()
+    r = _exchange(c, code, verifier)
+    assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
+    assert "retry-after" not in r.headers

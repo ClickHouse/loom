@@ -13,6 +13,7 @@ import time
 from typing import Any
 
 from server.auth import login
+from server.auth.aliases import TooManySpellings
 from server.core.ch import get_client
 
 log = logging.getLogger(__name__)
@@ -96,14 +97,14 @@ _JIT_RANDOM_TRIES = 5
 class _Name(enum.Enum):
     """What the walk over a JIT sign-up's names found."""
 
-    FREE = "free"  # a name for the new account
-    THEIRS = "theirs"  # the person's account, which a first sign-in elsewhere just wrote
-    NONE_FREE = "none_free"  # every name tried is taken
+    FREE = enum.auto()  # a name for the new account
+    THEIRS = enum.auto()  # the person's account, which a first sign-in elsewhere just wrote
+    NONE_FREE = enum.auto()  # every name tried is taken
 
 
 async def jit_provision_for_email(
     email: str,
-) -> tuple[str, str, list[str], list[str]] | None:
+) -> login.Identity | None:
     """Just-in-time provisioning for OIDC: when enabled, a verified email with
     no loom account gets a personal namespace auto-created (in oidc_jit_org),
     then resolves like any other account. Returns None (the caller then
@@ -135,7 +136,7 @@ async def jit_provision_for_email(
     async with claim_lock(org, "email:" + ident):
         try:
             return await _provision_jit(org, ident, base)
-        except login.SignInUnavailable:
+        except (login.SignInUnavailable, TooManySpellings):
             raise
         except Exception as e:  # a read or write that failed: retryable, as any sign-in's
             log.error("oidc jit: sign-up of %r in %s failed: %s", ident, org, e, exc_info=True)
@@ -158,9 +159,7 @@ async def finish_unfinished_account(email: str) -> None:
         raise login.SignInUnavailable from e
 
 
-async def _provision_jit(
-    org: str, ident: str, base: str
-) -> tuple[str, str, list[str], list[str]] | None:
+async def _provision_jit(org: str, ident: str, base: str) -> login.Identity | None:
     """`jit_provision_for_email` past its gates, under the email's lock."""
     from server.auth.self_signup import provision_account
 
@@ -215,7 +214,7 @@ async def _any_revoked(accounts: list[dict[str, Any]]) -> bool:
     return await subjects_revoked(sorted(subjects - {""}), issued_at=int(time.time()))
 
 
-async def _resolve_as_written(ident: str) -> tuple[str, str, list[str], list[str]] | None:
+async def _resolve_as_written(ident: str) -> login.Identity | None:
     """`resolve_identity_for_email`, reading every write that landed."""
     from server.core.ch import own_write_reads
 

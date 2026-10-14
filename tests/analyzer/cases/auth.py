@@ -15,7 +15,7 @@ async def _auth(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.identity.store import grants as G
 
     # One shape whether deactivated accounts count or not: it is a parameter.
-    await aliases._read_spellings(ORG, "alice@x.io", ch, include_inactive=True)
+    await aliases._read_spellings(ORG, "alice@x.io", ch, for_cutoff=True)
     await revocation._read_revocations([revocation.grant_claim_key(ORG, NS, "alice"), "alice"])
     await revocation.list_active()
     await jit._registry_row(ORG, NS)

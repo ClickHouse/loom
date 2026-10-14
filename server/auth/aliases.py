@@ -27,6 +27,8 @@ import logging
 import time
 from typing import Any
 
+from server.core.errors import LoomServerError
+
 log = logging.getLogger("loom.auth.aliases")
 
 TTL_S = 60.0
@@ -38,8 +40,12 @@ _LOOKUP_SPELLINGS = 8
 _CUTOFF_SPELLINGS = 1000
 
 
-class TooManySpellings(RuntimeError):
-    """More accounts tie spellings to a subject than a cutoff may read."""
+class TooManySpellings(LoomServerError):
+    """409 — more accounts tie spellings to a subject than a grant cutoff may
+    read. No retry fixes it: an operator releases the extra accounts."""
+
+    code = "TOO_MANY_SPELLINGS"
+    status_code = 409
 
 
 def _is_human_subject(subject: str) -> bool:
@@ -63,7 +69,7 @@ async def subject_aliases(
     if hit is not None and not strict and now - hit[0] < TTL_S:
         return list(hit[1])
     try:
-        out = await _read_spellings(org, subject, ch, include_inactive=False)
+        out = await _read_spellings(org, subject, ch, for_cutoff=False)
     except Exception:
         if strict:
             raise
@@ -83,20 +89,20 @@ async def cutoff_spellings(org: str, subject: str, *, ch: object | None = None) 
     since deactivated, whose other spelling may still be in a token."""
     if not _is_human_subject(subject):
         return [subject] if subject else []
-    return await _read_spellings(org, subject, ch, include_inactive=True)
+    return await _read_spellings(org, subject, ch, for_cutoff=True)
 
 
 async def _read_spellings(
-    org: str, subject: str, ch: object | None, *, include_inactive: bool
+    org: str, subject: str, ch: object | None, *, for_cutoff: bool
 ) -> list[str]:
-    """The spellings tied to `subject`. A cutoff (`include_inactive`) must
-    reach all of them, so it reads up to `_CUTOFF_SPELLINGS` and raises past
-    that rather than cut short."""
+    """The spellings tied to `subject`. A cutoff must reach all of them,
+    inactive accounts' too, so it reads up to `_CUTOFF_SPELLINGS` and raises
+    past that rather than cut short."""
     from server.core.ch import get_client
 
-    limit = _CUTOFF_SPELLINGS if include_inactive else _LOOKUP_SPELLINGS
+    limit = _CUTOFF_SPELLINGS if for_cutoff else _LOOKUP_SPELLINGS
     # A cutoff reads one row more than it may use, to see that it has them all.
-    fetch = limit + 1 if include_inactive else limit
+    fetch = limit + 1 if for_cutoff else limit
     client = ch or get_client()
     rows = await client.query_all(  # type: ignore[attr-defined]
         """
@@ -110,15 +116,15 @@ async def _read_spellings(
         params={
             "org": org,
             "sub": subject,
-            "all": include_inactive,
+            "all": for_cutoff,
             "lim": fetch,
         },
     )
-    if include_inactive and len(rows) > limit:
-        # No retry fixes this: an operator must release the extra accounts.
+    if for_cutoff and len(rows) > limit:
         log.error("aliases: more than %d accounts name %r in %r", limit, subject, org)
         raise TooManySpellings(
-            f"more than {limit} accounts tie spellings to {subject!r} in {org!r}"
+            f"more than {limit} accounts tie spellings to {subject!r} in {org!r}; "
+            "an operator releases the extra ones with `loom claim-release`"
         )
     out, seen = [subject], {subject.lower()}
     for r in rows:

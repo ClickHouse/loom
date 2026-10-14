@@ -16,11 +16,12 @@ The table is ReplacingMergeTree ORDER BY jti: the newest row per key governs.
 - Taking a grant away (`write_grant_cutoffs`) writes a cutoff row keyed by
   `grant_claim_key`: tokens of that subject minted before it no longer reach
   the namespace through their own claim (`authz.claim_withdrawn`).
-- A cutoff is kept `NEVER_EXPIRES_DAYS` (a sign-in mints past any cutoff,
-  so none may lapse while the owner row stands). Its key is per namespace
-  and subject spelling, and a later cutoff replaces it, so the table holds
-  at most one row per pair that ever lost a grant, however often. Past
-  `SNAPSHOT_WARN_ROWS` a process logs one warning.
+- A cutoff is kept `NEVER_EXPIRES_DAYS`: sign-in leaves out an owned
+  namespace with any cutoff, ever, so a lapsed cutoff would hand it back.
+  Its key is per namespace and subject spelling, and a later cutoff
+  replaces it, so the table holds at most one row per pair that ever lost
+  a grant, however often. Past `SNAPSHOT_WARN_ROWS` a process logs one
+  warning.
 
 Failure semantics: until the first successful read `loaded()` is False and
 `verify_token` refuses every token (503, retryable) — an empty set would let
@@ -214,11 +215,13 @@ async def revoke(
 
 def _apply_locally(keys: list[str], cutoff: int | None) -> None:
     """Apply revocations this process just wrote, now and in every refresh
-    for a while (`_fold_written`). Here they replace what the snapshot holds:
-    the rows just inserted are the newest versions of their keys in
-    ClickHouse. A later refresh may know newer ones, so it never moves a key
-    back. `loaded()` is left as it is: rows this process wrote are not a
-    snapshot."""
+    for a while (`_fold_written`). `loaded()` is left as it is: rows this
+    process wrote are not a snapshot.
+
+    Here they replace what the snapshot holds, as the rows just inserted
+    replace theirs in ClickHouse: a cutoff narrows a full revocation of the
+    same key. A refresh only adds them, since another process may have
+    written a newer row since."""
     global _revoked_jtis, _revoked_before
     now = time.monotonic()
     full, before = set(_revoked_jtis), dict(_revoked_before)
@@ -257,8 +260,8 @@ def grant_claim_key(org: str, namespace: str, subject: str) -> str:
     array, so an org or namespace holding `/` cannot make two scopes share a
     key. The subject is lower-cased, as alias lookup's SQL `lower()` matches
     it, and hashed so the key does not spell out an email; the hash is
-    unsalted, so a guessed email can be tested against it. Never a jti or a
-    subject verify checks."""
+    unsalted, so a guessed email can be tested against it. The `grant:` prefix
+    keeps it apart from the jtis and subjects `verify_token` looks up."""
     digest = hashlib.sha256(subject.lower().encode()).hexdigest()[:32]
     return _GRANT_CLAIM_PREFIX + json.dumps([org, namespace, digest], separators=(",", ":"))
 
@@ -285,11 +288,11 @@ async def write_grant_cutoffs(
     # A release cuts every member at once; read their spellings a few at a time.
     limit = asyncio.Semaphore(8)
 
-    async def aliases(subject: str) -> list[str]:
+    async def spellings_of(subject: str) -> list[str]:
         async with limit:
             return await cutoff_spellings(org, subject)
 
-    spellings = await asyncio.gather(*(aliases(s) for s in subjects))
+    spellings = await asyncio.gather(*(spellings_of(s) for s in subjects))
     keys = sorted(
         {
             grant_claim_key(org, ns, alias)

@@ -52,6 +52,9 @@ class LoginOutput(BaseModel):
 
 
 # Generic auth-failure message — never leak whether the account exists.
+# A signed-in person: (subject, org, namespaces, roles).
+Identity = tuple[str, str, list[str], list[str]]
+
 _BAD_CREDS = {"code": "AUTH_INVALID", "message": "Invalid email or password."}
 
 # Failed sign-ins per identifier (guessing one account's password) and per
@@ -79,7 +82,7 @@ def _unknown_account_hash() -> str:
 
 async def resolve_user_credentials(
     identifier: str, password: str, *, address: str = ""
-) -> tuple[str, str, list[str], list[str]] | None:
+) -> Identity | None:
     """Verify (email-or-namespace + password) → (subject, org, namespaces, roles).
 
     Shared by /v1/auth/login and the OAuth /authorize endpoint so the two can't
@@ -101,9 +104,7 @@ async def resolve_user_credentials(
     return resolved
 
 
-async def _check_credentials(
-    ident: str, password: str
-) -> tuple[str, str, list[str], list[str]] | None:
+async def _check_credentials(ident: str, password: str) -> Identity | None:
     ch = get_client()
     # Email first (one email may own several namespaces → mint with all of them).
     rows = await ch.query_all(
@@ -148,8 +149,8 @@ async def _check_credentials(
 
 
 async def _with_restricted_grants(
-    identity: tuple[str, str, list[str], list[str]],
-) -> tuple[str, str, list[str], list[str]]:
+    identity: Identity,
+) -> Identity:
     """Add the restricted namespaces the person holds a grant on to a resolved
     identity (password and OIDC share it so the two never drift on the
     namespace set)."""
@@ -164,10 +165,13 @@ async def _without_cut_namespaces(subject: str, org: str, namespaces: list[str])
     lowered the grant. When the cutoffs cannot be read, raise
     `SignInUnavailable` (503): failing open would hand a cut namespace back,
     and failing narrow would mint a token without the person's namespaces."""
+    from server.auth.aliases import TooManySpellings
     from server.auth.revocation import read_grant_cutoffs
 
     try:
         ended = await read_grant_cutoffs(org, subject, namespaces, issued_at=None)
+    except TooManySpellings:
+        raise  # permanent: an operator's fix, not a retry
     except Exception as e:
         log.warning("login: grant cutoff read failed for %r in %r: %s", subject, org, e)
         raise SignInUnavailable from e
@@ -225,9 +229,7 @@ async def restricted_grant_namespaces(subject: str, org: str, *, strict: bool) -
     return sorted({str(r.get("namespace") or "") for r in rows if r.get("namespace")})
 
 
-def _identity_from_rows(
-    rows: list[dict[str, Any]], *, verified_email: str = ""
-) -> tuple[str, str, list[str], list[str]]:
+def _identity_from_rows(rows: list[dict[str, Any]], *, verified_email: str = "") -> Identity:
     """Map matched loom.namespaces rows → (subject, org, namespaces, roles).
 
     Shared by password login and OIDC so the two can't drift on identity /
@@ -289,7 +291,7 @@ async def refreshed_roles(subject: str, org: str, roles: list[str]) -> list[str]
 
 async def resolve_identity_for_email(
     email: str,
-) -> tuple[str, str, list[str], list[str]] | None:
+) -> Identity | None:
     """Map an externally-verified email (e.g. an OIDC id_token's) to a loom
     identity. No password — the IdP already authenticated the user. Matches
     active namespaces by contact_email; password_hash is NOT required, so

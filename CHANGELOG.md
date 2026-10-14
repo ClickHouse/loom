@@ -81,8 +81,8 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 - **Security:** `context.fetch` no longer serves, and `context.offload` refuses to write,
   `page/` blobs: a parked `memory.search` page holds hits from every namespace its search
   fanned out over, and only `memory.search(page=...)` serves it, re-checking each of them.
-- Sign-in answers 503 when it cannot read the grant cutoffs, as an OAuth exchange does,
-  instead of a token without the person's own namespaces.
+- Sign-in answers a retryable 503 when it cannot read the grant cutoffs, as an OAuth
+  exchange does, instead of a token without the person's own namespaces.
 - `grants.approve` refuses (409 `GRANT_WOULD_DOWNGRADE`) to approve a request below the
   subject's current grant; lower a grant with `grants.create replace=true`.
 - With auth off, an `all_mine` search also reads every namespace the single user registered,

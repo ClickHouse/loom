@@ -137,6 +137,9 @@ async def check_authorized(
     ):
         return
 
+    # A claim whose grant was taken away since the token was minted.
+    withdrawn = org is not None and namespace is not None and claim_withdrawn(auth, org, namespace)
+
     # Scoped token (carries an `ns_roles` map): the per-namespace role is
     # AUTHORITATIVE and was capped to the minter's live grant at mint, so it
     # cannot over-grant (this closes the flat-role write-escalation). For a
@@ -144,7 +147,6 @@ async def check_authorized(
     # NOT fall through to grant lookup — the token was deliberately scoped
     # (and possibly downgraded), so it is its own ceiling. Non-namespace
     # (org-level) ops fall through to the flat-role check below.
-    withdrawn = org is not None and namespace is not None and claim_withdrawn(auth, org, namespace)
     if auth.has_ns_roles() and org is not None and namespace is not None:
         role = await _scoped_role(auth, required_role, org, namespace, withdrawn=withdrawn)
         if role is not None and role.value >= required_role.value:
@@ -380,7 +382,7 @@ def claim_withdrawn(auth: AuthInfo, org: str, namespace: str) -> bool:
 async def scoped_claims(auth: AuthInfo, org: str) -> list[str]:
     """A scoped token's named namespaces, in order, that its gate still
     admits: a withdrawn claim stays while its subject holds a live grant
-    there, as `_check_scoped` caps it at that grant."""
+    there, as `_scoped_role` caps it at that grant."""
     out = []
     for ns in (ns for ns in auth.namespaces if ns and ns != "*"):
         if not claim_withdrawn(auth, org, ns) or await _lookup_grant(org, ns, auth.subject):

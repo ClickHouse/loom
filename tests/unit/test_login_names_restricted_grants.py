@@ -163,3 +163,19 @@ async def test_the_restricted_grant_read_raises_for_a_caller_that_must_not_narro
     monkeypatch.setattr(login, "get_client", lambda: ch)
     with pytest.raises(RuntimeError):
         await login.restricted_grant_namespaces("jdoe", "clickhouse", strict=True)
+
+
+@pytest.mark.asyncio
+async def test_too_many_spellings_is_no_retryable_sign_in_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No retry fixes it, so it is not turned into a 503 to retry forever.
+    import server.auth.revocation as revocation
+    from server.auth.aliases import TooManySpellings
+
+    async def _too_many(*_a: Any, **_k: Any) -> set[str]:
+        raise TooManySpellings("more than 1000 accounts")
+
+    monkeypatch.setattr(revocation, "read_grant_cutoffs", _too_many)
+    with pytest.raises(TooManySpellings):
+        await login._without_cut_namespaces("jdoe", "clickhouse", ["home"])
