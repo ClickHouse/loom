@@ -64,9 +64,14 @@ async def test_a_reopen_past_the_metadata_limit_keeps_the_session_keys(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_a_first_begin_is_versioned_below_the_clock(monkeypatch) -> None:
+async def test_a_first_begin_is_versioned_by_its_start(monkeypatch) -> None:
     started = datetime(2026, 10, 1)
     row = await _begin(monkeypatch, None, started)
     started_ns = int((started - datetime(1970, 1, 1)).total_seconds()) * 10**9
     assert row["version"] == run_handlers._FIRST_BEGIN_VERSION_BASE - started_ns
 
+
+@pytest.mark.asyncio
+async def test_a_start_before_the_base_allows_is_still_below_the_clock(monkeypatch) -> None:
+    row = await _begin(monkeypatch, None, datetime(2020, 1, 1))
+    assert row["version"] < time.time_ns()

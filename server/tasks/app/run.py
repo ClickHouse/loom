@@ -59,7 +59,9 @@ IDLE_CLOSES_AT_ONCE = 8
 IDLE_CLOSE_BUDGET_S = 120.0
 # A session run's first begin writes this minus its start (in ns) as its version, so
 # of two web processes that both found no row the earlier start and its owner win
-# under FINAL; every later write takes the server's ns clock, far above it.
+# under FINAL. Every later write takes the server's ns clock, which is above it
+# while start + now exceeds the base (any start after mid-2025); an older start is
+# clamped below the host's clock.
 _FIRST_BEGIN_VERSION_BASE = 3_500_000_000_000_000_000
 
 
@@ -262,7 +264,7 @@ async def begin_session_run(input: RunBeginInput, *, started_at: datetime) -> No
     version = None
     if existing is None:
         started_ns = (started_at - datetime(1970, 1, 1)) // timedelta(microseconds=1) * 1000
-        version = _FIRST_BEGIN_VERSION_BASE - started_ns
+        version = min(_FIRST_BEGIN_VERSION_BASE - started_ns, time.time_ns() - 1)
     else:
         metadata = _parse_metadata(existing.get("metadata"))
         metadata.pop("closed_by", None)
