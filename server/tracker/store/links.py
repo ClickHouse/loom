@@ -10,6 +10,7 @@ re-inserted every pass.
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime
 from typing import Any, TypedDict, cast
 
@@ -101,7 +102,7 @@ def build_link_row(**overrides: Any) -> dict[str, Any]:
     if row.get("computed_at") is None:
         row["computed_at"] = now
     if not row.get("version"):
-        row["version"] = int(now.timestamp() * 1e9)
+        row["version"] = time.time_ns()
     return row
 
 

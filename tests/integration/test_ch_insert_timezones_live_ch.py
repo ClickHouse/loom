@@ -117,19 +117,24 @@ async def test_a_naive_utc_write_keeps_its_instant_in_any_host_zone(table: str, 
     assert read_back == "True"
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("zone", ZONES)
-async def test_a_thread_is_stored_created_now_in_any_host_zone(zone: str) -> None:
+@pytest.fixture
+async def org() -> Any:
     from server.core.ch import get_client
 
-    org = f"itest-tz-{uuid.uuid4().hex[:8]}"
+    name = f"itest-tz-{uuid.uuid4().hex[:8]}"
     try:
-        lag = int((await _run_in(zone, CONVERSATION, org)).split()[-1])
-        assert abs(lag) < 60  # an offset would be hours
+        yield name
     finally:
         ch = get_client()
         await ch.connect()
         await ch.execute(
-            "DELETE FROM loom.conversation_threads WHERE org = {org:String}", params={"org": org}
+            "DELETE FROM loom.conversation_threads WHERE org = {org:String}", params={"org": name}
         )
         await ch.disconnect()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("zone", ZONES)
+async def test_a_thread_is_stored_created_now_in_any_host_zone(org: str, zone: str) -> None:
+    lag = int((await _run_in(zone, CONVERSATION, org)).split()[-1])
+    assert abs(lag) < 60  # an offset would be hours

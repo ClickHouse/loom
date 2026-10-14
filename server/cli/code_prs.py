@@ -35,11 +35,11 @@ async def _backfill_prs(args: argparse.Namespace) -> int:
     repo = CodeRepo()
 
     months = args.months or settings.code_pr_backfill_months
-    oldest = date.today() - timedelta(days=30 * months)
+    oldest = naive_utc_now().date() - timedelta(days=30 * months)
     # merged_at is immutable, so a calendar-day cursor walking BACKWARD is
     # gapless and resumable: pr_backfill_date = the next day to fetch.
     cursor_raw = await repo.get_state(org, ns, "pr_backfill_date")
-    day = date.fromisoformat(cursor_raw) if cursor_raw else date.today()
+    day = date.fromisoformat(cursor_raw) if cursor_raw else naive_utc_now().date()
 
     total = 0
     while day >= oldest and total < args.max_prs:
