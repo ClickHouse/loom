@@ -120,7 +120,7 @@ def test_explicit_quantized_and_the_replica_probe_still_win() -> None:
 
 
 @pytest.mark.asyncio
-async def test_probe_reads_codecs_then_patch_parts_of_coded_tables_only() -> None:
+async def test_probe_reads_coded_columns_with_their_patch_parts() -> None:
     ch = _FakeCH(
         coded=[("chunks", "embedding"), ("memory_chunks", "embedding")],
         patches={"chunks": 1, "code_summaries": 4},
@@ -301,6 +301,24 @@ async def test_a_process_whose_first_probes_fail_reads_once_clickhouse_answers()
     with pytest.raises(CodedWidthMismatchError):
         await vector_codes_state.refuse_width("chunks", 3072)
     assert vector_codes_state.stored_width("chunks", "embedding") == 1024
+
+
+@pytest.mark.asyncio
+async def test_a_read_only_process_retries_failed_first_probes_once_a_ttl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A worker that booted while ClickHouse was down is not left without a reading."""
+    ch = _FakeCH(coded=[("chunks", "embedding")], patches={}, fail=True)
+    await vector_codes_state.probe(ch)
+    ch.fail = False
+    n = len(ch.calls)
+    vector_codes_state.codes_apply("loom.chunks")
+    await _the_refresh()
+    assert vector_codes_state.coded_columns() == {"loom.chunks.embedding"}
+    monkeypatch.setattr(vector_codes_state, "_probed_at", None)  # as if that one failed too
+    vector_codes_state.codes_apply("loom.chunks")  # within a TTL of the last start
+    assert len(ch.calls) == n + 2  # the codec question and one statement, once
+    assert vector_codes_state._refresh.done()
 
 
 @pytest.mark.asyncio

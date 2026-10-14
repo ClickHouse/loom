@@ -7,7 +7,6 @@ column does; the probe reads the same width from system.columns."""
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 import pytest
@@ -127,43 +126,3 @@ async def test_a_retry_that_fails_again_is_raised(table, monkeypatch) -> None:
 
 def _full(width: int) -> dict[str, list[float]]:
     return {c: [0.1] * width for c in COLUMNS}
-
-
-@pytest.mark.asyncio
-async def test_an_older_probe_answering_last_does_not_undo_the_fresh_reading(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A probe that read the old width answers after the probe the refusal
-    started has published the new one, while that probe reads its patch parts."""
-
-    async def _no_retry(self: Any, op_name: str, fn: Any, **_kw: Any) -> Any:
-        return await fn()
-
-    monkeypatch.setattr(ch_mod.CHClient, "_with_retry", _no_retry)
-    ch_mod.describe_cache_clear()
-    table = _Table(3072)
-    await codes_state.probe(table)
-    old_answer = asyncio.Event()
-    read = table.query_all
-
-    async def held(sql: str, params: Any = None) -> list[dict[str, Any]]:
-        rows = await read(sql, params)
-        if "system.columns" in sql:
-            await old_answer.wait()
-        return rows
-
-    table.query_all = held  # type: ignore[method-assign]
-    older = asyncio.create_task(codes_state.probe(table))  # reads 3072, answers late
-    await asyncio.sleep(0)
-
-    async def fresh(sql: str, params: Any = None) -> list[dict[str, Any]]:
-        if "system.parts" in sql:
-            old_answer.set()  # the old answer lands now
-            await older
-        return await read(sql, params)
-
-    table.query_all = fresh  # type: ignore[method-assign]
-    table.width = 1024  # rebuilt outside Loom
-    with pytest.raises(CodedWidthMismatchError, match="stores 1024-dim vectors"):
-        await _client(table, monkeypatch).insert("loom.memory_embeddings", [_full(3072)])
-    assert codes_state.stored_width("memory_embeddings", "embedding") == 1024

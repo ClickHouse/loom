@@ -25,11 +25,11 @@ reads again first when the reading is older than FRESH_READING_S, and a write
 is refused only on a reading under REFUSAL_READING_S old.
 
 A failed probe keeps the previous reading. A table never read (never probed,
-or every probe failed) answers "apply":
-the flag is right on every coded, patch-free table, and the cost of sending it
-to a patched one (a few percent) is far below the cost of withholding it from a
-patch-free one (several times the bytes read). The main fact
-leg keeps its own stricter gate (`patch_parts.fact_codes_first`).
+or every probe failed) answers "apply": the flag is right on every coded,
+patch-free table, and the cost of sending it to a patched one (a few percent)
+is far below the cost of withholding it from a patch-free one (several times
+the bytes read). The main fact leg keeps its own stricter gate
+(`patch_parts.fact_codes_first`).
 """
 
 from __future__ import annotations
@@ -73,7 +73,7 @@ _probed_at: float | None = None
 _ch: Any = None
 # The probe in flight, and when it started.
 _refresh: asyncio.Task[Any] | None = None
-_refresh_started = 0.0
+_refresh_started: float | None = None
 # Whether the server has the Quantized codec at all; None = not asked yet.
 _codec_available: bool | None = None
 
@@ -90,7 +90,7 @@ def reset() -> None:
     _probed_at = None
     _ch = None
     _refresh = None
-    _refresh_started = 0.0
+    _refresh_started = None
     _codec_available = None
 
 
@@ -323,7 +323,8 @@ def _maybe_refresh() -> None:
     now = time.monotonic()
     if _ch is None or (_probed_at is not None and now - _probed_at < _ttl()):
         return
-    if now - _refresh_started < _ttl():  # one that failed lately: wait a TTL before the next
+    # a probe started within a TTL: in flight, or failed lately
+    if _refresh_started is not None and now - _refresh_started < _ttl():
         return
     try:
         asyncio.get_running_loop()
@@ -335,7 +336,7 @@ def _maybe_refresh() -> None:
 def _start_refresh(*, since: float) -> asyncio.Task[Any]:
     """A probe that started at or after `since`: the one in flight, or a new one."""
     global _refresh, _refresh_started
-    if _refresh is None or _refresh.done() or _refresh_started < since:
+    if _refresh is None or _refresh.done() or _refresh_started is None or _refresh_started < since:
         from server.core.background import detached_task, register_deferred_task
 
         _refresh_started = time.monotonic()

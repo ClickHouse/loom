@@ -66,7 +66,7 @@ def test_the_release_bundle_and_its_smoke_take_the_checked_release() -> None:
 
 def test_a_failed_lookup_fails_its_step() -> None:
     """`echo "image=$(…)"` exits 0 when the lookup fails; an assignment does not."""
-    for name in ("ci.yml", "release.yml"):
+    for name in ("ci.yml", "release.yml", "docker-smoke.yml"):
         for line in (WORKFLOWS / name).read_text().splitlines():
             if '>> "$GITHUB_OUTPUT"' in line:
                 assert "$(" not in line, (name, line)
