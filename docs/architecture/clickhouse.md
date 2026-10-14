@@ -400,7 +400,11 @@ with `purge=true` and runner state.
   `run.begin`: claim, read the run row, write it, drop the claim. A later begin that
   takes the free claim reads the row and goes to a fresh id. `run.complete` and the
   erasure saga's `agent_runs.delete` step also drop claims, for a key a process that
-  died mid-begin left behind. All are Keeper key drops, not MergeTree mutations.
+  died mid-begin left behind. The same table holds an MCP session run's close claim,
+  `["close", org, namespace, run_id]`: one close of the closes racing for the run
+  holds it while it completes the run, and drops only its own (fenced by
+  `claimed_at`); one a dead closer left is taken over after ten minutes. All are
+  Keeper key drops, not MergeTree mutations.
 
 **Classification for erasure.** `server/erasure/store/census.py` puts every table in
 `schemas/schema.sql` in exactly one list, and `tests/unit/test_every_table_is_classified.py`

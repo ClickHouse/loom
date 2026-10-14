@@ -605,7 +605,8 @@ def test_a_narrowed_token_cannot_reach_any_blacklist_op(
     r = _post(control_plane_url, tokens["namespace"], "blacklist.list", w)
     assert r.status_code == 200 and seed.pattern_id_v in r.text, r.text[:300]
 
-    # Another web process takes the pattern up within its version-check interval.
+    # Another web process takes the pattern up within its version-check interval,
+    # read here from this process's settings: the server is assumed to share them.
     time.sleep(settings.blacklist_version_check_interval_seconds + 0.5)
     r = _post(
         control_plane_url,

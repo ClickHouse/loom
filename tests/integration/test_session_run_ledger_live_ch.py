@@ -228,9 +228,10 @@ async def test_closes_racing_for_one_session_run_complete_it_once(ch: Any) -> No
 
     org = f"itest-race-{uuid.uuid4().hex[:8]}"
     run_id = session_run_id(org, "sa:a", uuid.uuid4().hex)
-    if await claim_close(ch, org, "ns", run_id) is None:
+    probe = await claim_close(ch, {"org": org, "namespace": "ns", "run_id": run_id})
+    if probe is None:
         pytest.skip("no Keeper claims table on this server")
-    await drop_close_claim(ch, org, "ns", run_id)
+    await drop_close_claim(ch, {"org": org, "namespace": "ns", "run_id": run_id}, probe)
     try:
         for _ in range(5):
             await begin_session_run(
@@ -252,6 +253,37 @@ async def test_closes_racing_for_one_session_run_complete_it_once(ch: Any) -> No
     finally:
         await ch.execute(
             "DELETE FROM loom.agent_runs WHERE org = {org:String}", params={"org": org}
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_stale_close_claim_is_taken_over_once_and_its_holder_cannot_drop_it(
+    ch: Any,
+) -> None:
+    from server.tasks.store.runs import CLOSE_CLAIM_STALE_S, claim_close, drop_close_claim
+
+    org = f"itest-claim-{uuid.uuid4().hex[:8]}"
+    row = {"org": org, "namespace": "ns", "run_id": session_run_id(org, "sa:a", "s")}
+    old = await claim_close(ch, row)
+    if old is None:
+        pytest.skip("no Keeper claims table on this server")
+    try:
+        assert old.held and not (await claim_close(ch, row)).held  # fresh: held elsewhere
+        await ch.execute(
+            "ALTER TABLE loom.agent_run_claims UPDATE claimed_at = claimed_at - "
+            "INTERVAL {s:UInt32} SECOND WHERE org = {org:String}",
+            params={"s": CLOSE_CLAIM_STALE_S + 60, "org": org},
+        )
+        claims = await asyncio.gather(*(claim_close(ch, row) for _ in range(6)))
+        (new,) = [c for c in claims if c is not None and c.held]
+        await drop_close_claim(ch, row, old)  # the dead closer comes back late
+        assert not (await claim_close(ch, row)).held  # the taker still holds it
+        await drop_close_claim(ch, row, new)
+        assert (await claim_close(ch, row)).held
+    finally:
+        await ch.execute(
+            "ALTER TABLE loom.agent_run_claims DELETE WHERE org = {org:String}",
+            params={"org": org},
         )
 
 

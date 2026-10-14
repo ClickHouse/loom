@@ -294,25 +294,30 @@ async def close_idle_session_runs(idle_seconds: int, *, org: str = "") -> int:
     return sum(await asyncio.gather(*(close(row) for row in stale)))
 
 
-async def _complete_session_run(row: RunLedgerRow, *, reason: str, idle_seconds: int = 0) -> bool:
+async def _complete_session_run(
+    row: RunLedgerRow, *, reason: str, idle_seconds: int | None = None
+) -> bool:
     """Complete one row of a session run, once: a close claim lets one of the
     closes racing for it (the sweep on another host, a DELETE) through, and the
-    winner completes it only while it is still active, and with `idle_seconds`
-    (the sweep, which picked it a while ago) still idle. A second completion
-    would apply the retain mode to the run's memories again. Without Keeper
-    there is no claim, and two racing closes can both complete it."""
+    winner completes it only while it is still active, and for the sweep
+    (`idle_seconds`, which picked it a while ago) still idle. A second
+    completion would apply the retain mode to the run's memories again. Two
+    can still both complete it without Keeper, or when one stalls past
+    CLOSE_CLAIM_STALE_S and another takes its claim over."""
     ch = get_client()
     org, namespace, run_id = str(row["org"]), str(row["namespace"]), str(row["run_id"])
-    claimed = await runs_store.claim_close(ch, org, namespace, run_id)
-    if claimed is False:
+    claim = await runs_store.claim_close(ch, row)
+    if claim is not None and not claim.held:
         return False
     try:
         with sequential_reads():
             existing = await runs_store.fetch_run(ch, org, namespace, run_id)
         if existing is None or existing.get("status") != "active":
             return False
-        subject = str(json.loads(existing.get("metadata") or "{}").get("subject") or "")
-        if idle_seconds and await runs_store.called_lately(ch, run_id, subject, idle_seconds):
+        subject = str(_parse_metadata(existing.get("metadata")).get("subject") or "")
+        if idle_seconds is not None and await runs_store.called_lately(
+            ch, run_id, subject, idle_seconds
+        ):
             return False
         await _complete(
             ch,
@@ -332,8 +337,8 @@ async def _complete_session_run(row: RunLedgerRow, *, reason: str, idle_seconds:
         )
         return True
     finally:
-        if claimed:
-            await runs_store.drop_close_claim(ch, org, namespace, run_id)
+        if claim is not None:
+            await runs_store.drop_close_claim(ch, row, claim)
 
 
 async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:
@@ -538,7 +543,7 @@ async def handle_run_complete(input: RunCompleteInput) -> RunCompleteOutput:
 
 
 async def _complete(ch: Any, input: RunCompleteInput, existing: RunLedgerRow) -> RunCompleteOutput:
-    """Close the run `existing` is the stored row of."""
+    """Close the run from its stored row `existing`; the caller checked access."""
     now = _now()
     started = existing.get("started_at")
     duration_ms = int(input.duration_ms or 0)

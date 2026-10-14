@@ -99,7 +99,10 @@ hand should not claim to be implicit. The run sits in the caller's default
 namespace, so what its readers see stays there: its goal is the label
 `mcp session (<agent>)`, never a call's text (a read's query may reach any
 namespace the caller reads), and `memories_written` lists the writes in that
-namespace only (the others still carry its `run_id`).
+namespace only (the others still carry its `run_id`). Closes racing for one run
+(the sweep on two hosts, a `DELETE`) claim it in Keeper first, so one completes
+it and its retain mode applies once; without Keeper, or when a close stalls past
+the ten minutes after which its claim is taken over, two can both complete it.
 
 ## Operations
 

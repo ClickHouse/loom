@@ -38,17 +38,17 @@ class _Ledger:
         await asyncio.sleep(0)
         return [r for r in self.rows if r["run_id"] == run_id and not self._done(run_id)]
 
-    async def claim(self, ch: Any, org: str, ns: str, run_id: str) -> bool | None:
+    async def claim(self, ch: Any, row: dict[str, Any]) -> Any:
         await asyncio.sleep(0)
         if not self.keeper:
             return None
-        if run_id in self.claims:
-            return False
-        self.claims.add(run_id)
-        return True
+        held = row["run_id"] not in self.claims
+        self.claims.add(row["run_id"])
+        return run_handlers.runs_store.CloseClaim(held=held)
 
-    async def drop(self, ch: Any, org: str, ns: str, run_id: str) -> None:
-        self.claims.discard(run_id)
+    async def drop(self, ch: Any, row: dict[str, Any], claim: Any) -> None:
+        if claim.held:
+            self.claims.discard(row["run_id"])
 
     async def fetch(self, ch: Any, org: str, ns: str, run_id: str) -> dict[str, Any] | None:
         await asyncio.sleep(0)
@@ -181,3 +181,22 @@ async def test_a_run_its_token_called_since_the_pick_is_left_open(monkeypatch) -
     monkeypatch.setattr(run_handlers.runs_store, "called_lately", AsyncMock(return_value=True))
     assert await run_handlers.close_idle_session_runs(1800) == 0
     assert ledger.completes == [] and ledger.claims == set()
+
+
+@pytest.mark.asyncio
+async def test_a_keeper_failure_leaves_the_close_unclaimed(monkeypatch) -> None:
+    """The claim answers None, as with no claims table, rather than raising."""
+    from server.tasks.store import runs as store
+
+    class _DownKeeper:
+        async def execute(self, sql: str, params: Any = None) -> None:
+            raise RuntimeError("Coordination::Exception: Connection loss")
+
+    async def available(ch: Any) -> bool:
+        return True
+
+    monkeypatch.setattr(store, "_claims_available", available)
+    assert (
+        await store.claim_close(_DownKeeper(), {"org": "o", "namespace": "n", "run_id": "r"})
+        is None
+    )

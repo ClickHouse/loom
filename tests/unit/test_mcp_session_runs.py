@@ -81,7 +81,8 @@ def ledger(monkeypatch) -> _Ledger:
     monkeypatch.setattr(h, "active_session_runs", led.active_runs)
     monkeypatch.setattr(h, "_complete", led.complete)
     monkeypatch.setattr(h.runs_store, "fetch_run", led.fetch)
-    monkeypatch.setattr(h.runs_store, "claim_close", AsyncMock(return_value=True))
+    held = h.runs_store.CloseClaim(held=True)
+    monkeypatch.setattr(h.runs_store, "claim_close", AsyncMock(return_value=held))
     monkeypatch.setattr(h.runs_store, "drop_close_claim", AsyncMock())
     return led
 
