@@ -1,44 +1,21 @@
-# loom-repo-sandbox: the AppArmor profile for Loom containers that run the
-# bubblewrap repository-job sandbox (dev/docker-compose.colour.yml asks for it).
+# loom-repo-sandbox: AppArmor profile for the Loom containers that run the
+# bubblewrap repository-job sandbox (dev/docker-compose.colour.yml).
 #
-# The container's processes run under Docker's docker-default
-# (github.com/moby/profiles apparmor/v0.2.1, template.go, the version Docker
-# 29.x vendors), renamed, with `deny mount` kept and no `userns` rule: the
-# server and the tools it runs outside the sandbox cannot unshare or mount.
-# An exec of /usr/bin/bwrap moves into the child profile
-# loom-repo-sandbox//bwrap, which adds `userns, mount, pivot_root`: bwrap
-# creates a user namespace and mounts the job's fresh root inside it.
-# Everything bwrap starts inherits the child profile. That is the boundary:
-# any process in the container that can exec bwrap can create user namespaces
-# and mount inside them. A repository job is held back by Loom's own seccomp
-# filter, which bwrap installs before it runs the job and which refuses
-# unshare, mount, umount2, pivot_root and a clone with CLONE_NEWUSER.
-# The child keeps docker-default's /proc/sys and /sys write denials, which
-# refuse the user.max_user_namespaces write of bwrap's --disable-userns; Loom's
-# probe then runs bwrap without that flag, the seccomp filter standing in.
+# Based on Docker's docker-default (github.com/moby/profiles apparmor/v0.2.1,
+# template.go, as Docker 29.x vendors it). Every process in the container runs
+# under it, `deny mount` kept. Only an exec of /usr/bin/bwrap enters the child
+# profile //bwrap below, which adds `userns, mount, pivot_root`; what bwrap
+# runs inherits it. Constraints:
+#   - ABI 4.0, because `userns` needs it; under 4.0 a profile without `userns`
+#     cannot create a user namespace, and `unix, mqueue` keep what 3.0 left
+#     unmediated.
+#   - no `no-new-privileges` on the container: under it the kernel refuses the
+#     exec transition into //bwrap.
+#   - the child keeps docker-default's /proc and /sys denials, so it refuses
+#     bwrap's --disable-userns sysctl write; Loom runs bwrap without the flag.
 #
-# Other changes from docker-default:
-#   - `abi <abi/4.0>` instead of 3.0, because `userns` needs it; `unix,` and
-#     `mqueue,` keep what ABI 3.0 left unmediated (4.0 mediates both). Under
-#     4.0 a profile without `userns` may not create a user namespace.
-#   - no separate dockerd signal peer: dockerd runs unconfined, which the
-#     `peer=unconfined` lines already cover.
-#   - the outer profile may signal and trace the child (the server kills a
-#     timed-out job); the child may only receive from it.
-#
-# `apparmor=unconfined` is no substitute on hosts with
-# kernel.apparmor_restrict_unprivileged_userns=1 (Ubuntu 23.10+): an unconfined
-# process that creates a user namespace is moved into the restrictive
-# `unprivileged_userns` profile, which refuses the mounts.
-#
-# Do not combine with `no-new-privileges`: under it the kernel refuses the
-# exec transition into the child profile, and bwrap fails to start.
-#
-# Load it on the Docker host, and on every boot (apparmor.service loads
-# /etc/apparmor.d at boot):
-#   sudo install -m644 deploy/apparmor/loom-repo-sandbox /etc/apparmor.d/loom-repo-sandbox
-#   sudo apparmor_parser -r -W /etc/apparmor.d/loom-repo-sandbox
-# See "Repository-job sandbox" in docs/operations/code-index-operations.md.
+# Installation, what this opens and to whom: "Repository-job sandbox" in
+# docs/operations/code-index-operations.md.
 
 abi <abi/4.0>,
 
@@ -68,6 +45,7 @@ profile loom-repo-sandbox flags=(attach_disconnected,mediate_deleted) {
   signal (receive) peer=crun,
   # Container processes may send signals amongst themselves.
   signal (send,receive) peer=loom-repo-sandbox,
+  # The server kills a timed-out job; the job only receives from it (below).
   signal (send) peer=loom-repo-sandbox//bwrap,
 
   deny @{PROC}/* w,   # deny write for all files directly in /proc (not in a subdir)

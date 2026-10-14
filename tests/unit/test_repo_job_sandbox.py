@@ -253,26 +253,37 @@ def test_prlimit_sets_the_rlimits_in_front_of_bwrap_and_nproc_inside(monkeypatch
     assert argv[-5:] == ["--", "/usr/bin/prlimit", "--nproc=64:64", "--", "true"]
 
 
-def test_the_probe_drops_disable_userns_when_only_it_fails(monkeypatch) -> None:
-    """An AppArmor profile may refuse the sysctl write --disable-userns makes;
-    the seccomp filter still refuses the job new user namespaces."""
+@pytest.mark.parametrize(
+    ("help_text", "fails_with", "available", "tried"),
+    [
+        # An AppArmor profile may refuse the sysctl write --disable-userns makes;
+        # the seccomp filter still refuses the job new user namespaces.
+        ("--disable-userns", {True}, True, [True, False]),
+        ("--disable-userns", set(), True, [True]),
+        ("--disable-userns", {True, False}, False, [True, False]),
+        ("--unshare-user", set(), True, [False]),
+    ],
+)
+def test_the_probe_drops_disable_userns_only_when_it_alone_fails(
+    monkeypatch, help_text: str, fails_with: set[bool], available: bool, tried: list[bool]
+) -> None:
     monkeypatch.setattr(sandbox.shutil, "which", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr(sandbox.platform, "machine", lambda: "x86_64")
     monkeypatch.setattr(
         sandbox.subprocess,
         "run",
-        lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout="  --disable-userns  ..."),
+        lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout=f"  {help_text}  ..."),
     )
-    tried = []
+    runs = []
 
     def job():
-        tried.append(sandbox._disable_userns)
-        return subprocess.CompletedProcess([], 1 if sandbox._disable_userns else 0, b"", b"")
+        runs.append(sandbox._disable_userns)
+        return subprocess.CompletedProcess([], int(sandbox._disable_userns in fails_with), b"", b"")
 
     monkeypatch.setattr(sandbox, "_probe_job", job)
     monkeypatch.setattr(sandbox, "_disable_userns", False)
-    assert sandbox._probe() is True
-    assert tried == [True, False] and sandbox._disable_userns is False
+    assert sandbox._probe() is available
+    assert runs == tried and sandbox._disable_userns is tried[-1]
 
 
 def test_the_probe_says_no_without_prlimit(monkeypatch) -> None:

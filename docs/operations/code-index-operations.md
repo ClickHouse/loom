@@ -304,10 +304,21 @@ files (`dev/docker-compose.cloud.yml`, `dev/docker-compose.dev.yml`,
 `dev/docker-compose.read-replica.yml`, `deploy/standalone/compose.yaml`) do not: an
 AppArmor profile the host has not loaded stops a container from starting, so they keep
 Docker's defaults, the probe fails and every repository job runs as a plain process (see
-_Without the sandbox_). To run it there, copy the colour file's `security_opt` block
-into them once the host has the profile, and its `pids_limit` as the container's
-backstop. A source run (`make server`) has the sandbox only where the host
-passes the same requirements.
+_Without the sandbox_). To run it there, once the host has the profile:
+
+- copy the colour file's `security_opt` block and its `pids_limit` (the container's
+  backstop). The `seccomp=` path is relative to the project directory (the compose
+  file's folder unless `--project-directory` says otherwise): `./seccomp/…` works
+  for the files in `dev/`, and `deploy/standalone/compose.yaml` needs
+  `../../dev/seccomp/loom-repo-sandbox.json`;
+- the release's standalone bundle (`loom-stack.tar.gz`) ships neither the seccomp file
+  nor the AppArmor profile: take both from the same release's source tree and point
+  `seccomp=` at where you put the JSON;
+- `redeploy.sh` checks only the colour compose. Run `dev/apparmor_check.sh <compose file>`
+  by hand before starting another stack, and the throwaway-container check below.
+
+A source run (`make server`) has the sandbox only where the host passes the same
+requirements.
 
 **Requirements.** `bwrap` and `prlimit` (util-linux) on `PATH` (the image has both) and
 unprivileged user namespaces. Docker's defaults block bwrap three ways, and the colour
@@ -342,9 +353,11 @@ security_opt:
   tools it runs outside the sandbox cannot unshare or mount, but any process in the
   container that can exec `/usr/bin/bwrap` can create user namespaces and mount inside
   them, without Loom's filter. The child profile keeps `docker-default`'s `/proc/sys`
-  write denials, which refuse the sysctl write bwrap's `--disable-userns` makes; the
-  probe then runs bwrap without that flag, Loom's filter refusing new user namespaces
-  on its own. Load the profile on the Docker host once; `/etc/apparmor.d` is loaded
+  write denials, which refuse the sysctl write bwrap's `--disable-userns` makes (an
+  allow rule cannot override a deny, and narrowing the deny globs for both forms the
+  path can take would make them hard to review). So under this profile, production
+  included, the probe is expected to fall back to running bwrap without that flag,
+  logging it at INFO; Loom's filter refuses new user namespaces on its own. Load the profile on the Docker host once; `/etc/apparmor.d` is loaded
   again at every boot:
 
   ```bash
@@ -365,9 +378,11 @@ security_opt:
 
   `redeploy.sh` stops before building a colour when the profile is not loaded, and on a
   host without AppArmor (see below). After the new colour starts, and before the proxy
-  is swapped to it, it runs the same probe in the colour's workers container and stops
-  when it fails, leaving the old colour serving. That is the first check of the real
-  profile on a deploy that skipped the one above.
+  is swapped to it, it runs the same probe in each of the colour's containers that runs
+  under the profile (`loom-<colour>` and `loom-<colour>-workers`). When one fails it
+  prints the probe's warning, stops the new colour so its workers cannot take the lease
+  and run jobs unsandboxed, and exits with the old colour still serving. That is the
+  first check of the real profile on a deploy that skipped the one above.
 
 - **`/proc`.** Docker masks paths under `/proc` and `/sys`, and the kernel then refuses
   the fresh procfs mount the sandbox makes; `systempaths=unconfined` unmasks them. That

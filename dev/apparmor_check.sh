@@ -17,23 +17,31 @@ compose=${1:?usage: dev/apparmor_check.sh <compose file>}
 fs=${LOOM_APPARMOR_FS:-/sys/kernel/security/apparmor}
 
 # Every profile the file names, in any of Compose's spellings (quoted or not,
-# `apparmor=` or `apparmor:`, block or flow lists). Comments are dropped first.
+# `apparmor=` or `apparmor:`, block or flow lists), comments dropped first.
+# A name that is not a plain profile name (`${PROFILE}`, empty) stops the
+# check rather than passing it. POSIX sed and grep only: this runs on macOS too.
 code=$(sed 's/#.*//' "$compose")
-profiles=$(sed -n "s/.*apparmor[=:][\"']\{0,1\}\([A-Za-z0-9_.-][A-Za-z0-9_.-]*\).*/\1/p" <<<"$code" | sort -u)
-if [[ -z "$profiles" ]]; then
-  if grep -qi apparmor <<<"$code"; then
-    echo "!!! cannot read the AppArmor profile from $compose; refusing rather than guessing."
-    exit 1
-  fi
+options=$(grep -oE "apparmor[=:][^]\"',[:space:]]*" <<<"$code" || true)
+if [[ -z "$options" ]]; then
   exit 0
 fi
-profiles=$(grep -vx unconfined <<<"$profiles" || true)
+profiles=""
+while IFS= read -r option; do
+  name=${option#apparmor?}
+  if [[ ! "$name" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+    echo "!!! cannot read the AppArmor profile '$name' from $compose; refusing rather than guessing."
+    exit 1
+  fi
+  if [[ "$name" != unconfined && " $profiles" != *" $name "* ]]; then
+    profiles+="$name "
+  fi
+done <<<"$options"
 if [[ -z "$profiles" ]]; then
   exit 0
 fi
 
 if [[ ! -d "$fs" ]]; then
-  echo "!!! $compose asks for the AppArmor profile ${profiles//$'\n'/ }, but this host has no AppArmor."
+  echo "!!! $compose asks for the AppArmor profile ${profiles% }, but this host has no AppArmor."
   echo "    Docker would ignore it but still unmask /proc and /sys (systempaths=unconfined), with"
   echo "    nothing in their place. Enable AppArmor, or drop the security_opt block (repository"
   echo "    jobs then run without the sandbox)."

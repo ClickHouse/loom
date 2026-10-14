@@ -187,16 +187,17 @@ def _probe() -> bool:
             # It is a second lock only: the seccomp filter already refuses the job
             # new user namespaces.
             logger.info(
-                "sandbox probe failed with --disable-userns, trying without it: %s",
-                done.stderr.decode(errors="replace")[-300:],
+                "bwrap --disable-userns refused here (%s); jobs run without it, the "
+                "seccomp filter refusing new user namespaces",
+                done.stderr.decode(errors="replace").strip()[-300:],
             )
             _disable_userns = False
             done = _probe_job()
     except (OSError, subprocess.SubprocessError) as e:
-        logger.info("sandbox probe failed: %s", e)
+        logger.warning("sandbox probe failed: %s", e)
         return False
     if done.returncode != 0:
-        logger.info("sandbox probe failed: %s", done.stderr.decode(errors="replace")[-300:])
+        logger.warning("sandbox probe failed: %s", done.stderr.decode(errors="replace")[-300:])
     return done.returncode == 0
 
 

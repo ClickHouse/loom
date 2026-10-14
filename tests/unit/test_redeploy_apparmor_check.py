@@ -82,11 +82,26 @@ def test_every_compose_spelling_of_the_profile_is_checked(tmp_path: Path, line: 
     assert missing.returncode == 1 and "loom-repo-sandbox is not loaded" in missing.stdout
 
 
-def test_an_apparmor_option_it_cannot_read_stops(tmp_path: Path) -> None:
-    compose = tmp_path / "compose.yml"
-    compose.write_text("services:\n  web:\n    security_opt:\n      - apparmor=${PROFILE}\n")
-    done = _run(compose, _apparmor_fs(tmp_path, ["docker-default"]))
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["apparmor=${PROFILE}"],
+        ["apparmor=docker-default", "apparmor=${PROFILE}"],
+        ["apparmor="],
+    ],
+)
+def test_an_apparmor_option_it_cannot_read_stops(tmp_path: Path, options: list[str]) -> None:
+    done = _run(_compose(tmp_path, *options), _apparmor_fs(tmp_path, ["docker-default"]))
     assert done.returncode == 1 and "cannot read the AppArmor profile" in done.stdout
+
+
+def test_two_profiles_on_one_line_are_both_checked(tmp_path: Path) -> None:
+    compose = tmp_path / "compose.yml"
+    compose.write_text(
+        'services:\n  web:\n    security_opt: ["apparmor=missing-one", apparmor=docker-default]\n'
+    )
+    done = _run(compose, _apparmor_fs(tmp_path, ["docker-default"]))
+    assert done.returncode == 1 and "missing-one is not loaded" in done.stdout
 
 
 def test_every_named_profile_must_be_loaded(tmp_path: Path) -> None:
@@ -113,8 +128,12 @@ def test_redeploy_runs_the_check_before_the_preflight() -> None:
     assert check < text.index("dev/redeploy_preflight.sh")
 
 
-def test_redeploy_probes_the_new_colours_sandbox_before_the_swap() -> None:
+def test_redeploy_probes_both_new_containers_before_the_swap_and_stops_them_on_failure() -> None:
     text = (ROOT / "redeploy.sh").read_text(encoding="utf-8")
-    probe = text.index('docker exec "loom-$idle-workers" python -c')
-    assert "s.sandbox_available()" in text[probe : probe + 200]
-    assert text.index('wait_workers "$idle"') < probe < text.index('swap_to "$idle"')
+    loop = text.index('for c in "loom-$idle" "loom-$idle-workers"; do')
+    block = text[loop : text.index("done", loop)]
+    # decided from the running container, not the compose text (comments included)
+    assert "{{.HostConfig.SecurityOpt}}" in block and "*apparmor=loom-repo-sandbox*" in block
+    assert 'docker exec "$c" python -c' in block and "s.sandbox_available()" in block
+    assert 'docker stop -t 45 "loom-$idle" "loom-$idle-workers"' in block
+    assert text.index('wait_workers "$idle"') < loop < text.index('swap_to "$idle"')

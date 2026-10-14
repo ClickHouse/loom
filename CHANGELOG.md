@@ -19,7 +19,8 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   `bwrap` and what it runs) and `systempaths=unconfined`, plus `pids_limit: 8192` per
   container as a backstop. Load the AppArmor profile on the host before the next
   redeploy; `redeploy.sh` (through `dev/apparmor_check.sh`) stops when it is missing or
-  the host has no AppArmor, and does not swap to a new colour whose sandbox probe fails.
+  the host has no AppArmor, and stops the new colour instead of swapping to it when the
+  sandbox probe fails in either of its containers.
   The other Compose stacks are unchanged. See "Repository-job sandbox" in
   docs/operations/code-index-operations.md.
 
