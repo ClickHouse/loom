@@ -348,7 +348,6 @@ async def test_code_repo_add_is_refused_without_the_sandbox(plane, monkeypatch) 
             await call
         detail = ei.value.to_detail()
         assert detail["code"] == "SANDBOX_UNAVAILABLE"
-        # The refusal names the path that works without the sandbox.
         assert "LOOM_CODE_REPOS_JSON" in detail["message"]
     assert plane.ch.inserted == []
 

@@ -22,9 +22,11 @@ It also needs the [repository-job sandbox](../../operations/code-index-operation
 a repository added here gets compiler tiers that execute its own build code, and its
 clone talks to a host the person chose, so without the sandbox the add is refused
 (`SANDBOX_UNAVAILABLE`) and entries already added are no longer fetched or indexed.
-Of the shipped Compose stacks only the blue/green colours (`dev/docker-compose.colour.yml`)
-run it. On the others, the released stack included, index a repository through
-`LOOM_CODE_REPOS_JSON` ([quickstart](../../getting-started/quickstart.md#index-a-repository-on-the-released-stack)). Each org holds at most `LOOM_CODE_SELF_SERVICE_MAX_REPOS` (20) entries.
+Of the shipped Compose stacks only the blue/green one (`dev/docker-compose.colour.yml`)
+runs it. On the others, the released stack included, index a repository through
+`LOOM_CODE_REPOS_JSON` ([quickstart](../../getting-started/quickstart.md#index-a-repository-on-the-released-stack)).
+
+Each org holds at most `LOOM_CODE_SELF_SERVICE_MAX_REPOS` (20) entries.
 
 Any signed-in member of an org can add a repository and becomes its first maintainer.
 The remote can be `owner/name` (GitHub shorthand), an HTTPS URL, or an SSH/scp-style

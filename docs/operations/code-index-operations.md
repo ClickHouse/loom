@@ -321,13 +321,17 @@ _Without the sandbox_). To run it there, once the host has the profile:
 A source run (`make server`) has the sandbox only where the host passes the same
 requirements.
 
-**Which hosts can run it.** The shipped profile is an AppArmor profile, tested on
-Ubuntu 24.04 with `kernel.apparmor_restrict_unprivileged_userns=1` (the CI
-`sandbox-profile` job). On another AppArmor host (Ubuntu 22.04, Debian), load it
-the same way and confirm with the throwaway-container check below. Docker Desktop on
-macOS and Windows, and SELinux distributions such as Fedora and RHEL, cannot load an
-AppArmor profile, and no sandbox configuration is shipped or tested for them: run Loom
-there without the sandbox. Every host can still index repositories that the operator lists in
+**Which hosts can run it.** The shipped profile targets AppArmor 4.0 or later
+(`abi <abi/4.0>`): Ubuntu 24.04, where the CI `sandbox-profile` job tests it with
+`kernel.apparmor_restrict_unprivileged_userns=1`, and Debian 13. Older parsers
+(Ubuntu 22.04, Debian 12) reject that ABI, and Docker Desktop on macOS and Windows and
+SELinux distributions such as Fedora and RHEL cannot load an AppArmor profile at all. No
+sandbox configuration is shipped or tested for those hosts, so Loom runs there without
+it. Every host can still index the repositories the operator lists in
+`LOOM_CODE_REPOS_JSON` (see _Without the sandbox_ for what that runs, and the
+[quickstart](../getting-started/quickstart.md#index-a-repository-on-the-released-stack)
+for the released stack's commands); only adding a repository from the page needs the
+sandbox. Every host can still index repositories that the operator lists in
 `LOOM_CODE_REPOS_JSON` (see _Without the sandbox_ for what that runs, and the
 [quickstart](../getting-started/quickstart.md#index-a-repository-on-the-released-stack)
 for the released stack's commands); only adding a repository from the page needs the

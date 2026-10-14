@@ -37,8 +37,8 @@ installs the Compose and ClickHouse configuration under `~/.loom`, pulls the mat
 `ghcr.io/clickhouse/loom:X.Y.Z` image, and waits for
 `http://localhost:7777/v1/health`. The image contains the API, workers, migrations and
 the built React dashboard at `/me`; no Python or Node installation is needed. Python,
-TypeScript and Go compiler indexers are included and enabled. TypeScript repository
-dependencies are prepared automatically for each repository you index.
+TypeScript and Go compiler indexers are included and enabled. A repository indexed
+with the TypeScript indexer gets its dependencies installed automatically.
 The image supports Linux `amd64` and `arm64`, including Docker Desktop on Apple Silicon.
 
 Pin a release or inspect everything before starting:
@@ -68,21 +68,43 @@ Add `--volumes` only for an intentional, irreversible reset.
 
 ### Index a repository on the released stack
 
-List the repository in `LOOM_CODE_REPOS_JSON` in `~/.loom/.env`
-([Configure the entry](../operations/code-index-operations.md#configure-the-entry)), then
-recreate the stack and run the first index:
+Adding a repository from the dashboard is refused on this stack with `SANDBOX_UNAVAILABLE`:
+it needs the [repository-job sandbox](../operations/code-index-operations.md#repository-job-sandbox),
+which this stack leaves off because Docker's default confinement blocks it. List the
+repository in `~/.loom/.env` instead. Only list repositories you trust: their build steps
+(TypeScript installs, Go module downloads, CMake) run without the sandbox, inside the
+`loom` container.
+
+`LOOM_CODE_REPOS_JSON` is one line holding every repository as a JSON array
+([Configure the entry](../operations/code-index-operations.md#configure-the-entry)).
+Add it to `~/.loom/.env`, or add an entry to the array if the line is already there:
 
 ```bash
-echo 'LOOM_CODE_REPOS_JSON=[{"org":"dev","namespace":"code-myrepo","repo":"acme/myrepo","git_branch":"main","public":true}]' >> ~/.loom/.env
+LOOM_CODE_REPOS_JSON=[{"org":"dev","namespace":"code-myrepo","repo":"acme/myrepo","git_branch":"main","scip_producer":"python","scip_checkout_dir":"/app/var/code_repos/code-myrepo-checkout","public":true}]
+```
+
+- `scip_producer` picks the compiler-tier indexer: `typescript`, `python`, `go` or
+  `clang`. Without it the entry gets `clang`, which needs a configured build tree
+  ([Compiler tier](../operations/code-index-operations.md#compiler-tier)), so other
+  languages get only the parser tier.
+- `scip_checkout_dir` is the working tree that indexer runs in. For `typescript`,
+  `python` and `go` an empty Git repository is enough: the tier fetches each commit into
+  it from Loom's own clone.
+- A private repository needs a GitHub token: `LOOM_CODE_GITHUB_TOKEN` in `.env`, or
+  `github_token` on the entry.
+
+Then recreate the stack, create the working tree and run the first index:
+
+```bash
 docker compose --project-directory "$HOME/.loom" up -d --force-recreate loom
+docker compose --project-directory "$HOME/.loom" exec loom git init -q /app/var/code_repos/code-myrepo-checkout
 docker compose --project-directory "$HOME/.loom" exec loom loom code init --namespace code-myrepo --org dev
 docker compose --project-directory "$HOME/.loom" exec loom loom code backfill --namespace code-myrepo --org dev --embed
 ```
 
-`backfill --embed` needs a real embedding provider ([Models and keys](./models-and-keys.md)).
-Adding a repository from the dashboard is refused on this stack with `SANDBOX_UNAVAILABLE`:
-it needs the [repository-job sandbox](../operations/code-index-operations.md#repository-job-sandbox),
-which this stack leaves off because Docker's default confinement blocks it.
+`backfill --embed` needs an embedding provider ([Models and keys](./models-and-keys.md)).
+On the stock keyless stack it stops; add `--allow-fake-embedder` to try the wiring, not
+for real use.
 
 ### Start in multi-user mode
 

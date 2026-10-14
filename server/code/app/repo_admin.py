@@ -51,10 +51,9 @@ async def _require_sandbox() -> None:
 
     if not await asyncio.to_thread(sandbox_available):
         raise ValidationError(
-            "adding repositories from the page needs the repository-job sandbox, which is "
-            "unavailable on this deployment (bubblewrap missing or user namespaces blocked); "
-            "ask the operator to index it through LOOM_CODE_REPOS_JSON instead, or to enable "
-            'the sandbox ("Repository-job sandbox" in docs/operations/code-index-operations.md)',
+            "adding repositories or branches from the page needs the repository-job sandbox, "
+            "which this deployment cannot run; ask the operator to list the repository in "
+            "LOOM_CODE_REPOS_JSON instead (docs/operations/code-index-operations.md)",
             code="SANDBOX_UNAVAILABLE",
         )
 
