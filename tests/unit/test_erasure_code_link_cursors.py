@@ -28,6 +28,7 @@ def test_a_cursor_naming_an_erased_memory_loses_the_identity() -> None:
     assert steps._scrubbed("queue", json.dumps(_QUEUE), "o", set(), "bob") is None
     assert steps._scrubbed("backfill", json.dumps(_BACKFILL), "p", {"ns"}, "") is None
     assert steps._scrubbed("recheck/o/code", '{"head": "c1"}', "o", {"ns"}, "") is None
+    assert steps._scrubbed("queue", "[]", "o", set(), "alice") is None  # an empty queue
 
 
 class _CH:

@@ -569,7 +569,7 @@ def _scrubbed(key: str, value: str, org: str, namespaces: set[str], user_id: str
             who[_NS] in namespaces or bool(user_id) and who[_UID] == user_id
         )
 
-    if key == "queue" and isinstance(data, list) and names(data[_QUEUED:]):
+    if key == "queue" and isinstance(data, list) and data and names(data[_QUEUED:]):
         return json.dumps([*data[:_QUEUED], *[""] * len(IDENTITY)])
     if not isinstance(data, dict) or not (after := data.get("after")):
         return None
