@@ -180,24 +180,39 @@ def _probe() -> bool:
             [bwrap, "--help"], capture_output=True, text=True, timeout=10
         ).stdout
         _disable_userns = "--disable-userns" in help_text
-        scratch = tempfile.mkdtemp(prefix="loom-probe-")
-        try:
-            fd = _seccomp_fd()
-            try:
-                argv = _bwrap_argv(["true"], scratch=scratch, binds=[], fd=fd)
-                done = subprocess.run(
-                    argv, pass_fds=(fd,), capture_output=True, timeout=10, env={"PATH": os.defpath}
-                )
-            finally:
-                os.close(fd)
-        finally:
-            shutil.rmtree(scratch, ignore_errors=True)
+        done = _probe_job()
+        if done.returncode != 0 and _disable_userns:
+            # --disable-userns writes user.max_user_namespaces, which an AppArmor
+            # profile may refuse (loom-repo-sandbox's /proc/sys and /sys rules do).
+            # It is a second lock only: the seccomp filter already refuses the job
+            # new user namespaces.
+            logger.info(
+                "sandbox probe failed with --disable-userns, trying without it: %s",
+                done.stderr.decode(errors="replace")[-300:],
+            )
+            _disable_userns = False
+            done = _probe_job()
     except (OSError, subprocess.SubprocessError) as e:
         logger.info("sandbox probe failed: %s", e)
         return False
     if done.returncode != 0:
         logger.info("sandbox probe failed: %s", done.stderr.decode(errors="replace")[-300:])
     return done.returncode == 0
+
+
+def _probe_job() -> subprocess.CompletedProcess[bytes]:
+    scratch = tempfile.mkdtemp(prefix="loom-probe-")
+    try:
+        fd = _seccomp_fd()
+        try:
+            argv = _bwrap_argv(["true"], scratch=scratch, binds=[], fd=fd)
+            return subprocess.run(
+                argv, pass_fds=(fd,), capture_output=True, timeout=10, env={"PATH": os.defpath}
+            )
+        finally:
+            os.close(fd)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
 
 
 def _seccomp_fd() -> int:
@@ -240,7 +255,12 @@ def _bwrap_argv(argv: Sequence[str], *, scratch: str, binds: list[str], fd: int)
     args += ["--proc", "/proc", "--dev", "/dev", "--bind", scratch, "/tmp", "--dir", _HOME_INSIDE]
     args += binds
     args += ["--seccomp", str(fd)]
-    return [*args, "--", *argv]
+    # RLIMIT_NPROC is set here, inside bwrap's user namespace, where the kernel
+    # counts only the job's own tasks; outside it would count every task of the
+    # uid on the host. prlimit is under /usr, which the sandbox mounts.
+    nproc = settings.code_sandbox_max_pids
+    prlimit = shutil.which("prlimit") or "prlimit"
+    return [*args, "--", prlimit, f"--nproc={nproc}:{nproc}", "--", *argv]
 
 
 def tool_mounts(path: Path) -> list[Path]:
@@ -426,13 +446,13 @@ def _rlimits() -> list[tuple[str, int]]:
     return [
         ("--cpu", settings.code_sandbox_cpu_seconds),
         ("--data", settings.code_sandbox_memory_mb * mib),
-        ("--nproc", settings.code_sandbox_max_pids),
         ("--fsize", settings.code_sandbox_max_file_mb * mib),
     ]
 
 
 def _prlimit_argv() -> list[str]:
-    """`prlimit` setting the rlimits before it execs bwrap; the job inherits them."""
+    """`prlimit` setting the rlimits before it execs bwrap; the job inherits them
+    (all but RLIMIT_NPROC, which `_bwrap_argv` sets inside the sandbox)."""
     prlimit = shutil.which("prlimit") or "prlimit"
     return [prlimit, *(f"{option}={value}:{value}" for option, value in _rlimits()), "--"]
 

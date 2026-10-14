@@ -364,6 +364,15 @@ wait_workers "$idle" || {
   echo "!!! loom-$idle-workers is not healthy; not swapping. Inspect: docker logs loom-$idle-workers"
   exit 1
 }
+# A colour that asks for the sandbox profile must run the sandbox: a profile
+# that loads but refuses bwrap would otherwise leave repository jobs
+# unsandboxed without a word. The old colour keeps serving.
+if grep -q 'apparmor=loom-repo-sandbox' "$COLOUR_COMPOSE" \
+  && ! docker exec "loom-$idle-workers" python -c \
+    'from server.code.app.index import sandbox as s; raise SystemExit(0 if s.sandbox_available() else 1)'; then
+  echo "!!! loom-$idle-workers cannot run the repository-job sandbox; not swapping. See \"Repository-job sandbox\" in docs/operations/code-index-operations.md"
+  exit 1
+fi
 
 # ---- swap ------------------------------------------------------------------
 

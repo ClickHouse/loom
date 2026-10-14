@@ -3,23 +3,28 @@
 #
 # The container's processes run under Docker's docker-default
 # (github.com/moby/profiles apparmor/v0.2.1, template.go, the version Docker
-# 29.x vendors), renamed, with `deny mount` kept and no `userns` rule: they can
-# create no user namespace and mount nothing. Only /usr/bin/bwrap moves, on
-# exec, into the child profile loom-repo-sandbox//bwrap, which adds
-# `userns, mount, pivot_root`: bwrap creates a user namespace and mounts the
-# job's fresh root inside it. Everything bwrap starts (the job and the commands
-# it runs) inherits the child profile; Loom's own seccomp filter, which bwrap
-# installs before it runs the job, refuses the job unshare, mount, umount2,
-# pivot_root and a clone with CLONE_NEWUSER.
+# 29.x vendors), renamed, with `deny mount` kept and no `userns` rule: the
+# server and the tools it runs outside the sandbox cannot unshare or mount.
+# An exec of /usr/bin/bwrap moves into the child profile
+# loom-repo-sandbox//bwrap, which adds `userns, mount, pivot_root`: bwrap
+# creates a user namespace and mounts the job's fresh root inside it.
+# Everything bwrap starts inherits the child profile. That is the boundary:
+# any process in the container that can exec bwrap can create user namespaces
+# and mount inside them. A repository job is held back by Loom's own seccomp
+# filter, which bwrap installs before it runs the job and which refuses
+# unshare, mount, umount2, pivot_root and a clone with CLONE_NEWUSER.
+# The child keeps docker-default's /proc/sys and /sys write denials, which
+# refuse the user.max_user_namespaces write of bwrap's --disable-userns; Loom's
+# probe then runs bwrap without that flag, the seccomp filter standing in.
 #
-# Other changes from docker-default, in both profiles:
+# Other changes from docker-default:
 #   - `abi <abi/4.0>` instead of 3.0, because `userns` needs it; `unix,` and
 #     `mqueue,` keep what ABI 3.0 left unmediated (4.0 mediates both). Under
 #     4.0 a profile without `userns` may not create a user namespace.
 #   - no separate dockerd signal peer: dockerd runs unconfined, which the
 #     `peer=unconfined` lines already cover.
-#   - the two profiles may signal and trace each other, as processes in one
-#     container may under docker-default (the server kills a timed-out job).
+#   - the outer profile may signal and trace the child (the server kills a
+#     timed-out job); the child may only receive from it.
 #
 # `apparmor=unconfined` is no substitute on hosts with
 # kernel.apparmor_restrict_unprivileged_userns=1 (Ubuntu 23.10+): an unconfined
@@ -63,7 +68,7 @@ profile loom-repo-sandbox flags=(attach_disconnected,mediate_deleted) {
   signal (receive) peer=crun,
   # Container processes may send signals amongst themselves.
   signal (send,receive) peer=loom-repo-sandbox,
-  signal (send,receive) peer=loom-repo-sandbox//bwrap,
+  signal (send) peer=loom-repo-sandbox//bwrap,
 
   deny @{PROC}/* w,   # deny write for all files directly in /proc (not in a subdir)
   # deny write to files not in /proc/<number>/** or /proc/sys/**
@@ -85,7 +90,7 @@ profile loom-repo-sandbox flags=(attach_disconnected,mediate_deleted) {
   # allow processes within the container to trace each other,
   # provided all other LSM and yama setting allow it.
   ptrace (trace,tracedby,read,readby) peer=loom-repo-sandbox,
-  ptrace (trace,tracedby,read,readby) peer=loom-repo-sandbox//bwrap,
+  ptrace (trace,read) peer=loom-repo-sandbox//bwrap,
 
   # bwrap and everything it runs: the profile above plus the user namespace
   # and the mounts bwrap makes in it. `file,` gives inherit-exec (ix), so the
@@ -108,7 +113,7 @@ profile loom-repo-sandbox flags=(attach_disconnected,mediate_deleted) {
     signal (receive) peer=unconfined,
     signal (receive) peer=runc,
     signal (receive) peer=crun,
-    signal (send,receive) peer=loom-repo-sandbox,
+    signal (receive) peer=loom-repo-sandbox,
     signal (send,receive) peer=loom-repo-sandbox//bwrap,
 
     deny @{PROC}/* w,
@@ -127,7 +132,7 @@ profile loom-repo-sandbox flags=(attach_disconnected,mediate_deleted) {
     deny /sys/devices/virtual/powercap/** rwklx,
     deny /sys/kernel/security/** rwklx,
 
-    ptrace (trace,tracedby,read,readby) peer=loom-repo-sandbox,
+    ptrace (readby,tracedby) peer=loom-repo-sandbox,
     ptrace (trace,tracedby,read,readby) peer=loom-repo-sandbox//bwrap,
   }
 }

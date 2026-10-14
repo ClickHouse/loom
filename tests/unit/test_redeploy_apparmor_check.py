@@ -65,6 +65,37 @@ def test_a_host_without_apparmor_stops(tmp_path: Path) -> None:
     assert "this host has no AppArmor" in done.stdout
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        '    - "apparmor=loom-repo-sandbox"',
+        "    - 'apparmor:loom-repo-sandbox'",
+        '  security_opt: ["seccomp=x.json", "apparmor=loom-repo-sandbox"]',
+    ],
+)
+def test_every_compose_spelling_of_the_profile_is_checked(tmp_path: Path, line: str) -> None:
+    compose = tmp_path / "compose.yml"
+    compose.write_text(f"services:\n  web:\n{line}\n")
+    loaded = _run(compose, _apparmor_fs(tmp_path, ["loom-repo-sandbox"]))
+    assert loaded.returncode == 0, loaded.stdout
+    missing = _run(compose, _apparmor_fs(tmp_path / "other", ["docker-default"]))
+    assert missing.returncode == 1 and "loom-repo-sandbox is not loaded" in missing.stdout
+
+
+def test_an_apparmor_option_it_cannot_read_stops(tmp_path: Path) -> None:
+    compose = tmp_path / "compose.yml"
+    compose.write_text("services:\n  web:\n    security_opt:\n      - apparmor=${PROFILE}\n")
+    done = _run(compose, _apparmor_fs(tmp_path, ["docker-default"]))
+    assert done.returncode == 1 and "cannot read the AppArmor profile" in done.stdout
+
+
+def test_every_named_profile_must_be_loaded(tmp_path: Path) -> None:
+    compose = _compose(tmp_path, "apparmor=docker-default")
+    compose.write_text(compose.read_text() + "  w:\n    security_opt: [apparmor=loom-extra]\n")
+    done = _run(compose, _apparmor_fs(tmp_path, ["docker-default"]))
+    assert done.returncode == 1 and "loom-extra is not loaded" in done.stdout
+
+
 @pytest.mark.parametrize("options", [(), ("apparmor=unconfined",), ("seccomp=unconfined",)])
 def test_no_named_profile_needs_nothing(tmp_path: Path, options: tuple[str, ...]) -> None:
     assert _run(_compose(tmp_path, *options), tmp_path / "absent").returncode == 0
@@ -80,3 +111,10 @@ def test_redeploy_runs_the_check_before_the_preflight() -> None:
     text = (ROOT / "redeploy.sh").read_text(encoding="utf-8")
     check = text.index('dev/apparmor_check.sh "$COLOUR_COMPOSE" || exit 1')
     assert check < text.index("dev/redeploy_preflight.sh")
+
+
+def test_redeploy_probes_the_new_colours_sandbox_before_the_swap() -> None:
+    text = (ROOT / "redeploy.sh").read_text(encoding="utf-8")
+    probe = text.index('docker exec "loom-$idle-workers" python -c')
+    assert "s.sandbox_available()" in text[probe : probe + 200]
+    assert text.index('wait_workers "$idle"') < probe < text.index('swap_to "$idle"')

@@ -15,14 +15,13 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   They use narrow profiles instead of `unconfined`: `dev/seccomp/loom-repo-sandbox.json`
   (Docker's default plus `clone`, `unshare`, `mount`, `umount2`, `pivot_root`), the
   AppArmor profile `deploy/apparmor/loom-repo-sandbox` (`docker-default` for every
-  process, and a child profile adding `userns, mount, pivot_root` that only `bwrap` and
-  what it runs enter) and `systempaths=unconfined`. Each colour container gets
-  `pids_limit: 8192`, and `LOOM_CODE_SANDBOX_MAX_PIDS` is raised to 65536 there: the
-  rlimit counts every task of the uid on the host, so the cgroup is the bound. Load the
-  AppArmor profile on the host and check it in a throwaway container before the next
+  process, and a child profile adding `userns, mount, pivot_root` for whatever execs
+  `bwrap` and what it runs) and `systempaths=unconfined`, plus `pids_limit: 8192` per
+  container as a backstop. Load the AppArmor profile on the host before the next
   redeploy; `redeploy.sh` (through `dev/apparmor_check.sh`) stops when it is missing or
-  the host has no AppArmor. The other Compose stacks are unchanged. See "Repository-job
-  sandbox" in docs/operations/code-index-operations.md.
+  the host has no AppArmor, and does not swap to a new colour whose sandbox probe fails.
+  The other Compose stacks are unchanged. See "Repository-job sandbox" in
+  docs/operations/code-index-operations.md.
 
 ### Changed
 
@@ -30,6 +29,14 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   and a namespace's `rerank_endpoint` take a name, not a URL: `none`, `builtin:openai[:model]`,
   `builtin:cohere[:model]`, or an endpoint the operator names in `LOOM_RERANK_ENDPOINTS_JSON`.
   A URL or an unknown name is a 422. A namespace that still stores a URL is no longer reranked.
+
+### Fixed
+
+- `LOOM_CODE_SANDBOX_MAX_PIDS` bounds each repository job: it is set inside the job's
+  user namespace, so it no longer counts every task of the server's uid on the host.
+- Where an AppArmor profile refuses the sysctl write of bwrap's `--disable-userns`, the
+  sandbox probe retries without the flag instead of reporting the sandbox unavailable;
+  Loom's seccomp filter still refuses jobs new user namespaces.
 
 ## [1.0.0] - 2026-10-16
 

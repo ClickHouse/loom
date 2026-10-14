@@ -8,6 +8,7 @@ import contextlib
 import os
 import signal
 import struct
+import subprocess
 import sys
 from pathlib import Path
 
@@ -229,7 +230,7 @@ def test_the_probe_says_no_without_bwrap(monkeypatch) -> None:
     assert sandbox._probe() is False
 
 
-def test_prlimit_sets_the_rlimits_in_front_of_bwrap(monkeypatch) -> None:
+def test_prlimit_sets_the_rlimits_in_front_of_bwrap_and_nproc_inside(monkeypatch) -> None:
     """No Python runs between fork and exec (preexec_fn can deadlock a threaded
     server). Memory is RLIMIT_DATA: node reserves far more address space than
     RLIMIT_AS would allow."""
@@ -244,10 +245,34 @@ def test_prlimit_sets_the_rlimits_in_front_of_bwrap(monkeypatch) -> None:
         "/usr/bin/prlimit",
         "--cpu=60:60",
         "--data=1048576:1048576",
-        "--nproc=64:64",
         "--fsize=2097152:2097152",
         "--",
     ]
+    # RLIMIT_NPROC inside bwrap's user namespace: there it counts only the job's tasks.
+    argv = sandbox._bwrap_argv(["true"], scratch="/tmp/s", binds=[], fd=7)
+    assert argv[-5:] == ["--", "/usr/bin/prlimit", "--nproc=64:64", "--", "true"]
+
+
+def test_the_probe_drops_disable_userns_when_only_it_fails(monkeypatch) -> None:
+    """An AppArmor profile may refuse the sysctl write --disable-userns makes;
+    the seccomp filter still refuses the job new user namespaces."""
+    monkeypatch.setattr(sandbox.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(sandbox.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(
+        sandbox.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout="  --disable-userns  ..."),
+    )
+    tried = []
+
+    def job():
+        tried.append(sandbox._disable_userns)
+        return subprocess.CompletedProcess([], 1 if sandbox._disable_userns else 0, b"", b"")
+
+    monkeypatch.setattr(sandbox, "_probe_job", job)
+    monkeypatch.setattr(sandbox, "_disable_userns", False)
+    assert sandbox._probe() is True
+    assert tried == [True, False] and sandbox._disable_userns is False
 
 
 def test_the_probe_says_no_without_prlimit(monkeypatch) -> None:

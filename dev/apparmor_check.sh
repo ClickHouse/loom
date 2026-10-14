@@ -16,13 +16,24 @@ set -euo pipefail
 compose=${1:?usage: dev/apparmor_check.sh <compose file>}
 fs=${LOOM_APPARMOR_FS:-/sys/kernel/security/apparmor}
 
-profile=$(sed -n '/^ *- apparmor=/{s/^ *- apparmor=\([A-Za-z0-9_.-]*\).*/\1/p;q}' "$compose")
-if [[ -z "$profile" || "$profile" == unconfined ]]; then
+# Every profile the file names, in any of Compose's spellings (quoted or not,
+# `apparmor=` or `apparmor:`, block or flow lists). Comments are dropped first.
+code=$(sed 's/#.*//' "$compose")
+profiles=$(sed -n "s/.*apparmor[=:][\"']\{0,1\}\([A-Za-z0-9_.-][A-Za-z0-9_.-]*\).*/\1/p" <<<"$code" | sort -u)
+if [[ -z "$profiles" ]]; then
+  if grep -qi apparmor <<<"$code"; then
+    echo "!!! cannot read the AppArmor profile from $compose; refusing rather than guessing."
+    exit 1
+  fi
+  exit 0
+fi
+profiles=$(grep -vx unconfined <<<"$profiles" || true)
+if [[ -z "$profiles" ]]; then
   exit 0
 fi
 
 if [[ ! -d "$fs" ]]; then
-  echo "!!! $compose asks for the AppArmor profile $profile, but this host has no AppArmor."
+  echo "!!! $compose asks for the AppArmor profile ${profiles//$'\n'/ }, but this host has no AppArmor."
   echo "    Docker would ignore it but still unmask /proc and /sys (systempaths=unconfined), with"
   echo "    nothing in their place. Enable AppArmor, or drop the security_opt block (repository"
   echo "    jobs then run without the sandbox)."
@@ -31,8 +42,10 @@ fi
 
 # grep reads the files itself: `cat | grep -q` fails under pipefail when grep
 # exits early and cat takes SIGPIPE.
-if ! grep -qsxF "$profile" "$fs"/policy/profiles/*/name; then
-  echo "!!! AppArmor profile $profile is not loaded; $compose needs it. Load it once (persists across boots):"
-  echo "    sudo install -m644 deploy/apparmor/$profile /etc/apparmor.d/$profile && sudo apparmor_parser -r -W /etc/apparmor.d/$profile"
-  exit 1
-fi
+for profile in $profiles; do
+  if ! grep -qsxF "$profile" "$fs"/policy/profiles/*/name; then
+    echo "!!! AppArmor profile $profile is not loaded; $compose needs it. Load it once (persists across boots):"
+    echo "    sudo install -m644 deploy/apparmor/$profile /etc/apparmor.d/$profile && sudo apparmor_parser -r -W /etc/apparmor.d/$profile"
+    exit 1
+  fi
+done
