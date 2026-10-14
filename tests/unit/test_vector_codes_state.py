@@ -470,19 +470,32 @@ def test_each_serving_column_is_held_to_the_width_its_writes_carry(
     assert vector_codes_state.width_mismatches(1024) == {"loom.code_chunks.embedding": (3072, 1024)}
 
 
-def test_only_the_served_models_coded_columns_count_as_primary(
+@pytest.mark.asyncio
+async def test_only_the_served_models_coded_columns_count_as_primary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A plain primary table beside a coded secondary one: a model change has
     nothing coded to rebuild, so any primary width is fine."""
     from server.core.vectors import code_tables
 
-    monkeypatch.setattr(vector_codes_state._state, "widths", {"loom.code_chunks_small.embedding": 8})
+    ch = _FakeCH(coded=[("code_chunks_small", "embedding")], patches={}, width=8)
+    await vector_codes_state.probe(ch)
     monkeypatch.setattr(code_tables, "_mapping", lambda: {"small": ("loom.code_chunks_small", 8)})
-    assert not vector_codes_state.served_model_writes_coded()
+    assert not await vector_codes_state.served_model_writes_coded()
     assert vector_codes_state.width_mismatches(12) == {}
-    monkeypatch.setattr(vector_codes_state._state, "widths", {"loom.chunks.embedding": 3072})
-    assert vector_codes_state.served_model_writes_coded()
+    ch.coded, ch.width = [("chunks", "embedding")], 3072
+    await vector_codes_state.probe(ch)
+    assert await vector_codes_state.served_model_writes_coded()
+
+
+@pytest.mark.asyncio
+async def test_no_reading_counts_as_coded_unless_the_codec_is_missing() -> None:
+    """A failed boot probe must not let a width the rebuild cannot code through."""
+    await vector_codes_state.probe(_FakeCH(coded=[], patches={}, fail=True))
+    assert await vector_codes_state.served_model_writes_coded()
+    vector_codes_state.reset()
+    await vector_codes_state.probe(_FakeCH(coded=[], patches={}, codec=False))
+    assert not await vector_codes_state.served_model_writes_coded()
 
 
 def test_a_vector_its_coded_column_cannot_take_is_refused_by_name(

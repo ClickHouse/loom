@@ -257,7 +257,7 @@ async def test_a_width_the_coded_tables_cannot_take_is_refused_before_any_probe(
     llm, embed = AsyncMock(), AsyncMock()
     monkeypatch.setattr(validation, "_probe_llm", llm)
     monkeypatch.setattr(validation, "_probe_embedding", embed)
-    monkeypatch.setattr(codes_state, "served_model_writes_coded", lambda: coded)
+    monkeypatch.setattr(codes_state, "served_model_writes_coded", AsyncMock(return_value=coded))
     setup = setup_input(embedding={"provider": "openai", "model": "e", "dimensions": 12})
     result = await validation.validate_providers(setup, {"anthropic": "a", "openai": "o"})
     assert result.ready is ready

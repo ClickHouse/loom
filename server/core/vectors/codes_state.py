@@ -118,9 +118,13 @@ def stored_width(table: str, column: str) -> int | None:
     return _state.widths.get(f"{_qualify(table)}.{column}")
 
 
-def served_model_writes_coded() -> bool:
+async def served_model_writes_coded() -> bool:
     """Whether a coded column takes the served model's writes, so a model change
-    must pick a width the codec can encode."""
+    must pick a width the codec can encode. Without any reading (ClickHouse did
+    not answer) it says yes unless the server lacks the codec."""
+    await _reading_since(time.monotonic() - _ttl())
+    if _state.probed_at is None:
+        return _state.codec_available is not False
     return any(written_by_served_model(_table(c)) for c in _state.widths)
 
 
