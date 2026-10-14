@@ -30,8 +30,17 @@ def _prune_again(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_a_name_carries_the_namespace_the_parent_and_its_start_time(run_dir: Path) -> None:
     ppid = os.getppid()
-    expected = f"loom-budgets-{NS}-{ppid}-{runtime_files._started(ppid)}"
+    expected = f"loom-budgets-{NS or 0}-{ppid}-{runtime_files._started(ppid) or 0}"
     assert server_file("budgets") == str(run_dir / expected)
+
+
+def test_a_parent_with_no_start_time_is_named_0(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A container's pid 1 has parent pid 0, which /proc does not list."""
+    monkeypatch.setattr(os, "getppid", lambda: 0)
+    assert runtime_files._started(0) == ""
+    assert server_file("budgets") == str(run_dir / f"loom-budgets-{NS or 0}-0-0")
 
 
 def test_files_of_servers_gone_from_this_namespace_are_removed(
