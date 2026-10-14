@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import UTC, datetime
+from typing import Any
 
 from server.auth.revocation import end_grant_claims
 from server.identity.api.models_grants import (
@@ -298,10 +299,21 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
                 f"first (grants.create role=admin)"
             )
 
+    from server.code.app.index import maintainers
+
+    siblings: list[dict[str, Any]] = []
+    if row.role == "admin" and (row.status or "active") == "active":
+        # A revoked maintainer leaves every branch of the repository: planned
+        # first, so one cutoff write covers them all before any grant row lands.
+        siblings = await maintainers.plan_quietly(input.org, input.namespace, subject)
     if (row.status or "active") == "active":
         # A pending request granted nothing, so revoking it (a reject) ends no claim.
         await end_grant_claims(
-            input.org, [input.namespace], [subject], reason="grants.revoke", revoked_by=_actor()
+            input.org,
+            [input.namespace, *(r["namespace"] for r in siblings)],
+            [subject],
+            reason="grants.revoke",
+            revoked_by=_actor(),
         )
     now = datetime.now(UTC).replace(tzinfo=None)
     await grants_repo.insert_row(
@@ -317,11 +329,8 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
             "version": _version(),
         }
     )
-    if row.role == "admin" and (row.status or "active") == "active":
-        # A revoked maintainer leaves every branch of the repository.
-        from server.code.app.index import maintainers
-
-        await maintainers.revoke_quietly(input.org, input.namespace, subject, actor=_actor())
+    if siblings:
+        await maintainers.apply_quietly(input.org, input.namespace, subject, siblings)
     # The tokens this person minted lose their own grants here. Best-effort like the
     # maintainer fan-out above: the person's revoke has landed; a failed cascade is logged,
     # never a 500.

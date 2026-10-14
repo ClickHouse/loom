@@ -179,14 +179,20 @@ def _handler_env(
     async def _sync(org: str, ns: str, **_k: Any) -> None:
         calls["sync"].append((org, ns))
 
-    async def _revoke(org: str, ns: str, subject: str, **_k: Any) -> None:
-        calls["revoke"].append((org, ns, subject))
+    async def _plan(org: str, ns: str, subject: str, **_k: Any) -> list[dict[str, Any]]:
+        return [{"namespace": "code-x-26-5", "subject": subject}]
+
+    async def _apply(
+        org: str, ns: str, subject: str, rows: list[dict[str, Any]], **_k: Any
+    ) -> None:
+        calls["revoke"].append((org, ns, subject, [r["namespace"] for r in rows]))
 
     monkeypatch.setattr(grants_repo, "find_active_grant", _find)
     monkeypatch.setattr(grants_repo, "insert_row", _insert)
     monkeypatch.setattr(grants_mod, "_enforce_code_ceiling", _no_ceiling)
     monkeypatch.setattr(maintainers, "sync_quietly", _sync)
-    monkeypatch.setattr(maintainers, "revoke_quietly", _revoke)
+    monkeypatch.setattr(maintainers, "plan_quietly", _plan)
+    monkeypatch.setattr(maintainers, "apply_quietly", _apply)
     return calls
 
 
@@ -259,28 +265,66 @@ async def test_grants_revoke_admin_fans_out(
     out = await grants_mod.handle_grants_revoke(
         GrantsRevokeInput(org="clickhouse", namespace="code-x", subject="alice")
     )
-    assert out.revoked and _handler_env["revoke"] == [("clickhouse", "code-x", "alice")]
-    assert _handler_env["cutoffs"] == [("clickhouse", "code-x", ["alice"])]
+    assert out.revoked
+    assert _handler_env["revoke"] == [("clickhouse", "code-x", "alice", ["code-x-26-5"])]
+    # One cutoff write for the branch asked and every sibling, before any row.
+    assert _handler_env["cutoffs"] == [
+        ("clickhouse", "code-x", ["alice"]),
+        ("clickhouse", "code-x-26-5", ["alice"]),
+    ]
 
 
-async def test_a_failed_cutoff_still_revokes_the_sibling_branches(monkeypatch) -> None:
-    # The revoke on the asked branch has landed; leaving the subject admin on
-    # every sibling would be the wrong way to fail.
+async def test_a_failed_cutoff_fails_a_maintainer_revoke_with_nothing_written(
+    _handler_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The cutoffs for every branch are written before any grant row, so a
+    # failure leaves the grants standing and the revoke can be retried; a
+    # sibling revoked without its cutoff could never get one.
+    async def _any(*_a: Any, **_k: Any) -> GrantState:
+        return GrantState.from_row(
+            {"subject": "alice", "role": "admin", "status": "active", "granted_by": "ops"}
+        )
+
+    class _CH:
+        async def query_one(self, *_a: Any, **_k: Any) -> dict[str, Any]:
+            return {"n": 2}
+
     async def _down(*_a: Any, **_k: Any) -> None:
         raise RuntimeError("replica away")
 
-    monkeypatch.setattr(maintainers, "end_grant_claims", _down)
-    ch = _FakeCH(
-        [
-            _admin("code-x", "alice"),
-            _admin("code-x-26-5", "alice"),
-            _admin("code-x-26-5", "bob"),
-        ]
-    )
+    import server.core.ch as ch_mod
+
+    monkeypatch.setattr(grants_repo, "find_any_grant", _any)
+    monkeypatch.setattr(ch_mod, "get_client", lambda: _CH())
+    monkeypatch.setattr(grants_mod, "end_grant_claims", _down)
     with pytest.raises(RuntimeError):
+        await grants_mod.handle_grants_revoke(
+            GrantsRevokeInput(org="clickhouse", namespace="code-x", subject="alice")
+        )
+    assert _handler_env["rows"] == [] and _handler_env["revoke"] == []
+
+
+async def test_revoke_repo_maintainer_writes_the_cutoffs_before_the_rows(monkeypatch) -> None:
+    order: list[str] = []
+
+    async def _cut(org: str, namespaces: list[str], subjects: list[str], **_k: Any) -> None:
+        order.append("cutoff:" + ",".join(namespaces))
+
+    monkeypatch.setattr(maintainers, "end_grant_claims", _cut)
+    ch = _FakeCH(
+        [_admin("code-x", "alice"), _admin("code-x-26-5", "alice"), _admin("code-x-26-5", "bob")]
+    )
+    insert = ch.insert
+
+    async def _rows(table: str, rows: list[dict[str, Any]], **k: Any) -> None:
+        order.append("rows")
+        await insert(table, rows, **k)
+
+    ch.insert = _rows  # type: ignore[method-assign]
+    assert (
         await maintainers.revoke_repo_maintainer(
             "clickhouse", "code-x", "alice", actor="ops", ch=ch
         )
-    assert [(r["namespace"], r["subject"], r["revoked_at"] is not None) for r in ch.inserted] == [
-        ("code-x-26-5", "alice", True)
-    ]
+        == 1
+    )
+    assert order == ["cutoff:code-x-26-5", "rows"]

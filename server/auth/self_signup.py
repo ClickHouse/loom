@@ -324,7 +324,9 @@ _MAX_TRACKED = 10_000
 # insert-if-absent), so a shared claim store (a KeeperMap key under
 # keeper_map_strict_mode, as the migration lock uses) is the upgrade. Password
 # sign-in picks the row the password verifies, so a raced duplicate email
-# cannot sign one account into the other.
+# cannot sign one account into the other. OIDC JIT sign-up takes the same
+# per-email key (`login.jit_provision_for_email`), per process too; across
+# processes its name walk finds the account another just wrote.
 _claim_locks: dict[tuple[str, str], asyncio.Lock] = defaultdict(asyncio.Lock)
 
 
