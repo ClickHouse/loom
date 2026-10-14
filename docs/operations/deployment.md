@@ -569,7 +569,8 @@ flowchart LR
   a file write plus `nginx -s reload`; no port is rebound.
 
 Once per host, before the first redeploy, load the AppArmor profile the colours run the
-repository-job sandbox under, then check it in a throwaway container
+repository-job sandbox under, then check it in a throwaway container built from the
+checkout about to be deployed
 ([repository-job sandbox](./code-index-operations.md#repository-job-sandbox) has both
 commands):
 

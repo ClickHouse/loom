@@ -383,15 +383,17 @@ sudo apparmor_parser -r -W /etc/apparmor.d/loom-repo-sandbox
 
 **Checking it.** `apparmor_parser -Q -K` accepts the profile, but whether bwrap runs
 under it is known only once the host has loaded it. Check that in a throwaway container
-from the serving colour's image before the redeploy (`True` means the sandbox runs):
+from the build about to be deployed, not the serving one: an image from before the
+`--disable-userns` fallback prints `False` under this profile (`True` means the sandbox
+runs):
 
 ```bash
-colour=blue # the colour serving now: ./redeploy.sh --status
-image=$(docker inspect -f '{{.Config.Image}}' "loom-$colour")
+docker build -q -t loom:sandbox-check .
 docker run --rm --network none --user loom -w /app --entrypoint python \
   --security-opt seccomp=dev/seccomp/loom-repo-sandbox.json \
   --security-opt apparmor=loom-repo-sandbox --security-opt systempaths=unconfined \
-  "$image" -c 'from server.code.app.index import sandbox as s; print(s.sandbox_available())'
+  loom:sandbox-check -c 'from server.code.app.index import sandbox as s; print(s.sandbox_available())'
+docker image rm loom:sandbox-check
 ```
 
 **What `redeploy.sh` checks.** Before building a colour it stops when the profile is

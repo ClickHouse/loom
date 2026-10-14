@@ -13,10 +13,9 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 - The blue/green colours (`dev/docker-compose.colour.yml`) run the bubblewrap
   repository-job sandbox, so `/v1/health` no longer reports `repo_jobs_unsandboxed` there.
   They use narrow profiles instead of `unconfined`: `dev/seccomp/loom-repo-sandbox.json`
-  (Docker's default, which allows namespace `clone`, `unshare`, `mount` and `umount2`
-  only with `CAP_SYS_ADMIN` and `pivot_root` to no container, plus one rule allowing all
-  five to every process), the
-  AppArmor profile `deploy/apparmor/loom-repo-sandbox` (`docker-default` for every
+  (Docker's default plus one rule allowing `clone`, `unshare`, `mount`, `umount2` and
+  `pivot_root` to every process; the default allows the first four only with
+  `CAP_SYS_ADMIN`, and `pivot_root` never), the AppArmor profile `deploy/apparmor/loom-repo-sandbox` (`docker-default` for every
   process, and a child profile adding `userns, mount, pivot_root` for whatever execs
   `bwrap` and what it runs) and `systempaths=unconfined`, plus `pids_limit: 8192` per
   container as a backstop. Load the AppArmor profile on the host before the next
