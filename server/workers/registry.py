@@ -372,7 +372,7 @@ _WORKERS: tuple[_Worker, ...] = (
         None,
         "INTERVAL_SECONDS",
         interval_in_module=True,
-        # past the 120 s it starts closes for (IDLE_CLOSE_BUDGET_S), whatever the interval
+        # twice IDLE_CLOSE_BUDGET_S, so closes begun just before it ends can finish
         max_pass_seconds=240.0,
     ),
     _Worker(

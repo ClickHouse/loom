@@ -38,7 +38,9 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   keep the old behaviour or to leave cores for ClickHouse on a shared host. Several
   processes share files in a private runtime directory (`/run/loom`, which the compose files
   mount as a tmpfs); with none, as on a read-only root without one, the image starts one
-  process and says so, and an explicit `LOOM_WEB_WORKERS` above 1 refuses to start.
+  process and says so, and an explicit `LOOM_WEB_WORKERS` above 1 refuses to start, as does a
+  pinned `LOOM_RUNTIME_DIR` the server cannot use or that others can enter (a mode looser than
+  0700). With `docker run`, mount `--tmpfs /run/loom:uid=999,gid=999,mode=0700`.
 - **Operators:** the image owns `/run/loom` (uid 999) and the compose files mount it as a
   tmpfs. Runtime files under the earlier names (`loom-ratelimit-<pid>.buckets`,
   `loom-graph-marks-<pid>/`) are not removed automatically; delete them once the old server is

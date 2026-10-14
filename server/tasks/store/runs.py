@@ -348,20 +348,27 @@ async def idle_session_runs(
 
     Implicit runs are told by `metadata.implicit` and the `mcp-` prefix, which
     also covers the `mcp-<session id>` runs of earlier servers. `version` is
-    the time of the row's last write; the begin records the token's subject."""
+    the time of the row's last write. The begin records the token's subject,
+    and only that token's calls keep the run busy; a run with none recorded (an
+    earlier server's, or no auth) stays busy while any call reaches it."""
     rows: list[RunLedgerRow] = await ch.query_all(
         """
         WITH candidates AS (
             SELECT run_id FROM loom.agent_runs
             WHERE status = 'active' AND environment = 'mcp' AND startsWith(run_id, 'mcp-')
+        ),
+        recent AS (
+            SELECT run_id, subject FROM loom.agent_events
+            WHERE ts >= now64(3) - INTERVAL {idle:UInt32} SECOND AND run_id IN candidates
         )
         SELECT org, namespace, run_id FROM loom.agent_runs FINAL
         WHERE run_id IN candidates AND ({org:String} = '' OR org = {org:String})
           AND status = 'active' AND JSONExtractBool(metadata, 'implicit')
           AND version < toUInt64(toUnixTimestamp64Nano(now64(9) - INTERVAL {idle:UInt32} SECOND))
-          AND (run_id, JSONExtractString(metadata, 'subject')) NOT IN (
-              SELECT run_id, subject FROM loom.agent_events
-              WHERE ts >= now64(3) - INTERVAL {idle:UInt32} SECOND AND run_id IN candidates
+          AND (run_id, JSONExtractString(metadata, 'subject')) NOT IN recent
+          AND (
+              JSONExtractString(metadata, 'subject') != ''
+              OR run_id NOT IN (SELECT run_id FROM recent)
           )
         ORDER BY rand()
         LIMIT {lim:UInt32}

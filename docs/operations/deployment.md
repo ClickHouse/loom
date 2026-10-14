@@ -543,15 +543,17 @@ that script. `LOOM_BUILD_COMMIT`, stamped at build time, is what `/v1/health`
 reports as `build_commit`.
 
 The web processes share small files (rate-limit table, runtime overrides, graph marks) in
-`/run/loom`, which the compose files mount as a tmpfs. A plain `docker run` without
-`--tmpfs /run/loom` keeps them in the container's writable layer, and a restarted
-container does not remove an earlier one's; mount the tmpfs, or remove the container
-(`docker run --rm`) rather than restarting it. With a read-only root filesystem and no
-tmpfs, several web processes have nowhere to share: with `LOOM_WEB_WORKERS` unset
-`scripts/serve.sh` starts one and says so, and with it set above 1, or with
-`LOOM_RUNTIME_DIR` pinned to a directory it cannot use, it stops and says why. Mount a tmpfs at `/run/loom`, or pin `LOOM_RUNTIME_DIR` to a
-writable directory only the server's user can enter (mode 0700: a looser one is refused,
-not changed).
+`/run/loom`, which the compose files mount as a tmpfs owned by the image's user. With a
+plain `docker run`, mount it the same way, `--tmpfs /run/loom:uid=999,gid=999,mode=0700`:
+a bare `--tmpfs /run/loom` belongs to root, which the server's user cannot use. Without
+the tmpfs the files land in the container's writable layer, and a restarted container
+does not remove an earlier one's; remove the container (`docker run --rm`) rather than
+restarting it. With a read-only root filesystem and no tmpfs, several web processes have
+nowhere to share: with `LOOM_WEB_WORKERS` unset `scripts/serve.sh` starts one and says
+so, and with it set above 1, or with `LOOM_RUNTIME_DIR` pinned to a directory it cannot
+use, it stops and says why. Mount the tmpfs, or pin `LOOM_RUNTIME_DIR` to a writable
+directory only the server's user can enter (mode 0700: a looser one is refused, not
+changed).
 
 Every release publishes a multi-arch image (linux/amd64 and linux/arm64) to
 `ghcr.io/clickhouse/loom`, tagged `X.Y.Z`, `X.Y` and, for a stable release, `latest`.

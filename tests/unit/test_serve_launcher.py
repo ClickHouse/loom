@@ -77,6 +77,11 @@ def test_the_launcher_starts_what_it_can_share(
         assert "starting one web process" in done.stderr
 
 
+def test_a_pin_it_cannot_use_refuses_even_one_process(tmp_path: Path) -> None:
+    done = _launch(tmp_path, workers="1", runtime_dir="none", pinned="/data/rt")
+    assert done.returncode == 2 and "not starting" in done.stderr
+
+
 @pytest.mark.parametrize("pinned", ["", "/data/rt"])
 def test_an_explicit_count_with_nowhere_to_share_refuses_to_start(
     tmp_path: Path, pinned: str

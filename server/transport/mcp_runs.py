@@ -45,6 +45,9 @@ _NEVER_STAMPED_PREFIXES = ("run.", "code.")
 # run scope, where no other connection, the primer, or a later `replace`
 # addressed without it ever reads it. They stay labelled on the ledger.
 _RUN_SCOPED_PREFIXES = ("working_memory.",)
+# Ops that search every namespace the caller reads whatever they are sent:
+# `context.pack`'s knowledge and conversation legs.
+_SEARCH_EVERY_NAMESPACE = frozenset({"context.pack"})
 # Reads the session run labels although their input carries no `run_id`:
 # `search.query` (the `loom_search` tool) is the read agents call most.
 _LABELLED_READS = frozenset({"search.query"})
@@ -157,6 +160,7 @@ def goal_of(op: Any, arguments: dict[str, Any], defaults: dict[str, str]) -> str
     elsewhere = (
         str(arguments.get("org") or defaults.get("org")) != defaults.get("org")
         or str(arguments.get("namespace") or "") != defaults.get("namespace")
+        or op.name in _SEARCH_EVERY_NAMESPACE
         or _scope_of(op, arguments) == "all_mine"
         or arguments.get("namespaces")
     )

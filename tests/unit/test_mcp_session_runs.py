@@ -156,6 +156,13 @@ def test_a_search_kept_to_the_runs_namespace_gives_its_query() -> None:
     assert mcp_runs.goal_of(SEARCH, every, DEFAULTS) == "mcp session (cursor)"
 
 
+def test_a_context_pack_leaves_its_query_out_of_the_goal() -> None:
+    """Its knowledge and conversation legs search every namespace the caller reads."""
+    pack = OPERATIONS_BY_NAME["context.pack"]
+    call = {"org": "clickhouse", "namespace": "ns-a", "query": "SECRET question"}
+    assert mcp_runs.goal_of(pack, call, DEFAULTS) == "mcp session (cursor)"
+
+
 def test_an_unscoped_call_takes_the_scope_the_op_would_search_with(
     settings_override,
 ) -> None:

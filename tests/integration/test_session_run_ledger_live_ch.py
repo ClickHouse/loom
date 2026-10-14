@@ -183,6 +183,43 @@ async def test_the_idle_sweep_closes_a_run_however_long_ago_it_was_written(ch: A
 
 
 @pytest.mark.asyncio
+async def test_a_run_that_records_no_subject_stays_open_while_it_is_called(ch: Any) -> None:
+    """An earlier server's run: its calls carry a subject it never recorded."""
+    from server.tasks.app.run import active_session_runs, close_idle_session_runs
+
+    org = f"itest-nosub-{uuid.uuid4().hex[:8]}"
+    busy, quiet = f"mcp-{uuid.uuid4().hex}", f"mcp-{uuid.uuid4().hex}"
+    long_ago = int((naive_utc_now().timestamp() - 7200) * 1e9)
+    try:
+        await ch.insert(
+            "loom.agent_runs",
+            [
+                {
+                    "org": org,
+                    "namespace": "ns",
+                    "agent": AGENT,
+                    "run_id": run_id,
+                    "goal": "g",
+                    "environment": "mcp",
+                    "metadata": '{"implicit":true,"transport":"mcp"}',
+                    "version": long_ago,
+                }
+                for run_id in (busy, quiet)
+            ],
+            settings={"async_insert": 0},
+        )
+        await _ledger_call(ch, "ns", busy, subject="sa:still-working", org=org)
+        assert await close_idle_session_runs(1800, org=org) == 1
+        assert await active_session_runs(org, busy) != []
+        assert await active_session_runs(org, quiet) == []
+    finally:
+        for table in ("agent_runs", "agent_events"):
+            await ch.execute(
+                f"DELETE FROM loom.{table} WHERE org = {{org:String}}", params={"org": org}
+            )
+
+
+@pytest.mark.asyncio
 async def test_a_scoped_callers_session_run_is_its_own(ch: Any) -> None:
     """A token pinned to one user: the run the transport begins is filed under
     that user, and its DELETE completes it on a web process that never served
