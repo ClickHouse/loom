@@ -460,3 +460,26 @@ async def test_no_attempt_starts_after_the_wait(monkeypatch: pytest.MonkeyPatch)
         async with locks.lease("job"):
             pytest.fail("took the lease after its wait")
     assert max(starts) <= 100.5
+
+
+class EngineUnreadable(FakeKeeper):
+    """A server whose lock-table engine cannot be read."""
+
+    async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, Any] | None:
+        if "system.tables" in sql:
+            raise RuntimeError("Code: 999. Coordination error: connection loss")
+        return await super().query_one(sql, params)
+
+
+async def test_a_lock_whose_engine_cannot_be_read_sends_nothing_to_release(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    notes: list[str] = []
+    monkeypatch.setattr(kl.degradations, "note", lambda p, e, r="": notes.append(e))
+    ch = EngineUnreadable()
+    async with _locks(ch, monkeypatch).hold(*_IDENT):
+        pass
+    with pytest.raises(kl.LeaseBusy):
+        async with _locks(ch, monkeypatch).lease("job"):
+            pytest.fail("held a lease no Keeper confirmed")
+    assert ch.sql == [] and notes == ["process_lock_only", "lease_unconfirmed"]
