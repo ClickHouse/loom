@@ -613,8 +613,8 @@ def _vector_read_state_not_probed() -> Iterator[None]:
 @pytest.fixture(autouse=True)
 def _revocation_snapshot_loaded() -> Iterator[None]:
     """A unit test models a booted process: the revocation snapshot has been
-    read just now (and is empty), and no creator's account state is cached
-    yet. Tests of the not-yet-loaded state
+    read just now (and is empty), it has written no revocation of its own,
+    and no creator's account state is cached yet. Tests of the not-yet-loaded state
     set `_loaded` back to False. Saved and restored by hand, not through
     `monkeypatch`: requesting it here would set it up before
     `_settings_left_as_found` and so tear it down after that check."""
@@ -623,9 +623,11 @@ def _revocation_snapshot_loaded() -> Iterator[None]:
 
     saved = rev._loaded, rev._loaded_at
     rev._loaded, rev._loaded_at = True, rev.time.monotonic()
+    rev._written.clear()
     delegation._account_active.clear()
     yield
     rev._loaded, rev._loaded_at = saved
+    rev._written.clear()
 
 
 # The scalar repository the code-plane fixtures model, with its repository-shaped

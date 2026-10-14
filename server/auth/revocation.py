@@ -75,6 +75,11 @@ _revoked_jtis: frozenset[str] = frozenset()
 # Keys revoked only for tokens issued before the cutoff (unix seconds);
 # replaced together with `_revoked_jtis` on every refresh.
 _revoked_before: dict[str, int] = {}
+# What this process wrote and when (time.monotonic()), folded into every
+# snapshot for `_WRITTEN_KEEP_S`: a refresh whose read began before the write,
+# or reached a replica the write had not, would otherwise drop it.
+_written: dict[str, tuple[int | None, float]] = {}
+_WRITTEN_KEEP_S = 300.0
 # False until one refresh has succeeded in this process.
 _loaded = False
 # time.monotonic() of the last successful refresh; 0.0 = never.
@@ -127,6 +132,7 @@ async def refresh() -> None:
                 full.add(str(r["jti"]))
             else:
                 before[str(r["jti"])] = cutoff
+        _fold_written(full, before)
         _revoked_jtis = frozenset(full)
         _revoked_before = before
         if len(rows) > SNAPSHOT_WARN_ROWS and not _warned_size:
@@ -206,21 +212,32 @@ async def revoke(
 
 
 def _apply_locally(keys: list[str], cutoff: int | None) -> None:
-    """Fold revocations this process just wrote into its snapshot. The
-    re-read after the insert can fail, or land on a replica the insert has
-    not reached; either way the old snapshot would keep admitting the token
-    here until the next refresh. The written rows are the newest for their
-    keys, so they replace any earlier state of those keys. `loaded()` is left
-    as it is: rows this process wrote are not a snapshot."""
+    """Apply revocations this process just wrote, now and in every refresh
+    for a while. They are the newest rows for their keys, so they replace any
+    earlier state of them. `loaded()` is left as it is: rows this process
+    wrote are not a snapshot."""
     global _revoked_jtis, _revoked_before
-    written = set(keys)
-    before = {k: v for k, v in _revoked_before.items() if k not in written}
-    if cutoff is None:
-        _revoked_jtis = _revoked_jtis | written
-    else:
-        _revoked_jtis = _revoked_jtis - written
-        before.update(dict.fromkeys(written, cutoff))
-    _revoked_before = before
+    now = time.monotonic()
+    for key in keys:
+        _written[key] = (cutoff, now)
+    full, before = set(_revoked_jtis), dict(_revoked_before)
+    _fold_written(full, before)
+    _revoked_jtis, _revoked_before = frozenset(full), before
+
+
+def _fold_written(full: set[str], before: dict[str, int]) -> None:
+    """Apply what this process wrote in the last `_WRITTEN_KEEP_S` to a
+    snapshot being built, dropping older entries."""
+    now = time.monotonic()
+    for key, (cutoff, at) in list(_written.items()):
+        if now - at > _WRITTEN_KEEP_S:
+            del _written[key]
+        elif cutoff is None:
+            full.add(key)
+            before.pop(key, None)
+        else:
+            full.discard(key)
+            before[key] = cutoff
 
 
 _GRANT_CLAIM_PREFIX = "grant:"
@@ -229,8 +246,9 @@ _GRANT_CLAIM_PREFIX = "grant:"
 def grant_claim_key(org: str, namespace: str, subject: str) -> str:
     """The revocation key that withdraws (org, namespace) from `subject`'s
     token claims. The subject is case-folded, as alias lookup matches it, and
-    hashed: the key outlives the account, and an email has no business in it.
-    Never a jti or a subject verify checks."""
+    hashed so the key does not spell out an email; the hash is unsalted, so a
+    guessed email can be tested against it. Never a jti or a subject verify
+    checks."""
     digest = hashlib.sha256(subject.lower().encode()).hexdigest()[:32]
     return f"{_GRANT_CLAIM_PREFIX}{org}/{namespace}/{digest}"
 

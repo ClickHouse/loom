@@ -376,3 +376,13 @@ def test_a_refusal_after_a_cutoff_says_the_claim_ended(ch: _CH) -> None:
         with pytest.raises(PermissionError, match="claim on .*/team ended") as refused:
             asyncio.run(check_authorized(token, Role.VIEWER, ORG, "team"))
         assert then in str(refused.value)
+
+
+def test_a_refresh_that_read_before_the_cutoff_keeps_it(ch: _CH) -> None:
+    # The refresh's read went out before the cutoff landed and comes back
+    # after the write applied it: the old snapshot must not undo it here.
+    stale_rows = dict(ch.revoked)
+    _end("team")
+    ch.revoked = stale_rows
+    asyncio.run(rev.refresh())
+    assert not _admits(_flat("team"), "team")

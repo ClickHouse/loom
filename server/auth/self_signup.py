@@ -325,7 +325,7 @@ _MAX_TRACKED = 10_000
 # keeper_map_strict_mode, as the migration lock uses) is the upgrade. Password
 # sign-in picks the row the password verifies, so a raced duplicate email
 # cannot sign one account into the other. OIDC JIT sign-up takes the same
-# per-email key (`login.jit_provision_for_email`); self-signup is closed when
+# per-email key (`jit.jit_provision_for_email`); self-signup is closed when
 # OIDC is the login provider, so the two never race for a name.
 _claim_locks: dict[tuple[str, str], asyncio.Lock] = defaultdict(asyncio.Lock)
 

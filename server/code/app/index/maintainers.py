@@ -203,8 +203,10 @@ async def _plan_revoke(
 async def write_revokes(
     org: str, namespace: str, subject: str, rows: list[dict[str, Any]], *, ch: Any | None = None
 ) -> None:
-    """Write the planned revoke rows; the caller wrote their cutoffs first, so
-    a failure here leaves grants that reach no older token's claim."""
+    """Write the planned revoke rows. A failure is logged, not raised: the
+    sibling admin grants then stay live, reachable through a flat token's
+    grant check, until an operator revokes them; their cutoffs, written
+    first, still end older tokens' claims there."""
     if not rows:
         return
     from server.core.ch import get_client

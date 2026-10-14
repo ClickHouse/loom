@@ -25,7 +25,7 @@ from tests.unit.oauth_store_fake import MemoryOAuthStore
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from server.auth import login, oauth, oidc, revocation, self_signup  # noqa: E402
+from server.auth import jit, login, oauth, oidc, revocation, self_signup  # noqa: E402
 from server.settings import settings  # noqa: E402
 
 pytestmark = pytest.mark.usefixtures("cutoffs_read_at_mint")
@@ -191,7 +191,7 @@ async def test_resolve_identity_rejects_cross_org_ambiguity(monkeypatch) -> None
 # ── JIT provisioning ───────────────────────────────────────────────────────
 async def test_jit_off_returns_none(monkeypatch) -> None:
     monkeypatch.setattr(settings, "oidc_jit_provision", False)
-    assert await login.jit_provision_for_email("x@acme.com") is None
+    assert await jit.jit_provision_for_email("x@acme.com") is None
 
 
 async def test_jit_provisions_when_enabled(monkeypatch) -> None:
@@ -211,14 +211,14 @@ async def test_jit_provisions_when_enabled(monkeypatch) -> None:
 
     monkeypatch.setattr(self_signup, "provision_account", fake_provision)
     monkeypatch.setattr(login, "resolve_identity_for_email", fake_resolve)
-    monkeypatch.setattr(login, "_registry_row", none_registered)
+    monkeypatch.setattr(jit, "_registry_row", none_registered)
 
     async def no_accounts(org: str, ident: str) -> list[dict[str, Any]]:
         return []
 
-    monkeypatch.setattr(login, "_accounts_naming", no_accounts)
+    monkeypatch.setattr(jit, "_accounts_naming", no_accounts)
 
-    out = await login.jit_provision_for_email("Bob@Acme.com")
+    out = await jit.jit_provision_for_email("Bob@Acme.com")
     assert out == ("u-bob-xxxx", "acme", ["u-bob-xxxx"], ["writer"])
     assert calls["org"] == "acme"
     assert calls["contact_email"] == "bob@acme.com"  # normalized
@@ -242,7 +242,7 @@ def _jit_on(monkeypatch) -> dict[str, Any]:
 
     monkeypatch.setattr(self_signup, "provision_account", fake_provision)
     monkeypatch.setattr(login, "resolve_identity_for_email", fake_resolve)
-    monkeypatch.setattr(login, "_accounts_naming", no_accounts)
+    monkeypatch.setattr(jit, "_accounts_naming", no_accounts)
     return provisioned
 
 
@@ -267,8 +267,8 @@ async def test_jit_never_rebuilds_a_taken_name_and_takes_the_next(
             rows[namespace] = taken  # the first name tried
         return rows.get(namespace)
 
-    monkeypatch.setattr(login, "_registry_row", registry_row)
-    assert await login.jit_provision_for_email("bob@acme.com") is not None
+    monkeypatch.setattr(jit, "_registry_row", registry_row)
+    assert await jit.jit_provision_for_email("bob@acme.com") is not None
     (first,) = rows
     assert provisioned["namespace"] == f"{first}-2"
 
@@ -290,9 +290,9 @@ async def test_jit_refuses_a_person_whose_account_was_revoked(monkeypatch) -> No
         asked.append(sorted(set(subjects)))
         return "bob" in subjects
 
-    monkeypatch.setattr(login, "_accounts_naming", accounts)
+    monkeypatch.setattr(jit, "_accounts_naming", accounts)
     monkeypatch.setattr(revocation, "subjects_revoked", revoked)
-    assert await login.jit_provision_for_email("bob@acme.com") is None
+    assert await jit.jit_provision_for_email("bob@acme.com") is None
     assert provisioned == {}
     assert asked == [["bob", "u-bob-1234abcd-9f3e"]]
 
@@ -314,10 +314,10 @@ async def test_a_deleted_account_alone_is_no_offboarding(monkeypatch) -> None:
             else None
         )
 
-    monkeypatch.setattr(login, "_accounts_naming", accounts)
+    monkeypatch.setattr(jit, "_accounts_naming", accounts)
     monkeypatch.setattr(revocation, "subjects_revoked", not_revoked)
-    monkeypatch.setattr(login, "_registry_row", registry_row)
-    assert await login.jit_provision_for_email("bob@acme.com") is not None
+    monkeypatch.setattr(jit, "_registry_row", registry_row)
+    assert await jit.jit_provision_for_email("bob@acme.com") is not None
     assert provisioned["namespace"].endswith("-2")
 
 
@@ -331,12 +331,12 @@ async def test_jit_takes_a_random_name_once_the_predictable_ones_are_taken(
 
     async def registry_row(org: str, namespace: str) -> dict[str, Any] | None:
         tried.append(namespace)
-        if len(tried) <= login._JIT_SUFFIX_TRIES + 2:  # the predictable ones, then one random
+        if len(tried) <= jit._JIT_SUFFIX_TRIES + 2:  # the predictable ones, then one random
             return {"active": True, "contact_email": "mallory@acme.com"}
         return None
 
-    monkeypatch.setattr(login, "_registry_row", registry_row)
-    assert await login.jit_provision_for_email("bob@acme.com") is not None
+    monkeypatch.setattr(jit, "_registry_row", registry_row)
+    assert await jit.jit_provision_for_email("bob@acme.com") is not None
     name = provisioned["namespace"]
     assert name == tried[-1], "the random name is checked before it is used"
     assert name.startswith(tried[0] + "-") and name not in tried[:-1]
@@ -363,9 +363,9 @@ async def test_an_active_account_of_the_person_is_resolved_never_provisioned_aga
             else None
         )
 
-    monkeypatch.setattr(login, "_accounts_naming", accounts)
+    monkeypatch.setattr(jit, "_accounts_naming", accounts)
     monkeypatch.setattr(login, "resolve_identity_for_email", resolve)
-    out = await login.jit_provision_for_email("Bob@acme.com")
+    out = await jit.jit_provision_for_email("Bob@acme.com")
     assert (out is not None) is resolves
     assert provisioned == {}
 
@@ -378,8 +378,8 @@ async def test_jit_signs_in_to_its_own_account_another_process_just_wrote(monkey
     async def registry_row(org: str, namespace: str) -> dict[str, Any] | None:
         return {"active": True, "contact_email": "bob@acme.com"}
 
-    monkeypatch.setattr(login, "_registry_row", registry_row)
-    assert await login.jit_provision_for_email("bob@acme.com") is not None
+    monkeypatch.setattr(jit, "_registry_row", registry_row)
+    assert await jit.jit_provision_for_email("bob@acme.com") is not None
     assert provisioned == {}
 
 
@@ -401,10 +401,10 @@ async def test_two_first_sign_ins_in_one_process_make_one_account(monkeypatch) -
         made.append(kw["namespace"])
         written[kw["namespace"]] = {"active": True, "contact_email": kw["contact_email"]}
 
-    monkeypatch.setattr(login, "_registry_row", registry_row)
-    monkeypatch.setattr(login, "_accounts_naming", accounts)
+    monkeypatch.setattr(jit, "_registry_row", registry_row)
+    monkeypatch.setattr(jit, "_accounts_naming", accounts)
     monkeypatch.setattr(self_signup, "provision_account", provision)
-    await asyncio.gather(*(login.jit_provision_for_email("bob@acme.com") for _ in range(2)))
+    await asyncio.gather(*(jit.jit_provision_for_email("bob@acme.com") for _ in range(2)))
     assert len(made) == 1
 
 
@@ -418,7 +418,7 @@ async def test_jit_rejects_disallowed_domain(monkeypatch) -> None:
         called["n"] += 1
 
     monkeypatch.setattr(self_signup, "provision_account", fake_provision)
-    assert await login.jit_provision_for_email("eve@evil.com") is None
+    assert await jit.jit_provision_for_email("eve@evil.com") is None
     assert called["n"] == 0  # never provisioned
 
 

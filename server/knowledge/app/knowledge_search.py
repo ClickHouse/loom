@@ -7,10 +7,10 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from server.auth.fanout import namespaces_to_search
-from server.core.vectors.private_first import private_first_passes
+from server.core.vectors.private_first import search_private_first
 from server.embedding import get_embedder
 from server.identity.app import namespace_visibility
 from server.knowledge.api.models_knowledge import (
@@ -112,47 +112,16 @@ async def _search_private_first(
 ) -> list[tuple[str, list[ChunkHit]]]:
     from server.observability.otel import traced
 
-    # Private-first (mirrors memory.search): under all_mine, the addressed
-    # namespace and the private ones first; the public ones only if that pass
-    # came up dry.
-    PRIVATE_HIT_THRESHOLD = 0.30
-    first_pass: list[str] = []
-    second_pass: list[str] = []
+    visibility: dict[str, str] = {}
     if input.namespace_scope == "all_mine" and len(namespaces) > 1:
         visibility = await namespace_visibility.visibility_map(input.org, namespaces)
-        first_pass, second_pass = private_first_passes(input.namespace, namespaces, visibility)
-    if first_pass:
-        with traced(
-            "ch.query.chunks",
-            op="vector_search.private",
-            top_k=input.top_k,
-            namespaces=len(first_pass),
-        ):
-            results_per_ns = await asyncio.gather(*[search_one(ns) for ns in first_pass])
-        best_first_pass_similarity = 0.0
-        for _ns, hits in results_per_ns:
-            for h in hits:
-                sim = 1.0 - getattr(h, "distance", 1.0)
-                if sim > best_first_pass_similarity:
-                    best_first_pass_similarity = sim
-        if best_first_pass_similarity < PRIVATE_HIT_THRESHOLD and second_pass:
-            with traced(
-                "ch.query.chunks",
-                op="vector_search.public",
-                top_k=input.top_k,
-                namespaces=len(second_pass),
-            ):
-                second_pass_results = await asyncio.gather(*[search_one(ns) for ns in second_pass])
-            results_per_ns = list(results_per_ns) + list(second_pass_results)
-    else:
-        with traced(
-            "ch.query.chunks",
-            op="vector_search",
-            top_k=input.top_k,
-            namespaces=len(namespaces),
-        ):
-            results_per_ns = await asyncio.gather(*[search_one(ns) for ns in namespaces])
-    return list(results_per_ns)
+
+    def span(op: str, n: int) -> Any:
+        return traced("ch.query.chunks", op=op, top_k=input.top_k, namespaces=n)
+
+    return await search_private_first(
+        input.namespace, namespaces, visibility, search_one, threshold=0.30, span=span
+    )
 
 
 def _as_search_hits(results_per_ns: list[tuple[str, list[ChunkHit]]]) -> list[_SearchHit]:

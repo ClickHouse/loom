@@ -77,8 +77,8 @@ revoking a leaked token. The cost is a short 503 window at boot.
 
 **Grant cutoffs.** Taking a grant away or lowering it writes a row of the same table,
 keyed `grant:<org>/<namespace>/<hash of the case-folded subject>` (one per spelling of the
-subject, hashed so no email is stored), so tokens minted before it no longer reach the
-namespace through their own claim
+subject; the hash keeps an email out of the key but can be tested against a guessed one), so
+tokens minted before it no longer reach the namespace through their own claim
 (`revocation.write_grant_cutoffs`, `authz.withdrawn_claims`). The row is the only record:
 the grant row is replaced by the subject's next one, so a cutoff is never derived from
 it. Two consequences hold the design together:

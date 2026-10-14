@@ -8,7 +8,7 @@ import asyncio
 import logging
 from typing import Any
 
-from server.core.vectors.private_first import private_first_passes
+from server.core.vectors.private_first import search_private_first
 from server.identity.app import namespace_visibility
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app.search.context import SearchContext
@@ -188,58 +188,24 @@ async def _run_vector_legs(
                 break
     else:
         # ---- unscoped path (no scoped-token order): visibility-based private-first
-        # fallback, else a flat concurrent fan-out.
-        first_pass: list[str] = []
-        second_pass: list[str] = []
-        if input.namespace_scope == "all_mine" and len(ctx.namespaces) > 1:
-            # Visibility is TTL-cached, so a multi-namespace search does not pay a
-            # `loom.namespaces FINAL` round trip. With no private namespace (or no answer)
-            # both passes are empty and the search is the flat fan-out below: common in
-            # practice, well over a third of searches in one measured namespace.
-            namespaces = list(ctx.namespaces)
+        # fallback, else a flat concurrent fan-out. Visibility is TTL-cached, so a
+        # multi-namespace search does not pay a `loom.namespaces FINAL` round trip.
+        namespaces = list(ctx.namespaces)
+        visibility: dict[str, str] = {}
+        if input.namespace_scope == "all_mine" and len(namespaces) > 1:
             visibility = await namespace_visibility.visibility_map(input.org, namespaces)
-            first_pass, second_pass = private_first_passes(input.namespace, namespaces, visibility)
 
-        if first_pass:
-            with traced(
-                "ch.query.memory_embeddings",
-                op="vector_search.private",
-                top_k=input.top_k,
-                namespaces=len(first_pass),
-            ):
-                results_per_ns = list(
-                    await asyncio.gather(*[_search_one(ctx, ns) for ns in first_pass])
-                )
-            # Did the first pass (the addressed namespace and the private ones) clear
-            # the relevance floor? Its best similarity has to exceed the threshold.
-            best_first_pass_similarity = 0.0
-            for _ns, hits in results_per_ns:
-                for h in hits:
-                    sim = 1.0 - getattr(h, "distance", 1.0)
-                    if sim > best_first_pass_similarity:
-                        best_first_pass_similarity = sim
-            if best_first_pass_similarity < PRIVATE_HIT_THRESHOLD and second_pass:
-                # First pass was empty / noise — also search the public ones and merge.
-                with traced(
-                    "ch.query.memory_embeddings",
-                    op="vector_search.public",
-                    top_k=input.top_k,
-                    namespaces=len(second_pass),
-                ):
-                    second_pass_results = await asyncio.gather(
-                        *[_search_one(ctx, ns) for ns in second_pass]
-                    )
-                results_per_ns = list(results_per_ns) + list(second_pass_results)
-        else:
-            with traced(
-                "ch.query.memory_embeddings",
-                op="vector_search",
-                top_k=input.top_k,
-                namespaces=len(ctx.namespaces),
-            ):
-                results_per_ns = await asyncio.gather(
-                    *[_search_one(ctx, ns) for ns in ctx.namespaces]
-                )
+        def span(op: str, n: int) -> Any:
+            return traced("ch.query.memory_embeddings", op=op, top_k=input.top_k, namespaces=n)
+
+        results_per_ns = await search_private_first(
+            input.namespace,
+            namespaces,
+            visibility,
+            lambda ns: _search_one(ctx, ns),
+            threshold=PRIVATE_HIT_THRESHOLD,
+            span=span,
+        )
 
     # Join the entity-store ANN task launched before the vector legs.
     if entity_boost_task is not None:

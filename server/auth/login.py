@@ -15,12 +15,11 @@ from __future__ import annotations
 
 import asyncio
 import functools
-import itertools
 import logging
 import secrets
 import time
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any, NamedTuple
+from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -315,158 +314,6 @@ async def resolve_identity_for_email(
     if len({r["org"] for r in rows}) > 1:
         return None
     return await _with_restricted_grants(_identity_from_rows(rows, verified_email=ident))
-
-
-async def _registry_row(org: str, namespace: str) -> dict[str, Any] | None:
-    """The registry row of `namespace`, active or not, read as of every write
-    that landed (a concurrent first sign-in may have just written it)."""
-    from server.core.ch import own_write_reads
-
-    with own_write_reads():
-        row = await get_client().query_one(
-            """
-            SELECT active, toString(contact_email) AS contact_email
-            FROM loom.namespaces FINAL
-            WHERE org = {org:String} AND namespace = {ns:String}
-            LIMIT 1
-            """,
-            params={"org": org, "ns": namespace},
-        )
-    return None if row is None else dict(row)
-
-
-async def _accounts_naming(org: str, ident: str) -> list[dict[str, Any]]:
-    """Every registry row in `org` whose contact is `ident`, active or not
-    (deleted ones keep it; a released one has it cleared), read as of every
-    write that landed."""
-    from server.core.ch import own_write_reads
-
-    with own_write_reads():
-        rows = await get_client().query_all(
-            """
-            SELECT namespace, toString(owner_email) AS owner, active
-            FROM loom.namespaces FINAL
-            WHERE org = {org:String} AND contact_email = {ident:String}
-            """,
-            params={"org": org, "ident": ident},
-        )
-    return [dict(r) for r in rows]
-
-
-# The names a JIT sign-up tries past the first: `<name>-2` to `<name>-6`, then
-# random suffixes.
-_JIT_SUFFIX_TRIES = 5
-_JIT_RANDOM_TRIES = 5
-
-
-class _FreeName(NamedTuple):
-    """A name for a new JIT account, None when none is free. With
-    `existing_account`, a first sign-in elsewhere has just written the
-    person's account there."""
-
-    namespace: str | None
-    existing_account: bool = False
-
-
-async def jit_provision_for_email(
-    email: str,
-) -> tuple[str, str, list[str], list[str]] | None:
-    """Just-in-time provisioning for OIDC: when enabled, a verified email with
-    no loom account gets a personal namespace auto-created (in oidc_jit_org),
-    then resolves like any other account. Returns None (the caller then
-    rejects the login) when JIT is off or the email's domain isn't allowed,
-    when an account of the person's there is revoked outright, when their
-    active account there does not resolve (the cross-org guard), or when no
-    free name is found.
-    """
-    import hashlib
-
-    from server.auth.self_signup import claim_lock
-    from server.settings import settings as _settings
-
-    if not _settings.oidc_jit_provision:
-        return None
-    ident = email.strip().lower()
-    if "@" not in ident:
-        return None
-    domain = ident.rsplit("@", 1)[1]
-    allowed = _settings.oidc_jit_email_domains_set
-    if allowed and domain not in allowed:
-        return None
-    # Deterministic, unique-per-email namespace: a readable slug + an email
-    # hash so two different emails can never collide onto one account.
-    local = ident.split("@", 1)[0]
-    slug = "".join(c if c.isalnum() else "-" for c in local).strip("-")[:40] or "user"
-    base = f"u-{slug}-{hashlib.sha256(ident.encode()).hexdigest()[:8]}"
-    org = _settings.oidc_jit_org
-    # One sign-up per email at a time in this process, as self-signup does:
-    # a second sign-in waits and finds the account the first wrote.
-    async with claim_lock(org, "email:" + ident):
-        return await _provision_jit(org, ident, base)
-
-
-async def _provision_jit(
-    org: str, ident: str, base: str
-) -> tuple[str, str, list[str], list[str]] | None:
-    """`jit_provision_for_email` past its gates, under the email's lock."""
-    from server.auth.self_signup import provision_account
-
-    accounts = await _accounts_naming(org, ident)
-    if any(a["active"] for a in accounts):
-        return await _resolve_as_written(ident)  # their account, whatever its name
-    if await _any_revoked(accounts):
-        # Offboarded: a fresh name would be a new subject past the revoke.
-        log.info("oidc jit: an account of %r in %s is revoked; not provisioning", ident, org)
-        return None
-    name = await _free_name(org, ident, base)
-    if name.existing_account:
-        return await _resolve_as_written(ident)
-    if name.namespace is None:
-        log.warning("oidc jit: no free name for %r in %s", ident, org)
-        return None
-    await provision_account(
-        org=org,
-        namespace=name.namespace,
-        subject=name.namespace,
-        contact_email=ident,
-        password_hash="",  # SSO-only account
-        description="Auto-provisioned via OIDC SSO.",
-    )
-    # Two processes that both found the name free write the same row, and
-    # ReplacingMergeTree keeps one.
-    return await _resolve_as_written(ident)
-
-
-async def _free_name(org: str, ident: str, base: str) -> _FreeName:
-    """The first name free for a new account: `base`, `base-2` and on, then
-    random suffixes, so taking every predictable name cannot lock the person
-    out. A taken name is never rebuilt: that would hand back its data and an
-    admin grant."""
-    predictable = [base, *(f"{base}-{n}" for n in range(2, _JIT_SUFFIX_TRIES + 2))]
-    random_names = (f"{base}-{secrets.token_hex(4)}" for _ in range(_JIT_RANDOM_TRIES))
-    for ns in itertools.chain(predictable, random_names):
-        row = await _registry_row(org, ns)
-        if row is None:
-            return _FreeName(ns)
-        if row["active"] and row["contact_email"] == ident:
-            return _FreeName(ns, existing_account=True)
-    return _FreeName(None)
-
-
-async def _any_revoked(accounts: list[dict[str, Any]]) -> bool:
-    """Whether the subject of any of `accounts` is revoked outright."""
-    from server.auth.revocation import subjects_revoked
-
-    subjects = {a["namespace"] for a in accounts} | {a["owner"] for a in accounts}
-    return await subjects_revoked(sorted(subjects - {""}), issued_at=int(time.time()))
-
-
-async def _resolve_as_written(ident: str) -> tuple[str, str, list[str], list[str]] | None:
-    """`resolve_identity_for_email`, reading every write that landed."""
-    from server.core.ch import own_write_reads
-
-    with own_write_reads():
-        return await resolve_identity_for_email(ident)
 
 
 @router.post("/v1/auth/login", response_model=LoginOutput)

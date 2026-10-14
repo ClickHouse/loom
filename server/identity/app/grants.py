@@ -289,8 +289,9 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
     if row is None:
         return GrantsRevokeOutput(revoked=False)
 
+    active = (row.status or "active") == "active"
     # Only an active admin row is load-bearing for ownership.
-    if row.role == "admin" and (row.status or "active") == "active":
+    if row.role == "admin" and active:
         if await grants_repo.count_active_admins(input.org, input.namespace) <= 1:
             from server.core.errors import PreconditionFailedError
 
@@ -303,11 +304,11 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
     from server.code.app.index import maintainers
 
     siblings: list[dict[str, Any]] = []
-    if row.role == "admin" and (row.status or "active") == "active":
+    if row.role == "admin" and active:
         # A revoked maintainer leaves every branch of the repository: planned
         # first, so one cutoff write covers them all before any grant row lands.
         siblings = await maintainers.plan_revoke(input.org, input.namespace, subject)
-    if (row.status or "active") == "active":
+    if active:
         # A pending request granted nothing, so revoking it (a reject) ends no claim.
         await write_grant_cutoffs(
             input.org,

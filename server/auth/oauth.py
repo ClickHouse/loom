@@ -27,7 +27,7 @@ import logging
 import secrets
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple, cast
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 import httpx
@@ -54,8 +54,9 @@ _PENDING_TTL = 600  # OIDC pending-login record: time to complete IdP sign-in
 #   save_client(client_id, redirect_uris, client_name) / get_client(client_id)
 #   save_code(code, grant)   / find_code(code), consume_code(code, grant)
 #   save_refresh(token, gr)  / find_refresh(token, client_id),
-#     consume_refresh(token, grant) — single-use, consumed once the exchange
-#     is decided; a refresh is bound to the issuee: another client_id finds
+#     consume_refresh(token, grant) — single-use: consumed once the exchange
+#     is decided with a Keeper, before the decision without one (`_exchange`);
+#     a refresh is bound to the issuee: another client_id finds
 #     nothing, so a wrong presenter can't burn it.
 # Codes and refresh tokens are bearer secrets, so the store keys them by
 # _token_id(token) (sha256 hex), never the token itself: a row read out of
@@ -262,7 +263,7 @@ class _CHStore:
         return data
 
 
-_store: Any = _CHStore()
+_store: _CHStore = _CHStore()
 
 
 # --------------------------------------------------------------------------
@@ -523,7 +524,7 @@ async def authorize_submit(request: Request) -> RedirectResponse:
             headers={"Retry-After": "900"},
         ) from e
     except SignInUnavailable as e:
-        raise _unavailable("sign-in", e) from e
+        raise _log_and_retry_later("sign-in", e) from e
     if resolved is None:
         # Bounce back to the form with an error (don't leak which field).
         raise HTTPException(status_code=401, detail={"error": "access_denied"})
@@ -591,11 +592,8 @@ async def _start_oidc_login(
 @router.get("/oauth/callback")
 async def oidc_callback(request: Request) -> RedirectResponse:
     from server.auth import oidc
-    from server.auth.login import (
-        SignInUnavailable,
-        jit_provision_for_email,
-        resolve_identity_for_email,
-    )
+    from server.auth.jit import jit_provision_for_email
+    from server.auth.login import SignInUnavailable, resolve_identity_for_email
 
     code = request.query_params.get("code", "")
     state = request.query_params.get("state", "")
@@ -630,7 +628,7 @@ async def oidc_callback(request: Request) -> RedirectResponse:
             # No account — auto-provision one if JIT is on (else stay fail-closed).
             resolved = await jit_provision_for_email(email)
     except SignInUnavailable as e:
-        raise _unavailable("sign-in", e) from e
+        raise _log_and_retry_later("sign-in", e) from e
     if resolved is None:
         raise HTTPException(
             status_code=403,
@@ -734,6 +732,8 @@ async def token(request: Request) -> JSONResponse:
     raise HTTPException(status_code=400, detail={"error": "unsupported_grant_type"})
 
 
+# What an exchange presents: an authorization code or a refresh token.
+_Kind = Literal["code", "refresh"]
 _Decider = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
@@ -747,7 +747,7 @@ class _Decision(NamedTuple):
 
 
 async def _exchange(
-    kind: str, credential: str, *, client_id: str, decide: _Decider
+    kind: _Kind, credential: str, *, client_id: str, decide: _Decider
 ) -> dict[str, Any]:
     """Exchange a code or refresh token for tokens, once.
 
@@ -764,7 +764,7 @@ async def _exchange(
         async with asyncio.timeout(oauth_claims.CLAIM_TIMEOUT_S):
             found = await _find(kind, credential, client_id)
     except Exception as e:  # an unreadable store answers retryably, as below
-        raise _unavailable("credential read", e) from e
+        raise _log_and_retry_later("credential read", e) from e
     if found is None:
         raise _invalid_grant()
     ch = get_client()
@@ -772,7 +772,7 @@ async def _exchange(
     try:
         claim, holder = await oauth_claims.claim(ch, key)
     except Exception as e:  # an exchange Keeper could not keep apart does not run
-        raise _unavailable("exchange claim", e) from e
+        raise _log_and_retry_later("exchange claim", e) from e
     if claim is oauth_claims.Claim.TAKEN:
         log.info("oauth: %s is being exchanged by another request; told to retry", kind)
         raise _retry_later()
@@ -790,19 +790,20 @@ async def _exchange(
             elif decided.tokens is not None and kind == "refresh":
                 # The kept claim holds a retry off until it goes stale. A code
                 # expires before that, so its tokens are answered instead.
-                raise _unavailable(
+                raise _log_and_retry_later(
                     "consume", "did not finish", decided.grant, retry_after=oauth_claims.STALE_S
                 )
     finally:
         if claimed and not keep_claim:
             await oauth_claims.release_shielded(ch, key, holder)
-    if decided.tokens is None:
-        raise decided.refusal or _invalid_grant()
-    return decided.tokens
+    if decided.refusal is not None:
+        raise decided.refusal
+    # A decision without a refusal carries its tokens.
+    return cast("dict[str, Any]", decided.tokens)
 
 
 async def _settle(
-    kind: str,
+    kind: _Kind,
     credential: str,
     client_id: str,
     decide: _Decider,
@@ -840,23 +841,20 @@ async def _settle(
             return _Decision(grant, refusal=_invalid_grant())
         if isinstance(e, HTTPException):
             raise
-        raise _unavailable("exchange", e) from e
+        raise _log_and_retry_later("exchange", e) from e
 
 
-async def _find(kind: str, credential: str, client_id: str) -> dict[str, Any] | None:
-    grant: dict[str, Any] | None
+async def _find(kind: _Kind, credential: str, client_id: str) -> dict[str, Any] | None:
     if kind == "code":
-        grant = await _store.find_code(credential)
-    else:
-        grant = await _store.find_refresh(credential, client_id)
-    return grant
+        return await _store.find_code(credential)
+    return await _store.find_refresh(credential, client_id)
 
 
 def _invalid_grant() -> HTTPException:
     return HTTPException(status_code=400, detail={"error": "invalid_grant"})
 
 
-async def _consume(kind: str, credential: str, grant: dict[str, Any]) -> bool:
+async def _consume(kind: _Kind, credential: str, grant: dict[str, Any]) -> bool:
     """Mark the credential consumed; False when that did not finish within
     `CONSUME_TIMEOUT_S` (it may still land)."""
     from server.auth.oauth_claims import CONSUME_TIMEOUT_S
@@ -900,17 +898,17 @@ async def _decide_refresh(grant: dict[str, Any]) -> dict[str, Any]:
     try:
         roles = await refreshed_roles(grant["subject"], grant["org"], list(grant["roles"]))
     except Exception as e:  # an account that could not be read mints nothing
-        raise _unavailable("account read", e, grant) from e
+        raise _log_and_retry_later("account read", e, grant) from e
     if roles is None:
         raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
     return {**grant, "roles": roles, "namespaces": await _mint_namespaces(grant, issued_at)}
 
 
-def _unavailable(
-    what: str, cause: Exception | str, grant: dict[str, Any] | None = None, *, retry_after: int = 5
+def _log_and_retry_later(
+    what: str, cause: object, grant: dict[str, Any] | None = None, *, retry_after: int = 5
 ) -> HTTPException:
-    """The retryable refusal of an exchange whose `what` failed because of
-    `cause`, to be retried after `retry_after` seconds."""
+    """Log that `what` failed (because of `cause`, an exception or a reason)
+    and return the retryable 503 to raise, with `retry_after` seconds."""
     who = f" for {grant['subject']!r} in {grant['org']!r}" if grant else ""
     log.warning("oauth: %s failed%s: %s", what, who, cause)
     return _retry_later(retry_after)
@@ -945,7 +943,7 @@ async def _mint_namespaces(grant: dict[str, Any], issued_at: int) -> list[str]:
     except HTTPException:
         raise
     except Exception as e:  # no token is minted past a revocation it could not read
-        raise _unavailable("mint-time read", e, grant) from e
+        raise _log_and_retry_later("mint-time read", e, grant) from e
     return [ns for ns in namespaces if ns not in ended]
 
 

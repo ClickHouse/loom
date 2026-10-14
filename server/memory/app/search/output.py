@@ -112,13 +112,9 @@ async def _serve_parked_page(input: MemorySearchInput) -> MemorySearchOutput:
 
 
 async def _readable_namespaces(org: str, namespace: str, payload: dict[str, Any]) -> set[str]:
-    """The namespaces of a parked list the caller may still read. The page was
-    parked under the addressed `namespace`, which the transport authorized
-    again, but its other namespaces are the fan-out of the first call, and a
-    grant there may have been taken away since: they stay while they are in
-    the caller's fan-out now, read once for the page. A page that names no
-    other (a `this` search's) reads nothing: it does not hang on lookups it
-    has no use for."""
+    """The namespaces of a parked page the caller may still read: the
+    addressed one, and the others while they are in the caller's fan-out now.
+    A page that names no other namespace skips the fan-out read."""
     from server.auth.fanout import resolve_fanout
 
     authorized = {"", namespace}
