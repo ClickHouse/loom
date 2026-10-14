@@ -115,16 +115,21 @@ async def _readable_namespaces(org: str, namespace: str, payload: dict[str, Any]
     parked under the addressed `namespace`, which the transport authorized
     again, but its other namespaces are the fan-out of the first call, and a
     grant there may have been taken away since: they stay while they are in
-    the caller's fan-out now, read once for the page."""
+    the caller's fan-out now, read once for the page. A page that names no
+    other (a `this` search's) reads nothing: it does not hang on lookups it
+    has no use for."""
     from server.auth.fanout import resolve_fanout
 
+    authorized = {"", namespace}
     named = {str(h.get("namespace", "")) for h in payload.get("hits") or []}
     named |= {
         *(payload.get("namespaces_searched") or []),
         *(payload.get("namespaces_skipped") or []),
     }
+    if named <= authorized:
+        return authorized
     mine = (await resolve_fanout(org)).namespaces
-    return (named & set(mine)) | {"", namespace}
+    return (named & set(mine)) | authorized
 
 
 def _readable_slice(

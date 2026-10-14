@@ -33,7 +33,6 @@ class _CH:
     def __init__(self) -> None:
         self.revoked: dict[str, dict[str, Any]] = {}
         self.live: dict[str, str] = {}  # namespace -> role
-        self.granted_at: dict[str, int] = {}  # namespace -> unix seconds; default: now
 
     async def insert(self, table: str, rows: list[dict[str, Any]], **_k: Any) -> None:
         assert table == "loom.revoked_tokens"
@@ -43,14 +42,6 @@ class _CH:
         if "revoked_tokens" in sql:
             keys = (params or {}).get("keys")
             return [r for k, r in self.revoked.items() if keys is None or k in keys]
-        if "namespace_grants" in sql and "role = 'admin'" in sql:
-            wanted = (params or {}).get("nss") or []
-            now = int(datetime.now(UTC).timestamp())
-            return [
-                {"namespace": ns, "granted": self.granted_at.get(ns, now)}
-                for ns, role in self.live.items()
-                if role == "admin" and ns in wanted
-            ]
         if "namespace_grants" in sql:
             return [{"namespace": ns} for ns in self.live]
         return []
@@ -273,34 +264,12 @@ def test_a_minting_path_reads_the_cutoffs_from_clickhouse(ch: _CH) -> None:
     assert asyncio.run(rev.ended_claims(ORG, "alice", ["team"], issued_at=later)) == set()
 
 
-def test_an_admin_grant_given_since_the_cutoff_gives_a_minted_token_its_claim_back(
-    ch: _CH,
-) -> None:
-    # An operator reinstated the owner, or handed a released name back: the
-    # claim confers no more than that grant, so a new token carries it. A
-    # lower grant (a self-join stops at writer) leaves the namespace cut.
-    _end("team")
-    _end("notes")
-    later = int(datetime.now(UTC).timestamp()) + 5
-    ch.live = {"team": "admin", "notes": "writer"}
-    ch.granted_at = {"team": later, "notes": later}
-    assert asyncio.run(rev.ended_claims(ORG, "alice", ["team", "notes"], issued_at=None)) == {
-        "notes"
-    }
-
-
-def test_the_admin_grant_a_revoke_is_replacing_lifts_nothing(ch: _CH) -> None:
-    # The cutoff lands before the grant row it ends: a mint in between still
-    # reads the old admin row live, and must not carry the namespace past
-    # the cutoff, where every later refresh would keep it.
+def test_a_later_grant_does_not_end_a_cutoff_at_mint(ch: _CH) -> None:
+    # Not even an admin one: the live grant decides access there, and an
+    # exemption would rest on every path that can write an admin row.
     _end("team")
     ch.live = {"team": "admin"}
-    ch.granted_at = {"team": BEFORE}
     assert asyncio.run(rev.ended_claims(ORG, "alice", ["team"], issued_at=None)) == {"team"}
-    ch.granted_at = {"team": int(datetime.now(UTC).timestamp())}
-    assert asyncio.run(rev.ended_claims(ORG, "alice", ["team"], issued_at=None)) == {"team"}, (
-        "an admin row of the revoke's own second predates its cutoff"
-    )
 
 
 def test_a_subject_revocation_is_read_from_clickhouse(ch: _CH) -> None:
@@ -325,14 +294,14 @@ def test_the_mint_time_reads_are_sequentially_consistent(
     read = ch.query_all
 
     async def _recording(sql: str, params: dict[str, Any] | None = None) -> list[dict]:
-        if "revoked_tokens" in sql or "namespace_grants" in sql:
+        if "revoked_tokens" in sql:
             consistent.append(sequential_reads_active())
         return await read(sql, params)
 
     monkeypatch.setattr(ch, "query_all", _recording)
     asyncio.run(rev.ended_claims(ORG, "alice", ["team"], issued_at=None))
     asyncio.run(rev.subject_revoked("alice", issued_at=BEFORE))
-    assert consistent == [True, True, True], "the cutoffs, the admin grants, the subject"
+    assert consistent == [True, True], "the cutoffs, the subject"
 
 
 def test_a_failed_mint_time_read_propagates(ch: _CH, monkeypatch: pytest.MonkeyPatch) -> None:

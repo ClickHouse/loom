@@ -312,21 +312,26 @@ async def resolve_identity_for_email(
     return await _with_restricted_grants(_identity_from_rows(rows, verified_email=ident))
 
 
-async def _registered(org: str, namespace: str) -> bool:
-    """Whether a registry row exists for `namespace`, active or not, read as of
-    every write that landed."""
+async def _registry_row(org: str, namespace: str) -> dict[str, Any] | None:
+    """The registry row of `namespace`, active or not, read as of every write
+    that landed (a concurrent first sign-in may have just written it)."""
     from server.core.ch import own_write_reads
 
     with own_write_reads():
         row = await get_client().query_one(
             """
-            SELECT 1 AS x FROM loom.namespaces FINAL
+            SELECT active, toString(contact_email) AS contact_email
+            FROM loom.namespaces FINAL
             WHERE org = {org:String} AND namespace = {ns:String}
             LIMIT 1
             """,
             params={"org": org, "ns": namespace},
         )
-    return row is not None
+    return None if row is None else dict(row)
+
+
+# How many suffixed names (`<name>-2`, ...) a JIT sign-up tries past the first.
+_JIT_NAME_TRIES = 5
 
 
 async def jit_provision_for_email(
@@ -355,20 +360,29 @@ async def jit_provision_for_email(
     # hash so two different emails can never collide onto one account.
     local = ident.split("@", 1)[0]
     slug = "".join(c if c.isalnum() else "-" for c in local).strip("-")[:40] or "user"
-    ns = f"u-{slug}-{hashlib.sha256(ident.encode()).hexdigest()[:8]}"
-    if await _registered(_settings.oidc_jit_org, ns):
-        # Released or deleted (the sign-in found no active row for the email):
-        # provisioning it again would rebuild the row with default settings and
-        # an admin grant, handing back what an operator took away. Self-signup
-        # refuses a taken name the same way.
-        log.info(
-            "oidc jit: %s/%s is registered but inactive; not provisioning",
-            _settings.oidc_jit_org,
-            ns,
+    base = f"u-{slug}-{hashlib.sha256(ident.encode()).hexdigest()[:8]}"
+    org = _settings.oidc_jit_org
+    from server.core.ch import own_write_reads
+
+    for ns in [base, *(f"{base}-{n}" for n in range(2, _JIT_NAME_TRIES + 2))]:
+        row = await _registry_row(org, ns)
+        if row is None:
+            break
+        if bool(row.get("active")) and str(row.get("contact_email") or "") == ident:
+            # This person's, written by a concurrent first sign-in or missed by
+            # a replica the first read reached: resolve it as written.
+            with own_write_reads():
+                return await resolve_identity_for_email(ident)
+        # Released or deleted (it is inactive), or another account's: never
+        # rebuilt, which would hand back its data and an admin grant.
+        log.info("oidc jit: %s/%s is taken (released, deleted or another's); next", org, ns)
+    else:
+        log.warning(
+            "oidc jit: no free name for %r in %s after %d tries", ident, org, _JIT_NAME_TRIES + 1
         )
         return None
     await provision_account(
-        org=_settings.oidc_jit_org,
+        org=org,
         namespace=ns,
         subject=ns,
         contact_email=ident,
@@ -376,9 +390,11 @@ async def jit_provision_for_email(
         description="Auto-provisioned via OIDC SSO.",
     )
     # Re-resolve through the normal mapping (applies admin-promotion + the
-    # cross-org guard). A simultaneous first login for the same email
-    # writes the same (org, namespace) row — ReplacingMergeTree collapses it.
-    return await resolve_identity_for_email(ident)
+    # cross-org guard), as of the row just written. A simultaneous first login
+    # for the same email writes the same (org, namespace) row — ReplacingMergeTree
+    # collapses it.
+    with own_write_reads():
+        return await resolve_identity_for_email(ident)
 
 
 @router.post("/v1/auth/login", response_model=LoginOutput)

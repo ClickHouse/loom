@@ -744,9 +744,10 @@ async def _exchange(
     its own, and together they end well before the claim goes stale, so no
     taker runs beside a live exchange. A refusal uses the credential up; a
     failure before the consume leaves it (503) for the client's retry. A
-    consume that did not finish may still land, so the claim is kept until it
-    goes stale: a refusal still answers, an issue answers 503, and its tokens,
-    which the client never receives, are the worst it leaves."""
+    consume that did not finish, or was cancelled, may still land, so the
+    claim is kept until it goes stale: a refusal still answers, an issue
+    answers 503, and its tokens, which the client never receives, are the
+    worst it leaves."""
     from server.auth import oauth_claims
     from server.core.ch import get_client
 
@@ -773,12 +774,17 @@ async def _exchange(
                 issued = await _issue_tokens(decided, decided["client_id"], issued_at)
         except HTTPException as e:
             if grant is not None and e.status_code != 503:
-                keep_claim = not await _used_up(consume, grant)
+                # Kept until the consume is acknowledged: a cancelled one may still land.
+                keep_claim = True
+                if await _used_up(consume, grant):
+                    keep_claim = False
             raise
         except Exception as e:  # a find, decision or issue that did not finish uses nothing up
             raise _unavailable("exchange", e, grant) from e
-        if not await _used_up(consume, grant):
-            keep_claim = True
+        keep_claim = True  # as above, until the consume is acknowledged
+        if await _used_up(consume, grant):
+            keep_claim = False
+        else:
             # Wait out the kept claim: a retry before it goes stale finds it
             # held and, like any presenter beside a live exchange, is told to
             # retry in 5 s. A code is likely expired by then, and starts over.

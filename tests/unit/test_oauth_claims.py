@@ -163,3 +163,29 @@ def test_a_failed_sweep_does_not_fail_the_boot() -> None:
     keeper.down = True
     asyncio.run(oc.probe(keeper))
     assert oc.claims_atomic() is True
+
+
+def test_an_acquisition_past_its_wall_clock_bound_is_refused_and_released(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Retries, reconnects and pool waits all count: a claim whose insert landed
+    # but whose acquisition dragged on would start the exchange already old.
+    keeper = _Keeper()
+    asyncio.run(oc.probe(keeper))
+    execute = keeper.execute
+    released: list[str] = []
+
+    async def _slow(sql: str, params: dict[str, Any]) -> None:
+        if sql.startswith("INSERT"):
+            await execute(sql, params)
+            await asyncio.sleep(1)  # the reply lost, a reconnect
+            return
+        if " DELETE " in sql:
+            released.append(params["k"])
+        await execute(sql, params)
+
+    monkeypatch.setattr(keeper, "execute", _slow)
+    monkeypatch.setattr(oc, "CLAIM_TIMEOUT_S", 0.05)
+    with pytest.raises(TimeoutError):
+        _claim(keeper)
+    assert released == ["code:abc"] and keeper.rows == {}

@@ -301,14 +301,11 @@ async def ended_claims(
     the token's iat is past every cutoff, so a cutoff this process's snapshot
     has not caught up with yet would never apply to it.
 
-    A namespace the subject was given a live admin grant on since its cutoff
-    is not ended: only another admin can give that (a self-join stops below
-    it, a restore grants no admin over an existing namespace, OIDC JIT does
-    not rebuild a released or deleted account, and the maintainer sync does
-    not undo a lowering on a branch), and a claim confers no more than it,
-    so an owner an operator reinstated is not kept out of their claim. An
-    admin row granted before the cutoff is the one the revoke is replacing
-    (the cutoff lands first), so it lifts nothing."""
+    A later grant there, an admin one included, does not end a cutoff: the
+    live grant decides what the person may do there, and leaving the
+    namespace out of the claims minted on takes nothing that grant gives. An
+    exemption for some grant would rest on every path that can write one,
+    and each new such path would be a way back past the cutoff."""
     from server.auth.aliases import subject_aliases
 
     spellings = await subject_aliases(org, subject, strict=True)
@@ -316,47 +313,12 @@ async def ended_claims(
     if not by_key:
         return set()
     rows = await _read_revocations(sorted(by_key))
-    ended: dict[str, int] = {}  # namespace -> its latest cutoff
+    ended: set[str] = set()
     for r in rows:
         cutoff = _cutoff_seconds(r.get("issued_before"))
         if cutoff is not None and (issued_at is None or issued_at < cutoff):
-            ns = by_key[str(r["jti"])]
-            ended[ns] = max(cutoff, ended.get(ns, 0))
-    if not ended:
-        return set()
-    regranted = await _admin_granted_since(org, spellings, ended)
-    return {ns for ns in ended if ns not in regranted}
-
-
-async def _admin_granted_since(org: str, spellings: list[str], cutoffs: dict[str, int]) -> set[str]:
-    """The namespaces of `cutoffs` one of the subject's `spellings` holds a
-    live admin grant on, granted at or after that namespace's cutoff (unix
-    seconds; grant rows are stamped to the second, the cutoff is the second
-    after its write). Read as of every write that landed: a lagging replica
-    must not show a grant a revoke already ended."""
-    from server.core.ch import get_client, own_write_reads
-    from server.core.grant_sql import LIVE_GRANT
-
-    with own_write_reads():
-        rows = await get_client().query_all(
-            f"""
-            SELECT namespace, toUnixTimestamp(max(granted_at)) AS granted
-            FROM loom.namespace_grants FINAL
-            WHERE org = {{org:String}} AND namespace IN {{nss:Array(String)}}
-              AND lower(subject) IN {{subs:Array(String)}} AND role = 'admin' AND {LIVE_GRANT}
-            GROUP BY namespace
-            """,
-            params={
-                "org": org,
-                "nss": sorted(cutoffs),
-                "subs": [s.lower() for s in spellings],
-            },
-        )
-    return {
-        str(r["namespace"])
-        for r in rows
-        if int(r["granted"]) >= cutoffs.get(str(r["namespace"]), 2**62)
-    }
+            ended.add(by_key[str(r["jti"])])
+    return ended
 
 
 async def subject_revoked(subject: str, *, issued_at: int) -> bool:

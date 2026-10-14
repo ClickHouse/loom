@@ -101,11 +101,12 @@ inserts the credential's key into `loom.oauth_claims`, a KeeperMap table, under
 presenters exactly one runs. The other gets a retryable 503 rather than a final
 `invalid_grant` (it may be the owner retrying after a reply that never arrived), and its
 retry, after the release, reads the credential (with sequential consistency) as
-consumed. A live exchange is done within about 95 s of its claim landing: its credential
-read, decision and tokens share a one-minute deadline, its consume has ten seconds, and
-the claim's own retries the rest. A claim a dead one left is taken over after two minutes,
+consumed. A live exchange is done within 80 s of its claim landing, each phase under a
+wall-clock deadline that counts retries, reconnects and pool waits: ten seconds to
+acquire the claim, one minute for its credential read, decision and tokens, ten seconds
+for its consume. A claim a dead one left is taken over after two minutes,
 by a compare-and-swap, so of two takers one wins. A consume that did not finish may
-still land, so its claim is kept until it goes stale and the reply is a 503 with
+still land, as may a cancelled one, so its claim is kept until it goes stale and the reply is a 503 with
 `Retry-After: 120`; each server boot sweeps the claims older than two minutes. Every
 token an exchange or a sign-in mints is issued at the time taken before it read the
 grant cutoffs, and a cutoff is written again once its first write returned, so a

@@ -7,12 +7,11 @@ across the configured branch namespaces of one repository:
 
 * ``sync_repo_maintainers`` — the union of active admins over the branches,
   written to every branch that lacks one (``granted_by =
-  repo-maintainers:<source namespace>``). An explicit revocation on a branch,
-  or a lower grant that replaced the admin row there, newer than the
-  subject's newest sibling grant is respected: the admin row is not re-added.
-  Called after an admin grant is created or approved on a code namespace,
-  when a branch is added, and once per process per namespace by the
-  registrar (so environment-registered branches inherit).
+  repo-maintainers:<source namespace>``). An explicit revocation on a branch
+  that is newer than the subject's newest sibling grant is respected: the
+  row is not re-added. Called after an admin grant is created or approved
+  on a code namespace, when a branch is added, and once per process per
+  namespace by the registrar (so environment-registered branches inherit).
 * ``revoke_repo_maintainer`` — a revoked admin leaves every branch, except a
   branch where they are the only active admin (the handler's own guard).
 
@@ -68,17 +67,14 @@ def _row(
     }
 
 
-async def _grant_rows(
-    client: Any, org: str, branches: list[str], *, admins_only: bool = True
-) -> list[dict[str, Any]]:
-    role = "AND role = 'admin'" if admins_only else ""
+async def _admin_rows(client: Any, org: str, branches: list[str]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = await client.query_all(
-        f"""
-        SELECT namespace, subject, role, ifNull(toString(status), 'active') AS status,
+        """
+        SELECT namespace, subject, ifNull(toString(status), 'active') AS status,
                revoked_at, granted_at, granted_by
         FROM loom.namespace_grants FINAL
-        WHERE org = {{org:String}} AND namespace IN {{ns:Array(String)}}
-          {role}
+        WHERE org = {org:String} AND namespace IN {ns:Array(String)}
+          AND role = 'admin'
         """,
         params={"org": org, "ns": list(branches)},
     )
@@ -102,27 +98,18 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
     from server.core.ch import get_client
 
     client = ch or get_client()
-    rows = await _grant_rows(client, org, branches, admins_only=False)
+    rows = await _admin_rows(client, org, branches)
     active: dict[str, dict[str, datetime]] = {ns: {} for ns in branches}
-    # When the subject left admin on the branch: a revocation, or a lower
-    # grant that replaced the admin row (a `replace=true` lowering).
-    removed: dict[tuple[str, str], datetime] = {}
+    revoked: dict[tuple[str, str], datetime] = {}
     for r in rows:
         ns, subject = str(r["namespace"]), str(r["subject"])
         if ns not in active:
             continue
-        live = r.get("revoked_at") is None and str(r.get("status") or "active") in _ACTIVE
-        if live and str(r.get("role") or "") == "admin":
+        if r.get("revoked_at") is None and str(r.get("status") or "active") in _ACTIVE:
             active[ns][subject] = r["granted_at"]
-            continue
-        if r.get("revoked_at") is not None:
-            at = r["revoked_at"]
-        elif live:
-            at = r["granted_at"]  # lowered below admin
-        else:
-            continue  # a pending request removes nothing
-        key = (ns, subject)
-        removed[key] = max(removed.get(key, at), at)
+        elif r.get("revoked_at") is not None:
+            key = (ns, subject)
+            revoked[key] = max(revoked.get(key, r["revoked_at"]), r["revoked_at"])
     # newest sibling grant per subject, and the branch it came from
     union: dict[str, tuple[datetime, str]] = {}
     for ns, subs in active.items():
@@ -135,9 +122,9 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
         for subject, (at, src) in union.items():
             if subject in active[ns]:
                 continue
-            rv = removed.get((ns, subject))
+            rv = revoked.get((ns, subject))
             if rv is not None and rv >= at:
-                continue  # removed or lowered on this branch after their newest sibling grant
+                continue  # removed from this branch after their newest sibling grant
             inserts.append(_row(org, ns, subject, granted_by=f"{GRANTED_BY_PREFIX}{src}", now=now))
     if inserts:
         await _insert(client, inserts)
@@ -163,7 +150,7 @@ async def revoke_repo_maintainer(
     from server.core.ch import get_client
 
     client = ch or get_client()
-    rows = await _grant_rows(client, org, branches)
+    rows = await _admin_rows(client, org, branches)
     admins: dict[str, dict[str, dict[str, Any]]] = {ns: {} for ns in branches}
     for r in rows:
         if r.get("revoked_at") is None and str(r.get("status") or "active") in _ACTIVE:

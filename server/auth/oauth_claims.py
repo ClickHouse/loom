@@ -17,6 +17,7 @@ unclaimed (two presenters racing can both succeed) and /v1/health says so.
 
 from __future__ import annotations
 
+import asyncio
 import enum
 import logging
 import uuid
@@ -33,15 +34,19 @@ from server.core.schema.migrate_lease import (
 log = logging.getLogger(__name__)
 
 # A claim older than this was left by an exchange that died. A live one is done
-# well within it, wall clock from the moment its claim lands: the rest of the
-# claim (a retried insert, the holder read: up to about 25 s at 5 s a
-# statement), then the find, the decision and the tokens it issues sharing
-# `EXCHANGE_TIMEOUT_S` (retries and pool waits included), then the consume's
-# `CONSUME_TIMEOUT_S`. About 95 s at worst; the rest is margin for the clocks of
+# well within it, wall clock from the moment its claim lands, each phase under
+# an `asyncio.timeout` that counts retries, reconnects and pool waits: the
+# acquisition (`CLAIM_TIMEOUT_S`, which is all a claim can age before the
+# exchange holds it, since the insert stamps `claimed_at`), the find, the
+# decision and the tokens it issues (`EXCHANGE_TIMEOUT_S`), then the consume
+# (`CONSUME_TIMEOUT_S`). 80 s at worst; the rest is margin for the clocks of
 # the replicas that stamp and judge `claimed_at`.
 STALE_S = 120
+CLAIM_TIMEOUT_S = 10
 EXCHANGE_TIMEOUT_S = 60
 CONSUME_TIMEOUT_S = 10
+# A release past this leaves the claim to go stale rather than hold the reply.
+RELEASE_TIMEOUT_S = 10
 
 _STRICT = "SETTINGS keeper_map_strict_mode = 1"
 _INSERT = (
@@ -109,16 +114,23 @@ async def claim(ch: Any, key: str) -> tuple[Claim, str]:
     """Claim `key` for one exchange: (outcome, holder id to release with).
     Raises when Keeper cannot answer, so the caller refuses retryably rather
     than run an exchange it could not keep apart."""
-    if not await _available(ch):
-        return Claim.UNCLAIMED, ""
     me = uuid.uuid4().hex
+    attempted = False
     try:
-        with statement_timeout(5):
-            held = await _claim(ch, key, me)
+        # One wall-clock bound over the whole acquisition: a lost reply to an
+        # insert that landed, then reconnects, would otherwise age the claim
+        # toward `STALE_S` before the exchange even starts.
+        async with asyncio.timeout(CLAIM_TIMEOUT_S):
+            if not await _available(ch):
+                return Claim.UNCLAIMED, ""
+            attempted = True
+            with statement_timeout(5):
+                held = await _claim(ch, key, me)
     except Exception:
         # An insert or takeover that answered late may still have landed; a
         # claim left behind would lock the credential out until it went stale.
-        await release(ch, key, me)
+        if attempted:
+            await release(ch, key, me)
         raise
     return (Claim.HELD, me) if held else (Claim.TAKEN, "")
 
@@ -146,8 +158,9 @@ async def release(ch: Any, key: str, holder: str) -> None:
     """Drop this exchange's claim; one taken over since is the taker's and
     stays. A release that fails or stalls leaves the claim to go stale."""
     try:
-        with statement_timeout(5):
-            await ch.execute(_RELEASE, params={"k": key, "me": holder})
+        async with asyncio.timeout(RELEASE_TIMEOUT_S):
+            with statement_timeout(5):
+                await ch.execute(_RELEASE, params={"k": key, "me": holder})
     except Exception as e:  # noqa: BLE001 — the exchange is decided; a kept claim goes stale
         log.warning("oauth claims: release of %s failed: %s", key, e)
 

@@ -206,12 +206,12 @@ async def test_jit_provisions_when_enabled(monkeypatch) -> None:
     async def fake_resolve(email: str) -> tuple[str, str, list[str], list[str]]:
         return ("u-bob-xxxx", "acme", ["u-bob-xxxx"], ["writer"])
 
-    async def none_registered(org: str, namespace: str) -> bool:
-        return False
+    async def none_registered(org: str, namespace: str) -> None:
+        return None
 
     monkeypatch.setattr(self_signup, "provision_account", fake_provision)
     monkeypatch.setattr(login, "resolve_identity_for_email", fake_resolve)
-    monkeypatch.setattr(login, "_registered", none_registered)
+    monkeypatch.setattr(login, "_registry_row", none_registered)
 
     out = await login.jit_provision_for_email("Bob@Acme.com")
     assert out == ("u-bob-xxxx", "acme", ["u-bob-xxxx"], ["writer"])
@@ -220,24 +220,63 @@ async def test_jit_provisions_when_enabled(monkeypatch) -> None:
     assert calls["namespace"].startswith("u-bob-") and calls["password_hash"] == ""
 
 
-async def test_jit_does_not_rebuild_a_released_or_deleted_account(monkeypatch) -> None:
-    # The sign-in found no active row: one that exists inactive was released
-    # or deleted, and provisioning it again would hand back an admin grant.
+def _jit_on(monkeypatch) -> dict[str, Any]:
     monkeypatch.setattr(settings, "oidc_jit_provision", True)
     monkeypatch.setattr(settings, "oidc_jit_org", "acme")
     monkeypatch.setattr(settings, "oidc_jit_email_domains", "")
-    called = {"n": 0}
+    provisioned: dict[str, Any] = {}
 
     async def fake_provision(**kw: Any) -> None:
-        called["n"] += 1
+        provisioned.update(kw)
 
-    async def registered(org: str, namespace: str) -> bool:
-        return True
+    async def fake_resolve(email: str) -> tuple[str, str, list[str], list[str]]:
+        return ("someone", "acme", ["someone"], ["admin"])
 
     monkeypatch.setattr(self_signup, "provision_account", fake_provision)
-    monkeypatch.setattr(login, "_registered", registered)
-    assert await login.jit_provision_for_email("bob@acme.com") is None
-    assert called["n"] == 0
+    monkeypatch.setattr(login, "resolve_identity_for_email", fake_resolve)
+    return provisioned
+
+
+@pytest.mark.parametrize(
+    "taken",
+    [
+        {"active": False, "contact_email": "bob@acme.com"},  # released or deleted
+        {"active": True, "contact_email": "mallory@acme.com"},  # another's
+    ],
+)
+async def test_jit_never_rebuilds_a_taken_name_and_takes_the_next(
+    monkeypatch, taken: dict[str, Any]
+) -> None:
+    # Rebuilding a released or deleted account would hand back its data and an
+    # admin grant; one another account registered is theirs.
+    provisioned = _jit_on(monkeypatch)
+    rows: dict[str, dict[str, Any]] = {}
+
+    async def registry_row(org: str, namespace: str) -> dict[str, Any] | None:
+        if not rows:
+            rows[namespace] = taken  # the first name tried
+        return rows.get(namespace)
+
+    monkeypatch.setattr(login, "_registry_row", registry_row)
+    assert await login.jit_provision_for_email("bob@acme.com") is not None
+    (first,) = rows
+    assert provisioned["namespace"] == f"{first}-2"
+
+
+async def test_jit_resolves_a_name_a_concurrent_first_sign_in_wrote(monkeypatch) -> None:
+    provisioned = _jit_on(monkeypatch)
+
+    async def registry_row(org: str, namespace: str) -> dict[str, Any] | None:
+        return {"active": True, "contact_email": "bob@acme.com"}
+
+    monkeypatch.setattr(login, "_registry_row", registry_row)
+    assert await login.jit_provision_for_email("Bob@acme.com") == (
+        "someone",
+        "acme",
+        ["someone"],
+        ["admin"],
+    )
+    assert provisioned == {}
 
 
 async def test_jit_rejects_disallowed_domain(monkeypatch) -> None:

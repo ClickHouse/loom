@@ -63,8 +63,12 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   on that namespace. A flat or scoped token minted before it reaches the namespace only
   through the subject's current grant, and a grant made later does not restore the claim.
   Signing in again, an OAuth code exchange and an OAuth refresh leave the namespace out of
-  the token they mint, until the subject is given an admin grant there in a later second
-  (only another admin gives one, and the claim confers no more). The cutoff is a
+  the token they mint, for good: a later grant, an admin one included, gives access back
+  through itself, not the old claim. A token minted while the cutoff was being written is
+  cut as well (each mint is issued at the time before its cutoff read, and the cutoff is
+  written again once its first write returned). A refresh token saved before this release
+  carries the time after its read, so a cutoff that landed in that window rides its chain
+  until it expires. The cutoff is a
   `loom.revoked_tokens` row (`grant:<org>/<namespace>/<subject>`);
   `loom revoke-token --list --grants` shows them. A namespace never granted to the subject
   (named by an operator at mint) keeps its claim.
@@ -76,10 +80,10 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   exchange is bounded well inside the age its claim is taken over at. Without a
   Keeper, `/v1/health` reports `oauth_claims_not_atomic`.
 - **Security:** OIDC just-in-time provisioning no longer rebuilds an account that was
-  released (`loom claim-release`) or deleted: the person's next sign-in recreated its
-  namespace with default settings and an admin grant.
-- **Security:** a repository's maintainer sync no longer copies an admin grant back onto
-  a branch where the person was lowered (`grants.create` with `replace=true`) after it.
+  released (`loom claim-release`) or deleted, or one another account registered under the
+  name it derives: the person's next sign-in recreated it with default settings and an
+  admin grant, its data included. It provisions the next free name (`<name>-2`, ...)
+  instead.
 - **Security:** `namespace.restore` into an existing namespace needs an admin of it. The
   owner a first write auto-registered, who holds no grant there, could restore a payload
   whose grants made them, or anyone, admin.

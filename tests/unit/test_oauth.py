@@ -768,16 +768,16 @@ def test_an_exchange_issues_its_tokens_at_the_time_before_its_cutoff_read(
         rt = _exchange(c, code, verifier).json()["refresh_token"]
 
     async def _slow(subject: str, *, issued_at: int) -> bool:
-        await asyncio.sleep(1.1)
+        await asyncio.sleep(2.1)  # an issue time taken after this read is >= before + 2
         return False
 
     monkeypatch.setattr(revocation, "subject_revoked", _slow)
     before = int(time.time())
     r = _exchange(c, code, verifier) if grant_type == "authorization_code" else _refresh(c, rt)
     tok = r.json()
-    assert verify_token(tok["access_token"]).issued_at == before
+    assert verify_token(tok["access_token"]).issued_at - before <= 1
     saved = oauth._store.refresh[oauth._token_id(tok["refresh_token"])]
-    assert int(saved["exp"]) - oauth._REFRESH_TTL == before
+    assert int(saved["exp"]) - oauth._REFRESH_TTL - before <= 1
 
 
 def test_a_find_past_its_bound_is_told_to_retry(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -882,3 +882,40 @@ def test_a_failed_token_issue_leaves_the_credential_for_the_retry(
     assert exchange().status_code == 503
     monkeypatch.setattr(store, "save_refresh", save)
     assert exchange().status_code == 200
+
+
+@pytest.mark.parametrize("outcome", ["issued", "refused"])
+async def test_a_cancelled_consume_keeps_the_claim(held_claims: list[str], outcome: str) -> None:
+    """A consume cancelled from outside may still land: the claim is kept as
+    for one that failed, and the cancellation propagates."""
+    import asyncio
+
+    started = asyncio.Event()
+    grant = {
+        "client_id": "loom-test",
+        "subject": "alice@example.com",
+        "org": "test-org",
+        "namespaces": ["alice-ns"],
+        "roles": ["writer"],
+    }
+
+    async def find() -> dict:
+        return grant
+
+    async def decide(g: dict) -> dict:
+        if outcome == "refused":
+            raise oauth.HTTPException(status_code=400, detail={"error": "invalid_grant"})
+        return g
+
+    async def consume(g: dict) -> None:
+        started.set()
+        await asyncio.sleep(30)
+
+    task = asyncio.create_task(
+        oauth._exchange("code", "c", find=find, decide=decide, consume=consume)
+    )
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert held_claims == []

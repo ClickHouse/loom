@@ -246,3 +246,26 @@ async def test_a_page_reads_on_past_withheld_hits(monkeypatch) -> None:
     assert out.next_page == sp.make_handle(key, 3)
     last = await h.handle_memory_search(page.model_copy(update={"page": out.next_page}))
     assert [r.memory_key for r in last.results] == ["d"] and last.next_page == ""
+
+
+@pytest.mark.asyncio
+async def test_a_page_of_the_addressed_namespace_alone_reads_no_fan_out(monkeypatch) -> None:
+    """A `this` search's page names only the namespace the transport just
+    authorized: serving it reads no grants, so a failing lookup cannot fail it."""
+    import server.auth.fanout as fanout
+    from server.memory.api.models_search import MemorySearchInput
+    from server.memory.app import search as h
+
+    content = _encode(1, 2, [_hit("b", 0.8, ns="n"), _hit("c", 0.7, ns="n")])
+    key = sp.page_blob_key(content)
+    patch_handler_name(monkeypatch, "get_client", lambda: _CH(content))
+
+    async def _down(org: str) -> fanout.Fanout:
+        raise AssertionError("no fan-out read for an addressed-only page")
+
+    monkeypatch.setattr(fanout, "resolve_fanout", _down)
+    page = MemorySearchInput(
+        org="o", namespace="n", agent="*", query="q", top_k=2, page=sp.make_handle(key, 0)
+    )
+    out = await h.handle_memory_search(page)
+    assert [r.memory_key for r in out.results] == ["b", "c"]
