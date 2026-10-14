@@ -39,6 +39,9 @@ _EXPECTED_MUTATIONS = Counter(
         # run.complete drops a run id claim, also a KeeperMap key (the erasure saga's
         # drop goes through erasure.store.mutations.run_keeper_delete).
         ("server/tasks/store/runs.py", "agent_run_claims", "DELETE"): 1,
+        # An OAuth exchange's claim is a KeeperMap key: the release and the
+        # drop of a stale claim delete a znode, not MergeTree parts.
+        ("server/auth/oauth_claims.py", "oauth_claims", "DELETE"): 2,
         # Conditional Keeper key recovery, only after a kernel death proof and
         # a server-side quiescence check; not a MergeTree data mutation.
         ("server/insights/store/provider_lock.py", "_migration_lock", "DELETE"): 1,

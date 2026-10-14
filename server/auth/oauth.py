@@ -25,7 +25,8 @@ import json
 import logging
 import secrets
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
 
@@ -73,15 +74,11 @@ class _CHStore:
     """Durable OAuth state in loom.oauth_state — survives restart + replicas.
 
     Single-use is a consumed=1 ReplacingMergeTree version; reads take FINAL +
-    consumed=0 + unexpired.
-
-    Known limit: take_* is read-then-mark, not atomic: two presenters of the same
-    code or refresh token racing within one round trip can both succeed. A code
-    is useless without its PKCE verifier and lives 60 s; a refresh token is
-    bound to its client_id. An insert_deduplication_token would drop the second
-    consume row but tell neither caller, so it is no guard; the upgrade is a
-    KeeperMap claim key under keeper_map_strict_mode (the migration lock's
-    mechanism), whose second INSERT fails.
+    consumed=0 + unexpired, with sequential consistency, so a replica that has
+    not seen a consume cannot replay the credential. Finding and consuming are
+    two steps (the exchange is decided in between), so /oauth/token keeps two
+    concurrent exchanges of one credential apart with a Keeper claim
+    (`oauth_claims`); without a Keeper both can succeed.
     """
 
     _T = "loom.oauth_state"
@@ -168,14 +165,17 @@ class _CHStore:
     async def _find(
         self, rtype: str, rid: str, client_id: str | None = None
     ) -> dict[str, Any] | None:
-        row = await self._ch().query_one(
-            f"""SELECT client_id, redirect_uri, code_challenge, subject, org,
-                       namespaces, roles, expires_at
-                FROM {self._T} FINAL
-                WHERE record_type = {{t:String}} AND id = {{id:String}} AND consumed = 0
-                LIMIT 1""",
-            params={"t": rtype, "id": rid},
-        )
+        from server.core.ch import own_write_reads
+
+        with own_write_reads():
+            row = await self._ch().query_one(
+                f"""SELECT client_id, redirect_uri, code_challenge, subject, org,
+                           namespaces, roles, expires_at
+                    FROM {self._T} FINAL
+                    WHERE record_type = {{t:String}} AND id = {{id:String}} AND consumed = 0
+                    LIMIT 1""",
+                params={"t": rtype, "id": rid},
+            )
         if not row:
             return None
         exp = int(row.get("expires_at") or 0)
@@ -690,11 +690,14 @@ async def token(request: Request) -> JSONResponse:
     code_verifier = f.get("code_verifier", "")
     refresh_token = f.get("refresh_token", "")
     if grant_type == "authorization_code":
-        grant = await _store.find_code(code)
-        if grant is None:
-            raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
-        decided = _decide_code(grant, client_id, redirect_uri, code_verifier)
-        issued = await _used_up_unless_retryable(decided, lambda: _store.consume_code(code, grant))
+        async with _one_exchange("code", code):
+            grant = await _store.find_code(code)
+            if grant is None:
+                raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
+            decided = _decide_code(grant, client_id, redirect_uri, code_verifier)
+            issued = await _used_up_unless_retryable(
+                decided, lambda: _store.consume_code(code, grant)
+            )
         return JSONResponse(await _issue_tokens(issued, client_id))
 
     if grant_type == "refresh_token":
@@ -706,16 +709,39 @@ async def token(request: Request) -> JSONResponse:
                 status_code=400,
                 detail={"error": "invalid_request", "error_description": "client_id required"},
             )
-        grant = await _store.find_refresh(refresh_token, client_id)
-        if grant is None:
-            raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
-        decided = _decide_refresh(grant)
-        issued = await _used_up_unless_retryable(
-            decided, lambda: _store.consume_refresh(refresh_token, grant)
-        )
+        async with _one_exchange("refresh", refresh_token):
+            grant = await _store.find_refresh(refresh_token, client_id)
+            if grant is None:
+                raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
+            decided = _decide_refresh(grant)
+            issued = await _used_up_unless_retryable(
+                decided, lambda: _store.consume_refresh(refresh_token, grant)
+            )
         return JSONResponse(await _issue_tokens(issued, grant["client_id"]))
 
     raise HTTPException(status_code=400, detail={"error": "unsupported_grant_type"})
+
+
+@asynccontextmanager
+async def _one_exchange(record_type: str, credential: str) -> AsyncIterator[None]:
+    """Hold the credential's Keeper claim while its exchange runs
+    (`oauth_claims`): a concurrent exchange of it is refused like a used one."""
+    from server.auth import oauth_claims
+    from server.core.ch import get_client
+
+    ch = get_client()
+    key = f"{record_type}:{_token_id(credential)}"
+    try:
+        outcome, holder = await oauth_claims.claim(ch, key)
+    except Exception as e:  # an exchange Keeper could not keep apart does not run
+        raise _unavailable("exchange claim", e) from e
+    if outcome is oauth_claims.Claim.TAKEN:
+        raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
+    try:
+        yield
+    finally:
+        if outcome is oauth_claims.Claim.HELD:
+            await oauth_claims.release(ch, key, holder)
 
 
 async def _used_up_unless_retryable(
@@ -760,14 +786,16 @@ async def _decide_refresh(grant: dict[str, Any]) -> dict[str, Any]:
     try:
         roles = await refreshed_roles(grant["subject"], grant["org"], list(grant["roles"]))
     except Exception as e:  # an account that could not be read mints nothing
-        raise _unavailable("account read", grant, e) from e
+        raise _unavailable("account read", e, grant) from e
     if roles is None:
         raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
     return {**grant, "roles": roles, "namespaces": await _mint_namespaces(grant, issued_at)}
 
 
-def _unavailable(what: str, grant: dict[str, Any], e: Exception) -> HTTPException:
-    log.warning("oauth: %s failed for %r in %r: %s", what, grant["subject"], grant["org"], e)
+def _unavailable(what: str, e: Exception, grant: dict[str, Any] | None = None) -> HTTPException:
+    """The retryable refusal of an exchange whose `what` failed."""
+    who = f" for {grant['subject']!r} in {grant['org']!r}" if grant else ""
+    log.warning("oauth: %s failed%s: %s", what, who, e)
     return HTTPException(
         status_code=503,
         detail={"error": "temporarily_unavailable"},
@@ -796,7 +824,7 @@ async def _mint_namespaces(grant: dict[str, Any], issued_at: int) -> list[str]:
     except HTTPException:
         raise
     except Exception as e:  # no token is minted past a revocation it could not read
-        raise _unavailable("revocation read", grant, e) from e
+        raise _unavailable("mint-time read", e, grant) from e
     return [ns for ns in namespaces if ns not in ended]
 
 

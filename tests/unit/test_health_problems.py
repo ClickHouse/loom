@@ -633,3 +633,15 @@ def test_run_ids_without_keeper_claims_are_an_info_problem(monkeypatch: pytest.M
         if p.code == "run_claims_not_atomic"
     ]
     assert [p.severity for p in found] == ["info"]
+
+
+def test_oauth_exchanges_without_keeper_claims_are_a_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def codes(oauth: bool, atomic: bool | None) -> list[str]:
+        s = _settings(monkeypatch, LOOM_OAUTH_ENABLED=str(oauth).lower())
+        problems = collect_problems(s, HealthState(oauth_claims_atomic=atomic))
+        return [p.severity for p in problems if p.code == "oauth_claims_not_atomic"]
+
+    assert codes(True, None) == codes(True, True) == codes(False, False) == []
+    assert codes(True, False) == ["warn"]

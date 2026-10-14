@@ -67,6 +67,12 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   `loom.revoked_tokens` row (`grant:<org>/<namespace>/<subject>`);
   `loom revoke-token --list --grants` shows them. A namespace never granted to the subject
   (named by an operator at mint) keeps its claim.
+- **Security:** `/oauth/token` runs one exchange per code or refresh token: a KeeperMap
+  claim (`loom.oauth_claims`, migration `027_oauth_claims.sql`) refuses a concurrent
+  presenter, where two could both mint before. When a read the exchange needs fails it
+  answers a retryable 503 `temporarily_unavailable` and leaves the credential usable,
+  where a failed account read on refresh used to answer 500 and burn the token. Without a
+  Keeper, `/v1/health` reports `oauth_claims_not_atomic`.
 - **Security:** `context.fetch` no longer serves, and `context.offload` refuses to write,
   `page/` blobs: a parked `memory.search` page holds hits from every namespace its search
   fanned out over, and only `memory.search(page=...)` serves it, re-checking each of them.

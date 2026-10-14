@@ -93,6 +93,17 @@ it. Two consequences hold the design together:
   reads fail, `/oauth/token` answers 503 and leaves the code or refresh token unused, so
   the client's retry works; a decided exchange, a token or a refusal, uses it up.
 
+**One exchange per credential** (`server/auth/oauth_claims.py`). The OAuth store marks a
+code or refresh token used with a new ReplacingMergeTree version, and a read-then-mark
+cannot keep two concurrent exchanges of one credential apart. So `/oauth/token` first
+inserts the credential's key into `loom.oauth_claims`, a KeeperMap table, under
+`keeper_map_strict_mode`: Keeper refuses the second insert, so of two concurrent
+presenters exactly one runs and the other gets `invalid_grant`; one that comes after the
+release reads the credential (with sequential consistency) as consumed. The claim lives
+for one exchange, and one a crashed exchange left is taken over after two minutes. A
+server without a Keeper skips the table, runs exchanges unclaimed and reports
+`oauth_claims_not_atomic`.
+
 ## Authorization
 
 ### Roles

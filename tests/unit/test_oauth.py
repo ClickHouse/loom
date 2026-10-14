@@ -20,7 +20,19 @@ from fastapi.testclient import TestClient
 from server.auth import login, oauth
 from tests.unit.oauth_store_fake import MemoryOAuthStore
 
-pytestmark = pytest.mark.usefixtures("ended_grant_claims", "no_restricted_grants")
+pytestmark = pytest.mark.usefixtures("ended_grant_claims", "no_restricted_grants", "no_keeper")
+
+
+@pytest.fixture
+def no_keeper(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exchanges run unclaimed, as on a server without a Keeper; the claim
+    itself is tested in test_oauth_claims.py."""
+    from server.auth import oauth_claims
+
+    async def _unclaimed(ch: object, key: str) -> tuple[oauth_claims.Claim, str]:
+        return oauth_claims.Claim.UNCLAIMED, ""
+
+    monkeypatch.setattr(oauth_claims, "claim", _unclaimed)
 
 
 @pytest.fixture
@@ -672,3 +684,22 @@ def test_a_failed_restricted_grant_read_does_not_narrow_the_session(
     assert _refresh(c, rt).status_code == 503
     tok = _refresh(c, rt).json()
     assert verify_token(tok["access_token"]).namespaces == ("alice-ns", "restricted-qa")
+
+
+def test_a_concurrent_exchange_of_a_claimed_credential_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Another exchange of the code holds its Keeper claim: this one is refused
+    like a used code, and the code is left for the exchange that holds it."""
+    from server.auth import oauth_claims
+
+    async def _taken(ch: object, key: str) -> tuple[oauth_claims.Claim, str]:
+        return oauth_claims.Claim.TAKEN, ""
+
+    c = _client()
+    code, verifier = _seed_code()
+    with monkeypatch.context() as racing:
+        racing.setattr(oauth_claims, "claim", _taken)
+        refused = _exchange(c, code, verifier)
+    assert refused.status_code == 400 and refused.json()["detail"]["error"] == "invalid_grant"
+    assert _exchange(c, code, verifier).status_code == 200

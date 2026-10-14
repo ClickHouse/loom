@@ -31,7 +31,6 @@ TRANSIENT_TABLES = {
     "memory_ask_precedents": "cached answers reused as precedents, recomputed on a miss",
     "memory_drops": "a review log of writes that were dropped",
     "memory_extraction_queue": "a work queue; the facts it yields live in loom.memory",
-    "memory_code_link_queue": "the code link worker's queue of memory writes (keys only)",
     "consolidation_runs": "the consolidation worker's run ledger",
 }
 
@@ -84,7 +83,7 @@ def test_the_journal_files() -> None:
         "024_deployment_config.sql",
         "025_agent_run_claims.sql",
         "026_memory_code_links.sql",
-        "027_run_id_indexes.sql",
+        "027_oauth_claims.sql",
     ]
 
 
