@@ -154,13 +154,19 @@ async def handle_namespace_restore(
     payload = input.payload
 
     # Existing target, active or soft-deleted (namespace.delete leaves its data in place) ⇒
-    # the same admin + restricted check as namespace.register, before anything about the
+    # the admin + restricted check of namespace.register, less its pass for the
+    # auto-registered owner (a restore writes grants), before anything about the
     # target is read or answered. Fresh target ⇒ caller becomes admin via the auto-grant
     # below.
     target_existing = await namespaces_repo.fetch_row(input.org, input.target_namespace, ch=ch)
     if target_existing is not None:
         await _registry.require_admin_of_existing(
-            target_existing, input.org, input.target_namespace, caller, visibility=None
+            target_existing,
+            input.org,
+            input.target_namespace,
+            caller,
+            visibility=None,
+            owner_may_complete=False,
         )
 
     # Idempotency: if this snapshot_id already appears as a restore

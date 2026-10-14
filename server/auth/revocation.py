@@ -20,7 +20,7 @@ The table is ReplacingMergeTree ORDER BY jti: the newest row per key governs.
   per namespace and spelling of the subject, kept `NEVER_EXPIRES_DAYS` (a
   sign-in mints past any cutoff, so none may lapse while the owner row
   stands). Each is a short key and an int, and every refresh re-reads them
-  all; past `SNAPSHOT_WARN_ROWS` the refresh logs a warning so an operator
+  all; past `SNAPSHOT_WARN_ROWS` a process logs one warning so an operator
   sees the read and the memory grow before they matter.
 
 Failure semantics: until the first successful read `loaded()` is False and
@@ -53,6 +53,8 @@ _LATEST_EXPIRY = datetime(2105, 12, 31)
 # The snapshot size the refresh warns past: about 10 MB of keys per process,
 # re-read on every refresh.
 SNAPSHOT_WARN_ROWS = 100_000
+# Whether this process has warned of the size once.
+_warned_size = False
 
 
 def revocation_expiry(expires_at: datetime | None, now: datetime) -> datetime:
@@ -108,7 +110,7 @@ async def refresh() -> None:
     """Re-read the revocation set from CH and replace the in-memory copy."""
     from server.core.ch import get_client
 
-    global _revoked_jtis, _revoked_before, _loaded, _loaded_at
+    global _revoked_jtis, _revoked_before, _loaded, _loaded_at, _warned_size
     try:
         ch = get_client()
         rows = await ch.query_all(
@@ -127,7 +129,8 @@ async def refresh() -> None:
                 before[str(r["jti"])] = cutoff
         _revoked_jtis = frozenset(full)
         _revoked_before = before
-        if len(rows) > SNAPSHOT_WARN_ROWS:
+        if len(rows) > SNAPSHOT_WARN_ROWS and not _warned_size:
+            _warned_size = True
             log.warning(
                 "revocation snapshot holds %d rows (past %d), most of them grant cutoffs; "
                 "every process re-reads them on each refresh",
@@ -293,10 +296,12 @@ async def ended_claims(
     the token's iat is past every cutoff, so a cutoff this process's snapshot
     has not caught up with yet would never apply to it.
 
-    A namespace the subject holds a live admin grant on again is not ended:
-    only another admin can give that (a self-join stops below it), and a
-    claim confers no more than it, so an owner an operator reinstated, or
-    handed a released name back to, is not kept out of their claim."""
+    A namespace the subject was given a live admin grant on since its cutoff
+    is not ended: only another admin can give that (a self-join stops below
+    it, a restore grants no admin over an existing namespace), and a claim
+    confers no more than it, so an owner an operator reinstated is not kept
+    out of their claim. An admin row granted before the cutoff is the one the
+    revoke is replacing (the cutoff lands first), so it lifts nothing."""
     from server.auth.aliases import subject_aliases
 
     spellings = await subject_aliases(org, subject, strict=True)
@@ -304,33 +309,47 @@ async def ended_claims(
     if not by_key:
         return set()
     rows = await _read_revocations(sorted(by_key))
-    ended: set[str] = set()
+    ended: dict[str, int] = {}  # namespace -> its latest cutoff
     for r in rows:
         cutoff = _cutoff_seconds(r.get("issued_before"))
         if cutoff is not None and (issued_at is None or issued_at < cutoff):
-            ended.add(by_key[str(r["jti"])])
-    if ended:
-        ended -= await _admin_again(org, spellings, sorted(ended))
-    return ended
+            ns = by_key[str(r["jti"])]
+            ended[ns] = max(cutoff, ended.get(ns, 0))
+    if not ended:
+        return set()
+    regranted = await _admin_granted_since(org, spellings, ended)
+    return {ns for ns in ended if ns not in regranted}
 
 
-async def _admin_again(org: str, spellings: list[str], namespaces: list[str]) -> set[str]:
-    """The `namespaces` one of the subject's `spellings` holds a live admin
-    grant on, read as of every write that landed: a lagging replica must not
-    show a grant a revoke already ended."""
+async def _admin_granted_since(org: str, spellings: list[str], cutoffs: dict[str, int]) -> set[str]:
+    """The namespaces of `cutoffs` one of the subject's `spellings` holds a
+    live admin grant on, granted at or after that namespace's cutoff (unix
+    seconds; grant rows are stamped to the second, the cutoff is the second
+    after its write). Read as of every write that landed: a lagging replica
+    must not show a grant a revoke already ended."""
     from server.core.ch import get_client, own_write_reads
     from server.core.grant_sql import LIVE_GRANT
 
     with own_write_reads():
         rows = await get_client().query_all(
             f"""
-            SELECT DISTINCT namespace FROM loom.namespace_grants FINAL
+            SELECT namespace, toUnixTimestamp(max(granted_at)) AS granted
+            FROM loom.namespace_grants FINAL
             WHERE org = {{org:String}} AND namespace IN {{nss:Array(String)}}
               AND lower(subject) IN {{subs:Array(String)}} AND role = 'admin' AND {LIVE_GRANT}
+            GROUP BY namespace
             """,
-            params={"org": org, "nss": namespaces, "subs": [s.lower() for s in spellings]},
+            params={
+                "org": org,
+                "nss": sorted(cutoffs),
+                "subs": [s.lower() for s in spellings],
+            },
         )
-    return {str(r["namespace"]) for r in rows}
+    return {
+        str(r["namespace"])
+        for r in rows
+        if int(r["granted"]) >= cutoffs.get(str(r["namespace"]), 2**62)
+    }
 
 
 async def subject_revoked(subject: str, *, issued_at: int) -> bool:

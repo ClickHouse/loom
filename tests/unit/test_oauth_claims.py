@@ -32,8 +32,14 @@ class _Keeper:
     async def execute(self, sql: str, params: dict[str, Any]) -> None:
         if self.down:
             raise RuntimeError("Keeper away")
-        key = params["k"]
         assert "keeper_map_strict_mode = 1" in sql
+        if " DELETE " in sql and "claimed_at <" in sql:  # the boot sweep
+            assert params["stale"] == oc.STALE_S
+            for key in self.stale:
+                self.rows.pop(key, None)
+            self.stale.clear()
+            return
+        key = params["k"]
         if sql.startswith("INSERT"):
             if key in self.rows:
                 raise RuntimeError("Code: 999. Coordination::Exception: Node exists")
@@ -138,3 +144,22 @@ def test_keeper_failing_is_raised_for_a_retryable_refusal() -> None:
     keeper.down = True
     with pytest.raises(RuntimeError):
         _claim(keeper)
+
+
+def test_the_boot_probe_sweeps_the_stale_claims() -> None:
+    # A claim an exchange kept (its consume did not finish) or failed to
+    # release would otherwise stay until its credential came back.
+    keeper = _Keeper()
+    _claim(keeper, "code:kept")
+    _claim(keeper, "code:live")
+    keeper.stale.add("code:kept")
+    asyncio.run(oc.probe(keeper))
+    assert set(keeper.rows) == {"code:live"}
+
+
+def test_a_failed_sweep_does_not_fail_the_boot() -> None:
+    keeper = _Keeper()
+    asyncio.run(oc.probe(keeper))
+    keeper.down = True
+    asyncio.run(oc.probe(keeper))
+    assert oc.claims_atomic() is True

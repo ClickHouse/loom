@@ -769,7 +769,11 @@ async def _exchange(
             raise _unavailable("exchange", e, grant) from e
         if not await _used_up(consume, grant):
             keep_claim = True
-            raise _unavailable("consume", RuntimeError("did not finish"), grant)
+            # A retry is told the credential is in use until the kept claim
+            # goes stale; a code is likely expired by then, and starts over.
+            raise _unavailable(
+                "consume", RuntimeError("did not finish"), grant, retry_after=oauth_claims.STALE_S
+            )
         return issued
     finally:
         if outcome is oauth_claims.Claim.HELD and not keep_claim:
@@ -824,14 +828,17 @@ async def _decide_refresh(grant: dict[str, Any]) -> dict[str, Any]:
     return {**grant, "roles": roles, "namespaces": await _mint_namespaces(grant, issued_at)}
 
 
-def _unavailable(what: str, e: Exception, grant: dict[str, Any] | None = None) -> HTTPException:
-    """The retryable refusal of an exchange whose `what` failed."""
+def _unavailable(
+    what: str, e: Exception, grant: dict[str, Any] | None = None, *, retry_after: int = 5
+) -> HTTPException:
+    """The retryable refusal of an exchange whose `what` failed, to be retried
+    after `retry_after` seconds."""
     who = f" for {grant['subject']!r} in {grant['org']!r}" if grant else ""
     log.warning("oauth: %s failed%s: %s", what, who, e)
     return HTTPException(
         status_code=503,
         detail={"error": "temporarily_unavailable"},
-        headers={"Retry-After": "5"},
+        headers={"Retry-After": str(retry_after)},
     )
 
 

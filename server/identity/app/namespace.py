@@ -272,10 +272,19 @@ def _is_auto_registered_owner(existing: dict[str, Any], caller: str) -> bool:
 
 
 async def require_admin_of_existing(
-    existing: dict[str, Any], org: str, namespace: str, caller: str, *, visibility: str | None
+    existing: dict[str, Any],
+    org: str,
+    namespace: str,
+    caller: str,
+    *,
+    visibility: str | None,
+    owner_may_complete: bool = True,
 ) -> None:
     """Refuse `caller` unless it may rewrite the registered (active or soft-deleted) row
-    `existing`: the check `namespace.register` and `namespace.restore` both apply."""
+    `existing`: the check `namespace.register` and `namespace.restore` both apply.
+    `owner_may_complete=False` (a restore, which writes grants) refuses the
+    auto-registered owner who holds no admin: completing the registration grants
+    nothing, a restore would grant them, and anyone else, any role."""
     from server.auth.context import current_auth
 
     auth = current_auth()
@@ -294,9 +303,8 @@ async def require_admin_of_existing(
             )
     # A row born from a bare first write names its writer as owner and carries no grant.
     # That owner may complete the registration with the form; anyone else needs admin.
-    if not _is_auto_registered_owner(existing, caller) and not await _is_admin(
-        auth, org, namespace, caller
-    ):
+    owner_completes = owner_may_complete and _is_auto_registered_owner(existing, caller)
+    if not owner_completes and not await _is_admin(auth, org, namespace, caller):
         from server.core.errors import AuthInsufficientError
 
         raise AuthInsufficientError(

@@ -63,8 +63,8 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   on that namespace. A flat or scoped token minted before it reaches the namespace only
   through the subject's current grant, and a grant made later does not restore the claim.
   Signing in again, an OAuth code exchange and an OAuth refresh leave the namespace out of
-  the token they mint, until the subject holds an admin grant there again (only another
-  admin gives one, and the claim confers no more). The cutoff is a
+  the token they mint, until the subject is given an admin grant there after it (only
+  another admin gives one, and the claim confers no more). The cutoff is a
   `loom.revoked_tokens` row (`grant:<org>/<namespace>/<subject>`);
   `loom revoke-token --list --grants` shows them. A namespace never granted to the subject
   (named by an operator at mint) keeps its claim.
@@ -75,6 +75,9 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   where a failed account read on refresh used to answer 500 and burn the token. The
   exchange is bounded well inside the age its claim is taken over at. Without a
   Keeper, `/v1/health` reports `oauth_claims_not_atomic`.
+- **Security:** `namespace.restore` into an existing namespace needs an admin of it. The
+  owner a first write auto-registered, who holds no grant there, could restore a payload
+  whose grants made them, or anyone, admin.
 - **Security:** `context.fetch` no longer serves, and `context.offload` refuses to write,
   `page/` blobs: a parked `memory.search` page holds hits from every namespace its search
   fanned out over, and only `memory.search(page=...)` serves it, re-checking each of them.

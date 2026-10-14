@@ -816,7 +816,8 @@ def test_a_consume_that_did_not_finish_keeps_the_claim(
     code, verifier = _seed_code()
     if outcome == "issued":
         r = _exchange(c, code, verifier)
-        assert r.status_code == 503 and r.headers["retry-after"] == "5"
+        # A retry before the kept claim goes stale is told it is in use.
+        assert r.status_code == 503 and r.headers["retry-after"] == "120"
     else:
         r = _exchange(c, code, "not-the-verifier")
         assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"

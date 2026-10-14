@@ -33,6 +33,7 @@ class _CH:
     def __init__(self) -> None:
         self.revoked: dict[str, dict[str, Any]] = {}
         self.live: dict[str, str] = {}  # namespace -> role
+        self.granted_at: dict[str, int] = {}  # namespace -> unix seconds; default: now
 
     async def insert(self, table: str, rows: list[dict[str, Any]], **_k: Any) -> None:
         assert table == "loom.revoked_tokens"
@@ -44,8 +45,9 @@ class _CH:
             return [r for k, r in self.revoked.items() if keys is None or k in keys]
         if "namespace_grants" in sql and "role = 'admin'" in sql:
             wanted = (params or {}).get("nss") or []
+            now = int(datetime.now(UTC).timestamp())
             return [
-                {"namespace": ns}
+                {"namespace": ns, "granted": self.granted_at.get(ns, now)}
                 for ns, role in self.live.items()
                 if role == "admin" and ns in wanted
             ]
@@ -241,16 +243,34 @@ def test_a_minting_path_reads_the_cutoffs_from_clickhouse(ch: _CH) -> None:
     assert asyncio.run(rev.ended_claims(ORG, "alice", ["team"], issued_at=later)) == set()
 
 
-def test_a_live_admin_grant_gives_a_minted_token_its_claim_back(ch: _CH) -> None:
+def test_an_admin_grant_given_since_the_cutoff_gives_a_minted_token_its_claim_back(
+    ch: _CH,
+) -> None:
     # An operator reinstated the owner, or handed a released name back: the
     # claim confers no more than that grant, so a new token carries it. A
     # lower grant (a self-join stops at writer) leaves the namespace cut.
     _end("team")
     _end("notes")
+    later = int(datetime.now(UTC).timestamp()) + 5
     ch.live = {"team": "admin", "notes": "writer"}
+    ch.granted_at = {"team": later, "notes": later}
     assert asyncio.run(rev.ended_claims(ORG, "alice", ["team", "notes"], issued_at=None)) == {
         "notes"
     }
+
+
+def test_the_admin_grant_a_revoke_is_replacing_lifts_nothing(ch: _CH) -> None:
+    # The cutoff lands before the grant row it ends: a mint in between still
+    # reads the old admin row live, and must not carry the namespace past
+    # the cutoff, where every later refresh would keep it.
+    _end("team")
+    ch.live = {"team": "admin"}
+    ch.granted_at = {"team": BEFORE}
+    assert asyncio.run(rev.ended_claims(ORG, "alice", ["team"], issued_at=None)) == {"team"}
+    ch.granted_at = {"team": int(datetime.now(UTC).timestamp())}
+    assert asyncio.run(rev.ended_claims(ORG, "alice", ["team"], issued_at=None)) == {"team"}, (
+        "an admin row of the revoke's own second predates its cutoff"
+    )
 
 
 def test_a_subject_revocation_is_read_from_clickhouse(ch: _CH) -> None:

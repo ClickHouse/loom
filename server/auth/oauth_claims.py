@@ -33,10 +33,12 @@ from server.core.schema.migrate_lease import (
 log = logging.getLogger(__name__)
 
 # A claim older than this was left by an exchange that died. A live one is done
-# well within it, wall clock from the moment its claim lands: the find, the
-# decision and the tokens it issues share `EXCHANGE_TIMEOUT_S`, retries and
-# pool waits included, and the consume has `CONSUME_TIMEOUT_S`. The rest is
-# margin for the clocks of the replicas that stamp and judge `claimed_at`.
+# well within it, wall clock from the moment its claim lands: the rest of the
+# claim (a retried insert, the holder read: up to about 25 s at 5 s a
+# statement), then the find, the decision and the tokens it issues sharing
+# `EXCHANGE_TIMEOUT_S` (retries and pool waits included), then the consume's
+# `CONSUME_TIMEOUT_S`. About 95 s at worst; the rest is margin for the clocks of
+# the replicas that stamp and judge `claimed_at`.
 STALE_S = 120
 EXCHANGE_TIMEOUT_S = 60
 CONSUME_TIMEOUT_S = 10
@@ -53,6 +55,10 @@ _TAKE_OVER = (
     "ALTER TABLE loom.oauth_claims UPDATE holder = {me:String}, claimed_at = now64(3) "
     "WHERE claim_key = {k:String} "
     f"AND claimed_at < now64(3) - toIntervalSecond({{stale:UInt32}}) {_STRICT}"
+)
+_SWEEP = (
+    "ALTER TABLE loom.oauth_claims DELETE "
+    f"WHERE claimed_at < now64(3) - toIntervalSecond({{stale:UInt32}}) {_STRICT}"
 )
 _RELEASE = (
     "ALTER TABLE loom.oauth_claims DELETE "
@@ -76,11 +82,27 @@ def claims_atomic() -> bool | None:
 
 
 async def probe(ch: Any) -> None:
-    """At boot, so /v1/health names `oauth_claims_not_atomic` before any exchange."""
+    """At boot, so /v1/health names `oauth_claims_not_atomic` before any exchange,
+    and to sweep the stale claims: one an exchange kept on purpose (its consume
+    did not finish) or failed to release is otherwise removed only when its
+    credential is presented again."""
     try:
-        await _available(ch)
+        available = await _available(ch)
     except Exception as e:  # noqa: BLE001 — a failed probe leaves it to the first exchange
         log.warning("oauth claims: could not read system.tables: %s", e)
+        return
+    if available:
+        await _sweep(ch)
+
+
+async def _sweep(ch: Any) -> None:
+    """Drop every claim older than `STALE_S`. Strict mode, so a claim taken
+    over meanwhile fails the sweep rather than vanish under its new holder."""
+    try:
+        with statement_timeout(5):
+            await ch.execute(_SWEEP, params={"stale": STALE_S})
+    except Exception as e:  # noqa: BLE001 — a later boot sweeps; a stale claim is taken over meanwhile
+        log.warning("oauth claims: sweep of stale claims failed: %s", e)
 
 
 async def claim(ch: Any, key: str) -> tuple[Claim, str]:
