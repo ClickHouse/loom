@@ -308,7 +308,11 @@ async def test_a_deleted_account_alone_is_no_offboarding(monkeypatch) -> None:
         return False
 
     async def registry_row(org: str, namespace: str) -> dict[str, Any] | None:
-        return {"active": False, "contact_email": "bob@acme.com"} if namespace.count("-") == 2 else None
+        return (
+            {"active": False, "contact_email": "bob@acme.com"}
+            if namespace.count("-") == 2
+            else None
+        )
 
     monkeypatch.setattr(login, "_accounts_naming", accounts)
     monkeypatch.setattr(revocation, "subjects_revoked", not_revoked)
