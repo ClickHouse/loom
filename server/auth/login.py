@@ -357,12 +357,15 @@ async def jit_provision_for_email(
 ) -> tuple[str, str, list[str], list[str]] | None:
     """Just-in-time provisioning for OIDC: when enabled, a verified email with
     no loom account gets a personal namespace auto-created (in oidc_jit_org),
-    then resolves like any other account. Returns None when JIT is off or the
-    email's domain isn't allowed (caller then rejects the login).
+    then resolves like any other account. Returns None (the caller then
+    rejects the login) when JIT is off or the email's domain isn't allowed,
+    when an account of the person's there is revoked outright, when their
+    active account there does not resolve (the cross-org guard), or when no
+    free name is found.
     """
     import hashlib
 
-    from server.auth.self_signup import provision_account
+    from server.auth.self_signup import _claim_lock
     from server.settings import settings as _settings
 
     if not _settings.oidc_jit_provision:
@@ -380,7 +383,18 @@ async def jit_provision_for_email(
     slug = "".join(c if c.isalnum() else "-" for c in local).strip("-")[:40] or "user"
     base = f"u-{slug}-{hashlib.sha256(ident.encode()).hexdigest()[:8]}"
     org = _settings.oidc_jit_org
+    # One sign-up per email at a time in this process, as self-signup does:
+    # a second sign-in waits and finds the account the first wrote.
+    async with _claim_lock(org, "email:" + ident):
+        return await _provision_jit(org, ident, base)
+
+
+async def _provision_jit(
+    org: str, ident: str, base: str
+) -> tuple[str, str, list[str], list[str]] | None:
+    """`jit_provision_for_email` past its gates, under the email's lock."""
     from server.auth.revocation import any_subject_revoked
+    from server.auth.self_signup import provision_account
     from server.core.ch import own_write_reads
 
     accounts = await _accounts_naming(org, ident)
@@ -399,8 +413,14 @@ async def jit_provision_for_email(
         log.info("oidc jit: an account of %r in %s is revoked; not provisioning", ident, org)
         return None
     for ns in [base, *(f"{base}-{n}" for n in range(2, _JIT_NAME_TRIES + 2))]:
-        if await _registry_row(org, ns) is None:
+        row = await _registry_row(org, ns)
+        if row is None:
             break
+        if bool(row.get("active")) and str(row.get("contact_email") or "") == ident:
+            # This person's, written since the read above by a first sign-in
+            # on another process: sign in to it, never provision another.
+            with own_write_reads():
+                return await resolve_identity_for_email(ident)
         # Deleted, released or another's: never rebuilt, which would hand back
         # its data and an admin grant.
         log.info("oidc jit: %s/%s is taken; next", org, ns)
@@ -423,9 +443,9 @@ async def jit_provision_for_email(
         description="Auto-provisioned via OIDC SSO.",
     )
     # Re-resolve through the normal mapping (applies admin-promotion + the
-    # cross-org guard), as of the row just written. A simultaneous first login
-    # for the same email writes the same (org, namespace) row — ReplacingMergeTree
-    # collapses it.
+    # cross-org guard), as of the row just written. Two first sign-ins on two
+    # processes that both found the name free write the same (org, namespace)
+    # row — ReplacingMergeTree collapses it.
     with own_write_reads():
         return await resolve_identity_for_email(ident)
 

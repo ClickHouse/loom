@@ -261,3 +261,26 @@ async def test_grants_revoke_admin_fans_out(
     )
     assert out.revoked and _handler_env["revoke"] == [("clickhouse", "code-x", "alice")]
     assert _handler_env["cutoffs"] == [("clickhouse", "code-x", ["alice"])]
+
+
+async def test_a_failed_cutoff_still_revokes_the_sibling_branches(monkeypatch) -> None:
+    # The revoke on the asked branch has landed; leaving the subject admin on
+    # every sibling would be the wrong way to fail.
+    async def _down(*_a: Any, **_k: Any) -> None:
+        raise RuntimeError("replica away")
+
+    monkeypatch.setattr(maintainers, "end_grant_claims", _down)
+    ch = _FakeCH(
+        [
+            _admin("code-x", "alice"),
+            _admin("code-x-26-5", "alice"),
+            _admin("code-x-26-5", "bob"),
+        ]
+    )
+    with pytest.raises(RuntimeError):
+        await maintainers.revoke_repo_maintainer(
+            "clickhouse", "code-x", "alice", actor="ops", ch=ch
+        )
+    assert [(r["namespace"], r["subject"], r["revoked_at"] is not None) for r in ch.inserted] == [
+        ("code-x-26-5", "alice", True)
+    ]

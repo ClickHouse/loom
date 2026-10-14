@@ -366,6 +366,44 @@ async def test_an_active_account_of_the_person_is_resolved_never_provisioned_aga
     assert provisioned == {}
 
 
+async def test_jit_signs_in_to_its_own_account_another_process_just_wrote(monkeypatch) -> None:
+    # The account read found nothing; by the walk, a first sign-in elsewhere
+    # wrote the base name for this email: sign in to it, provision nothing.
+    provisioned = _jit_on(monkeypatch)
+
+    async def registry_row(org: str, namespace: str) -> dict[str, Any] | None:
+        return {"active": True, "contact_email": "bob@acme.com"}
+
+    monkeypatch.setattr(login, "_registry_row", registry_row)
+    assert await login.jit_provision_for_email("bob@acme.com") is not None
+    assert provisioned == {}
+
+
+async def test_two_first_sign_ins_in_one_process_make_one_account(monkeypatch) -> None:
+    import asyncio
+
+    _jit_on(monkeypatch)
+    written: dict[str, dict[str, Any]] = {}
+    made: list[str] = []
+
+    async def registry_row(org: str, namespace: str) -> dict[str, Any] | None:
+        return written.get(namespace)
+
+    async def accounts(org: str, ident: str) -> list[dict[str, Any]]:
+        return [{**r, "namespace": ns, "owner": ns} for ns, r in written.items()]
+
+    async def provision(**kw: Any) -> None:
+        await asyncio.sleep(0.01)  # the insert takes a moment
+        made.append(kw["namespace"])
+        written[kw["namespace"]] = {"active": True, "contact_email": kw["contact_email"]}
+
+    monkeypatch.setattr(login, "_registry_row", registry_row)
+    monkeypatch.setattr(login, "_accounts_naming", accounts)
+    monkeypatch.setattr(self_signup, "provision_account", provision)
+    await asyncio.gather(*(login.jit_provision_for_email("bob@acme.com") for _ in range(2)))
+    assert len(made) == 1
+
+
 async def test_jit_rejects_disallowed_domain(monkeypatch) -> None:
     monkeypatch.setattr(settings, "oidc_jit_provision", True)
     monkeypatch.setattr(settings, "oidc_jit_org", "acme")

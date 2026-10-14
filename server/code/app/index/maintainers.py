@@ -180,13 +180,19 @@ async def revoke_repo_maintainer(
             )
         )
     if out:
-        await end_grant_claims(
-            org,
-            [row["namespace"] for row in out],
-            [subject],
-            reason="maintainer revoked",
-            revoked_by=actor,
-        )
+        try:
+            await end_grant_claims(
+                org,
+                [row["namespace"] for row in out],
+                [subject],
+                reason="maintainer revoked",
+                revoked_by=actor,
+            )
+        except BaseException:
+            # The revoke on the branch it was asked for has landed: the sibling
+            # grants go too, toward less access, and the failure is raised.
+            await _insert(client, out)
+            raise
         await _insert(client, out)
         log.info(
             "repo maintainers: %s/%s — %r revoked on %d sibling branch(es)",
