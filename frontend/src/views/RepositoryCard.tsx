@@ -271,7 +271,8 @@ export interface CodeActions {
   onJoinAll: (bs: CodeRepoSummary[]) => void;
   onLeaveAll: (bs: CodeRepoSummary[]) => void;
   onManage: (facet: CodeFacet) => void;
-  onAddBranch: (facet: CodeFacet) => void;
+  /** Absent where the deployment cannot add branches from the page (no sandbox). */
+  onAddBranch?: (facet: CodeFacet) => void;
   /** A maintainer sets the repository's access (every branch it maintains). */
   onSetAccess?: (
     facet: CodeFacet,
@@ -365,9 +366,9 @@ function CodeFacetRow({
             </button>
           </Tip>
         )}
-        {c.maintained && (
+        {c.maintained && actions.onAddBranch && (
           <Tip content="Index another branch of this repository. It shares the mirror; you maintain it.">
-            <button type="button" onClick={() => actions.onAddBranch(c)} disabled={anyBusy} className={LINK}>
+            <button type="button" onClick={() => actions.onAddBranch?.(c)} disabled={anyBusy} className={LINK}>
               <GitBranch size={11} aria-hidden="true" /> Add branch
             </button>
           </Tip>

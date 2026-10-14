@@ -95,7 +95,7 @@ import {
   type CodeRepoRemoteBranches,
   type CodeWorkerStatus,
 } from "../api";
-import { sharedIndexStatus } from "../lib/sharedReads";
+import { sharedHealth, sharedIndexStatus } from "../lib/sharedReads";
 import { NamespaceSettingsDialog } from "../flows/NamespaceSettingsDialog";
 import { joinTarget, withdrawTarget, leaveTarget, type JoinTarget } from "../lib/joinActions";
 import { freshness, type Fresh } from "../lib/codeFreshness";
@@ -105,6 +105,7 @@ import { RepositoryCard, BranchChip, BTN, BTN_TONE, type CodeActions, type Recor
 import { useTrackerSources, useRecordActions, TRACKER_SOURCES_ABSENT } from "./TrackerSources";
 import { TrackersPanel } from "./TrackersPanel";
 import { Tip } from "../components/ui";
+import { isRecord } from "../lib/guards";
 import { oneOf } from "../lib/oneOf";
 
 // The register dialog loads on first open.
@@ -379,6 +380,24 @@ function useJoinActions(onChanged: () => void) {
   return { busy, join, cancel, leave, joinAll, leaveAll, applyPlan };
 }
 
+/** Whether `/v1/health` says this deployment runs without the repository-job sandbox,
+ *  where adding a repository or branch from the page is refused (`SANDBOX_UNAVAILABLE`). */
+export function runsUnsandboxed(health: Record<string, unknown> | null): boolean {
+  const problems = health?.problems;
+  return Array.isArray(problems) && problems.some((p) => isRecord(p) && p.code === "repo_jobs_unsandboxed");
+}
+
+/** False once health reports the sandbox off; true until then, so a slow or failed
+ *  health read never hides the buttons. */
+function useCanAddRepositories(): boolean {
+  const [canAdd, setCanAdd] = useState(true);
+  useAbortableEffect(async (_signal, live) => {
+    const health = await sharedHealth();
+    if (live() && runsUnsandboxed(health)) setCanAdd(false);
+  }, []);
+  return canAdd;
+}
+
 function RepositoriesHome({
   repos,
   error,
@@ -393,6 +412,7 @@ function RepositoriesHome({
   const actions = useJoinActions(onChanged);
   const [requesting, setRequesting] = useState<{ repo: CodeRepoSummary; role: RepoRole } | null>(null);
   const [adding, setAdding] = useState(false);
+  const canAdd = useCanAddRepositories();
   const [addingBranch, setAddingBranch] = useState<RepoGroup | null>(null);
   const [managing, setManaging] = useState<RepoGroup | null>(null);
   // The add-a-tracker dialog, from a card (that repository) or the page (none)
@@ -459,7 +479,7 @@ function RepositoriesHome({
     onJoinAll: (bs) => void actions.joinAll(bs),
     onLeaveAll: (bs) => void actions.leaveAll(bs),
     onManage: (g) => setManaging(g),
-    onAddBranch: (g) => setAddingBranch(g),
+    onAddBranch: canAdd ? (g) => setAddingBranch(g) : undefined,
     // Every branch the person maintains takes the new access; the QA binding is set on
     // the primary branch's namespace (the record is per repository)
     onSetAccess: (g, classification, join_policy, opening) => {
@@ -545,11 +565,17 @@ function RepositoriesHome({
                 </button>
               </Tip>
             )}
-            <Tip content="Index a Git repository. You become its maintainer.">
-              <button type="button" onClick={() => setAdding(true)} className={`${BTN} ${BTN_TONE.primary} shadow-sm`}>
-                <Plus size={13} aria-hidden="true" /> Add repository
-              </button>
-            </Tip>
+            {canAdd && (
+              <Tip content="Index a Git repository. You become its maintainer.">
+                <button
+                  type="button"
+                  onClick={() => setAdding(true)}
+                  className={`${BTN} ${BTN_TONE.primary} shadow-sm`}
+                >
+                  <Plus size={13} aria-hidden="true" /> Add repository
+                </button>
+              </Tip>
+            )}
           </div>
         )}
       </div>
@@ -614,8 +640,12 @@ function RepositoriesHome({
         <EmptyState
           icon={Code}
           title="No repositories yet"
-          description="Add the first one: a Git remote and a branch. You become its maintainer and the indexer builds it in the background."
-          action={org ? { label: "Add repository", onClick: () => setAdding(true) } : undefined}
+          description={
+            canAdd
+              ? "Add the first one: a Git remote and a branch. You become its maintainer and the indexer builds it in the background."
+              : "This server cannot add repositories from this page, because it runs without the repository-job sandbox. Ask the operator to list them in LOOM_CODE_REPOS_JSON."
+          }
+          action={org && canAdd ? { label: "Add repository", onClick: () => setAdding(true) } : undefined}
         />
       )}
 

@@ -1,4 +1,4 @@
-"""Dashboard-added repositories receive persistent compiler working trees."""
+"""Compiler-tier working trees: created when missing, except an operator's scip-clang one."""
 
 from __future__ import annotations
 
@@ -52,12 +52,17 @@ def test_registry_entry_initializes_checkout_for_its_bare_mirror(tmp_path: Path)
     assert actual_bare == bare.resolve()
 
 
-def test_operator_entry_keeps_explicit_checkout_contract(tmp_path: Path) -> None:
+def test_operator_entry_gets_its_checkout_unless_scip_clang_needs_a_build_tree(
+    tmp_path: Path,
+) -> None:
     bare = _bare_repo(tmp_path)
     checkout = tmp_path / "operator-owned"
     cfg = repo_config(source="env", git_dir=str(bare), scip_checkout_dir=str(checkout))
 
-    _actual, _bare, missing = resolve_checkout(cfg, "python")
-
+    _actual, _bare, missing = resolve_checkout(cfg, "clang")
     assert missing is not None and "checkout missing" in missing
     assert not checkout.exists()
+
+    _actual, _bare, missing = resolve_checkout(cfg, "python")
+    assert missing is None
+    assert (checkout / ".git").exists()

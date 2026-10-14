@@ -85,10 +85,10 @@ async def test_an_entry_the_tier_does_not_own_is_not_counted(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("worker", "module", "watermark"), TIERS)
-async def test_an_entry_without_a_checkout_is_skipped_with_the_reason(
-    worker: str, module: str, watermark: str, tmp_path: Path
+async def test_an_operator_scip_clang_entry_without_its_build_tree_is_skipped(
+    tmp_path: Path,
 ) -> None:
+    worker, module, watermark = TIERS[0]
     w = importlib.import_module(module)
     (tmp_path / "repo.git").mkdir()
     result, ctx = await _run(w, _Cfg(tmp_path), _repo(watermark), owns=True)
@@ -96,6 +96,19 @@ async def test_an_entry_without_a_checkout_is_skipped_with_the_reason(
     assert len(result.skipped) == 1
     assert result.skipped[0].startswith("code-x: ") and "checkout missing at" in result.skipped[0]
     assert _outcome(worker)["reason"] == result.skipped[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("worker", "module", "watermark"), TIERS[1:])
+async def test_an_entry_without_a_checkout_gets_an_empty_one(
+    worker: str, module: str, watermark: str, tmp_path: Path
+) -> None:
+    w = importlib.import_module(module)
+    (tmp_path / "repo.git").mkdir()
+    result, ctx = await _run(w, _Cfg(tmp_path), _repo(watermark), owns=True)
+    assert result.repos_checked == 1 and not result.errors and ctx.count == 0
+    assert (tmp_path / "checkout" / ".git").is_dir()
+    assert not any("checkout missing" in s for s in result.skipped)
 
 
 @pytest.mark.asyncio

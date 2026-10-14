@@ -348,6 +348,21 @@ describe("RepositoryCard", () => {
     expect(code.onAddBranch).toHaveBeenCalledWith(card.code);
   });
 
+  it("no Add branch where the deployment cannot add branches from the page", () => {
+    const a = actions();
+    const [card] = buildCards([branch({ my_role: "admin", my_status: "member" })], [source()]);
+    render(
+      <RepositoryCard
+        card={card}
+        busy={null}
+        code={{ ...a.code, onAddBranch: undefined }}
+        record={a.record}
+        defaultOpen
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Add branch" })).toBeNull();
+  });
+
   it("a reader never sees Details, Add branch, or the source's host", () => {
     mount([branch({ my_status: "member" })], [source()]);
     expect(screen.queryByText("Details")).toBeNull();

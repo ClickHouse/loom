@@ -62,10 +62,10 @@ class RepoConfig:
     # THIS branch. One per entry: two branches cannot share a checkout, but
     # they can and should share the bare clone (`git_dir`).
     scip_checkout_dir: str = ""
-    # Which compiler-tier producer indexes this entry's checkout — "clang" (scip-clang,
-    # code_scip_delta) or "typescript" (scip-typescript, code_scip_ts_delta). One per
-    # entry, like the checkout.
-    scip_producer: str = "clang"
+    # Which compiler-tier producer indexes this entry's checkout: "clang", "typescript",
+    # "go" or "python". One per entry, like the checkout. '' reads it from the tree's
+    # build manifests (producer_inference).
+    scip_producer: str = ""
     # Further compiler tiers over the same tree, each in its own checkout
     # (`checkout_for`) so two producers never move one working tree under each other:
     # a Python repository with a TypeScript frontend runs both.

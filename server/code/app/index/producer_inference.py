@@ -1,10 +1,11 @@
 """Which compiler tier a repository's tree calls for.
 
-A repository added from the UI names no producer; the workers that keep the compiler
-tiers current (`code_scip_delta` for scip-clang, the TypeScript worker, the Go worker)
-ask the tree instead. The rule is the languages' own build manifests, read from the
-namespace's live paths — one membership read of a handful of basenames — never a guess
-from file counts:
+An entry that names no producer (the default, from the page or from
+LOOM_CODE_REPOS_JSON) leaves it to its tree: the workers that keep the compiler tiers
+current (`code_scip_delta` for scip-clang, the TypeScript, Go and Python workers) ask
+the tree. The rule is the languages' own build manifests, read from the namespace's
+live paths — one membership read of a handful of basenames — never a guess from file
+counts:
 
   go.mod                                    → go
   tsconfig.json / jsconfig.json / package.json → typescript (scip-typescript
@@ -50,8 +51,7 @@ def infer_producers(paths: Iterable[str], *, root_only_clang: bool = True) -> li
 
 def applies(entry_producer: str, worker_producer: str, tree_producers: Iterable[str]) -> bool:
     """Does a compiler-tier worker own this entry? An explicit producer
-    decides alone ('clang' is what an `.env` entry says by default); an
-    empty one defers to the tree."""
+    decides alone; an empty one defers to the tree."""
     if entry_producer:
         return entry_producer == worker_producer
     return worker_producer in set(tree_producers)

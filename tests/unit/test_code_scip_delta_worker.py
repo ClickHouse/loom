@@ -23,7 +23,7 @@ def _lock_dir(monkeypatch, tmp_path):
 
 
 def _Cfg() -> Any:
-    return repo_config(org="clickhouse", namespace="code-clickhouse")
+    return repo_config(org="clickhouse", namespace="code-clickhouse", scip_producer="clang")
 
 
 def _repo(git_head: str, scip_commit: str) -> AsyncMock:

@@ -96,7 +96,7 @@ LOOM_CODE_REPOS_JSON='[
 | `embed_reuse_from`                   | a namespace whose embeddings are reused when the chunk text is identical (a release branch of the same repository)            |
 | `public`                             | the repository is public on its host: anyone in the org can join its index as a reader at once                                |
 | `classification`                     | `restricted` for a private repository: a maintainer approves each reader, and it is never org-readable                        |
-| `scip_producer`, `scip_checkout_dir` | the compiler-tier indexer (`clang`, `typescript`, `python`, `go`) and the working tree it runs in                             |
+| `scip_producer`, `scip_checkout_dir` | the compiler-tier indexer (`clang`, `typescript`, `python`, `go`; unset, the tree's build files pick) and its working tree    |
 | `scip_extra_producers`               | further compiler-tier producers over the same tree (a Python repository with a TypeScript frontend), each in its own checkout |
 | `git_extra_branches`                 | globs of other remote branches the shared mirror should carry                                                                 |
 | `github_token`                       | per-entry override of `LOOM_CODE_GITHUB_TOKEN`                                                                                |
@@ -196,13 +196,22 @@ only an entry's first index does.
 | Python     | `python`        | `LOOM_CODE_SCIP_PY_DELTA_ENABLED` | scip-python (in the image)                                                                                           |
 | Go         | `go`            | `LOOM_CODE_SCIP_GO_DELTA_ENABLED` | Go and scip-go (in the image)                                                                                        |
 
+An entry that names no `scip_producer` gets every tier whose build file its tree
+carries: `go.mod` (at any depth) for Go; `tsconfig.json`, `jsconfig.json` or
+`package.json` at the root for TypeScript; a root `CMakeLists.txt` for C/C++;
+`pyproject.toml`, `setup.py` or `requirements.txt` at the root for Python.
+`code.index_status` lists them as `compiler_candidates`. Name the producer where a build
+file is incidental, such as a C++ repository whose `pyproject.toml` only serves its test
+tooling; `scip_extra_producers` adds tiers beside a named one.
+
 All four workers are enabled by default. The Docker image includes the Python,
-TypeScript, and Go indexers and creates persistent compiler checkouts for repositories
-added from the dashboard. A worker whose project prerequisites are absent records a
-skip in `workers.status`; the Tree-sitter tier remains available. TypeScript projects
-have their dependencies installed automatically in their checkout. C/C++ projects need a
-compilation database and scip-clang (upstream publishes Linux binaries only for
-x86_64).
+TypeScript, and Go indexers. Their workers create a missing working tree as an empty
+repository and fetch each commit into it from the entry's mirror; the C/C++ tier of an
+operator's entry needs the configured build tree instead. A worker whose project
+prerequisites are absent records a skip in `workers.status`; the Tree-sitter tier
+remains available. TypeScript projects have their dependencies installed automatically
+in their checkout. C/C++ projects need a compilation database and scip-clang (upstream
+publishes Linux binaries only for x86_64).
 
 - **C/C++ delta cap.** The worker indexes changed translation units, including those
   that include a changed header, up to `LOOM_CODE_SCIP_DELTA_MAX_TUS` (200); above the

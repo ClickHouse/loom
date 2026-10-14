@@ -184,7 +184,7 @@ async def test_no_typescript_change_in_window_advances_the_watermark(monkeypatch
 def test_registry_and_producer_field():
     from server.code.domain.index.repos import RepoConfig
 
-    assert RepoConfig.__dataclass_fields__["scip_producer"].default == "clang"
+    assert RepoConfig.__dataclass_fields__["scip_producer"].default == ""
     assert w.WATERMARK == "scip_commit_ts" and w.PRODUCER == "typescript"
 
 

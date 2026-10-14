@@ -394,27 +394,22 @@ In `~/.loom/.env`, uncomment that line (add it if your `.env` predates it) and e
 here and in `--org` below:
 
 ```dotenv
-LOOM_CODE_REPOS_JSON=[{"org":"dev","namespace":"code-myrepo","repo":"acme/myrepo","git_branch":"main","scip_producer":"python","public":true}]
+LOOM_CODE_REPOS_JSON=[{"org":"dev","namespace":"code-myrepo","repo":"acme/myrepo","git_branch":"main","public":true}]
 ```
 
-- `scip_producer` picks the compiler-tier indexer: `typescript`, `python`, `go` or
-  `clang`. Without it the entry gets `clang`, which needs a configured build tree
-  ([Compiler tier](../operations/code-index-operations.md#compiler-tier)), so a Python,
-  TypeScript or Go repository gets only the parser tier.
-- The indexer runs in a working tree, `/app/var/code_repos/checkout-<namespace>` unless
-  the entry sets `scip_checkout_dir`. Loom creates it only for repositories added from
-  the dashboard, so create it yourself (below). For `typescript`, `python` and `go` an
-  empty Git repository is enough: the tier fetches each commit into it from Loom's own
-  clone.
+- Loom picks the compiler-tier indexers from the repository's build files (`go.mod`,
+  `package.json`, `pyproject.toml`, a root `CMakeLists.txt`, …); `scip_producer` names
+  one instead ([Compiler tier](../operations/code-index-operations.md#compiler-tier)).
+  C/C++ also needs a configured build tree, so without one a C/C++ repository gets only
+  the parser tier.
 - For a private repository, add a GitHub token (`LOOM_CODE_GITHUB_TOKEN` in `.env`, or
   `github_token` on the entry) and drop `"public":true`: it is for repositories public on
   their host, and lets anyone in the org read the index at once.
 
-Then recreate the `loom` container, create the working tree and run the first index:
+Then recreate the `loom` container and run the first index:
 
 ```bash
 docker compose --project-directory "$HOME/.loom" up -d --force-recreate loom
-docker compose --project-directory "$HOME/.loom" exec loom git init -q /app/var/code_repos/checkout-code-myrepo
 docker compose --project-directory "$HOME/.loom" exec loom loom code init --namespace code-myrepo --org dev
 docker compose --project-directory "$HOME/.loom" exec loom loom code backfill --namespace code-myrepo --org dev --embed
 ```

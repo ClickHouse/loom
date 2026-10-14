@@ -58,6 +58,17 @@ def test_entries_fall_back_to_scalars(monkeypatch: pytest.MonkeyPatch) -> None:
     assert repos[1].git_branch == repos[0].git_branch
 
 
+def test_an_entry_names_its_producer_or_leaves_it_to_the_tree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        settings,
+        "code_repos_json",
+        '[{"namespace": "code-a"}, {"namespace": "code-b", "scip_producer": "clang"}]',
+    )
+    assert [r.scip_producer for r in configured_repos()] == ["", "clang"]
+
+
 def test_invalid_json_degrades_to_scalar(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "code_repos_json", "{not json")
     repos = configured_repos()
