@@ -80,10 +80,11 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   caller's default namespace under the user and session the call acts as. Its id binds the
   token's subject and is no longer `mcp-<Mcp-Session-Id>`, and its goal is the label
   `mcp session (<agent>)`, not the first call's query, which may reach namespaces the run's
-  readers cannot; a `run.begin` naming an id of its shape (`mcp-` and 40 hex digits) is answered with
-  an id of its own. Its close no longer writes `metadata.calls`: count the `agent_events` rows
-  with its `run_id`. The new `mcp_session_run_sweep` worker closes an idle one from the ledger,
-  so it closes after a restart too, and so do the implicit runs an earlier server left open.
+  readers cannot; a `run.begin` naming an id of its shape (`mcp-` and 40 hex digits) is
+  answered with an id of its own. Its close no longer writes `metadata.calls`: count the
+  `agent_events` rows with its `run_id`. The new `mcp_session_run_sweep` worker closes an idle
+  one from the ledger, so it closes after a restart too, and so do the implicit runs an earlier
+  server left open.
   **Operators:** a web process no longer closes idle runs itself, so a deployment that runs no
   background workers anywhere (`LOOM_BACKGROUND_WORKERS=off` on every process) keeps them open.
   The first sweeps after the upgrade close every implicit run an earlier server left open. A
