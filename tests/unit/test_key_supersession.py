@@ -1727,7 +1727,7 @@ async def test_an_undo_replay_without_its_id_or_instant_is_abandoned_unread(
         called.append("read")
 
     monkeypatch.setattr(projection_failures, "mark_projection_failure_abandoned", mark_abandoned)
-    monkeypatch.setattr(projection_failures, "_rows_still_holding", never)
+    monkeypatch.setattr(graph_undo, "rows_still_holding", never)
     monkeypatch.setattr(graph_undo, "reopen_held_facts", never)
     failure = projection_failures.ProjectionFailureRow(
         failure_id="f1",

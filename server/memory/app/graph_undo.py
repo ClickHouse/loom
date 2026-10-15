@@ -16,6 +16,23 @@ from server.memory.domain.graph_quality import (
 )
 
 
+async def rows_still_holding(
+    org: str, namespace: str, hashes: Mapping[str, str], *, ch: Any
+) -> list[str]:
+    """The rows of `hashes` (id to `content_sha256`) whose value is still that one: a row
+    revised since an Undo is its revision's to reconcile, not the Undo's."""
+    rows = await ch.query_all(
+        """
+        SELECT toString(memory_id) AS id, toString(content_sha256) AS sha
+        FROM loom.memory FINAL
+        WHERE org = {org:String} AND namespace = {ns:String} AND memory_id IN {ids:Array(UUID)}
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params={"org": org, "ns": namespace, "ids": sorted(hashes)},
+    )
+    return sorted(str(r["id"]) for r in rows if hashes.get(str(r["id"])) == str(r["sha"]))
+
+
 async def reopen_held_facts(
     input: Any,
     ids: list[str],

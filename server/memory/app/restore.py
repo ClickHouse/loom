@@ -72,6 +72,9 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
                 restored=False, memory_id=str(existing.memory_id), version=int(existing.version)
             )
         new_version = next_version()
+        # The Undo's assertion time, taken with the restore: its graph step runs after the
+        # lock is released, and is dated here, not then.
+        restored_at = naive_utc_now()
         restore_row = memory_repo.build_memory_version_row(
             existing,
             version=new_version,
@@ -107,6 +110,7 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
         op="memory.restore",
         ch=ch,
         hashes={str(existing.memory_id): str(existing.content_sha256)},
+        restored_at=restored_at,
     )
     await audit.emit(
         "memory.unsupersede",

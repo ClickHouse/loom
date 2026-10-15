@@ -528,28 +528,12 @@ def _recorded_repairs(payload: dict[str, Any]) -> list[IntervalRepair]:
     ]
 
 
-async def _rows_still_holding(
-    failure: ProjectionFailureRow, hashes: dict[str, str], *, ch: Any
-) -> list[str]:
-    """The rows of `hashes` (id to `content_sha256`) whose value is still that one."""
-    rows = await ch.query_all(
-        """
-        SELECT toString(memory_id) AS id, toString(content_sha256) AS sha
-        FROM loom.memory FINAL
-        WHERE org = {org:String} AND namespace = {ns:String} AND memory_id IN {ids:Array(UUID)}
-        SETTINGS select_sequential_consistency = 1
-        """,
-        params={"org": failure.org, "ns": failure.namespace, "ids": sorted(hashes)},
-    )
-    return sorted(str(r["id"]) for r in rows if hashes.get(str(r["id"])) == str(r["sha"]))
-
-
 async def _retry_triples_reconcile(failure: ProjectionFailureRow, *, ch: Any) -> str:
     """Reconcile the facts of the rows a revision or an Undo changed, as it would have."""
     from types import SimpleNamespace
 
     from server.memory.app.entity_projections import close_dropped_facts
-    from server.memory.app.graph_undo import reopen_held_facts
+    from server.memory.app.graph_undo import reopen_held_facts, rows_still_holding
 
     ids = [str(i) for i in failure.payload.get("memory_ids") or []]
     if not ids:
@@ -565,7 +549,7 @@ async def _retry_triples_reconcile(failure: ProjectionFailureRow, *, ch: Any) ->
         # A row revised since the Undo is its revision's to reconcile, not the Undo's.
         hashes = failure.payload.get("content_sha256") or {}
         if hashes:
-            ids = await _rows_still_holding(failure, hashes, ch=ch)
+            ids = await rows_still_holding(failure.org, failure.namespace, hashes, ch=ch)
             if not ids:
                 return ""
         await reopen_held_facts(scope, ids, ch=ch, restored_at=restored_at, restore_id=restore_id)

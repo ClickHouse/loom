@@ -1480,6 +1480,47 @@ async def test_undo_brings_back_the_facts_the_restored_row_holds(ch, org) -> Non
     assert await _open_cities(ch, org, {"london", "paris"}) == {"london", "paris"}
 
 
+async def test_an_undo_leaves_the_graph_to_a_revision_made_before_its_graph_step(
+    ch, org, monkeypatch
+) -> None:
+    # The Undo restores London and releases the key's lock; before its graph step runs,
+    # the row is revised to Rome and Berlin is written. The Undo must not assert Rome.
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app import entity_projections
+    from server.memory.app.restore import handle_memory_restore
+
+    live = ("user", "live_in")
+    london = await _stated(ch, org, "s1", "I currently live in London", (*live, "london"))
+    paris = await _stated(ch, org, "s2", "I currently live in Paris", (*live, "paris"))
+    await _follow_retirement(ch, org, london, paris)
+    reconcile, revised = entity_projections.reconcile_row_facts, []
+
+    async def revised_first(*args: Any, **kwargs: Any) -> None:
+        if kwargs.get("op") != "memory.restore" or revised:
+            return await reconcile(*args, **kwargs)
+        revised.append(True)
+        await _revise("memory.update_by_id", org, london, "I live in Rome", ((*live, "rome"),))
+        await _stated(ch, org, "s3", "I moved to Berlin", (*live, "berlin"), memory_key="k3")
+        await _mutations_done(ch, org)
+        await reconcile(*args, **kwargs)
+
+    monkeypatch.setattr(entity_projections, "reconcile_row_facts", revised_first)
+    out = await handle_memory_restore(
+        MemoryRestoreInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            session_id="s1",
+            memory_key=KEY,
+            if_superseded_by=str(paris["memory_id"]),
+        )
+    )
+    assert out.restored
+    await _mutations_done(ch, org)
+    assert await _open_cities(ch, org, {"berlin"}) == {"berlin"}
+
+
 async def test_undo_makes_the_restored_value_current_and_retires_nothing(
     ch, org, monkeypatch
 ) -> None:

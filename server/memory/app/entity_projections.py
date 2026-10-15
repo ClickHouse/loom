@@ -476,18 +476,23 @@ async def reconcile_row_facts(
     op: str,
     ch: Any,
     hashes: Mapping[str, str] | None = None,
+    restored_at: datetime | None = None,
 ) -> None:
     """Fail-open `reopen_held_facts` (`reopen`) or `close_dropped_facts` for the rows
-    `ids` of `input`'s namespace; a failure is recorded for the projection repair, with
-    the time of the restore its replay is dated at, the Undo's id its replay finds its
-    rows by, and the `content_sha256` each restored row had (`hashes`), so the replay
-    skips a row revised since."""
-    restored_at, restore_id = naive_utc_now(), uuid.uuid4().hex
+    `ids` of `input`'s namespace. An Undo passes the time it restored at and the
+    `content_sha256` each row had (`hashes`): a row revised since is left to its
+    revision, now and on a replay. A failure is recorded for the projection repair with
+    both and the Undo's id, which its replay finds its rows by."""
+    restored_at, restore_id = restored_at or naive_utc_now(), uuid.uuid4().hex
     try:
         if reopen:
             # Lazy: graph_undo reads row links through this module.
             from server.memory.app import graph_undo
 
+            if hashes:
+                ids = await graph_undo.rows_still_holding(input.org, input.namespace, hashes, ch=ch)
+                if not ids:
+                    return
             await graph_undo.reopen_held_facts(
                 input, ids, ch=ch, restored_at=restored_at, restore_id=restore_id
             )
