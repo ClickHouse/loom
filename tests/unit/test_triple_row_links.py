@@ -684,3 +684,34 @@ def _as_set(stub: Any) -> Any:
 async def _none_held(*a: Any, **k: Any) -> frozenset:
     """No row written before row links holds anything."""
     return frozenset()
+
+
+@pytest.mark.parametrize(("ids", "legacy_read"), [(["m1"], False), (["m1", "m2"], True)])
+async def test_an_undo_reads_legacy_rows_unless_its_one_row_has_links(
+    monkeypatch, ids, legacy_read
+) -> None:
+    # Several rows may mix a linked row with one written before rows were linked.
+    from types import SimpleNamespace
+
+    from server.memory.app import graph_undo
+
+    read: list[list[str]] = []
+
+    async def linked(*a: Any, **k: Any) -> list:
+        return [("user", "live_in", "rome")]
+
+    async def none(*a: Any, **k: Any) -> frozenset:
+        return frozenset()
+
+    async def legacy(org: str, namespace: str, triples: Any, *, ch: Any, rows: list) -> frozenset:
+        read.append(rows)
+        return frozenset()
+
+    monkeypatch.setattr(graph_undo, "linked_triples", linked)
+    monkeypatch.setattr(graph_undo, "stated_by_live_rows", none)
+    monkeypatch.setattr(graph_undo, "held_by_unlinked_rows", legacy)
+    scope = SimpleNamespace(org="o", namespace="ns")
+    await graph_undo.reopen_held_facts(
+        scope, ids, ch=_CH(), restored_at=datetime(2026, 10, 15), restore_id="u1"
+    )
+    assert read == ([ids] if legacy_read else [])
