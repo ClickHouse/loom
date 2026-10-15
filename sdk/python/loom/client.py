@@ -793,6 +793,15 @@ class ConversationOps:
             await self._agent.call("conversation.save_message", body, **options),
         )
 
+    async def saved_status(
+        self, body: _ops.ConversationSavedStatusBody | None = None, /, **options: Any
+    ) -> _ops.ConversationSavedStatusOutput:
+        """`conversation.saved_status`."""
+        return cast(
+            "_ops.ConversationSavedStatusOutput",
+            await self._agent.call("conversation.saved_status", body, **options),
+        )
+
     async def search(
         self, body: _ops.ConversationSearchBody | None = None, /, **options: Any
     ) -> _ops.ConversationSearchOutput:

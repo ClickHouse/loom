@@ -420,6 +420,25 @@ class ConversationListSavedMessagesInput(BaseModel):
     fields: list[str] | None = None
 
 
+class ConversationSavedStatusInput(BaseModel):
+    """Which of a conversation's messages a user has saved, in one call: a chat
+    client draws every message's saved state when it opens the conversation."""
+
+    org: str
+    namespace: str
+    agent: str
+    user_id: str = Field(min_length=1, max_length=256)
+    # The conversation the messages belong to; message ids are unique within it.
+    conversation_id: str = Field(min_length=1, max_length=256)
+    # The messages to check (1-500).
+    message_ids: list[str] = Field(min_length=1, max_length=500)
+
+
+class ConversationSavedStatusOutput(BaseModel):
+    # The subset of `message_ids` this user has saved, in the order asked.
+    saved: list[str]
+
+
 class ConversationListSavedMessagesOutput(BaseModel):
     # The page, most recently saved first.
     rows: list[_SavedMessageHit]

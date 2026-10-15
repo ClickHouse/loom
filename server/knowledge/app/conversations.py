@@ -35,6 +35,8 @@ from server.knowledge.api.models_conversations import (
     ConversationListOutput,
     ConversationListSavedMessagesInput,
     ConversationListSavedMessagesOutput,
+    ConversationSavedStatusInput,
+    ConversationSavedStatusOutput,
     ConversationSaveMessageInput,
     ConversationSaveMessageOutput,
     ConversationSearchInput,
@@ -1007,6 +1009,28 @@ async def handle_conversation_list_saved_messages(
         hits, _SavedMessageHit, input.fields, always=frozenset({"conversation_id", "message_id"})
     )
     return ConversationListSavedMessagesOutput(rows=hits, next_cursor=next_cursor)
+
+
+async def handle_conversation_saved_status(
+    input: ConversationSavedStatusInput,
+) -> ConversationSavedStatusOutput:
+    """Report which of one conversation's messages this user has saved."""
+    from server.knowledge.store import conversations as conversation_repo
+
+    scope = _conversation_read_scope()
+    with traced("ch.query.conversation_saved_status", asked=len(input.message_ids)):
+        saved = await conversation_repo.saved_message_ids(
+            input.org,
+            input.namespace,
+            input.agent,
+            input.conversation_id,
+            input.message_ids,
+            scope=scope,
+            user_id=input.user_id,
+        )
+    return ConversationSavedStatusOutput(
+        saved=[m for m in dict.fromkeys(input.message_ids) if m in saved]
+    )
 
 
 def _excerpt(content: str) -> str:
