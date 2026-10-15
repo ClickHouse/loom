@@ -221,8 +221,6 @@ def _refuse(message: str) -> bool:
 def _ensure_reader(ch: Any, user: str, reader: str) -> bool:
     """Create or rebuild the reader where it is provably Loom's; say why not
     otherwise. Who owns it is settled before logging in as it."""
-    from server.settings import settings
-
     found = reader_objects(ch, reader)
     drop_hint = (
         f"If it is Loom's reader from an earlier setup (the password changed, or a setup "
@@ -231,13 +229,17 @@ def _ensure_reader(ch: Any, user: str, reader: str) -> bool:
     )
     if found == "foreign":
         return _refuse(
-            f"{reader} exists and is not one ch-setup made (no password, not on the profile "
-            "of its own name, or its profile is shared); set LOOM_CH_READER_USER to another name"
+            f"the name {reader} is taken by a user or settings profile ch-setup did not make "
+            "(a user without a password or not on the profile of its own name, or a profile "
+            "other accounts use); set LOOM_CH_READER_USER to another name"
         )
     if found == "profile":
         return _refuse(f"{reader} is a settings profile with no user. {drop_hint}")
+    if not found:
+        print(f"· {reader}: creating it")
+        return _create_reader(ch, user, reader, fresh=True)
 
-    logged_in, problem = reader_status(reader) if found else (False, "")
+    logged_in, problem = reader_status(reader)
     if logged_in is None:
         return _refuse(f"could not check {reader}: {problem}; run this again")
     if found == "config":
@@ -248,30 +250,38 @@ def _ensure_reader(ch: Any, user: str, reader: str) -> bool:
             )
         if problem:
             return _refuse(
-                f"{reader} is defined by the server's config and {problem}: raise its "
-                "profile in deploy/clickhouse-config/nlp_user_settings.xml to match"
+                f"{reader} is defined by the server's config and {problem}: change its profile "
+                "in deploy/clickhouse-config/nlp_user_settings.xml to match "
+                "LOOM_CH_CALLER_SHAPED_*"
             )
         print(f"✓ {reader} is defined by the server's config")
         return True
-    if found and not problem:
+    if not problem:
         print(f"✓ {reader} reads {preflight.DATABASE}.* under the current caps")
         return True
     if found == "unknown":
         # It may be someone else's account: replace nothing that cannot be seen.
         _refuse(
-            f"{user!r} may not list users and settings profiles, so cannot tell who owns {reader}"
+            f"{reader}: {problem}; {user!r} may not list users and settings profiles, so "
+            "cannot tell who owns it"
         )
         _print_admin_sql(user, reader)
         return False
-    if found == "user" and not logged_in:
+    if not logged_in:
         return _refuse(f"{reader} exists: {problem}. {drop_hint}")
+    print(f"· {reader}: {problem}; rebuilding it")
+    return _create_reader(ch, user, reader, fresh=False)
 
-    print(f"· {reader}: {problem}; rebuilding it" if found else f"· {reader}: creating it")
+
+def _create_reader(ch: Any, user: str, reader: str, *, fresh: bool) -> bool:
+    """Run the reader's SQL; a `fresh` one that fails halfway is dropped again."""
+    from server.settings import settings
+
     try:
         for stmt in reader_sql(reader, _quote(settings.ch_password)):
             ch.command(stmt)
     except Exception as e:
-        if not found:
+        if fresh:
             _drop_reader(ch, reader)
         if error_code(e) != preflight.ACCESS_DENIED:
             raise
@@ -294,6 +304,8 @@ def _set_up(ch: Any, user: str, reader: str) -> int:
             _print_admin_sql(user, reader)
         return 1
     print(f"✓ ClickHouse {server.version}; database {preflight.DATABASE} ready for {user!r}")
+    if warning := preflight.warnings(server):
+        print(f"· {warning}")
 
     if not _ensure_reader(ch, user, reader):
         return 1

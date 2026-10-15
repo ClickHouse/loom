@@ -369,7 +369,12 @@ def test_the_reader_must_not_be_the_loom_user(monkeypatch: pytest.MonkeyPatch) -
         # A probe that failed for another reason proves nothing: no advice to drop it.
         ("user", None, "Read timed out", "could not check analyst: Read timed out"),
         # No password, not on its own profile, or a shared profile.
-        ("foreign", True, "its profile does not match", "is not one ch-setup made"),
+        (
+            "foreign",
+            True,
+            "its profile does not match",
+            "is taken by a user or settings profile ch-setup did not make",
+        ),
         # A profile with no user: Loom's own after DROP USER, or someone else's.
         ("profile", False, "missing", "DROP SETTINGS PROFILE analyst"),
     ],
@@ -399,7 +404,10 @@ def test_ch_setup_does_not_log_in_as_an_account_it_does_not_own(
 
     monkeypatch.setattr(ch_setup, "reader_status", must_not_log_in)
     monkeypatch.setattr(ch_setup, "reader_objects", lambda ch, reader: found)
-    ch_setup._set_up(FakeCH(), "loom_app", "loom_reader")
+    ch = FakeCH()
+    assert ch_setup._set_up(ch, "loom_app", "loom_reader") == (0 if found == "" else 1)
+    created = any(sql.startswith("CREATE USER") for sql in ch.ran)
+    assert created == (found == "")
 
 
 @pytest.mark.parametrize(
@@ -407,7 +415,7 @@ def test_ch_setup_does_not_log_in_as_an_account_it_does_not_own(
     [
         (None, "Read timed out", "could not check loom_reader: Read timed out"),
         (False, "it does not accept LOOM_CH_PASSWORD", "a password other than LOOM_CH_PASSWORD"),
-        (True, "its profile does not match", "raise its profile"),
+        (True, "its profile does not match", "change its profile"),
     ],
 )
 def test_a_reader_in_the_server_s_config_gets_the_fix_for_what_is_wrong(
@@ -504,7 +512,7 @@ def test_a_bundled_reader_whose_caps_differ_is_a_failure(
     monkeypatch.setattr(ch_setup, "reader_objects", lambda ch, r: "config")
     assert ch_setup._set_up(FakeCH(), "loom", "loom_reader") == 1
     assert (
-        "raise its profile in deploy/clickhouse-config/nlp_user_settings.xml"
+        "change its profile in deploy/clickhouse-config/nlp_user_settings.xml"
         in capsys.readouterr().err
     )
 
@@ -524,7 +532,7 @@ def test_a_reader_whose_owner_cannot_be_seen_is_not_replaced(
     assert ch_setup._set_up(ch, "delegate", "someone_elses") == 1
     assert not any(sql.startswith("CREATE USER") for sql in ch.ran)
     captured = capsys.readouterr()
-    assert "cannot tell who owns someone_elses" in captured.err
+    assert "someone_elses: missing; 'delegate' may not list users" in captured.err
     assert "CREATE USER OR REPLACE `someone_elses`" in captured.err  # for an admin to judge
 
 

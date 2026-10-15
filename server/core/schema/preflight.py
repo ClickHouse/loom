@@ -301,19 +301,7 @@ def check(
             if migrating:
                 raise error
             later.append(error)
-    if later:
-        pointer = " (`loom ch-setup --print-sql` prints the SQL)"
-        log.warning(
-            "nothing to migrate now; the next migration will refuse: %s%s",
-            "; ".join(e.reason for e in later),
-            pointer if any(e.needs_admin for e in later) else "",
-        )
     unreadable = tuple(t for t in TELEMETRY_SYSTEM_TABLES if not _readable(ch, f"system.{t}"))
-    if unreadable:
-        log.warning(
-            "may not read system.%s: telemetry from these tables stays empty",
-            ", system.".join(unreadable),
-        )
 
     # The table exists only where the server is configured with a Keeper.
     keeper = bool(
@@ -333,6 +321,23 @@ def check(
         unreadable=unreadable,
         next_migration=tuple(later),
     )
+
+
+def warnings(server: Server) -> str:
+    """What a passing check still warns of, as one line ('' for nothing): the
+    refusals the next migration will hit and the telemetry tables this user
+    may not read. Boot and `loom migrate` log it, the doctor and ch-setup show it."""
+    parts = []
+    if server.next_migration:
+        reasons = "; ".join(gap.reason for gap in server.next_migration)
+        parts.append(f"the next boot with a migration to apply will refuse: {reasons}")
+    if server.unreadable:
+        tables = ", ".join(f"system.{t}" for t in server.unreadable)
+        parts.append(f"may not read {tables}, so the telemetry from these tables stays empty")
+    line = "; ".join(parts)
+    if server.unreadable or any(gap.needs_admin for gap in server.next_migration):
+        line += " (`loom ch-setup --print-sql` prints the SQL)"
+    return line
 
 
 def require_ready(

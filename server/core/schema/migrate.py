@@ -809,6 +809,18 @@ def _apply_under_lease(ch: Client, files: list[Path], to_apply: list[Path]) -> i
         lease.release()
 
 
+def _check_server(args: argparse.Namespace) -> None:
+    """The preflight for what this run does; what a passing check still warns of goes to stderr."""
+    from server.core.schema import preflight
+
+    server = preflight.require_ready(
+        need="read" if args.status or args.dry_run else "migrate",
+        journal=Path(args.migrations_dir),
+    )
+    if warning := preflight.warnings(server):
+        print(f"  ! {warning}", file=sys.stderr)
+
+
 def main(argv: list[str] | None = None, *, check_server: bool = True) -> int:
     """The `loom migrate` command. `check_server=False` for the server's boot,
     which ran the ClickHouse preflight before its first connect."""
@@ -867,10 +879,7 @@ def main(argv: list[str] | None = None, *, check_server: bool = True) -> int:
 
     try:
         if check_server:
-            preflight.require_ready(
-                need="read" if args.status or args.dry_run else "migrate",
-                journal=Path(args.migrations_dir),
-            )
+            _check_server(args)
         ch = client()
     except preflight.PreflightError as e:
         print(f"  ✗ {e}", file=sys.stderr)

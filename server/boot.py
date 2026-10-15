@@ -225,9 +225,11 @@ async def require_clickhouse_ready() -> None:
     from server.core.schema import preflight
 
     try:
-        await asyncio.to_thread(preflight.require_ready, need=preflight.needed_at_boot())
+        server = await asyncio.to_thread(preflight.require_ready, need=preflight.needed_at_boot())
     except preflight.PreflightError as e:
         raise RuntimeError(f"ClickHouse preflight: {e}") from None
+    if warning := preflight.warnings(server):
+        logging.getLogger(__name__).warning("ClickHouse preflight: %s", warning)
 
 
 async def run_fenced_boot_migrations(
