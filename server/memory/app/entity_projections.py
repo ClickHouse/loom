@@ -628,6 +628,7 @@ async def reopen_held_facts(
     # them and adds none, while another Undo in the same second is told apart.
     fresh = [m for m in markers if not m.row["restored"]]
     settings = {"async_insert": 1, "wait_for_async_insert": 1}
+    # Edges first: a replay after the triple markers failed to land finds them.
     await _insert_edge_markers(input, fresh, beaten, now, settings=settings, ch=ch)
     rows = [
         entity_triple_row(
@@ -718,18 +719,16 @@ async def _insert_edge_markers(
     settings: dict[str, Any],
     ch: Any,
 ) -> None:
-    # The edge plane agrees: each new marker's edge gets an observation from the Undo
-    # too, inserted before the markers, from its earliest marker's start. Only a pair
-    # the graph has an edge for: the Undo invents none, and weighs it as above. Edges
-    # carry no microseconds, so an edge row seen in the Undo's second, starting there,
-    # and not closed by a repair since, stands for it: a replay after the markers
-    # failed to land does not add a second one.
+    """Give each fresh marker's edge an observation from the Undo, from its earliest
+    marker's start: only an edge the graph has, weighed like its triples. Edges carry no
+    microseconds, so an edge row seen in the Undo's second and starting there, not
+    closed since, stands for an earlier attempt's."""
     edge_markers: dict[tuple[str, str], list[_Marker]] = {}
     for m in fresh:
         pair = canonical_edge_pair(m.row["subject"], m.row["object"])
         edge_markers.setdefault(pair, []).append(m)
     pairs = sorted(edge_markers)
-    starts = [min(m.start for m in edge_markers[p]) for p in pairs]
+    starts = {p: min(m.start for m in edge_markers[p]) for p in pairs}
     edges = (
         await ch.query_all(
             """
@@ -753,7 +752,7 @@ async def _insert_edge_markers(
                 "org": input.org,
                 "ns": input.namespace,
                 "pairs": pairs,
-                "starts": starts,
+                "starts": [starts[p] for p in pairs],
                 "at": now,
             },
         )
@@ -763,9 +762,9 @@ async def _insert_edge_markers(
     edge_rows = []
     for e in edges:
         pair = (e["entity_a"], e["entity_b"])
-        if e["restored"] or pair not in edge_markers:
+        if e["restored"]:
             continue
-        start = starts[pairs.index(pair)]
+        start = starts[pair]
         lost = all(_triple(m) in beaten for m in edge_markers[pair])
         edge_rows.append(
             entity_edge_row(
