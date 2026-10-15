@@ -88,8 +88,9 @@ forgotten.
   statement per (org, subject) into a per-process cache (`server/core/grant_cache.py`) kept
   for `grant_cache_ttl_seconds` (10 s). A grant write in this process drops at once the
   entries whose read covered the spelling it wrote, and any read in flight; a write to the
-  accounts that tie a person's spellings drops the org's. Another process sees either within
-  the TTL.
+  accounts that tie a person's spellings drops the org's. The server's other web processes
+  (`LOOM_WEB_WORKERS`) read again at once: the write marks a file in their runtime directory,
+  and an entry read before the mark is not served. Another server sees either within the TTL.
 - A failed re-read serves the cached entry while it is younger than
   `jwt_revocation_max_stale_seconds`, the bound a token check already lives with, and
   answers a retryable 503 past it.

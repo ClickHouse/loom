@@ -8,7 +8,9 @@ read per (org, subject), every spelling of the person included, is kept for
 
 A grant write in this process drops the entries whose read covered the
 spelling it wrote, at once; a write to the accounts that tie a person's
-spellings drops its org's. Another process sees either within the TTL. A failed
+spellings drops its org's. This server's other web processes read again at
+once too: the write marks a file they share, and an entry read before the mark
+is not served. Another server sees either within the TTL. A failed
 re-read serves the old entry while it is younger than
 `jwt_revocation_max_stale_seconds`, the bound a token check already lives with,
 and refuses (503) past it.
@@ -17,6 +19,8 @@ and refuses (503) past it.
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 import time
 from collections import OrderedDict, defaultdict
 from collections.abc import Iterable
@@ -25,6 +29,8 @@ from dataclasses import dataclass
 from server.core.errors import BackendUnavailableError
 from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT
 from server.settings import settings
+
+log = logging.getLogger(__name__)
 
 _MAX_ENTRIES = 10_000
 
@@ -43,7 +49,9 @@ class GrantMap:
 
 
 _Key = tuple[str, str]
-_entries: OrderedDict[_Key, tuple[float, GrantMap]] = OrderedDict()
+# (when stored, monotonic; when its read began, wall-clock ns; the grants)
+_Entry = tuple[float, int, GrantMap]
+_entries: OrderedDict[_Key, _Entry] = OrderedDict()
 _loading: dict[_Key, asyncio.Task[GrantMap]] = {}
 # Every read until it ends: an invalidation drops it from `_loading`, not from here.
 _running: set[asyncio.Task[GrantMap]] = set()
@@ -55,9 +63,13 @@ async def grant_map(org: str, subject: str) -> GrantMap:
     """The grants `subject`, under any of its spellings, holds on `org`."""
     key: _Key = (org, subject.lower())
     hit = _entries.get(key)
-    if hit is not None and time.monotonic() - hit[0] < settings.grant_cache_ttl_seconds:
+    if (
+        hit is not None
+        and time.monotonic() - hit[0] < settings.grant_cache_ttl_seconds
+        and not _written_since(hit[1])
+    ):
         _entries.move_to_end(key)
-        return hit[1]
+        return hit[2]
     task = _loading.get(key)
     if task is None:
         # A task of its own, so a cancelled request does not fail the ones waiting with it.
@@ -73,11 +85,55 @@ def invalidate(org: str, subjects: Iterable[str] | None = None) -> None:
     (every one with None), and any read of the org in flight."""
     _generation[org] += 1
     lowered = None if subjects is None else {s.lower() for s in subjects}
-    for key, (_at, grants) in list(_entries.items()):
-        if key[0] == org and (lowered is None or lowered & (grants.spellings | {key[1]})):
+    for key, entry in list(_entries.items()):
+        if key[0] == org and (lowered is None or lowered & (entry[2].spellings | {key[1]})):
             del _entries[key]
     for key in [k for k in _loading if k[0] == org]:
         del _loading[key]
+    _mark_written()
+
+
+def _marker() -> str | None:
+    """The file this server's web processes mark a grant write in, when there
+    is more than one of them (`LOOM_WEB_WORKERS`): the others read its time."""
+    if settings.web_workers <= 1:
+        return None
+    from server.core.runtime_files import server_file
+
+    try:
+        return server_file("grant-writes")
+    except OSError:
+        return None
+
+
+def _written_since(began_ns: int) -> bool:
+    """Whether another web process of this server wrote a grant since a read
+    began at `began_ns`."""
+    path = _marker()
+    if path is None:
+        return False
+    try:
+        return os.stat(path).st_mtime_ns >= began_ns
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True  # unreadable: read the grants again rather than trust the entry
+
+
+def _mark_written() -> None:
+    path = _marker()
+    if path is None:
+        return
+    from server.core.runtime_files import open_private
+
+    try:
+        fd = open_private(path, os.O_WRONLY | os.O_CREAT)
+        try:
+            os.utime(fd)
+        finally:
+            os.close(fd)
+    except OSError as e:
+        log.warning("grant cache: could not mark a grant write in %s: %s", path, e)
 
 
 def clear() -> None:
@@ -85,9 +141,10 @@ def clear() -> None:
     _loading.clear()
 
 
-async def _load(key: _Key, hit: tuple[float, GrantMap] | None) -> GrantMap:
+async def _load(key: _Key, hit: _Entry | None) -> GrantMap:
     org = key[0]
     generation = _generation[org]
+    began = time.time_ns()
     try:
         fresh = await _read(org, key[1])
     except Exception as e:
@@ -95,12 +152,12 @@ async def _load(key: _Key, hit: tuple[float, GrantMap] | None) -> GrantMap:
             hit is not None
             and time.monotonic() - hit[0] < settings.jwt_revocation_max_stale_seconds
         ):
-            return hit[1]
+            return hit[2]
         raise BackendUnavailableError(
             "grants could not be read; retry shortly", operation="grant_map"
         ) from e
     if _generation[org] == generation:
-        _entries[key] = (time.monotonic(), fresh)
+        _entries[key] = (time.monotonic(), began, fresh)
         _entries.move_to_end(key)
         while len(_entries) > _MAX_ENTRIES:
             _entries.popitem(last=False)

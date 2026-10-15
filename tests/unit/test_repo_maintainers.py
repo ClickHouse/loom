@@ -457,17 +457,25 @@ def _recording_claims(monkeypatch: pytest.MonkeyPatch, log: list[str]) -> None:
 
     from server.auth import grant_claims
 
-    held = grant_claims.grant_change
+    held, held_admins = grant_claims.grant_change, grant_claims.admins_change
 
     @asynccontextmanager
     async def _recorded(org: str, ns: str, subject: str) -> Any:
         async with held(org, ns, subject):
-            log.append(f"+{ns}" + ("/admins" if subject == "" else ""))
+            log.append(f"+{ns}")
             yield
-            log.append(f"-{ns}" + ("/admins" if subject == "" else ""))
+            log.append(f"-{ns}")
 
-    monkeypatch.setattr(grant_claims, "grant_change", _recorded)
-    monkeypatch.setattr(grants_mod, "grant_change", _recorded)
+    @asynccontextmanager
+    async def _recorded_admins(org: str, ns: str) -> Any:
+        async with held_admins(org, ns):
+            log.append(f"+{ns}/admins")
+            yield
+            log.append(f"-{ns}/admins")
+
+    for module in (grant_claims, grants_mod):
+        monkeypatch.setattr(module, "grant_change", _recorded)
+        monkeypatch.setattr(module, "admins_change", _recorded_admins)
 
 
 async def test_a_sync_takes_the_repository_claim_before_the_branch_s(
@@ -521,14 +529,18 @@ async def test_a_revoke_holds_the_repository_claim_across_its_fan_out_and_write(
     await grants_mod.handle_grants_revoke(
         GrantsRevokeInput(org="clickhouse", namespace="code-x", subject="alice")
     )
+    # The repository's, then the namespace's admins from the last-admin count to the
+    # write; the other branches first, the grant last.
     assert log == [
         "+repo:Org/x",
-        "fan-out",
+        "+repo:Org/x/admins",
         "+code-x/admins",
+        "fan-out",
         "+code-x",
         "write",
         "-code-x",
         "-code-x/admins",
+        "-repo:Org/x/admins",
         "-repo:Org/x",
     ]
 

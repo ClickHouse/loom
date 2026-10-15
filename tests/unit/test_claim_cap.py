@@ -402,3 +402,20 @@ def test_a_grant_write_drops_only_the_entries_that_read_its_subject(ch: _CH) -> 
     assert ch.grant_reads == reads, "bob's entry is kept"
     asyncio.run(grant_cache.grant_map(ORG, "alice"))
     assert ch.grant_reads == reads + 1, "alice's entry covered that spelling"
+
+
+def test_another_web_process_s_grant_write_is_seen_at_once(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    import os
+
+    marker = tmp_path / "loom-grant-writes"
+    monkeypatch.setattr(settings, "web_workers", 2)
+    monkeypatch.setattr("server.core.runtime_files.server_file", lambda name: str(marker))
+    ch.grants["team"] = ("writer", "active", False)
+    assert _admits(_flat("team"), "team", Role.WRITER)
+    ch.grants["team"] = ("writer", "active", True)  # revoked by a sibling web process
+    assert _admits(_flat("team"), "team", Role.WRITER), "this process has not heard yet"
+    marker.write_bytes(b"")
+    os.utime(marker)  # the sibling marks its write
+    assert not _admits(_flat("team"), "team", Role.WRITER)

@@ -269,3 +269,82 @@ def test_two_admins_revoked_at_once_leave_one(monkeypatch: pytest.MonkeyPatch) -
 
     assert sorted(asyncio.run(_both())) == ["refused", "revoked"]
     assert len(revoked) == 1
+
+
+def _two_admins(monkeypatch: pytest.MonkeyPatch) -> set[str]:
+    """alice and bob, admins of acme/team; a change that takes admin from one
+    of them lands in the returned set. The admin count reads, then replies late."""
+    gone: set[str] = set()
+
+    async def _find(org: str, ns: str, subject: str, **_k: Any) -> GrantState | None:
+        if subject in gone:
+            return None
+        return GrantState.from_row({"role": "admin", "status": "active", "granted_by": "x"})
+
+    async def _count(*_a: Any, **_k: Any) -> int:
+        n = 2 - len(gone)
+        await asyncio.sleep(0.01)
+        return n
+
+    async def _insert(row: dict[str, Any], **_k: Any) -> None:
+        gone.add(row["subject"])
+
+    async def _same(org: str, subject: str, **_k: Any) -> str:
+        return subject
+
+    async def _nothing(*_a: Any, **_k: Any) -> None:
+        return None
+
+    for name, fake in (
+        ("find_any_grant", _find),
+        ("find_active_grant", _find),
+        ("count_active_admins", _count),
+        ("insert_row", _insert),
+    ):
+        monkeypatch.setattr(grants_repo, name, fake)
+    monkeypatch.setattr("server.auth.aliases.canonical_subject", _same)
+    monkeypatch.setattr(grants_app, "_enforce_code_ceiling", _nothing)
+    return gone
+
+
+async def _outcome(change: Any) -> str:
+    from server.core.errors import PreconditionFailedError
+
+    try:
+        await change
+        return "done"
+    except PreconditionFailedError:
+        return "refused"
+
+
+def test_two_admins_lowered_at_once_leave_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    gone = _two_admins(monkeypatch)
+
+    def _lower(subject: str) -> Any:
+        return grants_app.handle_grants_create(
+            GrantsCreateInput(
+                org="acme", namespace="team", subject=subject, role="viewer", replace=True
+            )
+        )
+
+    async def _both() -> list[str]:
+        return list(await asyncio.gather(_outcome(_lower("alice")), _outcome(_lower("bob"))))
+
+    assert sorted(asyncio.run(_both())) == ["done", "refused"] and len(gone) == 1
+
+
+def test_two_admins_leaving_at_once_leave_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.identity.api.models import NamespaceLeaveInput
+    from server.identity.app import namespace_membership
+
+    gone = _two_admins(monkeypatch)
+
+    def _leave(subject: str) -> Any:
+        return namespace_membership.handle_namespace_leave(
+            NamespaceLeaveInput(org="acme", namespace="team", subject=subject)
+        )
+
+    async def _both() -> list[str]:
+        return list(await asyncio.gather(_outcome(_leave("alice")), _outcome(_leave("bob"))))
+
+    assert sorted(asyncio.run(_both())) == ["done", "refused"] and len(gone) == 1

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from contextlib import nullcontext
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
 from server.auth.grant_claims import admins_change, grant_change
@@ -144,10 +144,18 @@ async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
     from server.auth.aliases import canonical_subject
 
     subject = await canonical_subject(input.org, input.subject)
-    # Any role but admin may lower one, so it is counted against the admins.
-    admins = admins_change(input.org, input.namespace) if input.role != "admin" else nullcontext()
-    async with admins, grant_change(input.org, input.namespace, subject):
-        now = await _write_grant(input, subject)
+
+    async def _write(_row: GrantState | None) -> datetime:
+        return await _write_grant(input, subject)
+
+    if input.replace and input.role != "admin":
+        # Only `replace=true` lowers a grant (else 409): it may take admin.
+        lowered = await _taking_admin(input, subject, _write, lowered_to=input.role)
+        assert lowered is not None
+        now = lowered
+    else:
+        async with grant_change(input.org, input.namespace, subject):
+            now = await _write_grant(input, subject)
     if input.role == "admin":
         # A maintainer maintains every branch of the repository.
         from server.code.app.index import maintainers
@@ -282,15 +290,14 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
     ownerless; promote a replacement first.
     """
 
-    from server.code.app.index import maintainers
-
     subject, row = await _live_grant_row(input.org, input.namespace, input.subject)
     if row is None:
         return GrantsRevokeOutput(revoked=False)
-    # One maintainer change of this subject at a time across the repository's
-    # branches, so a sync cannot mirror the grant between the fan-out and the write.
-    async with maintainers.repo_change(input.org, input.namespace, subject):
-        done = await _revoke(input, subject)
+
+    async def _write(row: GrantState | None) -> tuple[GrantState, datetime] | None:
+        return None if row is None else (row, await _write_revoke(input, subject, row))
+
+    done = await _taking_admin(input, subject, _write)
     if done is None:
         return GrantsRevokeOutput(revoked=False)
     row, now = done
@@ -311,35 +318,42 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
     return GrantsRevokeOutput(revoked=True, revoked_at=now)
 
 
-async def _revoke(input: GrantsRevokeInput, subject: str) -> tuple[GrantState, datetime] | None:
-    """The revoke itself: a maintainer's other branches first, then the grant
-    under its claim. None when there is no grant left to revoke."""
+async def _taking_admin[T](
+    input: GrantsRevokeInput | GrantsCreateInput,
+    subject: str,
+    write: Callable[[GrantState | None], Awaitable[T]],
+    *,
+    lowered_to: str | None = None,
+) -> T:
+    """A change that may take admin from `subject` (a revoke, or a lowering to
+    `lowered_to`), under the repository's and the namespace's admins claims: a
+    maintainer is first taken off the other branches, so when one fails the
+    grant is still live and a retry redoes it all; then `write` runs under the
+    grant's own claim with the grant as read there."""
     from server.code.app.index import maintainers
 
-    fanned_out = False
-    for _ in range(_REVOKE_TRIES):
-        row = await grants_repo.find_any_grant(input.org, input.namespace, subject)
-        if row is None:
-            return None
-        if _active_admin(row) and not fanned_out:
-            # When a branch fails, this grant is still live and a retry redoes it all.
-            await _refuse_last_admin(input)
-            await maintainers.revoke_repo_maintainer(input.org, input.namespace, subject)
-            fanned_out = True
-        async with (
-            admins_change(input.org, input.namespace),
-            grant_change(input.org, input.namespace, subject),
-        ):
-            # Read again under the claim: what was read before it may have changed.
-            row = await grants_repo.find_any_grant(input.org, input.namespace, subject)
-            if row is None:
-                return None
-            if _active_admin(row) and not fanned_out:
-                continue  # made admin since the first read: fan out first
-            return row, await _write_revoke(input, subject, row)
-    raise GrantBusyError(
-        f"{input.subject!r} on {input.org}/{input.namespace} keeps changing; retry shortly"
-    )
+    org, namespace = input.org, input.namespace
+    async with (
+        maintainers.repo_change(org, namespace, subject),
+        maintainers.repo_admins_change(org, namespace),
+        admins_change(org, namespace),
+    ):
+        fanned_out = False
+        for _ in range(_REVOKE_TRIES):
+            row = await grants_repo.find_any_grant(org, namespace, subject)
+            if row is not None and _active_admin(row) and not fanned_out:
+                await _refuse_last_admin(input)
+                await maintainers.revoke_repo_maintainer(
+                    org, namespace, subject, lowered_to=lowered_to
+                )
+                fanned_out = True
+            async with grant_change(org, namespace, subject):
+                # Read again under the claim: what was read before it may have changed.
+                row = await grants_repo.find_any_grant(org, namespace, subject)
+                if row is not None and _active_admin(row) and not fanned_out:
+                    continue  # made admin since the first read: fan out first
+                return await write(row)
+    raise GrantBusyError(f"{input.subject!r} on {org}/{namespace} keeps changing; retry shortly")
 
 
 def _active_admin(row: GrantState) -> bool:

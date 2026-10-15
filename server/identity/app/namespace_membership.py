@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import logging
 import time
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from typing import Any
 
 from server.auth.grant_claims import admins_change, grant_change
 from server.core.ch import get_client
+from server.core.errors import GrantBusyError
 from server.core.grant_sql import LIVE_GRANT
 from server.identity.api.models import (
     NamespaceCancelRequestInput,
@@ -240,11 +242,21 @@ async def handle_namespace_leave(
     member, then re-leave).
     """
     caller = _registry.resolve_subject(input.subject)
-    async with (
-        admins_change(input.org, input.namespace),
-        grant_change(input.org, input.namespace, caller),
-    ):
-        return await _leave(input, caller)
+    from server.identity.store import grants as grants_repo
+
+    for _ in range(3):
+        before = await grants_repo.find_active_grant(input.org, input.namespace, caller)
+        admin = before is not None and before.role == "admin"
+        # Only an admin's leave takes admin away, so only it is counted against the admins.
+        admins = admins_change(input.org, input.namespace) if admin else nullcontext()
+        async with admins, grant_change(input.org, input.namespace, caller):
+            now = await grants_repo.find_active_grant(input.org, input.namespace, caller)
+            if not admin and now is not None and now.role == "admin":
+                continue  # made admin since: leave under the admins claim
+            return await _leave(input, caller)
+    raise GrantBusyError(
+        f"{caller!r} on {input.org}/{input.namespace} keeps changing; retry shortly"
+    )
 
 
 async def _leave(input: NamespaceLeaveInput, caller: str) -> NamespaceLeaveOutput:

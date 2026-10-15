@@ -38,6 +38,7 @@ def _wire(
         return None
 
     monkeypatch.setattr(grants_repo, "find_active_grant", _find)
+    monkeypatch.setattr(grants_repo, "find_any_grant", _find)
     monkeypatch.setattr(grants_repo, "insert_row", _insert)
     monkeypatch.setattr(grants_mod, "_enforce_code_ceiling", _no_ceiling)
     return inserted, looked_up

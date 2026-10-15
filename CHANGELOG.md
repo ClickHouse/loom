@@ -63,7 +63,7 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 - **Security:** a token's claim on a namespace goes no further than the grant its subject
   holds there. A revoked or lowered grant ends every older token's claim, and a pending or
   rejected request caps it at no access; a scoped token keeps its own role there capped at
-  the grant. It applies at once on the server that changed the grant and within
+  the grant. It applies at once on every web process of the server that changed the grant and within
   `LOOM_GRANT_CACHE_TTL_SECONDS` (default 10 s) on the others. A namespace the subject never
   held a grant on (named by an operator at mint) keeps its claim; a `loom mint-token` claim
   beyond a grant the subject holds is now capped at it.

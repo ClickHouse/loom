@@ -67,6 +67,19 @@ def repo_change(org: str, namespace: str, subject: str) -> AbstractAsyncContextM
     return grant_change(org, f"repo:{me.repo}", subject) if me is not None else nullcontext()
 
 
+def repo_admins_change(org: str, namespace: str) -> AbstractAsyncContextManager[None]:
+    """Hold the admins of `namespace`'s repository: a change that takes a
+    maintainer off every branch holds it from its own last-admin count to its
+    last write, so two such changes in one repository run one after the other.
+    Taken after `repo_change`, before any namespace's admins claim. A no-op off a
+    configured repository."""
+    from server.auth.grant_claims import admins_change
+    from server.code.domain.index.repos import configured_repos
+
+    me = next((c for c in configured_repos() if c.org == org and c.namespace == namespace), None)
+    return admins_change(org, f"repo:{me.repo}") if me is not None else nullcontext()
+
+
 def _row(
     org: str,
     ns: str,
@@ -76,12 +89,13 @@ def _row(
     now: datetime,
     revoked: bool = False,
     granted_at: datetime | None = None,
+    role: str = "admin",
 ) -> dict[str, Any]:
     return {
         "org": org,
         "namespace": ns,
         "subject": subject,
-        "role": "admin",
+        "role": role,
         "status": "active",
         "pending_role": None,
         "pending_since": None,
@@ -115,6 +129,7 @@ _GRANT_ROW_SQL = """
 """
 
 
+# A branch's live admins: the code plane reads grants itself, not through the identity store.
 _ADMINS_SQL = (
     "SELECT count() AS n FROM loom.namespace_grants FINAL WHERE org = {org:String}"
     " AND namespace = {ns:String} AND role = 'admin' AND " + LIVE_GRANT
@@ -225,7 +240,7 @@ async def _write_subject(
         if hold_repo:
             await held.enter_async_context(repo_change(org, rows[0]["namespace"], subject))
         for row in rows:
-            if row.get("revoked_at") is not None:
+            if row["role"] != "admin" or row.get("revoked_at") is not None:  # takes admin
                 await held.enter_async_context(admins_change(org, row["namespace"]))
             await held.enter_async_context(grant_change(org, row["namespace"], subject))
         wanted = []
@@ -320,12 +335,17 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
 
 
 async def revoke_repo_maintainer(
-    org: str, namespace: str, subject: str, *, ch: Any | None = None
+    org: str,
+    namespace: str,
+    subject: str,
+    *,
+    ch: Any | None = None,
+    lowered_to: str | None = None,
 ) -> int:
     """Revoke `subject`'s active admin grant on every other branch of the
-    repository; a branch where they are the only active admin keeps them
-    (the same guard `grants.revoke` applies). The caller holds `repo_change`.
-    Returns rows written."""
+    repository, or lower it to `lowered_to`; a branch where they are the only
+    active admin keeps them (the same guard `grants.revoke` applies). The
+    caller holds `repo_change` and `repo_admins_change`. Returns rows written."""
     branches = [b for b in branch_namespaces(org, namespace) if b != namespace]
     if not branches:
         return 0
@@ -359,7 +379,8 @@ async def revoke_repo_maintainer(
                 subject,
                 granted_by=str(mine.get("granted_by") or ""),
                 now=now,
-                revoked=True,
+                revoked=lowered_to is None,
+                role=lowered_to or "admin",
             )
         )
     written = (
@@ -369,10 +390,11 @@ async def revoke_repo_maintainer(
     )
     if written:
         log.info(
-            "repo maintainers: %s/%s — %r revoked on %d sibling branch(es)",
+            "repo maintainers: %s/%s — %r %s on %d sibling branch(es)",
             org,
             namespace,
             subject,
+            f"lowered to {lowered_to}" if lowered_to else "revoked",
             written,
         )
     return written

@@ -33,8 +33,6 @@ _STATEMENT_S = 10
 # The first wait for a claim held elsewhere, doubled up to `_POLL_MAX_S`.
 _POLL_S = 0.05
 _POLL_MAX_S = 0.8
-# The subject `admins_change` claims under: no grant row has an empty subject.
-ADMINS = ""
 # Without a Keeper: changes of one key are kept apart within this process.
 _local = KeyedLocks()
 
@@ -44,10 +42,22 @@ def claims_atomic() -> bool | None:
     return CLAIMS.atomic
 
 
-@asynccontextmanager
-async def grant_change(org: str, namespace: str, subject: str) -> AsyncIterator[None]:
+def grant_change(org: str, namespace: str, subject: str) -> AbstractAsyncContextManager[None]:
     """Hold the grant row of (org, namespace, subject) from a read to its write."""
-    key = json.dumps([org, namespace, subject])
+    return _claimed(json.dumps([org, namespace, subject]), f"{subject!r} on {org}/{namespace}")
+
+
+def admins_change(org: str, namespace: str) -> AbstractAsyncContextManager[None]:
+    """Hold the set of admins of `namespace` (or of a repository's branches, as
+    `repo:<repo>`). A change that may take admin from someone takes it before the
+    subject's own claim and counts the admins under it, so two such changes at
+    once cannot both see another admin left. Its key has no subject, so no
+    grant's key is the same."""
+    return _claimed(json.dumps([org, namespace]), f"the admins of {org}/{namespace}")
+
+
+@asynccontextmanager
+async def _claimed(key: str, what: str) -> AsyncIterator[None]:
     ch = get_client()
     deadline = time.monotonic() + WAIT_S
     poll = _POLL_S
@@ -61,7 +71,7 @@ async def grant_change(org: str, namespace: str, subject: str) -> AsyncIterator[
         if outcome is not Claim.TAKEN:
             break
         if time.monotonic() > deadline:
-            raise _busy(org, namespace, subject)
+            raise _busy(what)
         await asyncio.sleep(poll)
         poll = min(poll * 2, _POLL_MAX_S)
     if outcome is Claim.UNCLAIMED:
@@ -71,7 +81,7 @@ async def grant_change(org: str, namespace: str, subject: str) -> AsyncIterator[
                     _local.hold(key, wait_s=max(0.0, deadline - time.monotonic()))
                 )
             except TimeoutError as e:
-                raise _busy(org, namespace, subject) from e
+                raise _busy(what) from e
             await held.enter_async_context(_bounded())
             yield
         return
@@ -82,17 +92,8 @@ async def grant_change(org: str, namespace: str, subject: str) -> AsyncIterator[
         await CLAIMS.release_shielded(ch, key, holder)
 
 
-def admins_change(org: str, namespace: str) -> AbstractAsyncContextManager[None]:
-    """Hold the namespace's set of admins. A change that may remove an admin
-    takes it before the subject's own claim and counts the admins under it, so
-    two removals at once cannot both see another admin left."""
-    return grant_change(org, namespace, ADMINS)
-
-
-def _busy(org: str, namespace: str, subject: str) -> GrantBusyError:
-    return GrantBusyError(
-        f"another change to {subject!r} on {org}/{namespace} is running; retry shortly"
-    )
+def _busy(what: str) -> GrantBusyError:
+    return GrantBusyError(f"another change to {what} is running; retry shortly")
 
 
 @asynccontextmanager
