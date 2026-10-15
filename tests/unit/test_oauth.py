@@ -32,7 +32,7 @@ def _mem_store(monkeypatch):
     unit tests). The router reads the module global per call, so this applies.
     A refresh re-checks the account in CH; here it is active and keeps its
     roles unless a test says otherwise."""
-    monkeypatch.setattr(oauth, "_store", MemoryOAuthStore())
+    monkeypatch.setattr(oauth, "store", MemoryOAuthStore())
 
     async def active(subject: str, org: str, roles: list[str]) -> list[str]:
         return roles
@@ -116,7 +116,7 @@ def _seed_code(
         "roles": ["writer"],
         "exp": int(time.time()) + 60,
     }
-    asyncio.run(oauth._store.save_code(code, grant))
+    asyncio.run(oauth.store.save_code(code, grant))
     return code, verifier
 
 
@@ -242,7 +242,7 @@ def test_store_keeps_token_hashes_not_tokens() -> None:
     """Neither the code nor the refresh token is readable from the store: a
     leaked oauth_state row must not be a working credential."""
     c = _client()
-    store = oauth._store
+    store = oauth.store
     code, _ = _seed_code()
     assert list(store.codes) == [hashlib.sha256(code.encode()).hexdigest()]
     rt = _refresh_token_for_alice(c)
@@ -274,7 +274,7 @@ def _ch_store(monkeypatch) -> _FakeCH:
     ch = _FakeCH()
     store = oauth._CHStore()
     monkeypatch.setattr(store, "_ch", lambda: ch)
-    monkeypatch.setattr(oauth, "_store", store)
+    monkeypatch.setattr(oauth, "store", store)
     return ch
 
 
@@ -416,7 +416,7 @@ def test_consent_page_names_where_the_code_goes() -> None:
 def _refresh_token(c: TestClient, roles: list[str] | None = None) -> str:
     code, verifier = _seed_code()
     if roles is not None:
-        oauth._store.codes[oauth._token_id(code)]["roles"] = roles
+        oauth.store.codes[oauth.token_id(code)]["roles"] = roles
     return c.post(
         "/oauth/token",
         data={

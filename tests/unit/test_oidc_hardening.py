@@ -81,8 +81,11 @@ def test_one_jwk_client_per_jwks_uri(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class _Req:
+    """A callback from the browser that started the sign-in (its state cookie set)."""
+
     def __init__(self) -> None:
         self.query_params = {"code": "c", "state": "s"}
+        self.cookies = {"loom_oidc_state": oauth.token_id("s")}
 
 
 @pytest.mark.parametrize(
@@ -107,7 +110,7 @@ async def test_a_failed_callback_does_not_echo_the_idp(
             "code_challenge": "x",
         },
     )
-    monkeypatch.setattr(oauth, "_store", store)
+    monkeypatch.setattr(oauth, "store", store)
 
     async def boom(**kw: Any) -> Any:
         raise exc
@@ -134,7 +137,7 @@ async def test_an_unverified_email_is_refused_at_the_callback(
             "code_challenge": "x",
         },
     )
-    monkeypatch.setattr(oauth, "_store", store)
+    monkeypatch.setattr(oauth, "store", store)
 
     async def exchange(**kw: Any) -> dict[str, str]:
         return {"id_token": "t"}
@@ -174,6 +177,6 @@ async def test_only_invalid_grant_ends_a_session_at_refresh(
         raise httpx.HTTPStatusError("refused", request=response.request, response=response)
 
     monkeypatch.setattr(oidc, "_token_request", token_request)
-    expected = oidc.UpstreamRefused if refused else httpx.HTTPStatusError
+    expected = oidc.UpstreamRefused if refused else oidc.UpstreamUnavailable
     with pytest.raises(expected):
         await oidc.refresh("idp-refresh")

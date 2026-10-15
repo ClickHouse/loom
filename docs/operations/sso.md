@@ -54,8 +54,12 @@ Group claims are not mapped. Namespace access comes from Loom's own grants.
 
 ## Accounts
 
-The verified email matches an account by its contact email. For a person
-with no account:
+The verified email matches an SSO account (one with no password) by its
+contact email. An account created with a password is never matched: self-signup
+takes any email without verifying it, so matching would hand that account to
+whoever owns the address at the provider. To carry such an account over, have
+its owner grant the person's SSO account on the namespace. For a person with
+no account:
 
 - `LOOM_OIDC_JIT_PROVISION=true` creates one on their first sign-in: a
   personal namespace in `LOOM_OIDC_JIT_ORG`, role `writer`.

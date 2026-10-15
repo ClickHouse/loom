@@ -71,7 +71,8 @@ it too: `pip install clickhouse-loom`).
 
 The session is stored in `~/.loom/credentials` (mode `0600`): a one-hour
 access token and a refresh token that rotates on every use. An `Agent` given
-no `api_key` and no `LOOM_API_KEY` uses it, and refreshes as it goes. If a
+no `api_key` and no `LOOM_API_KEY`, talking to that server (`base_url=` or
+`LOOM_BASE_URL`), uses it and refreshes as it goes. If a
 spent refresh token is ever presented again, the server ends the whole
 session. `loom logout` revokes it on the server. `--profile NAME` (or
 `LOOM_PROFILE`) keeps sessions for several servers side by side; a profile's

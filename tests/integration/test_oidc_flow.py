@@ -21,6 +21,7 @@ from __future__ import annotations
 import base64
 import datetime as _dt
 import hashlib
+import re
 import secrets
 import sys
 import urllib.parse
@@ -143,26 +144,34 @@ def _drive_brokered_login(base: str) -> dict:
     verifier = secrets.token_urlsafe(48)
     challenge = _b64(hashlib.sha256(verifier.encode()).digest())
 
-    # authorize → loom redirects to the IdP (no password form)
-    r = httpx.get(
-        md["authorization_endpoint"],
-        params={
-            "response_type": "code",
-            "client_id": cid,
-            "redirect_uri": _MCP_REDIRECT,
-            "code_challenge": challenge,
-            "code_challenge_method": "S256",
-            "state": "mcp-xyz",
-        },
-        follow_redirects=False,
-    )
-    assert r.status_code == 302, r.text[:300]
-    # IdP auto-approves → redirects to loom's callback
-    r2 = httpx.get(r.headers["location"], follow_redirects=False)
-    assert r2.status_code == 302 and r2.headers["location"].startswith(f"{base}/oauth/callback")
-    # loom callback: exchange + verify + map/provision → redirect to MCP client
-    r3 = httpx.get(r2.headers["location"], follow_redirects=False)
-    assert r3.status_code == 302, r3.text[:300]
+    # authorize → loom redirects to the IdP (no password form), in one browser
+    with httpx.Client() as browser:
+        r = browser.get(
+            md["authorization_endpoint"],
+            params={
+                "response_type": "code",
+                "client_id": cid,
+                "redirect_uri": _MCP_REDIRECT,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+                "state": "mcp-xyz",
+            },
+        )
+        assert r.status_code == 302, r.text[:300]
+        # IdP auto-approves → redirects to loom's callback
+        r2 = browser.get(r.headers["location"])
+        assert r2.status_code == 302
+        assert r2.headers["location"].startswith(f"{base}/oauth/callback")
+        # loom callback: exchange + verify + map/provision → the consent page
+        page = browser.get(r2.headers["location"])
+        assert page.status_code == 200, page.text[:300]
+        ticket = re.search(r'name="ticket" value="([^"]+)"', page.text)
+        assert ticket, page.text[:300]
+        r3 = browser.post(
+            f"{base}/oauth/authorize/approve",
+            data={"ticket": ticket.group(1), "decision": "approve"},
+        )
+        assert r3.status_code == 302, r3.text[:300]
     q = urllib.parse.parse_qs(urllib.parse.urlparse(r3.headers["location"]).query)
     assert r3.headers["location"].startswith(_MCP_REDIRECT)
     assert q["state"] == ["mcp-xyz"]

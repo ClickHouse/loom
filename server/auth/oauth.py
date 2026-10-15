@@ -41,6 +41,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
+from server.auth.attempts import Attempts, client_address
 from server.auth.jwt import mint_token, new_jti
 from server.core.secrets_at_rest import seal, unseal
 from server.observability import audit
@@ -80,7 +81,7 @@ class CodeReplayed(Exception):
 #   save_device(device) / device_by_user_code(hash) / take_device(code) — the
 #     device grant (device.py); take_device consumes only a decided grant.
 # Codes, refresh tokens, device and user codes are bearer secrets, so the
-# store keys them by _token_id(token) (sha256 hex), never the token itself: a
+# store keys them by token_id(token) (sha256 hex), never the token itself: a
 # row read out of loom.oauth_state (a backup, a SELECT grant) is not a working
 # credential. The identity provider's refresh token has to be sent back to it,
 # so it is sealed instead (secrets_at_rest).
@@ -91,7 +92,7 @@ class CodeReplayed(Exception):
 # have no timezone, so they round-trip through CH without the naive-datetime
 # local-vs-UTC shift that would mark every fresh code instantly expired.
 # --------------------------------------------------------------------------
-def _token_id(token: str) -> str:
+def token_id(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
@@ -168,16 +169,16 @@ class _CHStore:
         }
 
     async def save_code(self, code: str, g: dict[str, Any]) -> None:
-        await self._ch().insert(self._T, [self._grant_row("code", _token_id(code), g, 0)])
+        await self._ch().insert(self._T, [self._grant_row("code", token_id(code), g, 0)])
 
     async def save_refresh(self, token: str, g: dict[str, Any]) -> None:
-        await self._ch().insert(self._T, [self._grant_row("refresh", _token_id(token), g, 0)])
+        await self._ch().insert(self._T, [self._grant_row("refresh", token_id(token), g, 0)])
 
     async def take_code(self, code: str) -> dict[str, Any] | None:
-        return await self._take("code", _token_id(code))
+        return await self._take("code", token_id(code))
 
     async def take_refresh(self, token: str, client_id: str) -> dict[str, Any] | None:
-        return await self._take("refresh", _token_id(token), client_id)
+        return await self._take("refresh", token_id(token), client_id)
 
     async def _take(
         self, rtype: str, rid: str, client_id: str | None = None
@@ -311,7 +312,7 @@ class _CHStore:
         row = await self._ch().query_one(
             f"""SELECT client_id, consumed, {self._DEVICE_COLUMNS} FROM {self._T} FINAL
                 WHERE record_type = 'device' AND id = {{id:String}} LIMIT 1""",
-            params={"id": _token_id(device_code)},
+            params={"id": token_id(device_code)},
         )
         if not row:
             return None
@@ -323,7 +324,7 @@ class _CHStore:
         return d
 
 
-_store: Any = _CHStore()
+store: Any = _CHStore()
 
 
 # --------------------------------------------------------------------------
@@ -349,7 +350,7 @@ def issuer(request: Request) -> str:
     return settings.oauth_issuer.rstrip("/") or public_base_url(request)
 
 
-async def _form_body(request: Request) -> dict[str, str]:
+async def form_body(request: Request) -> dict[str, str]:
     """Parse an application/x-www-form-urlencoded body (the OAuth wire format)
     without pulling in python-multipart — last value wins per key. A body
     that is not UTF-8 is the client's error (400 invalid_request), not a 500."""
@@ -501,7 +502,7 @@ async def register(request: Request) -> JSONResponse:
     client_id = "loom-" + secrets.token_urlsafe(16)
     uris = list(redirect_uris)
     name = "".join(c for c in str(body.get("client_name") or "MCP client") if c.isprintable())
-    await _store.save_client(client_id, uris, name[:120] or "MCP client")
+    await store.save_client(client_id, uris, name[:120] or "MCP client")
     return JSONResponse(
         {
             "client_id": client_id,
@@ -520,7 +521,7 @@ async def register(request: Request) -> JSONResponse:
 async def _validate_authorize_params(
     client_id: str, redirect_uri: str, code_challenge: str, code_challenge_method: str
 ) -> dict[str, Any]:
-    client: dict[str, Any] | None = await _store.get_client(client_id)
+    client: dict[str, Any] | None = await store.get_client(client_id)
     if client is None:
         raise HTTPException(status_code=400, detail={"error": "invalid_client"})
     if redirect_uri not in client["redirect_uris"]:
@@ -595,14 +596,16 @@ After you sign in, Loom sends the authorization to <b>{destination}</b>.</p>
 
 @connect_router.post("/oauth/authorize")
 async def authorize_submit(request: Request) -> RedirectResponse:
-    f = await _form_body(request)
+    f = await form_body(request)
     client_id = f.get("client_id", "")
     redirect_uri = f.get("redirect_uri", "")
     code_challenge = f.get("code_challenge", "")
     code_challenge_method = f.get("code_challenge_method", "S256")
     state = f.get("state", "")
     await _validate_authorize_params(client_id, redirect_uri, code_challenge, code_challenge_method)
-    from server.auth.attempts import client_address
+    if settings.oauth_login_provider == "oidc":
+        # The GET sends people to the IdP; a password posted here would skip it.
+        raise HTTPException(status_code=404, detail={"error": "password_sign_in_disabled"})
     from server.auth.login import LoginThrottled, resolve_user_credentials
 
     try:
@@ -637,7 +640,7 @@ async def _redirect_with_code(
     browser back to the client with it."""
     subject, org, namespaces, roles = identity
     code = secrets.token_urlsafe(32)
-    await _store.save_code(
+    await store.save_code(
         code,
         {
             **client,
@@ -671,6 +674,14 @@ def _oidc_callback_url() -> str:
     return f"{settings.oauth_issuer.rstrip('/')}/oauth/callback"
 
 
+# The browser that starts an IdP sign-in carries this cookie (the hash of the
+# `state`), and the callback requires it: a sign-in started in one browser
+# cannot be finished in another, so nobody can sign a victim into their own
+# account by sending them a callback link.
+_STATE_COOKIE = "loom_oidc_state"
+_sso_starts_by_address = Attempts(30, 900)
+
+
 async def start_oidc_login(kind: str, **data: str) -> RedirectResponse:
     """Send the browser to the IdP; `data` comes back to the callback."""
     from server.auth import oidc
@@ -678,7 +689,7 @@ async def start_oidc_login(kind: str, **data: str) -> RedirectResponse:
     oidc_state = secrets.token_urlsafe(32)
     nonce = secrets.token_urlsafe(32)
     verifier = secrets.token_urlsafe(48)
-    await _store.save_pending(
+    await store.save_pending(
         oidc_state, {**data, "kind": kind, "nonce": nonce, "code_verifier": verifier}
     )
     url = await oidc.build_authorize_url(
@@ -687,14 +698,26 @@ async def start_oidc_login(kind: str, **data: str) -> RedirectResponse:
         nonce=nonce,
         code_challenge=_b64url(hashlib.sha256(verifier.encode("ascii")).digest()),
     )
-    return RedirectResponse(url=url, status_code=302)
+    response = RedirectResponse(url=url, status_code=302)
+    response.set_cookie(
+        _STATE_COOKIE,
+        token_id(oidc_state),
+        max_age=_PENDING_TTL,
+        path="/oauth/callback",
+        secure=settings.oauth_issuer.startswith("https://"),
+        httponly=True,
+        samesite="lax",  # sent on the IdP's top-level redirect back
+    )
+    return response
 
 
 @router.get("/oauth/sso")
-async def dashboard_sso() -> RedirectResponse:
+async def dashboard_sso(request: Request) -> RedirectResponse:
     """The dashboard's "Sign in with SSO" button."""
     if settings.oauth_login_provider != "oidc":
         raise HTTPException(status_code=404, detail={"error": "sso_not_configured"})
+    if not _sso_starts_by_address.allow(client_address(request)):
+        raise HTTPException(status_code=429, headers={"Retry-After": "900"})
     return await start_oidc_login("dashboard")
 
 
@@ -708,18 +731,43 @@ async def _signin_denied(email: str, reason: str) -> None:
     )
 
 
+def _denied_page(reason: str) -> Response:
+    return html_page(
+        "Sign-in denied",
+        f"<h2>Sign-in denied</h2><p>{html.escape(reason)}.</p>",
+        403,
+    )
+
+
 @router.get("/oauth/callback")
 async def oidc_callback(request: Request) -> Response:
-    from server.auth import oidc
+    response = await _finish_oidc_login(request)
+    response.delete_cookie(_STATE_COOKIE, path="/oauth/callback")
+    return response
+
+
+async def _finish_oidc_login(request: Request) -> Response:
+    from server.auth import device, oidc
     from server.auth.login import jit_provision_for_email, resolve_identity_for_email
 
-    code = request.query_params.get("code", "")
     state = request.query_params.get("state", "")
-    if not code or not state:
-        raise HTTPException(status_code=400, detail={"error": "invalid_request"})
-    pending = await _store.take_pending(state)  # single-use; CSRF guard
+    started_here = request.cookies.get(_STATE_COOKIE, "")
+    if not state or not secrets.compare_digest(started_here, token_id(state)):
+        raise HTTPException(status_code=400, detail={"error": "invalid_state"})
+    pending = await store.take_pending(state)  # single-use
     if pending is None:
         raise HTTPException(status_code=400, detail={"error": "invalid_state"})
+    kind = pending["kind"]
+    user_code = device.unseal_user_code(pending["user_code"]) if kind == "device" else ""
+    if request.query_params.get("error"):
+        # The user cancelled at the IdP, or it refused them there.
+        await _signin_denied("", "cancelled at the identity provider")
+        if kind == "device":
+            await device.deny(user_code)
+        return _denied_page("The identity provider did not sign you in")
+    code = request.query_params.get("code", "")
+    if not code:
+        raise HTTPException(status_code=400, detail={"error": "invalid_request"})
     try:
         if not await oidc.check_callback_issuer(request.query_params.get("iss", "")):
             raise HTTPException(status_code=400, detail={"error": "invalid_issuer"})
@@ -739,7 +787,6 @@ async def oidc_callback(request: Request) -> Response:
     except Exception as e:  # any other verify failure refuses the login (re-raised)
         log.warning("oidc callback: id_token refused: %s", type(e).__name__)
         raise HTTPException(status_code=400, detail={"error": "oidc_error"}) from e
-    kind = pending["kind"]
     email = oidc.verified_email(claims)
     resolved = None
     if email:
@@ -749,31 +796,87 @@ async def oidc_callback(request: Request) -> Response:
         reason = "no loom account for this email" if email else "verified email required"
         await _signin_denied(str(claims.get("email") or ""), reason)
         if kind == "device":
-            from server.auth import device
-
-            await device.deny(pending["user_code"])
-        return html_page(
-            "Sign-in denied",
-            f"<h2>Sign-in denied</h2><p>{html.escape(reason)}. "
-            "Ask your Loom operator for access.</p>",
-            403,
-        )
+            await device.deny(user_code)
+        return _denied_page(f"{reason}; ask your Loom operator for access")
     upstream = str(tokens.get("refresh_token") or "")
     if kind == "device":
-        from server.auth import device
-
-        return await device.signed_in(pending["user_code"], resolved, upstream)
+        return await device.signed_in(user_code, resolved, upstream)
     if kind == "dashboard":
         return await _dashboard_signed_in(resolved)
-    return await _redirect_with_code(
+    return await _connect_consent(pending, resolved, upstream)
+
+
+async def _connect_consent(
+    pending: dict[str, Any],
+    identity: tuple[str, str, list[str], list[str]],
+    upstream_refresh: str,
+) -> Response:
+    """Under OIDC the IdP may sign the user in without a single click, so the
+    MCP client gets its code only after the user approves here, on a page that
+    names the client and where the authorization goes."""
+    client = await store.get_client(pending["client_id"])
+    if client is None:
+        raise HTTPException(status_code=400, detail={"error": "invalid_client"})
+    ticket = secrets.token_urlsafe(32)
+    await store.save_pending(
+        token_id(ticket),
         {
+            "kind": "connect",
             "client_id": pending["client_id"],
             "redirect_uri": pending["redirect_uri"],
             "code_challenge": pending["code_challenge"],
+            "mcp_state": pending["mcp_state"],
+            "identity": list(identity),
+            "upstream_refresh": seal(_UPSTREAM_PURPOSE, upstream_refresh),
         },
-        resolved,
-        upstream_refresh=upstream,
-        state=pending.get("mcp_state", ""),
+    )
+    subject, org = identity[0], identity[1]
+    destination = urlsplit(pending["redirect_uri"]).netloc or pending["redirect_uri"].split(":")[0]
+    return html_page(
+        "Connect Loom",
+        f"""<h2>Connect <b>{html.escape(client["client_name"])}</b> to Loom?</h2>
+<p>Signed in as <b>{html.escape(subject)}</b> ({html.escape(org)}).</p>
+<p>Approving lets this client read and write your memories. Loom sends the
+authorization to <b>{html.escape(destination)}</b>.</p>
+<form method="post" action="/oauth/authorize/approve">
+<input type="hidden" name="ticket" value="{ticket}">
+<button type="submit" name="decision" value="approve">Approve</button>
+<button type="submit" name="decision" value="deny" class="secondary">Deny</button>
+</form>""",
+    )
+
+
+@connect_router.post("/oauth/authorize/approve")
+async def connect_approve(request: Request) -> Response:
+    f = await form_body(request)
+    pending = await store.take_pending(token_id(f.get("ticket", "")))
+    if pending is None or pending.get("kind") != "connect":
+        return html_page("Connect Loom", "<h2>This approval has expired</h2>", 400)
+    subject, org, namespaces, roles = pending["identity"]
+    approved = f.get("decision") == "approve"
+    await audit.emit(
+        "auth.connect_approved" if approved else "auth.connect_denied",
+        org=org,
+        namespace="-",
+        actor=subject,
+        subject={"client_id": pending["client_id"], "redirect_uri": pending["redirect_uri"]},
+    )
+    client = {
+        "client_id": pending["client_id"],
+        "redirect_uri": pending["redirect_uri"],
+        "code_challenge": pending["code_challenge"],
+    }
+    if not approved:
+        params = {"error": "access_denied"}
+        if pending["mcp_state"]:
+            params["state"] = pending["mcp_state"]
+        sep = "&" if "?" in client["redirect_uri"] else "?"
+        return RedirectResponse(f"{client['redirect_uri']}{sep}{urlencode(params)}", 302)
+    return await _redirect_with_code(
+        client,
+        (subject, org, namespaces, roles),
+        upstream_refresh=unseal(_UPSTREAM_PURPOSE, pending["upstream_refresh"]),
+        state=pending["mcp_state"],
     )
 
 
@@ -834,7 +937,7 @@ async def issue_tokens(grant: dict[str, Any], client_id: str) -> dict[str, Any]:
     if settings.oauth_login_provider == "oidc" and not grant["upstream_refresh"]:
         return body
     refresh = secrets.token_urlsafe(32)
-    await _store.save_refresh(
+    await store.save_refresh(
         refresh,
         {
             "client_id": client_id,
@@ -885,7 +988,7 @@ async def end_replayed_session(e: CodeReplayed, what: str) -> HTTPException:
 async def _authorization_code_grant(f: dict[str, str]) -> dict[str, Any]:
     client_id = f.get("client_id", "")
     try:
-        grant = await _store.take_code(f.get("code", ""))  # single-use: marks consumed
+        grant = await store.take_code(f.get("code", ""))  # single-use: marks consumed
     except CodeReplayed as e:
         raise await end_replayed_session(e, "authorization code") from None
     if grant is None:
@@ -910,10 +1013,10 @@ async def _ask_identity_provider(grant: dict[str, Any], refresh_token: str) -> s
     except oidc.UpstreamRefused:
         await end_session(grant, "identity provider refused the user")
         raise _invalid_grant("the identity provider ended this session") from None
-    except httpx.HTTPError as e:
+    except oidc.UpstreamUnavailable as e:
         # Not the user's fault: put the spent token back so the retry works.
-        log.warning("oauth refresh: identity provider unreachable: %s", type(e).__name__)
-        await _store.save_refresh(refresh_token, grant)
+        log.warning("oauth refresh: identity provider unavailable: %s", e)
+        await store.save_refresh(refresh_token, grant)
         raise HTTPException(
             status_code=503,
             detail={"error": "temporarily_unavailable"},
@@ -947,7 +1050,7 @@ async def _refresh_token_grant(f: dict[str, str]) -> dict[str, Any]:
         )
     refresh_token = f.get("refresh_token", "")
     try:
-        grant = await _store.take_refresh(refresh_token, client_id)  # rotates
+        grant = await store.take_refresh(refresh_token, client_id)  # rotates
     except CodeReplayed as e:
         raise await end_replayed_session(e, "refresh token") from None
     if grant is None:
@@ -971,7 +1074,7 @@ async def _refresh_token_grant(f: dict[str, str]) -> dict[str, Any]:
 async def token(request: Request) -> JSONResponse:
     from server.auth import device
 
-    f = await _form_body(request)
+    f = await form_body(request)
     grant_type = f.get("grant_type", "")
     if grant_type == "authorization_code":
         return JSONResponse(await _authorization_code_grant(f))
@@ -990,11 +1093,11 @@ async def revoke_token(request: Request) -> Response:
     from server.auth.jwt import TokenError, verify_token
     from server.auth.revocation import revoke
 
-    f = await _form_body(request)
+    f = await form_body(request)
     token_value = f.get("token", "")
     grant = None
     try:
-        grant = await _store.take_refresh(token_value, f.get("client_id", ""))
+        grant = await store.take_refresh(token_value, f.get("client_id", ""))
     except CodeReplayed as e:
         grant = e.grant
     if grant is not None:
@@ -1009,8 +1112,14 @@ async def revoke_token(request: Request) -> Response:
     except TokenError:
         return Response(status_code=200)  # unknown, expired or already revoked
     if info.token_id:
-        exp = datetime.fromtimestamp(info.expires_at, UTC) if info.expires_at else None
-        await revoke(info.token_id, expires_at=exp, reason="logout", revoked_by=info.subject)
+        # The jti may name a whole session, whose refresh tokens outlive this
+        # access token: the revocation lasts as long as they can.
+        await revoke(
+            info.token_id,
+            expires_at=datetime.now(UTC) + timedelta(seconds=_REFRESH_TTL),
+            reason="logout",
+            revoked_by=info.subject,
+        )
         await audit.emit(
             "auth.session_revoked",
             org=info.org,

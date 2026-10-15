@@ -129,13 +129,14 @@ def _approve_with_password(base: str, user_code: str, email: str, password: str)
 
 
 def _approve_with_sso(base: str, user_code: str) -> httpx.Response:
-    """Sign in at the fake IdP (it signs in whoever `FakeIdP.email` names)
-    and return Loom's page after the callback."""
-    to_idp = httpx.post(f"{base}/oauth/device", data={"user_code": user_code})
-    assert to_idp.status_code == 302, to_idp.text
-    back = httpx.get(to_idp.headers["location"])
-    assert back.status_code == 302
-    return httpx.get(back.headers["location"])
+    """Sign in at the fake IdP (it signs in whoever `FakeIdP.email` names) in
+    one browser, and return Loom's page after the callback."""
+    with httpx.Client() as browser:
+        to_idp = browser.post(f"{base}/oauth/device", data={"user_code": user_code})
+        assert to_idp.status_code == 302, to_idp.text
+        back = browser.get(to_idp.headers["location"])
+        assert back.status_code == 302
+        return browser.get(back.headers["location"])
 
 
 def _whoami(base: str, token: str) -> dict[str, Any]:
@@ -257,9 +258,13 @@ def test_a_ci_job_gets_a_scoped_token_with_no_browser(password_server) -> None:
 
 @pytest.fixture
 def sso_server(ch_client) -> Iterator[tuple[str, str, FakeIdP]]:
+    from server.auth.passwords import hash_password
+
     org = unique_org("sso")
     email = f"sso-{uuid.uuid4().hex[:6]}@corp.example"
     _seed(ch_client, org, email, "")  # an SSO-only account
+    # Someone self-signed up with this email before SSO: never verified, never inherited.
+    _seed(ch_client, org, email, hash_password("squatter"))
     idp = FakeIdP(email)
     port = free_port()
     base = f"http://127.0.0.1:{port}"
@@ -286,8 +291,9 @@ def test_dashboard_sign_in_goes_straight_to_the_identity_provider(sso_server) ->
         assert "window.__LOOM_SSO = true" in page.text
     password = httpx.post(f"{base}/v1/auth/login", json={"identifier": email, "password": "x"})
     assert password.status_code == 404
-    to_idp = httpx.get(f"{base}/oauth/sso")
-    back = httpx.get(httpx.get(to_idp.headers["location"]).headers["location"])
+    with httpx.Client() as browser:
+        to_idp = browser.get(f"{base}/oauth/sso")
+        back = browser.get(browser.get(to_idp.headers["location"]).headers["location"])
     assert back.status_code == 302 and back.headers["location"].startswith("/me#token=")
     token = back.headers["location"].split("#token=", 1)[1]
     assert _whoami(base, token)["subject"] == email
@@ -298,7 +304,8 @@ def test_cli_login_through_the_identity_provider(sso_server) -> None:
     login = _Login(base)
     code = login.user_code()
     _approve(_approve_with_sso(base, code), base, code)
-    assert login.wait()["subject"] == email
+    who = login.wait()
+    assert who["subject"] == email and len(who["namespaces"]) == 1
     assert _stored()["refresh_token"]
 
 

@@ -4,9 +4,9 @@
 URL and a short code; you open the URL on any browser (this machine or your
 phone), sign in the way your Loom is set up (password or single sign-on) and
 approve. The access and refresh tokens land in `~/.loom/credentials` (mode
-0600), one entry per profile, and every `Agent` that is given no `api_key`
-and no `LOOM_API_KEY` uses them, refreshing the hour-long access token as it
-goes. `logout()` revokes the session on the server and forgets it here.
+0600), one entry per profile, and every `Agent` for that server that is
+given no `api_key` and no `LOOM_API_KEY` uses them, refreshing the hour-long
+access token as it goes. `logout()` revokes the session on the server and forgets it here.
 
 A profile is one sign-in to one server: `profile="staging"` (or
 `LOOM_PROFILE=staging`) keeps a second server's tokens beside the first.
@@ -30,6 +30,7 @@ import webbrowser
 from collections.abc import AsyncGenerator, Callable, Generator, Iterator
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -96,7 +97,9 @@ def _locked() -> Iterator[None]:
             fcntl.flock(lock, fcntl.LOCK_UN)
 
 
-def _metadata(client: httpx.Client) -> dict[str, Any]:
+def _endpoints(client: httpx.Client) -> dict[str, str]:
+    """The server's sign-in endpoints, each checked to be on the server itself,
+    so a code or token only ever goes where the user chose to sign in."""
     r = client.get("/.well-known/oauth-authorization-server")
     if r.status_code == 404:
         raise LoomError(
@@ -104,8 +107,17 @@ def _metadata(client: httpx.Client) -> dict[str, Any]:
             "or predates `loom login`"
         )
     r.raise_for_status()
-    meta: dict[str, Any] = r.json()
-    return meta
+    meta = r.json()
+    server = urlsplit(str(client.base_url))
+    endpoints = {}
+    for name in ("device_authorization_endpoint", "token_endpoint", "revocation_endpoint"):
+        url = urlsplit(str(meta.get(name, "")))
+        if (url.scheme, url.netloc) != (server.scheme, server.netloc):
+            raise LoomError(
+                f"{client.base_url} signs in at {url.scheme}://{url.netloc}; use that as the server"
+            )
+        endpoints[name] = str(meta[name])
+    return endpoints
 
 
 def _oauth_error(r: httpx.Response) -> str:
@@ -128,12 +140,17 @@ def _save(profile: str, server: str, tokens: dict[str, Any]) -> None:
     _write(data)
 
 
+def _say(line: str) -> None:
+    # Flushed: a piped or non-terminal stdout must still show the code now.
+    print(line, flush=True)
+
+
 def login(
     server: str | None = None,
     *,
     profile: str | None = None,
     open_browser: bool = True,
-    echo: Callable[[str], None] = print,
+    echo: Callable[[str], None] = _say,
 ) -> dict[str, Any]:
     """Sign in to `server` (default `LOOM_BASE_URL`, else localhost) and store
     the tokens under `profile`. Blocks until the sign-in is approved, denied
@@ -141,7 +158,7 @@ def login(
     server = (server or os.environ.get("LOOM_BASE_URL") or DEFAULT_SERVER).rstrip("/")
     profile = profile or default_profile()
     with httpx.Client(base_url=server, timeout=30.0) as client:
-        meta = _metadata(client)
+        meta = _endpoints(client)
         r = client.post(meta["device_authorization_endpoint"], data={"client_id": CLIENT_ID})
         r.raise_for_status()
         grant = r.json()
@@ -210,7 +227,7 @@ def _refresh(profile: str, refused: str) -> dict[str, Any]:
         raise AuthInvalid(f"the session for profile {profile!r} ended; run `loom login`")
     with httpx.Client(base_url=entry["server"], timeout=30.0) as client:
         r = client.post(
-            _metadata(client)["token_endpoint"],
+            _endpoints(client)["token_endpoint"],
             data={
                 "grant_type": "refresh_token",
                 "refresh_token": entry["refresh_token"],
@@ -254,7 +271,7 @@ def logout(profile: str | None = None) -> bool:
     try:
         with httpx.Client(base_url=entry["server"], timeout=30.0) as client:
             r = client.post(
-                _metadata(client)["revocation_endpoint"],
+                _endpoints(client)["revocation_endpoint"],
                 data={
                     "token": entry.get("refresh_token") or entry["access_token"],
                     "client_id": CLIENT_ID,
@@ -279,17 +296,14 @@ def whoami(profile: str | None = None) -> dict[str, Any]:
     return {"profile": profile, "server": server, **info}
 
 
-def stored_login(base_url: str | None) -> tuple[str, StoredLogin] | None:
-    """The signed-in profile to use for `base_url`, as (server, auth), or None.
-    A profile signed in to another server is never used: its token must not
-    be sent anywhere else."""
+def stored_login(server: str) -> StoredLogin | None:
+    """The signed-in profile (LOOM_PROFILE, default `default`) when it signed in
+    to `server`, else None: a profile's token is never sent anywhere else."""
     profile = default_profile()
     entry = _read()["profiles"].get(profile)
-    if not entry:
+    if not entry or entry["server"] != server.rstrip("/"):
         return None
-    if base_url and base_url.rstrip("/") != entry["server"]:
-        return None
-    return entry["server"], StoredLogin(profile)
+    return StoredLogin(profile)
 
 
 class StoredLogin(httpx.Auth):

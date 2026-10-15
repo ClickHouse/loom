@@ -66,17 +66,16 @@ def default_agent_name(agent: str | None) -> str:
 def _credentials(
     base_url: str | None, api_key: str | None
 ) -> tuple[str, str | None, StoredLogin | None]:
-    """The server and credential to use, first found wins: `api_key=`,
-    LOOM_API_KEY, the `loom login` profile for this server, then
-    `~/.loom/token` (what `loom mint-token --save` writes)."""
-    base_url = base_url or os.environ.get("LOOM_BASE_URL")
+    """The server and credential to use. The server: `base_url=`, else
+    LOOM_BASE_URL, else localhost. The credential, first found wins: `api_key=`,
+    LOOM_API_KEY, the `loom login` session for that server, `~/.loom/token`
+    (what `loom mint-token --save` writes)."""
+    base_url = base_url or os.environ.get("LOOM_BASE_URL") or DEFAULT_SERVER
     api_key = api_key or os.environ.get("LOOM_API_KEY")
     if api_key:
-        return base_url or DEFAULT_SERVER, api_key, None
-    stored = stored_login(base_url)
-    if stored is not None:
-        return stored[0], None, stored[1]
-    return base_url or DEFAULT_SERVER, token_from_file(), None
+        return base_url, api_key, None
+    auth = stored_login(base_url)
+    return base_url, None if auth else token_from_file(), auth
 
 
 class Agent:

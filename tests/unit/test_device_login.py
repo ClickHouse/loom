@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 import time
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -24,15 +25,17 @@ def _world(monkeypatch):
     """In-memory store, a loaded empty revocation list whose writes land
     locally, a recorded audit trail, and one password account."""
     store = MemoryOAuthStore()
-    monkeypatch.setattr(oauth, "_store", store)
+    monkeypatch.setattr(oauth, "store", store)
     monkeypatch.setattr(oauth.settings, "oauth_login_provider", "password")
     monkeypatch.setattr(revocation, "_loaded", True)
     monkeypatch.setattr(revocation, "_revoked_jtis", frozenset())
     monkeypatch.setattr(revocation, "_revoked_before", {})
     revoked: list[str] = []
+    expiries: list[Any] = []
 
     async def revoke(token_id: str, **kw: Any) -> dict[str, Any]:
         revoked.append(token_id)
+        expiries.append(kw.get("expires_at"))
         revocation._apply_locally(token_id, None)
         return {}
 
@@ -57,7 +60,9 @@ def _world(monkeypatch):
     monkeypatch.setattr(login, "refreshed_roles", active)
     for limiter in (device._polls, device._requests_by_address, device._wrong_codes_by_address):
         limiter.clear()
-    return {"store": store, "revoked": revoked, "events": events}
+    for limiter in (oauth._sso_starts_by_address,):
+        limiter.clear()
+    return {"store": store, "revoked": revoked, "expiries": expiries, "events": events}
 
 
 def _client() -> TestClient:
@@ -339,12 +344,15 @@ def test_revoking_a_refresh_token_ends_the_session(_world) -> None:
     assert _error(_refresh(c, tokens["refresh_token"])) == "invalid_grant"
 
 
-def test_revoking_an_access_token_revokes_its_jti(_world) -> None:
+def test_revoking_an_access_token_revokes_its_session_for_as_long_as_refresh_lives(_world) -> None:
     access = mint_token(
         subject="bob", org="acme", namespaces=["bob"], roles=["writer"], ttl_seconds=60, jti="j1"
     )
     r = _client().post("/oauth/revoke", data={"token": access, "client_id": "loom-cli"})
     assert r.status_code == 200 and _world["revoked"] == ["j1"]
+    # The jti names the session, whose refresh token lives 30 days, not the access token's minute.
+    lasts = _world["expiries"][0] - datetime.now(UTC)
+    assert lasts > timedelta(days=29)
 
 
 def test_revoking_garbage_is_a_quiet_200(_world) -> None:
@@ -360,7 +368,8 @@ def sso(monkeypatch):
     """Provider oidc with a stub IdP: sign-in redirects, the callback signs in
     `email`, and a refresh at the IdP does what `upstream` says."""
     monkeypatch.setattr(oauth.settings, "oauth_login_provider", "oidc")
-    monkeypatch.setattr(oauth.settings, "oauth_issuer", "https://loom.example")
+    # The TestClient's own origin, so the state cookie (Secure only on https) comes back.
+    monkeypatch.setattr(oauth.settings, "oauth_issuer", "http://testserver")
     state: dict[str, Any] = {"email": "alice@example.com", "upstream": "ok", "refresh": "idp-r1"}
 
     async def build(*, redirect_uri: str, state: str, nonce: str, code_challenge: str) -> str:
@@ -382,7 +391,7 @@ def sso(monkeypatch):
         if state["upstream"] == "refused":
             raise oidc.UpstreamRefused
         if state["upstream"] == "down":
-            raise httpx.ConnectError("down")
+            raise oidc.UpstreamUnavailable("ConnectError")
         return token + "+"
 
     async def by_email(email: str) -> Any:
@@ -518,3 +527,116 @@ def test_password_login_is_closed_under_sso(monkeypatch) -> None:
     app.include_router(login.router)
     r = TestClient(app).post("/v1/auth/login", json={"identifier": "a", "password": "b"})
     assert r.status_code == 404 and r.json()["detail"]["code"] == "PASSWORD_LOGIN_SSO"
+
+
+# ── round trips that must not be finished, forged or left hanging ─────────
+
+
+def test_a_callback_from_another_browser_is_refused(sso) -> None:
+    c = _client()
+    grant = _start(c)
+    r = c.post("/oauth/device", data={"user_code": grant["user_code"]}, follow_redirects=False)
+    state = r.headers["location"].split("state=")[1]
+    other_browser = _client()  # no state cookie
+    back = other_browser.get("/oauth/callback", params={"code": "c", "state": state})
+    assert (back.status_code, back.json()["detail"]["error"]) == (400, "invalid_state")
+
+
+def test_the_pending_sign_in_holds_no_usable_user_code(sso, _world) -> None:
+    c = _client()
+    grant = _start(c)
+    c.post("/oauth/device", data={"user_code": grant["user_code"]}, follow_redirects=False)
+    pending = str(_world["store"].pending)
+    assert device.normalize_user_code(grant["user_code"]) not in pending
+
+
+def test_cancelling_at_the_identity_provider_ends_the_device_grant(sso, _world) -> None:
+    c = _client()
+    grant = _start(c)
+    r = c.post("/oauth/device", data={"user_code": grant["user_code"]}, follow_redirects=False)
+    state = r.headers["location"].split("state=")[1]
+    back = c.get("/oauth/callback", params={"error": "access_denied", "state": state})
+    assert back.status_code == 403
+    assert _error(_poll(c, grant["device_code"])) == "access_denied"
+
+
+def test_dashboard_sso_starts_are_throttled_per_address(sso) -> None:
+    c = _client()
+    for _ in range(30):
+        assert c.get("/oauth/sso", follow_redirects=False).status_code == 302
+    assert c.get("/oauth/sso", follow_redirects=False).status_code == 429
+
+
+def _register(c: TestClient) -> str:
+    r = c.post("/oauth/register", json={"redirect_uris": ["http://127.0.0.1:9/cb"]})
+    return str(r.json()["client_id"])
+
+
+def test_no_password_reaches_mcp_connect_under_sso(sso) -> None:
+    c = _client()
+    r = c.post(
+        "/oauth/authorize",
+        data={
+            "client_id": _register(c),
+            "redirect_uri": "http://127.0.0.1:9/cb",
+            "code_challenge": "x" * 43,
+            "code_challenge_method": "S256",
+            "identifier": "alice@example.com",
+            "password": "pw",
+        },
+        follow_redirects=False,
+    )
+    assert r.status_code == 404
+
+
+def _connect_through_sso(c: TestClient) -> httpx.Response:
+    r = c.get(
+        "/oauth/authorize",
+        params={
+            "response_type": "code",
+            "client_id": _register(c),
+            "redirect_uri": "http://127.0.0.1:9/cb",
+            "code_challenge": "x" * 43,
+            "code_challenge_method": "S256",
+            "state": "mcp-state",
+        },
+        follow_redirects=False,
+    )
+    state = r.headers["location"].split("state=")[1]
+    return c.get("/oauth/callback", params={"code": "c", "state": state}, follow_redirects=False)
+
+
+def test_mcp_connect_under_sso_asks_before_it_sends_a_code(sso, _world) -> None:
+    c = _client()
+    page = _connect_through_sso(c)
+    assert page.status_code == 200 and "127.0.0.1:9" in page.text and not _world["store"].codes
+    ticket = _ticket(page.text)
+    r = c.post(
+        "/oauth/authorize/approve",
+        data={"ticket": ticket, "decision": "approve"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 302 and "code=" in r.headers["location"]
+    assert "state=mcp-state" in r.headers["location"]
+    again = c.post("/oauth/authorize/approve", data={"ticket": ticket, "decision": "approve"})
+    assert again.status_code == 400
+    assert "auth.connect_approved" in [n for n, _ in _world["events"]]
+
+
+def test_denying_mcp_connect_sends_the_client_an_error(sso, _world) -> None:
+    c = _client()
+    ticket = _ticket(_connect_through_sso(c).text)
+    r = c.post(
+        "/oauth/authorize/approve",
+        data={"ticket": ticket, "decision": "deny"},
+        follow_redirects=False,
+    )
+    assert "error=access_denied" in r.headers["location"] and not _world["store"].codes
+
+
+async def test_logout_survives_an_unreachable_identity_provider(monkeypatch) -> None:
+    async def down() -> dict[str, Any]:
+        raise httpx.ConnectError("down")
+
+    monkeypatch.setattr(oidc, "_discover", down)
+    await oidc.revoke("idp-refresh")  # logged, not raised

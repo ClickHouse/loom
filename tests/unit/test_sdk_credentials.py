@@ -180,14 +180,17 @@ def test_logout_revokes_the_refresh_token_and_forgets_it(server) -> None:
 def test_a_profile_is_never_sent_to_another_server(server) -> None:
     credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
     assert credentials.stored_login("https://other.example") is None
-    stored = credentials.stored_login(None)
-    assert stored is not None and stored[0] == _SERVER
+    assert credentials.stored_login("http://localhost:7777") is None
+    assert credentials.stored_login(_SERVER + "/") is not None
 
 
 def test_an_agent_uses_the_stored_login_and_an_api_key_wins(server, monkeypatch) -> None:
     from loom import Agent
 
     credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
+    # No server named: localhost, and the session (for another server) stays home.
+    assert "login:" not in repr(Agent("acme", "alice", "notebook").transport)
+    monkeypatch.setenv("LOOM_BASE_URL", _SERVER)
     agent = Agent("acme", "alice", "notebook")
     assert agent.transport.base_url == _SERVER
     assert "login:default" in repr(agent.transport)
@@ -205,3 +208,20 @@ def test_the_stored_login_refreshes_once_after_a_401(server) -> None:
         -1
     ] == "r1"
     assert _stored()["profiles"]["default"]["access_token"] == "a2"
+
+
+def test_sign_in_endpoints_on_another_host_are_refused(server) -> None:
+    server.queued["/.well-known/oauth-authorization-server"] = [
+        httpx.Response(
+            200, json={**_META, "token_endpoint": "https://elsewhere.example/oauth/token"}
+        )
+    ]
+    with pytest.raises(credentials.LoomError, match="elsewhere.example"):
+        credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
+
+
+def test_the_code_line_is_flushed_for_a_piped_terminal(monkeypatch) -> None:
+    flushes: list[bool] = []
+    monkeypatch.setattr("builtins.print", lambda *a, flush=False, **kw: flushes.append(flush))
+    credentials._say("To sign in, open …")
+    assert flushes == [True]

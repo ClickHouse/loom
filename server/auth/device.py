@@ -29,6 +29,7 @@ from fastapi.responses import JSONResponse, Response
 from server.auth import oauth
 from server.auth.attempts import Attempts, client_address
 from server.auth.jwt import new_jti
+from server.core.secrets_at_rest import seal, unseal
 from server.observability import audit
 from server.settings import settings
 
@@ -38,6 +39,7 @@ DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 # The CLI and the SDK are one public client; there is nothing to register.
 DEVICE_CLIENT_ID = "loom-cli"
 
+_USER_CODE_PURPOSE = "device user code"
 _DEVICE_TTL = 600
 _INTERVAL = 5
 # Consonants only: no vowels to spell words, no 0/O or 1/I to misread.
@@ -66,7 +68,7 @@ def _display(user_code: str) -> str:
 
 @router.post("/oauth/device_authorization")
 async def device_authorization(request: Request) -> JSONResponse:
-    f = await oauth._form_body(request)
+    f = await oauth.form_body(request)
     if f.get("client_id") != DEVICE_CLIENT_ID:
         raise HTTPException(status_code=400, detail={"error": "invalid_client"})
     address = client_address(request)
@@ -78,9 +80,9 @@ async def device_authorization(request: Request) -> JSONResponse:
         )
     device_code = secrets.token_urlsafe(32)
     user_code = _new_user_code()
-    await oauth._store.save_device(
+    await oauth.store.save_device(
         {
-            "id": oauth._token_id(device_code),
+            "id": oauth.token_id(device_code),
             "client_id": DEVICE_CLIENT_ID,
             "subject": "",
             "org": "",
@@ -89,7 +91,7 @@ async def device_authorization(request: Request) -> JSONResponse:
             "exp": int(time.time()) + _DEVICE_TTL,
             "family": "",
             "upstream_refresh": "",
-            "user_code": oauth._token_id(user_code),
+            "user_code": oauth.token_id(user_code),
             "status": "pending",
             "address": address,
             "ticket": "",
@@ -143,18 +145,19 @@ async def device_page(user_code: str = "") -> Response:
 async def device_sign_in(request: Request) -> Response:
     from server.auth.login import LoginThrottled, resolve_user_credentials
 
-    f = await oauth._form_body(request)
+    f = await oauth.form_body(request)
     typed = f.get("user_code", "")
     address = client_address(request)
     if _wrong_codes_by_address.blocked(address):
         return _code_form(typed, "Too many wrong codes. Try again later.", 429)
     user_code = normalize_user_code(typed)
-    device = await oauth._store.device_by_user_code(oauth._token_id(user_code))
+    device = await oauth.store.device_by_user_code(oauth.token_id(user_code))
     if device is None:
         _wrong_codes_by_address.record(address)
         return _code_form(typed, "That code is wrong or has expired.", 400)
     if settings.oauth_login_provider == "oidc":
-        return await oauth.start_oidc_login("device", user_code=user_code)
+        # Sealed: the pending row must not hold a usable user code.
+        return await oauth.start_oidc_login("device", user_code=seal(_USER_CODE_PURPOSE, user_code))
     try:
         identity = await resolve_user_credentials(
             f.get("identifier", ""), f.get("password", ""), address=address
@@ -180,7 +183,7 @@ async def signed_in(
     upstream_refresh: str,
 ) -> Response:
     """The user has signed in: remember who, and ask them to confirm."""
-    device = await oauth._store.device_by_user_code(oauth._token_id(user_code))
+    device = await oauth.store.device_by_user_code(oauth.token_id(user_code))
     if device is None:
         return _expired_page()
     subject, org, namespaces, roles = identity
@@ -191,9 +194,9 @@ async def signed_in(
         "namespaces": namespaces,
         "roles": roles,
         "upstream_refresh": upstream_refresh,
-        "ticket": oauth._token_id(ticket),
+        "ticket": oauth.token_id(ticket),
     }
-    await oauth._store.save_device(device)
+    await oauth.store.save_device(device)
     asked = time.strftime("%H:%M UTC", time.gmtime(device["exp"] - _DEVICE_TTL))
     return oauth.html_page(
         "Approve sign-in",
@@ -214,26 +217,31 @@ If someone sent you this code, deny it.</p>
     )
 
 
+def unseal_user_code(sealed: str) -> str:
+    """The user code an IdP round trip carried in its pending row."""
+    return unseal(_USER_CODE_PURPOSE, sealed)
+
+
 async def deny(user_code: str) -> None:
-    """The identity provider signed the user in but Loom has no account for
-    them: end the grant so `loom login` stops waiting."""
-    device = await oauth._store.device_by_user_code(oauth._token_id(user_code))
+    """The IdP sign-in failed or Loom has no account for the user: end the
+    grant so `loom login` stops waiting."""
+    device = await oauth.store.device_by_user_code(oauth.token_id(user_code))
     if device is not None:
-        await oauth._store.save_device(device | {"status": "denied", "ticket": ""})
+        await oauth.store.save_device(device | {"status": "denied", "ticket": ""})
 
 
 @router.post("/oauth/device/approve")
 async def device_approve(request: Request) -> Response:
-    f = await oauth._form_body(request)
-    device = await oauth._store.device_by_user_code(
-        oauth._token_id(normalize_user_code(f.get("user_code", "")))
+    f = await oauth.form_body(request)
+    device = await oauth.store.device_by_user_code(
+        oauth.token_id(normalize_user_code(f.get("user_code", "")))
     )
     ticket = f.get("ticket", "")
     if (
         device is None
         or not device["ticket"]
         or not ticket
-        or not secrets.compare_digest(device["ticket"], oauth._token_id(ticket))
+        or not secrets.compare_digest(device["ticket"], oauth.token_id(ticket))
     ):
         return _expired_page()
     approved = f.get("decision") == "approve"
@@ -242,7 +250,7 @@ async def device_approve(request: Request) -> Response:
         "ticket": "",
         "family": new_jti() if approved else "",
     }
-    await oauth._store.save_device(device)
+    await oauth.store.save_device(device)
     await audit.emit(
         "auth.device_approved" if approved else "auth.device_denied",
         org=device["org"],
@@ -274,10 +282,10 @@ async def device_code_grant(f: dict[str, str]) -> dict[str, Any]:
     if f.get("client_id") != DEVICE_CLIENT_ID:
         raise HTTPException(status_code=400, detail={"error": "invalid_client"})
     device_code = f.get("device_code", "")
-    if not _polls.allow(oauth._token_id(device_code)):
+    if not _polls.allow(oauth.token_id(device_code)):
         raise _token_error("slow_down")
     try:
-        device = await oauth._store.take_device(device_code)
+        device = await oauth.store.take_device(device_code)
     except oauth.CodeReplayed as e:
         raise await oauth.end_replayed_session(e, "device code") from None
     if device is None:

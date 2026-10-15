@@ -59,8 +59,13 @@ async def _discover() -> dict[str, Any]:
 
 
 class UpstreamRefused(Exception):
-    """The IdP answered a refresh with an OAuth error: the user's IdP session
+    """The IdP answered a refresh with `invalid_grant`: the user's IdP session
     is gone (deactivated, signed out everywhere, token revoked)."""
+
+
+class UpstreamUnavailable(Exception):
+    """The IdP could not answer a refresh (down, a 5xx, a rejected client
+    secret, a malformed reply): Loom's or the IdP's problem, not the user's."""
 
 
 def _scope(doc: dict[str, Any]) -> str:
@@ -119,10 +124,8 @@ async def exchange_code(*, code: str, redirect_uri: str, code_verifier: str) -> 
 
 async def refresh(refresh_token: str) -> str:
     """Spend the IdP refresh token; returns the one to keep next (the IdP may
-    rotate it). Raises UpstreamRefused only for `invalid_grant`, the IdP's
-    answer for a user or token it no longer honours; any other failure (the
-    IdP down, a 5xx, a rejected client secret) is Loom's or the IdP's problem,
-    not the user's, and comes through as the httpx error."""
+    rotate it). Raises UpstreamRefused for `invalid_grant` and
+    UpstreamUnavailable for anything else that goes wrong."""
     try:
         tokens = await _token_request(
             {"grant_type": "refresh_token", "refresh_token": refresh_token}
@@ -130,7 +133,9 @@ async def refresh(refresh_token: str) -> str:
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 400 and _error_code(e.response) == "invalid_grant":
             raise UpstreamRefused from e
-        raise
+        raise UpstreamUnavailable(f"HTTP {e.response.status_code}") from e
+    except (httpx.HTTPError, ValueError, KeyError) as e:
+        raise UpstreamUnavailable(type(e).__name__) from e
     return str(tokens.get("refresh_token") or refresh_token)
 
 
@@ -145,11 +150,10 @@ def _error_code(response: httpx.Response) -> str:
 async def revoke(refresh_token: str) -> None:
     """Revoke the IdP refresh token at the IdP's revocation endpoint (RFC 7009)
     when it has one. Best effort: logout has already ended the Loom session."""
-    doc = await _discover()
-    endpoint = doc.get("revocation_endpoint")
-    if not endpoint:
-        return
     try:
+        endpoint = (await _discover()).get("revocation_endpoint")
+        if not endpoint:
+            return
         async with httpx.AsyncClient(timeout=10.0) as c:
             await c.post(
                 endpoint,
@@ -160,7 +164,7 @@ async def revoke(refresh_token: str) -> None:
                     "client_secret": settings.oidc_client_secret,
                 },
             )
-    except httpx.HTTPError as e:
+    except (httpx.HTTPError, ValueError) as e:
         log.warning("oidc: revoking the identity provider's token failed: %s", type(e).__name__)
 
 

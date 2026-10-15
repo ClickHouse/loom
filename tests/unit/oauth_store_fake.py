@@ -1,6 +1,6 @@
 """An in-process stand-in for the OAuth store (`server.auth.oauth._CHStore`).
 
-Install it with `monkeypatch.setattr(oauth, "_store", MemoryOAuthStore())`;
+Install it with `monkeypatch.setattr(oauth, "store", MemoryOAuthStore())`;
 codes, refresh tokens and device codes are kept under their hashes, as the
 real store does, and a spent one is kept (marked) so a replay is seen.
 """
@@ -13,8 +13,7 @@ from typing import Any
 from fastapi import FastAPI
 
 from server.auth import device, oauth
-from server.auth.oauth import CodeReplayed
-from server.auth.oauth import _token_id as token_id
+from server.auth.oauth import CodeReplayed, token_id
 
 
 def oauth_app() -> FastAPI:

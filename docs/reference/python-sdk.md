@@ -27,8 +27,7 @@ The constructor's `base_url` and `api_key` win. Otherwise the SDK reads
 session `loom.login()` / `loom login` stored in `~/.loom/credentials` for that
 server (profile `LOOM_PROFILE`, default `default`; it refreshes itself), and
 finally the first line of `~/.loom/token`, the file `loom mint-token --save`
-writes. With no `base_url` and no `LOOM_BASE_URL`, a stored session also names
-the server. A blank `LOOM_API_KEY` counts as unset. The key never appears in a
+writes. A stored session is used only for the server it signed in to. A blank `LOOM_API_KEY` counts as unset. The key never appears in a
 `repr` or a log line: credential headers are redacted to their scheme and last
 four characters.
 

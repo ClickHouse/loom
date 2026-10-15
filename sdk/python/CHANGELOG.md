@@ -12,7 +12,7 @@ All notable changes to the Python SDK. The format follows
 - `loom.login()`, `loom.logout()`, `loom.whoami()` and `python -m loom login|logout|whoami`:
   sign in with the OAuth device grant on any browser (password or SSO). The session lives in
   `~/.loom/credentials` (mode 0600, one entry per `profile` / `LOOM_PROFILE`); an `Agent`
-  given no `api_key` and no `LOOM_API_KEY` uses it and refreshes it as it goes.
+  given no `api_key` and no `LOOM_API_KEY` uses it for the server it signed in to, and refreshes it.
 - `CodedWidthMismatch` and `OverrideNotShared` (`BackendUnavailable` subclasses) for the
   server's `CODED_WIDTH_MISMATCH` and `OVERRIDE_NOT_SHARED`.
 

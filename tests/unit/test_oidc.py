@@ -279,7 +279,7 @@ def test_validate_config_password_provider_is_noop(monkeypatch) -> None:
 
 # ── authorize redirects to the IdP under provider=oidc ─────────────────────
 async def test_authorize_redirects_to_idp(monkeypatch) -> None:
-    monkeypatch.setattr(oauth, "_store", MemoryOAuthStore())
+    monkeypatch.setattr(oauth, "store", MemoryOAuthStore())
 
     captured: dict[str, Any] = {}
 
@@ -315,7 +315,7 @@ async def test_authorize_redirects_to_idp(monkeypatch) -> None:
     assert r.status_code == 307 or r.status_code == 302, r.text
     assert r.headers["location"].startswith(f"{_ISS}/authorize")
     # The pending record carries the MCP client's params + nonce, keyed by state.
-    pend = oauth._store.pending[captured["state"]]
+    pend = oauth.store.pending[captured["state"]]
     assert pend["client_id"] == cid and pend["mcp_state"] == "mcp-state"
     assert pend["nonce"] == captured["nonce"]
     # PKCE on the IdP leg: the challenge sent is the S256 of the kept verifier.
