@@ -302,8 +302,11 @@ def check(
                 raise error
             later.append(error)
     if later:
+        pointer = " (`loom ch-setup --print-sql` prints the SQL)"
         log.warning(
-            "nothing to migrate now; the next migration will refuse: %s", "; ".join(map(str, later))
+            "nothing to migrate now; the next migration will refuse: %s%s",
+            "; ".join(e.reason for e in later),
+            pointer if any(e.needs_admin for e in later) else "",
         )
     unreadable = tuple(t for t in TELEMETRY_SYSTEM_TABLES if not _readable(ch, f"system.{t}"))
     if unreadable:

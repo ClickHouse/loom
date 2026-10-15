@@ -390,6 +390,41 @@ def test_an_account_ch_setup_cannot_prove_is_loom_s_is_left_alone(
     assert not any(sql.startswith(("CREATE USER", "CREATE SETTINGS", "DROP")) for sql in ch.ran)
 
 
+@pytest.mark.parametrize("found", ["foreign", "profile", ""])
+def test_ch_setup_does_not_log_in_as_an_account_it_does_not_own(
+    monkeypatch: pytest.MonkeyPatch, found: str
+) -> None:
+    def must_not_log_in(reader: str) -> Any:
+        raise AssertionError(f"logged in as {reader}")
+
+    monkeypatch.setattr(ch_setup, "reader_status", must_not_log_in)
+    monkeypatch.setattr(ch_setup, "reader_objects", lambda ch, reader: found)
+    ch_setup._set_up(FakeCH(), "loom_app", "loom_reader")
+
+
+@pytest.mark.parametrize(
+    ("logged_in", "problem", "refusal"),
+    [
+        (None, "Read timed out", "could not check loom_reader: Read timed out"),
+        (False, "it does not accept LOOM_CH_PASSWORD", "a password other than LOOM_CH_PASSWORD"),
+        (True, "its profile does not match", "raise its profile"),
+    ],
+)
+def test_a_reader_in_the_server_s_config_gets_the_fix_for_what_is_wrong(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    logged_in: bool | None,
+    problem: str,
+    refusal: str,
+) -> None:
+    monkeypatch.setattr(ch_setup, "reader_status", lambda reader: (logged_in, problem))
+    monkeypatch.setattr(ch_setup, "reader_objects", lambda ch, reader: "config")
+    assert ch_setup._set_up(FakeCH(), "loom", "loom_reader") == 1
+    err = capsys.readouterr().err
+    assert refusal in err
+    assert ("nlp_user_settings.xml" in err) == (logged_in is True)
+
+
 class Accounts(FakeCH):
     """A server holding `user` (storage, open login) and profile rows of the reader's name."""
 

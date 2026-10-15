@@ -213,6 +213,75 @@ def _print_admin_sql(user: str, reader: str) -> None:
     print("install directory (`loom ch-setup` from a checkout).", file=err)
 
 
+def _refuse(message: str) -> bool:
+    print(f"✗ {message}", file=sys.stderr)
+    return False
+
+
+def _ensure_reader(ch: Any, user: str, reader: str) -> bool:
+    """Create or rebuild the reader where it is provably Loom's; say why not
+    otherwise. Who owns it is settled before logging in as it."""
+    from server.settings import settings
+
+    found = reader_objects(ch, reader)
+    drop_hint = (
+        f"If it is Loom's reader from an earlier setup (the password changed, or a setup "
+        f"stopped halfway), have an admin run DROP USER IF EXISTS {reader}; DROP SETTINGS "
+        f"PROFILE {reader}; and run this again. Otherwise set LOOM_CH_READER_USER to another name"
+    )
+    if found == "foreign":
+        return _refuse(
+            f"{reader} exists and is not one ch-setup made (no password, not on the profile "
+            "of its own name, or its profile is shared); set LOOM_CH_READER_USER to another name"
+        )
+    if found == "profile":
+        return _refuse(f"{reader} is a settings profile with no user. {drop_hint}")
+
+    logged_in, problem = reader_status(reader) if found else (False, "")
+    if logged_in is None:
+        return _refuse(f"could not check {reader}: {problem}; run this again")
+    if found == "config":
+        if not logged_in:
+            return _refuse(
+                f"{reader} is defined by the server's config with a password other than "
+                "LOOM_CH_PASSWORD: make the two equal"
+            )
+        if problem:
+            return _refuse(
+                f"{reader} is defined by the server's config and {problem}: raise its "
+                "profile in deploy/clickhouse-config/nlp_user_settings.xml to match"
+            )
+        print(f"✓ {reader} is defined by the server's config")
+        return True
+    if found and not problem:
+        print(f"✓ {reader} reads {preflight.DATABASE}.* under the current caps")
+        return True
+    if found == "unknown":
+        # It may be someone else's account: replace nothing that cannot be seen.
+        _refuse(
+            f"{user!r} may not list users and settings profiles, so cannot tell who owns {reader}"
+        )
+        _print_admin_sql(user, reader)
+        return False
+    if found == "user" and not logged_in:
+        return _refuse(f"{reader} exists: {problem}. {drop_hint}")
+
+    print(f"· {reader}: {problem}; rebuilding it" if found else f"· {reader}: creating it")
+    try:
+        for stmt in reader_sql(reader, _quote(settings.ch_password)):
+            ch.command(stmt)
+    except Exception as e:
+        if not found:
+            _drop_reader(ch, reader)
+        if error_code(e) != preflight.ACCESS_DENIED:
+            raise
+        _refuse(f"{user!r} may not create the reader or grant it SELECT on {preflight.DATABASE}.*")
+        _print_admin_sql(user, reader)
+        return False
+    print(f"✓ {reader}: SELECT on {preflight.DATABASE}.* only, caps pinned")
+    return True
+
+
 def _set_up(ch: Any, user: str, reader: str) -> int:
     from server.settings import settings
 
@@ -226,66 +295,8 @@ def _set_up(ch: Any, user: str, reader: str) -> int:
         return 1
     print(f"✓ ClickHouse {server.version}; database {preflight.DATABASE} ready for {user!r}")
 
-    logged_in, problem = reader_status(reader)
-    found = reader_objects(ch, reader)
-    if found == "config" and problem:
-        print(
-            f"✗ {reader} is defined by the server's config and {problem}: raise its "
-            "profile in deploy/clickhouse-config/nlp_user_settings.xml to match",
-            file=sys.stderr,
-        )
+    if not _ensure_reader(ch, user, reader):
         return 1
-    if found == "config":
-        print(f"✓ {reader} is defined by the server's config")
-    elif not problem:
-        print(f"✓ {reader} reads {preflight.DATABASE}.* under the current caps")
-    elif found == "unknown":
-        # It may be someone else's account: replace nothing that cannot be seen.
-        print(
-            f"✗ {user!r} may not list users and settings profiles, so cannot tell who "
-            f"owns {reader}",
-            file=sys.stderr,
-        )
-        _print_admin_sql(user, reader)
-        return 1
-    elif found == "foreign":
-        print(
-            f"✗ {reader} exists and is not one ch-setup made (no password, not on the profile "
-            "of its own name, or its profile is shared); set LOOM_CH_READER_USER to another name",
-            file=sys.stderr,
-        )
-        return 1
-    elif found == "user" and logged_in is None:
-        print(f"✗ could not check {reader}: {problem}; run this again", file=sys.stderr)
-        return 1
-    elif found == "profile" or (found == "user" and not logged_in):
-        why = "is a settings profile with no user" if found == "profile" else f"exists: {problem}"
-        print(
-            f"✗ {reader} {why}. If it is Loom's reader from an earlier setup (the password "
-            f"changed, or a setup stopped halfway), have an admin run DROP USER IF EXISTS "
-            f"{reader}; DROP SETTINGS PROFILE {reader}; and run this again. Otherwise set "
-            "LOOM_CH_READER_USER to another name",
-            file=sys.stderr,
-        )
-        return 1
-    else:
-        print(f"· {reader}: {problem}; rebuilding it" if found else f"· {reader}: creating it")
-        try:
-            for stmt in reader_sql(reader, _quote(settings.ch_password)):
-                ch.command(stmt)
-        except Exception as e:
-            if not found:
-                _drop_reader(ch, reader)
-            if error_code(e) != preflight.ACCESS_DENIED:
-                raise
-            print(
-                f"✗ {user!r} may not create the reader or grant it SELECT on "
-                f"{preflight.DATABASE}.*",
-                file=sys.stderr,
-            )
-            _print_admin_sql(user, reader)
-            return 1
-        print(f"✓ {reader}: SELECT on {preflight.DATABASE}.* only, caps pinned")
     if not settings.ch_reader_user:
         print(f"  set LOOM_CH_READER_USER={reader} so caller-shaped reads run as it")
 
