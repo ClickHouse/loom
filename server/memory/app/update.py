@@ -596,6 +596,8 @@ async def _mirror_accepted(
         if f in input.model_fields_set and getattr(input, f, None) is not None
     }
     if changes:
+        # At the accepted revision's version: a write landing after it keeps winning.
+        changes["version"] = int(memory_row["version"])
         await memory_repo.reemit_embedding_rows_for_key(
             existing.org,
             existing.namespace,
@@ -635,7 +637,9 @@ def _revision_intent(
     supplied = frozenset(
         f
         for f in ("tags", "concepts", "confidence", "char_limit")
-        if f in input.model_fields_set and getattr(input, f, None) is not None
+        # null keeps tags, concepts and confidence; a null cap removes the cap.
+        if f in input.model_fields_set
+        and (f == "char_limit" or getattr(input, f, None) is not None)
     )
     keeps_value = new_sha == _verify.current_content_sha256(existing) and not input.revive
     declared = {row_key(memory_row): supplied} if keeps_value else {}
@@ -646,6 +650,7 @@ async def _after_revision(
     input: Any,
     existing: MemoryRow,
     memory_row: dict[str, Any],
+    *,
     new_sha: str,
     new_version: int,
     conflict_result: Any,
@@ -849,11 +854,11 @@ async def _write_revision(
         input,
         existing,
         memory_row,
-        new_sha,
-        new_version,
-        conflict_result,
-        duplicate_of_id,
-        revision_run_id,
-        cfg_task,
-        ch,
+        new_sha=new_sha,
+        new_version=new_version,
+        conflict_result=conflict_result,
+        duplicate_of_id=duplicate_of_id,
+        revision_run_id=revision_run_id,
+        cfg_task=cfg_task,
+        ch=ch,
     )

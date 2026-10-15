@@ -212,6 +212,7 @@ async def handle_memory_set(input: MemorySetInput) -> MemorySetOutput:
         pin_guard=True,
         stated=_stated(input),
         pin_requested=bool(input.pinned),
+        expected_sha256=input.if_match_sha256 or "",
     )
     try:
         with write_intent(intent):
@@ -491,7 +492,7 @@ async def _set_prepare_value(w: _SetWrite, _restated: bool) -> None:
     from server.memory.domain.sensitivity import LEVEL_TAGS, relabel, sensitivity_tags
 
     _sens_tags = sensitivity_tags(effective_sensitivity, input.tags or [])
-    if _sens_tags or set(input.tags or []) & LEVEL_TAGS:
+    if _sens_tags or {str(t).strip().lower() for t in input.tags or []} & LEVEL_TAGS:
         # Level labels are the server's: the one that holds, or none (a user's level
         # tag on unlabelled content is not a label).
         input = input.model_copy(update={"tags": relabel(input.tags or [], effective_sensitivity)})

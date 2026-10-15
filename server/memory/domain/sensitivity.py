@@ -234,7 +234,7 @@ LEVEL_TAGS = frozenset({f"sensitivity:{MEDIUM}", f"sensitivity:{HIGH}"})
 def relabel(tags: Iterable[str], level: str | None) -> list[str]:
     """`tags` with the level label of `level` in place of any other level's (one
     label, the one that holds)."""
-    kept = [t for t in tags if t not in LEVEL_TAGS]
+    kept = [t for t in tags if str(t).strip().lower() not in LEVEL_TAGS]
     return [*kept, *sensitivity_tags(level, kept)]
 
 

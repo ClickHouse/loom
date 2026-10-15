@@ -235,13 +235,16 @@ def test_commits_get_the_next_sequence_and_a_rising_recording_time(journal: Jour
     assert journal.watermark == 2
 
 
-def test_a_restatement_commits_nothing_but_its_version(journal: Journal) -> None:
-    # Its row's version orders the key's next write, so it is journaled: empty.
+def test_a_restatement_re_records_its_claim_at_its_version(journal: Journal) -> None:
+    # Its row's version orders the key's next write, and names the claim it shows.
     run(pub.publish_rows([mrow('"A"')]))
+    (first,) = json.loads(journal.commits[0]["assertions"])
     (row,) = run(pub.publish_rows([mrow('"A"', recall_count=4)]))
     restate = journal.commits[-1]
     assert [c["change_kind"] for c in journal.commits] == ["assert", "restate"]
-    assert json.loads(restate["assertions"]) == [] and list(restate["retired_assertion_ids"]) == []
+    (again,) = json.loads(restate["assertions"])
+    assert list(map(str, restate["retired_assertion_ids"])) == [first["assertion_id"]]
+    assert (again["value"], again["source_version"]) == ('"A"', row["version"])
     assert restate["row_version"] == row["version"]
 
 
@@ -1342,3 +1345,36 @@ def test_an_update_inherits_only_from_its_own_qualifiers_claim(
     with write_intent(WriteIntent(memory_key="k", existing=True, stated=frozenset())):
         (row,) = run(pub.publish_rows([austin]))
     assert row["pinned"] == 0
+
+
+def test_a_restated_claim_stays_the_one_its_row_shows(
+    journal: Journal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.domain.temporal_capture import WriteIntent, write_intent
+
+    for scope in ("us", "eu"):
+        with write_intent(WriteIntent(memory_key="k", qualifiers={"region": scope})):
+            run(pub.publish_rows([mrow('"A"', **_LOCKLESS)]))
+    with write_intent(WriteIntent(memory_key="k", qualifiers={"region": "eu"})):
+        (row,) = run(pub.publish_rows([mrow('"A"', **_LOCKLESS)]))
+    _over(journal, monkeypatch, row)
+    c = _copy(row, value='"C"', content_sha256=sha256_value_json('"C"'))
+    with write_intent(WriteIntent(memory_key="k", existing=True, stated=frozenset())):
+        run(pub.publish_rows([c]))
+    (a,) = [x for x in json.loads(journal.commits[-1]["assertions"]) if x["value"] == '"C"']
+    assert a["qualifiers"] == {"region": "eu"}
+
+
+def test_read_only_protects_the_claim_being_changed(journal: Journal) -> None:
+    from server.memory.domain.temporal_capture import WriteIntent, write_intent
+
+    with write_intent(WriteIntent(memory_key="k", qualifiers={"region": "us"})):
+        run(pub.publish_rows([mrow('"B"', **_LOCKLESS)]))
+    with write_intent(WriteIntent(memory_key="k", qualifiers={"region": "eu"})):
+        (eu,) = run(pub.publish_rows([mrow('"A"', **_LOCKLESS)]))
+    lock = _copy(eu, lock_mode="read_only")  # as memory.lock writes it
+    with _meta(lock, *_LOCKCOLS):
+        run(pub.publish_rows([lock]))
+    b = mrow('"B"', **_LOCKLESS)  # eu A → B: B is us's text, still a change to eu
+    with write_intent(WriteIntent(memory_key="k", qualifiers={"region": "eu"}, stated=frozenset())):
+        assert run(pub.publish_rows([b])) == []

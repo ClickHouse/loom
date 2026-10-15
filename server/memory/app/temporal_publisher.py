@@ -679,18 +679,19 @@ def _plan_row(
     fields = declared_fields(row)
     if fields is not None and "value" not in fields:
         fields = fields - {"content_sha256"}  # a hash follows its value: the journal's
+    claims = tm.current_claims(active, now)
+    shown = _claim_shown(claims, head) if claims else None
+    if (
+        shown is not None
+        and intent.expected_sha256
+        and shown.content_sha256 != intent.expected_sha256
+    ):
+        # Any write conditioned on a hash, against what the journal holds now.
+        raise PreconditionFailedError(
+            f"{ident[3]!r} no longer holds the content its precondition names; re-read and retry",
+            current_sha256=shown.content_sha256,
+        )
     if fields is None and intent.existing and not removes(row):
-        claims = tm.current_claims(active, now)
-        shown = _claim_shown(claims, head) if claims else None
-        if (
-            shown is not None
-            and intent.expected_sha256
-            and (shown.content_sha256 != intent.expected_sha256)
-        ):
-            raise PreconditionFailedError(
-                f"{ident[3]!r} no longer holds the content its precondition names; "
-                "re-read and retry"
-            )
         if shown is not None and not intent.qualifiers:
             # An update revises the claim the row shows, under that claim's qualifiers
             # (what it inherits is that claim's, not another qualifier's).
@@ -726,9 +727,14 @@ def _plan_row(
         return amendment
     if not _restates_now(row, active, now):
         return "restated"
-    # Committed with nothing in it, so its row's version orders the key's next
-    # write like any other.
-    return tm.Amendment("restate")
+    # The claim it restates is re-recorded at the row's version: the row names its
+    # claim unambiguously (the same text may hold under other qualifiers), and its
+    # version orders the key's next write like any other.
+    restated = _restated(row, active, now, intent)
+    if restated is None:
+        return tm.Amendment("restate")
+    again = tm.fresh(restated, source_version=int(row.get("version") or 0))
+    return tm.Amendment("restate", (restated.assertion_id,), (again,))
 
 
 def _reshapes_current(
@@ -930,7 +936,9 @@ def _as_value_write(
     if intent.existing:
         _revises_shown(r, claims, head)
     sha = str(row.get("content_sha256") or "")
-    new_value = bool(claims) and all(a.content_sha256 != sha for a in claims)
+    # Against the claim it changes (under its qualifiers), not every claim's text.
+    target = [a for a in claims if a.qualifiers == dict(intent.qualifiers)] or claims
+    new_value = bool(target) and all(a.content_sha256 != sha for a in target)
     if new_value and _locked_against(served, "value", now):
         return "locked"
     # Against what the caller asked for, before anything is inherited: a pin the row
@@ -972,7 +980,8 @@ def _carry(
             ahead = (
                 replaced.expires_at if replaced.expires_at and replaced.expires_at > now else None
             )
-            r["expires_at"] = tm.utc(ahead) if _holds_now(r, claims, now) else None
+            peers = [a for a in claims if a.qualifiers == dict(intent.qualifiers)]
+            r["expires_at"] = tm.utc(ahead) if _holds_now(r, peers, now) else None
     if same is not None:
         for c in ("verified_by", "verified_at", "verified_sha256"):
             if c in r:
@@ -1082,6 +1091,23 @@ def _locked_against(served: Sequence[tm.Assertion], action: str, now: datetime) 
         action in REFUSES.get(a.lock_mode, ()) and (a.lock_until is None or a.lock_until > now)
         for a in tm.current_claims(served, now)
     )
+
+
+def _restated(
+    row: Mapping[str, Any], served: Sequence[tm.Assertion], now: datetime, intent: WriteIntent
+) -> tm.Assertion | None:
+    """The current claim a restatement restates: its content and metadata, under its
+    own qualifiers when it names them."""
+    value, sha = str(row.get("value") or ""), str(row.get("content_sha256") or "")
+    mine = assertion_from_row(row, WriteIntent())
+    same = [
+        a
+        for a in tm.current_claims(served, now)
+        if (a.content_sha256 == sha or _same_value(a.value, value)) and _same_metadata(a, mine)
+    ]
+    under = [a for a in same if a.qualifiers == dict(intent.qualifiers)]
+    picked = under or same
+    return picked[0] if picked else None
 
 
 def _restates_now(row: Mapping[str, Any], served: Sequence[tm.Assertion], now: datetime) -> bool:
