@@ -158,8 +158,11 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
   );
   const [done, setDone] = useState<Set<SectionId>>(() => new Set());
   const requested = useRef<Set<SectionId>>(new Set());
-  // Bumped whenever the drawer moves to another memory or identity.
+  // Bumped whenever the drawer moves to another memory or identity, or closes.
   const inspection = useRef(0);
+  // The memory the drawer has open, so a restore that answers late can tell
+  // whether the drawer came back to it.
+  const shown = useRef<{ identity: Identity; memoryKey: string } | null>(null);
   const toggleSection = (id: SectionId) =>
     setSections((cur) => {
       const next = { ...cur, [id]: !cur[id] };
@@ -256,6 +259,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
     setLineage(null);
     setProvenance(null);
     inspection.current += 1;
+    shown.current = { identity, memoryKey };
     requested.current = new Set();
     setDone(new Set());
     // A read for a key the drawer has moved off must not land: its value under the new
@@ -279,6 +283,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
       live = false;
       // Closing the drawer leaves this memory too, so a restore still in flight is stale.
       inspection.current += 1;
+      shown.current = null;
     };
   }, [identity, memoryKey]);
 
@@ -568,6 +573,19 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
       if (stale()) {
         // Toasts are app-wide, so still report it, naming the key the drawer has left.
         toast(r.restored ? `Restored ${memoryKey}` : `Nothing to restore for ${memoryKey}`, r.restored ? "ok" : "info");
+        // Back on this memory (A, B, A): its load read may have shown the row before the
+        // restore, so read it again.
+        const back = shown.current;
+        if (r.restored && back?.identity === identity && back.memoryKey === memoryKey) {
+          const now = inspection.current;
+          getMemory(identity, memoryKey, { include_recall_breakdown: true })
+            .then((fresh) => {
+              if (inspection.current === now) setDetail(fresh);
+            })
+            .catch(() => {
+              /* the restore was reported; the drawer keeps what it shows */
+            });
+        }
         return;
       }
       // Nothing to restore means the row changed since it was read: show it as it is now.

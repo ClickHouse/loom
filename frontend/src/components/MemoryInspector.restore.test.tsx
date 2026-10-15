@@ -146,7 +146,7 @@ describe("MemoryInspector restore of a superseded row", () => {
   });
 
   // Opens user_city, clicks Restore, then moves the drawer to user_job before the
-  // restore answers. Returns the callbacks that answer it.
+  // restore answers. Returns the callbacks that answer it and the render.
   async function restoreThenMove(onChanged: () => void) {
     const job: MemoryDetail = { ...SUPERSEDED, value: "works at Acme", memory_id: "m-job-1", status: "active" };
     vi.mocked(getMemory).mockImplementation(async (_id, key) => (key === "user_job" ? job : SUPERSEDED));
@@ -169,7 +169,7 @@ describe("MemoryInspector restore of a superseded row", () => {
     );
     await screen.findByText("works at Acme");
     vi.mocked(getMemory).mockClear();
-    return { finish, fail };
+    return { finish, fail, view };
   }
 
   it("names the key of a restore that lands after the drawer moved to another memory", async () => {
@@ -184,6 +184,22 @@ describe("MemoryInspector restore of a superseded row", () => {
     expect(getMemory).not.toHaveBeenCalled();
     // The restore did land, so the list behind the drawer is refreshed.
     expect(onChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the restored row when the drawer is back on the memory as the restore lands", async () => {
+    seed("writer");
+    const { finish, view } = await restoreThenMove(() => {});
+    // Back to user_city: its load read answers the superseded row before the restore does.
+    vi.mocked(getMemory).mockResolvedValue(SUPERSEDED);
+    view.rerender(
+      <MemoryInspector identity={identity} memoryKey="user_city" onClose={() => {}} onChanged={() => {}} />,
+    );
+    await screen.findByText("lives in Lisbon");
+    expect(screen.getByRole("button", { name: "Restore" })).toBeTruthy();
+    vi.mocked(getMemory).mockResolvedValue({ ...SUPERSEDED, status: "active" });
+    finish({ restored: true });
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Restored user_city", "ok"));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Restore" })).toBeNull());
   });
 
   it("names the key of a restore that fails after the drawer moved to another memory", async () => {

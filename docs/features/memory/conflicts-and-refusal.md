@@ -179,8 +179,9 @@ way a delete since is never undone. When it finds nothing to restore, the inspec
 row and shows it as it is now. Either way the list behind the drawer is refreshed, even if
 the drawer has moved to another memory; a failed re-read shows "Reload failed" and leaves
 the restore's own message standing. A restore that answers after the drawer has moved to
-another memory is still reported, with its key named ("Restored user_city", "Restore of
-user_city failed: …"), and leaves the drawer on the memory it moved to.
+another memory or closed is still reported, with its key named ("Restored user_city",
+"Restore of user_city failed: …"), and leaves the drawer on the memory it moved to; if
+the drawer has come back to the restored memory, it re-reads the row.
 
 ## Duplicates
 
