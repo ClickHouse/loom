@@ -59,33 +59,15 @@ class MemoryOAuthStore:
         if client_id is not None and g["client_id"] != client_id:
             return None
         if key in self.spent:
-            raise CodeReplayed({"successor": "", **g}, self.spent[key])
+            raise CodeReplayed(dict(g))
         self.spent[key] = time.time()
         return dict(g)
 
     async def take_code(self, code: str, client_id: str) -> dict[str, Any] | None:
         return self._take(self.codes, token_id(code), client_id)
 
-    async def take_refresh(
-        self, token: str, client_id: str, successor: str = ""
-    ) -> dict[str, Any] | None:
-        g = self._take(self.refresh, token_id(token), client_id)
-        if g is not None and successor:
-            self.refresh[token_id(token)]["successor"] = token_id(successor)
-        return g
-
-    async def set_successor(self, token: str, g: dict[str, Any], successor: str) -> None:
-        self.refresh[token_id(token)] = {**g, "successor": token_id(successor)}
-        self.spent[token_id(token)] = time.time()
-
-    async def retire_if_unused(self, successor_id: str) -> tuple[str, dict[str, Any] | None]:
-        g = self.refresh.get(successor_id)
-        if g is None:
-            return "missing", None
-        if successor_id in self.spent:
-            return "used", None
-        self.spent[successor_id] = time.time()
-        return "unused", dict(g)
+    async def take_refresh(self, token: str, client_id: str) -> dict[str, Any] | None:
+        return self._take(self.refresh, token_id(token), client_id)
 
     async def save_pending(self, state: str, data: dict[str, Any]) -> None:
         self.pending[state] = dict(data)

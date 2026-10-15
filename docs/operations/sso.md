@@ -85,11 +85,11 @@ The provider can never grant admin.
   button again, and Okta's own session usually makes that one click.
 - `loom logout` revokes the Loom session on the server and the Okta refresh
   token at Okta.
-- If a spent refresh token comes back as a copy (after the token that
-  replaced it was used, or more than a minute later), someone else holds it:
-  Loom ends that session and the service accounts and MCP tokens minted from
-  it. A client that lost a refresh's answer asks again at once and goes on.
-  The person's other sessions are not affected.
+- If a spent refresh token comes back, someone else may hold a copy (or a
+  client lost the answer to a refresh): Loom ends that session and the
+  person signs in again. Service accounts and MCP tokens they minted are not
+  touched; after a suspected theft, review them (`loom call
+/v1/me/service_accounts`) and revoke what you don't recognise.
 - Okta refusing the user at a refresh ends that session.
 - Service accounts and MCP tokens a person creates from a sign-in session
   outlive it, including `loom logout`, for at most 30 days. Only a refresh
@@ -100,7 +100,7 @@ The provider can never grant admin.
   ended session writes an `auth.*` row to the audit log:
   `auth.sso_signin`, `auth.signin_denied`, `auth.device_approved`,
   `auth.device_denied`, `auth.connect_approved`, `auth.connect_denied`,
-  `auth.jit_provisioned`, `auth.refresh_reissued`, `auth.session_revoked`.
+  `auth.jit_provisioned`, `auth.session_revoked`.
 
 ## Behind a proxy
 

@@ -2630,7 +2630,6 @@ CREATE TABLE IF NOT EXISTS loom.oauth_state
     `address` String DEFAULT '',
     `ticket` String DEFAULT '',
     `upstream_refresh` String DEFAULT '',
-    `successor` String DEFAULT '',
     INDEX user_code_bloom_idx user_code TYPE bloom_filter(0.01) GRANULARITY 1
 )
 ENGINE = ReplacingMergeTree(version)

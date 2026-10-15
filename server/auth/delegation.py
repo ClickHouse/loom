@@ -85,12 +85,6 @@ def _refuse(message: str) -> HTTPException:
 SESSION_TTL = 30 * 86400
 
 
-def minted_by(session_id: str) -> str:
-    """The revocation key every token delegated from a sign-in session
-    carries in `parents`: revoking it ends just those tokens."""
-    return f"{session_id}/minted"
-
-
 async def delegate(
     parent: AuthInfo,
     *,
@@ -109,13 +103,7 @@ async def delegate(
     child_org = _child_org(parent, org)
     if parent.is_service_account and not is_service_account:
         raise _refuse("a service-account token can only mint service-account tokens")
-    parents = list(parent.parents)
-    if parent.session_id:
-        # A sign-in session's access token lives an hour; the child is tied
-        # to the session instead, and dies with it if the session is stolen.
-        parents.append(minted_by(parent.session_id))
-    elif parent.token_id:
-        parents.append(parent.token_id)
+    parents = [*parent.parents, parent.token_id] if parent.token_id else list(parent.parents)
     if len(parents) > MAX_CHAIN_DEPTH:
         raise _refuse(f"delegation chain is limited to {MAX_CHAIN_DEPTH} tokens")
     if scoped and "*" in requested:

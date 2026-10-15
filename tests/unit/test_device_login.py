@@ -3,7 +3,6 @@ SSO-only paths: every grant and every refusal, against the in-memory store."""
 
 from __future__ import annotations
 
-import asyncio
 import re
 import time
 from datetime import UTC, datetime, timedelta
@@ -284,8 +283,8 @@ def test_a_replayed_device_code_ends_the_session(_world, monkeypatch) -> None:
     tokens = _poll(c, grant["device_code"]).json()
     assert _error(_poll(c, grant["device_code"])) == "invalid_grant"
     sid = pyjwt.decode(tokens["access_token"], options={"verify_signature": False})["sid"]
-    # The session, and the machine tokens minted from it; nothing else of the person's.
-    assert _world["revoked"] == [sid, f"{sid}/minted"]
+    # The session; nothing else of the person's.
+    assert _world["revoked"] == [sid]
     assert _error(_refresh(c, tokens["refresh_token"])) == "invalid_grant"
 
 
@@ -309,11 +308,11 @@ def test_a_replayed_refresh_token_revokes_the_whole_family(_world, monkeypatch) 
     c = _client()
     first = _signed_in_tokens(c)
     second = _refresh(c, first["refresh_token"]).json()
-    _refresh(c, second["refresh_token"])  # its successor is in use
+    _refresh(c, second["refresh_token"])
     # The old token comes back (someone kept a copy): refused, and the session ends.
     assert _error(_refresh(c, first["refresh_token"])) == "invalid_grant"
     sid = pyjwt.decode(second["access_token"], options={"verify_signature": False})["sid"]
-    assert _world["revoked"] == [sid, f"{sid}/minted"]
+    assert _world["revoked"] == [sid]
     # So the legitimate holder's session is dead too, access tokens and all.
     assert revocation.is_revoked(sid)
     reasons = [kw["subject"]["reason"] for n, kw in _world["events"] if n == "auth.session_revoked"]
@@ -836,7 +835,7 @@ def test_a_refused_sso_sign_in_revokes_the_idp_token_it_got(sso, monkeypatch) ->
     assert revoked == ["idp-r1"]
 
 
-# ── theft ends the stolen session, never the person ─────────────────────────
+# ── a replay ends the session, never the person ─────────────────────────
 
 
 def test_a_revoked_subject_cannot_sign_in_again(_world) -> None:
@@ -876,54 +875,18 @@ def test_a_failed_issue_leaves_the_code_unspent(_world, monkeypatch) -> None:
     assert _world["revoked"] == []
 
 
-def test_session_children_carry_the_sessions_minted_key() -> None:
-    from server.auth import delegation
-    from server.auth.jwt import verify_token
-
-    parent = verify_token(
-        mint_token(
-            subject="ann",
-            org="acme",
-            namespaces=["ann"],
-            roles=["writer"],
-            ttl_seconds=3600,
-            session_id="s9",
-        )
-    )
-    assert delegation.minted_by("s9") == "s9/minted"
-    # delegate() puts it in `parents`, so revoking it ends exactly these children.
-    child = mint_token(
-        subject="sa:ci",
-        org="acme",
-        namespaces=["ann"],
-        roles=["viewer"],
-        parents=[delegation.minted_by(parent.session_id)],
-        parent_subjects=["ann"],
-        parent_iats=[parent.issued_at or 0],
-        creator="ann",
-    )
-    verify_token(child)
-    revocation._apply_locally("s9/minted", None)
-    from server.auth.jwt import TokenError
-
-    with pytest.raises(TokenError, match="parent"):
-        verify_token(child)
+# ── lost answers and leaked codes ────────────────────
 
 
-# ── retries are not thefts, a leaked code proves nothing ────────────────────
-
-
-def test_a_lost_answer_is_answered_again_and_the_session_goes_on(_world) -> None:
+def test_a_lost_answer_costs_a_sign_in_and_nothing_else(_world) -> None:
+    """Rotation cannot tell a lost answer from a copy: the session ends, as
+    for a replay, and the owner signs in again. What it minted is untouched."""
     c = _client()
     first = _signed_in_tokens(c)
-    lost = _refresh(c, first["refresh_token"]).json()  # never reached the client
-    again = _refresh(c, first["refresh_token"])
-    assert again.status_code == 200 and _world["revoked"] == []
-    assert _refresh(c, again.json()["refresh_token"]).status_code == 200
-    # The answer that was lost is retired: if it ever turns up, someone has a copy.
-    assert _error(_refresh(c, lost["refresh_token"])) == "invalid_grant"
+    _refresh(c, first["refresh_token"])  # its answer never reached the client
+    assert _error(_refresh(c, first["refresh_token"])) == "invalid_grant"
     sid = pyjwt.decode(first["access_token"], options={"verify_signature": False})["sid"]
-    assert _world["revoked"] == [sid, f"{sid}/minted"]
+    assert _world["revoked"] == [sid]
 
 
 def test_a_loom_failure_during_refresh_leaves_the_token_usable(_world, monkeypatch) -> None:
@@ -993,7 +956,7 @@ def test_a_leaked_spent_code_alone_ends_nothing(_world, monkeypatch) -> None:
     assert _world["revoked"] == []
     # With the verifier, it is the client's own copy coming back: the session ends.
     assert _error(_exchange(c, client_id, code, verifier)) == "invalid_grant"
-    assert len(_world["revoked"]) == 2
+    assert len(_world["revoked"]) == 1
 
 
 # ── failures put credentials back ───────────────────────────────────────────
@@ -1028,7 +991,7 @@ def test_an_inactive_account_ends_its_session_at_refresh(_world, monkeypatch) ->
     assert _world["revoked"] == [sid]
 
 
-def test_a_thefts_minted_revocation_lapses_with_what_it_revokes(_world) -> None:
+def test_a_replays_revocation_lapses_with_the_session(_world) -> None:
     c = _client()
     first = _signed_in_tokens(c)
     second = _refresh(c, first["refresh_token"]).json()
@@ -1041,47 +1004,3 @@ def test_a_thefts_minted_revocation_lapses_with_what_it_revokes(_world) -> None:
 def test_discovery_always_names_its_response_types(monkeypatch) -> None:
     monkeypatch.setattr(oauth.settings, "oauth_enabled", False)
     assert oauth.authorization_server_metadata("https://x")["response_types_supported"] == []
-
-
-# ── lost answers versus copies ────────────────────────────────────────────
-
-
-def test_a_reanswer_is_audited(_world) -> None:
-    c = _client()
-    first = _signed_in_tokens(c)
-    _refresh(c, first["refresh_token"])  # lost
-    assert _refresh(c, first["refresh_token"]).status_code == 200
-    assert "auth.refresh_reissued" in [n for n, _ in _world["events"]]
-
-
-def test_a_thief_who_refreshes_first_is_caught_when_the_owner_comes_back(
-    _world, monkeypatch
-) -> None:
-    c = _client()
-    first = _signed_in_tokens(c)
-    _refresh(c, first["refresh_token"])  # the thief, with a copy of the file
-    monkeypatch.setattr(oauth, "_LOST_ANSWER_S", -1)  # the owner's next refresh comes later
-    assert _error(_refresh(c, first["refresh_token"])) == "invalid_grant"
-    sid = pyjwt.decode(first["access_token"], options={"verify_signature": False})["sid"]
-    assert _world["revoked"] == [sid, f"{sid}/minted"]
-
-
-def test_an_old_copy_from_a_backup_is_a_theft_not_a_lost_answer(_world, monkeypatch) -> None:
-    c = _client()
-    old = _signed_in_tokens(c)
-    _refresh(c, old["refresh_token"])  # the owner moved on; the new token sits unused
-    monkeypatch.setattr(oauth, "_LOST_ANSWER_S", -1)  # days later
-    assert _error(_refresh(c, old["refresh_token"])) == "invalid_grant"
-    assert len(_world["revoked"]) == 2
-
-
-def test_a_retry_while_the_first_answer_is_still_being_made_waits(_world) -> None:
-    c = _client()
-    first = _signed_in_tokens(c)
-    store = _world["store"]
-    # The first refresh has spent the token, named its successor, not yet saved it.
-    asyncio.run(
-        store.take_refresh(first["refresh_token"], device.DEVICE_CLIENT_ID, "not-yet-saved")
-    )
-    r = _refresh(c, first["refresh_token"])
-    assert r.status_code == 503 and _world["revoked"] == []

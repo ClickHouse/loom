@@ -61,13 +61,11 @@ _UPSTREAM_PURPOSE = "oidc refresh token"
 
 
 class CodeReplayed(Exception):
-    """A single-use code or refresh token was presented after it was spent,
-    at `spent_at` (unix seconds)."""
+    """A single-use code or refresh token was presented after it was spent."""
 
-    def __init__(self, grant: dict[str, Any], spent_at: float = 0.0) -> None:
+    def __init__(self, grant: dict[str, Any]) -> None:
         super().__init__("spent credential presented again")
         self.grant = grant
-        self.spent_at = spent_at
 
 
 # --------------------------------------------------------------------------
@@ -119,7 +117,7 @@ class _CHStore:
     _T = "loom.oauth_state"
     _GRANT_COLUMNS = (
         "client_id, redirect_uri, code_challenge, subject, org, namespaces, roles, "
-        "expires_at, consumed, family, upstream_refresh, successor"
+        "expires_at, consumed, family, upstream_refresh"
     )
     _DEVICE_COLUMNS = (
         "id, subject, org, namespaces, roles, expires_at, family, upstream_refresh, "
@@ -169,7 +167,6 @@ class _CHStore:
             "expires_at": int(g["exp"]),
             "family": g.get("family", ""),
             "upstream_refresh": seal(_UPSTREAM_PURPOSE, g.get("upstream_refresh", "")),
-            "successor": g.get("successor", ""),
             "consumed": consumed,
             "version": time.time_ns(),
         }
@@ -183,12 +180,8 @@ class _CHStore:
     async def take_code(self, code: str, client_id: str) -> dict[str, Any] | None:
         return await self._take("code", token_id(code), client_id)
 
-    async def take_refresh(
-        self, token: str, client_id: str, successor: str = ""
-    ) -> dict[str, Any] | None:
-        """Spend the refresh token, noting `successor` (the one about to be
-        issued in its place, if any) on it in the same write."""
-        return await self._take("refresh", token_id(token), client_id, successor)
+    async def take_refresh(self, token: str, client_id: str) -> dict[str, Any] | None:
+        return await self._take("refresh", token_id(token), client_id)
 
     def _grant(self, row: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -202,20 +195,17 @@ class _CHStore:
             "exp": int(row["expires_at"]),
             "family": row["family"],
             "upstream_refresh": unseal(_UPSTREAM_PURPOSE, row["upstream_refresh"]),
-            "successor": row["successor"],
         }
 
     async def _row(self, rtype: str, rid: str) -> dict[str, Any] | None:
         row: dict[str, Any] | None = await self._ch().query_one(
-            f"""SELECT {self._GRANT_COLUMNS}, version FROM {self._T} FINAL
+            f"""SELECT {self._GRANT_COLUMNS} FROM {self._T} FINAL
                 WHERE record_type = {{t:String}} AND id = {{id:String}} LIMIT 1""",
             params={"t": rtype, "id": rid},
         )
         return row
 
-    async def _take(
-        self, rtype: str, rid: str, client_id: str, successor: str = ""
-    ) -> dict[str, Any] | None:
+    async def _take(self, rtype: str, rid: str, client_id: str) -> dict[str, Any] | None:
         row = await self._row(rtype, rid)
         if not row or int(row["expires_at"] or 0) < int(time.time()):
             return None
@@ -223,30 +213,9 @@ class _CHStore:
             return None  # checked before the consume: a wrong presenter can't burn it
         grant = self._grant(row)
         if row["consumed"]:
-            raise CodeReplayed(grant, int(row["version"]) / 1e9)  # the spend's time_ns
-        spent = {**grant, "successor": token_id(successor) if successor else ""}
-        await self._ch().insert(self._T, [self._grant_row(rtype, rid, spent, 1)])
+            raise CodeReplayed(grant)
+        await self._ch().insert(self._T, [self._grant_row(rtype, rid, grant, 1)])
         return grant
-
-    async def set_successor(self, token: str, g: dict[str, Any], successor: str) -> None:
-        """Note on the spent refresh token which token replaces it now."""
-        row = self._grant_row(
-            "refresh", token_id(token), {**g, "successor": token_id(successor)}, 1
-        )
-        await self._ch().insert(self._T, [row])
-
-    async def retire_if_unused(self, successor_id: str) -> tuple[str, dict[str, Any] | None]:
-        """Spend a refresh token by its id if it has never been presented.
-        ("unused", its grant), ("used", None), or ("missing", None) while
-        the answer that issues it is still being made."""
-        row = await self._row("refresh", successor_id)
-        if not row:
-            return "missing", None
-        if row["consumed"]:
-            return "used", None
-        grant = self._grant(row)
-        await self._ch().insert(self._T, [self._grant_row("refresh", successor_id, grant, 1)])
-        return "unused", grant
 
     async def save_pending(self, state: str, data: dict[str, Any]) -> None:
         # OIDC in-flight login: stash the MCP client's params + nonce keyed by
@@ -991,9 +960,7 @@ def _invalid_grant(description: str = "") -> HTTPException:
     return HTTPException(status_code=400, detail=detail)
 
 
-async def issue_tokens(
-    grant: dict[str, Any], client_id: str, *, refresh: str = ""
-) -> dict[str, Any]:
+async def issue_tokens(grant: dict[str, Any], client_id: str) -> dict[str, Any]:
     """An access token for the grant's session, and the next refresh token.
     Under OIDC a session with no IdP refresh token gets no Loom refresh token:
     nothing could tell Loom the user was deactivated, so the session ends with
@@ -1020,7 +987,7 @@ async def issue_tokens(
     }
     if settings.oauth_login_provider == "oidc" and not grant["upstream_refresh"]:
         return body
-    refresh = refresh or secrets.token_urlsafe(32)
+    refresh = secrets.token_urlsafe(32)
     await store.save_refresh(
         refresh,
         {
@@ -1038,43 +1005,32 @@ async def issue_tokens(
     return body
 
 
-async def end_session(grant: dict[str, Any], reason: str, *, stolen: bool = False) -> None:
+async def end_session(grant: dict[str, Any], reason: str) -> None:
     """Revoke the grant's session family: its refresh tokens stop refreshing and
-    its access tokens stop verifying. `stolen` (a spent credential came back,
-    so someone else holds a copy) also revokes the machine tokens minted from
-    this session (delegation.minted_by); a logout leaves
-    those to their owner. Raises when a revocation did not land."""
-    from server.auth.delegation import minted_by
+    its access tokens stop verifying. Tokens minted from the session (service
+    accounts, MCP tokens) are their owner's to revoke: an automatic verdict that
+    could be wrong (a lost answer looks like a replay) never reaches them.
+    Raises when the revocation did not land."""
     from server.auth.revocation import revoke
 
     if not grant["family"]:
         return  # nothing was issued under it (a denied grant), or it predates families
     until = datetime.now(UTC) + timedelta(seconds=_REFRESH_TTL)
     await revoke(grant["family"], expires_at=until, reason=reason, revoked_by="oauth")
-    if stolen:
-        # Children live at most SESSION_TTL, so the revocation need not outlast that.
-        await revoke(
-            minted_by(grant["family"]), expires_at=until, reason=reason, revoked_by="oauth"
-        )
     await audit.emit(
         "auth.session_revoked",
         org=grant["org"],
         namespace="-",
         actor=grant["subject"],
-        subject={
-            "family": grant["family"],
-            "client_id": grant["client_id"],
-            "reason": reason,
-            "machine_tokens": stolen,
-        },
+        subject={"family": grant["family"], "client_id": grant["client_id"], "reason": reason},
     )
 
 
 async def end_replayed_session(e: CodeReplayed, what: str) -> HTTPException:
-    """A spent credential came back: someone else holds a copy. The session
-    ends, and so does what it minted."""
+    """A spent credential came back: a copy is in other hands, or a client lost
+    an answer. Either way the session ends; its owner signs in again."""
     try:
-        await end_session(e.grant, f"{what} replayed", stolen=True)
+        await end_session(e.grant, f"{what} replayed")
     except Exception:  # the replay is refused whether or not the revoke landed
         log.exception("oauth: revoking a replayed %s's session failed", what)
     return _invalid_grant()
@@ -1153,17 +1109,14 @@ async def _refresh_token_grant(f: dict[str, str]) -> dict[str, Any]:
             detail={"error": "invalid_request", "error_description": "client_id required"},
         )
     refresh_token = f.get("refresh_token", "")
-    successor = secrets.token_urlsafe(32)  # noted on the spent token before it exists
     try:
-        presented = await store.take_refresh(refresh_token, client_id, successor)  # rotates
+        grant = await store.take_refresh(refresh_token, client_id)  # rotates
     except CodeReplayed as e:
-        grant = await _answer_again(e, refresh_token, successor)
-    else:
-        if presented is None:
-            raise _invalid_grant()
-        grant = dict(presented)
+        raise await end_replayed_session(e, "refresh token") from None
+    if grant is None:
+        raise _invalid_grant()
     try:
-        return await _refresh_session(grant, refresh_token, successor)
+        return await _refresh_session(grant, refresh_token)
     except HTTPException:
         raise  # an answer: refused, or retry later with the token put back
     except Exception:  # Loom's own failure: unspend the token so the retry is no replay
@@ -1171,43 +1124,7 @@ async def _refresh_token_grant(f: dict[str, str]) -> dict[str, Any]:
         raise
 
 
-# A client whose refresh answer was lost asks again at once (the SDK, after
-# its timeout); a spent token that comes back later than this is a copy.
-_LOST_ANSWER_S = 60
-
-
-async def _answer_again(e: CodeReplayed, refresh_token: str, successor: str) -> dict[str, Any]:
-    """A spent refresh token came back. Soon after the spend, with the token
-    that replaced it never used, its answer was lost: retire that one and
-    answer again. Otherwise someone else holds a copy, and the session ends.
-    Returns the grant to answer from."""
-    spent = e.grant
-    if not spent["successor"] or time.time() - e.spent_at > _LOST_ANSWER_S:
-        raise await end_replayed_session(e, "refresh token")
-    grant: dict[str, Any] | None
-    state, grant = await store.retire_if_unused(spent["successor"])
-    if state == "missing":  # the first answer is still being made
-        raise HTTPException(
-            status_code=503,
-            detail={"error": "temporarily_unavailable"},
-            headers={"Retry-After": "2"},
-        )
-    if grant is None:
-        raise await end_replayed_session(e, "refresh token")
-    await store.set_successor(refresh_token, spent, successor)
-    await audit.emit(
-        "auth.refresh_reissued",
-        org=grant["org"],
-        namespace="-",
-        actor=grant["subject"],
-        subject={"family": grant["family"], "client_id": grant["client_id"]},
-    )
-    return grant
-
-
-async def _refresh_session(
-    grant: dict[str, Any], refresh_token: str, successor: str
-) -> dict[str, Any]:
+async def _refresh_session(grant: dict[str, Any], refresh_token: str) -> dict[str, Any]:
     """The refresh grant's checks and new tokens, once the old token is spent."""
     from server.auth.login import refreshed_roles
     from server.auth.revocation import is_revoked
@@ -1230,7 +1147,7 @@ async def _refresh_session(
             await oidc.revoke(grant["upstream_refresh"])
         await end_session(grant, "account no longer active")
         raise _invalid_grant()
-    return await issue_tokens({**grant, "roles": roles}, grant["client_id"], refresh=successor)
+    return await issue_tokens({**grant, "roles": roles}, grant["client_id"])
 
 
 @router.post("/oauth/token")
@@ -1274,13 +1191,13 @@ async def revoke_token(request: Request) -> Response:
             status_code=400,
             detail={"error": "invalid_request", "error_description": "client_id required"},
         )
-    grant = None
+    grant, reason = None, "logout"
     try:
         grant = await store.take_refresh(token_value, client_id)
     except CodeReplayed as e:
-        grant = e.grant
+        grant, reason = e.grant, "refresh token replayed"  # an old copy, presented here
     if grant is not None:
-        await end_session(grant, "logout")
+        await end_session(grant, reason)
         if grant["upstream_refresh"] and settings.oauth_login_provider == "oidc":
             from server.auth import oidc
 

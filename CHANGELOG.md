@@ -25,10 +25,8 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   refresh. Service accounts and MCP tokens minted from a sign-in session live at most 30
   days; offboarding revokes them sooner (`loom revoke-token --subject`).
 - A sign-in session's access tokens carry its family as their `sid` claim. Logout, a
-  replayed code or device code, a spent refresh token coming back as a copy (its successor
-  used, or more than a minute after the spend), and a provider refusing the user each end
-  the whole session, and a replay also the machine tokens minted from it. A refresh whose
-  answer was lost, asked again at once, is answered again.
+  replayed refresh token, code or device code, and a provider refusing the user each end
+  the whole session (never the tokens minted from it, nor the person's other sessions).
   Every sign-in, approval, denial, MCP consent and ended session writes an `auth.*` audit
   row.
 - The dashboard's **Sign out** ends an SSO sign-in session on the server too; a token

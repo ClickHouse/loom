@@ -162,7 +162,7 @@ def test_full_oauth_handshake(oauth_server) -> None:
     assert who["subject"] == email
     assert ns in (who.get("namespaces") or [])  # subject-aligned → joins apply
 
-    # 7. refresh rotates (an old refresh token is single-use once its successor is used)
+    # 7. refresh rotates (old refresh token is single-use)
     tok2 = httpx.post(
         md["token_endpoint"],
         data={
@@ -172,7 +172,6 @@ def test_full_oauth_handshake(oauth_server) -> None:
         },
     ).json()
     assert tok2["access_token"]
-    # The client goes on with the new token; the old one is then rotated out.
     tok3 = httpx.post(
         md["token_endpoint"],
         data={

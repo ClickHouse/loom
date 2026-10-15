@@ -482,7 +482,7 @@ def test_service_accounts_and_account_views_need_no_dashboard(
     assert _whoami(base, kept["token"])["authenticated"] is True
 
 
-def test_a_stolen_session_ends_with_what_it_minted_and_spares_the_rest(
+def test_a_replayed_session_ends_and_spares_the_rest(
     password_server, tmp_path, monkeypatch
 ) -> None:
     base, _org, ns, email, password = password_server
@@ -506,16 +506,17 @@ def test_a_stolen_session_ends_with_what_it_minted_and_spares_the_rest(
     first = _stored()
     credentials.access_token(refused=first["access_token"])  # the client goes on...
     credentials.access_token(refused=_stored()["access_token"])
-    # ...and a copy of the first token turns up: this session and what it minted end.
+    # ...and a copy of the first token turns up: this session ends. The CI
+    # token minted from it is its owner's to revoke (it lives at most 30 days).
     assert _refresh(base, first["refresh_token"]).json()["detail"]["error"] == "invalid_grant"
     assert _whoami(base, _stored()["access_token"])["authenticated"] is False
-    assert _whoami(base, made["token"])["authenticated"] is False
+    assert _whoami(base, made["token"])["authenticated"] is True
     # The same person's other session, and what it minted, are untouched.
     assert _whoami(base, other["token"])["authenticated"] is True
     assert _loom(desktop, "call", "/v1/me/sharing-summary")["subject"] == email
 
 
-def test_a_lost_refresh_answer_does_not_end_the_session(
+def test_a_lost_refresh_answer_costs_a_sign_in_and_nothing_else(
     password_server, tmp_path, monkeypatch
 ) -> None:
     base, _org, ns, email, password = password_server
@@ -525,9 +526,7 @@ def test_a_lost_refresh_answer_does_not_end_the_session(
         home, "call", "/v1/me/service_accounts.create", "name=ci", f"namespaces:={json.dumps([ns])}"
     )
     first = _stored()
-    lost = _refresh(base, first["refresh_token"])  # the server rotates; the client never hears
-    assert lost.status_code == 200
-    # The client asks again with what it has, however much later: it goes on.
-    credentials.access_token(refused=first["access_token"])
-    assert _whoami(base, _stored()["access_token"])["authenticated"] is True
+    assert _refresh(base, first["refresh_token"]).status_code == 200  # the answer is lost
+    with pytest.raises(AuthInvalid, match="run `loom login`"):
+        credentials.access_token(refused=first["access_token"])
     assert _whoami(base, made["token"])["authenticated"] is True

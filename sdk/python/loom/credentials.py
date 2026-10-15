@@ -44,9 +44,8 @@ _DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 # with a token that dies in flight.
 _REFRESH_MARGIN_S = 60
 # Longer than a refresh can take on the server, which asks the identity
-# provider first (discovery and token calls, 10 s each), and short enough
-# that the retry after it lands inside the server's minute for lost answers.
-_REFRESH_TIMEOUT_S = 45.0
+# provider first: giving up sooner turns a slow answer into a lost one.
+_REFRESH_TIMEOUT_S = 60.0
 
 
 def _path() -> Path:
@@ -212,6 +211,14 @@ def login(
             with contextlib.suppress(webbrowser.Error):
                 webbrowser.open(grant["verification_uri_complete"])
         tokens = _poll(client, meta["token_endpoint"], grant)
+        replaced = _read()["profiles"].get(profile)
+        if replaced and replaced["server"] == server and replaced.get("refresh_token"):
+            # The session this sign-in replaces ends too, not left to run out.
+            with contextlib.suppress(httpx.HTTPError):
+                client.post(
+                    meta["revocation_endpoint"],
+                    data={"token": replaced["refresh_token"], "client_id": CLIENT_ID},
+                )
     with _locked():  # another process may be rotating a profile in the same file
         _save(profile, server, tokens)
     info = whoami(profile=profile)
@@ -235,7 +242,9 @@ def _poll(client: httpx.Client, token_endpoint: str, grant: dict[str, Any]) -> d
                 },
             )
         except httpx.TransportError:
-            continue  # the user may already have approved: keep asking until the deadline
+            # Not approved yet, keep asking. (Had the approved answer been the
+            # one lost, the next poll is refused and login says to run again.)
+            continue
         if r.status_code >= 500:
             continue
         if r.status_code == 200:
@@ -283,10 +292,10 @@ def _refresh(profile: str, refused: str) -> dict[str, Any]:
         endpoint = _endpoints(client)["token_endpoint"]
         try:
             r = client.post(endpoint, data=form, timeout=_REFRESH_TIMEOUT_S)
-        except httpx.TransportError:
-            # Not sent, or sent and the answer lost. Asked again at once, the
-            # server answers the lost answer again (it does so only shortly
-            # after the spend; later, the same token looks like a copy).
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            # Nothing reached the server, so nothing was spent: try once more.
+            # (A lost answer cannot be asked again: the server spent the token,
+            # and presenting it twice ends the session.)
             r = client.post(endpoint, data=form, timeout=_REFRESH_TIMEOUT_S)
     if r.status_code == 400 and _oauth_error(r) == "invalid_grant":
         _drop(profile)

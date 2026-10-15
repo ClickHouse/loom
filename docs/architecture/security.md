@@ -212,28 +212,22 @@ clients); the provider only authenticates the person. The OAuth server:
 **Sessions.** Each sign-in starts a session family. Its access tokens (one hour) carry the
 family as their `sid` claim, and its refresh tokens rotate within it. Revoking the family in
 `loom.revoked_tokens` ends every token of the session: on logout (`/oauth/revoke`), when the
-provider refuses the user at a refresh, and when a spent code or device code comes back, or
-a spent refresh token comes back as a copy. Someone else holds it, so this also revokes the
-session's `<sid>/minted` key, which every token delegated from the session carries in
-`parents`, and the service accounts and MCP tokens a thief could have minted end with it.
-
-A spent refresh token names, in the same write that spends it, the token about to replace
-it. It comes back legitimately only when its answer was lost, and then within seconds (the
-SDK asks again at once): back within a minute with that successor never used, the successor
-is retired, the client answered again and an `auth.refresh_reissued` row written; while the
-successor is still being issued the answer is "retry". Any other return is a copy: later
-than a minute (a thief who refreshed first is caught when the owner comes back; an old copy
-from a backup is caught at once), or after the successor was used. No path revokes more
-than the one session; a person's other sessions and tokens
-are never collateral, and nothing automatic writes a subject-wide revocation (which could
-replace an operator's outright ban). A subject revoked outright is issued nothing.
+provider refuses the user at a refresh, and when a spent refresh token, code or device code
+comes back (RFC 9700 reuse detection). A spent credential coming back means a copy is in
+other hands, or a client lost the answer that spent it; rotation cannot tell the two apart,
+so it does what is safe for both: the session ends, and its owner signs in again. That
+verdict reaches no further: tokens minted from the session, the person's other sessions and
+the subject are never touched by it, and nothing automatic writes a subject-wide revocation
+(which could replace an operator's outright ban). A subject revoked outright is issued
+nothing.
 
 Tokens delegated from a session are not clipped to the session's hour but to its horizon,
 30 days (the refresh tokens' lifetime), and they outlive logout. Under OIDC each refresh
 first spends the provider's refresh token, so a user deactivated there loses their sessions
 within the hour. Their machine tokens are not re-checked at the provider and run out within
-30 days; offboarding revokes the subject to end them at once. A provider that issues no
-refresh token gets no Loom refresh token. A session's refresh tokens roll: each refresh
+30 days; offboarding, or a session found stolen, revokes them (by subject, or each from the
+owner's service-account list). A provider that issues no refresh token gets no Loom refresh
+token. A session's refresh tokens roll: each refresh
 lasts 30 days from itself, so a session used at least monthly does not end on its own, and
 a password change does not end it; under OIDC the provider's own session limits apply at
 every refresh. A stolen access token can mint machine tokens

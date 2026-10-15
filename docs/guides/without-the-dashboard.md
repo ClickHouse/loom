@@ -2,7 +2,7 @@
 
 Everything the `/me` dashboard does can be done from a terminal, a script or
 an agent's shell. Sign in once with `loom login`, then use `loom call` or the
-Python SDK. This page maps each dashboard view to its command and SDK call.
+Python SDK. This page maps each dashboard view to its command and SDK call; every view not listed is plain operations too (`loom call --list`).
 
 ## Sign in
 
@@ -63,6 +63,10 @@ are on `agent.account` and `agent.deployment`.
 | Runs                              | `run.list`, `run.get`                                                                                                          | `agent.run.*`                                                                                                         |
 | Code index                        | `code.index_status`, `code.repo.add`, …                                                                                        | `agent.code.*`                                                                                                        |
 | Erasure                           | `erasure.request`, `erasure.status`, `erasure.list`                                                                            | `agent.erasure.*`                                                                                                     |
+| Tasks and inbox                   | `task.create`, `task.pull`, `task.updates`, `inbox.*`                                                                          | `agent.tasks.*`                                                                                                       |
+| Tracker sources                   | `tracker.source.add`, `tracker.source.list`, `tracker.item`, …                                                                 | `agent.tracker.*`                                                                                                     |
+| Graph (entities and facts)        | `facts.traverse`, `facts.*`                                                                                                    | `agent.facts.*`                                                                                                       |
+| Conversations and session briefs  | `conversation.*`, `session.brief_*`                                                                                            | `agent.conversations.*`, `agent.briefs.*`                                                                             |
 | Setup: service accounts           | `/v1/me/service_accounts`, `/v1/me/service_accounts.create`, `/v1/me/service_accounts.revoke`                                  | `agent.account.service_accounts()`, `.create_service_account(...)`, `.revoke_service_account(name)`                   |
 | Setup: connect an MCP client      | `/v1/me/setup/mcp_config --data '{"client": "cursor"}'`                                                                        | `agent.account.mcp_config("cursor")`                                                                                  |
 | Default namespace                 | `/v1/me/set-default-namespace namespace=…`                                                                                     | `agent.account.set_default_namespace(...)`                                                                            |

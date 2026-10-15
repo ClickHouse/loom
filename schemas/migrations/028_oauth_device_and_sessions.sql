@@ -9,17 +9,13 @@
 -- back.
 -- upstream_refresh: the identity provider's refresh token, sealed, so each
 -- Loom refresh can ask the provider whether the user is still active.
--- successor: on a spent refresh token, the id of the one that replaced it. A
--- spent token coming back while its successor is unused lost its answer; once
--- the successor has been used, a copy of the session is in other hands.
 ALTER TABLE loom.oauth_state
     ADD COLUMN IF NOT EXISTS family String DEFAULT '',
     ADD COLUMN IF NOT EXISTS user_code String DEFAULT '',
     ADD COLUMN IF NOT EXISTS status LowCardinality(String) DEFAULT '',
     ADD COLUMN IF NOT EXISTS address String DEFAULT '',
     ADD COLUMN IF NOT EXISTS ticket String DEFAULT '',
-    ADD COLUMN IF NOT EXISTS upstream_refresh String DEFAULT '',
-    ADD COLUMN IF NOT EXISTS successor String DEFAULT '';
+    ADD COLUMN IF NOT EXISTS upstream_refresh String DEFAULT '';
 -- The device page finds a grant by its user code, which is not in the sort
 -- key: skip the granules that cannot hold it.
 ALTER TABLE loom.oauth_state
