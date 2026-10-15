@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from server.identity.domain.account_ties import kept_aliases
+from server.identity.domain.account_ties import kept_aliases, owner_moved
 
 
 @pytest.mark.parametrize(
@@ -38,3 +38,20 @@ def test_the_old_pair_is_kept_when_the_account_stops_tying_it(
     existing: dict[str, object], owner: str, contact: str, kept: list[str]
 ) -> None:
     assert kept_aliases(existing, owner, contact) == kept
+
+
+@pytest.mark.parametrize(
+    ("existing", "owner", "moved"),
+    [
+        ({"owner_email": "bob", "contact_email": "bob@x.io"}, "eve", True),
+        ({"owner_email": "bob", "contact_email": "bob@x.io"}, "Bob", False),
+        ({"owner_email": "bob", "contact_email": "bob@x.io"}, "BOB@x.io", False),  # own email
+        # an agent account: no email, its claim code is its password
+        ({"owner_email": "agent-x", "contact_email": "", "password_hash": "h"}, "alice", True),
+        ({"owner_email": "team-admin", "contact_email": "", "password_hash": ""}, "other", False),
+    ],
+)
+def test_a_login_never_follows_the_account_to_another_owner(
+    existing: dict[str, object], owner: str, moved: bool
+) -> None:
+    assert owner_moved(existing, owner) is moved

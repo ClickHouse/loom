@@ -150,3 +150,13 @@ def test_the_same_owner_keeps_the_login() -> None:
     existing = _existing(owner_email="o@x", contact_email="o@x.io", password_hash="h")
     row = _row(existing)
     assert (row["contact_email"], row["password_hash"]) == ("o@x.io", "h")
+
+
+def test_an_agent_s_claim_code_does_not_follow_it_to_another_owner() -> None:
+    existing = _existing(owner_email="agent-x", contact_email="", password_hash="claim")
+    assert _row(existing)["password_hash"] == "", "the claim code signs in as the owner"
+
+
+def test_the_account_s_own_email_as_owner_keeps_the_login() -> None:
+    existing = _existing(owner_email="bob", contact_email="o@x", password_hash="h")
+    assert _row(existing)["password_hash"] == "h"  # registered with owner o@x, bob's email

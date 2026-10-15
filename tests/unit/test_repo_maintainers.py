@@ -626,3 +626,10 @@ async def test_a_mirror_alone_is_no_source_for_another_branch() -> None:
     mirrored = {**_admin("code-x-26-5", "alice"), "granted_by": "repo-maintainers:code-x"}
     ch = _FakeCH([_admin("code-x", "alice", role="viewer"), mirrored])
     assert await maintainers.sync_repo_maintainers("clickhouse", "code-x", ch=ch) == 0
+
+
+async def test_a_mirror_only_maintainer_skips_just_the_branches_with_a_row_of_theirs() -> None:
+    mirror = {**_admin("code-x", "alice"), "granted_by": "repo-maintainers:code-x-26-4"}
+    ch = _FakeCH([mirror, _admin("code-x-26-6", "alice", role="viewer", at=T0 - timedelta(days=1))])
+    await maintainers.sync_repo_maintainers("clickhouse", "code-x", ch=ch)
+    assert [r["namespace"] for r in ch.inserted] == ["code-x-26-5"]

@@ -23,7 +23,13 @@ def kept_aliases(existing: dict[str, Any], owner: str, contact: str) -> list[str
 
 
 def owner_moved(existing: dict[str, Any], owner: str) -> bool:
-    """Whether writing `owner` over a person's account hands it to someone else:
-    their email and password must not follow it."""
-    old = (existing.get("owner_email") or "").lower()
-    return bool(existing.get("contact_email")) and old != owner.lower()
+    """Whether writing `owner` over an account with a login (an email, or a
+    password such as an agent's claim code) hands it to someone else: the login
+    must not follow it. Either of the account's own spellings is no move."""
+    if not (existing.get("contact_email") or existing.get("password_hash")):
+        return False
+    own = {
+        (existing.get("owner_email") or "").lower(),
+        (existing.get("contact_email") or "").lower(),
+    }
+    return owner.lower() not in own - {""}

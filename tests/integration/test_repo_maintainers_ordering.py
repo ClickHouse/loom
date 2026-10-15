@@ -107,7 +107,9 @@ async def test_an_older_join_request_on_a_branch_is_answered_by_the_mirror(
     assert await maintainers.sync_repo_maintainers(org, "code-ord", ch=client) == 0
 
 
-async def test_a_request_after_a_revoke_is_left_for_its_approval(ch: tuple[Any, str]) -> None:
+async def test_a_request_made_after_the_admin_grant_is_left_for_its_approval(
+    ch: tuple[Any, str],
+) -> None:
     client, org = ch
     second = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
     await _grant(client, org, "code-ord", "admin", second)

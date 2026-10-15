@@ -87,6 +87,10 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   `030_namespace_released_aliases.sql`). The release clears the account's owner and contact
   email, the binding through which a token minted for one spelling is capped at a grant
   revoked under the other; the claim cap reads the column, and nothing else does.
+- **Security:** `namespace.register` naming another `owner_email` for an account with a login
+  (an email, or an agent's claim code) clears that login, so it no longer signs in as the
+  new owner; the old handle and email are kept in `released_aliases` for the claim cap.
+  Re-registering under the account's own handle or email keeps the login.
 - `grants.approve` refuses (409 `GRANT_WOULD_DOWNGRADE`) to approve a request below the
   subject's current grant; lower a grant with `grants.create replace=true`.
 - **Security:** two changes of one grant no longer interleave. An op that reads a grant

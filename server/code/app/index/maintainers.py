@@ -8,7 +8,9 @@ across the configured branch namespaces of one repository:
 * ``sync_repo_maintainers`` — the union of active admins over the branches,
   written to every branch that lacks one (``granted_by =
   repo-maintainers:<source namespace>``), from the admin grants given on a
-  branch, not mirrored there. A revocation or a lower role set on a branch after
+  branch, not mirrored there; a subject whose grant was given on a branch no
+  longer configured is mirrored from a mirror of it onto the branches they have
+  no row on. A revocation or a lower role set on a branch after
   the subject's newest such grant is respected, and so is a request made there
   since: admin is not re-added. An older row of any kind is replaced. Called
   after an admin grant is created or approved on a code namespace, when a branch
@@ -251,8 +253,8 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
     # The version of any other row per (branch, subject): a revoke, a lower role or a
     # request. A request after a revoke replaces its row, so it is respected the same.
     ended: dict[tuple[str, str], int] = {}
-    # A subject whose every row is a live mirror (its grant was given on a branch no
-    # longer configured): one of them is its source, onto branches it has no row on.
+    # A subject whose admin grant was given on a branch no longer configured: a mirror
+    # of it is its source, onto the branches it has no row on.
     mirrored: dict[str, tuple[int, datetime, str]] = {}
     for r in rows:
         ns, subject, version = str(r["namespace"]), str(r["subject"]), int(r["version"])
@@ -261,13 +263,17 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
         live = r.get("revoked_at") is None and str(r.get("status") or "active") in _ACTIVE
         if live and r.get("role") == "admin":
             active[ns].add(subject)
-            mirror = str(r.get("granted_by") or "").startswith(GRANTED_BY_PREFIX)
-            source = mirrored if mirror else union
-            if subject not in source or version > source[subject][0]:
-                source[subject] = (version, r["granted_at"], ns)
+            granted_by = str(r.get("granted_by") or "")
+            if not granted_by.startswith(GRANTED_BY_PREFIX):
+                if subject not in union or version > union[subject][0]:
+                    union[subject] = (version, r["granted_at"], ns)
+            elif granted_by.removeprefix(GRANTED_BY_PREFIX) not in active:
+                # Its source branch is gone: the mirror stands in for it.
+                if subject not in mirrored or version > mirrored[subject][0]:
+                    mirrored[subject] = (version, r["granted_at"], ns)
         else:
             ended[(ns, subject)] = version
-    for subject in {s for _ns, s in ended} | set(union):
+    for subject in union:
         mirrored.pop(subject, None)
     now = naive_utc_now()
     inserts: list[dict[str, Any]] = []
@@ -275,6 +281,8 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
         for subject, (version, at, src) in (union | mirrored).items():
             if subject in active[ns] or ended.get((ns, subject), 0) > version:
                 continue  # admin there already, or removed, lowered or asked there since
+            if subject in mirrored and (ns, subject) in ended:
+                continue  # a mirror's version is no time to compare a row there with
             # A mirror keeps its source's time; its own version replaces any older row.
             inserts.append(
                 _row(
