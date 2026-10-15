@@ -42,6 +42,7 @@ from server.auth.oauth_store import (
     OAuthStore,
     token_id,
 )
+from server.core import keeper_claims
 from server.core.secrets_at_rest import open_sealed, seal, unseal
 from server.observability import audit
 from server.settings import settings
@@ -962,7 +963,6 @@ async def put_back(saving: Coroutine[Any, Any, None]) -> None:
     end even if the cancellation comes again (shutdown drains it before
     ClickHouse goes), and a failure logged from inside it, so it neither hides
     the cancellation nor goes unseen."""
-    from server.core import keeper_claims
 
     async def logged() -> None:
         try:

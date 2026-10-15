@@ -28,22 +28,24 @@ _STRICT = "SETTINGS keeper_map_strict_mode = 1"
 # created the table starts claiming without a restart.
 _ABSENT_RECHECK_S = 60.0
 
-# Release tasks run under a shield, kept referenced until they finish.
-_releases = TaskSet()
+# Writes a cancelled request must still finish (claim releases, OAuth
+# credential put-backs), held until done; shutdown drains them before the
+# ClickHouse client goes.
+_shielded = TaskSet()
 
 
-async def shielded(release: Coroutine[Any, Any, None], *, name: str) -> None:
-    """Run a release to its end even when the request awaiting it is
-    cancelled, again and again (anyio repeats a cancellation): the task is held
-    in `_releases` and the wait for it is shielded."""
-    await asyncio.shield(_releases.spawn(release, name=name))
+async def shielded(write: Coroutine[Any, Any, None], *, name: str) -> None:
+    """Run `write` to its end even when the request awaiting it is cancelled,
+    again and again (anyio repeats a cancellation): the task is held in
+    `_shielded` and the wait for it is shielded."""
+    await asyncio.shield(_shielded.spawn(write, name=name))
 
 
 async def drain(timeout_s: float = 5.0) -> int:
     """Wait for the shielded writes still running (at most `timeout_s`);
     returns how many were. Shutdown calls it before the client disconnects:
     a request cancelled there leaves its write to finish here."""
-    live = [t for t in _releases if not t.done()]
+    live = [t for t in _shielded if not t.done()]
     if live:
         await asyncio.wait(live, timeout=timeout_s)
     return len(live)
