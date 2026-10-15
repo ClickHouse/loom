@@ -318,7 +318,14 @@ def test_the_port_and_image_given_to_a_run_stay_in_env(install) -> None:
 
 
 @pytest.mark.parametrize(
-    ("key", "value"), [("LOOM_PORT", "77x"), ("LOOM_IMAGE_REPOSITORY", "repo name")]
+    ("key", "value"),
+    [
+        ("LOOM_PORT", "77x"),
+        ("LOOM_PORT", "0"),
+        ("LOOM_PORT", "99999"),
+        ("LOOM_IMAGE_REPOSITORY", "repo name"),
+        ("LOOM_BIND_HOST", "$(id)"),
+    ],
 )
 def test_a_setting_env_cannot_keep_is_refused(install, key: str, value: str) -> None:
     run, target = install

@@ -71,6 +71,10 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 
 ### Changed
 
+- The installer writes `LOOM_PORT`, `LOOM_BIND_HOST` and `LOOM_IMAGE_REPOSITORY`, when
+  given, into the install directory's `.env`, so later `docker compose` commands there
+  use the same port and image; a rerun with a different value rewrites it. Its health
+  check polls the address Loom is published on.
 - `031_table_settings.sql` sets `non_replicated_deduplication_window` on every MergeTree
   table and the block-number columns on `loom.memory` and `loom.memory_embeddings`;
   `deploy/clickhouse-config/merge_tree_settings.xml`, which set them server-wide, is gone.

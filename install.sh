@@ -26,14 +26,20 @@ fail() {
 # Settings this run is given that .env keeps, so a later `docker compose` in the
 # install directory, which reads only .env, uses the same port and image.
 KEPT_SETTINGS="LOOM_PORT LOOM_BIND_HOST LOOM_IMAGE_REPOSITORY"
+# given KEY: the value this run was given for KEY, empty when none.
+given() {
+  eval "printf '%s' \"\${$1-}\""
+}
 for key in $KEPT_SETTINGS; do
-  eval "value=\${$key-}"
-  case $value in
-    *[!A-Za-z0-9._:/@-]*) fail "$key has a character .env cannot keep: $value" ;;
+  case $(given "$key") in
+    *[!A-Za-z0-9._:/@-]*) fail "$key has a character .env cannot keep: $(given "$key")" ;;
   esac
 done
 case ${LOOM_PORT-} in
+  '') ;;
   *[!0-9]*) fail "LOOM_PORT must be a port number: $LOOM_PORT" ;;
+  *) [ "$LOOM_PORT" -ge 1 ] && [ "$LOOM_PORT" -le 65535 ] \
+    || fail "LOOM_PORT must be between 1 and 65535: $LOOM_PORT" ;;
 esac
 
 while [ $# -gt 0 ]; do
@@ -271,8 +277,7 @@ if [ -n "$CH_URL" ]; then
   printf 'Loom will use ClickHouse at %s:%s as %s\n' "$CH_HOST" "$CH_PORT" "$CH_USER"
 fi
 for key in $KEPT_SETTINGS; do
-  eval "value=\${$key-}"
-  [ -z "$value" ] || set_env "$key" "$value"
+  [ -z "$(given "$key")" ] || set_env "$key" "$(given "$key")"
 done
 chmod 600 "$INSTALL_DIR/.env"
 umask "$saved_umask"
@@ -302,7 +307,13 @@ compose up -d
 
 port=$(get_env LOOM_PORT)
 port=${port:-7777}
-health="http://127.0.0.1:$port/v1/health"
+# Loom listens where it is published: loopback unless LOOM_BIND_HOST names an address.
+case $(get_env LOOM_BIND_HOST) in
+  '' | 0.0.0.0 | ::) host=127.0.0.1 ;;
+  *:*) host="[$(get_env LOOM_BIND_HOST)]" ;;
+  *) host=$(get_env LOOM_BIND_HOST) ;;
+esac
+health="http://$host:$port/v1/health"
 attempt=0
 while [ "$attempt" -lt 90 ]; do
   if curl -fsS "$health" 2>/dev/null | grep -q '"status"[[:space:]]*:[[:space:]]*"ok"'; then
