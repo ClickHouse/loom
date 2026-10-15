@@ -256,24 +256,6 @@ def test_status_reads_need_only_select() -> None:
     assert "CHECK GRANT SELECT ON loom.*" in ch.ran
 
 
-@pytest.mark.parametrize(
-    ("boot_migrate", "read_replica", "need"),
-    [
-        (True, False, "migrate"),
-        (False, False, "serve"),
-        (True, True, "serve"),
-    ],
-)
-def test_boot_and_doctor_need_the_same(
-    monkeypatch: pytest.MonkeyPatch, boot_migrate: bool, read_replica: bool, need: str
-) -> None:
-    from server.settings import settings
-
-    monkeypatch.setattr(settings, "boot_migrate", boot_migrate)
-    monkeypatch.setattr(settings, "read_replica", read_replica)
-    assert preflight.needed_at_boot() == need
-
-
 def test_a_url_in_ch_host_is_refused_before_connecting(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.settings import settings
 
@@ -778,7 +760,7 @@ def test_a_missing_ddl_grant_stops_even_with_nothing_pending(
     assert "SELECT" not in str(e.value).split(" on loom.*")[0]
 
 
-def test_a_process_that_runs_the_workers_needs_their_grants() -> None:
+def test_every_process_but_a_read_replica_needs_what_the_workers_run() -> None:
     class NoWorkerGrants(FakeCH):
         def command(self, sql: str, **kwargs: Any) -> Any:
             if sql.startswith("CHECK GRANT ") and any(
@@ -787,22 +769,46 @@ def test_a_process_that_runs_the_workers_needs_their_grants() -> None:
                 return 0
             return super().command(sql, **kwargs)
 
-    # A migration-only run never uses them.
-    assert preflight.check(NoWorkerGrants(), need="migrate").version
+    # Boot migrations off changes nothing: the workers and provider rebuilds run.
     with pytest.raises(preflight.PreflightError) as e:
-        preflight.check(NoWorkerGrants(), need="serve", workers=True)
+        preflight.check(NoWorkerGrants(), need="migrate", migrates=False)
     assert "is missing OPTIMIZE, TRUNCATE, SYSTEM REFRESH VIEW on loom.*" in str(e.value)
+    assert preflight.check(NoWorkerGrants(), need="serve").version
 
 
-@pytest.mark.parametrize(
-    ("mode", "replica", "runs"),
-    [("auto", False, True), ("on", False, True), ("off", False, False), ("auto", True, False)],
-)
-def test_which_processes_run_the_workers(
-    monkeypatch: pytest.MonkeyPatch, mode: str, replica: bool, runs: bool
+@pytest.mark.parametrize(("replica", "need"), [(False, "migrate"), (True, "serve")])
+def test_only_a_read_replica_is_checked_for_less(
+    monkeypatch: pytest.MonkeyPatch, replica: bool, need: str
 ) -> None:
     from server.settings import settings
 
-    monkeypatch.setattr(settings, "background_workers", mode)
     monkeypatch.setattr(settings, "read_replica", replica)
-    assert preflight.runs_workers() is runs
+    assert preflight.needed_at_boot() == need
+
+
+def test_a_process_that_does_not_migrate_never_creates_the_database() -> None:
+    ch = FakeCH(database=False)
+    with pytest.raises(preflight.PreflightError, match="cannot see a database loom"):
+        preflight.check(ch, need="migrate", migrates=False)
+    assert not any(sql.startswith("CREATE DATABASE") for sql in ch.ran)
+
+
+@pytest.mark.parametrize("boot_migrate", [True, False])
+async def test_boot_and_the_doctor_say_whether_this_process_migrates(
+    monkeypatch: pytest.MonkeyPatch, boot_migrate: bool
+) -> None:
+    from server import boot
+    from server.cli import doctor
+    from server.settings import settings
+
+    seen: list[bool] = []
+
+    def ready(**kwargs: Any) -> preflight.Server:
+        seen.append(kwargs["migrates"])
+        return preflight.Server("26.5.1.882", keeper=True, lightweight_updates=True)
+
+    monkeypatch.setattr(settings, "boot_migrate", boot_migrate)
+    monkeypatch.setattr(preflight, "require_ready", ready)
+    await boot.require_clickhouse_ready()
+    doctor._doctor_preflight_check()
+    assert seen == [boot_migrate, boot_migrate]

@@ -24,19 +24,20 @@ DATABASE = "loom"
 # 25.12 the text index. CI tests the latest release (dev/clickhouse_release.sh);
 # features of newer servers (the Quantized codec, aiEmbed) are probed where used.
 MIN_VERSION = (26, 4)
-# The grants on loom.* each kind of process needs. ALTER TABLE and ALTER VIEW,
-# not ALTER: from 26.9 the ALTER group holds ALTER HANDLER, which is global only,
-# so `CHECK GRANT ALTER ON loom.*` fails even after GRANT ALL ON loom.*.
+# The grants on loom.* each kind of process needs. "migrate" is any Loom server
+# but a read replica, whether it migrates or not: besides the migrations, it
+# sets retention TTLs (ALTER TABLE), compacts (OPTIMIZE), rebuilds provider
+# tables (CREATE, TRUNCATE, DROP) and retires views (SYSTEM REFRESH VIEW).
+# ALTER TABLE and ALTER VIEW, not ALTER: from 26.9 the ALTER group holds ALTER
+# HANDLER, which is global only, so `CHECK GRANT ALTER ON loom.*` fails even
+# after GRANT ALL ON loom.*.
 Need = Literal["migrate", "serve", "read"]
 GRANTS: dict[Need, str] = {
     "migrate": "CREATE TABLE, CREATE VIEW, ALTER TABLE, ALTER VIEW, DROP TABLE, DROP VIEW, "
-    "INSERT, SELECT",
+    "INSERT, SELECT, OPTIMIZE, TRUNCATE, SYSTEM REFRESH VIEW",
     "serve": "SELECT, INSERT, ALTER UPDATE, ALTER DELETE",
     "read": "SELECT",
 }
-# What the background workers run besides: compaction (OPTIMIZE), provider
-# rebuilds (TRUNCATE) and view retirement (SYSTEM REFRESH VIEW).
-WORKER_GRANTS = "OPTIMIZE, TRUNCATE, SYSTEM REFRESH VIEW"
 # The system tables the migration runner reads (and the preflight's own): a
 # refused one would fail a migration halfway, so it stops a migrating boot.
 RUNNER_SYSTEM_TABLES = (
@@ -144,7 +145,10 @@ def connect() -> Client:
     driver_log.setLevel(logging.CRITICAL)
     try:
         return clickhouse_connect.get_client(
-            **connection_kwargs(database=""), connect_timeout=10, send_receive_timeout=60
+            **connection_kwargs(database=""),
+            connect_timeout=10,
+            send_receive_timeout=60,
+            settings={"log_comment": "ch.preflight"},
         )
     except Exception as e:  # noqa: BLE001 — every connect failure becomes one line
         if error_code(e) in AUTH_FAILED:
@@ -254,19 +258,10 @@ def _cannot_create(user: str) -> PreflightError:
 
 
 def needed_at_boot() -> Need:
-    """What the server process needs: it migrates unless boot migrations are
-    off or it is a read replica."""
+    """What the server process needs: everything but a read replica runs DDL."""
     from server.settings import settings
 
-    return "migrate" if settings.boot_migrate and not settings.read_replica else "serve"
-
-
-def runs_workers() -> bool:
-    """Whether this process may run the background workers (`auto` lets any
-    process take the lease)."""
-    from server.settings import settings
-
-    return settings.background_workers != "off" and not settings.read_replica
+    return "serve" if settings.read_replica else "migrate"
 
 
 def check(
@@ -276,29 +271,29 @@ def check(
     create_database: bool = True,
     journal: Path = MIGRATIONS_DIR,
     strict: bool = False,
-    workers: bool = False,
+    migrates: bool = True,
 ) -> Server:
     """Raise PreflightError unless the server is new enough and `loom` exists
-    with the grants `need` names, and WORKER_GRANTS when this process runs the
-    `workers`. A process that will migrate creates a missing database where
-    its user may; with `create_database` off (the doctor) it only reports it
-    missing. `strict` checks as if a migration were pending (ch-setup prepares
-    for the next one). Returns what the doctor reports besides."""
+    with the grants `need` names. A process that `migrates` creates a missing
+    database where its user may; with `create_database` off (the doctor) it
+    only reports it missing. `strict` checks as if a migration were pending
+    (ch-setup prepares for the next one). Returns what the doctor reports besides."""
     from server.settings import settings
 
     user = settings.ch_user
     database = bool(ch.command(_DATABASE_COUNT))
-    # Strict where DDL is about to run: a restart with nothing pending is
-    # checked like a process that only serves.
-    migrating = need == "migrate" and (strict or not database or _migrations_pending(ch, journal))
+    migrates = migrates and need == "migrate"
+    # Strict where migrations are about to run: a restart with nothing
+    # pending, or one that does not migrate, relaxes what only they read.
+    migrating = migrates and (strict or not database or _migrations_pending(ch, journal))
     later: list[PreflightError] = []
-    version = oldest_version(ch, strict=migrating, gaps=later if need == "migrate" else None)
+    version = oldest_version(ch, strict=migrating, gaps=later if migrates else None)
     if version_key(version)[:2] < MIN_VERSION:
         floor = ".".join(map(str, MIN_VERSION))
         raise PreflightError(f"ClickHouse {version} is older than {floor}: upgrade the server")
 
     if not database:
-        if need != "migrate":
+        if not migrates:
             raise PreflightError(
                 f"{user!r} cannot see a database {DATABASE} (missing, or no grant on it)",
                 needs_admin=True,
@@ -317,13 +312,10 @@ def check(
         elif str(ch.command(f"CHECK GRANT CREATE DATABASE ON {DATABASE}.*")) != "1":
             raise _cannot_create(user)
 
-    # Strict even with nothing pending: the running server sets retention TTLs
-    # and rebuilds tables with these grants too.
+    # Strict even with nothing pending: the running server uses them too.
     _require(ch, user, GRANTS[need])
-    if workers:
-        _require(ch, user, WORKER_GRANTS)
 
-    if need == "migrate":
+    if migrates:
         refused = [t for t in RUNNER_SYSTEM_TABLES if not _readable(ch, f"system.{t}")]
         if refused:
             error = PreflightError(
@@ -379,13 +371,13 @@ def require_ready(
     need: Need,
     create_database: bool = True,
     journal: Path = MIGRATIONS_DIR,
-    workers: bool = False,
+    migrates: bool = True,
 ) -> Server:
     """`check` on a fresh connection, closed afterwards."""
     ch = connect()
     try:
         return check(
-            ch, need=need, create_database=create_database, journal=journal, workers=workers
+            ch, need=need, create_database=create_database, journal=journal, migrates=migrates
         )
     finally:
         ch.close()

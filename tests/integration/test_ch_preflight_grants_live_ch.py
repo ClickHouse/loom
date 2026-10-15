@@ -1,5 +1,6 @@
 """The preflight's grant checks against a real server: a user given everything
-on loom.* (as the admin SQL grants it) passes the migration check. From 26.9
+on loom.* (as the admin SQL grants it) passes every check, the workers'
+OPTIMIZE, TRUNCATE and SYSTEM REFRESH VIEW included. From 26.9
 the ALTER group holds the global-only ALTER HANDLER, so `CHECK GRANT ALTER ON
 loom.*` fails for such a user; the migration grants name ALTER TABLE and ALTER
 VIEW instead."""

@@ -170,12 +170,13 @@ def _doctor_preflight_check() -> tuple[str, str, str]:
     database (the doctor never does), a telemetry table is unreadable or the
     next migration would refuse; PASS otherwise. A missing Keeper has its own line."""
     from server.core.schema import preflight
+    from server.settings import settings
 
     try:
         server = preflight.require_ready(
             need=preflight.needed_at_boot(),
             create_database=False,
-            workers=preflight.runs_workers(),
+            migrates=settings.boot_migrate,
         )
     except preflight.PreflightError as e:
         return ("clickhouse_preflight", FAIL, str(e))
