@@ -116,9 +116,9 @@ def reader_problem(reader: str) -> str:
 
 
 def reader_owner(ch: Any, reader: str) -> str:
-    """Who made `reader`: "config" (the server's users.xml, as on the bundled
-    server), "ch-setup" (a user on the profile of its own name), "other", or
-    "" when there is no such user or this login may not list users."""
+    """Who made `reader`: "" (no such user), "config" (the server's users.xml,
+    as on the bundled server), "ch-setup" (a user on the profile of its own
+    name), "other", or "unknown" when this login may not list users."""
     params = {"r": reader}
     try:
         rows = ch.query(
@@ -133,8 +133,8 @@ def reader_owner(ch: Any, reader: str) -> str:
             "WHERE user_name = {r:String} AND inherit_profile = {r:String}",
             parameters=params,
         )
-    except Exception:  # noqa: BLE001 — a login that may not list users creates nothing either
-        return ""
+    except Exception:  # noqa: BLE001 — a login that may not list users cannot tell
+        return "unknown"
     return "ch-setup" if ours else "other"
 
 
@@ -178,6 +178,11 @@ def _set_up(ch: Any, user: str, reader: str) -> int:
             "set LOOM_CH_READER_USER to another name",
             file=sys.stderr,
         )
+        return 1
+    elif owner == "unknown":
+        # It may be someone else's account: replace nothing that cannot be seen.
+        print(f"✗ {user!r} may not list users, so cannot tell who owns {reader}", file=sys.stderr)
+        _print_admin_sql(user, reader)
         return 1
     else:
         print(f"· {reader}: {problem}; creating it")

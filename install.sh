@@ -114,12 +114,24 @@ read_password() {
   printf '\n' >/dev/tty
 }
 
+# get_env KEY: KEY's value in .env, empty when the file or the key is missing.
+get_env() {
+  [ -f "$INSTALL_DIR/.env" ] || return 0
+  awk -F= -v key="$1" '$1 == key { value = substr($0, length(key) + 2) } END { print value }' \
+    "$INSTALL_DIR/.env"
+}
+
 if [ -n "$CH_URL" ]; then
   parse_clickhouse_url "$CH_URL"
   if [ -z "$CH_PASSWORD_SET" ] && [ -n "${LOOM_CH_PASSWORD+set}" ]; then
     CH_PASSWORD=$LOOM_CH_PASSWORD CH_PASSWORD_SET=1
   fi
-  [ -n "$CH_PASSWORD_SET" ] || read_password
+  # A rerun for the same user and server keeps the password .env already holds.
+  if [ -z "$CH_PASSWORD_SET" ] && [ "$(get_env LOOM_CH_HOST)" = "$CH_HOST" ] \
+    && [ "$(get_env LOOM_CH_USER)" = "$CH_USER" ] && grep -q '^LOOM_CH_PASSWORD=' "$INSTALL_DIR/.env"; then
+    KEEP_PASSWORD=1
+  fi
+  [ -n "$CH_PASSWORD_SET${KEEP_PASSWORD:-}" ] || read_password
   # .env holds it between single quotes, which take everything else literally.
   case $CH_PASSWORD in
     *"'"*) fail "the ClickHouse password contains a single quote, which .env cannot hold; choose another" ;;
@@ -186,11 +198,6 @@ set_env() {
   mv "$tmp_dir/env.updated" "$INSTALL_DIR/.env"
 }
 
-get_env() {
-  awk -F= -v key="$1" '$1 == key { value = substr($0, length(key) + 2) } END { print value }' \
-    "$INSTALL_DIR/.env"
-}
-
 # .env holds the JWT secret and any ClickHouse password, so it is never
 # world-readable, not even between a write and the chmod.
 saved_umask=$(umask)
@@ -225,7 +232,7 @@ if [ -n "$CH_URL" ]; then
   set_env LOOM_CH_PORT "$CH_PORT"
   set_env LOOM_CH_SECURE "$CH_SECURE"
   set_env LOOM_CH_USER "$CH_USER"
-  set_env LOOM_CH_PASSWORD "'$CH_PASSWORD'"
+  [ -n "${KEEP_PASSWORD:-}" ] || set_env LOOM_CH_PASSWORD "'$CH_PASSWORD'"
   printf 'Loom will use ClickHouse at %s:%s as %s\n' "$CH_HOST" "$CH_PORT" "$CH_USER"
 fi
 chmod 600 "$INSTALL_DIR/.env"

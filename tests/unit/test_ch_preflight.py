@@ -256,6 +256,25 @@ def test_a_bundled_reader_whose_caps_differ_is_a_failure(
     )
 
 
+def test_a_reader_whose_owner_cannot_be_seen_is_not_replaced(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class MayNotListUsers(FakeCH):
+        def query(self, sql: str, **kwargs: Any) -> SimpleNamespace:
+            if "system.users" in sql:
+                raise RuntimeError("Code: 497. DB::Exception: Not enough privileges")
+            return super().query(sql, **kwargs)
+
+    monkeypatch.setattr(ch_setup, "reader_problem", lambda reader: "missing")
+    ch = MayNotListUsers()
+    assert ch_setup.reader_owner(ch, "someone_elses") == "unknown"
+    assert ch_setup._set_up(ch, "delegate", "someone_elses") == 1
+    assert not any(sql.startswith("CREATE USER") for sql in ch.ran)
+    captured = capsys.readouterr()
+    assert "cannot tell who owns someone_elses" in captured.err
+    assert "CREATE USER OR REPLACE `someone_elses`" in captured.out  # for an admin to judge
+
+
 def test_a_user_who_may_not_create_the_reader_gets_the_admin_sql(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
