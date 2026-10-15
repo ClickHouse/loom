@@ -403,12 +403,13 @@ async def _open_run(
 ) -> RunBeginOutput:
     """Write the run's active row and answer with its id. A new row starts at
     `started_at` (default: now); `version` replaces the server's (a session run's first begin)."""
-    # A re-sent begin that names no session or budget keeps the run's.
+    # A re-sent begin that names no session or budget keeps the run's. A cost
+    # budget belongs to its session, so it is kept only while the session is.
     prior = existing or {}
-    session_id = input.session_id
-    if not names_session(session_id):
-        session_id = str(prior.get("session_id") or SENTINEL)
-    budget_usd = input.budget_usd or float(prior.get("budget_usd") or 0.0)
+    prior_session = str(prior.get("session_id") or SENTINEL)
+    session_id = input.session_id if names_session(input.session_id) else prior_session
+    kept_usd = float(prior.get("budget_usd") or 0.0) if session_id == prior_session else 0.0
+    budget_usd = input.budget_usd or kept_usd
     budget_seconds = input.budget_seconds or int(prior.get("budget_seconds") or 0)
     # The begin row in the ledger carries the run it opened, so begin and complete join
     # on `run_id` (the body names none; the transport's fallback is the header run, empty
