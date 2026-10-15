@@ -266,12 +266,30 @@ async def _fenced_boot_migrations(
         return run_boot_migrations_if_enabled(migrate, lock_path, enabled=True, pending=pending)
     from server.insights.domain.provider_setup import pending_configuration
     from server.insights.store.provider_configuration import configurations
-    from server.insights.store.provider_lock import configuration_lock
+    from server.insights.store.provider_lock import (
+        ConfigurationLockUnavailable,
+        configuration_lock,
+    )
 
-    async with configuration_lock():
-        if pending_configuration(await configurations(ch=ch)) is not None:
-            raise RuntimeError("Finish the provider rebuild before applying schema migrations")
-        return run_boot_migrations_if_enabled(migrate, lock_path, enabled=True, pending=pending)
+    while True:
+        try:
+            async with configuration_lock():
+                if pending_configuration(await configurations(ch=ch)) is not None:
+                    raise RuntimeError(
+                        "Finish the provider rebuild before applying schema migrations"
+                    )
+                return run_boot_migrations_if_enabled(
+                    migrate, lock_path, enabled=True, pending=pending
+                )
+        except ConfigurationLockUnavailable:
+            # Most often a sibling process applying these same migrations, which
+            # can outlast the lock's wait. Failing here would stop the whole
+            # server (uvicorn exits when one worker fails to start).
+            if not pending():
+                return 0
+            logging.getLogger(__name__).info(
+                "boot migrations: another process holds the provider configuration lock; waiting"
+            )
 
 
 # One-shot boot tasks nobody awaits. The loop holds only a weak reference to

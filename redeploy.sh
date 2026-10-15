@@ -91,18 +91,18 @@ colour_health() { curl -fsS --max-time 5 "http://127.0.0.1:${PORT_OF[$1]}/v1/hea
 colour_build() { colour_health "$1" | jq -r '.build_commit // "unknown"' 2>/dev/null || echo unknown; }
 
 write_upstream() {
-  # Only the serving colour is named: nginx resolves upstream names at reload,
-  # and an idle colour that is down would fail it. Write-then-rename so a
-  # reload never reads a half-written file.
+  # Only the serving colour is named. `resolve` re-reads its address, so a
+  # container that restarts on a new one is still reached. Write-then-rename so
+  # a reload never reads a half-written file.
   mkdir -p "$UPSTREAM_DIR"
-  printf 'upstream loom {\n  server loom-%s:%s;\n  keepalive 32;\n}\n' "$1" "${PORT_OF[$1]}" >"$UPSTREAM.tmp"
+  printf 'upstream loom {\n  zone loom 64k;\n  server loom-%s:%s resolve;\n  keepalive 32;\n}\n' "$1" "${PORT_OF[$1]}" >"$UPSTREAM.tmp"
   mv -f "$UPSTREAM.tmp" "$UPSTREAM"
 }
 
 ensure_proxy() {
   # Idempotent: `up -d` on a running proxy with an unchanged config is a no-op.
   # The proxy needs an upstream file to start; a first run points it at the
-  # colour we are about to bring up (nginx only resolves it at (re)load).
+  # colour we are about to bring up (`resolve` lets nginx start before it is).
   [[ -f "$UPSTREAM" ]] || write_upstream "$1"
   docker compose -p loom-proxy -f "$PROXY_COMPOSE" up -d --no-build 2>&1 | sed 's/^/    /'
 }

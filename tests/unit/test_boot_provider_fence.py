@@ -160,3 +160,58 @@ async def test_failed_boot_migrations_keep_the_cache(setup):
         assert ch_schema_guard._schema_guard["at"] == 1e12
     finally:
         ch_schema_guard.schema_guard_reset()
+
+
+@pytest.mark.asyncio
+async def test_a_worker_waits_for_a_sibling_applying_the_migrations(setup, monkeypatch):
+    """The lock's wait is shorter than a slow migration; a worker that misses
+    it must not fail its start while the sibling is still migrating."""
+    client, migrate, pending, _, execute, _ = setup
+    attempts = []
+
+    @asynccontextmanager
+    async def busy():
+        attempts.append(True)
+        raise provider_lock.ConfigurationLockUnavailable("provider_configuration_lock_unavailable")
+        yield
+
+    monkeypatch.setattr(provider_lock, "configuration_lock", busy)
+    # Pending at the first check and after the first miss; the sibling then finishes.
+    pending.side_effect = [["027_x.sql"], ["027_x.sql"], []]
+    assert (
+        await boot.run_fenced_boot_migrations(
+            client, migrate, "lock", enabled=True, pending=pending
+        )
+        == 0
+    )
+    assert len(attempts) == 2
+    execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_worker_applies_what_is_still_pending_once_it_gets_the_lock(setup, monkeypatch):
+    client, migrate, pending, _, execute, owned = setup
+    misses = [True]
+
+    @asynccontextmanager
+    async def lock():
+        if misses:
+            misses.pop()
+            raise provider_lock.ConfigurationLockUnavailable(
+                "provider_configuration_lock_unavailable"
+            )
+        owned.append(True)
+        try:
+            yield
+        finally:
+            owned.pop()
+
+    monkeypatch.setattr(provider_lock, "configuration_lock", lock)
+    assert (
+        await boot.run_fenced_boot_migrations(
+            client, migrate, "lock", enabled=True, pending=pending
+        )
+        == 0
+    )
+    execute.assert_called_once()
+    assert not owned

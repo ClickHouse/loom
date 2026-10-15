@@ -51,7 +51,17 @@ def test_nginx_config_includes_the_upstream_file_and_names_no_colour() -> None:
     directives = "\n".join(ln for ln in text.splitlines() if not ln.strip().startswith("#"))
     assert "loom-blue" not in directives and "loom-green" not in directives
     example = (ROOT / "deploy" / "proxy" / "upstream.conf.example").read_text(encoding="utf-8")
-    assert re.search(r"server loom-(blue|green):778[12];", example)
+    assert re.search(r"server loom-(blue|green):778[12] resolve;", example)
+
+
+def test_the_proxy_follows_a_colour_that_restarts_on_a_new_address() -> None:
+    """nginx resolved the colour once at reload; a container restart moved it to
+    a new IP and every request timed out until the next reload."""
+    assert "resolver 127.0.0.11 " in NGINX.read_text(encoding="utf-8")
+    (line,) = [
+        ln for ln in SCRIPT.read_text(encoding="utf-8").splitlines() if "upstream loom {" in ln
+    ]
+    assert "zone loom " in line and "server loom-%s:%s resolve;" in line
 
 
 def test_colour_compose_shares_the_table_and_lock_and_binds_loopback() -> None:
