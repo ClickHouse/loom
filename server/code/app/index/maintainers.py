@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, nullcontext
 from datetime import datetime
 from typing import Any
 
@@ -47,6 +48,17 @@ def branch_namespaces(org: str, namespace: str) -> list[str]:
     if me is None:
         return []
     return [c.namespace for c in repos if c.org == org and c.repo == me.repo]
+
+
+def repo_change(org: str, namespace: str, subject: str) -> AbstractAsyncContextManager[None]:
+    """Hold `subject`'s maintainer grants on `namespace`'s repository: one change
+    at a time across its branches, taken before any branch's own claim. A
+    no-op off a configured repository."""
+    from server.auth.grant_claims import grant_change
+    from server.code.domain.index.repos import configured_repos
+
+    me = next((c for c in configured_repos() if c.org == org and c.namespace == namespace), None)
+    return grant_change(org, f"repo:{me.repo}", subject) if me is not None else nullcontext()
 
 
 def _row(
@@ -115,7 +127,11 @@ def _admin_since(row: dict[str, Any] | None, granted_at: Any) -> bool:
 
 
 async def _mirror_wanted(
-    client: Any, org: str, row: dict[str, Any], now: dict[str, Any] | None, read: Any
+    client: Any,
+    org: str,
+    row: dict[str, Any],
+    now: dict[str, Any] | None,
+    read: dict[str, Any] | None,
 ) -> bool:
     """A mirror is written only over the grant it was planned from (one changed
     since, an admin's lowering say, is left to the next sync), and only while
@@ -135,23 +151,36 @@ async def _mirror_wanted(
 
 
 async def _still_admin(
-    client: Any, org: str, row: dict[str, Any], now: dict[str, Any] | None, read: Any
+    client: Any,
+    org: str,
+    row: dict[str, Any],
+    now: dict[str, Any] | None,
+    read: dict[str, Any] | None,
 ) -> bool:
     """A revocation stands while the subject still holds the admin grant it
     was planned against; one granted again since is newer and stays."""
     return read is not None and _admin_since(now, read.get("granted_at"))
 
 
+# (client, org, planned row, current row, row as read) -> write it?
+_Wanted = Callable[
+    [Any, str, dict[str, Any], dict[str, Any] | None, dict[str, Any] | None], Awaitable[bool]
+]
+
+
 async def _write_under_claims(
     client: Any,
     org: str,
     planned: list[dict[str, Any]],
-    still_wanted: Callable[..., Awaitable[bool]],
+    still_wanted: _Wanted,
     read: list[dict[str, Any]],
+    *,
+    hold_repo: bool,
 ) -> int:
-    """Write each planned row under its grant's claim, if `still_wanted(client,
-    org, row, current row, row as read)` says so. A row that fails does not stop the others; the
-    first failure is raised once all were tried."""
+    """Write each planned row under its grant's claim while `still_wanted`
+    holds, and under the subject's repository claim with `hold_repo` (else the
+    caller holds it). A row that fails does not stop the others; the first
+    failure is raised once all were tried."""
     from server.auth.grant_claims import grant_change
     from server.core import grant_cache
 
@@ -160,7 +189,8 @@ async def _write_under_claims(
     for row in planned:
         ns, subject = row["namespace"], row["subject"]
         try:
-            async with grant_change(org, ns, subject):
+            repo = repo_change(org, ns, subject) if hold_repo else nullcontext()
+            async with repo, grant_change(org, ns, subject):
                 now = await client.query_one(
                     _GRANT_ROW_SQL, params={"org": org, "ns": ns, "sub": subject}
                 )
@@ -233,7 +263,9 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
                 )
             )
     written = (
-        await _write_under_claims(client, org, inserts, _mirror_wanted, rows) if inserts else 0
+        await _write_under_claims(client, org, inserts, _mirror_wanted, rows, hold_repo=True)
+        if inserts
+        else 0
     )
     if written:
         log.info(
@@ -251,7 +283,8 @@ async def revoke_repo_maintainer(
 ) -> int:
     """Revoke `subject`'s active admin grant on every other branch of the
     repository; a branch where they are the only active admin keeps them
-    (the same guard `grants.revoke` applies). Returns rows written."""
+    (the same guard `grants.revoke` applies). The caller holds `repo_change`.
+    Returns rows written."""
     branches = [b for b in branch_namespaces(org, namespace) if b != namespace]
     if not branches:
         return 0
@@ -288,7 +321,11 @@ async def revoke_repo_maintainer(
                 revoked=True,
             )
         )
-    written = await _write_under_claims(client, org, out, _still_admin, rows) if out else 0
+    written = (
+        await _write_under_claims(client, org, out, _still_admin, rows, hold_repo=False)
+        if out
+        else 0
+    )
     if written:
         log.info(
             "repo maintainers: %s/%s — %r revoked on %d sibling branch(es)",

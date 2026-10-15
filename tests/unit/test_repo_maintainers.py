@@ -260,8 +260,8 @@ async def test_grants_revoke_admin_fans_out(
     out = await grants_mod.handle_grants_revoke(
         GrantsRevokeInput(org="clickhouse", namespace="code-x", subject="alice")
     )
-    # The other branches first, the grant last, then a sweep for a mirror written meanwhile.
-    assert out.revoked and _handler_env["events"] == ["fan-out", "write", "fan-out"]
+    # The other branches first, the grant last.
+    assert out.revoked and _handler_env["events"] == ["fan-out", "write"]
     assert set(_handler_env["revoke"]) == {("clickhouse", "code-x", "alice")}
 
 
@@ -400,7 +400,7 @@ async def test_a_grant_made_admin_while_its_revoke_waits_is_fanned_out_first(
     out = await grants_mod.handle_grants_revoke(
         GrantsRevokeInput(org="clickhouse", namespace="code-x", subject="alice")
     )
-    assert out.revoked and _handler_env["events"] == ["fan-out", "write", "fan-out"]
+    assert out.revoked and _handler_env["events"] == ["fan-out", "write"]
     assert [r["revoked_at"] is not None for r in _handler_env["rows"]] == [True]
 
 
@@ -415,3 +415,25 @@ async def test_a_mirror_is_not_written_once_its_source_was_revoked() -> None:
     ch = _RevokedSource([_admin("code-x", "alice")])
     assert await maintainers.sync_repo_maintainers("clickhouse", "code-x", ch=ch) == 0
     assert ch.inserted == []
+
+
+async def test_one_subject_changes_one_repository_at_a_time_across_its_branches() -> None:
+    import asyncio
+
+    log: list[str] = []
+
+    async def _hold(ns: str, subject: str, name: str, hold: float) -> None:
+        async with maintainers.repo_change("clickhouse", ns, subject):
+            log.append(f"{name} in")
+            await asyncio.sleep(hold)
+            log.append(f"{name} out")
+
+    await asyncio.gather(
+        _hold("code-x", "alice", "revoke", 0.05), _hold("code-x-26-5", "alice", "sync", 0)
+    )
+    assert log == ["revoke in", "revoke out", "sync in", "sync out"]
+    log.clear()
+    await asyncio.gather(_hold("code-x", "alice", "a", 0.05), _hold("code-y", "alice", "b", 0))
+    assert log == ["a in", "b in", "b out", "a out"], "another repository does not wait"
+    async with maintainers.repo_change("clickhouse", "team", "alice"):
+        pass  # no repository: nothing held
