@@ -178,43 +178,65 @@ async def _write_under_claims(
     hold_repo: bool,
 ) -> int:
     """Write each subject's planned rows that `still_wanted` keeps in one insert,
-    holding its branch claims (in namespace order, so two writers never wait on
-    each other) and, with `hold_repo`, its repository claim first (else the
-    caller holds it). A failure writes none of that subject's rows."""
-    from server.auth.grant_claims import grant_change
-    from server.core import grant_cache
-
+    holding its repository claim (with `hold_repo`, else the caller holds it)
+    and then its branch claims: with the repository claim first, one change
+    across a subject's branches runs at a time. A subject that fails writes
+    none of its rows and does not stop the others; the first failure is raised
+    once all were tried."""
     seen = {(str(r["namespace"]), str(r["subject"])): r for r in read}
     by_subject: dict[str, list[dict[str, Any]]] = {}
     for row in planned:
         by_subject.setdefault(row["subject"], []).append(row)
-    written = 0
+    written, failed = 0, []
     for subject, rows in by_subject.items():
-        rows.sort(key=lambda r: r["namespace"])
-        async with AsyncExitStack() as held:
-            if hold_repo:
-                await held.enter_async_context(repo_change(org, rows[0]["namespace"], subject))
-            for row in rows:
-                await held.enter_async_context(grant_change(org, row["namespace"], subject))
-            wanted = []
-            for row in rows:
-                ns = row["namespace"]
-                now = await client.query_one(
-                    _GRANT_ROW_SQL, params={"org": org, "ns": ns, "sub": subject}
-                )
-                if await still_wanted(client, org, row, now, seen.get((ns, subject))):
-                    wanted.append(row)
-            if wanted:
-                try:
-                    await client.insert(
-                        "loom.namespace_grants",
-                        wanted,
-                        settings={"async_insert": 0, "wait_for_async_insert": 1},
-                    )
-                finally:
-                    grant_cache.invalidate(org)
-        written += len(wanted)
+        try:
+            written += await _write_subject(
+                client, org, subject, rows, still_wanted, seen, hold_repo
+            )
+        except Exception as e:  # noqa: BLE001 — the other subjects are still written
+            failed.append(e)
+    if failed:
+        raise failed[0]
     return written
+
+
+async def _write_subject(
+    client: Any,
+    org: str,
+    subject: str,
+    rows: list[dict[str, Any]],
+    still_wanted: _Wanted,
+    seen: dict[tuple[str, str], dict[str, Any]],
+    hold_repo: bool,
+) -> int:
+    """`_write_under_claims` for one subject's rows."""
+    from server.auth.grant_claims import grant_change
+    from server.core import grant_cache
+
+    rows.sort(key=lambda r: r["namespace"])
+    async with AsyncExitStack() as held:
+        if hold_repo:
+            await held.enter_async_context(repo_change(org, rows[0]["namespace"], subject))
+        for row in rows:
+            await held.enter_async_context(grant_change(org, row["namespace"], subject))
+        wanted = []
+        for row in rows:
+            ns = row["namespace"]
+            now = await client.query_one(
+                _GRANT_ROW_SQL, params={"org": org, "ns": ns, "sub": subject}
+            )
+            if await still_wanted(client, org, row, now, seen.get((ns, subject))):
+                wanted.append(row)
+        if wanted:
+            try:
+                await client.insert(
+                    "loom.namespace_grants",
+                    wanted,
+                    settings={"async_insert": 0, "wait_for_async_insert": 1},
+                )
+            finally:
+                grant_cache.invalidate(org)
+    return len(wanted)
 
 
 async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = None) -> int:

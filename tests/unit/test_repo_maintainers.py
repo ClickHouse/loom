@@ -510,3 +510,26 @@ async def test_a_revoke_holds_the_repository_claim_across_its_fan_out_and_write(
         GrantsRevokeInput(org="clickhouse", namespace="code-x", subject="alice")
     )
     assert log == ["+repo:Org/x", "fan-out", "+code-x", "write", "-code-x", "-repo:Org/x"]
+
+
+async def test_a_subject_that_cannot_be_claimed_does_not_stop_a_sync_for_the_others(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.auth import grant_claims
+    from server.core.errors import GrantBusyError
+
+    held = grant_claims.grant_change
+
+    def _alice_busy(org: str, ns: str, subject: str) -> Any:
+        if subject == "alice":
+            raise GrantBusyError("busy")
+        return held(org, ns, subject)
+
+    monkeypatch.setattr(grant_claims, "grant_change", _alice_busy)
+    ch = _FakeCH([_admin("code-x", "alice"), _admin("code-x", "bob")])
+    with pytest.raises(GrantBusyError):
+        await maintainers.sync_repo_maintainers("clickhouse", "code-x", ch=ch)
+    assert {(r["namespace"], r["subject"]) for r in ch.inserted} == {
+        ("code-x-26-5", "bob"),
+        ("code-x-26-6", "bob"),
+    }
