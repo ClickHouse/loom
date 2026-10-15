@@ -8,7 +8,6 @@ operations→handlers layering acyclic.
 
 from __future__ import annotations
 
-from datetime import timedelta
 from typing import Any
 
 from server.core.ch import get_client
@@ -30,8 +29,6 @@ from server.observability.budget import effective_cap
 # The events-only dimensions (memory_key, user_id, model, traffic_class,
 # instance_label, build_commit) and the cache columns exist only on the direct
 # scan; a roll-up row reads them as None / 0.
-# How far past the server's clock a turn's own time may be before it is clamped.
-TURN_AT_SLACK = timedelta(minutes=5)
 _SCAN_DIMS = ("memory_key", "user_id", "model", "traffic_class", "instance_label", "build_commit")
 
 
@@ -233,7 +230,7 @@ async def handle_cost_record_turns(input: CostRecordTurnsInput) -> CostRecordTur
                 turn_at = now
             # A turn cannot have happened later than now: a client clock running
             # ahead would hide it from the run it belongs to.
-            turn_at = min(turn_at, now + TURN_AT_SLACK)
+            turn_at = min(turn_at, now)
         rows.append(
             [
                 input.org,

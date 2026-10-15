@@ -232,7 +232,8 @@ class RunClient:
         `role` (planner / executor / critic / your own word) tags the run's
         reflection `role:<role>` so a same-role memory.search(role=...)
         prefers it. `budget_usd` / `budget_seconds` (0 = none) set a budget
-        that `get` reports as `over_budget` once the run goes past it."""
+        that `get` reports as `over_budget` once the run goes past it;
+        `budget_usd` needs `session_id`, whose turns are the run's spend."""
         payload: dict[str, Any] = {
             "org": self._agent.org,
             "namespace": self._agent.namespace,

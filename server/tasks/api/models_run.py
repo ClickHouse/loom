@@ -53,12 +53,20 @@ class RunBeginInput(BaseModel):
     role: str = Field(default="", max_length=64)
     # Free-form key/values stored on the run; `role`, when set, is added to it.
     metadata: dict[str, Any] = Field(default_factory=dict)
-    # Model spend in USD the run may reach; needs a session_id. 0 = none, and a
-    # re-sent begin with 0 keeps the run's budget. run.get reports a budget the
-    # run went past in `over_budget`: a signal for the agent, never a stop.
+    # Model spend in USD the run may reach; needs a session_id, re-sent with it.
+    # 0 = none, and a re-sent begin with 0 keeps the run's budget. run.get
+    # reports a budget the run went past in `over_budget`: a signal for the
+    # agent, never a stop.
     budget_usd: float = Field(default=0.0, ge=0.0, le=100_000.0)
     # Seconds the run may take; 0 = none, kept on a re-sent begin like budget_usd.
     budget_seconds: int = Field(default=0, ge=0, le=30 * 86400)
+
+    @model_validator(mode="after")
+    def _cost_budget_has_a_session(self) -> RunBeginInput:
+        # A run's spend is read from its session's recorded turns.
+        if self.budget_usd > 0 and self.session_id.strip() in ("", SENTINEL):
+            raise ValueError("budget_usd needs a session_id: a run's spend is its session's turns")
+        return self
 
 
 class RunBeginOutput(BaseModel):

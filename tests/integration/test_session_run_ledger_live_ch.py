@@ -788,4 +788,8 @@ async def test_the_run_cost_window_keeps_milliseconds_in_utc(
     finally:
         monkeypatch.undo()
         time.tzset()
+        await ch.execute(
+            "DELETE FROM loom.agent_turn_usage WHERE namespace = {ns:String}",
+            params={"ns": namespace},
+        )
     assert (turns, cost) == (1, 2.0)

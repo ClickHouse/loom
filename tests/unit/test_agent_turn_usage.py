@@ -110,7 +110,7 @@ def test_a_turn_dated_in_the_future_is_clamped_to_the_servers_clock() -> None:
     with patch.object(h, "get_client", return_value=_Client()):
         asyncio.run(h.handle_cost_record_turns(inp))
     by = dict(zip(fake.cols, fake.rows[0], strict=True))
-    assert by["turn_at"] <= datetime.now(UTC) + h.TURN_AT_SLACK
+    assert by["turn_at"] <= datetime.now(UTC)
 
 
 def test_handler_write_failure_records_nothing() -> None:

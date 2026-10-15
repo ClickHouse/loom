@@ -122,12 +122,17 @@ export const EMPTY_WHY = {
   budget: "set by run.begin(budget_usd, budget_seconds); a signal for the agent, never a stop",
 } as const;
 
-/** The budget run.begin set, e.g. "$1.00 · 30m 0s"; "—" when it set none. Read off
- * run.get's row: run.list rows are projected and do not carry it. */
-function budgetText(run: RunRow | null): string {
+/** The budget run.begin set and the time used against it, e.g. "$1.00 · 30m 0s · 42s
+ * elapsed"; "—" when it set none. Read off run.get: run.list rows are projected and do
+ * not carry it. */
+function budgetText(detail: RunGetResponse): string {
+  const run = detail.run;
   const parts: string[] = [];
   if (run?.budget_usd) parts.push(`$${run.budget_usd.toFixed(2)}`);
-  if (run?.budget_seconds) parts.push(fmtDuration(run.budget_seconds * 1000));
+  if (run?.budget_seconds) {
+    parts.push(fmtDuration(run.budget_seconds * 1000));
+    parts.push(`${fmtDuration((detail.elapsed_seconds ?? 0) * 1000)} elapsed`);
+  }
   return parts.length > 0 ? parts.join(" · ") : "—";
 }
 
@@ -552,7 +557,7 @@ export function Runs() {
                   (() => {
                     const hasSession = Boolean(open.session_id && open.session_id !== "-");
                     return (
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
                         <div>
                           <div className="text-2xs text-[var(--color-text-muted)]">recalled</div>
                           <div className="tabular-nums">
@@ -604,10 +609,7 @@ export function Runs() {
                         <div>
                           <div className="text-2xs text-[var(--color-text-muted)]">budget</div>
                           <div className="tabular-nums" title={EMPTY_WHY.budget}>
-                            {budgetText(detail.run)}
-                            {detail.run?.budget_seconds
-                              ? ` · ${fmtDuration((detail.elapsed_seconds ?? 0) * 1000)} elapsed`
-                              : ""}
+                            {budgetText(detail)}
                             {(detail.over_budget ?? []).length > 0 && (
                               <span className="text-[var(--color-danger)]">
                                 {" "}

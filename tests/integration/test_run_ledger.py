@@ -211,16 +211,19 @@ async def test_each_run_in_a_session_counts_only_its_own_turns(
 
 @pytest.mark.asyncio
 async def test_workers_in_their_own_sessions_count_only_their_own_turns(
-    control_plane_url: str,
+    control_plane_url: str, ch_client: Any
 ) -> None:
     from loom import Agent
 
     ns = f"run-ledger-{uuid.uuid4().hex[:6]}"
     async with Agent(org="run-test", namespace=ns, agent="a", base_url=control_plane_url) as a:
-        await a.run.begin(goal="worker a", session_id="worker-a", budget_usd=1.0)
-        b = await a.run.begin(goal="worker b", session_id="worker-b", budget_usd=1.0)
-        assert await _record_turn(a, "worker-a", "m1", turn_at=_now_iso()) > 0
-        got_b = await _get_with_turns(a, b["run_id"], 1, timeout_s=1.5)
+        run_a = await a.run.begin(goal="worker a", session_id="worker-a", budget_usd=1.0)
+        run_b = await a.run.begin(goal="worker b", session_id="worker-b", budget_usd=1.0)
+        cost = await _record_turn(a, "worker-a", "m1", turn_at=_now_iso())
+        ch_client.command("SYSTEM FLUSH ASYNC INSERT QUEUE")
+        got_a = await a.run.get(run_a["run_id"])
+        assert got_a["turns"] == 1 and got_a["cost_usd"] == cost
+        got_b = await a.run.get(run_b["run_id"])
         assert got_b["turns"] == 0 and got_b["cost_usd"] == 0.0 and got_b["over_budget"] == []
 
 

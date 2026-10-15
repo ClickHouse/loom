@@ -18,7 +18,6 @@ import pytest
 from pydantic import ValidationError
 
 from server.core.errors import NotFoundError
-from server.core.errors import ValidationError as CoreValidationError
 from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
 from server.tasks.api.models_run import RunBeginInput, RunCompleteInput, RunGetInput, RunListInput
 from server.tasks.store import runs as runs_store
@@ -425,44 +424,15 @@ def test_a_closed_run_is_timed_on_the_servers_clock(env) -> None:
     assert out.elapsed_seconds == 90 and out.over_budget == ["time"]
 
 
-def test_a_cost_budget_needs_a_session(env) -> None:
-    fake, _, h = env
+def test_a_cost_budget_needs_a_session() -> None:
+    # Refused by the request model, before run.begin claims the run id.
     for blank in ("-", "", " "):
-        fake.one[:] = []
-        with pytest.raises(CoreValidationError, match="session_id"):
-            asyncio.run(
-                h.handle_run_begin(
-                    RunBeginInput(
-                        org="o",
-                        namespace="n",
-                        agent="a",
-                        goal="g",
-                        session_id=blank,
-                        budget_usd=1.0,
-                    )
-                )
-            )
-    assert not fake.inserted
-    asyncio.run(
-        h.handle_run_begin(
-            RunBeginInput(org="o", namespace="n", agent="a", goal="g", budget_seconds=60)
-        )
-    )
-    assert fake.inserted
-
-
-def test_a_resent_begin_restating_the_budget_keeps_the_runs_session(env) -> None:
-    fake, _, h = env
-    fake.one[:] = [_run_row(budget_usd=1.5)]
-    asyncio.run(
-        h.handle_run_begin(
+        with pytest.raises(ValidationError, match="session_id"):
             RunBeginInput(
-                org="o", namespace="n", agent="claude", run_id="r1", goal="retry", budget_usd=2.0
+                org="o", namespace="n", agent="a", goal="g", session_id=blank, budget_usd=1.0
             )
-        )
-    )
-    row = next(rows[0] for table, rows in fake.inserted if table == "loom.agent_runs")
-    assert row["session_id"] == "s1" and row["budget_usd"] == 2.0
+    RunBeginInput(org="o", namespace="n", agent="a", goal="g", session_id="s1", budget_usd=1.0)
+    RunBeginInput(org="o", namespace="n", agent="a", goal="g", budget_seconds=60)
 
 
 def _cost_query(fake: Any) -> tuple[str, dict[str, Any]]:

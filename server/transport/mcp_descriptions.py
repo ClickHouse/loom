@@ -2045,9 +2045,8 @@ ATOMIC_TOOL_DESCRIPTIONS: dict[str, str] = {
         "WHEN: A conclusion to keep alongside the current state without rewriting it."
     ),
     "run.begin": (
-        "WHAT: Open the run ledger entry for this task (goal, request, optional "
-        "budget_seconds). Returns run_id; "
-        "pass it on every memory call so notes and credit attach to this run.\n"
+        "WHAT: Open the run ledger entry for this task (goal, request, optional budget_seconds). "
+        "Returns run_id; pass it on every memory call so notes and credit attach to this run.\n"
         "WHEN: Once, at the start of a task."
     ),
     "run.complete": (

@@ -25,12 +25,7 @@ from typing import Any
 
 from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now as _now
-from server.core.errors import (
-    AuthInsufficientError,
-    IdentityIncompleteError,
-    NotFoundError,
-    ValidationError,
-)
+from server.core.errors import AuthInsufficientError, IdentityIncompleteError, NotFoundError
 from server.core.naming import SENTINEL
 from server.identity.app.request_scope import request_narrowed, request_scope
 from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, row_in_read_scope
@@ -409,9 +404,6 @@ async def _open_run(
     if session_id in ("", SENTINEL):
         session_id = str(prior.get("session_id") or SENTINEL)
     budget_usd = input.budget_usd or float(prior.get("budget_usd") or 0.0)
-    if budget_usd > 0 and session_id == SENTINEL:
-        # A run's spend is read from its session's recorded turns.
-        raise ValidationError("budget_usd needs a session_id: a run's spend is its session's turns")
     # The begin row in the ledger carries the run it opened, so begin and complete join
     # on `run_id` (the body names none; the transport's fallback is the header run, empty
     # for a bare client).
@@ -961,15 +953,13 @@ async def handle_run_get(input: RunGetInput) -> RunGetOutput:
     stashed = run.metadata.get("recalled_keys") if isinstance(run.metadata, dict) else None
     if stashed:
         recalled = _merge_recalled(recalled, stashed)
-    turns, unpriced, cost, elapsed = 0, 0, 0.0, 0
-    window = _run_window(existing)
-    if window is not None:
-        since, until = window
-        elapsed = int((until - since).total_seconds())
-        if run.session_id != SENTINEL:
-            turns, unpriced, cost = await runs_store.run_cost(
-                ch, input.org, input.namespace, run.session_id, since, until
-            )
+    since, until = _run_window(existing)
+    elapsed = int((until - since).total_seconds())
+    turns, unpriced, cost = 0, 0, 0.0
+    if run.session_id != SENTINEL:
+        turns, unpriced, cost = await runs_store.run_cost(
+            ch, input.org, input.namespace, run.session_id, since, until
+        )
     return RunGetOutput(
         found=True,
         run=run,
@@ -985,12 +975,9 @@ async def handle_run_get(input: RunGetInput) -> RunGetOutput:
     )
 
 
-def _run_window(row: RunLedgerRow) -> tuple[datetime, datetime] | None:
+def _run_window(row: RunLedgerRow) -> tuple[datetime, datetime]:
     """When the run was open, on the server's clock: from its start to its close, or to now."""
-    started = row.get("started_at")
-    if not isinstance(started, datetime):
-        return None
-    return started, row.get("completed_at") or _now()
+    return row["started_at"], row.get("completed_at") or _now()
 
 
 async def handle_run_list(input: RunListInput) -> RunListOutput:
