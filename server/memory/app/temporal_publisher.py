@@ -655,10 +655,10 @@ def _past_only(
         return True
     if not removes(row):
         return False
-    # What the key's row shows after it, by the reconciler's rule (`applies_now`):
-    # what holds now, else its latest begun claim.
+    # A removal of what holds now removes the key's row: ended history stays in the
+    # journal (valid_as_of, memory.intervals), never shown as the present again.
     after = tm.apply({a.assertion_id: a for a in active}, amendment).values()
-    return bool(tm.current_claims(after, now))
+    return bool(tm.valid_now(after, now))
 
 
 def _plan_row(
@@ -938,7 +938,7 @@ def _carry(
             ahead = (
                 replaced.expires_at if replaced.expires_at and replaced.expires_at > now else None
             )
-            r["expires_at"] = tm.utc(ahead) if _holds_now(r, now) else None
+            r["expires_at"] = tm.utc(ahead) if _holds_now(r, claims, now) else None
     if same is not None:
         for c in ("verified_by", "verified_at", "verified_sha256"):
             if c in r:
@@ -949,6 +949,11 @@ def _carry(
         ) > _SENSITIVITY.get(str(r.get("sensitivity") or ""), 0):
             r["sensitivity"] = held
             _sensitive_window(r, now)
+            if "tags" in r:
+                from server.memory.domain.sensitivity import sensitivity_tags
+
+                tags = list(r["tags"] or [])
+                r["tags"] = [*tags, *sensitivity_tags(held, tags)]
 
 
 def _sensitive_window(r: dict[str, Any], now: datetime) -> None:
@@ -968,10 +973,16 @@ def _sensitive_window(r: dict[str, Any], now: datetime) -> None:
         r["on_expire"] = on_expire
 
 
-def _holds_now(r: Mapping[str, Any], now: datetime) -> bool:
-    """Does the row's own claim hold now by its validity (an undated one does)?"""
+def _holds_now(r: Mapping[str, Any], claims: Sequence[tm.Assertion], now: datetime) -> bool:
+    """Does the row's own claim hold now, as the journal will store it: by its
+    validity, and not bounded by a later state that has begun (a dated write stops
+    at one; an undated one holds now)?"""
     start = tm.utc(r.get("valid_at")) or tm.utc(r.get("temporal_anchor"))
     end = tm.utc(r.get("valid_to"))
+    if start is not None and any(
+        a.valid_from is not None and start < a.valid_from <= now for a in claims
+    ):
+        return False
     return (start is None or start <= now) and (end is None or end > now)
 
 

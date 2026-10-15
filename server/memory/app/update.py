@@ -594,7 +594,7 @@ async def _mirror_accepted(
         return
     changes = {
         f: memory_row[f]
-        for f in ("tags", "confidence")
+        for f in ("tags", "concepts", "confidence")
         if f in input.model_fields_set and getattr(input, f, None) is not None
     }
     if changes:

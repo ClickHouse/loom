@@ -353,6 +353,11 @@ async def _rewrite_current(
         if any(ident_of(c) == ident for c in later):
             return False
     if head is not None and (head.status not in _LIVE or head.tombstoned_at is not None):
+        # A removed row stays removed when all that remains is ended history: the
+        # key's past is read through valid_as_of, not shown as its present.
+        now_ = datetime.now(UTC)
+        if want and all(h.a.valid_to is not None and h.a.valid_to <= now_ for h in want):
+            return False
         head = None
     if not want:
         # Only plans remain: a row still showing one of them, as a plan, stays until it

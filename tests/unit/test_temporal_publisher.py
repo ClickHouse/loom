@@ -1233,3 +1233,33 @@ def test_a_plan_never_inherits_the_present_ttl(journal: Journal) -> None:
         assert run(pub.publish_rows([plan])) == []
     added = json.loads(journal.commits[-1]["assertions"])
     assert [a["expires_at"] for a in added if a["value"] == '"later"'] == [None]
+
+
+def test_open_ended_late_evidence_keeps_none_of_the_present_ttl(journal: Journal) -> None:
+    from server.memory.domain.temporal_capture import WriteIntent, write_intent
+
+    ahead = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(hours=2)
+    bob = mrow('"bob"', **_LOCKLESS, valid_at=datetime(2026, 1, 9, tzinfo=UTC), expires_at=ahead)
+    run(pub.publish_rows([bob]))
+    carol = mrow(
+        '"carol"', **_LOCKLESS, valid_at=datetime(2026, 1, 3, tzinfo=UTC), expires_at=ahead
+    )
+    with write_intent(WriteIntent(memory_key="k", stated=frozenset())):
+        assert run(pub.publish_rows([carol])) == []
+    added = json.loads(journal.commits[-1]["assertions"])
+    assert [a["expires_at"] for a in added if a["value"] == '"carol"'] == [None]
+
+
+def test_removing_what_holds_now_removes_the_row_whatever_history_remains(journal: Journal) -> None:
+    paris = mrow(
+        '"paris"',
+        **_LOCKLESS,
+        valid_at=datetime(2020, 1, 1, tzinfo=UTC),
+        valid_to=datetime(2021, 1, 1, tzinfo=UTC),
+    )
+    run(pub.publish_rows([paris]))
+    berlin = mrow('"berlin"', **_LOCKLESS, valid_at=datetime(2022, 1, 1, tzinfo=UTC))
+    run(pub.publish_rows([berlin]))
+    gone = _copy(berlin, tombstoned_at=datetime.now(UTC))
+    (row,) = run(pub.publish_rows([gone]))
+    assert row["tombstoned_at"] is not None
