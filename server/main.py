@@ -1,7 +1,7 @@
 """FastAPI application entrypoint.
 
 Run with:
-    uvicorn server.main:app --host 0.0.0.0 --port 7777
+    uvicorn server.main:app --host 0.0.0.0 --port 7777 --loop asyncio
 
 or:
     make server

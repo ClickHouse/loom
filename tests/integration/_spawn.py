@@ -69,6 +69,8 @@ def loom_server(
                 "127.0.0.1",
                 "--port",
                 str(port),
+                "--loop",
+                "asyncio",
                 "--log-level",
                 log_level,
             ],
