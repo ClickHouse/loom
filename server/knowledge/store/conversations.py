@@ -924,7 +924,7 @@ async def live_messages(
     ch = ch or _default_client()
     return await ch.query_all(
         """
-        SELECT msg_id, role, content, ts, metadata, user_id, run_id
+        SELECT msg_id, role, content, ts, metadata, user_id, run_id, is_saved
         FROM loom.conversations
         WHERE org = {org:String}
           AND namespace = {ns:String}
