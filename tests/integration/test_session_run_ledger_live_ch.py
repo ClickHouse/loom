@@ -753,14 +753,10 @@ async def test_a_reopened_session_run_keeps_what_its_close_recalled(ch: Any) -> 
 
 
 @pytest.mark.asyncio
-async def test_the_run_cost_window_keeps_milliseconds_in_utc(
-    ch: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_the_run_cost_window_keeps_milliseconds_in_utc(ch: Any) -> None:
     # A driver that binds datetimes to whole seconds would read this window as
     # 12:00:00 to 12:00:00, and one that binds a naive datetime as local time
     # would move it to 06:30 on this host; either misses the turn.
-    monkeypatch.setenv("TZ", "Asia/Kolkata")
-    time.tzset()
     namespace = f"ns-{uuid.uuid4().hex[:8]}"
     await ch.insert(
         "loom.agent_turn_usage",
@@ -782,11 +778,13 @@ async def test_the_run_cost_window_keeps_milliseconds_in_utc(
     since = datetime(2026, 1, 1, 12, 0, 0, 100000)
     until = datetime(2026, 1, 1, 12, 0, 0, 900000)
     try:
-        turns, _, cost = await run_handlers.runs_store.run_cost(
-            ch, ORG, namespace, "s", since, until
-        )
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setenv("TZ", "Asia/Kolkata")
+            time.tzset()
+            turns, _, cost = await run_handlers.runs_store.run_cost(
+                ch, ORG, namespace, "s", since, until
+            )
     finally:
-        monkeypatch.undo()
         time.tzset()
         await ch.execute(
             "DELETE FROM loom.agent_turn_usage WHERE namespace = {ns:String}",

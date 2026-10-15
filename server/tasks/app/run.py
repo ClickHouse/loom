@@ -26,7 +26,7 @@ from typing import Any
 from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now as _now
 from server.core.errors import AuthInsufficientError, IdentityIncompleteError, NotFoundError
-from server.core.naming import SENTINEL
+from server.core.naming import SENTINEL, names_session
 from server.identity.app.request_scope import request_narrowed, request_scope
 from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, row_in_read_scope
 from server.memory.app import run_feedback, run_retention
@@ -45,7 +45,7 @@ from server.tasks.api.models_run import (
     RunListOutput,
     RunRow,
 )
-from server.tasks.domain.budgets import budgets_exceeded, names_session
+from server.tasks.domain.budgets import budgets_exceeded
 from server.tasks.domain.session_runs import is_session_run_id
 from server.tasks.store import runs as runs_store
 from server.tasks.store.rows import RunLedgerRow
@@ -962,7 +962,7 @@ async def handle_run_get(input: RunGetInput) -> RunGetOutput:
     since, until = _run_window(existing)
     elapsed = max(0, int((until - since).total_seconds()))
     turns, unpriced, cost = 0, 0, 0.0
-    if run.session_id != SENTINEL:
+    if names_session(run.session_id):
         turns, unpriced, cost = await runs_store.run_cost(
             ch, input.org, input.namespace, run.session_id, since, until
         )

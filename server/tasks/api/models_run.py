@@ -15,9 +15,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from server.core.naming import SENTINEL
+from server.core.naming import SENTINEL, names_session
 from server.operations.read_projection import ProjectedRow
-from server.tasks.domain.budgets import BudgetKind, names_session
+from server.tasks.domain.budgets import BudgetKind
 from server.tasks.domain.states import RunStatus
 
 

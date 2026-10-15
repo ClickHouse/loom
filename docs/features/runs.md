@@ -28,33 +28,35 @@ A run row lives in `loom.agent_runs`. Most of what `run.get` shows is derived at
 
 `run.begin` takes an optional `budget_usd` (model spend) and `budget_seconds` (how long the run may take). `run.get`
 compares them with `cost_usd` and `elapsed_seconds` and lists the ones the run has gone past in `over_budget`
-(`cost`, `time`, or both). The first `run.get` in a session that finds an active run over budget also carries the
-mentor hint `run_over_budget`, which the plugins hand to the model as advice; a closed run still reports
-`over_budget` but gets no hint. Like every mentor hint it is said once per session, and a caller that sends no
-session (the SDK, plain HTTP) shares one per namespace and web process, so read `over_budget`, not the hint, to
-decide. Set a run's budget in its first `run.begin`. A re-sent `run.begin` replaces the run's row like any retry:
-it keeps the session and budget it does not restate, a new non-zero budget replaces the old one, and a 0 keeps
-it, so a budget cannot be removed once set.
+(`cost`, `time`, or both). Loom does not run the agent, so a budget is a signal for whoever does, never a stop.
 
 A run's spend is its session's turns made while the run was open, by each turn's own time (`turn_at`, from the
-transcript), so `budget_usd` needs a `session_id` (a 422 otherwise). The Stop hook posts a prompt's turns when the
-prompt ends, after any `run.complete` the agent called during it; those turns still count, and a re-sent turn keeps
-its time. A turn dated after the server's now is stamped with the server's time when it arrives, and again if it is
-re-sent (at a month boundary the two stamps can fall in different partitions and count in both windows). Runs open
-at once in one session see the same turns: a run nested in another counts toward both, and concurrent workers that
-each want their own cost budget need their own sessions. The window compares the client's turn times with the
-server's run times, so it relies on the client's clock being roughly right; one running minutes off misplaces the
-turns at a run's edges. A closed run is timed from its start to its close on the server's clock, whatever
-`duration_ms` the client reported.
+transcript), so `budget_usd` needs a `session_id` (a 422 otherwise). Time runs from the run's start to its close on
+the server's clock, whatever `duration_ms` the client reported. Set the budget in the run's first `run.begin`.
 
-Because the plugins post turns only when a prompt ends, a cost budget is checked between prompts, not inside one:
-a single headless prompt (`claude -p`) shows its spend only after it finishes. A turn whose model the price table
-does not know costs 0; `run.get` counts those in `unpriced_turns`, and they do not count toward `budget_usd`. The
-MCP tools offer only `budget_seconds`, since the model does not know the session id its turns are recorded under.
+The first `run.get` in a session that finds an active run over budget also carries the mentor hint
+`run_over_budget`, which the plugins hand to the model as advice. A closed run still reports `over_budget` but gets
+no hint. Like every mentor hint it is said once per session, and a caller that sends no session (the SDK, plain
+HTTP) shares one per namespace and web process, so decide on `over_budget`, not the hint.
 
-Loom does not run the agent, so a budget is a signal for whoever does, never a stop. The cost side is only as fresh
-as the turns the plugin's Stop hook has recorded, and a call's cost is known only after it returns, so a run can go
-past `budget_usd` by the last turn's cost before anything sees it.
+Limits:
+
+- **Between prompts only.** The plugins post a prompt's turns when it ends, so a cost budget is checked between
+  prompts, and a single headless prompt (`claude -p`) shows its spend only after it finishes. Those turns still
+  count when they arrive after the agent's own `run.complete`. A call's cost is known only after it returns, so a
+  run can go past `budget_usd` by its last turn's cost before anything sees it.
+- **The client's clock.** The window compares the client's turn times with the server's run times; a clock minutes
+  off misplaces the turns at a run's edges. A turn dated after the server's now is stamped with the server's time
+  when it arrives, and again if it is re-sent (at a month boundary the two stamps can fall in different partitions
+  and count in both windows). Any other re-sent turn keeps its time.
+- **One session, many runs.** Runs open at once in one session see the same turns: a nested run counts toward both,
+  and concurrent workers that each want a cost budget need their own sessions.
+- **Unpriced models.** A turn whose model the price table does not know costs 0; `run.get` counts those in
+  `unpriced_turns`, and they do not count toward `budget_usd`.
+- **MCP.** The MCP tools offer only `budget_seconds`, since the model does not know the session id its turns are
+  recorded under.
+- **Retries.** A re-sent `run.begin` replaces the run's row like any retry: it keeps the session and budget it does
+  not restate, a new non-zero budget replaces the old one, and 0 keeps it, so a budget cannot be removed once set.
 
 ## Recalled is not relied on
 

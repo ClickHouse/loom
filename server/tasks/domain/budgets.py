@@ -4,14 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from server.core.naming import SENTINEL
-
 BudgetKind = Literal["cost", "time"]
-
-
-def names_session(session_id: str) -> bool:
-    """Whether a run names a session: a cost budget is counted from one."""
-    return session_id.strip() not in ("", SENTINEL)
 
 
 def budgets_exceeded(
