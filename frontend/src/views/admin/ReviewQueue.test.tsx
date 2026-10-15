@@ -519,6 +519,30 @@ describe("ReviewQueue", () => {
     expect(await axeViolations(panel)).toEqual([]);
   });
 
+  it("re-announces a second Undo of the same key", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    // Two retirements of one key, from two sessions.
+    vi.mocked(listAutoResolved).mockResolvedValue(
+      page([retired("user_city"), retired("user_city", { memory_id: "id-user_city-2", session_id: "s2" })]),
+    );
+    vi.mocked(restoreMemory).mockResolvedValue({ restored: true, from_status: "superseded" });
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
+    const [first, second] = await screen.findAllByRole("button", { name: "Undo retirement of user_city" }, WAIT);
+    const live = () => screen.getByRole("tabpanel", { name: /Auto-resolved/ }).querySelector("[aria-live]");
+    await userEvent.click(first);
+    await waitFor(() => expect(live()?.textContent?.trim()).toBe("Restored user_city"));
+    const once = live()?.textContent;
+    await userEvent.click(second);
+    await waitFor(() =>
+      expect(screen.queryAllByRole("button", { name: "Undo retirement of user_city" })).toHaveLength(0),
+    );
+    // A live region repeats nothing when its text does not change.
+    expect(live()?.textContent?.trim()).toBe("Restored user_city");
+    expect(live()?.textContent).not.toBe(once);
+  });
+
   it("falls back to Conflicts when the audit log stops being readable on the Auto-resolved tab", async () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
     vi.mocked(listAutoResolved).mockResolvedValue(page([retired("user_city")]));
