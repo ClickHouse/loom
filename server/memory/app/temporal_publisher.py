@@ -862,6 +862,22 @@ def _same_memory(row: Mapping[str, Any], current: Mapping[str, Served], now: dat
     return not mid or not ids or mid in ids
 
 
+def _exact_validity(r: dict[str, Any], claims: Sequence[tm.Assertion]) -> None:
+    """A revision of the memory it read carries that row's validity, which
+    loom.memory keeps to the second: it is the claim's own, to the microsecond, not
+    a date its caller stated (a revision starting before the claim it revises
+    would fill only the past)."""
+
+    def second(d: datetime | None) -> datetime | None:
+        return d.replace(microsecond=0) if d is not None else None
+
+    span = (second(tm.utc(r.get("valid_at"))), second(tm.utc(r.get("valid_to"))))
+    for a in claims:
+        if (second(tm.row_start(a)), second(a.valid_to)) == span:
+            r["valid_at"], r["valid_to"] = tm.row_start(a), a.valid_to
+            return
+
+
 def _claim_shown(claims: Sequence[tm.Assertion], head: Mapping[str, Any] | None) -> tm.Assertion:
     """The current claim the current row shows: the one it was written from, else the
     one with its content and validity, else (a row behind the journal) the newest."""
@@ -895,6 +911,8 @@ def _as_value_write(
         r.update(_lock_in_force(claims, now))
     if removes(row):
         return ""
+    if intent.existing:
+        _exact_validity(r, claims)
     sha = str(row.get("content_sha256") or "")
     new_value = bool(claims) and all(a.content_sha256 != sha for a in claims)
     if new_value and _locked_against(served, "value", now):
@@ -952,7 +970,8 @@ def _carry(
             if "tags" in r:
                 from server.memory.domain.sensitivity import sensitivity_tags
 
-                tags = list(r["tags"] or [])
+                # The label that holds, not the one it replaced.
+                tags = [t for t in (r["tags"] or []) if not str(t).startswith("sensitivity:")]
                 r["tags"] = [*tags, *sensitivity_tags(held, tags)]
 
 

@@ -576,11 +576,13 @@ def _replayed_revision(existing: MemoryRow) -> MemoryUpdateByIdOutput:
     ident = (existing.agent, existing.user_id, existing.session_id, existing.memory_key)
     r = replayed(existing.namespace, ident)
     own = row_assertion(r.amendment if r is not None else None)
+    # Journaled for the past only, the memory itself was not revised.
+    revised = own is not None and not (r is not None and r.past_only)
     return MemoryUpdateByIdOutput(
-        updated=own is not None,
+        updated=revised,
         new_version=own.source_version if own is not None else 0,
         content_sha256=own.content_sha256 if own is not None else "",
-        left_out=r.left_out if r is not None else "",
+        left_out=(r.left_out or ("past_only" if r.past_only else "")) if r is not None else "",
     )
 
 

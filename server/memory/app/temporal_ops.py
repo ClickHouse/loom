@@ -536,6 +536,17 @@ async def _amend_guards(input: MemoryAmendInput) -> MemoryRow | None:
     return head
 
 
+def _spans_now(input: MemoryAmendInput) -> bool:
+    """Does the amendment's own claim hold now (a transition from its effective time,
+    a correction over its span)?"""
+    now = datetime.now(UTC)
+    if input.change_kind == "transition":
+        start, end = tm.utc(input.effective_at), None
+    else:
+        start, end = tm.utc(input.valid_from), tm.utc(input.valid_to)
+    return (start is None or start <= now) and (end is None or end > now)
+
+
 def _new_assertion(input: MemoryAmendInput, head: MemoryRow | None) -> tm.Assertion | None:
     """The assertion a correct or transition adds; None for a retract."""
     if input.value is None:
@@ -562,7 +573,8 @@ def _new_assertion(input: MemoryAmendInput, head: MemoryRow | None) -> tm.Assert
         # current row holds it (and as the current-state rewrite keeps it). A value
         # that reads as high is high, as memory.set would store it.
         sensitivity=resolve_sensitivity(getattr(head, "sensitivity", "") or None, serialized),
-        expires_at=tm.utc(head.expires_at) if head is not None else None,
+        # The present's expiry is the present's: a plan or a past span keeps none.
+        expires_at=tm.utc(head.expires_at) if head is not None and _spans_now(input) else None,
         pinned=bool(head.pinned) if head is not None else False,
         lock_mode=str(getattr(head, "lock_mode", "") or ""),
         tags=tuple(head.tags) if head is not None else (),

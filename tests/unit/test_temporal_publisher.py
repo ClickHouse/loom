@@ -1263,3 +1263,21 @@ def test_removing_what_holds_now_removes_the_row_whatever_history_remains(journa
     gone = _copy(berlin, tombstoned_at=datetime.now(UTC))
     (row,) = run(pub.publish_rows([gone]))
     assert row["tombstoned_at"] is not None
+
+
+def test_a_revision_keeps_its_claims_sub_second_start(journal: Journal) -> None:
+    from server.memory.domain.temporal_capture import WriteIntent, write_intent
+
+    start = datetime(2026, 3, 1, 10, 0, 0, 600000, tzinfo=UTC)
+    leeds = mrow('"leeds"', **_LOCKLESS, valid_at=start)
+    run(pub.publish_rows([leeds]))
+    # The row update read keeps validity to the second, as loom.memory stores it.
+    hull = _copy(
+        leeds,
+        value='"hull"',
+        content_sha256=sha256_value_json('"hull"'),
+        valid_at=start.replace(microsecond=0),
+    )
+    with write_intent(WriteIntent(memory_key="k", existing=True, stated=frozenset())):
+        (row,) = run(pub.publish_rows([hull]))
+    assert row["value"] == '"hull"' and tm.utc(row["valid_at"]) == start

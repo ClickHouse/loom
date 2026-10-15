@@ -346,7 +346,7 @@ async def _rewrite_current(
     agent, uid, sid, key = ident
     identity = memory_repo.Identity(org=org, namespace=ns, agent=agent, user_id=uid, session_id=sid)
     head = await memory_repo.get_by_key(
-        identity, key, scope=WHOLE_NAMESPACE, fresh=True, strong=True
+        identity, key, scope=WHOLE_NAMESPACE, fresh=True, strong=True, include_tombstoned=True
     )
     if cut_seq is not None:
         later = await store.commits_between(org, ns, cut_seq, 2**63 - 1, memory_keys=[key])
