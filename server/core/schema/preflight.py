@@ -16,6 +16,8 @@ from server.core.ch_errors import error_code
 if TYPE_CHECKING:
     from clickhouse_connect.driver.client import Client
 
+log = logging.getLogger(__name__)
+
 DATABASE = "loom"
 # The oldest server that applies every migration: 26.3 still gates stem() and
 # 25.12 the text index. CI tests the latest release (dev/clickhouse_release.sh);
@@ -53,7 +55,11 @@ SYSTEM_TABLES = (
     "zookeeper_connection",
 )
 # Every replica's version; a server without the `default` cluster is one node.
-REPLICA_VERSIONS_SQL = "SELECT version() FROM clusterAllReplicas('default', system.one)"
+# A replica that is down answers nothing and runs no DDL, so it is skipped.
+REPLICA_VERSIONS_SQL = (
+    "SELECT version() FROM clusterAllReplicas('default', system.one) "
+    "SETTINGS skip_unavailable_shards = 1"
+)
 
 _DATABASE_COUNT = f"SELECT count() FROM system.databases WHERE name = '{DATABASE}'"
 
@@ -149,25 +155,29 @@ def _readable(ch: Client, table: str) -> bool:
     return True
 
 
-def oldest_version(ch: Client) -> str:
+def oldest_version(ch: Client, *, strict: bool = True) -> str:
     """The oldest version among the server's replicas: a Cloud service in a
     rolling upgrade answers from replicas on two versions, and the old one
-    still runs the DDL. Only a server without the `default` cluster is taken
-    as one node; any other failure means the replicas are unknown."""
+    still runs the DDL. A server without the `default` cluster is one node.
+    When the replicas cannot be asked, `strict` (a process about to migrate)
+    stops; otherwise the connected server answers, with a warning."""
+    from server.settings import settings
+
     try:
         versions = [str(row[0]) for row in ch.query(REPLICA_VERSIONS_SQL).result_rows]
-    except Exception as e:  # noqa: BLE001 — every failure but a missing cluster stops here
+    except Exception as e:  # noqa: BLE001 — a missing cluster is one node; the rest depends on strict
         code = error_code(e)
-        if code == ACCESS_DENIED:
-            raise PreflightError(
-                "may not ask every replica for its version (clusterAllReplicas): "
-                "an admin has to run Loom's setup SQL",
-                needs_admin=True,
-            ) from None
         if code != CLUSTER_DOESNT_EXIST:
-            raise PreflightError(
-                f"cannot read every replica's version: {_connect_failure(e)}"
-            ) from None
+            if strict and code == ACCESS_DENIED:
+                raise PreflightError(
+                    f"{settings.ch_user!r} may not ask every replica for its version "
+                    "(clusterAllReplicas): an admin has to run Loom's setup SQL",
+                    needs_admin=True,
+                ) from None
+            if strict:
+                reason = str(e).splitlines()[0].split(" (for url")[0][:200]
+                raise PreflightError(f"cannot read every replica's version: {reason}") from None
+            log.warning("replica versions unknown; checking the connected server: %s", str(e)[:160])
         versions = [str(ch.command("SELECT version()"))]
     return min(versions, key=version_key)
 
@@ -195,7 +205,7 @@ def check(ch: Client, *, need: Need, create_database: bool = True) -> Server:
     only reports it missing. Returns what the doctor reports besides."""
     from server.settings import settings
 
-    version = oldest_version(ch)
+    version = oldest_version(ch, strict=need == "migrate")
     if version_key(version)[:2] < MIN_VERSION:
         floor = ".".join(map(str, MIN_VERSION))
         raise PreflightError(f"ClickHouse {version} is older than {floor}: upgrade the server")
@@ -232,7 +242,7 @@ def check(ch: Client, *, need: Need, create_database: bool = True) -> Server:
 
     # A refused table here would fail a migration halfway (the runner reads
     # system.merge_tree_settings, system.mutations and others as it goes).
-    refused = [t for t in SYSTEM_TABLES if not _readable(ch, f"system.{t}")]
+    refused = [t for t in SYSTEM_TABLES if need == "migrate" and not _readable(ch, f"system.{t}")]
     if refused:
         raise PreflightError(
             f"{user!r} may not read system.{', system.'.join(refused)}: "

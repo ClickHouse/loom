@@ -566,7 +566,7 @@ class CHClient:
             d["_reconnect_lock"] = asyncio.Lock()
 
     async def connect(self) -> None:
-        self._client = await clickhouse_connect.get_async_client(
+        client = await clickhouse_connect.get_async_client(
             **connection_kwargs(),
             compress=True,
             # The driver's read timeout is the outer backstop
@@ -604,8 +604,10 @@ class CHClient:
         # default before the session setting applies; bind them in UTC too.
         # tz_source="server" reads a bare DateTime in that zone, so reads come
         # back naive UTC, never in the host's zone.
-        self._client.server_tz = UTC
-        await _turn_off_unsafe_condition_cache(self._client)
+        client.server_tz = UTC
+        # Settled before any task can use it: a reconnect publishes it only now.
+        await _turn_off_unsafe_condition_cache(client)
+        self._client = client
         await _probe_vector_state(self)
 
     async def disconnect(self) -> None:

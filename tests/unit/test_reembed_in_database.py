@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import pytest
 
+# The conftest stubs it for fake clients; this file tests the real one.
+from server.core.ch import _turn_off_unsafe_condition_cache as _real_cache_guard
 from server.memory.app import reembed as rb
 
 COLS = [
@@ -169,8 +171,6 @@ async def test_a_session_turns_the_condition_cache_off_when_any_replica_is_old(
 ) -> None:
     from types import SimpleNamespace
 
-    from server.core.ch import _turn_off_unsafe_condition_cache
-
     class _Client:
         def __init__(self) -> None:
             self.settings: dict[str, object] = {}
@@ -186,5 +186,5 @@ async def test_a_session_turns_the_condition_cache_off_when_any_replica_is_old(
             self.settings[key] = value
 
     client = _Client()
-    await _turn_off_unsafe_condition_cache(client)  # type: ignore[arg-type]
+    await _real_cache_guard(client)  # type: ignore[arg-type]
     assert (client.settings == {"use_query_condition_cache": 0}) is turned_off

@@ -588,8 +588,9 @@ def _tracker_contract_not_enforced() -> Iterator[None]:
 @pytest.fixture(autouse=True)
 def _vector_read_state_not_probed() -> Iterator[None]:
     """`CHClient.connect()` probes the vector read state
-    (replica check, coded columns, patch parts). Unit clients are fakes, so
-    the connect probe is replaced by a no-op here and the module state starts
+    (replica check, coded columns, patch parts) and the replicas' versions for
+    the condition cache. Unit clients are fakes, so both connect probes are
+    replaced by no-ops here and the module state starts
     and ends empty — a test that wants a reading sets it
     (`vector_codes_state.set_coded`, `patch_parts.set_reading`). Set by hand
     for the reason given above."""
@@ -600,12 +601,18 @@ def _vector_read_state_not_probed() -> Iterator[None]:
     async def _not_probed(_client: Any) -> None:
         return None
 
+    async def _cache_left_alone(_client: Any) -> None:
+        return None
+
     before = ch_mod._probe_vector_state
+    guard = ch_mod._turn_off_unsafe_condition_cache
     ch_mod._probe_vector_state = _not_probed  # type: ignore[assignment]
+    ch_mod._turn_off_unsafe_condition_cache = _cache_left_alone  # type: ignore[assignment]
     vector_codes_state.reset()
     patch_parts.reset()
     yield
     ch_mod._probe_vector_state = before  # type: ignore[assignment]
+    ch_mod._turn_off_unsafe_condition_cache = guard  # type: ignore[assignment]
     vector_codes_state.reset()
     patch_parts.reset()
 

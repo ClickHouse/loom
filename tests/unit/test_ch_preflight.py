@@ -77,6 +77,12 @@ def test_replicas_that_cannot_be_asked_are_not_taken_for_one_server(
     assert e.value.needs_admin is needs_admin
 
 
+def test_a_serving_process_falls_back_when_the_replicas_cannot_be_asked() -> None:
+    ch = FakeCH(replica_error="Code: 279. DB::Exception: All connection tries failed")
+    assert preflight.check(ch, need="serve").version == "26.5.1.882"
+    assert not any(sql.startswith("SELECT 1 FROM system.") for sql in ch.ran)
+
+
 def test_every_system_table_loom_reads_is_checked_before_any_ddl() -> None:
     ch = FakeCH(denied=("SELECT 1 FROM system.merge_tree_settings",))
     with pytest.raises(preflight.PreflightError) as e:
