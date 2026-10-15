@@ -124,8 +124,11 @@ A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not mov
    tags released together cannot both pass the check against the same older bundle.
    Only one more such job waits: a third tag's publish cancels the waiting one, which must
    then be re-run by hand (Re-run failed jobs). A refusal here comes after `docker` pushed
-   the tag's image tags (and `:latest` for a final release): re-run the tag with
-   `allow_clickhouse_downgrade`, or move `:latest` back to the previous release by hand.
+   the tag's image tags (and `:latest` for a final release). A re-run keeps the run's
+   inputs and fails again, so dispatch the tag instead, which also publishes the SDKs:
+   with `-f clickhouse_image=` the newer release the error names (if it dumps the tag's
+   `schemas/schema.sql`), or with `-f allow_clickhouse_downgrade=true`. Otherwise move
+   `:latest` back to the previous release by hand.
 
 The server image is published before the GitHub Release, so an installer shown on the
 release page never points at a missing image.

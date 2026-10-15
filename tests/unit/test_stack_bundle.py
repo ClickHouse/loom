@@ -220,6 +220,7 @@ def test_the_release_refuses_a_downgrade_before_it_builds(
     (resolve,) = [
         s for s in _release_workflow()["jobs"]["clickhouse"]["steps"] if s.get("id") == "resolve"
     ]
+    assert resolve["env"]["ALLOW_DOWNGRADE"] == "${{ inputs.allow_clickhouse_downgrade }}"
     latest = tmp_path / "work" / "dev" / "clickhouse_release.sh"
     latest.parent.mkdir(parents=True)
     latest.write_text(f"echo {own}\n")
@@ -249,6 +250,7 @@ def test_overlapping_releases_recheck_the_bundle_another_tag_published(
     job = _release_workflow()["jobs"]["github-release"]
     assert job["concurrency"] == {"group": "release-publish", "cancel-in-progress": False}
     (keep,) = [s for s in job["steps"] if "published_bundle.sh" in s.get("run", "")]
+    assert keep["env"]["ALLOW_DOWNGRADE"] == "${{ inputs.allow_clickhouse_downgrade }}"
     _module().build("1.1.0", tmp_path / "work" / "release" / "stack", own)
     run = _run_step(tmp_path, keep["run"], ALLOW_DOWNGRADE=allow)
     assert (run.returncode == 0) is passes, run.stderr
