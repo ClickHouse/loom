@@ -353,29 +353,25 @@ async def device_approve(request: Request) -> Response:
     )
 
 
-def _token_error(error: str) -> oauth.OAuthError:
-    return oauth.OAuthError(error)
-
-
 async def device_code_grant(f: dict[str, str]) -> dict[str, Any]:
     """The token endpoint's answer to a polling CLI (RFC 8628 §3.5)."""
     if f.get("client_id") != DEVICE_CLIENT_ID:
         raise oauth.OAuthError("invalid_client")
     device_code = f.get("device_code", "")
     if not _polls.allow(token_id(device_code)):
-        raise _token_error("slow_down")
+        raise oauth.OAuthError("slow_down")
     try:
         device = await oauth.store.take_device(device_code)
     except CodeReplayed as e:
         raise await oauth.end_replayed_session(e, "device code") from None
     if device is None:
-        raise _token_error("invalid_grant")
+        raise oauth.OAuthError("invalid_grant")
     if device["exp"] < int(time.time()):
-        raise _token_error("expired_token")
+        raise oauth.OAuthError("expired_token")
     if device["status"] == "pending":
-        raise _token_error("authorization_pending")
+        raise oauth.OAuthError("authorization_pending")
     if device["status"] != "approved":
-        raise _token_error("access_denied")
+        raise oauth.OAuthError("access_denied")
     try:
         return await oauth.issue_tokens(device, DEVICE_CLIENT_ID)
     except oauth.OAuthError:

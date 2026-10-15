@@ -57,20 +57,24 @@ class MemoryOAuthStore:
         self.spent.pop(token_id(token), None)
 
     def _take(
-        self, rows: dict[str, dict[str, Any]], key: str, client_id: str | None = None
+        self,
+        rows: dict[str, dict[str, Any]],
+        key: str,
+        client_id: str,
+        accept: Any = lambda g: True,
     ) -> dict[str, Any] | None:
         g = rows.get(key)
         if g is None or g["exp"] < int(time.time()):
             return None
-        if client_id is not None and g["client_id"] != client_id:
+        if g["client_id"] != client_id or not accept(g):
             return None
         if key in self.spent:
             raise CodeReplayed(dict(g))
         self.spent[key] = time.time()
         return dict(g)
 
-    async def take_code(self, code: str, client_id: str) -> dict[str, Any] | None:
-        return self._take(self.codes, token_id(code), client_id)
+    async def take_code(self, code: str, client_id: str, accept: Any) -> dict[str, Any] | None:
+        return self._take(self.codes, token_id(code), client_id, accept)
 
     async def take_refresh(self, token: str, client_id: str) -> dict[str, Any] | None:
         return self._take(self.refresh, token_id(token), client_id)
@@ -112,6 +116,13 @@ class MemoryOAuthStore:
         return None
 
     async def take_device(self, device_code: str) -> dict[str, Any] | None:
+        undecided = await self.device(token_id(device_code))
+        if undecided is not None and undecided["status"] == "pending":
+            return undecided
+        async with self.transition(f"device:{token_id(device_code)}"):
+            return self._take_device(device_code)
+
+    def _take_device(self, device_code: str) -> dict[str, Any] | None:
         d = self.devices.get(token_id(device_code))
         if d is None:
             return None

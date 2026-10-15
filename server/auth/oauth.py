@@ -19,7 +19,7 @@ import logging
 import secrets
 import time
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 import httpx
@@ -764,21 +764,19 @@ async def end_session(grant: Grant | Device, reason: str) -> None:
         await store.owe_revocation(family, reason)
         _keep_trying(grant, reason)
         return
-    await audit.emit(
-        "auth.session_revoked",
-        org=grant["org"],
-        namespace="-",
-        actor=grant["subject"],
-        subject={"family": family, "client_id": grant["client_id"], "reason": reason},
-    )
+    await _audit_ended(grant, reason)
 
 
-_owed: set[asyncio.Task[None]] = set()
+# family -> the task retrying its owed revocation: one per family.
+_owed: dict[str, asyncio.Task[None]] = {}
 _RETRY_WAITS_S = (2, 10, 60, 300, 1800)
 
 
 def _keep_trying(grant: Grant | Device, reason: str) -> None:
     """Retry an owed revocation in the background until it lands."""
+    family = grant["family"]
+    if family in _owed:
+        return
 
     async def retry() -> None:
         from server.auth.revocation import revoke
@@ -787,17 +785,27 @@ def _keep_trying(grant: Grant | Device, reason: str) -> None:
             await asyncio.sleep(wait)
             until = datetime.now(UTC) + timedelta(seconds=_REFRESH_TTL)
             try:
-                await revoke(grant["family"], expires_at=until, reason=reason, revoked_by="oauth")
+                await revoke(family, expires_at=until, reason=reason, revoked_by="oauth")
             except Exception as e:  # noqa: BLE001 — tried again after the next wait
-                log.warning("oauth: owed revocation of %s still failing: %s", grant["family"], e)
+                log.warning("oauth: owed revocation of %s still failing: %s", family, e)
                 continue
-            log.info("oauth: owed revocation of session %s landed", grant["family"])
+            await _audit_ended(grant, f"{reason} (owed)")
             return
-        log.error("oauth: owed revocation of session %s never landed here", grant["family"])
+        log.error("oauth: owed revocation of session %s never landed here", family)
 
     task = asyncio.create_task(retry())
-    _owed.add(task)
-    task.add_done_callback(_owed.discard)
+    _owed[family] = task
+    task.add_done_callback(lambda _: _owed.pop(family, None))
+
+
+async def _audit_ended(grant: Grant | Device, reason: str) -> None:
+    await audit.emit(
+        "auth.session_revoked",
+        org=grant["org"],
+        namespace="-",
+        actor=grant["subject"],
+        subject={"family": grant["family"], "client_id": grant["client_id"], "reason": reason},
+    )
 
 
 def _unavailable() -> OAuthError:
@@ -829,25 +837,27 @@ async def end_replayed_session(e: CodeReplayed, what: str) -> OAuthError:
 
 async def _authorization_code_grant(f: dict[str, str]) -> dict[str, Any]:
     client_id = f.get("client_id", "")
+    code, verifier = f.get("code", ""), f.get("code_verifier", "")
+
+    def presented_right(g: Grant) -> bool:
+        return g["redirect_uri"] == f.get("redirect_uri", "") and verify_pkce_s256(
+            verifier, g["code_challenge"]
+        )
+
     try:
-        grant = await store.take_code(f.get("code", ""), client_id)  # single-use
+        grant = await store.take_code(code, client_id, presented_right)  # single-use
     except CodeReplayed as e:
-        spent = cast(Grant, e.grant)  # a code's
-        if not verify_pkce_s256(f.get("code_verifier", ""), spent["code_challenge"]):
-            raise _invalid_grant() from None  # a leaked code alone proves nothing
+        # Only the client itself (its verifier) presents it again: a leaked
+        # code alone was refused above, unspent.
         raise await end_replayed_session(e, "authorization code") from None
     if grant is None:
         raise _invalid_grant()
-    if grant["redirect_uri"] != f.get("redirect_uri", ""):
-        raise _invalid_grant()
-    if not verify_pkce_s256(f.get("code_verifier", ""), grant["code_challenge"]):
-        raise _invalid_grant("PKCE failed")
     try:
         return await issue_tokens(grant, client_id)
     except OAuthError:
         raise
     except Exception:  # Loom's own failure: unspend the code so the retry is no replay
-        await store.save_code(f.get("code", ""), grant)
+        await store.save_code(code, grant)
         raise
 
 
@@ -978,16 +988,15 @@ async def revoke_token(request: Request) -> Response:
         # token could not be matched, and logout would quietly do nothing.
         raise OAuthError("invalid_request", description="client_id required")
     grant: Grant | Device | None = None
-    reason = "logout"
     try:
         grant = await store.take_refresh(token_value, client_id)
     except CodeReplayed as e:
-        grant, reason = e.grant, "refresh token replayed"  # an old copy, presented here
+        grant = e.grant  # spent already (a logout retried, or an old copy): still a logout
     except claims.Busy:
         raise _unavailable() from None
     if grant is not None:
         try:
-            await end_session(grant, reason)
+            await end_session(grant, "logout")
         except Exception as e:  # nothing durable landed: the client must not think it did
             log.exception("oauth: logout could not end session %s", grant["family"])
             raise _unavailable() from e
@@ -1003,9 +1012,13 @@ async def revoke_token(request: Request) -> Response:
     # A session's access token ends its whole session; any other token itself.
     key = info.session_id or info.token_id
     if key:
-        await revoke(
-            key, expires_at=_revocation_end(info), reason="logout", revoked_by=info.subject
-        )
+        try:
+            await revoke(
+                key, expires_at=_revocation_end(info), reason="logout", revoked_by=info.subject
+            )
+        except Exception as e:  # not revoked: the client is told to retry, not that it worked
+            log.exception("oauth: logout could not revoke %s", key)
+            raise _unavailable() from e
         await audit.emit(
             "auth.session_revoked",
             org=info.org,

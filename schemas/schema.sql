@@ -2610,6 +2610,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS loom.oauth_claims
 (
     `claim_key` String,
+    `holder` String,
     `claimed_at` DateTime64(3)
 )
 ENGINE = KeeperMap('/loom/oauth_claims')

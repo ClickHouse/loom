@@ -388,8 +388,8 @@ def logout(profile: str | None = None) -> bool:
 def whoami(profile: str | None = None) -> dict[str, Any]:
     """Who the profile's token says you are, as the server verifies it."""
     profile = profile or default_profile()
-    token = access_token(profile)
-    server = _read()["profiles"][profile]["server"]
+    server = _entry_for(profile, None)["server"]
+    token = access_token(profile, server=server)  # this server's token, or none
     with _server(server) as client:
         r = client.get("/v1/whoami", headers={"Authorization": f"Bearer {token}"})
     if r.status_code != 200:

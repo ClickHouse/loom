@@ -86,7 +86,7 @@ async def test_a_refresh_token_presented_five_times_at_once_is_spent_once(store:
 async def test_a_code_presented_five_times_at_once_is_spent_once(store: Any) -> None:
     code = secrets.token_urlsafe(32)
     await store.save_code(code, _grant("loom-mcp"))
-    results = await _all(*(store.take_code(code, "loom-mcp") for _ in range(5)))
+    results = await _all(*(store.take_code(code, "loom-mcp", lambda _g: True) for _ in range(5)))
     assert len([r for r in results if isinstance(r, dict)]) == 1, results
 
 
@@ -139,3 +139,34 @@ async def test_one_approval_ticket_approves_once(store: Any) -> None:
         )
     approved = [a for a in answers if a.status_code == 200 and "signed in" in a.text]
     assert len(approved) == 1, [a.status_code for a in answers]
+
+
+async def test_a_holder_taken_over_cannot_release_the_new_holders_claim(
+    store: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.core.ch import get_client
+
+    ch = get_client()
+    key = f"test:{uuid.uuid4().hex}"
+    held = "SELECT holder FROM loom.oauth_claims WHERE claim_key = {k:String}"
+    monkeypatch.setattr(claims, "_STALE_S", 0)  # A stalls past it at once
+    a_inside, b_inside, a_done = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def a() -> None:
+        async with claims.holding(ch, key):
+            a_inside.set()
+            await b_inside.wait()  # still running while B has taken over
+        a_done.set()
+
+    async def b() -> str:
+        await a_inside.wait()
+        await asyncio.sleep(0.05)
+        async with claims.holding(ch, key):
+            b_inside.set()
+            await a_done.wait()  # A has left and run its release
+            row = await ch.query_one(held, params={"k": key})
+            return str(row["holder"]) if row else ""
+
+    _, b_holder = await asyncio.gather(a(), b())
+    assert b_holder, "A's release dropped the claim B held"
+    assert await ch.query_one(held, params={"k": key}) is None  # B dropped its own

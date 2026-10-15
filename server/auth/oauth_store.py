@@ -20,7 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any, Literal, Protocol, TypedDict
 
@@ -90,7 +90,9 @@ class OAuthStore(Protocol):
     async def save_client(self, client_id: str, redirect_uris: list[str], name: str) -> None: ...
     async def get_client(self, client_id: str) -> dict[str, Any] | None: ...
     async def save_code(self, code: str, g: Grant) -> None: ...
-    async def take_code(self, code: str, client_id: str) -> Grant | None: ...
+    async def take_code(
+        self, code: str, client_id: str, accept: Callable[[Grant], bool]
+    ) -> Grant | None: ...
     async def save_refresh(self, token: str, g: Grant) -> None: ...
     async def take_refresh(self, token: str, client_id: str) -> Grant | None: ...
     async def save_pending(self, state: str, data: dict[str, Any]) -> None: ...
@@ -230,13 +232,23 @@ class ClickHouseStore:
     async def save_refresh(self, token: str, g: Grant) -> None:
         await self._ch().insert(_T, [_grant_row("refresh", token_id(token), g, 0)])
 
-    async def take_code(self, code: str, client_id: str) -> Grant | None:
-        return await self._take("code", token_id(code), client_id)
+    async def take_code(
+        self, code: str, client_id: str, accept: Callable[[Grant], bool]
+    ) -> Grant | None:
+        """`accept` (the redirect URI and PKCE verifier match) is checked before
+        the spend, like the client: a code presented wrongly is left unspent."""
+        return await self._take("code", token_id(code), client_id, accept)
 
     async def take_refresh(self, token: str, client_id: str) -> Grant | None:
         return await self._take("refresh", token_id(token), client_id)
 
-    async def _take(self, rtype: str, rid: str, client_id: str) -> Grant | None:
+    async def _take(
+        self,
+        rtype: str,
+        rid: str,
+        client_id: str,
+        accept: Callable[[Grant], bool] = lambda g: True,
+    ) -> Grant | None:
         async with self.transition(f"{rtype}:{rid}"):
             row = await self._ch().query_one(
                 f"""SELECT {_GRANT_COLUMNS} FROM {_T} FINAL
@@ -245,9 +257,9 @@ class ClickHouseStore:
             )
             if not row or int(row["expires_at"] or 0) < int(time.time()):
                 return None
-            if row["client_id"] != client_id:
-                return None  # checked before the spend: a wrong presenter can't burn it
             grant = _grant(row)
+            if row["client_id"] != client_id or not accept(grant):
+                return None  # checked before the spend: a wrong presenter can't burn it
             if row["consumed"]:
                 raise CodeReplayed(grant)
             await self._ch().insert(_T, [_grant_row(rtype, rid, grant, 1)])
@@ -344,6 +356,9 @@ class ClickHouseStore:
         """The device grant as the polling client sees it. An approved or
         denied grant is spent by this read; a pending one is not."""
         rid = token_id(device_code)
+        undecided = await self.device(rid)
+        if undecided is not None and undecided["status"] == "pending":
+            return undecided  # a poll that writes nothing needs no claim
         async with self.transition(f"device:{rid}"):
             row = await self._ch().query_one(
                 f"""SELECT {_DEVICE_COLUMNS} FROM {_T} FINAL

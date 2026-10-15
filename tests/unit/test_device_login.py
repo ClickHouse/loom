@@ -1075,3 +1075,55 @@ def test_a_busy_grant_is_a_retry_not_a_refusal(_world, monkeypatch) -> None:
     monkeypatch.setattr(_world["store"], "take_refresh", busy)
     r = _refresh(c, tokens["refresh_token"])
     assert r.status_code == 503 and r.json()["error"] == "temporarily_unavailable"
+
+
+def test_a_code_presented_wrongly_is_left_for_its_client(_world) -> None:
+    c = _client()
+    client_id, code, verifier = _code_for(c, _world["store"])
+    assert _error(_exchange(c, client_id, code, "w" * 43)) == "invalid_grant"
+    assert _exchange(c, client_id, code, verifier).status_code == 200  # not burned
+
+
+def test_a_failed_access_token_logout_is_a_retry(_world, monkeypatch) -> None:
+    async def down(token_id: str, **kw: Any) -> dict[str, Any]:
+        raise RuntimeError("revoked_tokens unwritable")
+
+    monkeypatch.setattr(revocation, "revoke", down)
+    access = mint_token(
+        subject="bob", org="acme", namespaces=["bob"], roles=["writer"], ttl_seconds=60
+    )
+    r = _client().post("/oauth/revoke", data={"token": access, "client_id": "loom-cli"})
+    assert r.status_code == 503 and r.json()["error"] == "temporarily_unavailable"
+
+
+def test_a_logout_retried_after_the_token_was_spent_is_still_a_logout(_world) -> None:
+    c = _client()
+    tokens = _signed_in_tokens(c)
+    _refresh(c, tokens["refresh_token"])  # spent
+    c.post("/oauth/revoke", data={"token": tokens["refresh_token"], "client_id": "loom-cli"})
+    reasons = [kw["subject"]["reason"] for n, kw in _world["events"] if n == "auth.session_revoked"]
+    assert reasons == ["logout"]
+
+
+async def test_one_family_gets_one_retry_task() -> None:
+    oauth._owed.clear()
+    grant = {"family": "f1", "org": "o", "subject": "s", "client_id": "c"}
+    oauth._keep_trying(grant, "x")  # type: ignore[arg-type]
+    oauth._keep_trying(grant, "x")  # type: ignore[arg-type]
+    assert list(oauth._owed) == ["f1"]
+    oauth._owed["f1"].cancel()
+
+
+def test_a_pending_poll_claims_nothing(_world, monkeypatch) -> None:
+    c = _client()
+    code = _start(c)["device_code"]
+    claimed: list[str] = []
+    real = _world["store"].transition
+
+    def transition(key: str) -> Any:
+        claimed.append(key)
+        return real(key)
+
+    monkeypatch.setattr(_world["store"], "transition", transition)
+    assert _error(_poll(c, code)) == "authorization_pending"
+    assert claimed == []
