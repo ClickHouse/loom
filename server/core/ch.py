@@ -334,12 +334,13 @@ _DRIVER_DEFAULT_READ_TIMEOUT_S = 300
 
 
 def _driver_read_timeout_s() -> int:
-    """The driver-level read timeout: the `ddl` bound, or the driver's own
-    default when every class bound is off (0 must never mean 1 s). The client
-    is shared, so a `statement_timeout()` scope it is rebuilt inside may
-    raise this bound but never lower it."""
-    t = max(float(settings.ch_timeout_ddl_s), statement_timeout_var.get())
-    return int(t) if t > 0 else _DRIVER_DEFAULT_READ_TIMEOUT_S
+    """The driver-level read timeout: the largest class bound, a bound that
+    is off (0) counting as the driver's own default (0 must never mean 1 s).
+    The client is shared, so a `statement_timeout()` scope it is rebuilt
+    inside may raise this bound but never lower it."""
+    bounds = (settings.ch_timeout_read_s, settings.ch_timeout_write_s, settings.ch_timeout_ddl_s)
+    t = max(float(b) or _DRIVER_DEFAULT_READ_TIMEOUT_S for b in bounds)
+    return int(max(t, statement_timeout_var.get()))
 
 
 def _apply_class_timeout(out: dict[str, Any], cls: str) -> dict[str, Any]:

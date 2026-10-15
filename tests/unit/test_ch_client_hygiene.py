@@ -164,13 +164,23 @@ async def test_the_driver_read_timeout_is_the_largest_class(
         return _C()
 
     monkeypatch.setattr(ch_mod.clickhouse_connect, "get_async_client", _fake_get_async_client)
+    monkeypatch.setattr(settings, "ch_timeout_read_s", 30.0)
+    monkeypatch.setattr(settings, "ch_timeout_write_s", 60.0)
     monkeypatch.setattr(settings, "ch_timeout_ddl_s", 300.0)
     await ch_mod.CHClient().connect()
     assert captured["send_receive_timeout"] == 300
-    # Every bound off (0) falls back to the driver's own default, never 1 s.
+    # A bound off (0) counts as the driver's own default, never 1 s.
     monkeypatch.setattr(settings, "ch_timeout_ddl_s", 0.0)
     await ch_mod.CHClient().connect()
     assert captured["send_receive_timeout"] == 300
+    with ch_mod.statement_timeout(5):
+        await ch_mod.CHClient().connect()
+    assert captured["send_receive_timeout"] == 300
+    # A read bound above the ddl one is not cut short by the backstop.
+    monkeypatch.setattr(settings, "ch_timeout_read_s", 600.0)
+    await ch_mod.CHClient().connect()
+    assert captured["send_receive_timeout"] == 600
+    monkeypatch.setattr(settings, "ch_timeout_read_s", 30.0)
     monkeypatch.setattr(settings, "ch_timeout_ddl_s", 120.0)
     await ch_mod.CHClient().connect()
     assert captured["send_receive_timeout"] == 120
