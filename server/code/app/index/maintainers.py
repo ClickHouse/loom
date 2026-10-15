@@ -30,6 +30,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
+from server.core.errors import GrantBusyError
 
 log = logging.getLogger(__name__)
 
@@ -92,7 +93,7 @@ async def _grant_rows(client: Any, org: str, branches: list[str]) -> list[dict[s
     rows: list[dict[str, Any]] = await client.query_all(
         """
         SELECT namespace, subject, role, ifNull(toString(status), 'active') AS status,
-               revoked_at, granted_at, granted_by
+               revoked_at, granted_at, granted_by, version
         FROM loom.namespace_grants FINAL
         WHERE org = {org:String} AND namespace IN {ns:Array(String)}
         """,
@@ -103,69 +104,58 @@ async def _grant_rows(client: Any, org: str, branches: list[str]) -> list[dict[s
 
 _GRANT_ROW_SQL = """
     SELECT namespace, subject, role, ifNull(toString(status), 'active') AS status,
-           revoked_at, granted_at, granted_by
+           revoked_at, granted_at, granted_by, version
     FROM loom.namespace_grants FINAL
     WHERE org = {org:String} AND namespace = {ns:String} AND subject = {sub:String}
 """
 
 
-def _state(row: dict[str, Any] | None) -> tuple[Any, ...] | None:
-    if row is None:
-        return None
-    return row.get("role"), row.get("status"), row.get("revoked_at"), row.get("granted_at")
+def _version(row: dict[str, Any] | None) -> int | None:
+    """The grant row's version: a new one on every change, where `granted_at`
+    keeps whole seconds and two changes within one compare equal."""
+    return None if row is None else int(row["version"])
 
 
-def _admin_since(row: dict[str, Any] | None, granted_at: Any) -> bool:
-    """Whether `row` is a live admin grant given at `granted_at`."""
+def _live_admin(row: dict[str, Any] | None) -> bool:
     return (
         row is not None
         and row.get("role") == "admin"
         and row.get("revoked_at") is None
         and str(row.get("status") or "active") in _ACTIVE
-        and row.get("granted_at") == granted_at
     )
 
 
+# The grant rows a plan was made from, by (namespace, subject).
+_Seen = dict[tuple[str, str], dict[str, Any]]
+
+
 async def _mirror_wanted(
-    client: Any,
-    org: str,
-    row: dict[str, Any],
-    now: dict[str, Any] | None,
-    read: dict[str, Any] | None,
+    client: Any, org: str, row: dict[str, Any], now: dict[str, Any] | None, seen: _Seen
 ) -> bool:
     """A mirror is written only over the grant it was planned from (one changed
     since, an admin's lowering say, is left to the next sync), and only while
     its source is still the admin grant it copies: a revoke that landed since
     the plan read must not be copied back."""
-    if _state(now) != _state(read):
+    subject, source_ns = row["subject"], row["granted_by"].removeprefix(GRANTED_BY_PREFIX)
+    if _version(now) != _version(seen.get((row["namespace"], subject))):
         return False
     source = await client.query_one(
-        _GRANT_ROW_SQL,
-        params={
-            "org": org,
-            "ns": row["granted_by"].removeprefix(GRANTED_BY_PREFIX),
-            "sub": row["subject"],
-        },
+        _GRANT_ROW_SQL, params={"org": org, "ns": source_ns, "sub": subject}
     )
-    return _admin_since(source, row["granted_at"])
+    return _live_admin(source) and _version(source) == _version(seen.get((source_ns, subject)))
 
 
 async def _still_admin(
-    client: Any,
-    org: str,
-    row: dict[str, Any],
-    now: dict[str, Any] | None,
-    read: dict[str, Any] | None,
+    client: Any, org: str, row: dict[str, Any], now: dict[str, Any] | None, seen: _Seen
 ) -> bool:
     """A revocation stands while the subject still holds the admin grant it
     was planned against; one granted again since is newer and stays."""
-    return read is not None and _admin_since(now, read.get("granted_at"))
+    read = seen.get((row["namespace"], row["subject"]))
+    return read is not None and _live_admin(now) and _version(now) == _version(read)
 
 
-# (client, org, planned row, current row, row as read) -> write it?
-_Wanted = Callable[
-    [Any, str, dict[str, Any], dict[str, Any] | None, dict[str, Any] | None], Awaitable[bool]
-]
+# (client, org, planned row, current row, the plan's rows) -> write it?
+_Wanted = Callable[[Any, str, dict[str, Any], dict[str, Any] | None, _Seen], Awaitable[bool]]
 
 
 async def _write_under_claims(
@@ -181,8 +171,9 @@ async def _write_under_claims(
     holding its repository claim (with `hold_repo`, else the caller holds it)
     and then its branch claims: with the repository claim first, one change
     across a subject's branches runs at a time. A subject that fails writes
-    none of its rows and does not stop the others; the first failure is raised
-    once all were tried."""
+    none of its rows; one whose claim is busy does not stop the others, and
+    is raised once all were tried. Any other failure stops at once: Keeper or
+    ClickHouse not answering one subject will not answer the next."""
     seen = {(str(r["namespace"]), str(r["subject"])): r for r in read}
     by_subject: dict[str, list[dict[str, Any]]] = {}
     for row in planned:
@@ -193,7 +184,7 @@ async def _write_under_claims(
             written += await _write_subject(
                 client, org, subject, rows, still_wanted, seen, hold_repo
             )
-        except Exception as e:  # noqa: BLE001 — the other subjects are still written
+        except GrantBusyError as e:  # that subject's change runs; the others are free
             failed.append(e)
     if failed:
         raise failed[0]
@@ -206,7 +197,7 @@ async def _write_subject(
     subject: str,
     rows: list[dict[str, Any]],
     still_wanted: _Wanted,
-    seen: dict[tuple[str, str], dict[str, Any]],
+    seen: _Seen,
     hold_repo: bool,
 ) -> int:
     """`_write_under_claims` for one subject's rows."""
@@ -225,7 +216,7 @@ async def _write_subject(
             now = await client.query_one(
                 _GRANT_ROW_SQL, params={"org": org, "ns": ns, "sub": subject}
             )
-            if await still_wanted(client, org, row, now, seen.get((ns, subject))):
+            if await still_wanted(client, org, row, now, seen):
                 wanted.append(row)
         if wanted:
             try:

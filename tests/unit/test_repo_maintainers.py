@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -53,6 +54,7 @@ class _FakeCH:
 
 
 T0 = datetime(2026, 9, 17, 10, 0, 0)
+_VERSIONS = itertools.count(1)
 
 
 def _admin(
@@ -72,6 +74,7 @@ def _admin(
         "revoked_at": revoked_at,
         "granted_at": at,
         "granted_by": "ops",
+        "version": next(_VERSIONS),
     }
 
 
@@ -345,7 +348,8 @@ async def test_a_revoke_leaves_a_grant_given_again_after_it_planned() -> None:
         async def query_one(self, sql: str, params: Any = None) -> dict[str, Any] | None:
             row = await super().query_one(sql, params)
             if row and params["ns"] == "code-x-26-6":
-                return {**row, "granted_at": T0 + timedelta(hours=2)}
+                # Granted again within the same second: only the version tells.
+                return {**row, "version": row["version"] + 1}
             return row
 
     ch = _Regranted(
@@ -533,3 +537,22 @@ async def test_a_subject_that_cannot_be_claimed_does_not_stop_a_sync_for_the_oth
         ("code-x-26-5", "bob"),
         ("code-x-26-6", "bob"),
     }
+
+
+async def test_a_keeper_that_cannot_answer_stops_a_sync_at_the_first_subject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.auth import grant_claims
+    from server.core.errors import BackendUnavailableError
+
+    tried: list[str] = []
+
+    def _down(org: str, ns: str, subject: str) -> Any:
+        tried.append(subject)
+        raise BackendUnavailableError("keeper away")
+
+    monkeypatch.setattr(grant_claims, "grant_change", _down)
+    ch = _FakeCH([_admin("code-x", "alice"), _admin("code-x", "bob")])
+    with pytest.raises(BackendUnavailableError):
+        await maintainers.sync_repo_maintainers("clickhouse", "code-x", ch=ch)
+    assert len(set(tried)) == 1, "no wait per subject on a Keeper that is down"

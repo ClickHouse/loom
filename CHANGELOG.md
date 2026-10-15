@@ -82,6 +82,10 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   a retry, where it used to revoke the grant and log the failed branches. A maintainer's
   revoke and a maintainer sync of the same person hold one claim on the repository, so a
   sync can no longer copy a revoked maintainer's admin grant back onto a branch.
+- **Security:** releasing a person's account (`loom claim-release`, the release endpoint) ends
+  every token issued before it to either of its spellings, the login handle and the email.
+  The release clears the binding between them, which a token's claim needs to be capped at
+  a grant revoked under the other spelling.
 - `grants.approve` refuses (409 `GRANT_WOULD_DOWNGRADE`) to approve a request below the
   subject's current grant; lower a grant with `grants.create replace=true`.
 - **Security:** two changes of one grant no longer interleave. An op that reads a grant

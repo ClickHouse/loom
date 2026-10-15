@@ -329,3 +329,15 @@ def test_several_subjects_are_checked_for_a_revocation_in_one_read(ch: _CH) -> N
     assert not asyncio.run(rev.subjects_revoked(["u-bob"], issued_at=now))
     assert not asyncio.run(rev.subjects_revoked([], issued_at=now))
     assert reads == [["bob", "u-bob"], ["u-bob"]]
+
+
+def test_a_stale_exact_grant_read_does_not_loosen_the_cap(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ch.grants["team"] = ("writer", "active", True)  # revoked, as the cap reads it
+
+    async def _stale(sql: str, params: dict[str, Any] | None = None) -> dict | None:
+        return {"role": "writer"}  # a replica that has not seen the revoke
+
+    monkeypatch.setattr(ch, "query_one", _stale)
+    assert not _admits(_flat("team"), "team", Role.WRITER)

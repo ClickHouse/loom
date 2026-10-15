@@ -21,6 +21,19 @@ from server.identity.app import claim_release as cr
 from server.identity.app import namespace_classification as nc
 from server.settings import settings
 
+
+@pytest.fixture(autouse=True)
+def _tokens_revoked(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """A release ends the account's tokens; here it only records whose."""
+    revoked: list[str] = []
+
+    async def _revoke(subject: str, **_k: object) -> None:
+        revoked.append(subject)
+
+    monkeypatch.setattr("server.auth.revocation.revoke", _revoke)
+    return revoked
+
+
 _ROW: dict[str, Any] = {
     "org": "acme",
     "namespace": "repo-x",

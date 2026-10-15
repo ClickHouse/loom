@@ -197,11 +197,7 @@ async def check_authorized(
     # A caller that already read the principal's
     # grants this request (a listing over many namespaces) hands the answer
     # in — `None` included — instead of paying one grants read per namespace.
-    grant_role = (
-        known_grant
-        if known_grant is not _UNKNOWN_GRANT
-        else await _lookup_grant(org, namespace, auth.subject)
-    )
+    grant_role = await _grant_role(auth, org, namespace, cap, known_grant)
     if grant_role is not None and grant_role.value >= required_role.value:
         return
 
@@ -222,6 +218,19 @@ async def check_authorized(
         org,
         namespace,
     )
+
+
+async def _grant_role(
+    auth: AuthInfo, org: str, namespace: str, cap: int | None, known_grant: Role | None
+) -> Role | None:
+    """The grant the subject holds there. Where its claim is capped, the cap's
+    read decides: it covers every spelling consistently, and no second,
+    exact-spelling read may loosen it."""
+    if cap is not None:
+        return _rank_role(cap)
+    if known_grant is not _UNKNOWN_GRANT:
+        return known_grant
+    return await _lookup_grant(org, namespace, auth.subject)
 
 
 async def _check_creator(
