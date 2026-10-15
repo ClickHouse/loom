@@ -119,6 +119,13 @@ read_password() {
   printf '\n' >/dev/tty
 }
 
+# dotenv_quote VALUE: VALUE double-quoted for .env, with `\`, `"` and `$`
+# escaped, which Compose reads back exactly (single quotes cannot hold a
+# trailing backslash).
+dotenv_quote() {
+  printf '"%s"' "$(printf '%s' "$1" | sed 's/[\\"$]/\\&/g')"
+}
+
 # get_env KEY: KEY's value in .env, empty when the file or the key is missing.
 get_env() {
   [ -f "$INSTALL_DIR/.env" ] || return 0
@@ -146,10 +153,6 @@ if [ -n "$CH_URL" ]; then
     CH_PASSWORD_SET=1
   fi
   [ -n "$CH_PASSWORD_SET" ] || read_password
-  # .env holds it between single quotes, which take everything else literally.
-  case $CH_PASSWORD in
-    *"'"*) fail "the ClickHouse password contains a single quote, which .env cannot hold; choose another" ;;
-  esac
 fi
 
 # Compose prefers the shell's variables to .env; .env alone names the target.
@@ -251,7 +254,7 @@ if [ -n "$CH_URL" ]; then
   set_env LOOM_CH_PORT "$CH_PORT"
   set_env LOOM_CH_SECURE "$CH_SECURE"
   set_env LOOM_CH_USER "$CH_USER"
-  [ -n "${KEEP_PASSWORD:-}" ] || set_env LOOM_CH_PASSWORD "'$CH_PASSWORD'"
+  [ -n "${KEEP_PASSWORD:-}" ] || set_env LOOM_CH_PASSWORD "$(dotenv_quote "$CH_PASSWORD")"
   printf 'Loom will use ClickHouse at %s:%s as %s\n' "$CH_HOST" "$CH_PORT" "$CH_USER"
 fi
 chmod 600 "$INSTALL_DIR/.env"

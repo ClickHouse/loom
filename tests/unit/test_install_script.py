@@ -5,7 +5,9 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
+import shutil
 import stat
 import subprocess
 from pathlib import Path
@@ -92,7 +94,7 @@ def test_an_outside_clickhouse_is_written_to_env_and_never_printed(install) -> N
     assert env["LOOM_CH_SECURE"] == "true"
     assert env["LOOM_CH_USER"] == "loom@acme"
     # Single quotes: Compose takes the value literally, `$` included.
-    assert env["LOOM_CH_PASSWORD"] == "'p@ss$w0rd:/'"
+    assert env["LOOM_CH_PASSWORD"] == '"p@ss\\$w0rd:/"'
     assert stat.S_IMODE((target / ".env").stat().st_mode) == 0o600
 
 
@@ -103,7 +105,7 @@ def test_a_raw_slash_or_colon_in_the_password_is_never_printed(install) -> None:
     assert "Secr3t" not in result.stdout + result.stderr
     env = _env(target)
     assert (env["LOOM_CH_HOST"], env["LOOM_CH_PORT"]) == ("h.example", "8443")
-    assert env["LOOM_CH_PASSWORD"] == "'Secr3t/xy:12'"
+    assert env["LOOM_CH_PASSWORD"] == '"Secr3t/xy:12"'
 
 
 def test_a_query_string_after_the_port_is_ignored(install) -> None:
@@ -135,7 +137,7 @@ def test_the_password_can_come_from_the_environment(install) -> None:
         "8123",
         "false",
     )
-    assert env["LOOM_CH_USER"] == "loom" and env["LOOM_CH_PASSWORD"] == "'from-env'"
+    assert env["LOOM_CH_USER"] == "loom" and env["LOOM_CH_PASSWORD"] == '"from-env"'
 
 
 @pytest.mark.parametrize(
@@ -164,7 +166,7 @@ def test_an_empty_password_needs_no_terminal(install, args, env) -> None:
     run, target = install
     result = run(*args, start_new_session=True, **env)
     assert result.returncode == 0, result.stderr
-    assert _env(target)["LOOM_CH_PASSWORD"] == "''"
+    assert _env(target)["LOOM_CH_PASSWORD"] == '""'
 
 
 def test_a_rerun_for_the_same_server_keeps_the_saved_password(install) -> None:
@@ -173,7 +175,7 @@ def test_a_rerun_for_the_same_server_keeps_the_saved_password(install) -> None:
     rerun = run("--clickhouse", "https://loom@h.example", start_new_session=True)
     assert rerun.returncode == 0, rerun.stderr
     assert "Using the ClickHouse password saved in .env" in rerun.stdout
-    assert _env(target)["LOOM_CH_PASSWORD"] == "'first'"
+    assert _env(target)["LOOM_CH_PASSWORD"] == '"first"'
     other_port = run("--clickhouse", "https://loom@h.example:9440", start_new_session=True)
     assert other_port.returncode == 1 and "no ClickHouse password" in other_port.stderr
     other = run("--clickhouse", "https://someone@h.example", start_new_session=True)
@@ -187,12 +189,41 @@ def test_no_password_and_no_terminal_says_where_to_put_it(install) -> None:
     assert "no ClickHouse password: set LOOM_CH_PASSWORD" in result.stderr
 
 
-def test_a_password_with_a_single_quote_is_refused(install) -> None:
+@pytest.mark.parametrize("password", ["it's", "ends\\", "a$b", 'q"x', "t\\tab", "$HOME"])
+def test_compose_reads_back_the_password_exactly(install, tmp_path: Path, password: str) -> None:
+    docker = shutil.which("docker")
+    if not docker or subprocess.run([docker, "compose", "version"], capture_output=True).returncode:
+        pytest.skip("needs Docker Compose to parse .env")
     run, target = install
-    result = run("--clickhouse", "https://u:it's@h:8443")
-    assert result.returncode == 1
-    assert "single quote" in result.stderr
-    assert not (target / ".env").exists()
+    assert run("--clickhouse", "https://loom@h.example", LOOM_CH_PASSWORD=password).returncode == 0
+    probe = tmp_path / "probe.yaml"
+    # Both ways compose.yaml passes it: env_file, and `${LOOM_CH_PASSWORD-…}`.
+    probe.write_text(
+        "services:\n  t:\n    image: busybox\n    env_file: [.env]\n"
+        '    environment:\n      INTERPOLATED: "${LOOM_CH_PASSWORD-unset}"\n'
+    )
+    config = subprocess.run(
+        [
+            docker,
+            "compose",
+            "--project-directory",
+            str(target),
+            "--env-file",
+            str(target / ".env"),
+            "-f",
+            str(probe),
+            "config",
+            "--format",
+            "json",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    environment = json.loads(config.stdout)["services"]["t"]["environment"]
+    # `config` writes a literal `$` as `$$`, its own escape.
+    assert environment["LOOM_CH_PASSWORD"].replace("$$", "$") == password
+    assert environment["INTERPOLATED"].replace("$$", "$") == password
 
 
 def test_an_upgrade_keeps_env_and_an_older_install_stays_bundled(install) -> None:
@@ -231,28 +262,45 @@ def test_switching_an_install_to_an_outside_clickhouse(install) -> None:
 
 
 def _answer_prompt(env: dict[str, str], url: str, answer: bytes) -> None:
-    """Run the installer on a pseudo-terminal and type `answer` at the prompt."""
+    """Run the installer on a pseudo-terminal, type `answer` at the prompt and
+    wait for it to finish, all within a deadline."""
     import pty
     import select
+    import signal
     import time
 
     pid, fd = pty.fork()
     if pid == 0:
         os.execvpe("sh", ["sh", str(ROOT / "install.sh"), "--clickhouse", url], env)
-    seen = b""
-    deadline = time.monotonic() + 20
-    while b"password for" not in seen and time.monotonic() < deadline:
-        if select.select([fd], [], [], 0.5)[0]:
-            seen += os.read(fd, 1024)
-    assert b"(Enter keeps the one saved in .env)" in seen, seen
-    os.write(fd, answer)
-    os.waitpid(pid, 0)
+    deadline = time.monotonic() + 30
+    seen, answered, status = b"", False, None
+    try:
+        while status is None and time.monotonic() < deadline:
+            if select.select([fd], [], [], 0.2)[0]:
+                try:
+                    seen += os.read(fd, 1024)
+                except OSError:  # the child closed the terminal
+                    pass
+            if not answered and b"password for" in seen:
+                assert b"(Enter keeps the one saved in .env)" in seen, seen
+                os.write(fd, answer)
+                answered = True
+            done, code = os.waitpid(pid, os.WNOHANG)
+            if done:
+                status = code
+    finally:
+        if status is None:
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+        os.close(fd)
+    assert answered, seen
+    assert status is not None and os.waitstatus_to_exitcode(status) == 0, seen
 
 
 def test_enter_at_a_rerun_prompt_keeps_the_saved_password(install, installer_env) -> None:
     run, target = install
     assert run("--clickhouse", "https://loom:first@h.example").returncode == 0
     _answer_prompt(installer_env, "https://loom@h.example", b"\n")
-    assert _env(target)["LOOM_CH_PASSWORD"] == "'first'"
+    assert _env(target)["LOOM_CH_PASSWORD"] == '"first"'
     _answer_prompt(installer_env, "https://loom@h.example", b"second\n")
-    assert _env(target)["LOOM_CH_PASSWORD"] == "'second'"
+    assert _env(target)["LOOM_CH_PASSWORD"] == '"second"'

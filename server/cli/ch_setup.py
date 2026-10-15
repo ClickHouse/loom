@@ -44,19 +44,33 @@ def _caps() -> dict[str, float]:
     return caller_shaped_ceilings()
 
 
-def reader_sql(reader: str, password: str) -> list[str]:
-    """The reader's profile, user and grant; `password` is an SQL literal."""
+def _profile() -> dict[str, tuple[str, float | None, float | None, bool]]:
+    """The reader's settings profile: each setting's value (as SQL), its MIN
+    and MAX (None for none) and whether it is CONST. `reader_sql` writes it and
+    `reader_problem` checks the reader runs under exactly this."""
     from server.code.domain.deadline import STATEMENT_FLOOR_S
 
-    settings = ["readonly = 2"]
+    profile: dict[str, tuple[str, float | None, float | None, bool]] = {
+        "readonly": ("2", None, None, False)
+    }
     for name, cap in _caps().items():
-        if not cap:
-            settings.append(f"{name} = 0")  # no cap asked for: none pinned either
-            continue
         # The floor keeps a statement from sending 0, which ClickHouse reads as no limit.
-        floor = STATEMENT_FLOOR_S if name == "max_execution_time" else 1
-        settings.append(f"{name} = {_number(cap)} MIN {_number(floor)} MAX {_number(cap)}")
-    settings.append("read_overflow_mode = 'throw' CONST")
+        floor = STATEMENT_FLOOR_S if name == "max_execution_time" else 1.0
+        profile[name] = (_number(cap), floor, cap, False) if cap else ("0", None, None, False)
+    profile["read_overflow_mode"] = ("'throw'", None, None, True)
+    return profile
+
+
+def reader_sql(reader: str, password: str) -> list[str]:
+    """The reader's profile, user and grant; `password` is an SQL literal."""
+    settings = []
+    for name, (value, low, high, const) in _profile().items():
+        bounds = (
+            f" MIN {_number(low)} MAX {_number(high)}"
+            if low is not None and high is not None
+            else ""
+        )
+        settings.append(f"{name} = {value}{bounds}{' CONST' if const else ''}")
     return [
         f"CREATE SETTINGS PROFILE OR REPLACE `{reader}` SETTINGS {', '.join(settings)}",
         f"CREATE USER OR REPLACE `{reader}` IDENTIFIED BY {password} SETTINGS PROFILE '{reader}'",
@@ -80,23 +94,39 @@ def admin_sql(user: str, reader: str) -> list[str]:
     ]
 
 
+def _setting(
+    value: str, low: str | None, high: str | None, readonly: int
+) -> tuple[str, float | None, float | None, bool]:
+    """A reader's `system.settings` row in `_profile`'s shape."""
+    try:
+        shown = _number(float(value))
+    except ValueError:
+        shown = f"'{value}'"
+    lower = None if low is None else float(low)
+    upper = None if high is None else float(high)
+    return (shown, lower, upper, readonly == 1)
+
+
 def reader_problem(reader: str) -> str:
     """Why `reader` is not ready ('' when it is): it must log in with
-    LOOM_CH_PASSWORD, read `loom.*` and run under the current caps."""
+    LOOM_CH_PASSWORD, read `loom.*` and run under exactly `_profile`, the
+    constraints included."""
     import clickhouse_connect
 
     from server.core.ch_target import connection_kwargs
 
-    caps = _caps()
-    probes = ", ".join(
-        ["currentUser()", "getSetting('readonly')"] + [f"getSetting('{n}')" for n in caps]
-    )
+    profile = _profile()
     try:
         ch = clickhouse_connect.get_client(
             **{**connection_kwargs(database=""), "username": reader}, connect_timeout=10
         )
         try:
-            name, readonly, *limits = ch.query(f"SELECT {probes}").result_rows[0]
+            name = ch.command("SELECT currentUser()")
+            rows = ch.query(
+                "SELECT name, value, min, max, readonly FROM system.settings "
+                "WHERE name IN {names:Array(String)}",
+                parameters={"names": list(profile)},
+            ).result_rows
             granted = str(ch.command(f"CHECK GRANT SELECT ON {preflight.DATABASE}.*")) == "1"
         finally:
             ch.close()
@@ -104,8 +134,11 @@ def reader_problem(reader: str) -> str:
         if error_code(e) in preflight.AUTH_FAILED:
             return "missing, or its password is not LOOM_CH_PASSWORD"
         return str(e).splitlines()[0][:160]
-    if name != reader or int(readonly) != 2 or [float(v) for v in limits] != list(caps.values()):
-        return "its profile does not match the current caps"
+    actual = {row[0]: _setting(*row[1:]) for row in rows}
+    # `readonly` cannot be changed under readonly anyway, so only its value counts.
+    actual["readonly"] = (actual["readonly"][0], None, None, False)
+    if name != reader or actual != profile:
+        return "its profile does not match the current caps and constraints"
     if not granted:
         return f"it lacks SELECT on {preflight.DATABASE}.*"
     return ""

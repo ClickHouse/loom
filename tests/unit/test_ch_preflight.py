@@ -16,8 +16,11 @@ from server.core.schema import preflight
 class FakeCH:
     """Answers the preflight's statements from a dict; records the rest."""
 
-    def __init__(self, *, replicas=("26.5.1.882",), database=True, grants=1, denied=()):
+    def __init__(
+        self, *, replicas=("26.5.1.882",), database=True, grants=1, denied=(), replica_error=""
+    ):
         self.replicas = replicas
+        self.replica_error = replica_error
         self.database = database
         self.grants = grants
         self.denied = set(denied)
@@ -25,6 +28,8 @@ class FakeCH:
 
     def query(self, sql: str, **_: Any) -> SimpleNamespace:
         if "clusterAllReplicas" in sql:
+            if self.replica_error:
+                raise RuntimeError(self.replica_error)
             if self.replicas is None:
                 raise RuntimeError("Code: 701. Requested cluster 'default' not found")
             return SimpleNamespace(result_rows=[(v,) for v in self.replicas])
@@ -55,6 +60,39 @@ def test_a_ready_server_passes_and_reports_what_it_has() -> None:
 def test_the_oldest_replica_decides_the_version() -> None:
     with pytest.raises(preflight.PreflightError, match=r"26\.3\.1\.1 is older than 26\.4"):
         preflight.check(FakeCH(replicas=("26.6.1.1", "26.3.1.1")), need="migrate")
+
+
+@pytest.mark.parametrize(
+    ("error", "needs_admin"),
+    [
+        ("Code: 497. DB::Exception: Not enough privileges. (ACCESS_DENIED)", True),
+        ("Code: 210. DB::Exception: Connection refused (NETWORK_ERROR)", False),
+    ],
+)
+def test_replicas_that_cannot_be_asked_are_not_taken_for_one_server(
+    error: str, needs_admin: bool
+) -> None:
+    with pytest.raises(preflight.PreflightError) as e:
+        preflight.oldest_version(FakeCH(replica_error=error))
+    assert e.value.needs_admin is needs_admin
+
+
+def test_every_system_table_loom_reads_is_checked_before_any_ddl() -> None:
+    ch = FakeCH(denied=("SELECT 1 FROM system.merge_tree_settings",))
+    with pytest.raises(preflight.PreflightError) as e:
+        preflight.check(ch, need="migrate")
+    assert "system.merge_tree_settings" in str(e.value) and e.value.needs_admin
+    assert not any(sql.startswith("CREATE") for sql in ch.ran)
+
+
+def test_the_reader_profile_is_compared_with_its_constraints() -> None:
+    profile = ch_setup._profile()
+    assert profile["max_execution_time"] == ("30", 0.05, 30.0, False)
+    assert profile["read_overflow_mode"] == ("'throw'", None, None, True)
+    # What system.settings shows a reader whose profile lost its MIN/MAX.
+    assert ch_setup._setting("30", None, None, 0) != profile["max_execution_time"]
+    assert ch_setup._setting("30", "0.05", "30", 0) == profile["max_execution_time"]
+    assert ch_setup._setting("throw", None, None, 0) != profile["read_overflow_mode"]
 
 
 def test_a_server_without_the_default_cluster_answers_for_itself() -> None:

@@ -60,6 +60,7 @@ _DATABASE_COUNT = f"SELECT count() FROM system.databases WHERE name = '{DATABASE
 # UNKNOWN_USER, WRONG_PASSWORD, REQUIRED_PASSWORD, AUTHENTICATION_FAILED
 AUTH_FAILED = frozenset({192, 193, 194, 516})
 ACCESS_DENIED = 497
+CLUSTER_DOESNT_EXIST = 701
 
 
 class PreflightError(RuntimeError):
@@ -134,15 +135,41 @@ def connect() -> Client:
         driver_log.setLevel(level)
 
 
+def _readable(ch: Client, table: str) -> bool:
+    """Whether this user may read `table`; one the server lacks counts as
+    readable (part_log and view_refreshes appear on first use)."""
+    try:
+        ch.command(f"SELECT 1 FROM {table} LIMIT 0")
+    except Exception as e:
+        if error_code(e) == ACCESS_DENIED:
+            return False
+        if error_code(e) in (60, 81):  # UNKNOWN_TABLE, UNKNOWN_DATABASE
+            return True
+        raise
+    return True
+
+
 def oldest_version(ch: Client) -> str:
     """The oldest version among the server's replicas: a Cloud service in a
     rolling upgrade answers from replicas on two versions, and the old one
-    still runs the DDL."""
+    still runs the DDL. Only a server without the `default` cluster is taken
+    as one node; any other failure means the replicas are unknown."""
     try:
         versions = [str(row[0]) for row in ch.query(REPLICA_VERSIONS_SQL).result_rows]
-    except Exception:  # noqa: BLE001 — no `default` cluster, or no REMOTE grant: one server answers
-        versions = []
-    return min(versions or [str(ch.command("SELECT version()"))], key=version_key)
+    except Exception as e:  # noqa: BLE001 — every failure but a missing cluster stops here
+        code = error_code(e)
+        if code == ACCESS_DENIED:
+            raise PreflightError(
+                "may not ask every replica for its version (clusterAllReplicas): "
+                "an admin has to run Loom's setup SQL",
+                needs_admin=True,
+            ) from None
+        if code != CLUSTER_DOESNT_EXIST:
+            raise PreflightError(
+                f"cannot read every replica's version: {_connect_failure(e)}"
+            ) from None
+        versions = [str(ch.command("SELECT version()"))]
+    return min(versions, key=version_key)
 
 
 def _cannot_create(user: str) -> PreflightError:
@@ -203,16 +230,15 @@ def check(ch: Client, *, need: Need, create_database: bool = True) -> Server:
             needs_admin=True,
         )
 
-    try:
-        ch.command("SELECT count() FROM system.mutations WHERE 0")
-    except Exception as e:
-        if error_code(e) != ACCESS_DENIED:
-            raise
+    # A refused table here would fail a migration halfway (the runner reads
+    # system.merge_tree_settings, system.mutations and others as it goes).
+    refused = [t for t in SYSTEM_TABLES if not _readable(ch, f"system.{t}")]
+    if refused:
         raise PreflightError(
-            f"{user!r} may not read the system tables Loom waits on: "
+            f"{user!r} may not read system.{', system.'.join(refused)}: "
             "an admin has to run Loom's setup SQL",
             needs_admin=True,
-        ) from None
+        )
 
     # The table exists only where the server is configured with a Keeper.
     keeper = bool(
