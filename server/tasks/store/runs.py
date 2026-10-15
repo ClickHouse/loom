@@ -440,10 +440,8 @@ async def traced_recall_keys(ch: Any, org: str, ns: str, run_id: str) -> list[st
 async def run_cost(
     ch: Any, org: str, ns: str, session_id: str, since: datetime, until: datetime
 ) -> tuple[int, int, float]:
-    """(turns, unpriced turns, cost in USD) of the session's turns made between
-    `since` and `until`, by each turn's own time: the run's spend, wherever the
-    hook posts it from and however often it re-sends it. An unpriced turn (a
-    model the price table does not know) costs 0."""
+    """(turns, unpriced turns, cost in USD) of the session's turns with
+    since <= turn_at <= until. An unpriced turn costs 0."""
     row = await ch.query_one(
         """
         SELECT count() AS turns, countIf(NOT priced) AS unpriced, sum(cost_usd) AS cost

@@ -17,11 +17,10 @@ from loom import Agent
 BUDGET_SECONDS = 30 * 60
 
 
-async def step(agent: Agent, run_id: str, n: int) -> bool:
-    """One unit of the agent's work; True when the task is done."""
-    await agent.memory.set(
-        f"ax/fix-flaky-test/step-{n}", f"step {n} ran in the AX sandbox", run_id=run_id
-    )
+async def step(agent: Agent, n: int) -> bool:
+    """One unit of the agent's work; True when the task is done. Inside the run
+    scope, the write carries the run's id."""
+    await agent.memory.set(f"ax/fix-flaky-test/step-{n}", f"step {n} ran in the AX sandbox")
     return n >= 3
 
 
@@ -30,7 +29,7 @@ async def work(agent: Agent, run_id: str) -> Literal["completed", "cancelled"]:
     n = 0
     while True:
         n += 1
-        if await step(agent, run_id, n):
+        if await step(agent, n):
             return "completed"
         report = await agent.run.get(run_id)
         over = report.get("over_budget") or []  # absent on a server without budgets

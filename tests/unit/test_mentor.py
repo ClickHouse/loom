@@ -634,35 +634,33 @@ def test_set_rules_duplicate_large_value_and_churn() -> None:
 
 
 def test_run_over_budget_fires_only_when_run_get_names_a_budget() -> None:
-    active = {"status": "active"}
-    within = {"run": active, "over_budget": [], "cost_usd": 0.4, "elapsed_seconds": 30}
+    run = {"status": "active", "budget_usd": 2.0}
+    within = {"run": run, "over_budget": [], "cost_usd": 0.4, "elapsed_seconds": 30}
     assert _call("run.get", {"run_id": "r1"}, within) is None
-    over = {"run": active, "over_budget": ["cost"], "cost_usd": 2.5, "elapsed_seconds": 30}
+    over = {"run": run, "over_budget": ["cost"], "cost_usd": 2.5, "elapsed_seconds": 30}
     hint = _call("run.get", {"run_id": "r1"}, over, session="s2")
     assert hint is not None and hint[0] == "run_over_budget"
-    assert "cost budget" in hint[1] and "$2.50 spent" in hint[1] and "run.complete" in hint[1]
-    assert "elapsed" not in hint[1]
+    assert "cost budget ($2.50 of $2.00 spent)" in hint[1] and "run.complete" in hint[1]
+    assert " s of " not in hint[1]
 
 
 def test_run_over_budget_names_only_the_budgets_it_went_past() -> None:
-    active = {"status": "active"}
-    time_only = {"run": active, "over_budget": ["time"], "cost_usd": 0.0, "elapsed_seconds": 90}
+    run = {"status": "active", "budget_usd": 0.005, "budget_seconds": 60}
+    time_only = {"run": run, "over_budget": ["time"], "cost_usd": 0.0, "elapsed_seconds": 90}
     hint = _call("run.get", {"run_id": "r1"}, time_only, session="s-time")
-    assert hint is not None and "time budget (90 s elapsed)" in hint[1] and "$" not in hint[1]
-    both = {
-        "run": active,
-        "over_budget": ["cost", "time"],
-        "cost_usd": 0.0042,
-        "elapsed_seconds": 90,
-    }
+    assert hint is not None and "time budget (90 s of 60 s)" in hint[1] and "$" not in hint[1]
+    both = {"run": run, "over_budget": ["cost", "time"], "cost_usd": 0.0062, "elapsed_seconds": 90}
     hint = _call("run.get", {"run_id": "r1"}, both, session="s-both")
-    assert hint is not None and "cost and time budgets ($0.00 spent, 90 s elapsed)" in hint[1]
+    # A sub-cent budget is shown to four decimals, not as $0.00.
+    expected = "cost and time budgets ($0.0062 of $0.0050 spent, 90 s of 60 s)"
+    assert hint is not None and expected in hint[1]
 
 
 def test_run_over_budget_spells_a_large_spend_in_dollars() -> None:
-    big = {"run": {"status": "active"}, "over_budget": ["cost"], "cost_usd": 12345.0}
+    run = {"status": "active", "budget_usd": 10000.0}
+    big = {"run": run, "over_budget": ["cost"], "cost_usd": 12345.0}
     hint = _call("run.get", {"run_id": "r1"}, big, session="s-big")
-    assert hint is not None and "$12,345.00 spent" in hint[1]
+    assert hint is not None and "$12,345.00 of $10,000.00 spent" in hint[1]
 
 
 @pytest.mark.parametrize("status", ["completed", "failed", "cancelled"])

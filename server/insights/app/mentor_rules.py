@@ -906,13 +906,17 @@ def _rule_run_over_budget(
     op: str, args: dict[str, Any], res: dict[str, Any], facts: dict[str, Any], st: dict[str, Any]
 ) -> _Call:
     over = res.get("over_budget") or []
-    if op != "run.get" or not over or (res.get("run") or {}).get("status") != "active":
+    run = res.get("run") or {}
+    if op != "run.get" or not over or run.get("status") != "active":
         return None
     spent = []
     if "cost" in over:
-        spent.append(f"${float(res.get('cost_usd') or 0.0):,.2f} spent")
+        budget = float(run.get("budget_usd") or 0.0)
+        money = ",.4f" if budget < 0.01 else ",.2f"
+        cost = float(res.get("cost_usd") or 0.0)
+        spent.append(f"${cost:{money}} of ${budget:{money}} spent")
     if "time" in over:
-        spent.append(f"{res.get('elapsed_seconds', 0)} s elapsed")
+        spent.append(f"{res.get('elapsed_seconds', 0)} s of {run.get('budget_seconds', 0)} s")
     budgets = "cost and time budgets" if len(over) > 1 else f"{over[0]} budget"
     return (
         "run_over_budget",

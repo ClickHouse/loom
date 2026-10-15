@@ -83,11 +83,14 @@ cluster's architecture) and put it in an image with the Loom SDK and your agent:
 FROM python:3.12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-RUN pip install --no-cache-dir clickhouse-loom
+RUN pip install --no-cache-dir "clickhouse-loom>=1.0"
 COPY ax-task-runner /usr/local/bin/ax-task-runner
 COPY agent.py /opt/loom-agent/agent.py
 ENTRYPOINT ["/usr/local/bin/ax-task-runner"]
 ```
+
+`agent.py` needs an SDK and a Loom server from the release that added run
+budgets (1.0); against an older server `run.begin` refuses the budget field.
 
 Substrate accepts only an image pinned by digest, so `task.yaml` names it as
 `<registry>/ax-loom-task@sha256:<digest>`. A tag is refused, and AX then falls

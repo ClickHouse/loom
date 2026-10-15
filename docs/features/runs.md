@@ -32,12 +32,14 @@ compares them with `cost_usd` and `elapsed_seconds` and lists the ones the run h
 mentor hint `run_over_budget`, which the plugins hand to the model as advice; a closed run still reports
 `over_budget` but gets no hint. Like every mentor hint it is said once per session, and a caller that sends no
 session (the SDK, plain HTTP) shares one per namespace and web process, so read `over_budget`, not the hint, to
-decide.
+decide. To raise a run's budget, re-send `run.begin` with the same `run_id` and a larger value (with its
+`session_id` for `budget_usd`); a 0 keeps the current one, so a budget cannot be removed once set.
 
 A run's spend is its session's turns made while the run was open, by each turn's own time (`turn_at`, from the
 transcript), so `budget_usd` needs a `session_id` (a 422 otherwise). The Stop hook posts a prompt's turns when the
 prompt ends, after any `run.complete` the agent called during it; those turns still count, and a re-sent turn
-keeps its time. Runs open at once in one session see the same turns: a run nested in another counts toward both,
+keeps its time. A turn dated after the server's now is stamped with the server's time when it arrives, and again if
+it is re-sent. Runs open at once in one session see the same turns: a run nested in another counts toward both,
 and concurrent workers that each want their own cost budget need their own sessions. The window compares the
 client's turn times with the server's run times, so it relies on the client's clock being roughly right; one
 running minutes off misplaces the turns at a run's edges. A closed run is timed from its start to its close on the

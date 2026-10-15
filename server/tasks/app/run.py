@@ -954,7 +954,7 @@ async def handle_run_get(input: RunGetInput) -> RunGetOutput:
     if stashed:
         recalled = _merge_recalled(recalled, stashed)
     since, until = _run_window(existing)
-    elapsed = int((until - since).total_seconds())
+    elapsed = max(0, int((until - since).total_seconds()))
     turns, unpriced, cost = 0, 0, 0.0
     if run.session_id != SENTINEL:
         turns, unpriced, cost = await runs_store.run_cost(
