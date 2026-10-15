@@ -74,9 +74,10 @@ parse_clickhouse_url() {
     http://*) CH_SECURE=false CH_PORT=8123 rest=${1#http://} ;;
     *) fail "--clickhouse takes an http:// or https:// URL, such as https://default@abc.clickhouse.cloud:8443" ;;
   esac
-  rest=${rest%%/*}
   # CH_PASSWORD_SET: a password was given, even an empty one (`user:@host`).
   CH_USER= CH_PASSWORD= CH_PASSWORD_SET=
+  # The user and password go first, up to the last `@`, so a `/` or `:` in the
+  # password never reaches the host part, nor any message printed from it.
   case $rest in
     *@*)
       userinfo=${rest%@*}
@@ -87,6 +88,7 @@ parse_clickhouse_url() {
       esac
       ;;
   esac
+  rest=${rest%%/*}
   case $rest in
     *:*) CH_HOST=${rest%:*} CH_PORT=${rest##*:} ;;
     *) CH_HOST=$rest ;;

@@ -65,7 +65,7 @@ def test_a_missing_database_is_created_only_when_asked() -> None:
     ch = FakeCH(database=False)
     preflight.check(ch, need="migrate")
     assert "CREATE DATABASE IF NOT EXISTS loom" in ch.ran
-    with pytest.raises(preflight.PreflightError, match="run `loom ch-setup`"):
+    with pytest.raises(preflight.PreflightError, match=r"missing, or no grant on it"):
         preflight.check(FakeCH(database=False), need="serve")
 
 
@@ -301,6 +301,19 @@ def test_the_doctor_fails_where_boot_could_not_create_the_database() -> None:
     with pytest.raises(preflight.PreflightError) as e:
         preflight.check(NoCreate(database=False), need="migrate", create_database=False)
     assert e.value.needs_admin and "may not create it" in str(e.value)
+
+
+def test_a_database_another_worker_created_meanwhile_is_not_a_failure() -> None:
+    class Raced(FakeCH):
+        def command(self, sql: str) -> Any:
+            if sql.startswith("CREATE DATABASE"):
+                self.database = True  # the other worker won
+                raise RuntimeError(
+                    "Code: 341. DB::Exception: Database loom was created by another replica"
+                )
+            return super().command(sql)
+
+    preflight.check(Raced(database=False), need="migrate")
 
 
 def test_a_check_that_may_not_create_the_database_only_reports_it_missing() -> None:

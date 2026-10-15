@@ -96,6 +96,16 @@ def test_an_outside_clickhouse_is_written_to_env_and_never_printed(install) -> N
     assert stat.S_IMODE((target / ".env").stat().st_mode) == 0o600
 
 
+def test_a_raw_slash_or_colon_in_the_password_is_never_printed(install) -> None:
+    run, target = install
+    result = run("--clickhouse", "https://loom:Secr3t/xy:12@h.example:8443")
+    assert result.returncode == 0, result.stderr
+    assert "Secr3t" not in result.stdout + result.stderr
+    env = _env(target)
+    assert (env["LOOM_CH_HOST"], env["LOOM_CH_PORT"]) == ("h.example", "8443")
+    assert env["LOOM_CH_PASSWORD"] == "'Secr3t/xy:12'"
+
+
 def test_the_password_can_come_from_the_environment(install) -> None:
     run, target = install
     result = run(LOOM_CH_URL="http://loom@ch.internal", LOOM_CH_PASSWORD="from-env")

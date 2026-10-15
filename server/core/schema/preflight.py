@@ -55,6 +55,8 @@ SYSTEM_TABLES = (
 # Every replica's version; a server without the `default` cluster is one node.
 REPLICA_VERSIONS_SQL = "SELECT version() FROM clusterAllReplicas('default', system.one)"
 
+_DATABASE_COUNT = f"SELECT count() FROM system.databases WHERE name = '{DATABASE}'"
+
 # UNKNOWN_USER, WRONG_PASSWORD, REQUIRED_PASSWORD, AUTHENTICATION_FAILED
 AUTH_FAILED = frozenset({192, 193, 194, 516})
 ACCESS_DENIED = 497
@@ -172,17 +174,23 @@ def check(ch: Client, *, need: Need, create_database: bool = True) -> Server:
         raise PreflightError(f"ClickHouse {version} is older than {floor}: upgrade the server")
 
     user = settings.ch_user
-    database = bool(ch.command(f"SELECT count() FROM system.databases WHERE name = '{DATABASE}'"))
+    database = bool(ch.command(_DATABASE_COUNT))
     if not database:
         if need != "migrate":
-            raise PreflightError(f"database {DATABASE} does not exist: run `loom ch-setup`")
+            raise PreflightError(
+                f"{user!r} cannot see a database {DATABASE} (missing, or no grant on it)",
+                needs_admin=True,
+            )
         if create_database:
             try:
                 ch.command(f"CREATE DATABASE IF NOT EXISTS {DATABASE}")
             except Exception as e:
-                if error_code(e) != ACCESS_DENIED:
+                if error_code(e) == ACCESS_DENIED:
+                    raise _cannot_create(user) from None
+                # Another process or replica may have created it meanwhile
+                # (Cloud answers UNFINISHED, 341): only a still-missing one fails.
+                if not ch.command(_DATABASE_COUNT):
                     raise
-                raise _cannot_create(user) from None
         # The doctor creates nothing; it only says whether boot could.
         elif str(ch.command(f"CHECK GRANT CREATE DATABASE ON {DATABASE}.*")) != "1":
             raise _cannot_create(user)
