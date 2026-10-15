@@ -30,8 +30,8 @@ Open a RUN — one execution of a task — BEFORE you start working on it.
 | `consumer` | `str` | `''` | The calling integration's tag, recorded on the ledger row. |
 | `role` | `str` | `''` | The agent's role in a multi-agent run — planner, executor, critic, or the team's own word. |
 | `metadata` | `dict[str, Any]` | *(computed)* | Free-form key/values stored on the run; `role`, when set, is added to it. |
-| `budget_usd` | `float` | `0.0` | Model spend in USD the run may reach; needs a session_id. 0 = none. run.get reports a budget the run went past in `over_budget`: a signal for the agent, never a stop. |
-| `budget_seconds` | `int` | `0` | Seconds the run may take; 0 = none. |
+| `budget_usd` | `float` | `0.0` | Model spend in USD the run may reach; needs a session_id. 0 = none, and a re-sent begin with 0 keeps the run's budget. run.get reports a budget the run went past in `over_budget`: a signal for the agent, never a stop. |
+| `budget_seconds` | `int` | `0` | Seconds the run may take; 0 = none, kept on a re-sent begin like budget_usd. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -85,7 +85,7 @@ Close a run opened with run.begin — call EXACTLY ONCE when the task ends.
 
 ## `run.get`
 
-Replay one run: goal, status, final response, the memories it relied on, the memory_keys it wrote, how many memories it recalled and observed, and what its model turns cost. over_budget names a…
+Replay one run: goal, status, final response, the memories it relied on, the memory_keys it wrote, how many memories it recalled and observed, and what its model turns cost.
 
 `POST /v1/run.get` · MCP `loom_run_get` · role `viewer` · read
 
@@ -103,7 +103,7 @@ Replay one run: goal, status, final response, the memories it relied on, the mem
 | `recalled_keys` | `list[str]` | Keys memory.search returned under the run plus keys the hooks reported as served; empty when neither is known. |
 | `memories_written` | `list[str]` | Keys written under this run's id, read live from `loom.memory`. |
 | `observations` | `int` | Episodic observations (`observe.record`) tagged with this run's id. |
-| `turns` | `int` | The session's turns in loom.agent_turn_usage (the plugin's Stop hook writes them) from the run's start to its close; 0 when the run has no session or the hook is not installed. |
+| `turns` | `int` | The session's turns in loom.agent_turn_usage (the plugin's Stop hook writes them) made while the run was open; 0 when the run has no session or the hook is not installed. |
 | `cost_usd` | `float` | Summed model cost in USD of those turns; 0 as for `turns`. |
 | `elapsed_seconds` | `int` | Seconds the run has taken: until now while active, its duration once closed. |
 | `over_budget` | `list[Literal['cost', 'time']]` | The budgets the run has gone past: `cost` (cost_usd > budget_usd) and `time` (elapsed_seconds > budget_seconds). |

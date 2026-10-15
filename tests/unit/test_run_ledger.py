@@ -329,7 +329,7 @@ def test_outcome_override_and_explicit_duration(env) -> None:
     assert [(e["event_type"], e["event_count"]) for e in events] == [("used", 3)]
 
 
-def test_get_derives_written_observed_recalled_and_session_cost(env) -> None:
+def test_get_derives_written_observed_recalled_and_run_cost(env) -> None:
     fake, _, h = env
     fake.one.append(
         _run_row(status="completed", completed_at=T0, duration_ms=5, memories_used=["ci:flaky"])
@@ -389,6 +389,8 @@ def test_a_resent_begin_without_a_budget_keeps_the_runs_budget(env) -> None:
     )
     row = next(rows[0] for table, rows in fake.inserted if table == "loom.agent_runs")
     assert row["budget_usd"] == 1.5 and row["budget_seconds"] == 600
+    # The session the budget is counted from stays with it.
+    assert row["session_id"] == "s1"
 
 
 def _get_with(env, row: dict[str, Any], cost: float) -> Any:
@@ -414,8 +416,10 @@ def test_get_within_budget_or_without_one_names_nothing(env) -> None:
     assert no_budget.over_budget == [] and no_budget.run.budget_usd == 0.0
 
 
-def test_a_closed_run_is_timed_by_its_duration(env) -> None:
-    row = _run_row(status="completed", completed_at=T0, duration_ms=90_000, budget_seconds=60)
+def test_a_closed_run_is_timed_on_the_servers_clock(env) -> None:
+    # The client reported 10 ms; the server saw the run open for 90 s.
+    closed = datetime(2026, 9, 11, 12, 1, 30)
+    row = _run_row(status="completed", completed_at=closed, duration_ms=10, budget_seconds=60)
     out = _get_with(env, row, cost=0.0)
     assert out.elapsed_seconds == 90 and out.over_budget == ["time"]
 
@@ -430,20 +434,22 @@ def test_a_cost_budget_needs_a_session() -> None:
     RunBeginInput(org="o", namespace="n", agent="a", goal="g", budget_seconds=60)
 
 
-def _cost_window(fake: Any) -> tuple[Any, Any]:
-    params = [c[2] for c in fake.calls if "agent_turn_usage" in c[1]][0]
-    return params["since"], params["until"]
+def _cost_query(fake: Any) -> tuple[str, dict[str, Any]]:
+    return [(c[1], c[2]) for c in fake.calls if "agent_turn_usage" in c[1]][0]
 
 
-def test_cost_counts_only_the_turns_while_the_run_was_open(env) -> None:
-    fake, _, h = env
+def test_cost_counts_the_turns_made_while_the_run_was_open(env) -> None:
+    fake, _, _ = env
     closed_at = datetime(2026, 9, 11, 12, 0, 5)
     _get_with(env, _run_row(status="completed", completed_at=closed_at, duration_ms=5000), 0.1)
-    assert _cost_window(fake) == (T0, closed_at)
+    sql, params = _cost_query(fake)
+    assert "turn_at >= {since" in sql and "turn_at <= {until" in sql
+    assert (params["since"], params["until"]) == (T0, closed_at)
 
     fake.calls.clear()
     _get_with(env, _run_row(), 0.1)  # active: up to now
-    assert _cost_window(fake) == (T0, datetime(2026, 9, 11, 12, 0, 42, 500000))
+    _, params = _cost_query(fake)
+    assert (params["since"], params["until"]) == (T0, datetime(2026, 9, 11, 12, 0, 42, 500000))
 
 
 def test_a_run_without_a_session_reads_no_cost(env) -> None:

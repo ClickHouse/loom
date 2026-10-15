@@ -118,15 +118,15 @@ export const EMPTY_WHY = {
   noSession:
     "run.begin carried no top-level session_id, so model turns and cost cannot be joined (a session_id inside metadata is not read)",
   sessionCost:
-    "the turns the run's session recorded while the run was open, from the usage the Stop hook posts (cost.record_turns)",
+    "the turns the run's session made while the run was open, from the usage the Stop hook posts (cost.record_turns)",
   budget: "set by run.begin(budget_usd, budget_seconds); a signal for the agent, never a stop",
 } as const;
 
-/** The budget run.begin set, e.g. "$1 · 30m 0s"; "—" when it set none. Read off
+/** The budget run.begin set, e.g. "$1.00 · 30m 0s"; "—" when it set none. Read off
  * run.get's row: run.list rows are projected and do not carry it. */
 function budgetText(run: RunRow | null): string {
   const parts: string[] = [];
-  if (run?.budget_usd) parts.push(`$${run.budget_usd}`);
+  if (run?.budget_usd) parts.push(`$${run.budget_usd.toFixed(2)}`);
   if (run?.budget_seconds) parts.push(fmtDuration(run.budget_seconds * 1000));
   return parts.length > 0 ? parts.join(" · ") : "—";
 }

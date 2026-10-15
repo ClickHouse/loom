@@ -4,8 +4,7 @@
 [Agent Substrate](https://github.com/agent-substrate/substrate). The tasks are
 cheap to create, suspend and throw away. Each sandbox starts empty, and AX has
 no memory layer. Loom adds one: what a task learns outlives the sandbox, the
-next task recalls it, and every task's run sits in Loom's run ledger with what
-it cost.
+next task recalls it, and every task's run sits in Loom's run ledger.
 
 | File                 | What it is                                                                                                 |
 | -------------------- | ---------------------------------------------------------------------------------------------------------- |
@@ -127,7 +126,7 @@ since Loom never stops it. The run is closed however the work ends: `completed`,
 `cancelled` when it stops for the budget or is cancelled, `failed` on an error.
 
 A cost budget (`budget_usd`) needs a `session_id`, because a run's spend is the
-turns its session recorded while the run was open. A sandboxed agent has no
+turns its session made while the run was open. A sandboxed agent has no
 Claude Code or Codex plugin recording them, so it reports its own with
 `cost.record_turns` under that session to use one. See
 [runs](../../docs/features/runs.md#budgets).

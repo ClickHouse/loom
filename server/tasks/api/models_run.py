@@ -13,10 +13,11 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 from server.core.naming import SENTINEL
 from server.operations.read_projection import ProjectedRow
+from server.tasks.domain.budgets import BudgetKind
 from server.tasks.domain.states import RunStatus
 
 
@@ -52,19 +53,20 @@ class RunBeginInput(BaseModel):
     role: str = Field(default="", max_length=64)
     # Free-form key/values stored on the run; `role`, when set, is added to it.
     metadata: dict[str, Any] = Field(default_factory=dict)
-    # Model spend in USD the run may reach; needs a session_id. 0 = none.
-    # run.get reports a budget the run went past in `over_budget`: a signal for
-    # the agent, never a stop.
+    # Model spend in USD the run may reach; needs a session_id. 0 = none, and a
+    # re-sent begin with 0 keeps the run's budget. run.get reports a budget the
+    # run went past in `over_budget`: a signal for the agent, never a stop.
     budget_usd: float = Field(default=0.0, ge=0.0, le=100_000.0)
-    # Seconds the run may take; 0 = none.
+    # Seconds the run may take; 0 = none, kept on a re-sent begin like budget_usd.
     budget_seconds: int = Field(default=0, ge=0, le=30 * 86400)
 
-    @model_validator(mode="after")
-    def _cost_budget_has_a_session(self) -> RunBeginInput:
+    @field_validator("budget_usd")
+    @classmethod
+    def _cost_budget_has_a_session(cls, value: float, info: ValidationInfo) -> float:
         # A run's spend is read from its session's recorded turns.
-        if self.budget_usd > 0 and self.session_id.strip() in ("", SENTINEL):
+        if value > 0 and str(info.data.get("session_id") or "").strip() in ("", SENTINEL):
             raise ValueError("budget_usd needs a session_id: a run's spend is its session's turns")
-        return self
+        return value
 
 
 class RunBeginOutput(BaseModel):
@@ -318,8 +320,8 @@ class RunGetOutput(BaseModel):
     # Episodic observations (`observe.record`) tagged with this run's id.
     observations: int = 0
     # The session's turns in loom.agent_turn_usage (the plugin's Stop hook writes
-    # them) from the run's start to its close; 0 when the run has no session or
-    # the hook is not installed.
+    # them) made while the run was open; 0 when the run has no session or the
+    # hook is not installed.
     turns: int = 0
     # Summed model cost in USD of those turns; 0 as for `turns`.
     cost_usd: float = 0.0
@@ -328,7 +330,7 @@ class RunGetOutput(BaseModel):
     # The budgets the run has gone past: `cost` (cost_usd > budget_usd) and
     # `time` (elapsed_seconds > budget_seconds). Empty when within budget or
     # when run.begin set none.
-    over_budget: list[Literal["cost", "time"]] = Field(default_factory=list)
+    over_budget: list[BudgetKind] = Field(default_factory=list)
 
 
 class RunListInput(BaseModel):

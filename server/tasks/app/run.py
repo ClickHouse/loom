@@ -21,7 +21,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Literal
+from typing import Any
 
 from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now as _now
@@ -44,6 +44,7 @@ from server.tasks.api.models_run import (
     RunListOutput,
     RunRow,
 )
+from server.tasks.domain.budgets import budgets_exceeded
 from server.tasks.domain.session_runs import is_session_run_id
 from server.tasks.store import runs as runs_store
 from server.tasks.store.rows import RunLedgerRow
@@ -99,6 +100,11 @@ def _parse_metadata(raw: Any) -> dict[str, Any]:
         return v if isinstance(v, dict) else {}
     except (TypeError, ValueError):
         return {}
+
+
+def _named(value: str) -> str:
+    """`value`, or "" when it is the wire's "-" for not given."""
+    return "" if value.strip() in ("", "-") else value
 
 
 def _grade_columns(existing: RunLedgerRow | None) -> RunLedgerRow:
@@ -412,7 +418,8 @@ async def _open_run(
         "namespace": input.namespace,
         "agent": input.agent,
         "user_id": input.user_id or "-",
-        "session_id": input.session_id or "-",
+        # A re-sent begin that names no session keeps the run's, as it keeps its budget.
+        "session_id": _named(input.session_id) or str((existing or {}).get("session_id") or "-"),
         "run_id": run_id,
         "goal": input.goal,
         "user_request": input.user_request,
@@ -435,7 +442,6 @@ async def _open_run(
             if input.role.strip()
             else input.metadata
         ),
-        # A re-sent begin that names no budget keeps the one the run has.
         "budget_usd": input.budget_usd or float((existing or {}).get("budget_usd") or 0.0),
         "budget_seconds": input.budget_seconds or int((existing or {}).get("budget_seconds") or 0),
     }
@@ -958,12 +964,17 @@ async def handle_run_get(input: RunGetInput) -> RunGetOutput:
         turns=turns,
         cost_usd=cost,
         elapsed_seconds=elapsed,
-        over_budget=_budgets_exceeded(run, cost, elapsed),
+        over_budget=budgets_exceeded(
+            float(existing.get("budget_usd") or 0.0),
+            int(existing.get("budget_seconds") or 0),
+            cost,
+            elapsed,
+        ),
     )
 
 
 async def _run_cost(ch: Any, row: RunLedgerRow) -> tuple[int, float]:
-    """The turns and cost Loom recorded for the run's session while the run was open."""
+    """The turns the run's session made while the run was open, and their cost."""
     session_id = str(row.get("session_id") or "-")
     started = row.get("started_at")
     if session_id == "-" or not isinstance(started, datetime):
@@ -975,25 +986,12 @@ async def _run_cost(ch: Any, row: RunLedgerRow) -> tuple[int, float]:
 
 
 def _elapsed_seconds(row: RunLedgerRow) -> int:
-    """How long the run has taken: its recorded duration once closed, else since it started."""
-    if row.get("status") != "active":
-        return int(row.get("duration_ms") or 0) // 1000
+    """How long the run has taken, on the server's clock: to its close, or to now."""
     started = row.get("started_at")
     if not isinstance(started, datetime):
         return 0
-    return max(0, int((_now() - started.replace(tzinfo=None)).total_seconds()))
-
-
-def _budgets_exceeded(
-    run: RunRow, cost_usd: float, elapsed_seconds: int
-) -> list[Literal["cost", "time"]]:
-    """The budgets the run has gone past; a budget of 0 is no budget."""
-    over: list[Literal["cost", "time"]] = []
-    if run.budget_usd > 0 and cost_usd > run.budget_usd:
-        over.append("cost")
-    if run.budget_seconds > 0 and elapsed_seconds > run.budget_seconds:
-        over.append("time")
-    return over
+    end = row.get("completed_at") or _now()
+    return max(0, int((end.replace(tzinfo=None) - started.replace(tzinfo=None)).total_seconds()))
 
 
 async def handle_run_list(input: RunListInput) -> RunListOutput:

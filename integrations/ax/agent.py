@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 
 from loom import Agent
 
@@ -38,24 +39,20 @@ async def work(agent: Agent, run_id: str) -> str:
 
 
 async def main() -> None:
+    # AX stops a task with SIGTERM; cancelling lets the run close as cancelled.
+    task = asyncio.current_task()
+    assert task is not None
+    asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, task.cancel)
+
     org = os.environ["LOOM_ORG"]
     namespace = os.environ["LOOM_NAMESPACE"]
     async with Agent(org, namespace, "ax-fix-flaky-test") as agent:
-        run = await agent.run.begin(
+        # The scope closes the run: as `run.status` on a clean exit, `failed` on
+        # an error and `cancelled` on a cancellation, re-raising either.
+        async with agent.run_scope(
             goal="Fix the flaky test", environment="ax", budget_seconds=BUDGET_SECONDS
-        )
-        run_id = run["run_id"]
-        status = "failed"
-        try:
-            status = await work(agent, run_id)
-        except asyncio.CancelledError:
-            status = "cancelled"
-            raise
-        finally:
-            try:
-                await agent.run.complete(run_id, status=status)
-            except Exception as e:  # noqa: BLE001 — never hide why the work stopped
-                print(f"could not close run {run_id}: {e}")
+        ) as run:
+            run.status = await work(agent, run.run_id)
 
 
 if __name__ == "__main__":

@@ -440,16 +440,15 @@ async def traced_recall_keys(ch: Any, org: str, ns: str, run_id: str) -> list[st
 async def run_cost(
     ch: Any, org: str, ns: str, session_id: str, since: datetime, until: datetime
 ) -> tuple[int, float]:
-    """(turns, cost in USD) of the session's turns Loom recorded between `since`
-    and `until`: the run's own spend, not what the session spent before or after
-    it. Bounded by `ts`, the server's insert time, not the client-stamped
-    `turn_at`, so a client clock that runs behind cannot hide a turn."""
+    """(turns, cost in USD) of the session's turns made between `since` and `until`,
+    by each turn's own time: the run's spend, wherever the hook posts it from and
+    however often it re-sends it."""
     row = await ch.query_one(
         """
         SELECT count() AS turns, sum(cost_usd) AS cost
         FROM loom.agent_turn_usage FINAL
         WHERE org = {org:String} AND namespace = {ns:String} AND session_id = {sid:String}
-          AND ts >= {since:DateTime64(3)} AND ts <= {until:DateTime64(3)}
+          AND turn_at >= {since:DateTime64(3)} AND turn_at <= {until:DateTime64(3)}
         """,
         params={"org": org, "ns": ns, "sid": session_id, "since": since, "until": until},
     )
@@ -492,9 +491,9 @@ __all__ = [
     "list_runs",
     "live_memories_by_key",
     "observation_count",
+    "run_cost",
     "run_row",
     "runs_to_grade",
-    "run_cost",
     "traced_recall_keys",
     "written_keys",
 ]

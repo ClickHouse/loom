@@ -12,9 +12,11 @@ kind: Workspace
 metadata:
   name: loom-memory
 spec:
-  git:
-    - repo: "https://github.com/<org>/<repo>.git"
-      branch: "main"
+  # Off until google/ax#482 lands: current AX clones before the sandbox has a
+  # network (README.md, known issue). Clone from the agent's command instead.
+  # git:
+  #   - repo: "https://github.com/<org>/<repo>.git"
+  #     branch: "main"
   files:
     # Claude Code reads this MCP config and expands ${LOOM_BASE_URL} and
     # ${LOOM_API_KEY} from the environment.

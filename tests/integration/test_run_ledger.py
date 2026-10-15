@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -167,45 +167,43 @@ async def _get_with_turns(a: Any, run_id: str, turns: int, timeout_s: float = 6.
         await asyncio.sleep(0.25)
 
 
+def _now_iso() -> str:
+    return datetime.now(UTC).isoformat()
+
+
 @pytest.mark.asyncio
 async def test_each_run_in_a_session_counts_only_its_own_turns(control_plane_url: str) -> None:
     from loom import Agent
 
     ns = f"run-ledger-{uuid.uuid4().hex[:6]}"
     async with Agent(org="run-test", namespace=ns, agent="w", base_url=control_plane_url) as a:
+        # The Stop hook posts a prompt's turns after the prompt ends, so after the
+        # agent has completed a run it opened during that prompt.
         first = await a.run.begin(goal="first", session_id="sess-b", budget_usd=0.1)
-        first_cost = await _record_turn(a, "sess-b", "m1")
-        await _get_with_turns(a, first["run_id"], 1)
-        await a.run.complete(first["run_id"], status="completed")
         await asyncio.sleep(0.2)
+        first_turn_at = _now_iso()
+        await asyncio.sleep(0.2)
+        await a.run.complete(first["run_id"], status="completed")
+        first_cost = await _record_turn(a, "sess-b", "m1", turn_at=first_turn_at)
+        await _get_with_turns(a, first["run_id"], 1)
 
+        await asyncio.sleep(0.2)
         second = await a.run.begin(goal="second", session_id="sess-b", budget_usd=0.05)
-        second_cost = await _record_turn(a, "sess-b", "m2")
+        await asyncio.sleep(0.2)
+        second_cost = await _record_turn(a, "sess-b", "m2", turn_at=_now_iso())
         assert first_cost > 0.05 and first_cost + second_cost > 0.1
+        await _get_with_turns(a, second["run_id"], 1)
 
-        # The second run's turn does not reach the closed first run.
-        got_second = await _get_with_turns(a, second["run_id"], 1)
+        # A re-sent turn keeps its time, and so its run.
+        await _record_turn(a, "sess-b", "m1", turn_at=first_turn_at)
+        await asyncio.sleep(1.0)
+
         got_first = await a.run.get(first["run_id"])
         assert got_first["turns"] == 1 and got_first["cost_usd"] == first_cost
         assert got_first["over_budget"] == []
-        # The first run's turn does not count against the second.
+        got_second = await a.run.get(second["run_id"])
         assert got_second["turns"] == 1 and got_second["cost_usd"] == second_cost
         assert got_second["over_budget"] == ["cost"]
-
-
-@pytest.mark.asyncio
-async def test_a_turn_stamped_by_a_slow_client_clock_still_counts(control_plane_url: str) -> None:
-    from loom import Agent
-
-    ns = f"run-ledger-{uuid.uuid4().hex[:6]}"
-    async with Agent(org="run-test", namespace=ns, agent="w", base_url=control_plane_url) as a:
-        run = await a.run.begin(goal="slow clock", session_id="sess-c", budget_usd=0.01)
-        # A client clock five minutes behind the server stamps the turn before the run began.
-        behind = datetime.now(UTC) - timedelta(minutes=5)
-        cost = await _record_turn(a, "sess-c", "m1", turn_at=behind.isoformat())
-        got = await _get_with_turns(a, run["run_id"], 1)
-        assert got["turns"] == 1 and got["cost_usd"] == cost
-        assert got["over_budget"] == ["cost"]
 
 
 @pytest.mark.asyncio

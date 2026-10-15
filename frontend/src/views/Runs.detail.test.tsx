@@ -170,7 +170,7 @@ describe("Runs page", () => {
     fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
     const dialog = await screen.findByRole("dialog");
     const budget = await within(dialog).findByTitle(EMPTY_WHY.budget);
-    expect(budget).toHaveTextContent("$1 · 30m 0s · over cost");
+    expect(budget).toHaveTextContent("$1.00 · 30m 0s · over cost");
   });
 
   it("a run without a budget shows a dash", async () => {

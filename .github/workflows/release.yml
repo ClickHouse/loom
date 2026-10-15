@@ -516,14 +516,24 @@ jobs:
           esac
       # An existing release for the tag is updated and its other files replaced,
       # so a re-run or the later dispatch leaves the published bytes attached.
+      # Notes are generated only when this run creates the release: on an existing
+      # one the action appends them again, under notes edited by hand.
+      - name: Is there a release for this tag already
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "release=false" >>"$GITHUB_OUTPUT"
+          fi
       - name: Create or update the release with notes and files
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
-          # From the commits since the previous tag, on the tag push only: on an
-          # existing release the action appends them again, under notes edited by hand.
-          generate_release_notes: ${{ github.event_name == 'push' }}
+          generate_release_notes: ${{ steps.existing.outputs.release != 'true' }} # from the commits since the previous tag
           draft: false
           prerelease: ${{ needs.version.outputs.prerelease == 'true' }}
           overwrite_files: true

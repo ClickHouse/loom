@@ -27,8 +27,8 @@ Two plugin pull requests that bump to the same number merge without a conflict, 
 
 ## Release notes
 
-The tag push generates the GitHub Release's notes from the commits since the previous tag; the later
-registry dispatch keeps them as they are. What commits cannot say goes in a "Release notes" section of the
+The run that creates the GitHub Release generates its notes from the commits since the previous tag; a
+re-run or the later registry dispatch keeps them as they are. What commits cannot say goes in a "Release notes" section of the
 release pull request's description, so it is reviewed before the tag: operator steps (new settings,
 backfills, table rebuilds) and client-visible wire changes, including every removed request field and
 retired flag. No registry of removed fields exists, so the release notes are where a client learns of one.
@@ -104,9 +104,9 @@ A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not mov
    provenance and an SBOM;
 6. `docker-smoke` installs the bundle with that image, on the ClickHouse release it
    names, on amd64 and arm64;
-7. `github-release` creates the GitHub Release only after that image exists, or updates it
-   on a re-run, with notes generated from the commits since the previous tag, and attaches
-   the verified files. A bundle the release already carries is kept, and so is its checksum
+7. `github-release` creates the GitHub Release only after that image exists, with notes
+   generated from the commits since the previous tag, or updates it on a re-run, keeping
+   its notes as they are, and attaches the verified files. A bundle the release already carries is kept, and so is its checksum
    (one the release lost is written again from it): replacing an asset deletes it first,
    and a failed upload would leave an installed version without its bundle. A new bundle
    never names an older ClickHouse release than the bundles of the 30 newest releases

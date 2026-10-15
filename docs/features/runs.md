@@ -9,18 +9,18 @@ relied on loses the boost it earned.
 
 A run row lives in `loom.agent_runs`. Most of what `run.get` shows is derived at read time from the other planes:
 
-| Field                              | Stored or derived | Source                                                                                                      |
-| ---------------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------- |
-| `goal`, `user_request`, `model`, … | stored            | `run.begin`                                                                                                 |
-| `status`, `final_response`         | stored            | `run.complete` (`active` until then)                                                                        |
-| `memories_used`                    | stored            | `run.complete`: the agent's own statement of what it relied on                                              |
-| `grade`, `grade_source`, …         | stored            | `run.grade`, after the run closed                                                                           |
-| `memories_written`                 | derived           | rows in `loom.memory` carrying the run's `run_id`                                                           |
-| `recalled`, `recalled_keys`        | derived           | the search trace log under the `run_id`, unioned with `run.complete(recalled_keys)`                         |
-| `observations`                     | derived           | episodic rows from `observe.record` tagged with the `run_id`                                                |
-| `turns`, `cost_usd`                | derived           | the session's turns in `loom.agent_turn_usage` while the run was open (written by the coding-agent plugins) |
-| `budget_usd`, `budget_seconds`     | stored            | `run.begin` (0 = no budget)                                                                                 |
-| `elapsed_seconds`, `over_budget`   | derived           | the run's age (or its duration once closed) and `cost_usd`, against the budget                              |
+| Field                              | Stored or derived | Source                                                                                                           |
+| ---------------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `goal`, `user_request`, `model`, … | stored            | `run.begin`                                                                                                      |
+| `status`, `final_response`         | stored            | `run.complete` (`active` until then)                                                                             |
+| `memories_used`                    | stored            | `run.complete`: the agent's own statement of what it relied on                                                   |
+| `grade`, `grade_source`, …         | stored            | `run.grade`, after the run closed                                                                                |
+| `memories_written`                 | derived           | rows in `loom.memory` carrying the run's `run_id`                                                                |
+| `recalled`, `recalled_keys`        | derived           | the search trace log under the `run_id`, unioned with `run.complete(recalled_keys)`                              |
+| `observations`                     | derived           | episodic rows from `observe.record` tagged with the `run_id`                                                     |
+| `turns`, `cost_usd`                | derived           | the session's turns in `loom.agent_turn_usage` made while the run was open (written by the coding-agent plugins) |
+| `budget_usd`, `budget_seconds`     | stored            | `run.begin` (0 = no budget)                                                                                      |
+| `elapsed_seconds`, `over_budget`   | derived           | the run's age (or its duration once closed) and `cost_usd`, against the budget                                   |
 
 `recalled` is `-1` when `LOOM_SEARCH_TRACE_LOG_ENABLED` is off and no `recalled_keys` were sent.
 
@@ -30,12 +30,17 @@ A run row lives in `loom.agent_runs`. Most of what `run.get` shows is derived at
 compares them with `cost_usd` and `elapsed_seconds` and lists the ones the run has gone past in `over_budget`
 (`cost`, `time`, or both). The first `run.get` in a session that finds an active run over budget also carries the
 mentor hint `run_over_budget`, which the plugins hand to the model as advice; a closed run still reports
-`over_budget` but gets no hint.
+`over_budget` but gets no hint. Like every mentor hint it is said once per session, and a caller that sends no
+session (the SDK, plain HTTP) shares one per namespace and web process, so read `over_budget`, not the hint, to
+decide.
 
-A run's spend is the turns Loom recorded for its session between the run's start and its close, so `budget_usd`
-needs a `session_id` (a 422 otherwise), and two runs in one session each count only their own window. The window
-goes by when Loom recorded each turn, not the turn's own timestamp, so a client clock that runs behind cannot hide
-spend; a turn recorded after the run closed does not count.
+A run's spend is its session's turns made while the run was open, by each turn's own time (`turn_at`, from the
+transcript), so `budget_usd` needs a `session_id` (a 422 otherwise). Two runs in one session each count their own
+turns, and a run nested in another counts toward both. The Stop hook posts a prompt's turns when the prompt ends,
+after any `run.complete` the agent called during it; those turns still count, and a re-sent turn keeps its time.
+The window compares the client's turn times with the server's run times, so it relies on the client's clock being
+roughly right: one running minutes off misplaces the turns at a run's edges. A closed run is timed from its start
+to its close on the server's clock, whatever `duration_ms` the client reported.
 
 Loom does not run the agent, so a budget is a signal for whoever does, never a stop. The cost side is only as fresh
 as the turns the plugin's Stop hook has recorded, and a call's cost is known only after it returns, so a run can go
@@ -228,7 +233,7 @@ See [configuration: dedup and expiry](../reference/configuration.md#dedup-and-ex
 - The SDK's `run.scope` writes the ledger best-effort: a failed `run.complete` never
   masks the block's own exception, so a run whose completion failed stays `active`.
 - `turns` and `cost_usd` are 0 when the run has no `session_id` or the client does not
-  report turn usage. They count only the turns recorded while the run was open.
+  report turn usage. They count only the turns made while the run was open.
 
 ## Related
 

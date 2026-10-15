@@ -15,6 +15,7 @@ recalled from the run_id, and its cost from the session.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Mapping
 from contextvars import ContextVar
@@ -386,8 +387,9 @@ class RunScope:
 
     `run.begin` on entry; on exit `run.complete` with the keys the block's
     `memory.ask` answers cited (plus anything passed to `used()`), status
-    `completed` or `failed` (an exception propagates after the ledger row is
-    written), and outcome `positive` when memories were used on a clean
+    `completed` (or `run.status` when the block set it), `failed` on an
+    exception or `cancelled` on a cancellation (either propagates after the
+    ledger row is written), and outcome `positive` when memories were used on a clean
     exit, `negative` on failure, unless set explicitly. Inside the block,
     writes without a run_id carry the run's, typed or through `Agent.call`
     (Session, AgentTools); recalls are labelled with it (`scope_read_label`).
@@ -402,6 +404,8 @@ class RunScope:
         self.final_response: str = ""
         self.confidence: float = 0.0
         self.outcome: Literal["", "positive", "negative", "none"] = ""
+        # How a block that ends without an exception closes the run.
+        self.status: Literal["completed", "failed", "cancelled"] = "completed"
         self.metadata: dict[str, Any] = {}
         self.completed: dict[str, Any] | None = None
         self._token: Any = None
@@ -463,10 +467,14 @@ class RunScope:
         if self._token is not None:
             _ACTIVE_RUN.reset(self._token)
             self._token = None
-        status: Literal["completed", "failed", "cancelled"] = "failed" if exc_type else "completed"
+        status = self.status
+        if exc_type is not None:
+            status = "cancelled" if issubclass(exc_type, asyncio.CancelledError) else "failed"
         outcome = self.outcome
-        if not outcome:
-            outcome = "negative" if exc_type else ("positive" if self.used_keys else "")
+        if not outcome and status == "failed":
+            outcome = "negative"
+        elif not outcome and status == "completed" and self.used_keys:
+            outcome = "positive"
         try:
             self.completed = await self._client.complete(
                 self.run_id,

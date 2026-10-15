@@ -20,7 +20,7 @@ rules:
           - header: Authorization
             prefix: "Bearer "
             credentialUri: ate-secret://k8s.io/default/loom-creds/loom-token/token
-  # git clone of the Workspace repository, end to end TLS (not intercepted).
+  # git clone, from the Workspace or the agent's own command; end to end TLS (not intercepted).
   - tlsPassthrough:
       hostnames: ["github.com"]
       ports: { numbers: [443] }

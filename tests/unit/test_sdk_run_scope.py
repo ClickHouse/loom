@@ -3,6 +3,7 @@ memories its recalls cited are the run's `memories_used`."""
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -83,6 +84,24 @@ async def test_exception_completes_as_failed_and_propagates(agent: Agent) -> Non
         and done["memories_used"] == ["m1"]
     )
     assert current_run() is None and run.completed is not None
+
+
+async def test_cancellation_completes_as_cancelled_and_propagates(agent: Agent) -> None:
+    t: Any = agent.transport
+    with pytest.raises(asyncio.CancelledError):
+        async with agent.run_scope(goal="g"):
+            raise asyncio.CancelledError
+    done = t.payload("/v1/run.complete")
+    # Cancelled judges nothing: the server derives outcome `none` from the status.
+    assert done["status"] == "cancelled" and done["outcome"] == ""
+
+
+async def test_a_clean_exit_closes_with_the_status_the_block_set(agent: Agent) -> None:
+    t: Any = agent.transport
+    async with agent.run_scope(goal="g", budget_seconds=60) as run:
+        run.status = "cancelled"  # stopped early, e.g. over budget
+    assert t.payload("/v1/run.begin")["budget_seconds"] == 60
+    assert t.payload("/v1/run.complete")["status"] == "cancelled"
 
 
 async def test_ledger_failure_never_masks_the_block(agent: Agent) -> None:

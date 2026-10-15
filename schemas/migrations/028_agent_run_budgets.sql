@@ -1,7 +1,8 @@
 -- An optional budget on an agent run: what it may spend and how long it may run.
 --
 -- run.begin stores them; run.get compares them with what the run has spent
--- (loom.agent_turn_usage, by session) and how long it has been open, and names
+-- (its session's turns in loom.agent_turn_usage while it was open) and how
+-- long it has been open, and names
 -- the budgets it has gone past. Loom does not run the agent, so the check is a
 -- signal for whoever does, never a stop. 0 means no budget.
 ALTER TABLE loom.agent_runs
