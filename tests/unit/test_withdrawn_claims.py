@@ -266,21 +266,32 @@ def _logged_at(role: str, at: datetime, namespace: str = "team") -> dict[str, An
         ([], False),
     ],
 )
-def test_a_pair_fell_when_its_grant_ranks_below_one_this_week(
+@pytest.mark.grant_log_check
+def test_a_recheck_cuts_a_pair_whose_grant_ranks_below_one_it_held(
     ch: _CH, roles: list[str], fell: bool
 ) -> None:
+    from server.identity.app import grant_writes
+
     then = datetime(2026, 5, 1, 12, 0, 0)
     ch.log = [_logged_at(role, then + timedelta(seconds=i)) for i, role in enumerate(roles)]
     pair = ("team", "alice")
-    assert asyncio.run(rev.fell_this_week(ORG, [pair])) == ([pair] if fell else [])
+    assert asyncio.run(grant_writes.recheck(ORG, [pair])) == ([pair] if fell else [])
+    assert (rev.grant_claim_key(ORG, *pair) in ch.revoked) is fell
 
 
 def _cut_raised_under(ch: _CH, roles: list[str], written: int) -> bool:
     """Whether writing log row `written` of `roles` (one per second) cuts the pair."""
     then = datetime(2026, 5, 1, 12, 0, 0)
     ch.log = [_logged_at(role, then + timedelta(seconds=i)) for i, role in enumerate(roles)]
-    version = int(ch.log[written]["version"])
-    asyncio.run(rev.cut_where_raised_under(ORG, {("team", "alice"): version}, revoked_by="b"))
+    from server.identity.app import grant_writes
+
+    row = {
+        "org": ORG,
+        "namespace": "team",
+        "subject": "alice",
+        "version": ch.log[written]["version"],
+    }
+    asyncio.run(grant_writes._cut_raised_under([row]))
     return rev.grant_claim_key(ORG, "team", "alice") in ch.revoked
 
 
@@ -297,6 +308,7 @@ def _cut_raised_under(ch: _CH, roles: list[str], written: int) -> bool:
         (["writer"], 0, False),
     ],
 )
+@pytest.mark.grant_log_check
 def test_a_write_is_cut_when_the_row_before_it_ranks_higher(
     ch: _CH, roles: list[str], written: int, cut: bool
 ) -> None:
@@ -556,7 +568,9 @@ def test_a_lowered_scoped_token_still_lists_the_namespace_its_gate_admits(ch: _C
     ],
 )
 def test_a_log_row_grants_its_role_only_while_active(row: dict, rank: int) -> None:
-    assert rev._rank(row) == rank
+    from server.identity.app import grant_writes
+
+    assert grant_writes._rank(row) == rank
 
 
 def test_a_grant_cutoff_acknowledged_late_does_not_move_this_process_back() -> None:

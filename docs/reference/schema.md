@@ -243,7 +243,7 @@ whether it is refreshable. `make lint` fails when the page is stale.
 | `memory_usage_totals` | `SummingMergeTree` | `(org, namespace, memory_id)` |  |  |  |
 | `memory_versions` | `ReplacingMergeTree` | `(org, namespace, agent, user_id, session_id, memory_key, version)` | `toYYYYMM(created_at)` |  | 1 skip index (bloom_filter) |
 | `namespace_calibration_result` | `ReplacingMergeTree(version)` | `(org, namespace)` |  |  |  |
-| `namespace_grant_log` | `MergeTree` | `(org, namespace, subject, version)` | `toDate(logged_at)` | `logged_at + toIntervalDay(7)` |  |
+| `namespace_grant_log` | `MergeTree` | `(org, namespace, subject, version)` | `org` |  |  |
 | `namespace_grants` | `ReplacingMergeTree(version)` | `(org, namespace, subject)` | `org` |  |  |
 | `namespace_ontology` | `ReplacingMergeTree(version)` | `(org, namespace, kind, name)` | `org` |  |  |
 | `namespace_policies` | `ReplacingMergeTree(version)` | `(org, namespace, policy_id)` |  |  |  |

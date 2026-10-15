@@ -130,7 +130,7 @@ async def _live_grants(
 
 
 async def revoke_token_grants(
-    org: str, sa_subject: str, *, namespace: str | None = None, ch: Any = None
+    org: str, sa_subject: str, *, namespace: str | None = None, retry: bool = False, ch: Any = None
 ) -> int:
     """Revoke every live grant held by a token's own subject (on one
     namespace when given). Returns the number revoked."""
@@ -143,17 +143,18 @@ async def revoke_token_grants(
     if rows:
         revoked = [revoked_grant_row(org, sa_subject, r, now) for r in rows]
         await grant_writes.lower(org, revoked, reason="token grants revoked", ch=ch)
-    else:
-        # Perhaps a retry whose rows landed without their second cutoff.
+    elif retry:
+        # Its rows may have landed without their second cutoff.
         await grant_writes.recheck_logged(org, namespace=namespace, subject=sa_subject)
     return len(rows)
 
 
 async def cascade_revoke_to_created_tokens(
-    org: str, namespace: str, subject: str, *, ch: Any = None
+    org: str, namespace: str, subject: str, *, retry: bool = False, ch: Any = None
 ) -> int:
     """A person's grant on ``namespace`` was revoked: revoke the grants
-    every live token they created holds there. Returns tokens touched."""
+    every live token they created holds there. Returns tokens touched.
+    `retry` for a revoke repeated after its first attempt failed."""
     if ch is None:
         from server.core.ch import get_client
 
@@ -172,6 +173,6 @@ async def cascade_revoke_to_created_tokens(
     touched = 0
     for r in sa_rows:
         sa = str(r.get("sa_subject") or "")
-        if sa and await revoke_token_grants(org, sa, namespace=namespace, ch=ch):
+        if sa and await revoke_token_grants(org, sa, namespace=namespace, retry=retry, ch=ch):
             touched += 1
     return touched

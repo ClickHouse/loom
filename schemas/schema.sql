@@ -2444,14 +2444,12 @@ CREATE TABLE IF NOT EXISTS loom.namespace_grant_log
     `role` LowCardinality(String),
     `status` LowCardinality(String),
     `revoked_at` Nullable(DateTime),
-    `version` UInt64,
-    `logged_at` DateTime DEFAULT now()
+    `version` UInt64
 )
 ENGINE = MergeTree
-PARTITION BY toDate(logged_at)
+PARTITION BY org
 ORDER BY (org, namespace, subject, version)
-TTL logged_at + toIntervalDay(7)
-SETTINGS ttl_only_drop_parts = 1, index_granularity = 8192;
+SETTINGS index_granularity = 8192;
 
 -- loom.namespace_grants
 CREATE TABLE IF NOT EXISTS loom.namespace_grants

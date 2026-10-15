@@ -302,7 +302,7 @@ async def handle_namespace_restore(
             # Perhaps a retry whose lowered grants landed without their second cutoff.
             await grant_writes.recheck(
                 input.org,
-                [(input.target_namespace, s) for s in sorted({r["subject"] for r in rows})],
+                [(input.target_namespace, s) for s in sorted(set(last) - cut)],
             )
 
     # Provenance audit row — carries the snapshot_id in the subject for

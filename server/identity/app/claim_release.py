@@ -140,7 +140,7 @@ async def release_claim(
         else:
             # Perhaps a retry whose tombstones landed without their second cutoff.
             await grant_writes.recheck_logged(org, namespace=namespace)
-        await grant_writes.write_rows([t for t in tombstones if t not in active], ch=ch)
+        await grant_writes.write_rows([t for t in tombstones if t["status"] != "active"], ch=ch)
     except TooManySpellingsError as e:
         raise _release_refusal(org, namespace, e) from e
 

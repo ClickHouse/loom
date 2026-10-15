@@ -56,7 +56,8 @@ def rechecked(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, list[tuple[str
 def _branches(monkeypatch: pytest.MonkeyPatch, branches: list[str]) -> list[tuple[str, str]]:
     cascaded: list[tuple[str, str]] = []
 
-    async def _cascade(org: str, namespace: str, subject: str) -> None:
+    async def _cascade(org: str, namespace: str, subject: str, *, retry: bool) -> None:
+        assert retry
         cascaded.append((namespace, subject))
 
     monkeypatch.setattr(
@@ -98,20 +99,40 @@ def test_a_retried_revoke_spares_a_branch_the_subject_still_holds(
     assert cascaded == [("code-x", "alice")]
 
 
-def test_a_retried_replace_rechecks(rechecked: list[Any], monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _writer(*_a: Any, **_k: Any) -> GrantState:
-        return GrantState.from_row({"role": "writer", "status": "active", "granted_by": "ops"})
+@pytest.mark.parametrize(
+    ("existing", "requested", "replace", "rechecks"),
+    [
+        # The same role again, with or without replace: perhaps a retry.
+        ("writer", "writer", True, True),
+        ("writer", "writer", False, True),
+        # A raise is never cut, and a first grant has nothing to finish.
+        ("viewer", "writer", True, False),
+        (None, "writer", False, False),
+    ],
+)
+def test_a_create_rechecks_only_when_it_repeats_the_role(
+    rechecked: list[Any],
+    monkeypatch: pytest.MonkeyPatch,
+    existing: str | None,
+    requested: str,
+    replace: bool,
+    rechecks: bool,
+) -> None:
+    async def _existing(*_a: Any, **_k: Any) -> GrantState | None:
+        if existing is None:
+            return None
+        return GrantState.from_row({"role": existing, "status": "active", "granted_by": "ops"})
 
-    monkeypatch.setattr(grants_repo, "find_active_grant", _writer)
+    monkeypatch.setattr(grants_repo, "find_active_grant", _existing)
     create = GrantsCreateInput(
         org=ORG,
         namespace="team",
         subject="bob",
-        role="writer",
-        replace=True,  # type: ignore[arg-type]
+        role=requested,  # type: ignore[arg-type]
+        replace=replace,  # type: ignore[arg-type]
     )
     asyncio.run(grants_app.handle_grants_create(create))
-    assert rechecked == [(ORG, [("team", "bob")])]
+    assert rechecked == ([(ORG, [("team", "bob")])] if rechecks else [])
 
 
 def test_a_retried_approve_rechecks(rechecked: list[Any]) -> None:
@@ -199,7 +220,11 @@ def test_a_retried_token_grant_revoke_rechecks_the_subjects_logged_pairs(
             return []
 
     monkeypatch.setattr(grant_writes, "recheck_logged", _recheck_logged)
-    revoked = asyncio.run(
-        token_grants.revoke_token_grants(ORG, "sa:bot-1", namespace="team", ch=_NoLiveGrants())
+    first = token_grants.revoke_token_grants(ORG, "sa:bot-1", namespace="team", ch=_NoLiveGrants())
+    assert asyncio.run(first) == 0 and rechecked == [], (
+        "a first revoke with nothing live is a no-op"
     )
-    assert revoked == 0 and rechecked == [("team", "sa:bot-1")]
+    again = token_grants.revoke_token_grants(
+        ORG, "sa:bot-1", namespace="team", retry=True, ch=_NoLiveGrants()
+    )
+    assert asyncio.run(again) == 0 and rechecked == [("team", "sa:bot-1")]

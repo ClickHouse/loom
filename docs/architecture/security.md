@@ -110,12 +110,13 @@ hold the design together:
     them: a token minted while the insert was in flight read the old grant and is issued
     after the first cutoff.
   - Every other op writes no less than it read, so a higher row just before its own in
-    `loom.namespace_grant_log` (filled by a materialized view on every grant insert, kept a
-    week) is a raise it lowered without knowing, and that pair is cut. A raise is never
+    `loom.namespace_grant_log` (filled by a materialized view on every grant insert) is a
+    raise it lowered without knowing, and that pair is cut. A raise is never
     cut: a token minted after an older cutoff (by `loom mint-token`, say) keeps its claim.
   - A retried op that finds its rows already written cannot tell what its first attempt
-    did, so it cuts again every pair the log shows fell this week. That also cuts tokens
-    minted since a finished lowering, which their next mint replaces.
+    did, so it cuts again every pair whose grant ranks below one the log holds for it. A
+    token minted from the grant since loses nothing, since a cut claim falls back to the
+    live grant; a `loom mint-token` claim past the grant does.
 
   The spellings a cutoff covers are read with sequential consistency, since a missed one
   never gets a key.

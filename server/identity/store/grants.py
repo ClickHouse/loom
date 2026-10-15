@@ -261,3 +261,45 @@ async def ranked_live_grants(
         params={"org": org, "subs": subjects, "lim": int(limit)},
     )
     return list(rows or [])
+
+
+async def logged_rows(
+    org: str, namespaces: list[str], subjects: list[str], *, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """Every row of `loom.namespace_grant_log` for these namespaces and
+    subjects, oldest first, read as of every write that landed."""
+    ch = ch or _default_client()
+    with own_write_reads():
+        rows: list[dict[str, Any]] = await ch.query_all(
+            """
+            SELECT namespace, subject, role, status, revoked_at, version
+            FROM loom.namespace_grant_log
+            WHERE org = {org:String} AND namespace IN {ns:Array(String)}
+              AND subject IN {subs:Array(String)}
+            ORDER BY version
+            """,
+            params={"org": org, "ns": namespaces, "subs": subjects},
+        )
+    return rows
+
+
+async def logged_pairs(
+    org: str,
+    *,
+    namespace: str | None = None,
+    subject: str | None = None,
+    ch: _CHClient | None = None,
+) -> list[tuple[str, str]]:
+    """The (namespace, subject) pairs the grant log holds on `namespace` or of `subject`."""
+    ch = ch or _default_client()
+    with own_write_reads():
+        rows = await ch.query_all(
+            """
+            SELECT DISTINCT namespace, subject FROM loom.namespace_grant_log
+            WHERE org = {org:String}
+              AND ({ns:String} = '' OR namespace = {ns:String})
+              AND ({sub:String} = '' OR subject = {sub:String})
+            """,
+            params={"org": org, "ns": namespace or "", "sub": subject or ""},
+        )
+    return sorted((str(r["namespace"]), str(r["subject"])) for r in rows)

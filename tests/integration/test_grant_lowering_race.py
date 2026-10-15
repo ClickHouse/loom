@@ -167,7 +167,7 @@ async def test_a_retry_cuts_a_raise_its_failed_first_attempt_lowered_unseen(
     revoke = GrantsRevokeInput(org=org, namespace="team", subject="hal")
     with monkeypatch.context() as m:
         m.setattr(grants_repo, "find_any_grant", _read_then_approve)
-        m.setattr(grant_writes, "cut_where_raised_under", _down)
+        m.setattr(grant_writes, "_cut_raised_under", _down)
         with pytest.raises(RuntimeError):
             await grants_app.handle_grants_revoke(revoke)
     assert await _cutoff_reason(org, "hal") is None

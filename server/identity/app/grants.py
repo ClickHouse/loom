@@ -178,8 +178,8 @@ async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
         await grant_writes.lower(input.org, [row], reason="grants.create lowered")
     else:
         await grant_writes.write_row(row)
-        if input.replace:
-            # Perhaps the retry of a lowering that never got its second cutoff.
+        if existing is not None and grant_rank(existing.role) == grant_rank(input.role):
+            # Perhaps a retry whose first attempt landed without its cut.
             await grant_writes.recheck(input.org, [(input.namespace, subject)])
     if input.role == "admin":
         # A maintainer maintains every branch of the repository.
@@ -294,7 +294,7 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
         )
         for ns in sorted({input.namespace, *(ns for ns, _ in fell)}):
             if ns == input.namespace or (await _live_grant_row(input.org, ns, subject))[1] is None:
-                await _cascade_quietly(input.org, ns, subject)
+                await _cascade_quietly(input.org, ns, subject, retry=True)
         return GrantsRevokeOutput(revoked=False)
 
     active = (row.status or "active") == "active"
@@ -335,13 +335,13 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
     return GrantsRevokeOutput(revoked=True, revoked_at=now)
 
 
-async def _cascade_quietly(org: str, namespace: str, subject: str) -> None:
+async def _cascade_quietly(org: str, namespace: str, subject: str, *, retry: bool = False) -> None:
     """The tokens this person minted lose their own grants here. Best-effort: the
     person's revoke has landed; a failed cascade is logged, never a 500."""
     from server.identity.app import token_grants
 
     try:
-        await token_grants.cascade_revoke_to_created_tokens(org, namespace, subject)
+        await token_grants.cascade_revoke_to_created_tokens(org, namespace, subject, retry=retry)
     except Exception as e:  # noqa: BLE001 - the revoke itself succeeded
         log.warning("token grant cascade failed for %s/%s %s: %s", org, namespace, subject, e)
 

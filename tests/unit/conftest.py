@@ -296,6 +296,7 @@ def _no_grant_log_check(request: pytest.FixtureRequest) -> Iterator[None]:
         yield
         return
     from server.identity.app import grant_writes
+    from server.identity.store import grants as grants_repo
 
     async def _skip(*_a: object, **_k: object) -> None:
         return None
@@ -304,18 +305,17 @@ def _no_grant_log_check(request: pytest.FixtureRequest) -> Iterator[None]:
         return []
 
     stubs = {
-        "cut_where_raised_under": _skip,
-        "restamp": _skip,
-        "write_pair_cutoffs": _skip,
-        "fell_this_week": _none,
-        "logged_pairs": _none,
+        (grant_writes, "restamp"): _skip,
+        (grant_writes, "write_pair_cutoffs"): _skip,
+        (grants_repo, "logged_rows"): _none,
+        (grants_repo, "logged_pairs"): _none,
     }
-    before = {name: getattr(grant_writes, name) for name in stubs}
-    for name, stub in stubs.items():
-        setattr(grant_writes, name, stub)
+    before = {target: getattr(*target) for target in stubs}
+    for (module, name), stub in stubs.items():
+        setattr(module, name, stub)
     yield
-    for name, original in before.items():
-        setattr(grant_writes, name, original)
+    for (module, name), original in before.items():
+        setattr(module, name, original)
 
 
 @pytest.fixture(autouse=True)
