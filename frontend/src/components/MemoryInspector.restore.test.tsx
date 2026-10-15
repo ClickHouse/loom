@@ -194,6 +194,39 @@ describe("MemoryInspector restore of a superseded row", () => {
     expect(screen.getByText("works at Acme")).toBeTruthy();
   });
 
+  it("names the key of a restore that finds nothing after the drawer moved to another memory", async () => {
+    seed("writer");
+    const { finish } = await restoreThenMove(() => {});
+    finish({ restored: false });
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Nothing to restore for user_city", "info"));
+    expect(getMemory).not.toHaveBeenCalled();
+  });
+
+  it("names the key of a restore that lands after the drawer closed", async () => {
+    seed("writer");
+    const onChanged = vi.fn();
+    const view = render(
+      <MemoryInspector identity={identity} memoryKey="user_city" onClose={() => {}} onChanged={onChanged} />,
+    );
+    await screen.findByText("lives in Lisbon");
+    let finish: (v: { restored: boolean }) => void = () => {};
+    vi.mocked(restoreMemory).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Restore" }));
+    view.unmount();
+    vi.mocked(getMemory).mockClear();
+    finish({ restored: true });
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Restored user_city", "ok"));
+    // No drawer is left to show a re-read in.
+    expect(getMemory).not.toHaveBeenCalled();
+    expect(toast).not.toHaveBeenCalledWith("Restored", "ok");
+    expect(onChanged).toHaveBeenCalledTimes(1);
+  });
+
   it("reports a landed restore even when the re-read fails", async () => {
     seed("writer");
     const onChanged = vi.fn();

@@ -277,6 +277,8 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
     // costs seven reads and about 118 MB of ClickHouse for six kilobytes on the screen.
     return () => {
       live = false;
+      // Closing the drawer leaves this memory too, so a restore still in flight is stale.
+      inspection.current += 1;
     };
   }, [identity, memoryKey]);
 
