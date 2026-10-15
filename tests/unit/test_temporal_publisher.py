@@ -1281,3 +1281,23 @@ def test_a_revision_keeps_its_claims_sub_second_start(journal: Journal) -> None:
     with write_intent(WriteIntent(memory_key="k", existing=True, stated=frozenset())):
         (row,) = run(pub.publish_rows([hull]))
     assert row["value"] == '"hull"' and tm.utc(row["valid_at"]) == start
+
+
+def test_an_update_revises_the_claim_the_row_shows_under_its_qualifiers(
+    journal: Journal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.domain.temporal_capture import WriteIntent, write_intent
+
+    for scope, value in (("eu", '"hull"'), ("us", '"boston"')):
+        with write_intent(WriteIntent(memory_key="k", qualifiers={"region": scope})):
+            run(pub.publish_rows([mrow(value, **_LOCKLESS)]))
+    us = journal.commits[-1]
+    head = mrow(
+        '"boston"', **_LOCKLESS, version=int(json.loads(us["assertions"])[0]["source_version"])
+    )
+    _over(journal, monkeypatch, head)
+    austin = _copy(head, value='"austin"', content_sha256=sha256_value_json('"austin"'))
+    with write_intent(WriteIntent(memory_key="k", existing=True, stated=frozenset())):
+        assert run(pub.publish_rows([austin]))
+    (a,) = [x for x in json.loads(journal.commits[-1]["assertions"]) if x["value"] == '"austin"']
+    assert a["qualifiers"] == {"region": "us"}

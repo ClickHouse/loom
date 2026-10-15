@@ -488,9 +488,14 @@ async def _set_prepare_value(w: _SetWrite, _restated: bool) -> None:
     # contact detail.
     from server.memory.domain.sensitivity import sensitivity_tags
 
-    _sens_tags = sensitivity_tags(effective_sensitivity, input.tags or [])
+    # One level label: the one that holds replaces another level's (a user's other
+    # `sensitivity:*` tags stay).
+    _kept_tags = [
+        t for t in (input.tags or []) if t not in ("sensitivity:medium", "sensitivity:high")
+    ]
+    _sens_tags = sensitivity_tags(effective_sensitivity, _kept_tags)
     if _sens_tags:
-        input = input.model_copy(update={"tags": [*(input.tags or []), *_sens_tags]})
+        input = input.model_copy(update={"tags": [*_kept_tags, *_sens_tags]})
         try:
             from server.observability.metrics import record_attribute_tagged
 
