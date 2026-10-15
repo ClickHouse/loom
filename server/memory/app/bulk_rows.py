@@ -43,9 +43,9 @@ def _with_sensitivity_tag(tags: list[str], level: str) -> list[str]:
     """Append `sensitivity:<level>` to a batch row's tags so the label reaches the embeddings
     table the ranking reads. Never raises."""
     try:
-        from server.memory.domain.sensitivity import sensitivity_tags
+        from server.memory.domain.sensitivity import relabel
 
-        return [*tags, *sensitivity_tags(level, tags)]
+        return relabel(tags, level)
     except Exception:  # noqa: BLE001 — a label must not fail a write
         return list(tags)
 

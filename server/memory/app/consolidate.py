@@ -114,12 +114,12 @@ def _with_sensitivity_tag_for_row(
 ) -> list[str]:
     """The merged row's `sensitivity:<level>` tag for the label it inherits; the union of
     source tags may already carry one."""
-    from server.memory.domain.sensitivity import sensitivity_tags
+    from server.memory.domain.sensitivity import relabel
 
     level = inherited_sensitivity(
         (str(r.get("sensitivity") or "") for r in cluster), canonical_value
     )
-    return [*tags, *sensitivity_tags(level, tags)]
+    return relabel(tags, level)
 
 
 def _consolidation_canonical_row(

@@ -34,7 +34,7 @@ from typing import Any
 from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client
 from server.memory.app.high_fence import fence_high, tombstone_chunks_of
-from server.memory.domain.sensitivity import HIGH, MEDIUM, detect_sensitivity, sensitivity_tags
+from server.memory.domain.sensitivity import HIGH, MEDIUM, detect_sensitivity, relabel
 
 # RE2, for ClickHouse `match()`: a superset of the shapes in
 # `memory/domain/sensitivity.py`'s high and medium patterns. Anything this misses
@@ -219,14 +219,14 @@ async def _tag_embeddings(c: SweepCandidate, *, ch: _CHClient) -> int:
     out: list[dict[str, Any]] = []
     for r in rows:
         tags = list(r.get("tags") or [])
-        extra = sensitivity_tags(c.level, tags)
-        if not extra:
+        relabelled = relabel(tags, c.level)
+        if relabelled == tags:
             continue
         out.append(
             build_embedding_row(
                 **(
                     {col: val for col, val in r.items() if col in EMBEDDING_PERSISTED_COLS}
-                    | {"tags": [*tags, *extra], "version": reemit_version(r)}
+                    | {"tags": relabelled, "version": reemit_version(r)}
                 )
             )
         )
@@ -254,7 +254,7 @@ async def apply(candidates: list[SweepCandidate], *, ch: _CHClient | None = None
                 tags = list(getattr(existing, "tags", None) or [])
                 return {
                     "sensitivity": _c.level,
-                    "tags": [*tags, *sensitivity_tags(_c.level, tags)],
+                    "tags": relabel(tags, _c.level),
                     "updated_at": now,
                     "version": _v,
                 }

@@ -486,16 +486,15 @@ async def _set_prepare_value(w: _SetWrite, _restated: bool) -> None:
     # The sensitivity tier rides the tags too: the embeddings table has no sensitivity
     # column, and the ranking demotes labelled rows on questions that did not ask for a
     # contact detail.
-    from server.memory.domain.sensitivity import sensitivity_tags
-
     # One level label: the one that holds replaces another level's (a user's other
     # `sensitivity:*` tags stay).
-    _kept_tags = [
-        t for t in (input.tags or []) if t not in ("sensitivity:medium", "sensitivity:high")
-    ]
-    _sens_tags = sensitivity_tags(effective_sensitivity, _kept_tags)
-    if _sens_tags:
-        input = input.model_copy(update={"tags": [*_kept_tags, *_sens_tags]})
+    from server.memory.domain.sensitivity import LEVEL_TAGS, relabel, sensitivity_tags
+
+    _sens_tags = sensitivity_tags(effective_sensitivity, input.tags or [])
+    if _sens_tags or set(input.tags or []) & LEVEL_TAGS:
+        # Level labels are the server's: the one that holds, or none (a user's level
+        # tag on unlabelled content is not a label).
+        input = input.model_copy(update={"tags": relabel(input.tags or [], effective_sensitivity)})
         try:
             from server.observability.metrics import record_attribute_tagged
 

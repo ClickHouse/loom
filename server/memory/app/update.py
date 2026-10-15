@@ -390,16 +390,12 @@ def _update_sensitivity(
     """(the revised row's sensitivity, its tags with the `sensitivity:` tag): the
     level memory.set would give the new value (autodetected when the setting is on),
     never below the row's own label."""
-    from server.memory.domain.sensitivity import (
-        max_sensitivity,
-        resolve_sensitivity,
-        sensitivity_tags,
-    )
+    from server.memory.domain.sensitivity import max_sensitivity, relabel, resolve_sensitivity
 
     level = max_sensitivity(
         [getattr(existing, "sensitivity", ""), resolve_sensitivity("", serialized_value)]
     )
-    return level, [*tags, *sensitivity_tags(level, tags)]
+    return level, relabel(tags, level)
 
 
 def _revised_fields(input: Any, existing: MemoryRow) -> tuple[Any, str, str, list[str], list[str]]:
@@ -804,7 +800,14 @@ async def _write_revision(
         # The vector writes go with the version row, once the journal accepted it; a
         # revision of a memory removed since it was read is refused, not re-asserted.
         with (
-            write_intent(WriteIntent(memory_key=existing.memory_key, existing=True, stated=stated)),
+            write_intent(
+                WriteIntent(
+                    memory_key=existing.memory_key,
+                    existing=True,
+                    stated=stated,
+                    expected_sha256=str(getattr(input, "if_match_sha256", "") or ""),
+                )
+            ),
             declare_fields(declared),
         ):
             written = await insert_memory_versions(

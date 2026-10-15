@@ -679,6 +679,22 @@ def _plan_row(
     fields = declared_fields(row)
     if fields is not None and "value" not in fields:
         fields = fields - {"content_sha256"}  # a hash follows its value: the journal's
+    if fields is None and intent.existing and not removes(row):
+        claims = tm.current_claims(active, now)
+        shown = _claim_shown(claims, head) if claims else None
+        if (
+            shown is not None
+            and intent.expected_sha256
+            and (shown.content_sha256 != intent.expected_sha256)
+        ):
+            raise PreconditionFailedError(
+                f"{ident[3]!r} no longer holds the content its precondition names; "
+                "re-read and retry"
+            )
+        if shown is not None and not intent.qualifiers:
+            # An update revises the claim the row shows, under that claim's qualifiers
+            # (what it inherits is that claim's, not another qualifier's).
+            intent = replace(intent, qualifiers=dict(shown.qualifiers))
     left_out = _left_out_before(row, intent, active, head, floor, ident)
     if not left_out and intent.existing and not _same_memory(row, current, now):
         left_out = "superseded"  # the key was deleted and written anew since the read
@@ -702,11 +718,6 @@ def _plan_row(
         ]
         kind = "redact" if row.get("redacted_at") is not None else "retract"
         return tm.Amendment(kind, tuple(gone), ())
-    if fields is None and intent.existing and not intent.qualifiers and not removes(row):
-        # An update revises the claim the row shows, under that claim's qualifiers.
-        claims = tm.current_claims(active, now)
-        if claims:
-            intent = replace(intent, qualifiers=dict(_claim_shown(claims, head).qualifiers))
     try:
         amendment = amendment_for_row(row, active, intent, head, now=now)
     except tm.EmptyInterval as e:
@@ -932,8 +943,6 @@ def _as_value_write(
 
 
 _SENSITIVITY = {"": 0, "low": 1, "medium": 2, "high": 3}
-# The label tags a sensitivity level adds (`sensitivity_tags`); a user's own stay.
-_LEVEL_TAGS = frozenset({"sensitivity:medium", "sensitivity:high"})
 
 
 def _carry(
@@ -975,11 +984,9 @@ def _carry(
             r["sensitivity"] = held
             _sensitive_window(r, now)
             if "tags" in r:
-                from server.memory.domain.sensitivity import sensitivity_tags
+                from server.memory.domain.sensitivity import relabel
 
-                # The label that holds, not the one it replaced.
-                tags = [t for t in (r["tags"] or []) if t not in _LEVEL_TAGS]
-                r["tags"] = [*tags, *sensitivity_tags(held, tags)]
+                r["tags"] = relabel(r["tags"] or [], held)  # the label that holds
 
 
 def _sensitive_window(r: dict[str, Any], now: datetime) -> None:

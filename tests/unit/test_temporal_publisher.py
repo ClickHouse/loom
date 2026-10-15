@@ -1301,3 +1301,44 @@ def test_an_update_revises_the_claim_the_row_shows_under_its_qualifiers(
         assert run(pub.publish_rows([austin]))
     (a,) = [x for x in json.loads(journal.commits[-1]["assertions"]) if x["value"] == '"austin"']
     assert a["qualifiers"] == {"region": "us"}
+
+
+def test_an_update_precondition_is_checked_against_the_journal(journal: Journal) -> None:
+    from server.core.errors import PreconditionFailedError
+    from server.memory.domain.temporal_capture import WriteIntent, write_intent
+
+    base = mrow('"leeds"', **_LOCKLESS)
+    run(pub.publish_rows([base]))
+    run(pub.publish_rows([_copy(base, value='"york"', content_sha256=sha256_value_json('"york"'))]))
+    hull = _copy(base, value='"hull"', content_sha256=sha256_value_json('"hull"'))
+    intent = WriteIntent(
+        memory_key="k",
+        existing=True,
+        stated=frozenset(),
+        expected_sha256=sha256_value_json('"leeds"'),
+    )
+    with write_intent(intent), pytest.raises(PreconditionFailedError):
+        run(pub.publish_rows([hull]))
+
+
+def test_an_update_inherits_only_from_its_own_qualifiers_claim(
+    journal: Journal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.domain.temporal_capture import WriteIntent, write_intent
+
+    with write_intent(WriteIntent(memory_key="k", qualifiers={"region": "us"})):
+        run(pub.publish_rows([mrow('"boston"', **_LOCKLESS, pinned=0)]))
+    us = journal.commits[-1]
+    with write_intent(WriteIntent(memory_key="k", qualifiers={"region": "eu"})):
+        run(pub.publish_rows([mrow('"leeds"', **_LOCKLESS, pinned=1)]))
+    head = mrow(
+        '"boston"',
+        **_LOCKLESS,
+        pinned=0,
+        version=int(json.loads(us["assertions"])[0]["source_version"]),
+    )
+    _over(journal, monkeypatch, head)
+    austin = _copy(head, value='"austin"', content_sha256=sha256_value_json('"austin"'))
+    with write_intent(WriteIntent(memory_key="k", existing=True, stated=frozenset())):
+        (row,) = run(pub.publish_rows([austin]))
+    assert row["pinned"] == 0

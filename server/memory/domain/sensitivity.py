@@ -227,6 +227,17 @@ def sensitivity_tags(level: str | None, existing: Iterable[str] = ()) -> list[st
     return [] if tag in have else [tag]
 
 
+# The label tags a level carries; a user's other `sensitivity:*` tags are its own.
+LEVEL_TAGS = frozenset({f"sensitivity:{MEDIUM}", f"sensitivity:{HIGH}"})
+
+
+def relabel(tags: Iterable[str], level: str | None) -> list[str]:
+    """`tags` with the level label of `level` in place of any other level's (one
+    label, the one that holds)."""
+    kept = [t for t in tags if t not in LEVEL_TAGS]
+    return [*kept, *sensitivity_tags(level, kept)]
+
+
 def contact_intent(query: str) -> bool:
     """Does the question ask for a way to reach someone? Then a labelled
     contact detail is the answer, not collateral, and the ranking must not
