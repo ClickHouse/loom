@@ -124,7 +124,9 @@ parse_clickhouse_url() {
   case $CH_PORT in '' | *[!0-9]*) fail "the ClickHouse URL has an invalid port: $CH_PORT" ;; esac
   # Both go into .env as written, and the user into ch-setup's SQL.
   case $CH_USER in *[!A-Za-z0-9_.@-]*) fail "the ClickHouse user may hold only letters, digits and _ . @ -" ;; esac
-  case $CH_HOST in *[!A-Za-z0-9._:\[\]-]*) fail "the ClickHouse URL has an invalid host: $CH_HOST" ;; esac
+  host_chars=$CH_HOST
+  case $CH_HOST in \[*\]) host_chars=${CH_HOST#\[} host_chars=${host_chars%\]} ;; esac
+  case $host_chars in *[!A-Za-z0-9._:-]*) fail "the ClickHouse URL has an invalid host: $CH_HOST" ;; esac
 }
 
 # read_password [HINT]: ask on the terminal, without echo.

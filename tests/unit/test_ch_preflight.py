@@ -167,7 +167,7 @@ def test_the_doctor_warns_of_what_the_next_migration_will_refuse(
     )
     name, grade, detail = doctor._doctor_preflight_check()
     assert (name, grade) == ("clickhouse_preflight", doctor.WARN)
-    assert "will refuse: may not read system.mutations; may not ask every replica" in detail
+    assert "will refuse: may not read system.mutations | may not ask every replica" in detail
     assert "system.query_log" in detail
     # One pointer to the SQL for the whole line.
     assert detail.count("--print-sql") == 1 and detail.count("will refuse") == 1
@@ -758,18 +758,21 @@ def test_the_reader_holds_select_on_loom_alone(
     assert ch_setup.reader_status(reader) == (True, problem)
 
 
-def test_an_up_to_date_process_needs_only_the_grants_it_serves_with(
+def test_a_missing_ddl_grant_stops_even_with_nothing_pending(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class DmlOnly(FakeCH):
         def command(self, sql: str, **kwargs: Any) -> Any:
+            held = ("SELECT", "INSERT", "ALTER UPDATE", "ALTER DELETE")
+            if sql.startswith("CHECK GRANT ") and "," not in sql:
+                return int(sql.removeprefix("CHECK GRANT ").split(" ON ")[0] in held)
             if sql == f"CHECK GRANT {preflight.GRANTS['migrate']} ON loom.*":
                 return 0
             return super().command(sql, **kwargs)
 
+    # The running server's workers use the DDL grants too.
     monkeypatch.setattr(preflight, "_migrations_pending", lambda ch, journal: False)
-    (gap,) = preflight.check(DmlOnly(), need="migrate").next_migration
-    assert "lacks" in gap.reason and gap.needs_admin
-    monkeypatch.setattr(preflight, "_migrations_pending", lambda ch, journal: True)
-    with pytest.raises(preflight.PreflightError, match="lacks"):
+    with pytest.raises(preflight.PreflightError) as e:
         preflight.check(DmlOnly(), need="migrate")
+    assert "is missing CREATE TABLE" in str(e.value)
+    assert "SELECT" not in str(e.value).split(" on loom.*")[0]

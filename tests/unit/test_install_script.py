@@ -376,6 +376,7 @@ def test_a_prepared_install_on_an_outside_clickhouse_names_ch_setup(install) -> 
     [
         ("http://lo%24om%20x@h.example:8123", "the ClickHouse user may hold only"),
         ("http://loom@h%24x.example:8123", "invalid host"),
+        ("http://loom@a]b:8123", "invalid host"),
     ],
 )
 def test_a_user_or_host_env_cannot_keep_is_refused(install, url: str, message: str) -> None:

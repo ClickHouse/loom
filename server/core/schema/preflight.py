@@ -222,7 +222,7 @@ def _granted(ch: Client, grants: str) -> bool:
 
 def _lacks(user: str, grants: str) -> PreflightError:
     return PreflightError(
-        f"{user!r} lacks {grants} on {DATABASE}.*: "
+        f"{user!r} is missing {grants} on {DATABASE}.*: "
         f"an admin has to run GRANT CURRENT GRANTS ON {DATABASE}.* TO `{user}`",
         needs_admin=True,
     )
@@ -296,13 +296,11 @@ def check(
         elif str(ch.command(f"CHECK GRANT CREATE DATABASE ON {DATABASE}.*")) != "1":
             raise _cannot_create(user)
 
-    # The DDL grants are needed only while a migration is pending, like the
-    # checks below; an up-to-date process needs those it serves with.
-    deferred = need == "migrate" and not migrating
-    if not _granted(ch, GRANTS["serve" if deferred else need]):
-        raise _lacks(user, GRANTS["serve" if deferred else need])
-    if deferred and not _granted(ch, GRANTS["migrate"]):
-        later.append(_lacks(user, GRANTS["migrate"]))
+    # Strict even with nothing pending: the running server's workers use the
+    # DDL grants too (retention TTLs, compaction, rebuilds, view refreshes).
+    if not _granted(ch, GRANTS[need]):
+        missing = [g for g in GRANTS[need].split(", ") if not _granted(ch, g)]
+        raise _lacks(user, ", ".join(missing))
 
     if need == "migrate":
         refused = [t for t in RUNNER_SYSTEM_TABLES if not _readable(ch, f"system.{t}")]
@@ -343,12 +341,13 @@ def warnings(server: Server) -> str:
     may not read. Boot and `loom migrate` log it; the doctor shows it."""
     parts = []
     if server.next_migration:
-        reasons = "; ".join(gap.reason for gap in server.next_migration)
+        reasons = " | ".join(gap.reason for gap in server.next_migration)
         parts.append(f"the next migration will refuse: {reasons}")
     if server.unreadable:
         tables = ", ".join(f"system.{t}" for t in server.unreadable)
         parts.append(f"may not read {tables}, so the telemetry from these tables stays empty")
-    line = "; ".join(parts)
+    # Each reason may end in its own SQL advice: " | " keeps them apart.
+    line = " | ".join(parts)
     if server.unreadable or any(gap.needs_admin for gap in server.next_migration):
         line += " (`loom ch-setup --print-sql` prints the SQL)"
     return line
