@@ -56,7 +56,7 @@ _REPLICA_BOUND_ERROR_CODES: tuple[int, ...] = (10, 242, 999)
 # same replica that just failed, so a single retry is not enough.
 REPLICA_BOUND_RETRIES: int = 2
 # Strict-mode KeeperMap answers, the same on every replica.
-_KEEPER_ANSWERS: tuple[str, ...] = ("Node exists", "Bad version", "No node")
+_KEEPER_ANSWERS: tuple[str, ...] = ("Node exists", "Bad version")
 
 
 # A query-level setting one replica does not know. ClickHouse

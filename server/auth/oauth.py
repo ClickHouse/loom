@@ -823,10 +823,17 @@ async def end_replayed_session(e: CodeReplayed, what: str) -> OAuthError:
     an answer. Either way the session ends; its owner signs in again, told why,
     so a theft is not taken for an expiry. While the end is not recorded
     anywhere, the answer is "retry", not a final refusal."""
-    from server.auth.revocation import is_revoked
+    from server.auth.revocation import revoked_outright
 
-    if e.grant["family"] and is_revoked(e.grant["family"]):
-        return _invalid_grant("this session has ended; sign in again")  # a logout spent it
+    family = e.grant["family"]
+    try:
+        ended = bool(family) and await revoked_outright(family)
+    except Exception:  # unknown: treat it as the replay it may be
+        log.exception("oauth: could not read whether session %s has ended", family)
+        ended = False
+    if ended:  # a logout spent it, or an earlier replay ended the session
+        log.warning("oauth: a spent %s of ended session %s was presented again", what, family)
+        return _invalid_grant("this session has ended; sign in again")
     try:
         await end_session(e.grant, f"{what} replayed")
     except Exception:  # nothing durable landed: the presenter is told to retry

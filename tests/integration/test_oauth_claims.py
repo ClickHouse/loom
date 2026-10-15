@@ -210,7 +210,7 @@ async def test_a_claim_insert_retried_after_a_lost_answer_is_still_ours(store: A
     )
 
 
-async def test_a_holder_running_past_its_bound_is_cut_off(
+async def test_a_holder_past_its_time_writes_nothing(
     store: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from server.core.ch import get_client
@@ -220,9 +220,73 @@ async def test_a_holder_running_past_its_bound_is_cut_off(
     monkeypatch.setattr(claims, "_HOLD_S", 0.1)
     with pytest.raises(claims.Busy):
         async with claims.holding(ch, key):
-            await asyncio.sleep(5)
+            await asyncio.sleep(0.2)
+            claims.before_write()
     held = "SELECT holder FROM loom.oauth_claims WHERE claim_key = {k:String}"
     assert await ch.query_one(held, params={"k": key}) is None
+
+
+async def test_a_slow_takeover_cannot_write_once_the_next_waiter_may_take_it(
+    store: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.core.ch import get_client
+
+    ch = get_client()
+    key = f"test:{uuid.uuid4().hex}"
+    monkeypatch.setattr(claims, "_STALE_S", 1)  # the real bounds, scaled down
+    monkeypatch.setattr(claims, "_HOLD_S", 0.67)
+    await ch.execute(
+        "INSERT INTO loom.oauth_claims (claim_key, holder, claimed_at) "
+        "VALUES ({k:String}, 'dead', now64(3) - INTERVAL 60 SECOND)",
+        params={"k": key},
+    )
+    real = type(ch).query_one
+    reads = 0
+
+    async def query_one(self: Any, sql: str, *a: Any, **k: Any) -> Any:
+        nonlocal reads
+        if "SELECT holder FROM loom.oauth_claims" in sql:
+            reads += 1
+            if reads == 2:  # the first waiter confirms its takeover slowly
+                await asyncio.sleep(0.8)
+        return await real(self, sql, *a, **k)
+
+    monkeypatch.setattr(type(ch), "query_one", query_one)
+
+    async def write_after(delay: float) -> str:
+        await asyncio.sleep(delay)
+        async with claims.holding(ch, key):
+            await asyncio.sleep(0.3)
+            claims.before_write()
+            return "wrote"
+
+    first, second = await _all(write_after(0), write_after(1.2))
+    assert isinstance(first, claims.Busy) and second == "wrote"
+
+
+async def test_a_spend_that_fails_but_lands_is_put_back(
+    store: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.core.ch import get_client
+
+    ch = get_client()
+    token = secrets.token_urlsafe(32)
+    await store.save_refresh(token, _grant("loom-cli"))
+    real = type(ch).insert
+    failed = False
+
+    async def insert(self: Any, table: str, rows: list[dict[str, Any]], *a: Any, **k: Any) -> Any:
+        nonlocal failed
+        result = await real(self, table, rows, *a, **k)
+        if not failed and rows[0].get("consumed") == 1:
+            failed = True  # the write landed, but its answer was lost
+            raise TimeoutError("ClickHouse write statement exceeded 5 s")
+        return result
+
+    monkeypatch.setattr(type(ch), "insert", insert)
+    with pytest.raises(TimeoutError):
+        await store.take_refresh(token, "loom-cli")
+    assert await store.take_refresh(token, "loom-cli") is not None  # the retry, not a replay
 
 
 async def test_polling_a_pending_device_grant_takes_no_claim(
@@ -243,3 +307,15 @@ async def test_polling_a_pending_device_grant_takes_no_claim(
     polled = await store.take_device(code)
     assert polled is not None and polled["status"] == "pending"
     assert claimed == []
+
+
+async def test_a_session_another_process_ended_reads_as_ended(
+    store: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.auth import revocation
+
+    family = uuid.uuid4().hex
+    assert not await revocation.revoked_outright(family)
+    await revocation.revoke(family, reason="logout", revoked_by="claims-it")
+    monkeypatch.setattr(revocation, "_revoked_jtis", frozenset())  # this process lags
+    assert await revocation.revoked_outright(family)

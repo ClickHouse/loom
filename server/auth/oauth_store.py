@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -26,6 +27,8 @@ from typing import Any, Literal, Protocol, TypedDict
 
 from server.auth import claims
 from server.core.secrets_at_rest import seal, unseal
+
+log = logging.getLogger(__name__)
 
 _T = "loom.oauth_state"
 UPSTREAM_PURPOSE = "oidc refresh token"
@@ -262,8 +265,26 @@ class ClickHouseStore:
                 return None  # checked before the spend: a wrong presenter can't burn it
             if row["consumed"]:
                 raise CodeReplayed(grant)
-            await self._ch().insert(_T, [_grant_row(rtype, rid, grant, 1)])
+            await self._spend(
+                _grant_row(rtype, rid, grant, 1), lambda: _grant_row(rtype, rid, grant, 0)
+            )
             return grant
+
+    async def _spend(self, spent: dict[str, Any], unspent: Callable[[], dict[str, Any]]) -> None:
+        """Write a credential's spent version. A failed write may still land,
+        so the unspent version goes in after it (the later version wins under
+        FINAL), and the client's retry is not taken for a replay."""
+        claims.before_write()
+        try:
+            await self._ch().insert(_T, [spent])
+        except Exception:
+            try:
+                await self._ch().insert(_T, [unspent()])
+            except Exception as e:  # noqa: BLE001 — the spend's own error is the answer
+                log.warning(
+                    "oauth: could not put back %s %s: %s", spent["record_type"], spent["id"][:8], e
+                )
+            raise
 
     async def save_pending(self, state: str, data: dict[str, Any]) -> None:
         # The JSON rides the client_name column, unused for non-client rows.
@@ -289,6 +310,7 @@ class ClickHouseStore:
             )
             if not row or int(row["expires_at"] or 0) < int(time.time()):
                 return None
+            claims.before_write()
             await self._ch().insert(
                 _T,
                 [
@@ -330,6 +352,7 @@ class ClickHouseStore:
         return row is not None
 
     async def save_device(self, d: Device) -> None:
+        claims.before_write()  # a no-op outside a transition
         await self._ch().insert(_T, [_device_row(d, 0)])
 
     async def device(self, device_id: str) -> Device | None:
@@ -373,5 +396,5 @@ class ClickHouseStore:
             if row["consumed"]:
                 raise CodeReplayed(d)
             if d["status"] != "pending":
-                await self._ch().insert(_T, [_device_row(d, 1)])
+                await self._spend(_device_row(d, 1), lambda: _device_row(d, 0))
             return d

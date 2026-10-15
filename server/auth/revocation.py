@@ -92,6 +92,24 @@ def is_revoked(jti: str, *, issued_at: int | None = None) -> bool:
     return cutoff is not None and issued_at is not None and issued_at < cutoff
 
 
+async def revoked_outright(jti: str) -> bool:
+    """`is_revoked` read from loom.revoked_tokens itself, for a check that
+    cannot wait for this process's copy to catch up with another's write."""
+    from server.core.ch import get_client
+
+    if is_revoked(jti):
+        return True
+    row = await get_client().query_one(
+        """
+        SELECT 1 FROM loom.revoked_tokens FINAL
+        WHERE jti = {j:String} AND expires_at > now() AND issued_before IS NULL
+        LIMIT 1
+        """,
+        params={"j": jti},
+    )
+    return row is not None
+
+
 async def refresh() -> None:
     """Re-read the revocation set from CH and replace the in-memory copy."""
     from server.core.ch import get_client
