@@ -161,7 +161,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     if settings.oauth_enabled:
         from server.auth import oauth_claims
 
-        await oauth_claims.probe(ch)
+        await oauth_claims.CLAIMS.probe(ch)
     from server.auth import grant_claims
 
     await grant_claims.CLAIMS.probe(ch)

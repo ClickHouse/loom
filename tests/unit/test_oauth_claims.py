@@ -64,7 +64,7 @@ def _unprobed(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 
 def _claim(keeper: _Keeper, key: str = "code:abc") -> tuple[oc.Claim, str]:
-    return asyncio.run(oc.claim(keeper, key))
+    return asyncio.run(oc.CLAIMS.claim(keeper, key))
 
 
 def test_a_live_claim_keeps_a_second_exchange_out_until_released() -> None:
@@ -73,7 +73,7 @@ def test_a_live_claim_keeps_a_second_exchange_out_until_released() -> None:
     assert first is oc.Claim.HELD
     assert _claim(keeper)[0] is oc.Claim.TAKEN
     assert keeper.takeovers == 0, "a live claim is not tried for takeover"
-    asyncio.run(oc.release(keeper, "code:abc", holder))
+    asyncio.run(oc.CLAIMS.release(keeper, "code:abc", holder))
     assert _claim(keeper)[0] is oc.Claim.HELD
 
 
@@ -89,7 +89,7 @@ def test_a_release_leaves_a_claim_that_was_taken_over() -> None:
     _, old = _claim(keeper)
     keeper.stale.add("code:abc")
     _, new = _claim(keeper)
-    asyncio.run(oc.release(keeper, "code:abc", old))
+    asyncio.run(oc.CLAIMS.release(keeper, "code:abc", old))
     assert keeper.rows == {"code:abc": new}
 
 
@@ -157,15 +157,15 @@ def test_the_boot_probe_sweeps_the_stale_claims() -> None:
     _claim(keeper, "code:kept")
     _claim(keeper, "code:live")
     keeper.stale.add("code:kept")
-    asyncio.run(oc.probe(keeper))
+    asyncio.run(oc.CLAIMS.probe(keeper))
     assert set(keeper.rows) == {"code:live"}
 
 
 def test_a_failed_sweep_does_not_fail_the_boot() -> None:
     keeper = _Keeper()
-    asyncio.run(oc.probe(keeper))
+    asyncio.run(oc.CLAIMS.probe(keeper))
     keeper.down = True
-    asyncio.run(oc.probe(keeper))
+    asyncio.run(oc.CLAIMS.probe(keeper))
     assert oc.claims_atomic() is True
 
 
@@ -175,7 +175,7 @@ def test_an_acquisition_past_its_wall_clock_bound_is_refused_and_released(
     # Retries, reconnects and pool waits all count: a claim whose insert landed
     # but whose acquisition dragged on would start the exchange already old.
     keeper = _Keeper()
-    asyncio.run(oc.probe(keeper))
+    asyncio.run(oc.CLAIMS.probe(keeper))
     execute = keeper.execute
     released: list[str] = []
 
@@ -199,7 +199,7 @@ async def test_a_cancelled_acquisition_releases_what_it_may_have_claimed() -> No
     # A client disconnect after the insert landed: the claim is dropped, not
     # left to lock the credential out until it goes stale.
     keeper = _Keeper()
-    await oc.probe(keeper)
+    await oc.CLAIMS.probe(keeper)
     execute = keeper.execute
     inserted = asyncio.Event()
 
@@ -210,7 +210,7 @@ async def test_a_cancelled_acquisition_releases_what_it_may_have_claimed() -> No
             await asyncio.sleep(30)  # the reply never comes
 
     keeper.execute = _hang  # type: ignore[method-assign]
-    task = asyncio.create_task(oc.claim(keeper, "code:abc"))
+    task = asyncio.create_task(oc.CLAIMS.claim(keeper, "code:abc"))
     await inserted.wait()
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -223,7 +223,7 @@ async def test_a_release_outlives_a_second_cancellation() -> None:
     # The request is cancelled again while it releases (anyio repeats it): the
     # shielded release still drops the claim.
     keeper = _Keeper()
-    await oc.probe(keeper)
+    await oc.CLAIMS.probe(keeper)
     execute = keeper.execute
     inserted, releasing = asyncio.Event(), asyncio.Event()
 
@@ -240,7 +240,7 @@ async def test_a_release_outlives_a_second_cancellation() -> None:
             await execute(sql, params)
 
     keeper.execute = _slow  # type: ignore[method-assign]
-    task = asyncio.create_task(oc.claim(keeper, "code:abc"))
+    task = asyncio.create_task(oc.CLAIMS.claim(keeper, "code:abc"))
     await inserted.wait()
     task.cancel()
     await releasing.wait()
@@ -256,7 +256,7 @@ def test_a_claim_read_back_as_taken_drops_what_it_may_have_written() -> None:
     # lagging follower showed no holder: the attempt answers TAKEN and
     # releases its own holder id, which leaves anyone else's claim alone.
     keeper = _Keeper()
-    asyncio.run(oc.probe(keeper))
+    asyncio.run(oc.CLAIMS.probe(keeper))
     other, holder = _claim(keeper)
     assert other is oc.Claim.HELD
     released: list[str] = []

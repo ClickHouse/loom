@@ -20,12 +20,9 @@ Keeper the migration skipped the table and the exchange runs unclaimed, as
 
 from __future__ import annotations
 
-from typing import Any
+from server.core.keeper_claims import Claim, KeeperClaims
 
-from server.core.keeper_claims import Claim, KeeperClaims, shielded
-from server.core.schema.migrate_lease import is_keeper_table
-
-__all__ = ["Claim", "claim", "claims_atomic", "is_keeper_table", "probe", "release"]
+__all__ = ["CLAIMS", "Claim", "claims_atomic"]
 
 # A claim older than STALE_S was left by an exchange that died. A live one is
 # done in 80 s at most: each phase below is a wall-clock bound, retries and
@@ -51,24 +48,3 @@ CLAIMS = KeeperClaims(
 def claims_atomic() -> bool | None:
     """Whether OAuth exchanges are claimed in Keeper here; None = not asked yet."""
     return CLAIMS.atomic
-
-
-async def probe(ch: Any) -> None:
-    """At boot, so /v1/health names `oauth_claims_not_atomic` before any exchange,
-    and to sweep the stale claims: one an exchange kept on purpose (its consume
-    did not finish) or failed to release is otherwise removed only when its
-    credential is presented again."""
-    await CLAIMS.probe(ch)
-
-
-async def claim(ch: Any, key: str) -> tuple[Claim, str]:
-    """Claim `key` for one exchange: (outcome, holder id to release with)."""
-    return await CLAIMS.claim(ch, key)
-
-
-async def release(ch: Any, key: str, holder: str) -> None:
-    await CLAIMS.release(ch, key, holder)
-
-
-async def release_shielded(ch: Any, key: str, holder: str) -> None:
-    await shielded(release(ch, key, holder), name="oauth_claims.release")

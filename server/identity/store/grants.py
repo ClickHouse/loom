@@ -24,12 +24,14 @@ async def insert_row(
     """Insert one grant row. Used by both create and revoke (revoke is
     a new row with `revoked_at` populated + bumped version)."""
     ch = ch or _default_client()
-    await ch.insert(
-        "loom.namespace_grants",
-        [row],
-        settings={"async_insert": 0, "wait_for_async_insert": 1},
-    )
-    _invalidate([row])
+    try:
+        await ch.insert(
+            "loom.namespace_grants",
+            [row],
+            settings={"async_insert": 0, "wait_for_async_insert": 1},
+        )
+    finally:
+        _invalidate([row])  # a reply lost after the write landed still drops it
 
 
 async def insert_rows(
@@ -43,12 +45,14 @@ async def insert_rows(
     if not rows:
         return
     ch = ch or _default_client()
-    await ch.insert(
-        "loom.namespace_grants",
-        rows,
-        settings={"async_insert": 0, "wait_for_async_insert": 1},
-    )
-    _invalidate(rows)
+    try:
+        await ch.insert(
+            "loom.namespace_grants",
+            rows,
+            settings={"async_insert": 0, "wait_for_async_insert": 1},
+        )
+    finally:
+        _invalidate(rows)
 
 
 def _invalidate(rows: list[dict[str, Any]]) -> None:

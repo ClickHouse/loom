@@ -17,6 +17,7 @@ import pytest
 
 from server.auth import oauth_claims
 from server.core.repo_base import _default_client
+from server.core.schema.migrate_lease import is_keeper_table
 
 _OLD_CLAIM = (
     "INSERT INTO loom.oauth_claims (claim_key, holder, claimed_at) "
@@ -33,7 +34,7 @@ async def ch() -> AsyncIterator[Any]:
         row = await client.query_one(
             "SELECT engine FROM system.tables WHERE database = 'loom' AND name = 'oauth_claims'"
         )
-        if not oauth_claims.is_keeper_table(row):
+        if not is_keeper_table(row):
             pytest.skip("needs loom.oauth_claims (a ClickHouse Keeper)")
         oauth_claims.CLAIMS.atomic = None
         yield client
@@ -48,45 +49,45 @@ def _key() -> str:
 
 async def test_of_concurrent_claims_on_one_credential_exactly_one_holds(ch: Any) -> None:
     key = _key()
-    outcomes = await asyncio.gather(*(oauth_claims.claim(ch, key) for _ in range(8)))
+    outcomes = await asyncio.gather(*(oauth_claims.CLAIMS.claim(ch, key) for _ in range(8)))
     held = [holder for outcome, holder in outcomes if outcome is oauth_claims.Claim.HELD]
     assert len(held) == 1
     assert all(
         o is oauth_claims.Claim.TAKEN for o, _ in outcomes if o is not oauth_claims.Claim.HELD
     )
-    await oauth_claims.release(ch, key, held[0])
-    outcome, holder = await oauth_claims.claim(ch, key)
+    await oauth_claims.CLAIMS.release(ch, key, held[0])
+    outcome, holder = await oauth_claims.CLAIMS.claim(ch, key)
     assert outcome is oauth_claims.Claim.HELD
-    await oauth_claims.release(ch, key, holder)
+    await oauth_claims.CLAIMS.release(ch, key, holder)
 
 
 async def test_a_stale_claim_is_taken_over_and_a_release_keeps_the_takers(ch: Any) -> None:
     key = _key()
     await ch.execute(_OLD_CLAIM, params={"k": key, "age": oauth_claims.STALE_S + 60})
-    outcome, holder = await oauth_claims.claim(ch, key)
+    outcome, holder = await oauth_claims.CLAIMS.claim(ch, key)
     assert outcome is oauth_claims.Claim.HELD
-    await oauth_claims.release(ch, key, "dead")  # the dead exchange's late release
-    assert (await oauth_claims.claim(ch, key))[0] is oauth_claims.Claim.TAKEN
-    await oauth_claims.release(ch, key, holder)
+    await oauth_claims.CLAIMS.release(ch, key, "dead")  # the dead exchange's late release
+    assert (await oauth_claims.CLAIMS.claim(ch, key))[0] is oauth_claims.Claim.TAKEN
+    await oauth_claims.CLAIMS.release(ch, key, holder)
 
 
 async def test_the_boot_sweep_drops_only_stale_claims(ch: Any) -> None:
     stale, live = _key(), _key()
     await ch.execute(_OLD_CLAIM, params={"k": stale, "age": oauth_claims.STALE_S + 60})
-    _, holder = await oauth_claims.claim(ch, live)
-    await oauth_claims.probe(ch)
+    _, holder = await oauth_claims.CLAIMS.claim(ch, live)
+    await oauth_claims.CLAIMS.probe(ch)
     rows = await ch.query_all(
         "SELECT claim_key FROM loom.oauth_claims WHERE claim_key IN {ks:Array(String)}",
         params={"ks": [stale, live]},
     )
     assert [r["claim_key"] for r in rows] == [live]
-    await oauth_claims.release(ch, live, holder)
+    await oauth_claims.CLAIMS.release(ch, live, holder)
 
 
 async def test_of_concurrent_takers_of_a_stale_claim_exactly_one_holds(ch: Any) -> None:
     key = _key()
     await ch.execute(_OLD_CLAIM, params={"k": key, "age": oauth_claims.STALE_S + 60})
-    outcomes = await asyncio.gather(*(oauth_claims.claim(ch, key) for _ in range(8)))
+    outcomes = await asyncio.gather(*(oauth_claims.CLAIMS.claim(ch, key) for _ in range(8)))
     held = [holder for outcome, holder in outcomes if outcome is oauth_claims.Claim.HELD]
     assert len(held) == 1
-    await oauth_claims.release(ch, key, held[0])
+    await oauth_claims.CLAIMS.release(ch, key, held[0])

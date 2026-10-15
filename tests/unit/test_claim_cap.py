@@ -367,3 +367,18 @@ def test_a_service_account_capped_to_nothing_reads_through_its_creator(
         is_service_account=True,
     )
     assert _admits(bot, "team", Role.WRITER)
+
+
+def test_a_grant_write_whose_reply_is_lost_still_drops_the_cache(ch: _CH) -> None:
+    ch.grants["team"] = ("writer", "active", False)
+    assert _admits(_flat("team"), "team", Role.WRITER)
+
+    async def _landed_then_lost(table: str, rows: list[dict[str, Any]], **_k: Any) -> None:
+        ch.grants["team"] = ("writer", "active", True)
+        raise TimeoutError("reply lost")
+
+    ch.insert = _landed_then_lost  # type: ignore[method-assign]
+    revoke = {"org": ORG, "namespace": "team", "subject": "alice", "role": "writer"}
+    with pytest.raises(TimeoutError):
+        asyncio.run(grants_repo.insert_row(revoke))
+    assert not _admits(_flat("team"), "team")

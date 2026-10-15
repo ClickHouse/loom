@@ -756,7 +756,7 @@ async def _exchange(
     ch = get_client()
     key = f"{kind}:{_token_id(credential)}"
     try:
-        claim, holder = await oauth_claims.claim(ch, key)
+        claim, holder = await oauth_claims.CLAIMS.claim(ch, key)
     except Exception as e:  # an exchange Keeper could not keep apart does not run
         raise _logged_unavailable("exchange claim", e) from e
     if claim is oauth_claims.Claim.TAKEN:
@@ -765,7 +765,7 @@ async def _exchange(
     issued_at = int(time.time())  # before the decision reads the revocations
     if claim is oauth_claims.Claim.UNCLAIMED:
         return await _exchange_unclaimed(kind, credential, found, decide, issued_at)
-    release = functools.partial(oauth_claims.release_shielded, ch, key, holder)
+    release = functools.partial(oauth_claims.CLAIMS.release_shielded, ch, key, holder)
     return await _exchange_claimed(kind, credential, client_id, decide, issued_at, release)
 
 

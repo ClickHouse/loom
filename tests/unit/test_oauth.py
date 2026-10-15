@@ -37,8 +37,8 @@ def keeper(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     async def _release(ch: object, key: str, holder: str) -> None:
         released.append(key)
 
-    monkeypatch.setattr(oauth_claims, "claim", _held)
-    monkeypatch.setattr(oauth_claims, "release", _release)
+    monkeypatch.setattr(oauth_claims.CLAIMS, "claim", _held)
+    monkeypatch.setattr(oauth_claims.CLAIMS, "release", _release)
     return released
 
 
@@ -602,7 +602,7 @@ def test_a_concurrent_exchange_of_a_claimed_credential_is_told_to_retry(
     c = _client()
     code, verifier = _seed_code()
     with monkeypatch.context() as racing:
-        racing.setattr(oauth_claims, "claim", _taken)
+        racing.setattr(oauth_claims.CLAIMS, "claim", _taken)
         refused = _exchange(c, code, verifier)
     assert refused.status_code == 503 and refused.headers["retry-after"] == "5"
     assert _exchange(c, code, verifier).status_code == 200
@@ -841,8 +841,8 @@ async def test_an_exchange_cancelled_before_its_consume_still_releases(
         await asyncio.sleep(0.05)
         released.append(key)
 
-    monkeypatch.setattr(oauth_claims, "claim", _held)
-    monkeypatch.setattr(oauth_claims, "release", _release)
+    monkeypatch.setattr(oauth_claims.CLAIMS, "claim", _held)
+    monkeypatch.setattr(oauth_claims.CLAIMS, "release", _release)
 
     reads: list[str] = []
 
@@ -880,7 +880,7 @@ def test_without_a_keeper_the_credential_is_used_up_before_the_decision(
     async def _unclaimed(ch: object, key: str) -> tuple[oauth_claims.Claim, str]:
         return oauth_claims.Claim.UNCLAIMED, ""
 
-    monkeypatch.setattr(oauth_claims, "claim", _unclaimed)
+    monkeypatch.setattr(oauth_claims.CLAIMS, "claim", _unclaimed)
     store = oauth._store
     order: list[str] = []
     consume = store.consume_code
@@ -911,6 +911,6 @@ def test_a_made_up_credential_is_refused_before_any_keeper_write(
     async def _no_claim(ch: object, key: str) -> tuple[oauth_claims.Claim, str]:
         raise AssertionError("claimed a credential that does not exist")
 
-    monkeypatch.setattr(oauth_claims, "claim", _no_claim)
+    monkeypatch.setattr(oauth_claims.CLAIMS, "claim", _no_claim)
     r = _exchange(_client(), "no-such-code", "v")
     assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
