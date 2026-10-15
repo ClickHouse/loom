@@ -113,7 +113,7 @@ def test_shortfall_is_min_of_live_and_limit_minus_returned() -> None:
 
 
 def test_the_condition_cache_is_unsafe_only_below_26_8() -> None:
-    from server.core.vectors.vector_floor import condition_cache_unsafe
+    from server.core.ch import condition_cache_unsafe
 
     assert condition_cache_unsafe("26.6.1.10")
     assert condition_cache_unsafe("26.4.1.2509")

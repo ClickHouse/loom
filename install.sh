@@ -179,9 +179,10 @@ if [ -n "$CH_URL" ]; then
   [ -n "$CH_PASSWORD_SET" ] || read_password
 fi
 
-# Compose prefers the shell's variables to .env; .env alone names the target.
+# Compose prefers the shell's variables to .env; .env alone names the target,
+# the image version and the project (LOOM_VERSION was read above).
 unset COMPOSE_PROFILES LOOM_CH_HOST LOOM_CH_PORT LOOM_CH_SECURE LOOM_CH_USER LOOM_CH_PASSWORD \
-  LOOM_CH_READER_USER
+  LOOM_CH_READER_USER LOOM_VERSION COMPOSE_PROJECT_NAME
 
 tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/loom-install.XXXXXX")
 trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM

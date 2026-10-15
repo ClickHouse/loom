@@ -39,8 +39,9 @@ Sizing (web replicas, uvicorn processes, the workers container) is in
   service. The URL must name one.
 - **The URL.** `http://` defaults to port 8123, `https://` to 8443 and TLS.
   Percent-encode `@`, `:`, `/` and `%` in the user or password; an empty password is
-  `user:@host` or `LOOM_CH_PASSWORD=`. `LOOM_CH_URL` works in place of `--clickhouse`. A server on the Docker host is `host.docker.internal`: `localhost`
-  inside the container is the container itself.
+  `user:@host` or `LOOM_CH_PASSWORD=`. `LOOM_CH_URL` works in place of `--clickhouse`.
+  A server on the Docker host is `host.docker.internal`: `localhost` inside the
+  container is the container itself.
 - **The password.** Set `LOOM_CH_PASSWORD`, or answer the prompt, which does not echo;
   one in the URL works too, but `ps` and the shell history see it. It is written only to
   `.env`, which is mode 600, double-quoted with `\`, `"` and `$` escaped so Compose reads

@@ -29,8 +29,10 @@ MIN_VERSION = (26, 4)
 # so `CHECK GRANT ALTER ON loom.*` fails even after GRANT ALL ON loom.*.
 Need = Literal["migrate", "serve", "read"]
 GRANTS: dict[Need, str] = {
+    # The migrations, and the running server's workers: compaction (OPTIMIZE),
+    # provider rebuilds (TRUNCATE) and view retirement (SYSTEM REFRESH VIEW).
     "migrate": "CREATE TABLE, CREATE VIEW, ALTER TABLE, ALTER VIEW, DROP TABLE, DROP VIEW, "
-    "INSERT, SELECT",
+    "INSERT, SELECT, OPTIMIZE, TRUNCATE, SYSTEM VIEWS",
     "serve": "SELECT, INSERT, ALTER UPDATE, ALTER DELETE",
     "read": "SELECT",
 }
@@ -189,13 +191,15 @@ def _migrations_pending(ch: Client, journal: Path) -> bool:
     return bool(ledger_report(applied, files).pending)
 
 
-def oldest_version(ch: Client, *, strict: bool = True) -> str:
+def oldest_version(
+    ch: Client, *, strict: bool = True, gaps: list[PreflightError] | None = None
+) -> str:
     """The oldest version among the server's replicas: a Cloud service in a
     rolling upgrade answers from replicas on two versions, and the old one
     still runs the DDL. A server without the `default` cluster is one node.
     When the replicas cannot be asked, `strict` (a process about to migrate)
-    stops; otherwise the connected server answers (check() records what a
-    migrating process would have refused)."""
+    stops; otherwise the connected server answers, and what a strict check
+    would have refused goes to `gaps`."""
     from server.settings import settings
 
     try:
@@ -203,15 +207,19 @@ def oldest_version(ch: Client, *, strict: bool = True) -> str:
     except Exception as e:  # noqa: BLE001 — a missing cluster is one node; the rest depends on strict
         code = error_code(e)
         if code != CLUSTER_DOESNT_EXIST:
-            if strict and code == ACCESS_DENIED:
-                raise PreflightError(
+            if code == ACCESS_DENIED:
+                refusal = PreflightError(
                     f"{settings.ch_user!r} may not ask every replica for its version "
                     "(clusterAllReplicas): an admin has to run Loom's setup SQL",
                     needs_admin=True,
-                ) from None
-            if strict:
+                )
+            else:
                 reason = str(e).splitlines()[0].split(" (for url")[0][:200]
-                raise PreflightError(f"cannot read every replica's version: {reason}") from None
+                refusal = PreflightError(f"cannot read every replica's version: {reason}")
+            if strict:
+                raise refusal from None
+            if gaps is not None:
+                gaps.append(refusal)
         versions = [str(ch.command("SELECT version()"))]
     return min(versions, key=version_key)
 
@@ -265,13 +273,7 @@ def check(
     # checked like a process that only serves.
     migrating = need == "migrate" and (strict or not database or _migrations_pending(ch, journal))
     later: list[PreflightError] = []
-    try:
-        version = oldest_version(ch, strict=need == "migrate")
-    except PreflightError as e:
-        if migrating:
-            raise
-        later.append(e)
-        version = str(ch.command("SELECT version()"))
+    version = oldest_version(ch, strict=migrating, gaps=later if need == "migrate" else None)
     if version_key(version)[:2] < MIN_VERSION:
         floor = ".".join(map(str, MIN_VERSION))
         raise PreflightError(f"ClickHouse {version} is older than {floor}: upgrade the server")

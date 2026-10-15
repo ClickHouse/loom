@@ -470,13 +470,23 @@ async def _probe_vector_state(client: CHClient) -> None:
     await ensure_probed(client)
 
 
+def condition_cache_unsafe(oldest_version: str) -> bool:
+    """Before 26.8 (ClickHouse #112086) a vector-search read with a WHERE clause
+    could record granules as non-matching, and a later SELECT with the same
+    condition silently returned fewer rows. True when the oldest replica is
+    older than that, so Loom's sessions turn the cache off whatever any
+    profile says."""
+    from server.core.schema.preflight import version_key
+
+    return version_key(oldest_version)[:2] < (26, 8)
+
+
 async def _turn_off_unsafe_condition_cache(client: AsyncClient) -> None:
     """Run every Loom session with the query condition cache off when any
-    replica predates its vector-read fix (`vector_floor`), or when the
+    replica predates its vector-read fix (`condition_cache_unsafe`), or when the
     replicas cannot be asked. Each new connection asks, so a reconnect keeps
     the setting."""
     from server.core.schema.preflight import CLUSTER_DOESNT_EXIST, REPLICA_VERSIONS_SQL, version_key
-    from server.core.vectors import vector_floor
 
     async def versions(sql: str) -> list[str]:
         return [str(row[0]) for row in (await client.query(sql)).result_rows]
@@ -493,7 +503,7 @@ async def _turn_off_unsafe_condition_cache(client: AsyncClient) -> None:
         log.info("replica versions unknown (%s): use_query_condition_cache = 0", str(e)[:120])
         client.set_client_setting("use_query_condition_cache", 0)
         return
-    if vector_floor.condition_cache_unsafe(oldest):
+    if condition_cache_unsafe(oldest):
         client.set_client_setting("use_query_condition_cache", 0)
         log.info("ClickHouse %s: sessions run with use_query_condition_cache = 0", oldest)
 
