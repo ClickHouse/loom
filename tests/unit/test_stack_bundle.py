@@ -142,13 +142,78 @@ def test_a_new_bundle_is_checked_against_the_newest_of_several(tmp_path: Path) -
         module.refuse_older("clickhouse/clickhouse-server:26.9.1.5", [final, rc])
 
 
-def test_the_release_checks_a_new_bundle_against_the_latest_published_one() -> None:
+def _release_workflow() -> dict:
     import yaml
 
-    workflow = yaml.safe_load(
+    return yaml.safe_load(
         (Path(__file__).parents[2] / ".github" / "workflows" / "release.yml").read_text()
     )
-    (resolve,) = [s for s in workflow["jobs"]["clickhouse"]["steps"] if s.get("id") == "resolve"]
-    assert "published_bundle.sh recent" in resolve["run"]
-    assert "build_stack_bundle.py not-older" in resolve["run"]
+
+
+def test_the_release_warns_when_a_published_bundle_keeps_its_own_release() -> None:
+    (resolve,) = [
+        s for s in _release_workflow()["jobs"]["clickhouse"]["steps"] if s.get("id") == "resolve"
+    ]
     assert "::warning::clickhouse_image=" in resolve["run"]
+
+
+# `gh` as the publish step sees it: v1.1.0 is not published yet, and v1.2.0's
+# bundle (STUB_BUNDLE) was published by another tag's run a moment ago.
+STUB_GH = """#!/usr/bin/env bash
+if [ "$1" = api ]; then
+  case "$2" in
+    */releases/tags/*) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+    *) echo v1.2.0 ;;
+  esac
+  exit 0
+fi
+while [ $# -gt 0 ]; do [ "$1" = --dir ] && dir=$2; shift; done
+cp "$STUB_BUNDLE" "$dir/loom-stack.tar.gz"
+"""
+
+
+@pytest.mark.parametrize(
+    ("own", "allow", "published"),
+    [
+        ("clickhouse/clickhouse-server:26.9.17.8", "", False),
+        ("clickhouse/clickhouse-server:26.9.17.8", "true", True),
+        ("clickhouse/clickhouse-server:26.9.18.11", "", True),
+    ],
+)
+def test_overlapping_releases_recheck_the_bundle_another_tag_published(
+    tmp_path: Path, own: str, allow: str, published: bool
+) -> None:
+    """Two tags resolve ClickHouse before either publishes; the publish step,
+    one at a time across tags, refuses the one that would now be a downgrade."""
+    import os
+    import subprocess
+
+    module = _module()
+    other, _ = module.build("1.2.0", tmp_path / "other", "clickhouse/clickhouse-server:26.9.18.11")
+    module.build("1.1.0", tmp_path / "work" / "release" / "stack", own)
+    (tmp_path / "work" / "scripts").symlink_to(Path(__file__).parents[2] / "scripts")
+    gh = tmp_path / "bin" / "gh"
+    gh.parent.mkdir()
+    gh.write_text(STUB_GH)
+    gh.chmod(0o755)
+
+    job = _release_workflow()["jobs"]["github-release"]
+    assert job["concurrency"] == {"group": "release-publish", "cancel-in-progress": False}
+    (keep,) = [s for s in job["steps"] if "published_bundle.sh" in s.get("run", "")]
+    run = subprocess.run(
+        ["bash", "-e", "-c", keep["run"]],
+        cwd=tmp_path / "work",
+        env={
+            **os.environ,
+            "PATH": f"{gh.parent}:{os.environ['PATH']}",
+            "GITHUB_REPOSITORY": "o/r",
+            "VERSION": "1.1.0",
+            "ALLOW_DOWNGRADE": allow,
+            "STUB_BUNDLE": str(other),
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert (run.returncode == 0) is published, run.stderr
+    if not published:
+        assert "older than clickhouse/clickhouse-server:26.9.18.11" in run.stderr

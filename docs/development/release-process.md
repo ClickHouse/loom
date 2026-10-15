@@ -96,11 +96,7 @@ A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not mov
    The dispatch passes only if that release dumps the tag's `schemas/schema.sql`;
    otherwise regenerate it on that release (the
    [schema dump](./migrations.md#schema-dump-and-check) commands with
-   `LOOM_CLICKHOUSE_IMAGE=clickhouse/clickhouse-server:A.B.C.D`), commit it, and re-tag.
-   A new bundle never names an older release than the bundles of the 30 newest releases
-   (prereleases included) do, since an install upgrading to it would start an older
-   server on data a newer one wrote; the job fails instead, unless the dispatch adds
-   `-f allow_clickhouse_downgrade=true`;
+   `LOOM_CLICKHOUSE_IMAGE=clickhouse/clickhouse-server:A.B.C.D`), commit it, and re-tag;
 3. `build` writes the version into the Python and TypeScript SDK sources and builds the
    Python SDK wheel and sdist, the npm tarball (after the TypeScript SDK's `check:dist`),
    and zips of the two plugins (`loom-claude-code-plugin-vX.Y.Z.zip`,
@@ -118,7 +114,14 @@ A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not mov
    on a re-run, with notes generated from the commits since the previous tag, and attaches
    the verified files. A bundle the release already carries is kept, and so is its checksum
    (one the release lost is written again from it): replacing an asset deletes it first,
-   and a failed upload would leave an installed version without its bundle.
+   and a failed upload would leave an installed version without its bundle. A new bundle
+   never names an older ClickHouse release than the bundles of the 30 newest releases
+   (prereleases included) do, since an install upgrading to it would start an older
+   server on data a newer one wrote; the job fails instead, unless the dispatch adds
+   `-f allow_clickhouse_downgrade=true`. This job runs for one tag at a time, so two
+   tags released together cannot both pass the check against the same older bundle;
+   GitHub keeps one waiting run, so a third tag cancels the waiting one, which is then
+   re-run.
 
 The server image is published before the GitHub Release, so an installer shown on the
 release page never points at a missing image.

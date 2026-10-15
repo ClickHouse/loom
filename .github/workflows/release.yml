@@ -139,15 +139,12 @@ jobs:
       # A re-run keeps the release this version's published bundle names, so
       # rerunning the installer for it never moves ClickHouse.
       # A dispatch may name the release in place of `latest`; a published
-      # bundle keeps its own either way. A new bundle never names an older
-      # release than a recent published one (prereleases included), unless the
-      # dispatch allows it.
+      # bundle keeps its own either way.
       - id: resolve
         env:
           VERSION: ${{ needs.version.outputs.version }}
           GH_TOKEN: ${{ github.token }}
           CLICKHOUSE_IMAGE: ${{ inputs.clickhouse_image }}
-          ALLOW_DOWNGRADE: ${{ inputs.allow_clickhouse_downgrade }}
         run: |
           if [ -n "$CLICKHOUSE_IMAGE" ]; then
             python - <<'PY'
@@ -173,13 +170,6 @@ jobs:
                 image=$CLICKHOUSE_IMAGE
               else
                 image=$(bash dev/clickhouse_release.sh)
-              fi
-              last=0
-              bash scripts/release/published_bundle.sh recent recent-published || last=$?
-              if [ "$last" -eq 0 ] && [ "$ALLOW_DOWNGRADE" != true ]; then
-                python scripts/release/build_stack_bundle.py not-older "$image" recent-published/*/loom-stack.tar.gz
-              elif [ "$last" -ne 0 ] && [ "$last" -ne 3 ]; then
-                exit "$last"
               fi
               ;;
             *) exit "$status" ;;
@@ -486,6 +476,11 @@ jobs:
     needs: [version, verify, docker, docker-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # One publish at a time across every tag, so the downgrade check below
+    # sees the bundle another tag's run published a moment ago.
+    concurrency:
+      group: release-publish
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
@@ -499,11 +494,14 @@ jobs:
       # Replacing an asset deletes it first: a failed upload would leave an
       # installed version without its bundle, and its pin with it. A published
       # bundle and its checksum stay; a checksum file the release lost is
-      # written again from the published bundle.
+      # written again from the published bundle. A new bundle never names an
+      # older ClickHouse release than a recent published one (prereleases
+      # included), unless the dispatch allows it.
       - name: Keep a bundle this version already published
         env:
           VERSION: ${{ needs.version.outputs.version }}
           GH_TOKEN: ${{ github.token }}
+          ALLOW_DOWNGRADE: ${{ inputs.allow_clickhouse_downgrade }}
         run: |
           status=0
           bash scripts/release/published_bundle.sh "$VERSION" published || status=$?
@@ -516,7 +514,16 @@ jobs:
                 (cd published && sha256sum loom-stack.tar.gz) >release/stack/loom-stack.tar.gz.sha256
               fi
               ;;
-            3) ;;
+            3)
+              last=0
+              bash scripts/release/published_bundle.sh recent recent-published || last=$?
+              if [ "$last" -eq 0 ] && [ "$ALLOW_DOWNGRADE" != true ]; then
+                image=$(python3 scripts/release/build_stack_bundle.py pinned-in release/stack/loom-stack.tar.gz)
+                python3 scripts/release/build_stack_bundle.py not-older "$image" recent-published/*/loom-stack.tar.gz
+              elif [ "$last" -ne 0 ] && [ "$last" -ne 3 ]; then
+                exit "$last"
+              fi
+              ;;
             *) exit "$status" ;;
           esac
       # An existing release for the tag is updated and its other files replaced,
