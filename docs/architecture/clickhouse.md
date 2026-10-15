@@ -92,7 +92,7 @@ and file locks are listed in [system overview](system-overview.md#deployment-top
 | `MergeTree`                                        | Append-only logs: `events`, `agent_events`, `audit_log`, `conversations`, `task_events`, `entity_edges`, traces                                                                                         | Rows are facts about a moment.                                                        |
 | `SummingMergeTree`                                 | Counters: `entity_degree`, `memory_usage_totals`, `code_unit_signal`                                                                                                                                    | A counter is an INSERT of a delta, never a read-modify-write.                         |
 | `AggregatingMergeTree`                             | Non-additive rollups: `memory_term_freq`, `chunk_term_freq`, `code_term_freq`, `agent_cost_rollup_daily`, `memory_exposure_breadth_hourly`, `query_nodes`, `namespace_write_marks`, `subject_last_seen` | Partial aggregate states (a distinct count cannot be summed), finished with `-Merge`. |
-| `KeeperMap`                                        | `task_leases`, `agent_run_claims`, `oauth_claims` and the migration lock `loom._migration_lock`                                                                                                         | Linearizable compare-and-swap across processes.                                       |
+| `KeeperMap`                                        | `task_leases`, `agent_run_claims`, `oauth_claims`, `grant_claims` and the migration lock `loom._migration_lock`                                                                                         | Linearizable compare-and-swap across processes.                                       |
 
 **Why `ReplacingMergeTree` for mutable state.** `ALTER … UPDATE` rewrites whole parts
 asynchronously with no read-your-write guarantee. Lightweight `UPDATE` writes patch parts
@@ -412,6 +412,9 @@ with `purge=true` and runner state.
   takers one wins. A claim is kept, to go stale, when the consume did not finish, and
   each boot sweeps the claims older than two minutes with one strict-mode
   `ALTER … DELETE`. The drop and the sweep are Keeper key drops, not MergeTree mutations.
+- **Grant change claims** (`loom.grant_claims`, KeeperMap) work the same way, around one
+  grant change: an op that reads a grant and then writes it holds the grant's key from
+  the read to the write, so a concurrent change to the same grant waits for it.
 
 **Classification for erasure.** `server/erasure/store/census.py` puts every table in
 `schemas/schema.sql` in exactly one list, and `tests/unit/test_every_table_is_classified.py`

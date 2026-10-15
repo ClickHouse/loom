@@ -324,6 +324,20 @@ def subjects_not_revoked(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_grant_claims() -> Iterator[None]:
+    """A grant change sees no Keeper unless a test says otherwise, so it holds
+    a lock in this process and asks no client about the claims table."""
+    from server.auth import grant_claims
+
+    before = (grant_claims.CLAIMS.atomic, grant_claims.CLAIMS.absent_until)
+    grant_claims.CLAIMS.atomic, grant_claims.CLAIMS.absent_until = False, float("inf")
+    grant_claims._local.clear()  # each test runs its own event loop
+    yield
+    grant_claims._local.clear()
+    grant_claims.CLAIMS.atomic, grant_claims.CLAIMS.absent_until = before
+
+
+@pytest.fixture(autouse=True)
 def _no_run_claims() -> Iterator[None]:
     """run.begin sees no Keeper unless a test says otherwise: the claims-table
     check is cached per process, so without this the first test to ask decides

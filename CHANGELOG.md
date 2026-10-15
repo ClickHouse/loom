@@ -79,6 +79,14 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   fanned out over, and only `memory.search(page=...)` serves it, re-checking each of them.
 - `grants.approve` refuses (409 `GRANT_WOULD_DOWNGRADE`) to approve a request below the
   subject's current grant; lower a grant with `grants.create replace=true`.
+- **Security:** two changes of one grant no longer interleave. An op that reads a grant
+  and then writes it (`grants.create`, `grants.approve`, `grants.revoke`, `namespace.join`,
+  `namespace.leave`, `namespace.cancel_request`) holds the grant from the read to the
+  write, in a KeeperMap claim (`loom.grant_claims`, migration `028_grant_claims.sql`); a
+  concurrent change of the same grant waits, and past 10 s answers a retryable 503
+  `GRANT_BUSY`. An approval could write over a promotion or a revoke that landed after its
+  read. Without a Keeper the changes are kept apart within each process only, and
+  `/v1/health` reports `grant_changes_not_atomic`.
 - With auth off, an `all_mine` search also reads every namespace the single user registered,
   not only the addressed one.
 - The addressed namespace is always searched first. A scoped token's other namespaces follow

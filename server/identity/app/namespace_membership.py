@@ -8,6 +8,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
+from server.auth.grant_claims import grant_change
 from server.core.ch import get_client
 from server.core.grant_sql import LIVE_GRANT
 from server.identity.api.models import (
@@ -38,9 +39,15 @@ async def handle_namespace_join(
     namespace land `pending` — zero access until an admin approves.
     Idempotent: re-joining at or below the current role is a no-op.
     """
-    ch = get_client()
     caller = _registry.resolve_subject(input.subject)
+    async with grant_change(input.org, input.namespace, caller):
+        return await _join(input, caller)
 
+
+async def _join(input: NamespaceJoinInput, caller: str) -> NamespaceJoinOutput:
+    """The join, under the grant's claim."""
+
+    ch = get_client()
     row = await ch.query_one(
         """
         SELECT toString(visibility) AS visibility, active, requires_approval,
@@ -232,9 +239,15 @@ async def handle_namespace_leave(
     ownership transfer first (via `grants.create` to promote another
     member, then re-leave).
     """
-    ch = get_client()
     caller = _registry.resolve_subject(input.subject)
+    async with grant_change(input.org, input.namespace, caller):
+        return await _leave(input, caller)
 
+
+async def _leave(input: NamespaceLeaveInput, caller: str) -> NamespaceLeaveOutput:
+    """The leave, under the grant's claim."""
+
+    ch = get_client()
     from server.identity.store import grants as grants_repo
 
     existing = await grants_repo.find_active_grant(input.org, input.namespace, caller)
@@ -271,6 +284,14 @@ async def handle_namespace_cancel_request(
 ) -> NamespaceCancelRequestOutput:
     """Clear the caller's pending_role; preserve their base grant."""
     caller = _registry.resolve_subject(input.subject)
+    async with grant_change(input.org, input.namespace, caller):
+        return await _cancel_request(input, caller)
+
+
+async def _cancel_request(
+    input: NamespaceCancelRequestInput, caller: str
+) -> NamespaceCancelRequestOutput:
+    """The cancel, under the grant's claim."""
 
     from server.identity.store import grants as grants_repo
 

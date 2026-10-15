@@ -645,3 +645,14 @@ def test_oauth_exchanges_without_keeper_claims_are_a_warning(
 
     assert codes(True, None) == codes(True, True) == codes(False, False) == []
     assert codes(True, False) == ["warn"]
+
+
+def test_grant_changes_without_keeper_claims_are_a_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def codes(atomic: bool | None) -> list[str]:
+        problems = collect_problems(_settings(monkeypatch), HealthState(grant_claims_atomic=atomic))
+        return [p.severity for p in problems if p.code == "grant_changes_not_atomic"]
+
+    assert codes(None) == codes(True) == []
+    assert codes(False) == ["warn"]

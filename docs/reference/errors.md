@@ -380,6 +380,10 @@ Raised in `server/memory/app/extract/handler.py`.
 
 Raised in `server/memory/app/verify.py`.
 
+#### `GRANT_BUSY`
+
+HTTP 503, raised as `server.core.errors.GrantBusyError`. 503 — another change to the same grant held it past the wait.
+
 #### `GRANT_WOULD_DOWNGRADE`
 
 HTTP 409, raised as `server.core.errors.GrantWouldDowngradeError`. 409 — `grants.create` asked for a role below the subject's current active grant on that namespace.

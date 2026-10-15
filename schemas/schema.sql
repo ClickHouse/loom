@@ -16,12 +16,12 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 140 tables + 17 materialized views.
+-- Counts: 141 tables + 17 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 
 -- ======================================================================
--- Tables (140)
+-- Tables (141)
 -- ======================================================================
 
 -- loom.agent_cost_rollup_daily
@@ -1573,6 +1573,16 @@ PARTITION BY toYYYYMM(ts)
 ORDER BY (org, namespace, kind, ts)
 TTL toDateTime(ts) + toIntervalDay(30)
 SETTINGS index_granularity = 8192;
+
+-- loom.grant_claims
+CREATE TABLE IF NOT EXISTS loom.grant_claims
+(
+    `claim_key` String,
+    `holder` String,
+    `claimed_at` DateTime64(3)
+)
+ENGINE = KeeperMap('/loom/grant_claims')
+PRIMARY KEY claim_key;
 
 -- loom.idempotency
 CREATE TABLE IF NOT EXISTS loom.idempotency

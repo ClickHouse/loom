@@ -162,6 +162,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         from server.auth import oauth_claims
 
         await oauth_claims.probe(ch)
+    from server.auth import grant_claims
+
+    await grant_claims.CLAIMS.probe(ch)
     tracker_sources_loop = boot.start_tracker_sources_refresher(ch)
     await boot.probe_sandbox()
     lease_retry: asyncio.Task[None] | None = None

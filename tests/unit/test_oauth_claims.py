@@ -56,8 +56,8 @@ class _Keeper:
 
 @pytest.fixture(autouse=True)
 def _unprobed(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    monkeypatch.setattr(oc, "_atomic", None)
-    monkeypatch.setattr(oc, "_absent_until", 0.0)
+    monkeypatch.setattr(oc.CLAIMS, "atomic", None)
+    monkeypatch.setattr(oc.CLAIMS, "absent_until", 0.0)
     yield
 
 
@@ -186,7 +186,7 @@ def test_an_acquisition_past_its_wall_clock_bound_is_refused_and_released(
         await execute(sql, params)
 
     monkeypatch.setattr(keeper, "execute", _slow)
-    monkeypatch.setattr(oc, "CLAIM_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(oc.CLAIMS, "claim_timeout_s", 0.05)
     with pytest.raises(TimeoutError):
         _claim(keeper)
     assert released == ["code:abc"] and keeper.rows == {}
@@ -278,5 +278,5 @@ def test_a_missing_claims_table_is_asked_for_again() -> None:
     assert _claim(keeper)[0] is oc.Claim.UNCLAIMED
     keeper.table = True
     assert _claim(keeper)[0] is oc.Claim.UNCLAIMED, "a no is kept for a while"
-    oc._absent_until = 0.0  # the recheck is due
+    oc.CLAIMS.absent_until = 0.0  # the recheck is due
     assert _claim(keeper)[0] is oc.Claim.HELD

@@ -35,10 +35,10 @@ async def ch() -> AsyncIterator[Any]:
         )
         if not oauth_claims.is_keeper_table(row):
             pytest.skip("needs loom.oauth_claims (a ClickHouse Keeper)")
-        oauth_claims._atomic = None
+        oauth_claims.CLAIMS.atomic = None
         yield client
     finally:
-        oauth_claims._atomic = None
+        oauth_claims.CLAIMS.atomic = None
         await client.disconnect()
 
 
