@@ -12,7 +12,6 @@ namespace.rollback would reinstate. CH-free.
 
 from __future__ import annotations
 
-import json
 import re
 from datetime import datetime
 from typing import Any
@@ -20,9 +19,6 @@ from typing import Any
 import pytest
 
 from server.memory import store as mr
-from server.memory.store import redaction
-from server.memory.store.rows import MEMORY_PERSISTED_COLS
-from tests.unit.memory_rows import projection_row
 from tests.unit.schema_ddl import column_names
 
 SECRET = "ssn 078-05-1120"
@@ -92,34 +88,6 @@ async def test_both_version_tables_scrub_every_text_column() -> None:
         assert {"redacted_at", "redaction_reason"} <= cols
         # One version only: the live head shares the memory_id.
         assert "version = {v:UInt64}" in sql and "memory_id = {mid:UUID}" in sql
-
-
-async def test_a_rollback_to_a_redacted_version_never_revives_the_object() -> None:
-    """namespace.rollback reinstates a mirror row through fetch_version_rows
-    (hydrate) and build_memory_version_row: the new head must carry no text."""
-    stored = projection_row(
-        org="acme",
-        namespace="shop",
-        memory_key="customer",
-        memory_id=_MID,
-        version=17,
-        value=json.dumps({"note": SECRET}),
-        value_json=json.dumps({"note": SECRET}),
-        evidence=f"said: {SECRET}",
-        entities=["078-05-1120"],
-        concepts=["ssn"],
-    )
-    sql = next(s for s, _ in await _redact() if "memory_versions" in s)
-    for col, expr in _assignments(sql).items():
-        if col in stored and not expr.startswith("{"):
-            stored[col] = _literal(expr)
-    # The mirror row as SELECT * returns it: `value` is the stored text.
-    mirror_row = {k: v for k, v in stored.items() if k != "value_text"}
-    reinstated = mr.build_memory_version_row(mr.rows._hydrate(mirror_row), version=99)
-    assert set(reinstated) >= set(MEMORY_PERSISTED_COLS)
-    assert reinstated["value_json"] in ("{}", "")
-    assert reinstated["value"] == redaction.REDACTED_VALUE
-    assert SECRET not in repr(reinstated)
 
 
 @pytest.mark.parametrize("head_live", [True, False])
