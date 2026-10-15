@@ -381,8 +381,10 @@ async def _rewrite_current(
     else:
         h = want[0]
         base = head or _row_of(org, ns, ident, h)
+        # The memory the claim belongs to (a plan the old head never showed may be
+        # another memory's): the row says whose state it shows.
         row = memory_repo.build_memory_version_row(
-            base, version=version, updated_at=now, **_columns(h)
+            base, version=version, updated_at=now, memory_id=h.memory_id, **_columns(h)
         )
     embedder = get_embedder()
     embedded = is_embedded(str(row["memory_type"]), str(row["sensitivity"]))

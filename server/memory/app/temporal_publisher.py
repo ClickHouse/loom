@@ -655,9 +655,10 @@ def _past_only(
         return True
     if not removes(row):
         return False
-    # Only a claim that holds now keeps the key's row: an ended one is history.
+    # What the key's row shows after it, by the reconciler's rule (`applies_now`):
+    # what holds now, else its latest begun claim.
     after = tm.apply({a.assertion_id: a for a in active}, amendment).values()
-    return bool(tm.valid_now(after, now))
+    return bool(tm.current_claims(after, now))
 
 
 def _plan_row(
@@ -900,7 +901,7 @@ def _as_value_write(
         return "locked"
     # Against what the caller asked for, before anything is inherited: a pin the row
     # would take from the journal never authorizes replacing the pinned value.
-    own_pin = bool(row.get("pinned")) and (intent.stated is None or "pinned" in intent.stated)
+    own_pin = intent.pin_requested if intent.stated is not None else bool(row.get("pinned"))
     if intent.pin_guard and new_value and not own_pin and any(a.pinned for a in claims):
         return "pinned"
     _carry(r, claims, intent, now)
@@ -931,11 +932,13 @@ def _carry(
     if stated is not None:
         if "pinned" not in stated and "pinned" in r and (same is not None or not intent.pin_guard):
             r["pinned"] = int(replaced.pinned)
-        if "expires_at" not in stated and "expires_at" in r and _holds_now(r, now):
+        if "expires_at" not in stated and "expires_at" in r:
+            # The present claim's expiry is the present's: a plan or late evidence
+            # keeps none of it (what its writer copied from the head included).
             ahead = (
                 replaced.expires_at if replaced.expires_at and replaced.expires_at > now else None
             )
-            r["expires_at"] = tm.utc(ahead)
+            r["expires_at"] = tm.utc(ahead) if _holds_now(r, now) else None
     if same is not None:
         for c in ("verified_by", "verified_at", "verified_sha256"):
             if c in r:
@@ -945,6 +948,24 @@ def _carry(
             held, 0
         ) > _SENSITIVITY.get(str(r.get("sensitivity") or ""), 0):
             r["sensitivity"] = held
+            _sensitive_window(r, now)
+
+
+def _sensitive_window(r: dict[str, Any], now: datetime) -> None:
+    """A row raised into a sensitive tier takes that tier's retention window, as the
+    handler gives a row written at that tier."""
+    from server.memory.domain.sensitive_retention import sensitive_retention
+
+    expires_at, on_expire, _ = sensitive_retention(
+        sensitivity=str(r.get("sensitivity") or ""),
+        expires_at=tm.utc(r.get("expires_at")),
+        on_expire=str(r.get("on_expire") or ""),
+        now=now,
+        settings=settings,
+    )
+    r["expires_at"] = expires_at
+    if "on_expire" in r:
+        r["on_expire"] = on_expire
 
 
 def _holds_now(r: Mapping[str, Any], now: datetime) -> bool:
@@ -1056,7 +1077,7 @@ def _shows_current(
     # other row whose own claim is not current is left out, never shown with
     # metadata the journal does not hold.
     shown: tm.Assertion | None = None
-    if own in current:
+    if own in current and amendment.change_kind != "assess":
         shown = own
     elif amendment.change_kind == "assess":
         revised = [a for a in current if a in amendment.added and carries(a)] or [

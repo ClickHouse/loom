@@ -209,6 +209,7 @@ async def handle_memory_set(input: MemorySetInput) -> MemorySetOutput:
         input.write_intent() or WriteIntent(memory_key=input.memory_key),
         pin_guard=True,
         stated=_stated(input),
+        pin_requested=bool(input.pinned),
     )
     try:
         with write_intent(intent):

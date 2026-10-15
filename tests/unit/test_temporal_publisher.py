@@ -1207,3 +1207,29 @@ def test_an_update_never_lands_on_a_recreated_memory(journal: Journal) -> None:
     update = _copy(base, value='"C"', content_sha256=sha256_value_json('"C"'))  # read A
     with write_intent(WriteIntent(memory_key="k", existing=True, stated=frozenset())):
         assert run(pub.publish_rows([update])) == []
+
+
+def test_an_explicit_unpinned_set_never_replaces_a_pinned_value(journal: Journal) -> None:
+    from server.memory.domain.temporal_capture import WriteIntent, write_intent
+
+    base = mrow('"A"', **_LOCKLESS, pinned=1)
+    run(pub.publish_rows([base]))
+    # The handler kept the pin of the row it read; the caller asked for none.
+    b = _copy(base, value='"B"', content_sha256=sha256_value_json('"B"'), pinned=1)
+    intent = WriteIntent(memory_key="k", pin_guard=True, stated=frozenset({"pinned"}))
+    with write_intent(intent):
+        assert run(pub.publish_rows([b])) == []
+
+
+def test_a_plan_never_inherits_the_present_ttl(journal: Journal) -> None:
+    from server.memory.domain.temporal_capture import WriteIntent, write_intent
+
+    ahead = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(seconds=30)
+    run(pub.publish_rows([mrow('"now"', **_LOCKLESS, expires_at=ahead)]))
+    plan = mrow(
+        '"later"', **_LOCKLESS, valid_at=datetime.now(UTC) + timedelta(days=2), expires_at=ahead
+    )
+    with write_intent(WriteIntent(memory_key="k", stated=frozenset())):
+        assert run(pub.publish_rows([plan])) == []
+    added = json.loads(journal.commits[-1]["assertions"])
+    assert [a["expires_at"] for a in added if a["value"] == '"later"'] == [None]

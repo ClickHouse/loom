@@ -92,6 +92,9 @@ class WriteIntent:
     # sensitivity). The rest is the journal's when the write is planned, not a copy
     # of what the writer read. None: a writer that states none of them.
     stated: frozenset[str] | None = None
+    # Whether the caller itself asked to pin (memory.set's request, before a handler
+    # keeps a restated pin): only that authorizes replacing a pinned value.
+    pin_requested: bool = False
 
 
 _intent: ContextVar[WriteIntent | None] = ContextVar("loom_temporal_intent", default=None)

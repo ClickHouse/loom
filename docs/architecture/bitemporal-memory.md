@@ -111,8 +111,10 @@ the `loom.memory` row (the current-state projection) are written after it.
     committed since their read.
   - `memory.lock` only tightens, checked against the journal's lock in force when
     it is planned (`locked` otherwise); unlock is its own operation.
-  - The expiry sweep holds only while the key is still expired (`superseded` once
-    a touch extended it).
+  - The expiry sweep holds only while the claim it read is still expired
+    (`superseded` once a touch extended it), and removes only claims that have
+    expired. A key left with no claim holding now shows its latest begun claim, as
+    a key holding only a closed fact does; a delete removes every claim.
   - A lock binds only what holds now; a lock on an ended claim binds nothing.
     Every left-out write answers why (`left_out`: superseded, locked, pinned,
     restated). An embedding row lands only with a kept memory row the journal left
