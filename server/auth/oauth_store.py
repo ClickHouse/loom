@@ -371,7 +371,9 @@ class ClickHouseStore:
     async def pending(self, state: str) -> dict[str, Any] | None:
         """The record `take_pending` would spend, left unspent."""
         loaded = await self._live_pending(f"pending:{state}")
-        data: dict[str, Any] | None = loaded[0]["data"] if loaded else None
+        if loaded is None:
+            return None
+        data: dict[str, Any] = loaded[0]["data"]
         return data
 
     async def take_pending(self, state: str) -> dict[str, Any] | None:

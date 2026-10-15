@@ -19,7 +19,7 @@ import json
 import logging
 import secrets
 import time
-from collections.abc import Awaitable
+from collections.abc import Coroutine
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
@@ -42,6 +42,7 @@ from server.auth.oauth_store import (
     OAuthStore,
     token_id,
 )
+from server.core.background import TaskSet
 from server.core.secrets_at_rest import open_sealed, seal, unseal
 from server.observability import audit
 from server.settings import settings
@@ -807,17 +808,15 @@ async def _decide_connect(f: dict[str, str]) -> Response:
     }
     # Minted before the ticket is spent, so a failed write leaves the approval
     # to submit again; of two submits only the one that spends the ticket answers.
-    answer = (
-        await _redirect_with_code(
+    answer = None
+    if approved:
+        answer = await _redirect_with_code(
             client,
             (subject, org, namespaces, roles),
             upstream_refresh=unseal(UPSTREAM_PURPOSE, pending["upstream_refresh"]),
             state=pending["mcp_state"],
             since=pending["since"],
         )
-        if approved
-        else None
-    )
     if await store.take_pending(ticket) is None:
         return expired  # the other submit answered
     await audit.emit(
@@ -959,13 +958,21 @@ async def _audit_ended(grant: Grant | Device, reason: str) -> None:
     )
 
 
-async def put_back(saving: Awaitable[None]) -> None:
-    """Return a spent credential from a request being cancelled; a failure
-    here must not hide the cancellation."""
-    try:
-        await asyncio.shield(saving)
-    except Exception as e:  # noqa: BLE001 — the cancellation is what goes on
-        log.warning("oauth: could not put a credential back: %s", e)
+_put_backs = TaskSet()
+
+
+async def put_back(saving: Coroutine[Any, Any, None]) -> None:
+    """Return a spent credential from a request being cancelled: held to its
+    end even if the cancellation comes again, and a failure logged from inside
+    it, so it neither hides the cancellation nor goes unseen."""
+
+    async def logged() -> None:
+        try:
+            await saving
+        except Exception as e:  # noqa: BLE001 — the cancellation is what goes on
+            log.warning("oauth: could not put a credential back: %s", e)
+
+    await asyncio.shield(_put_backs.spawn(logged(), name="oauth put-back"))
 
 
 def _unavailable() -> OAuthError:

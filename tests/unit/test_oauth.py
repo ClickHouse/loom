@@ -705,3 +705,18 @@ async def test_a_put_back_that_fails_still_lets_the_cancellation_through() -> No
 
     with pytest.raises(asyncio.CancelledError):
         await refresh()
+
+
+async def test_a_put_back_finishes_though_the_request_is_cancelled_again() -> None:
+    saved = asyncio.Event()
+
+    async def slow_save() -> None:
+        await asyncio.sleep(0.05)
+        saved.set()
+
+    request = asyncio.create_task(oauth.put_back(slow_save()))
+    await asyncio.sleep(0)
+    request.cancel()  # the shutdown cancels again while the put-back runs
+    with pytest.raises(asyncio.CancelledError):
+        await request
+    await asyncio.wait_for(saved.wait(), 1)
