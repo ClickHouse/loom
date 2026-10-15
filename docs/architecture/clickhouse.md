@@ -271,8 +271,8 @@ merge that lag themselves.
 
 Merges discard superseded `memory` rows, so the RMT table is not a history.
 `memory_versions_mv` copies every inserted `memory` row into `memory_versions`, which keeps
-each version. `memory.history`, `memory.redact`, `namespace.rollback` and the usage fold
-read it; the erasure saga deletes from it. A new `memory` column goes into
+each version. `memory.history`, `memory.redact` and the usage fold
+read it (`namespace.rollback` reads the bi-temporal journal); the erasure saga deletes from it. A new `memory` column goes into
 `memory_versions` and the view's `SELECT` in the same migration;
 `tests/unit/test_memory_versions_schema.py` compares the column lists.
 

@@ -385,10 +385,12 @@ Return a namespace's memories to what they were at `as_of`.
 | `as_of` | `datetime` | The instant rolled back to, as UTC. |
 | `reinstate` | `int` | Keys that serve again what they served at as_of (planned, or committed). |
 | `remove` | `int` | Keys that served nothing at as_of, retracted (planned, or committed). |
-| `left_out` | `int` | Planned keys a lock in force or a blacklist kept as they are (applied only). |
+| `left_out` | `int` | Keys left as they are: a value they served then is one today's rules refuse (blacklisted, redacted), or, applied, a lock in force refused the change. |
 | `truncated` | `bool` | More keys differ than max_keys; call again (or narrow memory_keys). |
 | `sample` | `list[dict[str, Any]]` | Up to 20 keys (`memory_key`, `agent`, `user_id`, `session_id`, `action`, the values served `then` and `now`). |
 | `applied_at` | `datetime \| None` | When the rollback was written; None on a dry run or when no key differed. |
+| `read_token` | `str` | Read-your-write token for the rollback's commits (pass it to a later read). |
+| `current_rows_pending` | `bool` | The commits landed but some current rows were not rewritten yet; the reconciler brings them in line (reads with `read_token` already see them). |
 
 ## `namespace.search_categories`
 

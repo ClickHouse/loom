@@ -55,13 +55,56 @@ async def test_the_plan_names_only_changed_keys_and_never_a_redacted_value(
         cut.first_at, cut.seq, cut.watermark = datetime(2026, 1, 1, tzinfo=UTC), 5, 5
         return cut
 
-    async def _served(org: str, cut: reads.Cut, **_: Any) -> list[reads.Held]:
+    async def _served_at(org: str, cut: reads.Cut, **_: Any) -> dict[str, reads.Held]:
         side = then if cut.axes.known is not None else now
-        return [reads.Held(a, "a", "-", "-", k, "m") for k, al in side.items() for a in al]
+        return {
+            a.assertion_id: reads.Held(a, "a", "-", "-", k, "m")
+            for k, al in side.items()
+            for a in al
+        }
+
+    async def _visible(org: str, ns: str, held: list[reads.Held]) -> list[reads.Held]:
+        return held
+
+    async def _keys(*_a: Any, **_k: Any) -> list[str]:
+        return ["born", "same", "secret"]
+
+    from server.memory.store import temporal as journal
 
     monkeypatch.setattr(reads, "cutoff", _cutoff)
-    monkeypatch.setattr(reads, "served", _served)
+    monkeypatch.setattr(reads, "_served_at", _served_at)
+    monkeypatch.setattr(reads, "visible", _visible)
+    monkeypatch.setattr(journal, "journal_keys", _keys)
     plan = await rb.plan("o", "n", datetime(2026, 2, 1, tzinfo=UTC), memory_keys=None, limit=10)
     by_key = {c.ident[3]: c for c in plan.changes}
     assert sorted(by_key) == ["born", "secret"]
-    assert by_key["born"].action == "remove" and by_key["secret"].then == ()
+    # A key that served a value since redacted is left as it is, never emptied.
+    assert by_key["born"].action == "remove" and not by_key["born"].refused
+    assert by_key["secret"].refused
+    assert by_key["secret"].sample()["then"] == ["[withheld]"]
+
+
+def test_a_partial_read_never_plans_a_rollback() -> None:
+    """A truncated page would plan removals of keys it did not see; any other gap
+    (an allocation in doubt, an integrity break) reads a partial journal."""
+    from server.core.errors import TemporalUnavailableError, ValidationError
+
+    def _cut(*gaps: str) -> reads.Cut:
+        cut = reads.Cut(namespace="n", axes=None)  # type: ignore[arg-type]
+        cut.gaps = list(gaps)
+        return cut
+
+    rb._refuse_gaps(_cut(), _cut())
+    with pytest.raises(ValidationError, match="memory_keys"):
+        rb._refuse_gaps(_cut(), _cut("truncated:10000"))
+    with pytest.raises(TemporalUnavailableError, match="allocation_in_doubt"):
+        rb._refuse_gaps(_cut("allocation_in_doubt:7"), _cut())
+
+
+def test_the_lock_in_force_stays_and_one_lifted_since_is_not_taken_again() -> None:
+    then = tm.first('"Leeds"', lock_mode="read_only", locked_by="human:ann")
+    held = tm.first('"Paris"', lock_mode="no_delete", lock_reason="audit")
+    (back,) = rb._build(_change([then], [held]))([held]).added
+    assert (back.lock_mode, back.lock_reason, back.locked_by) == ("no_delete", "audit", "")
+    (free,) = rb._build(_change([then], [tm.first('"Paris"')]))([tm.first('"Paris"')]).added
+    assert free.lock_mode == ""

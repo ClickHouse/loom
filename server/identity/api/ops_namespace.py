@@ -267,9 +267,9 @@ namespace_rollback = Operation(
     input_model=NamespaceRollbackInput,
     output_model=NamespaceRollbackOutput,
     handler=handle_namespace_rollback,
-    # A dry run is idempotent; an apply re-inserts heads and is not.
+    # A dry run is idempotent; an apply commits, and a repeat finds nothing to change.
     idempotent=False,
-    budget_p99_ms=10000,  # bounded by max_keys; one FULL OUTER JOIN + batched inserts
+    budget_p99_ms=10000,  # bounded by max_keys: a journal read per 50 keys, one batch of commits
     required_role=Role.ADMIN,
     audit=True,
 )

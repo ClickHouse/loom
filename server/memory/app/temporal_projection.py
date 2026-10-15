@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Sequence
+from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 from itertools import takewhile
 from typing import Any
@@ -21,7 +22,6 @@ from server.erasure.app import fence
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.app import temporal_reads as reads
 from server.memory.app.high_fence import fence_high
-from server.memory.app.namespace_rollback import stub_embedding_row
 from server.memory.app.temporal_rows import (
     Ident,
     Served,
@@ -204,6 +204,19 @@ async def reconcile_current(
     page per pass from durable cursors; a commit younger than `settle_s` may still
     be landing its row and is left alone. `only` scopes the commit cursor to one
     (org, namespace). Returns rows rewritten."""
+    token = _SETTLE.set(settle_s)
+    try:
+        return await _reconcile_pass(limit=limit, settle_s=settle_s, only=only)
+    finally:
+        _SETTLE.reset(token)
+
+
+# How long a commit's own row may still be landing: the pass's `settle_s` (a
+# rewrite inside a pass leaves a younger commit's row to its writer).
+_SETTLE: ContextVar[int] = ContextVar("loom_temporal_settle_s", default=store.SETTLE_S)
+
+
+async def _reconcile_pass(*, limit: int, settle_s: int, only: tuple[str, str] | None) -> int:
     fixed = 0
     # recorded_at is ClickHouse's clock: the cutoff is too.
     settled = await store.server_now() - timedelta(seconds=settle_s)
@@ -345,21 +358,19 @@ async def project_keys(
     )
     if any(g.startswith("read_token") for g in cut.gaps):
         raise TemporalUnavailableError("the change's current rows are pending; they follow")
-    out: dict[Ident, list[reads.Held]] = {}
-    for ident in idents:
-        agent, uid, sid, key = ident
-        rows = await reads.served(
-            org,
-            cut,
-            scope=WHOLE_NAMESPACE,
-            memory_keys=[key],
-            agent=agent,
-            user_id=uid,
-            session_id=sid,
-            include_high=True,
-        )
-        out[ident] = reads.applies_now(rows, cut, key)
-        await _rewrite_current(org, ns, ident, out[ident], cut_seq=cut.seq, plans=rows)
+    rows = await reads.served(
+        org,
+        cut,
+        scope=WHOLE_NAMESPACE,
+        memory_keys=sorted({i[3] for i in idents}),
+        include_high=True,
+    )
+    by: dict[Ident, list[reads.Held]] = {}
+    for h in rows:
+        by.setdefault((h.agent, h.user_id, h.session_id, h.memory_key), []).append(h)
+    out = {i: reads.applies_now(by.get(i, []), cut, i[3]) for i in idents}
+    for ident in idents:  # one at a time: the request's reads share one session
+        await _rewrite_current(org, ns, ident, out[ident], cut_seq=cut.seq, plans=by.get(ident, []))
     return out
 
 
@@ -439,8 +450,10 @@ async def _rewrite_current(
     async with namespace_lock(org, ns):
         if cut_seq is not None and await _committed_since(org, ns, ident, cut_seq):
             return False
-        version = await _projection_version(org, ns, ident, head, plans or want)
-        row["version"] = version
+        stamped = await _projection_version(org, ns, ident, head)
+        if stamped is None:
+            return False
+        version = row["version"] = stamped
         stub["version"] = version
         with write_intent(WriteIntent(memory_key=key, journaled=True)):
             await memory_repo.insert_memory_versions(
@@ -473,24 +486,26 @@ async def _projection_version(
     ns: str,
     ident: tuple[str, str, str, str],
     head: memory_repo.MemoryRow | None,
-    held: Sequence[reads.Held],
-) -> int:
-    """The version a projected row takes: the instant the state it shows began (the
-    key's latest commit, or a validity boundary since passed: a plan come due, a span
-    ended), above every version the key holds. History and rollback read a version
-    as that recording time; a write drawn after the state began stays newer."""
-    now = datetime.now(UTC)
-    began = [await store.last_commit_at(org, ns, ident)]
-    for h in held:
-        began += [t for t in (h.a.valid_from, h.a.valid_to) if t is not None and t <= now]
+) -> int | None:
+    """The version a projected row takes, above every version the key holds and no
+    earlier than the key's latest commit (history reads a version as a
+    recording time). Never a later instant than that: a write drawn before the row
+    was projected but published after it would read as superseded. None while a
+    commit's own row is still landing (its writer inserts it after the lock): that
+    writer's row carries columns the journal does not, so it is left to land."""
     raw = await store.memory_heads(org, ns, [ident])
     committed = await store.newest_row_versions(org, ns, [ident])
+    landed = max([0, *(int(r["version"]) for r in raw)])
+    at = await store.last_commit_at(org, ns, ident)
+    pending = max(committed.values(), default=0) > landed
+    if pending and at is not None and at > datetime.now(UTC) - timedelta(seconds=_SETTLE.get()):
+        return None
     return max(
         [
             1,
-            *(to_epoch_ns(t) for t in began if t is not None),
+            to_epoch_ns(at) if at is not None else 0,
             *(int(head.version) + 1 for _ in [0] if head is not None),
-            *(int(r["version"]) + 1 for r in raw),
+            landed + 1,
             *(v + 1 for v in committed.values()),
         ]
     )
@@ -595,4 +610,62 @@ def _row_of(
         created_at=born,
         last_reinforced_at=born,
         expires_at=tm.utc(a.expires_at),
+    )
+
+
+def stub_embedding_row(
+    row: memory_repo.MemoryRow,
+    embedder: Any,
+    *,
+    version: int,
+    tombstoned_at: datetime | None,
+    created_at: datetime,
+) -> dict[str, Any]:
+    """A dimensionless embedding row for a re-emitted version row: the embedding
+    worker fills its vector. `version` is the new memory row's, so a concurrent
+    'high' write's fence outranks it."""
+    from server.memory.domain.excerpt import build_excerpt
+    from server.memory.domain.trust import attests
+
+    serialized = row.value if isinstance(row.value, str) else json.dumps(row.value, default=str)
+    return memory_repo.build_embedding_row(
+        org=row.org,
+        namespace=row.namespace,
+        agent=row.agent,
+        user_id=row.user_id,
+        session_id=row.session_id,
+        run_id=row.run_id or "-",
+        memory_key=row.memory_key,
+        memory_type=row.memory_type,
+        scope="private",
+        content_excerpt=build_excerpt(serialized, memory_key=row.memory_key),
+        embedding_model=embedder.model_name,
+        embedding_dim=0,
+        embedding=[0.0] * int(embedder.dim),
+        tombstoned_at=tombstoned_at,
+        created_at=created_at,
+        version=version,
+        tags=list(row.tags or []),
+        entities=list(row.entities or []),
+        status=str(row.status or "active"),
+        confidence=float(row.confidence),
+        temporal_anchor=row.temporal_anchor,
+        temporal_confidence=float(row.temporal_confidence or 0.0),
+        valid_at=row.valid_at,
+        valid_to=row.valid_to,
+        invalid_at=row.invalid_at,
+        reinforcement_count=int(getattr(row, "reinforcement_count", 1) or 1),
+        source_resource_id=getattr(row, "source_resource_id", "") or "",
+        source_class=getattr(row, "source_class", "") or "",
+        expires_at=row.expires_at,
+        files=list(getattr(row, "files", None) or []),
+        concepts=list(getattr(row, "concepts", None) or []),
+        # The version's attestation, if it still binds its content.
+        verified=int(
+            attests(
+                getattr(row, "verified_by", ""),
+                getattr(row, "verified_sha256", ""),
+                getattr(row, "content_sha256", ""),
+            )
+        ),
     )

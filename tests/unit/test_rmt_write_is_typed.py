@@ -208,9 +208,6 @@ _EMBEDDING_BUILDER_NAMES = {"build_embedding_row", "EMBEDDING_PERSISTED_COLS"}
 _EMBEDDING_ALLOW: dict[tuple[str, str], str] = {
     # The funnel every other write goes through: it inserts what it is handed.
     ("server/memory/store/inserts.py", "insert_embedding_rows"): "the funnel",
-    ("server/memory/app/temporal_projection.py", "_rewrite_current"): (
-        "its one row is namespace_rollback.stub_embedding_row's, built with build_embedding_row"
-    ),
     ("server/memory/app/bulk_set.py", "_embed"): (
         "bulk_set's embed phase builds each row with build_embedding_row into "
         "_BulkWriteState.embedding_rows; this inserts the ones whose version row the "

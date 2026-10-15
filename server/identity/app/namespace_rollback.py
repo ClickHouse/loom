@@ -15,12 +15,13 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
-from server.core.errors import ValidationError
+from server.core.errors import LoomServerError, ValidationError
 from server.identity.api.models import (
     NamespaceRollbackInput,
     NamespaceRollbackOutput,
 )
 from server.memory.app import namespace_rollback as memory_rollback
+from server.memory.app import temporal_publisher as publisher
 
 log = logging.getLogger(__name__)
 
@@ -49,16 +50,52 @@ async def handle_namespace_rollback(
             "remove every key"
         )
     changes = plan.changes
+    planned = [c for c in changes if not c.refused]
     out = NamespaceRollbackOutput(
         dry_run=input.dry_run,
         as_of=as_of,
-        reinstate=sum(c.action == "reinstate" for c in changes),
-        remove=sum(c.action == "remove" for c in changes),
+        reinstate=sum(c.action == "reinstate" for c in planned),
+        remove=sum(c.action == "remove" for c in planned),
+        left_out=len(changes) - len(planned),
         truncated=plan.truncated,
         sample=[c.sample() for c in changes[:_SAMPLE]],
     )
-    if input.dry_run or not changes:
+    if input.dry_run or not planned:
         return out
+
+    receipts = await memory_rollback.apply(input.org, input.namespace, changes)
+    committed = {r.ident for r in receipts if r.commit_seq}
+    done = [c for c in planned if c.ident in committed]
+    out.reinstate = sum(c.action == "reinstate" for c in done)
+    out.remove = sum(c.action == "remove" for c in done)
+    # Refused, or a lock in force refused the change: the key keeps its claims.
+    out.left_out = len(changes) - len(done)
+    out.sample = [c.sample() for c in done[:_SAMPLE]]
+    out.applied_at = datetime.now(UTC)
+    out.read_token = publisher.read_token(receipts)
+    # Audited as soon as it is committed: the rows that follow are a projection.
+    await _audit.emit(
+        event_type="namespace.rollback",
+        org=input.org,
+        namespace=input.namespace,
+        actor=resolve_subject(),
+        subject={
+            "as_of": as_of.isoformat(),
+            "reinstate": out.reinstate,
+            "remove": out.remove,
+            "left_out": out.left_out,
+            "truncated": plan.truncated,
+            "memory_keys": input.memory_keys or [],
+            "commit_seqs": sorted(r.commit_seq for r in receipts if r.commit_seq),
+        },
+    )
+    try:
+        await memory_rollback.project(input.org, input.namespace, receipts)
+    except LoomServerError as e:
+        # Committed: the reconciler brings the current rows in line.
+        out.current_rows_pending = True
+        log.warning("namespace.rollback: current rows left to the reconciler: %s", e)
+    return out
 
     # What committed: a key whose lock or a blacklist refuses the change keeps its claims.
     done = await memory_rollback.apply(input.org, input.namespace, changes)

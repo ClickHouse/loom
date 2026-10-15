@@ -282,11 +282,12 @@ C < retired_seq)`, then the valid-time test. Content and tag filters run after
   the same way, from the published and applied watermarks. The rewrite's last
   check that no commit to the key passed its cut, and its insert, run under the
   publisher's namespace lock, so no write can commit and answer in between. Its
-  version is the instant the state it shows began (the key's latest commit, or a
-  plan come due or a span ended), above every version the key holds: history and
-  rollback read a version as that recording time, and a write drawn after the
-  state began stays newer. Its stub embedding row is filled by the embedding
-  worker. A namespace or
+  version is above every version the key holds and no earlier than the key's
+  latest commit (history reads a version as a recording time), never a later
+  instant: a write drawn before the rewrite but published after it stays newer. A
+  commit whose own row has not landed yet (its writer inserts it after the lock) is
+  left to land, since that row carries columns the journal does not. Its stub
+  embedding row is filled by the embedding worker. A namespace or
   user under an in-progress erasure, or a failed one still being retried, is left
   alone; an abandoned one no longer holds it.
 

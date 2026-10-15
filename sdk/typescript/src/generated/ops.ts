@@ -6665,6 +6665,8 @@ export interface NamespaceRollbackOutput {
   truncated?: boolean;
   sample?: Array<Record<string, unknown>>;
   applied_at?: string | null;
+  read_token?: string;
+  current_rows_pending?: boolean;
 }
 
 export interface NamespaceSearchCategoriesInput {

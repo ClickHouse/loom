@@ -6,14 +6,12 @@ the commits, as after any amendment."""
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-import server.memory.store as store
-from server.core.errors import TemporalUnavailableError
+from server.core.errors import TemporalUnavailableError, ValidationError
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.app import temporal_publisher as publisher
 from server.memory.app import temporal_reads as reads
@@ -28,12 +26,15 @@ Ident = tuple[str, str, str, str]
 
 @dataclass(frozen=True)
 class KeyChange:
-    """One key the rollback changes: what it served as known at `as_of`, and now."""
+    """One key the rollback changes: what it served as known at `as_of`, and now.
+    `refused`: a claim it served then is one today's rules refuse (a blacklisted or
+    redacted value), so the key is left as it is."""
 
     ident: Ident
     memory_id: str
     then: tuple[tm.Assertion, ...]
     now: tuple[tm.Assertion, ...]
+    refused: bool = False
 
     @property
     def action(self) -> str:
@@ -46,10 +47,17 @@ class KeyChange:
             "agent": agent,
             "user_id": uid,
             "session_id": sid,
-            "action": self.action,
-            "then": [reads.decode_value(a.value) for a in self.then],
-            "now": [reads.decode_value(a.value) for a in self.now],
+            "action": "left_out" if self.refused else self.action,
+            "then": [_shown(a) for a in self.then],
+            "now": [_shown(a) for a in self.now],
         }
+
+
+def _shown(a: tm.Assertion) -> Any:
+    """A value as the sample may show it: never a high one or a redacted one."""
+    if a.sensitivity == "high" or a.value == REDACTED_VALUE:
+        return "[withheld]"
+    return reads.decode_value(a.value)
 
 
 @dataclass(frozen=True)
@@ -60,47 +68,93 @@ class Plan:
     first_at: datetime | None
 
 
+# Keys read per page: each page's claims, at both cuts, fit one read.
+_PAGE = 50
+
+
 async def plan(
     org: str, namespace: str, as_of: datetime, *, memory_keys: list[str] | None, limit: int
 ) -> Plan:
-    """The keys whose served set as known at `as_of` differs from now (up to `limit`)."""
+    """The keys whose served set as known at `as_of` differs from now: every key the
+    journal has, a page at a time, the first `limit` changes kept (`truncated`
+    when more differ). Refused when either cut has a gap: a plan from a partial
+    read would remove keys it did not see."""
+    from server.memory.store import temporal as journal
+
     now = datetime.now(UTC)
     then_cut = await reads.cutoff(org, namespace, Axes(valid=now, known=as_of))
     now_cut = await reads.cutoff(org, namespace, Axes(valid=now, known=None))
-    if now_cut.watermark < now_cut.seq:
-        raise TemporalUnavailableError("the journal's projection is catching up; retry")
-    then = await _served(org, then_cut, memory_keys)
-    current = await _served(org, now_cut, memory_keys)
-    truncated = any(g.startswith("truncated") for g in (*then_cut.gaps, *now_cut.gaps))
+    _refuse_gaps(then_cut, now_cut)
+    keys = list(memory_keys) if memory_keys else await journal.journal_keys(org, namespace)
     changes: list[KeyChange] = []
-    for ident in sorted(then.keys() | current.keys()):
-        was, held = then.get(ident, []), current.get(ident, [])
-        if _state(was) == _state(held):
-            continue
-        if len(changes) == limit:
-            truncated = True
-            break
-        changes.append(
-            KeyChange(
-                ident=ident,
-                memory_id=next((h.memory_id for h in [*was, *held] if h.memory_id), ""),
-                # A redacted claim is never served again as a value.
-                then=tuple(h.a for h in was if h.a.value != REDACTED_VALUE),
-                now=tuple(h.a for h in held),
+    for i in range(0, len(keys), _PAGE):
+        page = keys[i : i + _PAGE]
+        then, refused = await _served(org, then_cut, page)
+        current, _ = await _served(org, now_cut, page)
+        _refuse_gaps(then_cut, now_cut)
+        for ident in sorted(then.keys() | current.keys()):
+            was, held = then.get(ident, []), current.get(ident, [])
+            if _state(was) == _state(held):
+                continue
+            if sum(not c.refused for c in changes) == limit:
+                return Plan(changes, True, now_cut.first_at)
+            changes.append(
+                KeyChange(
+                    ident=ident,
+                    memory_id=next((h.memory_id for h in [*was, *held] if h.memory_id), ""),
+                    then=tuple(h.a for h in was),
+                    now=tuple(h.a for h in held),
+                    refused=ident in refused,
+                )
             )
+    return Plan(changes, False, now_cut.first_at)
+
+
+def _refuse_gaps(*cuts: reads.Cut) -> None:
+    gaps = [g for c in cuts for g in c.gaps]
+    if any(g.startswith("truncated") for g in gaps):
+        raise ValidationError(
+            "a key holds more claims than one rollback read takes; name fewer memory_keys"
         )
-    return Plan(changes, truncated, now_cut.first_at)
+    if gaps:
+        raise TemporalUnavailableError(
+            f"the journal cannot be read whole now ({', '.join(gaps)}); retry"
+        )
 
 
 async def _served(
-    org: str, cut: reads.Cut, memory_keys: list[str] | None
-) -> dict[Ident, list[reads.Held]]:
+    org: str, cut: reads.Cut, page: list[str]
+) -> tuple[dict[Ident, list[reads.Held]], set[Ident]]:
+    """Each identity's claims at the cut, unfiltered, and the identities with a claim
+    today's rules refuse (a blacklisted or redacted value): those are never served
+    again, so their keys are left as they are."""
+    from server.core.ch import sequential_reads
+
+    if not cut.seq:
+        return {}, set()
+    with sequential_reads():
+        raw = await reads._served_at(
+            org,
+            cut,
+            scope=WHOLE_NAMESPACE,
+            memory_keys=page,
+            agent=None,
+            user_id=None,
+            session_id=None,
+            include_high=True,
+            memory_type=None,
+            tags=(),
+            limit=10_000,
+        )
+    shown = {id(h) for h in await reads.visible(org, cut.namespace, list(raw.values()))}
     out: dict[Ident, list[reads.Held]] = {}
-    for h in await reads.served(
-        org, cut, scope=WHOLE_NAMESPACE, memory_keys=memory_keys, include_high=True
-    ):
-        out.setdefault((h.agent, h.user_id, h.session_id, h.memory_key), []).append(h)
-    return out
+    refused: set[Ident] = set()
+    for h in raw.values():
+        ident = (h.agent, h.user_id, h.session_id, h.memory_key)
+        out.setdefault(ident, []).append(h)
+        if id(h) not in shown or h.a.value == REDACTED_VALUE:
+            refused.add(ident)
+    return out, refused
 
 
 def _state(held: list[reads.Held]) -> list[str]:
@@ -113,103 +167,46 @@ def _state(held: list[reads.Held]) -> list[str]:
 _IDS = tm.IDENTITY_FIELDS | {"embed_input_sha256"}
 
 
-async def apply(org: str, namespace: str, changes: list[KeyChange]) -> list[KeyChange]:
-    """Commit each change, then project the current rows; returns the changes that
-    committed. A key whose lock in force refuses the change commits nothing, nor does
-    one whose earlier value a blacklist added since refuses."""
-    from server.memory.app.blacklist_guard import enforce_on_insert
-    from server.memory.app.temporal_projection import project_keys
-
-    allowed = []
-    for c in changes:
-        try:
-            for a in c.then:
-                await enforce_on_insert(org=org, namespace=namespace, value=a.value)
-        except Exception as e:  # noqa: BLE001 — a refused value leaves its key as it is
-            log.info("namespace.rollback: %s left as it is: %s", c.ident[3], e)
-            continue
-        allowed.append(c)
-    receipts = await publisher.publish_amendments(
+async def apply(org: str, namespace: str, changes: list[KeyChange]) -> list[publisher.Receipt]:
+    """Commit each change a key's state allows, as one batch; the receipts of the keys
+    that committed. A refused key commits nothing, nor does one whose lock in force
+    refuses the change. The current rows follow with `project`."""
+    return await publisher.publish_amendments(
         org,
         namespace,
-        [(c.ident, c.memory_id, _build(c)) for c in allowed],
+        [(c.ident, c.memory_id, _build(c)) for c in changes if not c.refused],
         operation="namespace.rollback",
     )
-    committed = {r.ident for r in receipts if r.commit_seq}
-    done = [c for c in allowed if c.ident in committed]
-    if done:
-        await project_keys(
-            org, namespace, [c.ident for c in done], read_token=publisher.read_token(receipts)
-        )
-    return done
+
+
+async def project(org: str, namespace: str, receipts: list[publisher.Receipt]) -> None:
+    """The committed keys' current rows, rewritten to what now applies."""
+    from server.memory.app.temporal_projection import project_keys
+
+    idents = [r.ident for r in receipts if r.commit_seq]
+    if idents:
+        await project_keys(org, namespace, idents, read_token=publisher.read_token(receipts))
 
 
 def _build(c: KeyChange) -> publisher.Build:
     def build(served: list[tm.Assertion]) -> tm.Amendment:
-        if publisher._locked_against(served, "value" if c.then else "delete", datetime.now(UTC)):
+        now = datetime.now(UTC)
+        if publisher._locked_against(served, "value" if c.then else "delete", now):
             return tm.Amendment("rollback")
+        # A lock is today's control, not part of what the key said then: the one in
+        # force stays, and one lifted since is not taken again.
+        lock = publisher._lock_in_force(tm.current_claims(served, now), now)
+        held = {
+            "lock_mode": str(lock["lock_mode"]),
+            "lock_until": tm.utc(lock["lock_until"]),
+            "lock_reason": str(lock["lock_reason"]),
+            "locked_by": str(lock["locked_by"]),
+            "locked_at": tm.utc(lock["locked_at"]),
+        }
         return tm.Amendment(
             "rollback",
             tuple(a.assertion_id for a in served),
-            tuple(tm.fresh(a) for a in c.then),
+            tuple(tm.fresh(a, **held) for a in c.then),
         )
 
     return build
-
-
-def stub_embedding_row(
-    row: store.MemoryRow,
-    embedder: Any,
-    *,
-    version: int,
-    tombstoned_at: datetime | None,
-    created_at: datetime,
-) -> dict[str, Any]:
-    """A dimensionless embedding row for a re-emitted version row: the embedding
-    worker fills its vector. `version` is the new memory row's, so a concurrent
-    'high' write's fence outranks it."""
-    from server.memory.domain.excerpt import build_excerpt
-    from server.memory.domain.trust import attests
-
-    serialized = row.value if isinstance(row.value, str) else json.dumps(row.value, default=str)
-    return store.build_embedding_row(
-        org=row.org,
-        namespace=row.namespace,
-        agent=row.agent,
-        user_id=row.user_id,
-        session_id=row.session_id,
-        run_id=row.run_id or "-",
-        memory_key=row.memory_key,
-        memory_type=row.memory_type,
-        scope="private",
-        content_excerpt=build_excerpt(serialized, memory_key=row.memory_key),
-        embedding_model=embedder.model_name,
-        embedding_dim=0,
-        embedding=[0.0] * int(embedder.dim),
-        tombstoned_at=tombstoned_at,
-        created_at=created_at,
-        version=version,
-        tags=list(row.tags or []),
-        entities=list(row.entities or []),
-        status=str(row.status or "active"),
-        confidence=float(row.confidence),
-        temporal_anchor=row.temporal_anchor,
-        temporal_confidence=float(row.temporal_confidence or 0.0),
-        valid_at=row.valid_at,
-        valid_to=row.valid_to,
-        invalid_at=row.invalid_at,
-        reinforcement_count=int(getattr(row, "reinforcement_count", 1) or 1),
-        source_resource_id=getattr(row, "source_resource_id", "") or "",
-        source_class=getattr(row, "source_class", "") or "",
-        expires_at=row.expires_at,
-        files=list(getattr(row, "files", None) or []),
-        concepts=list(getattr(row, "concepts", None) or []),
-        # The version's attestation, if it still binds its content.
-        verified=int(
-            attests(
-                getattr(row, "verified_by", ""),
-                getattr(row, "verified_sha256", ""),
-                getattr(row, "content_sha256", ""),
-            )
-        ),
-    )

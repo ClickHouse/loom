@@ -135,8 +135,8 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
     long value is also split into `memory_chunks`, fail-open.
 
 **Embedding stubs.** `memory.set` embeds before it inserts, so an embed failure fails
-the call and writes nothing. Other writers (`memory.promote` on an embed failure,
-`namespace.rollback`) write a stub: `embedding_dim = 0` and a zero vector. Imports and
+the call and writes nothing. Other writers (`memory.promote` on an embed failure, the
+current-row projection after `memory.amend` or `namespace.rollback`) write a stub: `embedding_dim = 0` and a zero vector. Imports and
 observation writers may write no embedding row at all. `embedding_worker` fills both at
 the stub's version plus one, so a later real write still wins. A row that keeps failing
 accrues `embed_attempts` and is marked `embed_failed_at` so it cannot stall the batch.
@@ -321,18 +321,17 @@ Table-level retention and tiering are operator TTLs, off by default
 
 ## History, snapshot, restore and rollback
 
-| Operation            | Reads                                           | Writes                                                                                                                                 |
-| -------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `memory.history`     | `memory_versions` for one key                   | Nothing.                                                                                                                               |
-| `memory.redact`      | `memory_versions`, by org-wide `memory_id`      | Scrubs one historical version in place. Refuses the live head (delete it first).                                                       |
-| `namespace.snapshot` | Live `memory` rows, type configs, curated rows  | A portable payload with `version`, `content_sha256` and the attestation columns, plus a `loom.namespace_snapshots` audit row.          |
-| `namespace.restore`  | A snapshot payload                              | Rows into a target namespace (created if missing; the caller becomes admin). Idempotent per `snapshot_id`. Never strips `verified_by`. |
-| `namespace.rollback` | `memory` heads and `memory_versions` at `as_of` | Each changed key's older version as a new head; keys absent at `as_of` tombstoned; embedding stubs for the worker. Dry run by default. |
+| Operation            | Reads                                                  | Writes                                                                                                                                                                               |
+| -------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `memory.history`     | `memory_versions` for one key                          | Nothing.                                                                                                                                                                             |
+| `memory.redact`      | `memory_versions`, by org-wide `memory_id`             | Scrubs one historical version in place. Refuses the live head (delete it first).                                                                                                     |
+| `namespace.snapshot` | Live `memory` rows, type configs, curated rows         | A portable payload with `version`, `content_sha256` and the attestation columns, plus a `loom.namespace_snapshots` audit row.                                                        |
+| `namespace.restore`  | A snapshot payload                                     | Rows into a target namespace (created if missing; the caller becomes admin). Idempotent per `snapshot_id`. Never strips `verified_by`.                                               |
+| `namespace.rollback` | The bi-temporal journal at `known_as_of=as_of` and now | One commit per changed key serving its claims at `as_of` again as they were (spans, plans, kinds); keys that served nothing then retracted; current rows follow. Dry run by default. |
 
-Rollback restores heads, not exact state. `version` is a wall-clock stamp, so the head
-at T is the largest version at or before T. Triples, records, summaries and aggregates
-are rebuilt by their workers (`memory/domain/rollback.py` plans the rollback,
-`memory/app/namespace_rollback.py` applies it, `identity/app/namespace_rollback.py` is the handler).
+Rollback restores what each key served, not derived state: triples, records, summaries
+and aggregates are rebuilt by their workers (`memory/app/namespace_rollback.py` plans and
+commits it, `identity/app/namespace_rollback.py` is the handler).
 
 ## Erasure saga
 
@@ -394,21 +393,21 @@ hash, source class and verdict. The row hash and the checkpoint chain are descri
 
 ## Source entry points
 
-| Path                                                                                                                                                            | What                                                                                                |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `server/memory/api/models_*.py`, `server/memory/api/ops_*.py`                                                                                                   | Wire models; op declarations.                                                                       |
-| `server/memory/app/write.py`, `server/memory/app/set_commit.py`                                                                                                 | `handle_memory_set` and its `_set_*` phases.                                                        |
-| `server/memory/app/update.py`                                                                                                                                   | `memory.update`, `memory.update_by_id`.                                                             |
-| `server/memory/app/extract/handler.py`                                                                                                                          | `set_from_messages`.                                                                                |
-| `server/memory/app/bulk_set.py`, `server/memory/app/bulk_rows.py`, `server/memory/app/bulk_verdicts.py`                                                         | `bulk_set`, its rows, `apply_bulk_verdicts`.                                                        |
-| `server/memory/app/pipeline.py`                                                                                                                                 | `DEFAULT_PIPELINE`, `register_step`, `run_pipeline`; its text rules are in `server/memory/domain/`. |
-| `server/memory/app/{conflicts,conflict_judge,conflict_deferred,key_supersession}.py`                                                                            | Verdicts and supersession.                                                                          |
-| `server/memory/app/search/`, `server/memory/app/retrieval/`, `server/memory/domain/search_sql.py`                                                               | Search phases and leg SQL.                                                                          |
-| `server/memory/store/`                                                                                                                                          | `rows.py`, `inserts.py`, `reads.py`, `lifecycle.py`, `history.py`.                                  |
-| `server/memory/app/{after_write,projections,projection_failures}.py`                                                                                            | Fail-open projections.                                                                              |
-| `server/erasure/app/saga.py`, `server/erasure/store/`, `server/erasure/workers/recovery.py`                                                                     | Erasure.                                                                                            |
-| `server/memory/domain/rollback.py`, `server/memory/app/{namespace_rollback,snapshot_rows}.py`, `server/identity/app/{namespace_rollback,namespace_snapshot}.py` | Rollback, snapshot, restore.                                                                        |
-| `server/observability/audit.py`, `server/insights/domain/audit_checkpoints.py`, `server/insights/workers/audit_verifier.py`                                     | Audit.                                                                                              |
+| Path                                                                                                                        | What                                                                                                |
+| --------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `server/memory/api/models_*.py`, `server/memory/api/ops_*.py`                                                               | Wire models; op declarations.                                                                       |
+| `server/memory/app/write.py`, `server/memory/app/set_commit.py`                                                             | `handle_memory_set` and its `_set_*` phases.                                                        |
+| `server/memory/app/update.py`                                                                                               | `memory.update`, `memory.update_by_id`.                                                             |
+| `server/memory/app/extract/handler.py`                                                                                      | `set_from_messages`.                                                                                |
+| `server/memory/app/bulk_set.py`, `server/memory/app/bulk_rows.py`, `server/memory/app/bulk_verdicts.py`                     | `bulk_set`, its rows, `apply_bulk_verdicts`.                                                        |
+| `server/memory/app/pipeline.py`                                                                                             | `DEFAULT_PIPELINE`, `register_step`, `run_pipeline`; its text rules are in `server/memory/domain/`. |
+| `server/memory/app/{conflicts,conflict_judge,conflict_deferred,key_supersession}.py`                                        | Verdicts and supersession.                                                                          |
+| `server/memory/app/search/`, `server/memory/app/retrieval/`, `server/memory/domain/search_sql.py`                           | Search phases and leg SQL.                                                                          |
+| `server/memory/store/`                                                                                                      | `rows.py`, `inserts.py`, `reads.py`, `lifecycle.py`, `history.py`.                                  |
+| `server/memory/app/{after_write,projections,projection_failures}.py`                                                        | Fail-open projections.                                                                              |
+| `server/erasure/app/saga.py`, `server/erasure/store/`, `server/erasure/workers/recovery.py`                                 | Erasure.                                                                                            |
+| `server/memory/app/{namespace_rollback,snapshot_rows}.py`, `server/identity/app/{namespace_rollback,namespace_snapshot}.py` | Rollback, snapshot, restore.                                                                        |
+| `server/observability/audit.py`, `server/insights/domain/audit_checkpoints.py`, `server/insights/workers/audit_verifier.py` | Audit.                                                                                              |
 
 ## Related
 

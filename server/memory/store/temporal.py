@@ -1006,6 +1006,17 @@ async def last_commits(
     }
 
 
+async def journal_keys(org: str, namespace: str, *, ch: _CHClient | None = None) -> list[str]:
+    """Every memory key the namespace's journal has a commit for, in order."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        f"SELECT DISTINCT memory_key FROM {COMMITS} "
+        "WHERE org = {org:String} AND namespace = {ns:String} ORDER BY memory_key",
+        params={"org": org, "ns": namespace},
+    )
+    return [str(r["memory_key"]) for r in rows]
+
+
 async def last_commit_at(
     org: str, namespace: str, ident: tuple[str, str, str, str], *, ch: _CHClient | None = None
 ) -> datetime | None:

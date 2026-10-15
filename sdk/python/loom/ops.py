@@ -14047,6 +14047,8 @@ class NamespaceRollbackOutput(TypedDict, total=False):
     truncated: NotRequired[bool]
     sample: NotRequired[list[dict[str, Any]]]
     applied_at: NotRequired[Optional[str]]
+    read_token: NotRequired[str]
+    current_rows_pending: NotRequired[bool]
 
 
 class NamespaceSearchCategoriesInput(TypedDict, total=False):

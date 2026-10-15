@@ -600,6 +600,8 @@ def _inherited(
     was = max(under, key=lambda a: a.source_version) if under else None
     lock = publisher._lock_in_force(claims, now)
     spans = _spans_now(input)
+    start = tm.utc(input.effective_at if input.change_kind == "transition" else input.valid_from)
+    plan_at = start if start is not None and start > now else None
     memory_type = was.memory_type if was is not None else n.memory_type
     kept = was.expires_at if was is not None and was.expires_at and was.expires_at > now else None
     c = classify_value(
@@ -610,14 +612,15 @@ def _inherited(
         tags=was.tags if was is not None else (),
         expires_at=kept if spans else None,
         on_expire="",
-        now=now,
+        # A plan's window runs from when it applies; a past span keeps none.
+        now=plan_at if plan_at is not None else now,
         settings=settings,
     )
     return replace(
         n,
         memory_type=memory_type,
         sensitivity=c.sensitivity,
-        expires_at=tm.utc(c.expires_at) if spans else None,
+        expires_at=tm.utc(c.expires_at) if spans or plan_at is not None else None,
         pinned=was.pinned if was is not None else False,
         lock_mode=str(lock["lock_mode"]),
         lock_until=tm.utc(lock["lock_until"]),

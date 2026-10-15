@@ -683,7 +683,8 @@ class NamespaceRollbackOutput(BaseModel):
     reinstate: int
     # Keys that served nothing at as_of, retracted (planned, or committed).
     remove: int
-    # Planned keys a lock in force or a blacklist kept as they are (applied only).
+    # Keys left as they are: a value they served then is one today's rules refuse
+    # (blacklisted, redacted), or, applied, a lock in force refused the change.
     left_out: int = 0
     # More keys differ than max_keys; call again (or narrow memory_keys).
     truncated: bool = False
@@ -692,6 +693,11 @@ class NamespaceRollbackOutput(BaseModel):
     sample: list[dict[str, Any]] = Field(default_factory=list)
     # When the rollback was written; None on a dry run or when no key differed.
     applied_at: datetime | None = None
+    # Read-your-write token for the rollback's commits (pass it to a later read).
+    read_token: str = ""
+    # The commits landed but some current rows were not rewritten yet; the
+    # reconciler brings them in line (reads with `read_token` already see them).
+    current_rows_pending: bool = False
 
 
 # ------------------------------------------------------------------

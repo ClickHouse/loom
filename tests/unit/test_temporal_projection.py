@@ -465,32 +465,33 @@ def test_a_rewrite_never_overwrites_a_commit_newer_than_its_cut(
 
 
 @pytest.mark.asyncio
-async def test_a_projected_row_is_stamped_when_its_state_began(monkeypatch) -> None:
-    """Not when the repair ran: a write drawn after the state began stays newer, and
-    history reads the version as the time the state was recorded."""
+async def test_a_projected_row_is_stamped_at_the_keys_latest_commit(monkeypatch) -> None:
+    """Above every version the key holds, and at its latest commit, never a later
+    instant: a write drawn before the projection but published after it stays newer.
+    While a commit's own row is still landing, the projection leaves it to land."""
     from datetime import UTC, datetime, timedelta
-    from types import SimpleNamespace
 
     from server.memory.app import temporal_projection as tp
-    from server.memory.domain import temporal_model as tm
     from server.memory.domain.temporal_reads import to_epoch_ns
 
     committed = datetime.now(UTC) - timedelta(minutes=5)
-    due = datetime.now(UTC) - timedelta(minutes=1)
+    rows: dict[str, Any] = {"raw": [{"version": 7}], "committed": {("a", "-", "-", "k"): 7}}
 
-    async def _at(*_a, **_k):
+    async def _at(*_a: Any, **_k: Any) -> datetime:
         return committed
 
-    async def _none(*_a, **_k):
-        return {} if _k.get("dict") else []
+    async def _raw(*_a: Any, **_k: Any) -> list[dict[str, Any]]:
+        return rows["raw"]
 
-    async def _versions(*_a, **_k):
-        return {}
+    async def _committed(*_a: Any, **_k: Any) -> dict[Any, int]:
+        return rows["committed"]
 
     monkeypatch.setattr(tp.store, "last_commit_at", _at)
-    monkeypatch.setattr(tp.store, "memory_heads", _none)
-    monkeypatch.setattr(tp.store, "newest_row_versions", _versions)
-    plan = SimpleNamespace(a=tm.first('"York"', valid_from=due))
-    v = await tp._projection_version("o", "n", ("a", "-", "-", "k"), None, [plan])
-    assert v == to_epoch_ns(due)
-    assert v < to_epoch_ns(datetime.now(UTC))
+    monkeypatch.setattr(tp.store, "memory_heads", _raw)
+    monkeypatch.setattr(tp.store, "newest_row_versions", _committed)
+    ident = ("a", "-", "-", "k")
+    assert await tp._projection_version("o", "n", ident, None) == to_epoch_ns(committed)
+    # A commit whose row has not landed yet, recorded within the settle window.
+    rows["committed"] = {ident: to_epoch_ns(committed) + 99}
+    committed = datetime.now(UTC)
+    assert await tp._projection_version("o", "n", ident, None) is None
