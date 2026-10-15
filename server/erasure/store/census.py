@@ -463,11 +463,7 @@ NO_MEMORY_CONTENT: dict[str, str] = {
         "PR numbers, titles and backport verdicts of the public code record per release "
         "branch, keyed by org + code namespace; no memory row, no user axis."
     ),
-    "loom.revoked_tokens": (
-        "auth plane: revoked JWT ids, revoked subjects, and grant cutoffs keyed "
-        "grant:[org, namespace, subject hash] (pseudonymous), kept 10 years; an erasure "
-        "leaves them, since dropping one would hand a revoked claim back."
-    ),
+    "loom.revoked_tokens": "auth plane: revoked JWT ids.",
     "loom.oauth_state": "auth plane: OAuth client registrations and codes; no memory rows.",
     "loom.oauth_claims": "auth plane: the OAuth exchange in flight per credential id.",
     "loom.service_accounts": "auth plane: service-account definitions.",
@@ -498,7 +494,6 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     "loom.namespaces": "namespace registry and per-namespace settings.",
     "loom.namespace_types": "per-type retention/dedup configuration.",
     "loom.namespace_grants": "access grants (subject, role).",
-    "loom.namespace_grant_log": "every grant row as inserted (subject, role).",
     "loom.namespace_visits": "last-seen per (subject, namespace) for the namespace picker.",
     "loom.namespace_policies": "admin-authored access policies (effect, actions, condition).",
     "loom.namespace_ontology": "admin-registered kinds/names for the ontology.",

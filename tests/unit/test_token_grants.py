@@ -169,9 +169,7 @@ async def test_revoking_the_person_cascades_to_the_tokens_they_minted_on_that_na
 
 
 @pytest.mark.asyncio
-async def test_grants_revoke_handler_calls_the_cascade(
-    monkeypatch: pytest.MonkeyPatch, recorded_cutoff_writes: list[tuple[str, list[str], list[str]]]
-) -> None:
+async def test_grants_revoke_handler_calls_the_cascade(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.identity.api.models_grants import GrantsRevokeInput
 
     async def _find(org: str, namespace: str, subject: str, **_kw: Any) -> GrantState:
@@ -185,11 +183,11 @@ async def test_grants_revoke_handler_calls_the_cascade(
 
     inserted: list[dict[str, Any]] = []
 
-    async def _insert(rows: list[dict[str, Any]], **_kw: Any) -> None:
-        inserted.extend(rows)
+    async def _insert(row: dict[str, Any], **_kw: Any) -> None:
+        inserted.append(row)
 
     monkeypatch.setattr(grants_repo, "find_any_grant", _find)
-    monkeypatch.setattr(grants_repo, "insert_rows", _insert)
+    monkeypatch.setattr(grants_repo, "insert_row", _insert)
     monkeypatch.setattr(tg, "cascade_revoke_to_created_tokens", _cascade)
     out = await grants_mod.handle_grants_revoke(
         GrantsRevokeInput(org=ORG, namespace="code-private", subject="alice@x")

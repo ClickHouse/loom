@@ -5,7 +5,6 @@ row's `created_at` and `duplicate_threshold`."""
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
@@ -221,30 +220,6 @@ async def test_a_non_admin_learns_nothing_from_the_idempotency_probe(wire) -> No
 
 
 @pytest.mark.asyncio
-async def test_a_restore_that_lowers_a_grant_ends_the_older_claims(
-    monkeypatch: pytest.MonkeyPatch, recorded_cutoff_writes: list[tuple[str, list[str], list[str]]]
-) -> None:
-    from types import SimpleNamespace
-
-    from server.identity.app import namespace_snapshot
-    from server.identity.store import grants as grants_repo
-
-    live = {"alice": "writer", "bob": "viewer"}
-
-    async def _active(org: str, namespace: str, subjects: list[str], **_k: object) -> dict:
-        return {s: live[s] for s in subjects if s in live}
-
-    monkeypatch.setattr(grants_repo, "active_roles", _active)
-    restored = [
-        SimpleNamespace(subject="alice", role="viewer"),  # lowered
-        SimpleNamespace(subject="bob", role="writer"),  # raised
-        SimpleNamespace(subject="carol", role="viewer"),  # new
-    ]
-    await namespace_snapshot._end_lowered_claims("o", "ns", restored, "boss", ch=None)
-    assert recorded_cutoff_writes == [("o", ["ns"], ["alice"])]
-
-
-@pytest.mark.asyncio
 async def test_the_auto_registered_owner_completes_a_registration_but_cannot_restore(
     wire,
 ) -> None:
@@ -263,76 +238,3 @@ async def test_the_auto_registered_owner_completes_a_registration_but_cannot_res
         NamespaceRegisterInput(org=ORG, namespace=NS, owner_email="alice@x")
     )
     assert ch.rows_for("loom.namespace_grants") == []
-
-
-@pytest.mark.asyncio
-async def test_a_failed_cutoff_write_fails_a_restore_with_nothing_written(
-    wire, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def _down(*_a: Any, **_k: Any) -> None:
-        raise RuntimeError("replica away")
-
-    async def _lowered(org: str, namespace: str, subjects: list[str], **_k: Any) -> dict:
-        return {"alice@x": "admin"}
-
-    from server.identity.store import grants as grants_repo
-
-    monkeypatch.setattr(namespace_snapshot, "write_grant_cutoffs", _down)
-    monkeypatch.setattr(grants_repo, "active_roles", _lowered)
-    install, grants = wire
-    grants[(ORG, NS, "owner@x")] = Role.ADMIN
-    ch = install(_deleted_row(), "owner@x", Role.ADMIN)
-    restore = _restore_input()
-    lowering = {"subject": "alice@x", "role": "viewer", "granted_by": "ops"}
-    restore.payload = NamespaceSnapshotOutput.model_validate(
-        {**restore.payload.model_dump(), "grants": [lowering], "grant_count": 1}
-    )
-    with pytest.raises(RuntimeError):
-        await namespace_snapshot.handle_namespace_restore(restore)
-    assert ch.inserts == []
-
-
-@pytest.mark.asyncio
-async def test_a_restore_compares_the_last_row_of_each_subject(
-    monkeypatch: pytest.MonkeyPatch, recorded_cutoff_writes: list[tuple[str, list[str], list[str]]]
-) -> None:
-    # The last row lands, so an earlier, lower duplicate lowers nothing.
-    from types import SimpleNamespace
-
-    from server.identity.store import grants as grants_repo
-
-    async def _active(org: str, namespace: str, subjects: list[str], **_k: object) -> dict:
-        return {"alice": "writer"}
-
-    monkeypatch.setattr(grants_repo, "active_roles", _active)
-    restored = [
-        SimpleNamespace(subject="alice", role="viewer"),
-        SimpleNamespace(subject="alice", role="writer"),
-    ]
-    await namespace_snapshot._end_lowered_claims("o", "ns", restored, "boss", ch=None)
-    assert recorded_cutoff_writes == []
-
-
-def test_a_restore_rechecks_only_the_subjects_it_leaves_as_they_are(
-    monkeypatch: pytest.MonkeyPatch,
-    recorded_cutoff_writes: list[tuple[str, list[str], list[str]]],
-) -> None:
-    # A raised or new subject is never cut; a kept one may be a retry's.
-    from types import SimpleNamespace
-
-    from server.identity.app import namespace_snapshot
-    from server.identity.store import grants as grants_repo
-
-    async def _live(*_a: Any, **_k: Any) -> dict[str, str]:
-        return {"low": "admin", "same": "writer", "up": "viewer"}
-
-    monkeypatch.setattr(grants_repo, "active_roles", _live)
-    grants = [
-        SimpleNamespace(subject=s, role=r)
-        for s, r in [("low", "viewer"), ("same", "writer"), ("up", "admin"), ("new", "viewer")]
-    ]
-    lowered, kept = asyncio.run(
-        namespace_snapshot._end_lowered_claims("acme", "team", grants, "op", ch=None)
-    )
-    assert (lowered, kept) == (["low"], ["same"])
-    assert recorded_cutoff_writes == [("acme", ["team"], ["low"])]

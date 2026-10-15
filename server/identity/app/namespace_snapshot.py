@@ -3,10 +3,9 @@ audit rows as one payload, and that payload written back into a namespace."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from typing import Any
 
-from server.auth.revocation import write_grant_cutoffs
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.grant_sql import LIVE_GRANT
@@ -20,13 +19,10 @@ from server.identity.api.models import (
     _SnapshotMemoryRow,
     _SnapshotTypeRow,
 )
-from server.identity.app import grant_writes
 from server.identity.app import namespace as _registry
-from server.identity.store import grants as grants_repo
 from server.identity.store import namespaces as namespaces_repo
 from server.memory.app import snapshot_rows as memory_snapshot
 from server.memory.app.provenance import writer_actor
-from server.operations.base import grant_rank
 
 
 def snapshot_memory_row(r: Mapping[str, Any]) -> _SnapshotMemoryRow:
@@ -198,15 +194,6 @@ async def handle_namespace_restore(
             },
         )
 
-    # The cutoffs for the grants this restore lowers come before any row, as
-    # in every other grant change: a failure then writes nothing.
-    lowered: list[str] = []
-    kept: list[str] = []
-    if payload.grants and target_existing is not None:
-        lowered, kept = await _end_lowered_claims(
-            input.org, input.target_namespace, payload.grants, caller, ch
-        )
-
     now = naive_utc_now_seconds()
 
     # Only CREATE the namespace row when absent — an RMT insert over an
@@ -279,33 +266,23 @@ async def handle_namespace_restore(
     # Grants. granted_by = caller so the restore is traceable; the
     # original granted_by stays in the snapshot payload.
     if payload.grants:
-        # Of a subject's rows, the last is the one that lands.
-        last = {g.subject: g for g in payload.grants}
-        rows = [
-            {
-                "org": input.org,
-                "namespace": input.target_namespace,
-                "subject": g.subject,
-                "role": g.role,
-                "granted_at": now,
-                "granted_by": caller,
-                "revoked_at": None,
-                "version": version_base + i,
-            }
-            for i, g in enumerate(last.values())
-        ]
-        cut = set(lowered)
-        await grant_writes.finish_lowering(
-            input.org, [r for r in rows if r["subject"] in cut], revoked_by=caller, ch=ch
+        await ch.insert(
+            "loom.namespace_grants",
+            [
+                {
+                    "org": input.org,
+                    "namespace": input.target_namespace,
+                    "subject": g.subject,
+                    "role": g.role,
+                    "granted_at": now,
+                    "granted_by": caller,
+                    "revoked_at": None,
+                    "version": version_base + i,
+                }
+                for i, g in enumerate(payload.grants)
+            ],
+            settings={"async_insert": 0, "wait_for_async_insert": 1},
         )
-        await grant_writes.write_rows([r for r in rows if r["subject"] not in cut], ch=ch)
-        if target_existing is not None:
-            # A subject the restore leaves as it is may be a retry's, whose lowered
-            # grant landed without its second cutoff.
-            await grant_writes.recheck(
-                input.org,
-                [(input.target_namespace, s) for s in kept],
-            )
 
     # Provenance audit row — carries the snapshot_id in the subject for
     # the idempotency lookup on re-restores.
@@ -338,27 +315,3 @@ async def handle_namespace_restore(
             "grants": payload.grant_count,
         },
     )
-
-
-async def _end_lowered_claims(
-    org: str, namespace: str, grants: Sequence[Any], caller: str, ch: Any
-) -> tuple[list[str], list[str]]:
-    """A restore writes its grants over the live ones. A subject it lowers
-    loses the claims of older tokens there, as any other downgrade does. The
-    caller counts as admin: the restore makes them one before its grants.
-    Of a subject's rows, the last is the one that lands. Returns the subjects
-    it lowers and those it leaves at their live role."""
-    restored = {g.subject: g.role for g in grants}
-    live = await grants_repo.active_roles(org, namespace, list(restored), ch=ch)
-    live[caller] = "admin"
-    lowered = [
-        subject
-        for subject, role in restored.items()
-        if subject in live and grant_rank(live[subject]) > grant_rank(role)
-    ]
-    kept = sorted(s for s, role in restored.items() if s in live and live[s] == role)
-    if lowered:
-        await write_grant_cutoffs(
-            org, [namespace], lowered, reason="namespace.restore", revoked_by=caller
-        )
-    return lowered, kept

@@ -6,7 +6,6 @@ server `code` is a class the SDK deserializes via `errors.from_response`.
 
 from __future__ import annotations
 
-import functools
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -93,22 +92,6 @@ class GrantWouldDowngradeError(LoomServerError):
         self, message: str = "", *, current_role: str = "", requested_role: str = ""
     ) -> None:
         super().__init__(message, current_role=current_role, requested_role=requested_role)
-
-
-class TooManySpellingsError(LoomServerError):
-    """409 — more than 1000 accounts in the org name the person's email, past
-    what a grant cutoff reads. Carries the `subject` and the `limit`; no retry
-    fixes it: an operator releases the extra accounts."""
-
-    code = "TOO_MANY_SPELLINGS"
-    status_code = 409
-
-    def __init__(self, message: str, *, subject: str, limit: int) -> None:
-        super().__init__(message, subject=subject, limit=limit)
-
-    def __reduce__(self) -> tuple[Any, ...]:
-        # The default rebuilds from `args` alone, which lacks the keywords.
-        return functools.partial(type(self), **self.extra), (self.message,), self.__dict__
 
 
 class OverloadedError(LoomServerError):

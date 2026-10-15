@@ -60,21 +60,13 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   and a namespace's `rerank_endpoint` take a name, not a URL: `none`, `builtin:openai[:model]`,
   `builtin:cohere[:model]`, or an endpoint the operator names in `LOOM_RERANK_ENDPOINTS_JSON`.
   A URL or an unknown name is a 422. A namespace that still stores a URL is no longer reranked.
-- **Security:** revoking or lowering a grant ends what the subject's older tokens claim on
-  that namespace: a flat one reaches it only through the subject's current grant, and a
-  scoped one keeps its own role there capped at that grant. Tokens minted later (sign-in,
-  an OAuth code exchange or refresh) leave it out for good; a later grant gives access
-  back through itself, not through the old claim. A restricted namespace, read only by a
-  token naming it, is named again while a live grant covers the person. The cutoff is a
-  `loom.revoked_tokens` row keyed by org, namespace and a hash of the lower-cased
-  subject, and `loom revoke-token --list --grants` shows them. A namespace never
-  granted to the subject (named by an operator at mint) keeps its claim. A refresh token
-  saved before this release can carry a cutoff that landed while it was minted until it
-  expires.
-- **Security:** migration `028_namespace_grant_log.sql` adds `loom.namespace_grant_log`,
-  every grant row as written (one row per grant write, kept like the grants), and
-  backfills it from `loom.namespace_grants`. A grant change reads it after its write: a
-  concurrent raise its read missed, and a retried lowering, are cut too.
+- **Security:** a token's claim on a namespace goes no further than the grant its subject
+  holds there. A revoked or lowered grant ends every older token's claim, and a pending or
+  rejected request caps it at no access; a scoped token keeps its own role there capped at
+  the grant. It applies at once on the server that changed the grant and within
+  `LOOM_GRANT_CACHE_TTL_SECONDS` (default 10 s) on the others. A namespace the subject never
+  held a grant on (named by an operator at mint) keeps its claim; a `loom mint-token` claim
+  beyond a grant the subject holds is now capped at it.
 - **Security:** with a Keeper, `/oauth/token` runs one exchange per code or refresh token
   (a KeeperMap claim, `loom.oauth_claims`, migration `027_oauth_claims.sql`); a concurrent
   presenter is told to retry, and a failed read answers a retryable 503
@@ -85,12 +77,6 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 - **Security:** `context.fetch` no longer serves, and `context.offload` refuses to write,
   `page/` blobs: a parked `memory.search` page holds hits from every namespace its search
   fanned out over, and only `memory.search(page=...)` serves it, re-checking each of them.
-- Sign-in reads the person's grant cutoffs before it mints. When it cannot, it answers a
-  retryable 503, as an OAuth exchange does. When more than 1000 accounts name the
-  person's email, `/v1/auth/login` and taking a grant away from that person refuse with
-  409 `TOO_MANY_SPELLINGS`, `/oauth/authorize` and the OIDC callback answer 403
-  `access_denied`, and `/oauth/token` 400 `invalid_grant`; an operator releases the extra
-  accounts.
 - `grants.approve` refuses (409 `GRANT_WOULD_DOWNGRADE`) to approve a request below the
   subject's current grant; lower a grant with `grants.create replace=true`.
 - With auth off, an `all_mine` search also reads every namespace the single user registered,
@@ -111,9 +97,6 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   gets the next free name (`<name>-2`, ..., then a random suffix). A first sign-in whose
   owner grant failed to land is finished at the next sign-in, from a new `oidc-jit` tag on
   the account; a grant revoked or lowered since is never given back.
-- **Security:** self-signup refuses an email a deleted account still holds, as it refuses
-  a taken name. Signing up and deleting again and again tied any number of accounts to
-  someone else's address. `loom claim-release` frees the email; the name stays reserved.
 - **Security:** `namespace.restore` into an existing namespace needs an admin of it. The
   owner a first write auto-registered, who holds no grant there, could restore a payload
   whose grants made them, or anyone, admin.

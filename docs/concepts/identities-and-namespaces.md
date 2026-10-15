@@ -153,24 +153,16 @@ operation's role, or a live grant does.
 
 - **Grants** (`loom.namespace_grants`, one row per `(org, namespace, subject)`) add a role
   on one namespace above what the token carries.
-  - **What ends a claim.** Taking a grant away or lowering it (`grants.revoke`,
-    `grants.create` with `replace=true`, `namespace.leave`, a released claim, a restore that
-    lowers it, a maintainer leaving a repository's branches) writes a cutoff. A token
-    minted before it reaches the namespace only through the grant the subject holds now,
-    even when an operator also named the namespace at mint; a scoped one keeps its own role
-    there, capped at that grant. The cutoff covers the whole second of the change, so a
-    token minted in that second is cut too.
-  - **What minting does.** Signing in, an OAuth code exchange and an OAuth refresh leave a
-    cut namespace out of the token they mint, for good. A later grant, an admin one
-    included, gives access back through itself and never brings the claim back. A
-    restricted namespace is the exception: a token reads one only by naming it, so a mint
-    names it again while a live grant there covers the person. Each mint
-    takes its issue time before it reads the cutoffs, and a cutoff is written again once
-    the grant row has landed, so a token minted while one was in flight is cut too.
+  - **A claim goes no further than the grant.** Where the subject holds a grant row on a
+    namespace the token names, of any status, the claim reaches no further than that grant:
+    a revoked or lowered grant (`grants.revoke`, `grants.create` with `replace=true`,
+    `namespace.leave`, a released claim, a restore) ends every older token's claim there,
+    and a pending or rejected request caps it at no access. A scoped token keeps its own
+    role there, capped at the live grant.
   - **What is not touched.** A namespace the subject never held a grant on keeps its
-    claim; revoke the token to take that away. Approving a request never lowers a grant.
-  - **When it applies.** The server that took the grant away applies it at once, every
-    other within `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` (default 30 s).
+    claim; revoke the token to take that away.
+  - **When it applies.** The server that changed the grant applies it at once, every other
+    within `LOOM_GRANT_CACHE_TTL_SECONDS` (default 10 s).
 - **Service accounts inherit.** A service account with no grant of its own on a namespace
   uses its creator's grant there, so a token minted from the dashboard follows the person
   who made it, except on a restricted namespace.

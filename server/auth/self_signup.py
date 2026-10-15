@@ -211,16 +211,14 @@ async def _claim_account(input: SelfSignupInput, org: str, namespace: str) -> Se
             },
         )
     # One email = one human. Sharing contact_email across namespaces lets
-    # login pick one arbitrarily — an account-takeover surface. A deleted
-    # account keeps its email, as it keeps its name: otherwise sign-up and
-    # delete repeated would tie any number of accounts to someone else's
-    # address, past what a grant cutoff reads (`aliases.cutoff_spellings`).
+    # login pick one arbitrarily — an account-takeover surface.
     existing = await ch.query_one(
         """
         SELECT count() AS n
         FROM loom.namespaces FINAL
         WHERE org = {org:String}
           AND lower(contact_email) = {ce:String}
+          AND active = 1
           AND password_hash != ''
         """,
         params={"org": org, "ce": contact_email},
@@ -233,8 +231,7 @@ async def _claim_account(input: SelfSignupInput, org: str, namespace: str) -> Se
                 "message": (
                     f"An account already exists for {contact_email}. "
                     "Sign in with that email instead, or create the new "
-                    "namespace from your existing account. A deleted account "
-                    "keeps its email until an operator runs `loom claim-release`."
+                    "namespace from your existing account."
                 ),
             },
         )

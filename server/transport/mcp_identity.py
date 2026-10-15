@@ -337,7 +337,7 @@ async def _caller_defaults(
                 if auth_info.org and auth_info.org != "*"
                 else settings.self_signup_org
             )
-            claimed_namespaces = live_claims(
+            claimed_namespaces = await live_claims(
                 auth_info, org, getattr(auth_info, "namespaces", None) or ()
             )
         else:

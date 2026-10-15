@@ -250,9 +250,9 @@ def mint_token(
     `parents` / `parent_subjects` / `parent_iats` / `creator` are the delegation claims
     `delegation.delegate` computes; a token minted from another token gets
     them from there. `issued_at` (unix seconds; default now) is the `iat`:
-    a path that read the grant cutoffs to decide `namespaces` passes the
-    time it took before that read, so a cutoff that landed after it still
-    postdates the token (`revocation.write_grant_cutoffs`).
+    a path that read the revocations before minting passes the time it took
+    before that read, so a revocation that landed after it still postdates
+    the token.
     """
     now = int(time.time()) if issued_at is None else issued_at
     payload: dict[str, Any] = {

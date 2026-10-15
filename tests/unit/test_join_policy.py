@@ -362,32 +362,3 @@ async def test_code_registry_writes_open_for_a_public_repo_and_approval_otherwis
         by["code-priv"]["join_policy"] == "approval" and by["code-priv"]["visibility"] == "private"
     )
     assert by["code-priv"]["classification"] == "restricted"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(("held", "rechecks"), [("viewer", True), ("admin", False)])
-async def test_a_join_that_finds_its_grant_already_written_rechecks(
-    monkeypatch: pytest.MonkeyPatch, held: str, rechecks: bool
-) -> None:
-    """Perhaps a retry whose first attempt landed without its cut; asking below
-    the role held cannot be one."""
-    import server.identity.app.namespace_membership as ns
-    from server.identity.app import grant_writes
-    from server.identity.domain.grants import GrantState
-    from server.identity.store import grants as grants_repo
-
-    ch = _wire(monkeypatch, _row(join_policy="open"))
-    rechecked: list[Any] = []
-
-    async def _viewer(*_: Any, **__: Any) -> GrantState:
-        return GrantState.from_row({"role": held, "status": "active", "granted_by": "alice"})
-
-    async def _recheck(org: str, pairs: list[Any]) -> list[Any]:
-        rechecked.append(pairs)
-        return []
-
-    monkeypatch.setattr(grants_repo, "find_any_grant", _viewer)
-    monkeypatch.setattr(grant_writes, "recheck", _recheck)
-    out = await ns.handle_namespace_join(_join("viewer"))
-    assert not out.joined and ch.inserted == []
-    assert rechecked == ([[("code-clickhouse", "alice")]] if rechecks else [])

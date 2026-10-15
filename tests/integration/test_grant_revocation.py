@@ -1,11 +1,10 @@
-"""Taking a grant away ends the claims of the subject's older tokens, over real
-HTTP against a server that requires auth.
+"""A token's claim reaches no further than the grant its subject holds there,
+over real HTTP against a server that requires auth.
 
-Each case first proves the old token works, then takes the grant away the way
-an operator or the subject would, then replays what used to bring the access
+Each case first proves the token works, then takes the grant away the way an
+operator or the subject would, then replays what used to bring the access
 back: a self-join, a fresh join request, a re-request, an approval below the
-current role. A claim never backed by a grant and a token minted after the
-cutoff keep working.
+current role. A claim never backed by a grant keeps working.
 """
 
 from __future__ import annotations
@@ -45,12 +44,6 @@ def base(control_plane_url: str) -> Iterator[str]:
     }
     with loom_server("grant-revocation", env) as url:
         yield url
-
-
-def _past_the_cutoff_second() -> None:
-    """A cutoff covers the whole second of the change, so a token minted in it
-    is cut too: wait into the next second before minting one that should not be."""
-    time.sleep(1.1)
 
 
 def _token(sub: str, namespaces: list[str], **claims: Any) -> str:
@@ -110,7 +103,6 @@ def _namespace(base: str, join_policy: str, *, alice: str | None = "writer") -> 
     if alice:
         grant = _call(base, "grants.create", _admin(), namespace=ns, subject="alice", role=alice)
         assert grant.status_code == 200, grant.text
-    _past_the_cutoff_second()
     return ns
 
 
@@ -183,7 +175,11 @@ def test_a_second_request_is_still_only_a_request(base: str) -> None:
     assert row["status"] == "pending"
 
 
-def test_rejecting_a_request_leaves_an_operator_named_claim(base: str) -> None:
+def test_a_claim_never_backed_by_a_grant_keeps_working_until_a_grant_row_exists(
+    base: str,
+) -> None:
+    # An operator-named claim stands where the subject holds no grant row; a
+    # request, even one rejected, is a row, and caps the claim at no access.
     ns = _namespace(base, "approval", alice=None)
     bob = _token("bob", [ns])
     assert _writes(base, bob, ns) == 200
@@ -193,16 +189,15 @@ def test_rejecting_a_request_leaves_an_operator_named_claim(base: str) -> None:
         base, "grants.approve", _admin(), namespace=ns, subject="bob", decision="reject"
     )
     assert rejected.status_code == 200, rejected.text
-    assert _writes(base, bob, ns) == 200
+    assert _writes(base, bob, ns) == 403
 
 
-def test_leaving_ends_the_claim_and_a_later_token_is_untouched(base: str) -> None:
+def test_leaving_ends_every_tokens_claim(base: str) -> None:
     ns = _namespace(base, "approval")
     old = _token("alice", [ns])
     assert _call(base, "namespace.leave", old, namespace=ns).json()["left"]
     assert _writes(base, old, ns) == 403
-    _past_the_cutoff_second()
-    assert _writes(base, _token("alice", [ns]), ns) == 200
+    assert _writes(base, _token("alice", [ns]), ns) == 403
 
 
 def test_signing_in_again_does_not_bring_back_a_revoked_owner(base: str) -> None:
@@ -238,7 +233,6 @@ def test_signing_in_again_does_not_bring_back_a_revoked_owner(base: str) -> None
         base, "grants.create", _admin(), namespace=ns, subject=owner, role="viewer", replace=True
     )
     assert lowered.status_code == 200, lowered.text
-    _past_the_cutoff_second()
     token = _login()
     assert _writes(base, token, ns) == 403
     assert _reads(base, token, ns) == 200

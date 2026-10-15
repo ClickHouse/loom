@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 from server.auth import login, oauth
 from tests.unit.oauth_store_fake import MemoryOAuthStore
 
-pytestmark = pytest.mark.usefixtures("cutoffs_read_at_mint", "no_restricted_grants", "keeper")
+pytestmark = pytest.mark.usefixtures("subjects_not_revoked", "keeper")
 
 
 @pytest.fixture
@@ -40,16 +40,6 @@ def keeper(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     monkeypatch.setattr(oauth_claims, "claim", _held)
     monkeypatch.setattr(oauth_claims, "release", _release)
     return released
-
-
-@pytest.fixture
-def no_restricted_grants(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The restricted-grant read a refresh makes; a test that needs one patches it."""
-
-    async def _none(subject: str, org: str, **_k: object) -> list[str]:
-        return []
-
-    monkeypatch.setattr(login, "restricted_grant_namespaces", _none)
 
 
 def _revoke_subject(monkeypatch: pytest.MonkeyPatch, cutoff: int | None) -> None:
@@ -557,35 +547,6 @@ def test_a_non_utf8_form_body_is_a_400_not_a_500(path: str) -> None:
     assert r.json()["detail"]["error"] == "invalid_request"
 
 
-def test_refresh_drops_a_namespace_whose_grant_ended_for_good(
-    cutoffs_read_at_mint: dict[str, int],
-) -> None:
-    """A refresh mints with a fresh iat, past the cutoff a revoked grant left;
-    the namespace leaves the sign-in snapshot, so no later refresh brings it back."""
-    from server.auth.jwt import verify_token
-
-    c = _client()
-    code, verifier = _seed_code()
-    oauth._store.codes[oauth._token_id(code)]["namespaces"] = ["alice-ns", "team"]
-    rt = c.post(
-        "/oauth/token",
-        data={
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": "http://127.0.0.1:9999/cb",
-            "client_id": "loom-test",
-            "code_verifier": verifier,
-        },
-    ).json()["refresh_token"]
-    cutoffs_read_at_mint["team"] = int(time.time()) + 5
-    first = _refresh(c, rt).json()
-    assert verify_token(first["access_token"]).namespaces == ("alice-ns",)
-    # The rotated grant is newer than the cutoff now; only the snapshot keeps it out.
-    cutoffs_read_at_mint["team"] = int(time.time()) - 3600
-    second = _refresh(c, first["refresh_token"]).json()
-    assert verify_token(second["access_token"]).namespaces == ("alice-ns",)
-
-
 def _exchange(c: TestClient, code: str, verifier: str):
     return c.post(
         "/oauth/token",
@@ -597,23 +558,6 @@ def _exchange(c: TestClient, code: str, verifier: str):
             "code_verifier": verifier,
         },
     )
-
-
-@pytest.mark.parametrize(("cut_after_authorize", "kept"), [(True, False), (False, True)])
-def test_a_code_exchange_drops_a_namespace_taken_away_since_authorize(
-    cutoffs_read_at_mint: dict[str, int], cut_after_authorize: bool, kept: bool
-) -> None:
-    """A cutoff after the code was issued drops the namespace; an older one,
-    which the authorize step already applied, does not."""
-    from server.auth.jwt import verify_token
-
-    c = _client()
-    code, verifier = _seed_code()
-    oauth._store.codes[oauth._token_id(code)]["namespaces"] = ["alice-ns", "team"]
-    cutoffs_read_at_mint["team"] = int(time.time()) + (5 if cut_after_authorize else -3600)
-    tok = _exchange(c, code, verifier).json()
-    want = ("alice-ns", "team") if kept else ("alice-ns",)
-    assert verify_token(tok["access_token"]).namespaces == want
 
 
 def test_a_code_exchange_is_refused_for_a_subject_revoked_since(
@@ -642,53 +586,6 @@ def test_an_unreadable_revocation_store_mints_nothing(monkeypatch: pytest.Monkey
     code, verifier = _seed_code()
     r = _exchange(c, code, verifier)
     assert r.status_code == 503 and r.json()["detail"]["error"] == "temporarily_unavailable"
-
-
-def test_a_refresh_keeps_a_cut_restricted_namespace_still_granted(
-    cutoffs_read_at_mint: dict[str, int], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A restricted namespace is read only by a token naming it; lowered to a
-    viewer grant, the person still reads it, so the refresh keeps it."""
-    from server.auth.jwt import verify_token
-
-    async def _still_granted(subject: str, org: str, **_k: object) -> list[str]:
-        return ["restricted-qa"]
-
-    monkeypatch.setattr(login, "restricted_grant_namespaces", _still_granted)
-    c = _client()
-    code, verifier = _seed_code()
-    oauth._store.codes[oauth._token_id(code)]["namespaces"] = ["alice-ns", "restricted-qa"]
-    rt = _exchange(c, code, verifier).json()["refresh_token"]
-    cutoffs_read_at_mint["restricted-qa"] = int(time.time()) + 5
-    tok = _refresh(c, rt).json()
-    assert verify_token(tok["access_token"]).namespaces == ("alice-ns", "restricted-qa")
-
-
-def test_a_failed_restricted_grant_read_does_not_narrow_the_session(
-    cutoffs_read_at_mint: dict[str, int], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A lookup that failed is not a grant that ended: the refresh answers
-    503 and keeps the restricted namespace once the lookup works again."""
-    from server.auth.jwt import verify_token
-
-    calls = {"n": 0}
-
-    async def _flaky(subject: str, org: str, **kw: object) -> list[str]:
-        calls["n"] += 1
-        if calls["n"] == 1:
-            assert kw.get("strict") is True
-            raise RuntimeError("replica away")
-        return ["restricted-qa"]
-
-    monkeypatch.setattr(login, "restricted_grant_namespaces", _flaky)
-    c = _client()
-    code, verifier = _seed_code()
-    oauth._store.codes[oauth._token_id(code)]["namespaces"] = ["alice-ns", "restricted-qa"]
-    rt = _exchange(c, code, verifier).json()["refresh_token"]
-    cutoffs_read_at_mint["restricted-qa"] = int(time.time()) + 5
-    assert _refresh(c, rt).status_code == 503
-    tok = _refresh(c, rt).json()
-    assert verify_token(tok["access_token"]).namespaces == ("alice-ns", "restricted-qa")
 
 
 def test_a_concurrent_exchange_of_a_claimed_credential_is_told_to_retry(
@@ -756,12 +653,12 @@ def test_a_slow_consume_that_landed_is_never_answered_with_a_retry(
 
 
 @pytest.mark.parametrize("grant_type", ["authorization_code", "refresh_token"])
-def test_an_exchange_issues_its_tokens_at_the_time_before_its_cutoff_read(
+def test_an_exchange_issues_its_tokens_at_the_time_before_its_revocation_read(
     monkeypatch: pytest.MonkeyPatch, grant_type: str
 ) -> None:
-    """A cutoff can land while the exchange runs, after its read: the tokens
-    carry the time taken before the read, so the cutoff, written again once
-    its insert returned, still postdates them and cuts them."""
+    """A subject revocation can land while the exchange runs, after its read:
+    the tokens carry the time taken before the read, so it still postdates
+    them and cuts them."""
 
     import jwt as pyjwt
 
@@ -1017,66 +914,3 @@ def test_a_made_up_credential_is_refused_before_any_keeper_write(
     monkeypatch.setattr(oauth_claims, "claim", _no_claim)
     r = _exchange(_client(), "no-such-code", "v")
     assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
-
-
-@pytest.mark.parametrize("claimed", [True, False])
-def test_too_many_spellings_refuses_the_exchange_for_good(
-    monkeypatch: pytest.MonkeyPatch, claimed: bool
-) -> None:
-    """A retry cannot fix it, so the client gets invalid_grant, not a 503.
-    Under a claim, where a failure would be a 503, the code is used up and
-    the claim released."""
-    from server.auth import oauth_claims, revocation
-    from server.core.errors import TooManySpellingsError
-
-    released: list[str] = []
-
-    async def _claim(ch: object, key: str) -> tuple[oauth_claims.Claim, str]:
-        return (oauth_claims.Claim.HELD, "me") if claimed else (oauth_claims.Claim.UNCLAIMED, "")
-
-    async def _release(ch: object, key: str, holder: str) -> None:
-        released.append(key)
-
-    async def _too_many(*_a: object, **_k: object) -> set[str]:
-        raise TooManySpellingsError("too many accounts", subject="alice", limit=1000)
-
-    monkeypatch.setattr(oauth_claims, "claim", _claim)
-    monkeypatch.setattr(oauth_claims, "release", _release)
-    monkeypatch.setattr(revocation, "read_grant_cutoffs", _too_many)
-    c = _client()
-    code, verifier = _seed_code()
-    r = _exchange(c, code, verifier)
-    assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
-    assert "retry-after" not in r.headers
-    assert released == ([f"code:{oauth._token_id(code)}"] if claimed else [])
-    assert oauth._token_id(code) not in oauth._store.codes  # used up
-
-
-def test_a_password_sign_in_no_retry_fixes_is_refused_in_the_oauth_envelope(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from server.core.errors import TooManySpellingsError
-
-    async def _valid(*_a: object) -> None:
-        return None
-
-    async def _too_many(*_a: object, **_k: object) -> login.Identity:
-        raise TooManySpellingsError("too many accounts", subject="alice", limit=1000)
-
-    monkeypatch.setattr(oauth, "_validate_authorize_params", _valid)
-    monkeypatch.setattr(login, "resolve_user_credentials", _too_many)
-    r = _client().post(
-        "/oauth/authorize",
-        data={
-            "client_id": "c",
-            "redirect_uri": "http://127.0.0.1:9/cb",
-            "code_challenge": "x",
-            "identifier": "alice",
-            "password": "pw",
-        },
-    )
-    assert r.status_code == 403
-    assert r.json()["detail"] == {
-        "error": "access_denied",
-        "error_description": "too many accounts",
-    }

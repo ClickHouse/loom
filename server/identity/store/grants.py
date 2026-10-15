@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from server.core.ch import own_write_reads
+from server.core import grant_cache
 from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.grants import GrantState, PendingGrant
@@ -29,6 +29,7 @@ async def insert_row(
         [row],
         settings={"async_insert": 0, "wait_for_async_insert": 1},
     )
+    _invalidate([row])
 
 
 async def insert_rows(
@@ -47,6 +48,14 @@ async def insert_rows(
         rows,
         settings={"async_insert": 0, "wait_for_async_insert": 1},
     )
+    _invalidate(rows)
+
+
+def _invalidate(rows: list[dict[str, Any]]) -> None:
+    """This process's namespace gate sees a grant change at once; others
+    within `grant_cache_ttl_seconds`."""
+    for org in {r["org"] for r in rows}:
+        grant_cache.invalidate(org, [r["subject"] for r in rows if r["org"] == org])
 
 
 async def pending_for_admins(
@@ -132,45 +141,19 @@ async def find_active_grant(
 ) -> GrantState | None:
     """Look up the current ACTIVE grant for (org, ns, subject), if any.
     Pending grants are intentionally excluded — they don't authorize
-    action yet. Read as of every write that landed: a grant change decides
-    from it whether it lowers the grant (and so ends older tokens' claims),
-    and a lagging replica would miss a higher grant just written."""
+    action yet."""
     ch = ch or _default_client()
-    with own_write_reads():
-        row = await ch.query_one(
-            """
-            SELECT role, granted_by, status, pending_role, pending_since
-            FROM loom.namespace_grants FINAL
-            WHERE org = {org:String} AND namespace = {ns:String}
-              AND subject = {sub:String} AND {live}
-            LIMIT 1
-            """.replace("{live}", LIVE_GRANT),
-            params={"org": org, "ns": namespace, "sub": subject},
-        )
+    row = await ch.query_one(
+        """
+        SELECT role, granted_by, status, pending_role, pending_since
+        FROM loom.namespace_grants FINAL
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND subject = {sub:String} AND {live}
+        LIMIT 1
+        """.replace("{live}", LIVE_GRANT),
+        params={"org": org, "ns": namespace, "sub": subject},
+    )
     return None if row is None else GrantState.from_row(row)
-
-
-async def active_roles(
-    org: str,
-    namespace: str,
-    subjects: list[str],
-    *,
-    ch: _CHClient | None = None,
-) -> dict[str, str]:
-    """subject -> role of the ACTIVE grants on (org, ns) among `subjects`, read
-    as of every write that landed (a restore decides from it which grants it
-    lowers)."""
-    ch = ch or _default_client()
-    with own_write_reads():
-        rows = await ch.query_all(
-            """
-            SELECT subject, role FROM loom.namespace_grants FINAL
-            WHERE org = {org:String} AND namespace = {ns:String}
-              AND subject IN {subs:Array(String)} AND {live}
-            """.replace("{live}", LIVE_GRANT),
-            params={"org": org, "ns": namespace, "subs": subjects},
-        )
-    return {str(r["subject"]): str(r["role"]) for r in rows}
 
 
 async def find_any_grant(
@@ -182,21 +165,18 @@ async def find_any_grant(
 ) -> GrantState | None:
     """Look up ANY non-revoked grant — active OR pending. Used by the
     join handler to detect already-requested-but-not-yet-approved
-    self-joins so they aren't duplicated, and by `grants.revoke`, which
-    ends older tokens' claims when the grant it finds is active: read as of
-    every write that landed, so a just-approved grant is not missed."""
+    self-joins so they aren't duplicated."""
     ch = ch or _default_client()
-    with own_write_reads():
-        row = await ch.query_one(
-            """
-            SELECT role, granted_by, status, pending_role, pending_since
-            FROM loom.namespace_grants FINAL
-            WHERE org = {org:String} AND namespace = {ns:String}
-              AND subject = {sub:String} AND revoked_at IS NULL
-            LIMIT 1
-            """,
-            params={"org": org, "ns": namespace, "sub": subject},
-        )
+    row = await ch.query_one(
+        """
+        SELECT role, granted_by, status, pending_role, pending_since
+        FROM loom.namespace_grants FINAL
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND subject = {sub:String} AND revoked_at IS NULL
+        LIMIT 1
+        """,
+        params={"org": org, "ns": namespace, "sub": subject},
+    )
     return None if row is None else GrantState.from_row(row)
 
 
@@ -261,47 +241,3 @@ async def ranked_live_grants(
         params={"org": org, "subs": subjects, "lim": int(limit)},
     )
     return list(rows or [])
-
-
-async def logged_rows(
-    org: str, namespaces: list[str], subjects: list[str], *, ch: _CHClient | None = None
-) -> list[dict[str, Any]]:
-    """Every row of `loom.namespace_grant_log` for these namespaces and
-    subjects, oldest first, read as of every write that landed."""
-    ch = ch or _default_client()
-    with own_write_reads():
-        rows: list[dict[str, Any]] = await ch.query_all(
-            """
-            SELECT namespace, subject, role, status, revoked_at, version
-            FROM loom.namespace_grant_log
-            WHERE org = {org:String} AND namespace IN {ns:Array(String)}
-              AND subject IN {subs:Array(String)}
-            ORDER BY version
-            """,
-            params={"org": org, "ns": namespaces, "subs": subjects},
-        )
-    return rows
-
-
-async def logged_pairs(
-    org: str,
-    *,
-    namespace: str | None = None,
-    subject: str | None = None,
-    ch: _CHClient | None = None,
-) -> list[tuple[str, str]]:
-    """The (namespace, subject) pairs the grant log holds on `namespace` or of `subject`."""
-    if not namespace and not subject:
-        raise ValueError("logged_pairs needs a namespace or a subject, not the whole org")
-    ch = ch or _default_client()
-    with own_write_reads():
-        rows = await ch.query_all(
-            """
-            SELECT DISTINCT namespace, subject FROM loom.namespace_grant_log
-            WHERE org = {org:String}
-              AND ({ns:String} = '' OR namespace = {ns:String})
-              AND ({sub:String} = '' OR subject = {sub:String})
-            """,
-            params={"org": org, "ns": namespace or "", "sub": subject or ""},
-        )
-    return sorted((str(r["namespace"]), str(r["subject"])) for r in rows)

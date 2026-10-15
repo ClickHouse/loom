@@ -12,10 +12,8 @@ across the configured branch namespaces of one repository:
   row is not re-added. Called after an admin grant is created or approved
   on a code namespace, when a branch is added, and once per process per
   namespace by the registrar (so environment-registered branches inherit).
-* ``plan_revoke`` — a revoked admin leaves every branch, except a branch
-  where they are the only active admin (the handler's own guard).
-  ``grants.revoke`` plans first, writes the cutoffs for every branch in one
-  call, then the grant rows in one insert.
+* ``revoke_repo_maintainer`` — a revoked admin leaves every branch, except a
+  branch where they are the only active admin (the handler's own guard).
 
 Readers stay per branch: the approval fan-out already turns a person's branch requests
 into one decision. Restricted branches also need the token to name them — a person's
@@ -139,32 +137,15 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
     return len(inserts)
 
 
-async def plan_revoke(
+async def revoke_repo_maintainer(
     org: str, namespace: str, subject: str, *, ch: Any | None = None
-) -> list[dict[str, Any]]:
-    """The revoke rows that take `subject`'s active admin grant off every
-    other branch of the repository, not written yet. A failed read plans
-    none: the revoke that asked goes on, and the sibling grants stay for an
-    operator to revoke, each with its own cutoff."""
-    try:
-        return await _plan_revoke(org, namespace, subject, ch=ch)
-    except Exception:  # the fan-out never fails the revoke that caused it
-        log.warning(
-            "repo maintainers: revoke plan failed for %s/%s/%s",
-            org,
-            namespace,
-            subject,
-            exc_info=True,
-        )
-        return []
-
-
-async def _plan_revoke(
-    org: str, namespace: str, subject: str, *, ch: Any | None = None
-) -> list[dict[str, Any]]:
+) -> int:
+    """Revoke `subject`'s active admin grant on every other branch of the
+    repository; a branch where they are the only active admin keeps them
+    (the same guard `grants.revoke` applies). Returns rows written."""
     branches = [b for b in branch_namespaces(org, namespace) if b != namespace]
     if not branches:
-        return []
+        return 0
     from server.core.ch import get_client
 
     client = ch or get_client()
@@ -197,7 +178,16 @@ async def _plan_revoke(
                 revoked=True,
             )
         )
-    return out
+    if out:
+        await _insert(client, out)
+        log.info(
+            "repo maintainers: %s/%s — %r revoked on %d sibling branch(es)",
+            org,
+            namespace,
+            subject,
+            len(out),
+        )
+    return len(out)
 
 
 async def sync_quietly(org: str, namespace: str, *, ch: Any | None = None) -> None:
@@ -206,3 +196,16 @@ async def sync_quietly(org: str, namespace: str, *, ch: Any | None = None) -> No
         await sync_repo_maintainers(org, namespace, ch=ch)
     except Exception:  # the fan-out never fails the op that caused it
         log.warning("repo maintainers: sync failed for %s/%s", org, namespace, exc_info=True)
+
+
+async def revoke_quietly(org: str, namespace: str, subject: str, *, ch: Any | None = None) -> None:
+    try:
+        await revoke_repo_maintainer(org, namespace, subject, ch=ch)
+    except Exception:  # the fan-out never fails the revoke that caused it
+        log.warning(
+            "repo maintainers: revoke fan-out failed for %s/%s/%s",
+            org,
+            namespace,
+            subject,
+            exc_info=True,
+        )

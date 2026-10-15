@@ -207,8 +207,8 @@ and a 5xx always a `BackendUnavailable`.
 | `LoomError`          | `INVALID_RESPONSE`                                          | a 2xx body that is not a JSON object                                   |
 
 Only `PRECONDITION_FAILED` carries `.current_sha256`. The other 409s that land in
-`PreconditionFailed` (`PINNED_CONFLICT`, `GRANT_WOULD_DOWNGRADE`,
-`TOO_MANY_SPELLINGS`) are not fixed by resending; match on `.code`.
+`PreconditionFailed` (`PINNED_CONFLICT`, `GRANT_WOULD_DOWNGRADE`)
+are not fixed by resending; match on `.code`.
 
 `loom` re-exports `LoomError`, `ValidationError`, `AuthInvalid`,
 `AuthInsufficient`, `NotFound`, `PreconditionFailed`, `IdempotentConflict`,

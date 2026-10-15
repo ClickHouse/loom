@@ -80,9 +80,9 @@ async def resolve_my_namespaces(org: str, subject: str | None = None) -> list[st
       `namespaces` claim and active `loom.namespace_grants` rows (grants
       widen), returned sorted.
 
-    Either way a claimed namespace whose grant was revoked or lowered after
-    the token was minted is left out (`authz.claim_withdrawn`), unless a
-    scoped token's subject still holds a grant there (`authz.scoped_claims`).
+    Either way a claim on a namespace where the subject holds a grant row is
+    capped at that grant (`authz.claim_capped`): a flat token's goes, and a
+    scoped token's stays while that grant is live (`authz.scoped_claims`).
 
     A delegated token (a `creator` claim) is neither: its claim narrowed to
     the creator's live grants (`_delegated_namespaces`).
@@ -114,7 +114,7 @@ async def resolve_my_namespaces(org: str, subject: str | None = None) -> list[st
     resolved_subject: str | None = None
     if auth is not None and auth.subject:
         resolved_subject = auth.subject
-        jwt_namespaces = set(live_claims(auth, org, auth.namespaces))
+        jwt_namespaces = set(await live_claims(auth, org, auth.namespaces))
     if not resolved_subject:
         resolved_subject = subject
 

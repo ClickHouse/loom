@@ -288,34 +288,39 @@ def _no_copy_head_check(request: pytest.FixtureRequest) -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
-def _no_grant_log_check(request: pytest.FixtureRequest) -> Iterator[None]:
-    """A grant write reads the grant log and writes cutoffs through
-    `grant_writes`; unit fakes answer statements by shape, so those calls are
-    off unless a test is marked `grant_log_check`."""
-    if request.node.get_closest_marker("grant_log_check"):
+def _no_claim_cap(request: pytest.FixtureRequest) -> Iterator[None]:
+    """The namespace gate caps a token's claim at the grant its subject holds
+    there (`authz.claim_capped`), read through the grant cache; unit fakes
+    answer statements by shape, so the cap is off unless a test is marked
+    `claim_cap`."""
+    from server.core import grant_cache
+
+    grant_cache.clear()
+    if request.node.get_closest_marker("claim_cap"):
         yield
+        grant_cache.clear()
         return
-    from server.identity.app import grant_writes
-    from server.identity.store import grants as grants_repo
+    from server.auth import authz
 
-    async def _skip(*_a: object, **_k: object) -> None:
-        return None
+    async def _uncapped(*_a: object, **_k: object) -> bool:
+        return False
 
-    async def _none(*_a: object, **_k: object) -> list[object]:
-        return []
-
-    stubs = {
-        (grant_writes, "restamp"): _skip,
-        (grant_writes, "write_pair_cutoffs"): _skip,
-        (grants_repo, "logged_rows"): _none,
-        (grants_repo, "logged_pairs"): _none,
-    }
-    before = {target: getattr(*target) for target in stubs}
-    for (module, name), stub in stubs.items():
-        setattr(module, name, stub)
+    before = authz.claim_capped
+    authz.claim_capped = _uncapped  # type: ignore[assignment]
     yield
-    for (module, name), original in before.items():
-        setattr(module, name, original)
+    authz.claim_capped = before  # type: ignore[assignment]
+
+
+@pytest.fixture
+def subjects_not_revoked(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Token-minting paths read the subject's revocations from ClickHouse;
+    none is revoked here."""
+    import server.auth.revocation as revocation
+
+    async def _not_revoked(subjects: list[str], *, issued_at: int) -> bool:
+        return False
+
+    monkeypatch.setattr(revocation, "subjects_revoked", _not_revoked)
 
 
 @pytest.fixture(autouse=True)
@@ -644,8 +649,8 @@ def _vector_read_state_not_probed() -> Iterator[None]:
 @pytest.fixture(autouse=True)
 def _revocation_snapshot_loaded() -> Iterator[None]:
     """A unit test models a booted process: the revocation snapshot has been
-    read just now (and is empty), it has written no revocation of its own,
-    and no creator's account state is cached yet. Tests of the not-yet-loaded state
+    read just now (and is empty), and no creator's account state is cached
+    yet. Tests of the not-yet-loaded state
     set `_loaded` back to False. Saved and restored by hand, not through
     `monkeypatch`: requesting it here would set it up before
     `_settings_left_as_found` and so tear it down after that check."""
@@ -654,11 +659,9 @@ def _revocation_snapshot_loaded() -> Iterator[None]:
 
     saved = rev._loaded, rev._loaded_at
     rev._loaded, rev._loaded_at = True, rev.time.monotonic()
-    rev._written.clear()
     delegation._account_active.clear()
     yield
     rev._loaded, rev._loaded_at = saved
-    rev._written.clear()
 
 
 # The scalar repository the code-plane fixtures model, with its repository-shaped
@@ -689,57 +692,3 @@ def scalar_code_repo(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     for name, value in SCALAR_CODE_REPO.items():
         monkeypatch.setattr(settings, name, value)
     return dict(SCALAR_CODE_REPO)
-
-
-@pytest.fixture
-def recorded_cutoff_writes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> list[tuple[str, list[str], list[str]]]:
-    """Record the first cutoff of each lowering the grant handlers make instead
-    of writing cutoff rows: (org, namespaces, subjects) per call."""
-    import server.identity.app.namespace_snapshot as snapshot
-    from server.identity.app import grant_writes
-
-    calls: list[tuple[str, list[str], list[str]]] = []
-
-    async def _record(
-        org: str, namespaces: list[str], subjects: list[str], *, reason: str, revoked_by: str
-    ) -> None:
-        calls.append((org, list(namespaces), list(subjects)))
-
-    async def _record_pairs(
-        org: str, pairs: list[tuple[str, str]], *, reason: str, revoked_by: str
-    ) -> None:
-        if pairs:
-            calls.append((org, sorted({ns for ns, _ in pairs}), sorted({s for _, s in pairs})))
-
-    monkeypatch.setattr(snapshot, "write_grant_cutoffs", _record)
-    monkeypatch.setattr(grant_writes, "write_pair_cutoffs", _record_pairs)
-    return calls
-
-
-@pytest.fixture
-def cutoffs_read_at_mint(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
-    """Token-minting paths (sign-in, OAuth) read the revocations from
-    ClickHouse; answer from this map instead: namespace -> the cutoff (unix
-    seconds) a grant taken away there left, empty unless a test adds one. No
-    subject is revoked."""
-    import server.auth.revocation as revocation
-
-    cutoffs: dict[str, int] = {}
-
-    async def _ended(
-        org: str, subject: str, namespaces: list[str], *, issued_at: int | None
-    ) -> set[str]:
-        return {
-            ns
-            for ns in namespaces
-            if ns in cutoffs and (issued_at is None or issued_at < cutoffs[ns])
-        }
-
-    async def _not_revoked(subjects: list[str], *, issued_at: int) -> bool:
-        return False
-
-    monkeypatch.setattr(revocation, "read_grant_cutoffs", _ended)
-    monkeypatch.setattr(revocation, "subjects_revoked", _not_revoked)
-    return cutoffs

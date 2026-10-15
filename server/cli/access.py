@@ -28,7 +28,6 @@ def _cmd_claim_release(args: argparse.Namespace) -> int:
     stays reserved even then.
     """
 
-    from server.core.errors import TooManySpellingsError
     from server.identity.app.claim_release import release_claim
 
     async def _lookup_owner(ch: Any) -> str | None:
@@ -64,17 +63,13 @@ def _cmd_claim_release(args: argparse.Namespace) -> int:
             return 1
 
     async def _go(ch: Any) -> int:
-        try:
-            out = await release_claim(
-                org=args.org,
-                namespace=args.namespace,
-                reason="",
-                actor_subject="loom-cli",
-                ch=ch,
-            )
-        except TooManySpellingsError as e:
-            print(e.message, file=sys.stderr)
-            return 1
+        out = await release_claim(
+            org=args.org,
+            namespace=args.namespace,
+            reason="",
+            actor_subject="loom-cli",
+            ch=ch,
+        )
         if out is None:
             print(f"no claim found for {args.org}/{args.namespace}", file=sys.stderr)
             return 1
@@ -282,8 +277,7 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
     principal. Other replicas see the row on their next refresh tick.
     `--subject S --issued-before T` retires only the tokens
     minted for S before T, so a token re-minted after the leak keeps working.
-    `--list` prints the unexpired revocations; `--grants` adds the cutoffs a
-    revoked or lowered grant leaves, one per namespace and spelling."""
+    `--list` prints the unexpired revocations."""
     import getpass
 
     from server.auth import revocation
@@ -299,17 +293,13 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    if args.grants and not args.list:
-        print("  ✗ --grants widens --list; pass --list", file=sys.stderr)
-        return 2
     if issued_before is not None and not args.subject:
         print("  ✗ --issued-before narrows a --subject revocation; pass --subject", file=sys.stderr)
         return 2
 
     async def _run(ch: Any) -> int:
         if args.list:
-            rows = await revocation.list_active(include_grant_cutoffs=args.grants)
-            return _print_revocations(rows, as_json=args.json)
+            return _print_revocations(await revocation.list_active(), as_json=args.json)
         token_id = args.jti or args.subject
         by = f"cli:{getpass.getuser()}"
         row = await revocation.revoke(
@@ -406,12 +396,6 @@ def _add_revoke_token_parser(sub: Any) -> None:
         "with --issued-before.",
     )
     which.add_argument("--list", action="store_true", help="Print the unexpired revocations.")
-    p_revoke.add_argument(
-        "--grants",
-        action="store_true",
-        help="With --list, also print the cutoffs revoked and lowered grants leave "
-        "(grant:[org, namespace, subject hash]).",
-    )
     p_revoke.add_argument(
         "--issued-before",
         default=None,

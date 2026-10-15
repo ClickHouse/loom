@@ -27,17 +27,13 @@ import logging
 import time
 from typing import Any
 
-from server.core.errors import TooManySpellingsError
-
 log = logging.getLogger("loom.auth.aliases")
 
 TTL_S = 60.0
 _CACHE: dict[tuple[str, str], tuple[float, tuple[str, ...]]] = {}
 _CACHE_MAX = 10_000
-# Accounts a lookup reads per subject; a cutoff reads many more, and refuses
-# rather than cut short when even that is not all of them.
-_LOOKUP_SPELLINGS = 8
-_CUTOFF_SPELLINGS = 1000
+# Accounts one lookup reads per subject.
+LOOKUP_ROWS = 8
 
 
 def _is_human_subject(subject: str) -> bool:
@@ -51,8 +47,7 @@ async def subject_aliases(
     the subject alone when the read fails or nothing is tied to it.
 
     `strict` reads the directory now and raises when it cannot, for a caller
-    whose answer persists (an OAuth refresh's grant read). A grant cutoff
-    reads `cutoff_spellings` instead."""
+    that must not take the subject alone for all of them."""
     if not _is_human_subject(subject):
         return [subject] if subject else []
     key = (org, subject)
@@ -60,8 +55,26 @@ async def subject_aliases(
     now = time.monotonic()
     if hit is not None and not strict and now - hit[0] < TTL_S:
         return list(hit[1])
+    out = [subject]
     try:
-        out = await _read_spellings(org, subject, ch, for_cutoff=False)
+        from server.core.ch import get_client
+
+        client = ch or get_client()
+        rows = await client.query_all(  # type: ignore[attr-defined]
+            """
+            SELECT owner_email, contact_email
+            FROM loom.namespaces FINAL
+            WHERE org = {org:String} AND ifNull(active, true) = true
+              AND contact_email != ''
+              AND (owner_email = {sub:String} OR lower(contact_email) = lower({sub:String}))
+            LIMIT {lim:UInt32}
+            """,
+            params={"org": org, "sub": subject, "lim": LOOKUP_ROWS},
+        )
+        for r in rows:
+            for spelling in (str(r.get("owner_email") or ""), str(r.get("contact_email") or "")):
+                if spelling and spelling.lower() not in {s.lower() for s in out}:
+                    out.append(spelling)
     except Exception:
         if strict:
             raise
@@ -72,70 +85,6 @@ async def subject_aliases(
     if len(_CACHE) >= _CACHE_MAX:
         _CACHE.clear()
     _CACHE[key] = (now, tuple(out))
-    return out
-
-
-async def cutoff_spellings(org: str, subject: str, *, ch: object | None = None) -> list[str]:
-    """Every spelling a grant cutoff for `subject` must cover: read now, never
-    cached, raising when the directory cannot answer, and counting accounts
-    since deactivated, whose other spelling may still be in a token. Read
-    with sequential consistency: a spelling a lagging replica misses gets no
-    cutoff, and no later refresh writes one."""
-    from server.core.ch import own_write_reads
-
-    if not _is_human_subject(subject):
-        return [subject] if subject else []
-    with own_write_reads():
-        return await _read_spellings(org, subject, ch, for_cutoff=True)
-
-
-async def _read_spellings(
-    org: str, subject: str, ch: object | None, *, for_cutoff: bool
-) -> list[str]:
-    """The spellings tied to `subject`. A cutoff must reach all of them,
-    inactive accounts' too, so it reads up to `_CUTOFF_SPELLINGS` and raises
-    past that rather than cut short."""
-    from server.core.ch import get_client
-
-    limit = _CUTOFF_SPELLINGS if for_cutoff else _LOOKUP_SPELLINGS
-    # A cutoff reads one row more than it may use, to see that it has them all.
-    fetch = limit + 1 if for_cutoff else limit
-    client = ch or get_client()
-    rows = await client.query_all(  # type: ignore[attr-defined]
-        """
-        SELECT DISTINCT owner_email, contact_email
-        FROM loom.namespaces FINAL
-        WHERE org = {org:String} AND ({all:Bool} OR ifNull(active, true) = true)
-          AND contact_email != ''
-          AND (owner_email = {sub:String} OR lower(contact_email) = lower({sub:String}))
-        LIMIT {lim:UInt32}
-        """,
-        params={
-            "org": org,
-            "sub": subject,
-            "all": for_cutoff,
-            "lim": fetch,
-        },
-    )
-    if for_cutoff and len(rows) > limit:
-        log.error(
-            "aliases: more than %d accounts name %r in %r; release the extra ones "
-            "(docs/reference/errors.md#too-many-spellings)",
-            limit,
-            subject,
-            org,
-        )
-        raise TooManySpellingsError(
-            f"too many accounts name {subject!r} in {org!r}; ask your Loom operator",
-            subject=subject,
-            limit=limit,
-        )
-    out, seen = [subject], {subject.lower()}
-    for r in rows:
-        for spelling in (str(r.get("owner_email") or ""), str(r.get("contact_email") or "")):
-            if spelling and spelling.lower() not in seen:
-                out.append(spelling)
-                seen.add(spelling.lower())
     return out
 
 

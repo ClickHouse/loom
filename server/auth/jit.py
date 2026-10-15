@@ -14,7 +14,6 @@ from typing import Any
 
 from server.auth import login
 from server.core.ch import get_client
-from server.core.errors import TooManySpellingsError
 
 log = logging.getLogger(__name__)
 
@@ -134,7 +133,7 @@ async def jit_provision_for_email(email: str) -> login.Identity | None:
     async with claim_lock(org, "email:" + ident):
         try:
             return await _provision_jit(org, ident, base)
-        except (login.SignInUnavailable, TooManySpellingsError):
+        except login.SignInUnavailable:
             raise
         except Exception as e:  # a read or write that failed: retryable, as any sign-in's
             log.error("oidc jit: sign-up of %r in %s failed: %s", ident, org, e, exc_info=True)

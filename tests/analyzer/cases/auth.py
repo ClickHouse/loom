@@ -1,6 +1,6 @@
-"""The auth plane's own reads and writes (server/auth/): grant cutoffs and the
-spellings they cover, the OAuth exchange claim, the JIT registry reads, and
-the grant reads a grant change decides from."""
+"""The auth plane's own reads and writes (server/auth/): the grants a token's
+claim is capped at, the subject revocations a mint reads, the OAuth exchange
+claim, and the JIT registry reads."""
 
 from __future__ import annotations
 
@@ -11,21 +11,15 @@ from tests.analyzer.corpus import Case, RecordingCH
 
 
 async def _auth(ch: RecordingCH, c: dict[str, Any]) -> None:
-    from server.auth import aliases, jit, oauth_claims, revocation
-    from server.identity.store import grants as G
+    from server.auth import jit, oauth_claims, revocation
+    from server.core import grant_cache
 
-    # One shape whether deactivated accounts count or not: it is a parameter.
-    await aliases._read_spellings(ORG, "alice@x.io", ch, for_cutoff=True)
-    await revocation._read_revocations([revocation.grant_claim_key(ORG, NS, "alice"), "alice"])
+    await grant_cache._read(ORG, ["alice", "alice@x.io"])
+    await revocation._read_revocations(["alice"])
     await revocation.list_active()
     await jit._registry_row(ORG, NS)
     await jit._accounts_naming(ORG, "alice@x.io")
     await jit._ever_granted(ORG, {"namespace": NS, "owner": "alice"})
-    await G.active_roles(ORG, NS, ["alice"], ch=ch)
-    await G.find_active_grant(ORG, NS, "alice", ch=ch)
-    await G.find_any_grant(ORG, NS, "alice", ch=ch)
-    await G.logged_rows(ORG, [NS], ["alice"], ch=ch)
-    await G.logged_pairs(ORG, namespace=NS, ch=ch)
     claim = {"k": "code:abc", "me": "h1", "stale": oauth_claims.STALE_S}
     await ch.execute(oauth_claims._INSERT, params=claim)
     await ch.query_one(oauth_claims._HOLDER, params=claim)

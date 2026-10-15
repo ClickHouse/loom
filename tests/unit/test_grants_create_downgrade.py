@@ -34,31 +34,13 @@ def _wire(
     async def _insert(row: dict[str, Any], **_: Any) -> None:
         inserted.append(row)
 
-    async def _insert_rows(rows: list[dict[str, Any]], **_: Any) -> None:
-        inserted.extend(rows)
-
     async def _no_ceiling(*_a: Any, **_k: Any) -> None:
         return None
 
     monkeypatch.setattr(grants_repo, "find_active_grant", _find)
     monkeypatch.setattr(grants_repo, "insert_row", _insert)
-    monkeypatch.setattr(grants_repo, "insert_rows", _insert_rows)
     monkeypatch.setattr(grants_mod, "_enforce_code_ceiling", _no_ceiling)
     return inserted, looked_up
-
-
-@pytest.fixture
-def restamped(monkeypatch: pytest.MonkeyPatch) -> list[set[tuple[str, str]]]:
-    """The pairs each grant write asked to cut again."""
-    from server.identity.app import grant_writes
-
-    calls: list[set[tuple[str, str]]] = []
-
-    async def _record(org: str, pairs: list[tuple[str, str]], **_: Any) -> None:
-        calls.append(set(pairs))
-
-    monkeypatch.setattr(grant_writes, "restamp", _record)
-    return calls
 
 
 def _row(role: str, **extra: Any) -> dict[str, Any]:
@@ -129,29 +111,11 @@ async def test_downgrade_without_replace_is_409_with_typed_code(
 
 
 @pytest.mark.asyncio
-async def test_downgrade_with_replace_overwrites_and_ends_older_claims(
-    monkeypatch: pytest.MonkeyPatch,
-    recorded_cutoff_writes: list[tuple[str, list[str], list[str]]],
-    restamped: list[set[tuple[str, str]]],
-) -> None:
+async def test_downgrade_with_replace_overwrites(monkeypatch: pytest.MonkeyPatch) -> None:
     inserted, _ = _wire(monkeypatch, _row("admin"))
     out = await grants_mod.handle_grants_create(_create("viewer", replace=True))
     assert out.role == "viewer"
     assert inserted[0]["role"] == "viewer"
-    assert recorded_cutoff_writes == [("o", ["ns"], ["alice"])]
-    assert restamped == [{("ns", "alice")}], "cut again once the row landed"
-
-
-@pytest.mark.asyncio
-async def test_an_upgrade_ends_no_claim(
-    monkeypatch: pytest.MonkeyPatch,
-    recorded_cutoff_writes: list[tuple[str, list[str], list[str]]],
-    restamped: list[set[tuple[str, str]]],
-) -> None:
-    _wire(monkeypatch, _row("viewer"))
-    await grants_mod.handle_grants_create(_create("writer"))
-    assert recorded_cutoff_writes == []
-    assert restamped == []
 
 
 @pytest.mark.asyncio
@@ -226,9 +190,7 @@ async def test_an_email_spelling_is_checked_against_the_row_it_would_replace(
 
 
 @pytest.mark.asyncio
-async def test_revoke_by_email_revokes_the_canonical_row(
-    monkeypatch: pytest.MonkeyPatch, recorded_cutoff_writes: list[tuple[str, list[str], list[str]]]
-) -> None:
+async def test_revoke_by_email_revokes_the_canonical_row(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.identity.api.models_grants import GrantsRevokeInput
     from server.identity.app import token_grants
 
@@ -240,19 +202,18 @@ async def test_revoke_by_email_revokes_the_canonical_row(
     async def _find_any(org: str, ns: str, sub: str, **_: Any) -> GrantState | None:
         return GrantState.from_row(_row("writer")) if sub == "alice" else None
 
-    async def _insert(rows: list[dict[str, Any]], **_: Any) -> None:
-        inserted.extend(rows)
+    async def _insert(row: dict[str, Any], **_: Any) -> None:
+        inserted.append(row)
 
     async def _cascade(*_a: Any, **_k: Any) -> None:
         return None
 
     monkeypatch.setattr("server.auth.aliases.canonical_subject", _canonical)
     monkeypatch.setattr(grants_repo, "find_any_grant", _find_any)
-    monkeypatch.setattr(grants_repo, "insert_rows", _insert)
+    monkeypatch.setattr(grants_repo, "insert_row", _insert)
     monkeypatch.setattr(token_grants, "cascade_revoke_to_created_tokens", _cascade)
     out = await grants_mod.handle_grants_revoke(
         GrantsRevokeInput(org="o", namespace="ns", subject="alice@x.com")
     )
     assert out.revoked is True
-    assert recorded_cutoff_writes == [("o", ["ns"], ["alice"])]
     assert inserted[0]["subject"] == "alice" and inserted[0]["revoked_at"] is not None

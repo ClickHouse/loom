@@ -23,7 +23,6 @@ from server.identity.api.models import (
     NamespaceMarkSeenOutput,
     _MineEntry,
 )
-from server.identity.app import grant_writes
 from server.identity.app import namespace as _registry
 from server.identity.domain import join_policy as _jp
 from server.operations.base import grant_rank
@@ -94,11 +93,8 @@ async def handle_namespace_join(
     if existing is not None:
         current_role = existing.role
         existing_pending = existing.pending_role
-        # Active equal-or-higher → no-op. The same role may be a retry whose
-        # first attempt landed without its cut.
+        # Active equal-or-higher → no-op.
         if grant_rank(current_role) >= grant_rank(input.role):
-            if grant_rank(current_role) == grant_rank(input.role):
-                await grant_writes.recheck(input.org, [(input.namespace, caller)])
             return NamespaceJoinOutput(
                 joined=False,
                 namespace=input.namespace,
@@ -114,7 +110,6 @@ async def handle_namespace_join(
             )
         # Same pending request already on file → no-op, return pending state.
         if gated and existing_pending == input.role:
-            await grant_writes.recheck(input.org, [(input.namespace, caller)])
             return NamespaceJoinOutput(
                 joined=False,
                 namespace=input.namespace,
@@ -135,7 +130,7 @@ async def handle_namespace_join(
         # never becomes a base role. Active grant → keep that base role and
         # record the elevation as pending_role.
         if existing is None or existing.status == "pending":
-            await grant_writes.write_row(
+            await grants_repo.insert_row(
                 {
                     "org": input.org,
                     "namespace": input.namespace,
@@ -162,7 +157,7 @@ async def handle_namespace_join(
             )
 
         base_role = existing.role
-        await grant_writes.write_row(
+        await grants_repo.insert_row(
             {
                 "org": input.org,
                 "namespace": input.namespace,
@@ -189,7 +184,7 @@ async def handle_namespace_join(
         )
 
     # Ungated path — single row, exact role requested.
-    await grant_writes.write_row(
+    await grants_repo.insert_row(
         {
             "org": input.org,
             "namespace": input.namespace,
@@ -244,7 +239,6 @@ async def handle_namespace_leave(
 
     existing = await grants_repo.find_active_grant(input.org, input.namespace, caller)
     if existing is None:
-        await grant_writes.recheck(input.org, [(input.namespace, caller)])
         return NamespaceLeaveOutput(left=False, namespace=input.namespace)
 
     if existing.role == "admin":
@@ -257,21 +251,17 @@ async def handle_namespace_leave(
             )
 
     now = datetime.now(UTC).replace(tzinfo=None)
-    await grant_writes.lower(
-        input.org,
-        [
-            {
-                "org": input.org,
-                "namespace": input.namespace,
-                "subject": caller,
-                "role": existing.role,
-                "granted_at": now,
-                "granted_by": existing.granted_by,
-                "revoked_at": now,
-                "version": time.time_ns(),
-            }
-        ],
-        reason="namespace.leave",
+    await grants_repo.insert_row(
+        {
+            "org": input.org,
+            "namespace": input.namespace,
+            "subject": caller,
+            "role": existing.role,
+            "granted_at": now,
+            "granted_by": existing.granted_by,
+            "revoked_at": now,
+            "version": time.time_ns(),
+        }
     )
     return NamespaceLeaveOutput(left=True, namespace=input.namespace, left_at=now)
 
@@ -286,7 +276,6 @@ async def handle_namespace_cancel_request(
 
     existing = await grants_repo.find_any_grant(input.org, input.namespace, caller)
     if existing is None:
-        await grant_writes.recheck(input.org, [(input.namespace, caller)])
         return NamespaceCancelRequestOutput(
             cancelled=False,
             namespace=input.namespace,
@@ -298,7 +287,6 @@ async def handle_namespace_cancel_request(
     # branch). Elevation request: status='active', pending_role carries it.
     no_base_access = existing.status == "pending"
     if not pending_role and not no_base_access:
-        await grant_writes.recheck(input.org, [(input.namespace, caller)])
         return NamespaceCancelRequestOutput(
             cancelled=False,
             namespace=input.namespace,
@@ -307,7 +295,7 @@ async def handle_namespace_cancel_request(
     now = datetime.now(UTC).replace(tzinfo=None)
     if no_base_access and not pending_role:
         # No underlying base row — cancelling means revoking entirely.
-        await grant_writes.write_row(
+        await grants_repo.insert_row(
             {
                 "org": input.org,
                 "namespace": input.namespace,
@@ -330,7 +318,7 @@ async def handle_namespace_cancel_request(
         )
 
     # New-shape: clear pending_role, leave base role active.
-    await grant_writes.write_row(
+    await grants_repo.insert_row(
         {
             "org": input.org,
             "namespace": input.namespace,
@@ -481,7 +469,9 @@ async def handle_namespace_list_mine(
 
     auth = current_auth()
     if auth is not None:
-        jwt_only = live_claims(auth, input.org, [ns for ns in auth.namespaces if ns not in seen])
+        jwt_only = await live_claims(
+            auth, input.org, [ns for ns in auth.namespaces if ns not in seen]
+        )
         # Claim-only namespaces have no grant row to JOIN through, so look up
         # kind/visibility directly — otherwise a code namespace named in a
         # token's claim would masquerade as a memory namespace and the header

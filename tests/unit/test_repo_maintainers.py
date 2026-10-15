@@ -130,7 +130,7 @@ async def test_sync_respects_a_newer_explicit_revocation_on_a_branch() -> None:
     assert [(r["namespace"], r["subject"]) for r in ch.inserted] == [("code-x-26-6", "alice")]
 
 
-async def test_a_revoke_plans_every_branch_except_where_they_are_the_only_admin() -> None:
+async def test_revoke_leaves_every_branch_except_where_they_are_the_only_admin() -> None:
     ch = _FakeCH(
         [
             _admin("code-x-26-5", "alice"),
@@ -138,19 +138,11 @@ async def test_a_revoke_plans_every_branch_except_where_they_are_the_only_admin(
             _admin("code-x-26-6", "alice"),  # alone there
         ]
     )
-    (row,) = await maintainers.plan_revoke("clickhouse", "code-x", "alice", ch=ch)
+    n = await maintainers.revoke_repo_maintainer("clickhouse", "code-x", "alice", ch=ch)
+    assert n == 1
+    (row,) = ch.inserted
     assert (row["namespace"], row["subject"], row["role"]) == ("code-x-26-5", "alice", "admin")
     assert row["revoked_at"] is not None
-    assert ch.inserted == [], "planned, not written"
-
-
-async def test_a_failed_plan_never_fails_the_revoke() -> None:
-    class _Down(_FakeCH):
-        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
-            raise RuntimeError("clickhouse down")
-
-    down = _Down([])
-    assert await maintainers.plan_revoke("clickhouse", "code-x", "alice", ch=down) == []
 
 
 async def test_sync_quietly_never_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -165,15 +157,8 @@ async def test_sync_quietly_never_raises(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 @pytest.fixture()
-def _handler_env(
-    monkeypatch: pytest.MonkeyPatch, recorded_cutoff_writes: list[tuple[str, list[str], list[str]]]
-) -> dict[str, Any]:
-    calls: dict[str, Any] = {
-        "sync": [],
-        "revoke": [],
-        "rows": [],
-        "cutoffs": recorded_cutoff_writes,
-    }
+def _handler_env(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    calls: dict[str, Any] = {"sync": [], "revoke": [], "rows": []}
 
     async def _find(*_a: Any, **_k: Any) -> dict[str, Any] | None:
         return None
@@ -187,18 +172,14 @@ def _handler_env(
     async def _sync(org: str, ns: str, **_k: Any) -> None:
         calls["sync"].append((org, ns))
 
-    async def _plan(org: str, ns: str, subject: str, **_k: Any) -> list[dict[str, Any]]:
-        return [{"org": org, "namespace": "code-x-26-5", "subject": subject}]
-
-    async def _insert_rows(rows: list[dict[str, Any]], **_k: Any) -> None:
-        calls["revoke"].append([r["namespace"] for r in rows])
+    async def _revoke(org: str, ns: str, subject: str, **_k: Any) -> None:
+        calls["revoke"].append((org, ns, subject))
 
     monkeypatch.setattr(grants_repo, "find_active_grant", _find)
     monkeypatch.setattr(grants_repo, "insert_row", _insert)
     monkeypatch.setattr(grants_mod, "_enforce_code_ceiling", _no_ceiling)
     monkeypatch.setattr(maintainers, "sync_quietly", _sync)
-    monkeypatch.setattr(maintainers, "plan_revoke", _plan)
-    monkeypatch.setattr(grants_repo, "insert_rows", _insert_rows)
+    monkeypatch.setattr(maintainers, "revoke_quietly", _revoke)
     return calls
 
 
@@ -271,38 +252,4 @@ async def test_grants_revoke_admin_fans_out(
     out = await grants_mod.handle_grants_revoke(
         GrantsRevokeInput(org="clickhouse", namespace="code-x", subject="alice")
     )
-    assert out.revoked
-    # This branch's revoke and every sibling's land in one insert.
-    assert _handler_env["revoke"] == [["code-x", "code-x-26-5"]]
-    # One cutoff write for the branch asked and every sibling, before any row.
-    assert _handler_env["cutoffs"] == [("clickhouse", ["code-x", "code-x-26-5"], ["alice"])]
-
-
-async def test_a_failed_cutoff_fails_a_maintainer_revoke_with_nothing_written(
-    _handler_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # The cutoffs for every branch are written before any grant row, so a
-    # failure leaves the grants standing and the revoke can be retried; a
-    # sibling revoked without its cutoff could never get one.
-    async def _any(*_a: Any, **_k: Any) -> GrantState:
-        return GrantState.from_row(
-            {"subject": "alice", "role": "admin", "status": "active", "granted_by": "ops"}
-        )
-
-    class _CH:
-        async def query_one(self, *_a: Any, **_k: Any) -> dict[str, Any]:
-            return {"n": 2}
-
-    async def _down(*_a: Any, **_k: Any) -> None:
-        raise RuntimeError("replica away")
-
-    import server.core.ch as ch_mod
-
-    monkeypatch.setattr(grants_repo, "find_any_grant", _any)
-    monkeypatch.setattr(ch_mod, "get_client", lambda: _CH())
-    monkeypatch.setattr(grants_mod.grant_writes, "write_pair_cutoffs", _down)
-    with pytest.raises(RuntimeError):
-        await grants_mod.handle_grants_revoke(
-            GrantsRevokeInput(org="clickhouse", namespace="code-x", subject="alice")
-        )
-    assert _handler_env["rows"] == [] and _handler_env["revoke"] == []
+    assert out.revoked and _handler_env["revoke"] == [("clickhouse", "code-x", "alice")]

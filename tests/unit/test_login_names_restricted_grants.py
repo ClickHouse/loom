@@ -11,8 +11,6 @@ import pytest
 
 import server.auth.login as login
 
-pytestmark = pytest.mark.usefixtures("cutoffs_read_at_mint")
-
 
 class _FakeCH:
     """Answers the owned-namespace read with `ns_rows` and the grant join
@@ -126,56 +124,3 @@ async def test_widening_reads_the_gates_live_grant_predicate(
     await login.widen_with_restricted_grants("jdoe", "clickhouse", ["own"])
     grant_sql = [s for s in ch.sql if "namespace_grants" in s]
     assert grant_sql and LIVE_GRANT in grant_sql[0]
-
-
-@pytest.mark.asyncio
-async def test_a_login_leaves_out_an_owned_namespace_whose_grant_was_taken_away(
-    cutoffs_read_at_mint: dict[str, int],
-) -> None:
-    """Owning the registry row is not access once a co-admin revoked or
-    lowered the grant; whatever grant is left applies through the grant itself."""
-    cutoffs_read_at_mint["team"] = 1
-    assert await login._without_cut_namespaces("jdoe", "clickhouse", ["home", "team"]) == ["home"]
-
-
-@pytest.mark.asyncio
-async def test_an_unreadable_cutoff_store_refuses_the_sign_in(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # As an OAuth exchange answers 503: a token minted without the cutoffs
-    # would miss the person's own namespaces for its whole life.
-    import server.auth.revocation as revocation
-
-    async def _down(*_a: Any, **_k: Any) -> set[str]:
-        raise RuntimeError("replica away")
-
-    monkeypatch.setattr(revocation, "read_grant_cutoffs", _down)
-    with pytest.raises(login.SignInUnavailable):
-        await login._without_cut_namespaces("jdoe", "clickhouse", ["home", "team"])
-
-
-@pytest.mark.asyncio
-async def test_the_restricted_grant_read_raises_for_a_caller_that_must_not_narrow(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # An OAuth refresh: a failed read must not mint a narrowed session.
-    ch = _FakeCH(_own("home"), RuntimeError("replica away"))
-    monkeypatch.setattr(login, "get_client", lambda: ch)
-    with pytest.raises(RuntimeError):
-        await login.restricted_grant_namespaces("jdoe", "clickhouse", strict=True)
-
-
-@pytest.mark.asyncio
-async def test_too_many_spellings_is_no_retryable_sign_in_failure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # No retry fixes it, so it is not turned into a 503 to retry forever.
-    import server.auth.revocation as revocation
-    from server.core.errors import TooManySpellingsError
-
-    async def _too_many(*_a: Any, **_k: Any) -> set[str]:
-        raise TooManySpellingsError("more than 1000 accounts", subject="alice", limit=1000)
-
-    monkeypatch.setattr(revocation, "read_grant_cutoffs", _too_many)
-    with pytest.raises(TooManySpellingsError):
-        await login._without_cut_namespaces("jdoe", "clickhouse", ["home"])

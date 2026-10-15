@@ -454,7 +454,6 @@ def render_cli() -> str:
 # --- errors -------------------------------------------------------------------
 
 _CODE_LITERAL = re.compile(r"^[A-Z][A-Z0-9_]{3,}$")
-_LEADING_STATUS = re.compile(r"^\d{3} — ")
 
 
 def _code_literals() -> dict[str, set[str]]:
@@ -500,10 +499,7 @@ def _typed_errors() -> dict[str, tuple[int, str, str]]:
                     attrs[target.id] = value.value
             code, status = attrs.get("code"), attrs.get("status_code")
             if isinstance(code, str) and _CODE_LITERAL.match(code) and isinstance(status, int):
-                # A docstring led by its status ("409 — …"): the entry names it already.
-                doc, stripped = _LEADING_STATUS.subn("", _first_sentence(ast.get_docstring(cls)))
-                if stripped:
-                    doc = doc[:1].upper() + doc[1:]
+                doc = _first_sentence(ast.get_docstring(cls))
                 typed.setdefault(code, (status, doc, f"{module}.{cls.name}"))
     return typed
 

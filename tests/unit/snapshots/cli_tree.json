@@ -7050,7 +7050,6 @@
         "jti",
         "subject",
         "list",
-        "grants",
         "issued_before",
         "reason",
         "expires_at",
@@ -7128,21 +7127,6 @@
        "type": null,
        "required": false,
        "help": "Print the unexpired revocations.",
-       "metavar": null
-      },
-      {
-       "option_strings": [
-        "--grants"
-       ],
-       "dest": "grants",
-       "action": "_StoreTrueAction",
-       "default": false,
-       "const": true,
-       "choices": null,
-       "nargs": 0,
-       "type": null,
-       "required": false,
-       "help": "With --list, also print the cutoffs revoked and lowered grants leave (grant:[org, namespace, subject hash]).",
        "metavar": null
       },
       {

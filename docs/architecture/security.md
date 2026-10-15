@@ -75,51 +75,22 @@ boot and refreshes it every `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` (30 s), thro
 token on every fresh process, which is when an operator restarts the fleet after
 revoking a leaked token. The cost is a short 503 window at boot.
 
-**Grant cutoffs.** Taking a grant away or lowering it writes a row of the same table,
-keyed `grant:["<org>","<namespace>","<hash of the lower-cased subject>"]` (one per
-spelling of the subject; the hash keeps an email out of the key but can be tested against
-a guessed one; it is not a keyed HMAC because a rotated key would orphan cutoffs kept for
-ten years), so tokens minted before it no longer reach the namespace through their own
-claim (`revocation.write_grant_cutoffs`, `authz.claim_withdrawn`). The row is the only
-lasting record: the grant row is replaced by the subject's next one. Four consequences
-hold the design together:
+**A claim goes no further than the grant.** A token names namespaces, and a flat token's
+claim on one would otherwise admit it with the token's own role. Where the subject holds a
+grant row on the namespace, of any status, the claim is capped at that grant instead
+(`authz.claim_capped`): a revoked or lowered grant ends every older token's claim there, a
+pending or rejected request caps it at no access, and a scoped token keeps its own role
+there capped at the live grant. A namespace the subject never held a grant on (a `loom
+mint-token` claim) keeps the claim; grant rows are never deleted, so a revocation is never
+forgotten.
 
-- A cutoff lives as long as the longest token it must outlive. Rows are kept for
-  `NEVER_EXPIRES_DAYS` (ten years) because tokens without `exp` exist and a sign-in
-  leaves an ever-cut owned namespace out of every token it mints; shortening that to a
-  token lifetime would hand the namespace back. So every process holds, and re-reads each
-  `jwt_revocation_cache_ttl_seconds`, one snapshot row per (namespace, subject spelling)
-  that ever lost a grant: memory that grows with the deployment's history, not its tokens.
-  Past `SNAPSHOT_WARN_ROWS` (100,000) it logs a warning.
-- The paths that mint a token (sign-in, OAuth code exchange and refresh) read the
-  cutoffs and the subject's revocation from ClickHouse with sequential consistency, not
-  from the snapshot: a token minted past a revocation it has not seen keeps the access
-  for its whole life, while a request check catches up on the next refresh. When those
-  reads fail, `/oauth/token` answers 503 and leaves the code or refresh token unused, so
-  the client's retry works; a decided exchange, a token or a refusal, uses it up.
-- A cutoff's time comes from the clock of the host that wrote it, and the newest row for
-  a key wins, so the hosts' clocks must agree to within about a second (NTP). A host whose
-  clock runs behind could write a later cutoff that lands earlier than the one it
-  replaces. The spellings a cutoff covers come from contact emails, which self-signup does
-  not verify; a cutoff refuses outright, and logs an error naming the subject, rather than
-  read past 1000 accounts, so an operator can release the extra ones.
-- A grant change decides from a read of the current grant, and ClickHouse has no row
-  lock, so a write can land after a concurrent change its read did not see. Every grant
-  write that reads first goes through `grant_writes`:
-  - An op that takes a role away (`lower`) cuts the claims before its rows and again after
-    them: a token minted while the insert was in flight read the old grant and is issued
-    after the first cutoff.
-  - Every other op writes no less than it read, so a higher row just before its own in
-    `loom.namespace_grant_log` (filled by a materialized view on every grant insert) is a
-    raise it lowered without knowing, and that pair is cut. A raise is never
-    cut: a token minted after an older cutoff (by `loom mint-token`, say) keeps its claim.
-  - A retried op that finds its rows already written cannot tell what its first attempt
-    did, so it cuts again every pair whose grant ranks below one the log holds for it. A
-    token minted from the grant since loses nothing, since a cut claim falls back to the
-    live grant; a `loom mint-token` claim past the grant does.
-
-  The spellings a cutoff covers are read with sequential consistency, since a missed one
-  never gets a key.
+- The subject's rows are read once per (org, spellings) into a per-process cache
+  (`server/core/grant_cache.py`) kept for `grant_cache_ttl_seconds` (10 s). A grant write
+  drops this process's entries at once; another process sees it within the TTL.
+- A failed re-read serves the cached entry while it is younger than
+  `jwt_revocation_max_stale_seconds`, the bound a token check already lives with, and
+  answers a retryable 503 past it. Spellings that cannot be read, or more of them than one
+  lookup returns, cap the claim.
 
 **One exchange per credential** (`server/auth/oauth_claims.py`). The OAuth store marks a
 code or refresh token used by writing a new ReplacingMergeTree version, so reading and then
@@ -143,9 +114,9 @@ Keeper refuses the second insert, so exactly one presenter runs.
 - **Without a Keeper** there is no table. The credential is used up before the decision,
   as before the claim existed, and `/v1/health` reports `oauth_claims_not_atomic`.
 
-Every token a sign-in or an exchange mints takes its issue time before it reads the grant
-cutoffs, and a cutoff is written again once the grant row has landed, so a cutoff that
-landed while a mint ran still postdates the token.
+Every token an OAuth exchange mints takes its issue time before it reads the subject's
+revocations from ClickHouse, so a `revoke-token --subject` that landed while it ran still
+postdates the token.
 
 ## Authorization
 

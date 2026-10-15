@@ -21,7 +21,6 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 from server.auth.directory import ClassificationUnavailable, directory
-from server.auth.revocation import grant_cutoff_applies
 from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT
 
 # Re-export from operations.base so there's one canonical Role definition.
@@ -137,8 +136,9 @@ async def check_authorized(
     ):
         return
 
-    # A claim whose grant was taken away since the token was minted.
-    withdrawn = org is not None and namespace is not None and claim_withdrawn(auth, org, namespace)
+    # A claim on a namespace where the subject holds a grant row is capped at
+    # that grant, so a revoked or lowered grant ends every older token's claim.
+    capped = org is not None and namespace is not None and await claim_capped(auth, org, namespace)
 
     # Scoped token (carries an `ns_roles` map): the per-namespace role is
     # AUTHORITATIVE and was capped to the minter's live grant at mint, so it
@@ -148,11 +148,11 @@ async def check_authorized(
     # (and possibly downgraded), so it is its own ceiling. Non-namespace
     # (org-level) ops fall through to the flat-role check below.
     if auth.has_ns_roles() and org is not None and namespace is not None:
-        role = await _scoped_role(auth, required_role, org, namespace, withdrawn=withdrawn)
+        role = await _scoped_role(auth, required_role, org, namespace, capped=capped)
         if role is not None and role.value >= required_role.value:
             return
         if not _code_namespace_read(required_role, org, namespace):
-            raise _scoped_refusal(required_role, org, namespace, role, withdrawn=withdrawn)
+            raise _scoped_refusal(required_role, org, namespace, role, capped=capped)
 
     # Reads check the readable set; writes (WRITER+) check the narrower
     # writable set, so a token can read an inherited parent namespace
@@ -162,7 +162,7 @@ async def check_authorized(
         ns_covered_by_jwt = (
             auth.can_write(org, namespace) if is_write else auth.can_access(org, namespace)
         )
-        if withdrawn:
+        if capped:
             ns_covered_by_jwt = False
     else:
         ns_covered_by_jwt = False
@@ -201,8 +201,8 @@ async def check_authorized(
         return
 
     # Be specific so the failing gate is visible to debug clients.
-    if withdrawn:
-        raise _refused(_withdrawn_message(org, namespace, required_role), org, namespace)
+    if capped:
+        raise _refused(_capped_message(org, namespace, required_role), org, namespace)
     if not ns_covered_by_jwt:
         raise _refused(
             f"principal {auth.subject!r} cannot access {org}/{namespace} "
@@ -317,11 +317,11 @@ def names_namespace(auth: AuthInfo, org: str, namespace: str) -> bool:
 
 
 async def _scoped_role(
-    auth: AuthInfo, required_role: Role, org: str, namespace: str, *, withdrawn: bool
+    auth: AuthInfo, required_role: Role, org: str, namespace: str, *, capped: bool
 ) -> Role | None:
     """The role a scoped token holds on (org, namespace) for this op: its own,
-    capped at the subject's live grant when its claim was withdrawn. None for
-    a write outside its `ns_write` claim (inherited by a delegated child)."""
+    capped at the subject's live grant where it holds one. None for a write
+    outside its `ns_write` claim (inherited by a delegated child)."""
     if (
         required_role.value >= Role.WRITER.value
         and auth.write_namespaces
@@ -329,7 +329,7 @@ async def _scoped_role(
     ):
         return None
     role = auth.effective_role(org, namespace)
-    if role is not None and withdrawn:
+    if role is not None and capped:
         live = await _lookup_grant(org, namespace, auth.subject)
         role = None if live is None else min(role, live)
     return role
@@ -346,10 +346,10 @@ def _code_namespace_read(required_role: Role, org: str, namespace: str) -> bool:
 
 
 def _scoped_refusal(
-    required_role: Role, org: str, namespace: str, role: Role | None, *, withdrawn: bool
+    required_role: Role, org: str, namespace: str, role: Role | None, *, capped: bool
 ) -> PermissionError:
-    if withdrawn:
-        return _refused(_withdrawn_message(org, namespace, required_role), org, namespace)
+    if capped:
+        return _refused(_capped_message(org, namespace, required_role), org, namespace)
     return _refused(
         f"scoped token: {required_role.name} required on {org}/{namespace}; "
         f"token grants {role.name if role else 'no access'} there",
@@ -358,41 +358,48 @@ def _scoped_refusal(
     )
 
 
-def _withdrawn_message(org: str, namespace: str, required_role: Role) -> str:
+def _capped_message(org: str, namespace: str, required_role: Role) -> str:
     return (
-        f"this token's claim on {org}/{namespace} ended when a grant there was revoked "
-        f"or lowered after it was minted, and the grant held there now does not allow "
-        f"{required_role.name}"
+        f"this token's claim on {org}/{namespace} goes no further than the grant held "
+        f"there, which does not allow {required_role.name}"
     )
 
 
-def claim_withdrawn(auth: AuthInfo, org: str, namespace: str) -> bool:
-    """Whether this token names `namespace` and a grant of its subject there
-    was taken away after it was minted (`revocation.write_grant_cutoffs`). A
-    namespace the subject never held a grant on (an operator's `loom
-    mint-token`) and a token minted after the cutoff keep their claim. No
-    I/O: the revocation snapshot."""
-    return (
-        auth.issued_at is not None
-        and names_namespace(auth, org, namespace)
-        and grant_cutoff_applies(org, namespace, auth.subject, auth.issued_at)
-    )
+async def claim_capped(auth: AuthInfo, org: str, namespace: str) -> bool:
+    """Whether this token names `namespace` and its subject holds a grant row
+    there, of any status: the claim then reaches no further than that grant.
+    A namespace the subject never held a grant on (an operator's `loom
+    mint-token`) keeps its claim. Spellings that cannot be read, or more of
+    them than one lookup returns, cap too."""
+    from server.auth.aliases import LOOKUP_ROWS, subject_aliases
+    from server.core.grant_cache import grant_map
+
+    if not names_namespace(auth, org, namespace):
+        return False
+    try:
+        spellings = await subject_aliases(org, auth.subject, strict=True)
+    except Exception:  # noqa: BLE001 — an unread spelling must not leave a claim standing
+        return True
+    # Each account the lookup read adds a spelling: past its row cap, some went unread.
+    if len(spellings) > LOOKUP_ROWS:
+        return True
+    return (await grant_map(org, spellings)).has_row(namespace)
 
 
 async def scoped_claims(auth: AuthInfo, org: str) -> list[str]:
-    """A scoped token's named namespaces, in order, that its gate still
-    admits: a withdrawn claim stays while its subject holds a live grant
-    there, as `_scoped_role` caps it at that grant."""
+    """A scoped token's named namespaces, in order, that its gate admits: a
+    capped claim stays while its subject holds a live grant there, as
+    `_scoped_role` caps it at that grant."""
     out = []
     for ns in (ns for ns in auth.namespaces if ns and ns != "*"):
-        if not claim_withdrawn(auth, org, ns) or await _lookup_grant(org, ns, auth.subject):
+        if not await claim_capped(auth, org, ns) or await _lookup_grant(org, ns, auth.subject):
             out.append(ns)
     return out
 
 
-def live_claims(auth: AuthInfo, org: str, namespaces: Iterable[str]) -> list[str]:
-    """The named `namespaces` (no `*`) whose claim still stands, in order."""
-    return [ns for ns in namespaces if ns and ns != "*" and not claim_withdrawn(auth, org, ns)]
+async def live_claims(auth: AuthInfo, org: str, namespaces: Iterable[str]) -> list[str]:
+    """The named `namespaces` (no `*`) whose claim is not capped, in order."""
+    return [ns for ns in namespaces if ns and ns != "*" and not await claim_capped(auth, org, ns)]
 
 
 async def _check_restricted(auth: AuthInfo, required_role: Role, org: str, namespace: str) -> None:
@@ -561,7 +568,7 @@ __all__ = [
     "GRANT_ROLES",
     "Role",
     "check_authorized",
-    "claim_withdrawn",
+    "claim_capped",
     "grant_rank",
     "grant_role",
     "grant_role_for",

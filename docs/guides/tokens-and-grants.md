@@ -166,15 +166,15 @@ answer to the user (the entity graph, conversation reads, exports, admin ops) is
 ## Give and take away grants
 
 `loom.namespace_grants` holds one row per `(org, namespace, subject)`: a role on one
-namespace above what the token carries. Grants add; taking one away also takes away what
-the subject's older tokens claim there.
+namespace above what the token carries. Grants add; where the subject holds one, a
+token's claim goes no further than it.
 
 | Op                      | Role   | Does                                                                                                                     |
 | ----------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------ |
 | `grants.create`         | admin  | Give `subject` a `role`. Below the subject's current role it answers 409 `GRANT_WOULD_DOWNGRADE` unless `replace: true`. |
 | `grants.revoke`         | admin  | Remove it; on a restricted namespace the grants of tokens the subject minted there go too.                               |
 | `grants.list`           | viewer | The namespace's grants.                                                                                                  |
-| `grants.approve`        | admin  | Activate a pending join request. Below the subject's current grant it answers 409: an approval never lowers one.         |
+| `grants.approve`        | admin  | Activate a pending join request. Below the subject's current grant it answers 409: an approval never asks to lower one.  |
 | `grants.pending_for_me` | viewer | Requests waiting on the caller's approval.                                                                               |
 
 ```bash
@@ -183,22 +183,18 @@ curl -s "$LOOM_BASE_URL/v1/grants.create" -H "Authorization: Bearer $ADMIN_TOKEN
   -d '{"org":"acme","namespace":"team-shared","subject":"sa:triage","role":"viewer"}'
 ```
 
-- **Taking a grant away ends older tokens' claims.** `grants.revoke`, a `replace: true`
-  lowering, `namespace.leave`, `loom claim-release` and a restore that lowers a grant each
-  write a cutoff in `loom.revoked_tokens`, keyed by a hash of each lower-cased spelling of
-  the subject and kept ten years. A flat token minted before it reaches the namespace only
-  through the subject's current grant; a scoped one keeps its own role there, capped at
-  that grant.
-  Every token minted later (sign-in, an OAuth exchange or refresh) leaves the namespace out
-  of its claim for good: a later grant, an admin one included, gives access back through
-  itself. A restricted namespace is the exception: a token reads one only by naming it,
-  so a sign-in or a refresh names it again while a live grant there covers the person. A
-  namespace an operator named at mint that was never granted to the subject keeps its
-  claim; revoke the token for that. `loom revoke-token --list --grants` shows the cutoffs.
+- **A claim goes no further than the grant.** Where the subject holds a grant row on a
+  namespace the token names, of any status, the claim is capped at that grant: a
+  `grants.revoke`, a `replace: true` lowering, `namespace.leave`, `loom claim-release` or a
+  restore ends every older token's claim there at once on the server that made it and
+  within `LOOM_GRANT_CACHE_TTL_SECONDS` (10 s) on the others, and a pending or rejected
+  request caps it at no access. A scoped token keeps its own role there, capped at the
+  grant. A namespace an operator named at mint that was never granted to the subject keeps
+  its claim; revoke the token for that.
 - **Registering is owning.** `namespace.register` makes the caller the namespace's `admin`.
   With self-signup (`LOOM_IDENTITY_PROVIDER=trust-network`) the first principal to claim a
-  name owns it; `loom claim-release --org <org> --namespace <ns>` revokes its grants (and
-  ends their tokens' claims), clears the owner and deactivates it. The name stays reserved
+  name owns it; `loom claim-release --org <org> --namespace <ns>` revokes its grants,
+  clears the owner and deactivates it. The name stays reserved
   (its memories are kept, and whoever claimed it next would own them); erasing the
   namespace removes the data but not the reservation.
 - **Restoring into a namespace needs its admin.** `namespace.restore` into an existing
@@ -424,7 +420,7 @@ loom revoke-token --jti <jti>                                    # exactly one t
 loom revoke-token --subject my-bot --reason "laptop lost"        # every token for my-bot, in every org
 loom revoke-token --subject my-bot --issued-before <ISO-8601>    # only tokens issued before that instant
 loom revoke-token --jti <jti> --expires-at <token exp, ISO-8601> # let the row lapse with the token
-loom revoke-token --list                                         # unexpired revocations (--grants adds the grant cutoffs)
+loom revoke-token --list                                         # unexpired revocations
 ```
 
 `--issued-before` keeps a token re-minted after a leak working. Without `--expires-at` the

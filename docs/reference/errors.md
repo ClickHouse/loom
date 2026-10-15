@@ -119,7 +119,6 @@ deduplicates; a `Retry-After` honoured up to 60 s. Each op's kind is in the
 | `PRECONDITION_FAILED`               | 409  | `if_match_sha256` does not match the live row: another writer changed it.                                                                                                                               | `detail.current_sha256` is the live hash. Re-read if your change depends on the new value, then resend with that hash; no separate read is needed to retry a blind overwrite.                                                                                                                                                                                         |
 | `PINNED_CONFLICT`                   | 409  | `memory.set` on a key, or close to a fact, that is pinned. A write that does not pin never replaces a pinned memory. `detail.pinned_blocker_id` names the blocking row.                                 | Change it with `memory.update` (keeps the pin) or `memory.pin` (re-pins), or store the new fact under its own key.                                                                                                                                                                                                                                                    |
 | `IDEMPOTENT_CONFLICT`               | 409  | An `Idempotency-Key` (or MCP `_idempotency_key`) reused with a different body for the same op and caller.                                                                                               | Use a new key per distinct request. Resending the original body with the old key replays the stored answer.                                                                                                                                                                                                                                                           |
-| `TOO_MANY_SPELLINGS`                | 409  | More than 1000 accounts in the org name the person's email, past what a grant cutoff reads. Sign-in and taking a grant away from that person refuse; OAuth answers in its own envelope.                 | Not retryable. An operator releases the extra accounts; see [Too many spellings](#too-many-spellings).                                                                                                                                                                                                                                                                |
 | `BLACKLISTED`                       | 422  | The value matches a refuse pattern registered with `blacklist.add` (`pattern_id`, `scope`, `reason`).                                                                                                   | Do not retry the value. If the pattern is wrong, an admin removes it (`blacklist.remove`).                                                                                                                                                                                                                                                                            |
 | `LOCKED`                            | 423  | The row carries a `memory.lock` that refuses this write.                                                                                                                                                | Wait for `lock_until` to pass, or have a namespace admin release it with `memory.unlock`.                                                                                                                                                                                                                                                                             |
 | `RATE_LIMITED`                      | 429  | A namespace, org or actor token bucket is empty for the op's class.                                                                                                                                     | Wait `Retry-After`. Sustained 429s mean the caller needs pacing or a batch op (`memory.bulk_set`); limits are in [HTTP API](./http-api.md#rate-limits).                                                                                                                                                                                                               |
@@ -128,73 +127,6 @@ deduplicates; a `Retry-After` honoured up to 60 s. Each op's kind is in the
 | `SCHEMA_PENDING`                    | 503  | The call needs a table from a migration this build carries but the database has not applied (`table`, `migration`).                                                                                     | An operator runs `loom migrate` (or restarts with `LOOM_BOOT_MIGRATE=true`); see [Upgrades](../operations/upgrades.md).                                                                                                                                                                                                                                               |
 | `EMBED_TIMEOUT`                     | 503  | The embedding provider did not answer a search's query embedding within `LOOM_MEMORY_SEARCH_EMBED_BOUND_S` on any attempt (`LOOM_MEMORY_SEARCH_EMBED_BOUND_RETRIES`).                                   | A raw HTTP or MCP caller retries once; an SDK caller has already retried, so it backs off. Repeated, the provider is slow or down: the log's `query embed exceeded` warnings and `loom.agent_events` rows with this code show it (a hung provider sets no health flag); see [Troubleshooting](../operations/troubleshooting.md#searches-fail-with-503-embed_timeout). |
 | `UNKNOWN_OP`, `OP_NOT_ON_MCP` (MCP) | —    | `loom_op` named an op that does not exist or is not reachable on this connection, or a hidden op was called over MCP.                                                                                   | Use the suggestion in the result (`did_you_mean`, `instead`), or `loom_op {"op": "help", "query": "<words>"}` to list ops.                                                                                                                                                                                                                                            |
-
-### Too many spellings
-
-`/v1/auth/login`, any op that takes a grant away from that person (`grants.revoke`, a
-lowering `grants.create`, `namespace.leave`, `namespace.restore`) and
-`POST /v1/admin/claim_release` answer 409 `TOO_MANY_SPELLINGS` with the text in
-`detail.message`, and the subject and bound in `detail.subject` and `detail.limit`. Any
-other op that changes the person's grant (`grants.create`, `grants.approve`,
-`namespace.join`, `namespace.cancel_request`) can answer it too, after its change landed,
-when it finds a concurrent change lowered the grant; repeat it once the accounts are fixed.
-`loom claim-release` prints the text and exits 1. `/oauth/authorize` and the OIDC callback
-answer 403 `access_denied`, and `/oauth/token` 400 `invalid_grant`, with the text in
-`detail.error_description`.
-
-The cutoff counts the distinct `(owner_email, contact_email)` pairs of the accounts that
-name the subject the server log names (`'<subject>'` below):
-
-```sql
-SELECT namespace, owner_email, contact_email, active,
-       password_hash != '' AS has_password, created_at
-FROM loom.namespaces FINAL
-WHERE org = '<org>' AND contact_email != ''
-  AND (owner_email = '<subject>' OR lower(contact_email) = lower('<subject>'))
-ORDER BY created_at
-```
-
-Keep the account the person signs in with and release the others with
-`loom claim-release --org <org> --namespace <account>`; a release clears the account's
-contact, so it stops counting. A release first cuts the tokens of its grantees, so
-releasing an account the person holds a grant on refuses too: release those last, once at
-most 1000 remain.
-
-When the person holds a grant on too many of them for that, clear just their contact.
-That changes no grant, but it unties each account's owner from the person, so a later
-cutoff for the person no longer reaches tokens minted under that owner. List the extra
-accounts, never the one the person keeps, and clear their contacts:
-
-```sql
-INSERT INTO loom.namespaces
-SELECT * REPLACE ('' AS contact_email, greatest(updated_at, now()) AS updated_at)
-FROM (
-    SELECT * FROM loom.namespaces FINAL
-    WHERE org = '<org>' AND namespace IN ('<account>', ...)
-      AND (owner_email = '<subject>' OR lower(contact_email) = lower('<subject>'))
-)
-```
-
-The filter sits in the subquery because a `WHERE` beside `REPLACE` reads the replaced
-`''`. `greatest` keeps the new row from losing to the row it replaces when that row is
-stamped ahead of the server's clock; on a tie the later insert wins.
-
-Then retire the tokens those owners hold, with
-`loom revoke-token --subject <owner_email> --issued-before <time>` for each account you
-named, skipping an owner `loom revoke-token --list` already lists with `-` under
-`issued_before`: a new row replaces the old, so it would let that owner's later tokens
-back in. Script it over the list. Take `<time>` at least a minute after the `INSERT`, once
-servers no longer cache the old tie: a token minted after that claims nothing the person
-was granted, so it may stay. A subject revocation spans every org, so an owner name that
-is also an account elsewhere loses that account's current sessions too; check first:
-
-```sql
-SELECT org, namespace FROM loom.namespaces FINAL
-WHERE owner_email IN ('<owner_email>', ...) AND org != '<org>'
-```
-
-Re-run the first query to check that at most 1000 remain, then release each account you
-named in the `INSERT` with `loom claim-release --org <org> --namespace <account>`.
 
 ## How the entries below are generated
 
@@ -242,15 +174,15 @@ Raised in `server/auth/bearer.py`, `server/auth/login.py`, `server/identity/app/
 
 #### `AUTH_UNAVAILABLE`
 
-Raised in `server/auth/bearer.py`, `server/auth/login.py`, `server/auth/routes.py`.
+Raised in `server/auth/bearer.py`, `server/auth/routes.py`.
 
 #### `BACKEND_TIMEOUT`
 
-HTTP 504, raised as `server.core.errors.BackendTimeoutError`. A ClickHouse statement ran past its class deadline (reads 30 s, writes 60 s, DDL 300 s). What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 504, raised as `server.core.errors.BackendTimeoutError`. 504 — a ClickHouse statement ran past its class deadline (reads 30 s, writes 60 s, DDL 300 s). What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `BACKEND_UNAVAILABLE`
 
-HTTP 503, raised as `server.core.errors.BackendUnavailableError`. ClickHouse could not be reached after the bounded reconnect.
+HTTP 503, raised as `server.core.errors.BackendUnavailableError`. 503 — ClickHouse could not be reached after the bounded reconnect.
 
 #### `BAD_BRANCH`
 
@@ -422,7 +354,7 @@ Raised in `server/auth/self_signup.py`.
 
 #### `EMBED_TIMEOUT`
 
-HTTP 503, raised as `server.core.errors.EmbedTimeoutError`. The query embedding did not answer within `memory_search_embed_bound_s` on any attempt. What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 503, raised as `server.core.errors.EmbedTimeoutError`. 503 — the query embedding did not answer within `memory_search_embed_bound_s` on any attempt. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `EMPTY_PREDICATE`
 
@@ -450,7 +382,7 @@ Raised in `server/memory/app/verify.py`.
 
 #### `GRANT_WOULD_DOWNGRADE`
 
-HTTP 409, raised as `server.core.errors.GrantWouldDowngradeError`. `grants.create` asked for a role below the subject's current active grant on that namespace.
+HTTP 409, raised as `server.core.errors.GrantWouldDowngradeError`. 409 — `grants.create` asked for a role below the subject's current active grant on that namespace.
 
 #### `HANDLER_HTTP_ERROR`
 
@@ -590,7 +522,7 @@ Raised in `server/transport/mcp_auth.py`.
 
 #### `OVERLOADED`
 
-HTTP 503, raised as `server.core.errors.OverloadedError`. Every pooled ClickHouse connection of this process was busy for longer than `ch_pool_wait_ms`. What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 503, raised as `server.core.errors.OverloadedError`. 503 — every pooled ClickHouse connection of this process was busy for longer than `ch_pool_wait_ms`. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `PINNED_CONFLICT`
 
@@ -598,15 +530,15 @@ Raised in `server/memory/app/set_commit.py`, `server/memory/app/update.py`, `ser
 
 #### `POLICY_FORBIDDEN`
 
-HTTP 403, raised as `server.identity.app.policy_gate.PolicyForbiddenError`. Carries the decision: which rules denied, per-leaf values, and any evaluation errors — "denied by policy" and "denied because the check could not run" are distinguishable by `errors`. What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 403, raised as `server.identity.app.policy_gate.PolicyForbiddenError`. 403 with the decision attached: which rules denied, per-leaf values, and any evaluation errors — "denied by policy" and "denied because the check could not run" are distinguishable by `errors`. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `PRECONDITION_FAILED`
 
-HTTP 409, raised as `server.core.errors.PreconditionFailedError`. `if_match_sha256` mismatch. What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 409, raised as `server.core.errors.PreconditionFailedError`. 409 — `if_match_sha256` mismatch. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `RATE_LIMITED`
 
-HTTP 429, raised as `server.core.errors.RateLimitedError`. The caller is over one of its admission limits (the org's in-flight requests); `retry_after_s` is the hint the SDK's retry layer honours. What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 429, raised as `server.core.errors.RateLimitedError`. 429 — the caller is over one of its admission limits (the org's in-flight requests); `retry_after_s` is the hint the SDK's retry layer honours. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `RECALL_REQUIRES_FILTER`
 
@@ -658,7 +590,7 @@ Raised in `server/memory/app/records.py`.
 
 #### `SCHEMA_PENDING`
 
-HTTP 503, raised as `server.core.errors.SchemaPendingError`. The statement names a table that a migration this build carries but the service has not applied would create. What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 503, raised as `server.core.errors.SchemaPendingError`. 503 — the statement names a table that a migration this build carries but the service has not applied would create. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `SCHEMA_REQUIRES_KEY`
 
@@ -727,10 +659,6 @@ Raised in `server/code/app/member_writes.py`.
 #### `TIMELINE_REQUIRES_FILTER`
 
 Raised in `server/memory/app/curation.py`.
-
-#### `TOO_MANY_SPELLINGS`
-
-HTTP 409, raised as `server.core.errors.TooManySpellingsError`. More than 1000 accounts in the org name the person's email, past what a grant cutoff reads. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `UNKNOWN_ARGUMENT`
 

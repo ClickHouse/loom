@@ -1,10 +1,10 @@
 """Password-based sign-in: verify email-or-namespace + password, mint a JWT
 with the user's full namespace set.
 
-The namespace set is the namespaces the person owns (by contact email), less
-those a grant of theirs was taken away on, plus every *restricted* namespace
-they hold an active direct grant on. A restricted namespace is read only by a
-token that names it, and the live grant is re-checked on every call, so naming
+The namespace set is the namespaces the person owns (by
+contact email) plus every *restricted* namespace they hold an active direct
+grant on. A restricted namespace is read only by a token
+that names it, and the live grant is re-checked on every call, so naming
 it here removes the "sign in with a different token" dead end for the
 maintainers and approved readers of a restricted repository without
 widening anything a revoked grant would still have to close. Standard
@@ -17,7 +17,6 @@ import asyncio
 import functools
 import logging
 import secrets
-import time
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
@@ -28,7 +27,6 @@ from server.auth.attempts import Attempts, client_address
 from server.auth.jwt import mint_token
 from server.auth.passwords import hash_password, verify_password_off_loop
 from server.core.ch import get_client
-from server.core.errors import TooManySpellingsError
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -69,7 +67,7 @@ class LoginThrottled(Exception):
 
 
 class SignInUnavailable(Exception):
-    """The grant cutoffs a sign-in reads could not be read; retry later."""
+    """A sign-in could not read or write what it needs; retry later."""
 
 
 @functools.cache
@@ -149,41 +147,47 @@ async def _check_credentials(ident: str, password: str) -> Identity | None:
     return await _with_restricted_grants(_identity_from_rows([primary, *same_credential]))
 
 
-async def _with_restricted_grants(identity: Identity) -> Identity:
+async def _with_restricted_grants(
+    identity: Identity,
+) -> Identity:
     """Add the restricted namespaces the person holds a grant on to a resolved
     identity (password and OIDC share it so the two never drift on the
     namespace set)."""
     subject, org, namespaces, roles = identity
-    namespaces = await _without_cut_namespaces(subject, org, namespaces)
     return subject, org, await widen_with_restricted_grants(subject, org, namespaces), roles
 
 
-async def _without_cut_namespaces(subject: str, org: str, namespaces: list[str]) -> list[str]:
-    """The owned `namespaces` minus those a grant of the person's was taken
-    away on: owning the registry row is not access once a co-admin revoked or
-    lowered the grant. When the cutoffs cannot be read, raise
-    `SignInUnavailable` (503): failing open would hand a cut namespace back,
-    and failing narrow would mint a token without the person's namespaces."""
-    from server.auth.revocation import read_grant_cutoffs
-
-    try:
-        ended = await read_grant_cutoffs(org, subject, namespaces, issued_at=None)
-    except TooManySpellingsError:
-        raise  # permanent: an operator's fix, not a retry
-    except Exception as e:
-        log.warning("login: grant cutoff read failed for %r in %r: %s", subject, org, e)
-        raise SignInUnavailable from e
-    return [ns for ns in namespaces if ns not in ended]
-
-
 async def widen_with_restricted_grants(subject: str, org: str, namespaces: list[str]) -> list[str]:
-    """`namespaces` (the person's own, first — their order is the read
-    priority) followed by `restricted_grant_namespaces`, deduplicated. Only
-    restricted rows are added — see the module docstring. A failed read
-    leaves the set as it was: a login must never fail on this lookup, and the
-    owned namespaces alone are the safe fallback."""
+    """`namespaces` (the person's own, first — their order is
+    the read priority) followed by every restricted namespace in `org` the
+    subject holds an active, unrevoked direct grant on, sorted, deduplicated.
+    Only restricted rows are added — see the module docstring. A failed read
+    leaves the set as it was: a login must never fail on this lookup, and
+    the owned namespaces alone are the safe fallback."""
+    ch = get_client()
     try:
-        restricted = await restricted_grant_namespaces(subject, org, strict=False)
+        from server.auth.aliases import subject_aliases
+        from server.core.grant_sql import LIVE_GRANT
+
+        subjects = [s.lower() for s in await subject_aliases(org, subject, ch=ch)]
+        # LIVE_GRANT's columns are the grant row's: the namespaces side
+        # selects none of them.
+        rows = await ch.query_all(
+            """
+            SELECT g.namespace AS namespace
+            FROM (SELECT * FROM loom.namespace_grants FINAL) AS g
+            INNER JOIN (SELECT org, namespace, classification, active
+                        FROM loom.namespaces FINAL) AS n
+                ON n.org = g.org AND n.namespace = g.namespace
+            WHERE g.org = {org:String}
+              AND lower(g.subject) IN {subs:Array(String)}
+              AND {live}
+              AND toString(n.classification) = 'restricted'
+              AND ifNull(n.active, true) = true
+            ORDER BY g.namespace
+            """.replace("{live}", LIVE_GRANT),
+            params={"org": org, "subs": subjects},
+        )
     except Exception:
         log.warning(
             "login: restricted-grant lookup failed for %r in %r; token names owned namespaces only",
@@ -192,39 +196,10 @@ async def widen_with_restricted_grants(subject: str, org: str, namespaces: list[
             exc_info=True,
         )
         return list(namespaces)
-    own = set(namespaces)
-    return list(namespaces) + [ns for ns in restricted if ns not in own]
-
-
-async def restricted_grant_namespaces(subject: str, org: str, *, strict: bool) -> list[str]:
-    """Every restricted namespace in `org` the subject holds an active,
-    unrevoked direct grant on, sorted. The grants read raises when it fails;
-    the alias read before it does too with `strict`, and otherwise falls back
-    to the subject alone."""
-    from server.auth.aliases import subject_aliases
-    from server.core.grant_sql import LIVE_GRANT
-
-    ch = get_client()
-    subjects = [s.lower() for s in await subject_aliases(org, subject, ch=ch, strict=strict)]
-    # LIVE_GRANT's columns are the grant row's: the namespaces side selects
-    # none of them.
-    rows = await ch.query_all(
-        """
-        SELECT g.namespace AS namespace
-        FROM (SELECT * FROM loom.namespace_grants FINAL) AS g
-        INNER JOIN (SELECT org, namespace, classification, active
-                    FROM loom.namespaces FINAL) AS n
-            ON n.org = g.org AND n.namespace = g.namespace
-        WHERE g.org = {org:String}
-          AND lower(g.subject) IN {subs:Array(String)}
-          AND {live}
-          AND toString(n.classification) = 'restricted'
-          AND ifNull(n.active, true) = true
-        ORDER BY g.namespace
-        """.replace("{live}", LIVE_GRANT),
-        params={"org": org, "subs": subjects},
-    )
-    return sorted({str(r.get("namespace") or "") for r in rows if r.get("namespace")})
+    own = list(namespaces)
+    seen = set(own)
+    extra = sorted({str(r.get("namespace") or "") for r in rows if r.get("namespace")} - seen)
+    return own + extra
 
 
 def _identity_from_rows(rows: list[dict[str, Any]], *, verified_email: str = "") -> Identity:
@@ -287,7 +262,9 @@ async def refreshed_roles(subject: str, org: str, roles: list[str]) -> list[str]
     return platform_roles(subject, verified_email=str(row.get("contact_email") or ""))
 
 
-async def resolve_identity_for_email(email: str) -> Identity | None:
+async def resolve_identity_for_email(
+    email: str,
+) -> Identity | None:
     """Map an externally-verified email (e.g. an OIDC id_token's) to a loom
     identity. No password — the IdP already authenticated the user. Matches
     active namespaces by contact_email; password_hash is NOT required, so
@@ -317,8 +294,6 @@ async def resolve_identity_for_email(email: str) -> Identity | None:
 
 @router.post("/v1/auth/login", response_model=LoginOutput)
 async def login(input: LoginInput, request: Request) -> LoginOutput:
-    # Before the grant cutoffs are read: a cutoff landing after the read postdates the token.
-    issued_at = int(time.time())
     try:
         resolved = await resolve_user_credentials(
             input.identifier, input.password, address=client_address(request)
@@ -332,12 +307,6 @@ async def login(input: LoginInput, request: Request) -> LoginOutput:
             },
             headers={"Retry-After": "900"},
         ) from e
-    except SignInUnavailable as e:
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "AUTH_UNAVAILABLE", "message": "Sign-in is unavailable; try again."},
-            headers={"Retry-After": "5"},
-        ) from e
     if resolved is None:
         raise HTTPException(status_code=401, detail=_BAD_CREDS)
     subject, org, namespaces, roles = resolved
@@ -348,9 +317,8 @@ async def login(input: LoginInput, request: Request) -> LoginOutput:
         roles=roles,
         ttl_seconds=_JWT_TTL_SECONDS,
         is_service_account=False,
-        issued_at=issued_at,
     )
-    expires_at = datetime.fromtimestamp(issued_at, UTC).replace(tzinfo=None) + timedelta(
+    expires_at = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(
         seconds=_JWT_TTL_SECONDS
     )
     return LoginOutput(

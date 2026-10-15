@@ -13,16 +13,6 @@ The table is ReplacingMergeTree ORDER BY jti: the newest row per key governs.
   fills it, and the supervisor worker (lease holder) or `start_refresh_loop`
   (every other process) re-reads it each `jwt_revocation_cache_ttl_seconds`.
 - `is_revoked` is a frozenset/dict lookup — no I/O, safe from sync verify.
-- Taking a grant away (`write_grant_cutoffs`) writes a cutoff row keyed by
-  `grant_claim_key`: tokens of that subject minted before it no longer reach
-  the namespace through their own claim (`authz.claim_withdrawn`).
-- A cutoff is kept `NEVER_EXPIRES_DAYS`: sign-in leaves out an owned
-  namespace with any cutoff, ever, so a lapsed cutoff would hand it back.
-  Its key is per namespace and subject spelling, and a later cutoff
-  replaces it, so the table holds at most one row per pair that ever lost
-  a grant, however often; a service account whose token lost its grants is
-  a subject too. Past `SNAPSHOT_WARN_ROWS` a process logs one
-  warning.
 
 Failure semantics: until the first successful read `loaded()` is False and
 `verify_token` refuses every token (503, retryable) — an empty set would let
@@ -35,8 +25,6 @@ token is refused again (503) until a refresh lands.
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
 import logging
 import math
 import time
@@ -53,11 +41,6 @@ log = logging.getLogger(__name__)
 # lands. Every expiry is therefore clamped below that range.
 NEVER_EXPIRES_DAYS = 3650
 _LATEST_EXPIRY = datetime(2105, 12, 31)
-# The snapshot size the refresh warns past: about 10 MB of keys per process,
-# re-read on every refresh.
-SNAPSHOT_WARN_ROWS = 100_000
-# Whether this process has warned of the size once.
-_warned_size = False
 
 
 def revocation_expiry(expires_at: datetime | None, now: datetime) -> datetime:
@@ -78,11 +61,6 @@ _revoked_jtis: frozenset[str] = frozenset()
 # Keys revoked only for tokens issued before the cutoff (unix seconds);
 # replaced together with `_revoked_jtis` on every refresh.
 _revoked_before: dict[str, int] = {}
-# What this process wrote and when (time.monotonic()), folded into every
-# snapshot for `_WRITTEN_KEEP_S`: a refresh whose read began before the write,
-# or reached a replica the write had not, would otherwise drop it.
-_written: dict[str, tuple[int | None, float]] = {}
-_WRITTEN_KEEP_S = 300.0
 # False until one refresh has succeeded in this process.
 _loaded = False
 # time.monotonic() of the last successful refresh; 0.0 = never.
@@ -118,7 +96,7 @@ async def refresh() -> None:
     """Re-read the revocation set from CH and replace the in-memory copy."""
     from server.core.ch import get_client
 
-    global _revoked_jtis, _revoked_before, _loaded, _loaded_at, _warned_size
+    global _revoked_jtis, _revoked_before, _loaded, _loaded_at
     try:
         ch = get_client()
         rows = await ch.query_all(
@@ -135,17 +113,8 @@ async def refresh() -> None:
                 full.add(str(r["jti"]))
             else:
                 before[str(r["jti"])] = cutoff
-        _fold_written(full, before)
         _revoked_jtis = frozenset(full)
         _revoked_before = before
-        if len(rows) > SNAPSHOT_WARN_ROWS and not _warned_size:
-            _warned_size = True
-            log.warning(
-                "revocation snapshot holds %d rows (past %d), most of them grant cutoffs; "
-                "every process re-reads them on each refresh",
-                len(rows),
-                SNAPSHOT_WARN_ROWS,
-            )
         _loaded = True
         _loaded_at = time.monotonic()
     except Exception as e:  # noqa: BLE001 — keep the last revocation set on a CH glitch
@@ -210,190 +179,25 @@ async def revoke(
     }
     await get_client().insert("loom.revoked_tokens", [row])
     await refresh()
-    _apply_locally([token_id], _cutoff_seconds(issued_before))
+    _apply_locally(token_id, _cutoff_seconds(issued_before))
     return row
 
 
-def _apply_locally(keys: list[str], cutoff: int | None) -> None:
-    """Apply revocations this process just wrote, now and in every refresh
-    for a while (`_fold_written`). `loaded()` is left as it is: rows this
-    process wrote are not a snapshot.
-
-    Here they replace what the snapshot holds, as the rows just inserted
-    replace theirs in ClickHouse: a cutoff narrows a full revocation of the
-    same key. A refresh only tightens with them (a full revocation, or a
-    later cutoff), since another process may have written a newer row since."""
+def _apply_locally(key: str, cutoff: int | None) -> None:
+    """Fold a revocation this process just wrote into its snapshot. The
+    re-read in `revoke` can fail, or land on a replica the insert has not
+    reached; either way the old snapshot would keep admitting the token
+    here until the next refresh. The written row is the newest for its key,
+    so it replaces any earlier state of that key. `loaded()` is left as it
+    is: one known row is not a snapshot."""
     global _revoked_jtis, _revoked_before
-    now = time.monotonic()
-    full, before = set(_revoked_jtis), dict(_revoked_before)
-    for key in keys:
-        _written[key] = (cutoff, now)
-        if cutoff is None:
-            full.add(key)
-            before.pop(key, None)
-        else:
-            full.discard(key)
-            before[key] = cutoff
-    _revoked_jtis, _revoked_before = frozenset(full), before
-
-
-def _tighten_locally(keys: list[str], cutoff: int) -> None:
-    """`_apply_locally` for grant cutoffs, which only move forward: a write
-    acknowledged after a newer one must not pull this process's cutoff back."""
-    global _revoked_before
-    now = time.monotonic()
-    before = dict(_revoked_before)
-    for key in keys:
-        newest = max(cutoff, before.get(key, cutoff))
-        before[key] = newest
-        _written[key] = (newest, now)
+    before = {k: v for k, v in _revoked_before.items() if k != key}
+    if cutoff is None:
+        _revoked_jtis = _revoked_jtis | {key}
+    else:
+        _revoked_jtis = _revoked_jtis - {key}
+        before[key] = cutoff
     _revoked_before = before
-
-
-def _fold_written(full: set[str], before: dict[str, int]) -> None:
-    """Apply what this process wrote in the last `_WRITTEN_KEEP_S` to a
-    snapshot being built, dropping older entries. A key never moves back: a
-    newer cutoff, or a full revocation, from another process stands."""
-    now = time.monotonic()
-    for key, (cutoff, at) in list(_written.items()):
-        if now - at > _WRITTEN_KEEP_S:
-            del _written[key]
-        elif cutoff is None:
-            full.add(key)
-            before.pop(key, None)
-        elif key not in full:
-            before[key] = max(cutoff, before.get(key, cutoff))
-
-
-_GRANT_CLAIM_PREFIX = "grant:"
-
-
-def grant_claim_key(org: str, namespace: str, subject: str) -> str:
-    """The revocation key that withdraws (org, namespace) from `subject`'s
-    token claims: `grant:["<org>","<namespace>","<subject hash>"]`. A JSON
-    array, so an org or namespace holding `/` cannot make two scopes share a
-    key. The subject is lower-cased, as alias lookup's SQL `lower()` matches
-    it, and hashed so the key does not spell out an email; the hash is
-    unsalted, so a guessed email can be tested against it. The `grant:` prefix
-    keeps it apart from the jtis and subjects `verify_token` looks up."""
-    digest = hashlib.sha256(subject.lower().encode()).hexdigest()[:32]
-    return _GRANT_CLAIM_PREFIX + json.dumps([org, namespace, digest], separators=(",", ":"))
-
-
-def grant_claim_prefix(org: str) -> str:
-    """The start every one of `org`'s grant cutoff keys shares."""
-    return f"{_GRANT_CLAIM_PREFIX}[{json.dumps(org)},"
-
-
-def grant_cutoff_applies(org: str, namespace: str, subject: str, issued_at: int) -> bool:
-    """Whether a cutoff for `subject` on (org, namespace) is later than a
-    token issued at `issued_at` (unix seconds). Reads this process's
-    snapshot: no I/O, for the request path."""
-    return is_revoked(grant_claim_key(org, namespace, subject), issued_at=issued_at)
-
-
-async def write_grant_cutoffs(
-    org: str, namespaces: list[str], subjects: list[str], *, reason: str, revoked_by: str
-) -> None:
-    """Withdraw `namespaces` from the claims of every token `subjects` hold
-    that was minted before now, under each spelling of each subject.
-
-    Callers write this before the grant row it is about, so a failure fails
-    their change, and `restamp` once the row has landed."""
-    await write_pair_cutoffs(
-        org, [(ns, s) for ns in namespaces for s in subjects], reason=reason, revoked_by=revoked_by
-    )
-
-
-async def write_pair_cutoffs(
-    org: str, pairs: list[tuple[str, str]], *, reason: str, revoked_by: str
-) -> None:
-    """One cutoff row per spelling of each (namespace, subject), in one insert."""
-    from server.auth.aliases import cutoff_spellings
-    from server.core.ch import get_client
-
-    # A release cuts every member at once; read their spellings a few at a time.
-    limit = asyncio.Semaphore(8)
-
-    async def spellings_of(subject: str) -> list[str]:
-        async with limit:
-            return await cutoff_spellings(org, subject)
-
-    subjects = sorted({s for _, s in pairs})
-    reads = [asyncio.create_task(spellings_of(s)) for s in subjects]
-    try:
-        spellings = dict(zip(subjects, await asyncio.gather(*reads), strict=True))
-    except BaseException:
-        # Stop the other reads; a TaskGroup would wrap the refusal callers catch.
-        for read in reads:
-            read.cancel()
-        await asyncio.gather(*reads, return_exceptions=True)
-        raise
-    keys = sorted({grant_claim_key(org, ns, alias) for ns, s in pairs for alias in spellings[s]})
-    if not keys:
-        return
-    rows, cutoff = _cutoff_rows(keys, reason, revoked_by)
-    await get_client().insert("loom.revoked_tokens", rows)
-    # This process applies them now; every other at its next refresh.
-    _tighten_locally(keys, cutoff)
-
-
-# The reason a lowering's second cutoff carries.
-RESTAMPED = "grant lowered"
-
-
-async def restamp(org: str, pairs: list[tuple[str, str]], *, revoked_by: str) -> None:
-    """The second cutoff of a lowering, once its grant row has landed: a token
-    minted while the insert was in flight read the old grant, and is issued
-    after the first cutoff."""
-    if pairs:
-        await write_pair_cutoffs(org, pairs, reason=RESTAMPED, revoked_by=revoked_by)
-
-
-def _cutoff_rows(keys: list[str], reason: str, revoked_by: str) -> tuple[list[dict[str, Any]], int]:
-    """One cutoff per key at the next whole second, so a token minted in the
-    second of the change is cut too; and that second as unix seconds."""
-    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
-    issued_before = now + timedelta(seconds=1)
-    cutoff = int(issued_before.replace(tzinfo=UTC).timestamp())
-    rows = [
-        {
-            "jti": key,
-            "revoked_at": now,
-            "expires_at": revocation_expiry(None, now),
-            "reason": reason,
-            "revoked_by": revoked_by,
-            "issued_before": issued_before,
-            # The newest cutoff wins in ClickHouse too, however late its insert lands.
-            "version": cutoff * 1_000_000_000,
-        }
-        for key in keys
-    ]
-    return rows, cutoff
-
-
-async def read_grant_cutoffs(
-    org: str, subject: str, namespaces: list[str], *, issued_at: int | None
-) -> set[str]:
-    """Which of `namespaces` have a cutoff for `subject` later than
-    `issued_at` (unix seconds; None means any cutoff counts).
-
-    Token mints call this instead of `grant_cutoff_applies`: it reads
-    ClickHouse, not this process's snapshot, which may not have the newest
-    cutoff yet. A later grant does not remove a cutoff."""
-    from server.auth.aliases import cutoff_spellings
-
-    spellings = await cutoff_spellings(org, subject)
-    by_key = {grant_claim_key(org, ns, s): ns for ns in namespaces for s in spellings}
-    if not by_key:
-        return set()
-    rows = await _read_revocations(sorted(by_key))
-    ended: set[str] = set()
-    for r in rows:
-        cutoff = _cutoff_seconds(r.get("issued_before"))
-        if cutoff is not None and (issued_at is None or issued_at < cutoff):
-            ended.add(by_key[str(r["jti"])])
-    return ended
 
 
 async def subjects_revoked(subjects: list[str], *, issued_at: int) -> bool:
@@ -417,26 +221,26 @@ async def _read_revocations(keys: list[str]) -> list[dict[str, Any]]:
     with own_write_reads():
         return await get_client().query_all(
             """
-            SELECT jti, issued_before, reason FROM loom.revoked_tokens FINAL
+            SELECT jti, issued_before FROM loom.revoked_tokens FINAL
             WHERE jti IN {keys:Array(String)} AND expires_at > now()
             """,
             params={"keys": keys},
         )
 
 
-async def list_active(*, include_grant_cutoffs: bool = False) -> list[dict[str, Any]]:
-    """The unexpired revocations, newest first. Grant cutoffs, most of the
-    table, are left out unless asked for."""
+async def list_active() -> list[dict[str, Any]]:
+    """The unexpired revocations, newest first — the same rows the refresh
+    worker reads every `jwt_revocation_cache_ttl_seconds`, so this read is
+    already paid for at that cadence (the table holds well under 1000 rows)."""
     from server.core.ch import get_client
 
     rows = await get_client().query_all(
         """
         SELECT jti, revoked_at, expires_at, reason, revoked_by, issued_before
         FROM loom.revoked_tokens FINAL
-        WHERE expires_at > now() AND ({cutoffs:Bool} OR NOT startsWith(jti, {prefix:String}))
+        WHERE expires_at > now()
         ORDER BY revoked_at DESC
         """,
-        params={"cutoffs": include_grant_cutoffs, "prefix": _GRANT_CLAIM_PREFIX},
     )
     return [dict(r) for r in rows]
 

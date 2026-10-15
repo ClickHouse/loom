@@ -17,8 +17,6 @@ from typing import Any
 
 import pytest
 
-from server.auth.revocation import grant_claim_prefix
-
 _ORG_SHAPE = re.compile(r"^it-[a-z0-9][a-z0-9-]{0,40}-[0-9a-f]{8}$")
 _minted: set[str] = set()
 
@@ -124,7 +122,6 @@ def purge(client: Any, database: str, orgs: frozenset[str]) -> dict[str, int]:
     if not orgs:
         return {}
     _delete(client, database, _org_tables(client, database), orgs)
-    _delete_grant_cutoffs(client, database, orgs)
     left = residue(client, database, orgs)
     # A response's follow-up work can still be writing when the run ends, so
     # one retry isn't always past the last flush.
@@ -135,16 +132,6 @@ def purge(client: Any, database: str, orgs: frozenset[str]) -> dict[str, int]:
         _delete(client, database, sorted(left), orgs)
         left = residue(client, database, orgs)
     return left
-
-
-def _delete_grant_cutoffs(client: Any, database: str, orgs: frozenset[str]) -> None:
-    """`revoked_tokens` has no org column: a grant cutoff's key names its org."""
-    client.command(
-        f"ALTER TABLE `{database}`.`revoked_tokens` "
-        "DELETE WHERE arrayExists(p -> startsWith(jti, p), %(prefixes)s)",
-        parameters={"prefixes": [grant_claim_prefix(o) for o in sorted(orgs)]},
-        settings={"mutations_sync": 2},
-    )
 
 
 def _delete(client: Any, database: str, tables: list[str], orgs: frozenset[str]) -> None:

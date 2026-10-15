@@ -36,7 +36,6 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from server.auth.jwt import mint_token
-from server.core.errors import TooManySpellingsError
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -509,11 +508,11 @@ async def authorize_submit(request: Request) -> RedirectResponse:
     state = f.get("state", "")
     await _validate_authorize_params(client_id, redirect_uri, code_challenge, code_challenge_method)
     from server.auth.attempts import client_address
-    from server.auth.login import LoginThrottled, SignInUnavailable, resolve_user_credentials
+    from server.auth.login import LoginThrottled, resolve_user_credentials
 
-    # The code's issue time is taken before the grant cutoffs are read, so a
-    # cutoff landing after the read postdates it (`write_grant_cutoffs`). Its
-    # 60 s lifetime counts from here, so the password check comes out of it.
+    # The code's issue time is taken before the revocations are read at its
+    # exchange, so a revocation landing after that read postdates it. Its 60 s
+    # lifetime counts from here, so the password check comes out of it.
     issued_at = int(time.time())
     try:
         resolved = await resolve_user_credentials(
@@ -525,10 +524,6 @@ async def authorize_submit(request: Request) -> RedirectResponse:
             detail={"error": "temporarily_unavailable"},
             headers={"Retry-After": "900"},
         ) from e
-    except SignInUnavailable as e:
-        raise _logged_unavailable("sign-in", e) from e
-    except TooManySpellingsError as e:
-        raise _access_denied(e) from e
     if resolved is None:
         # Bounce back to the form with an error (don't leak which field).
         raise HTTPException(status_code=401, detail={"error": "access_denied"})
@@ -623,7 +618,7 @@ async def oidc_callback(request: Request) -> RedirectResponse:
             status_code=403,
             detail={"error": "access_denied", "error_description": "verified email required"},
         )
-    # Before the cutoff read, as in authorize_submit; the code's lifetime counts
+    # As in authorize_submit, the code's lifetime counts
     # from here, so the account lookup (and a JIT provisioning) comes out of it.
     issued_at = int(time.time())
     try:
@@ -634,8 +629,6 @@ async def oidc_callback(request: Request) -> RedirectResponse:
             resolved = await jit_provision_for_email(email)
     except SignInUnavailable as e:
         raise _logged_unavailable("sign-in", e) from e
-    except TooManySpellingsError as e:
-        raise _access_denied(e) from e
     if resolved is None:
         raise HTTPException(
             status_code=403,
@@ -673,7 +666,7 @@ async def oidc_callback(request: Request) -> RedirectResponse:
 # --------------------------------------------------------------------------
 async def _issue_tokens(grant: dict[str, Any], client_id: str, issued_at: int) -> dict[str, Any]:
     """The tokens for a decided grant, both issued at `issued_at`: the time
-    the exchange took before it read the grant cutoffs."""
+    the exchange took before it read the revocations."""
     access = mint_token(
         subject=grant["subject"],
         org=grant["org"],
@@ -769,7 +762,7 @@ async def _exchange(
     if claim is oauth_claims.Claim.TAKEN:
         log.info("oauth: %s is being exchanged by another request; told to retry", kind)
         raise _unavailable()
-    issued_at = int(time.time())  # before the decision reads the grant cutoffs
+    issued_at = int(time.time())  # before the decision reads the revocations
     if claim is oauth_claims.Claim.UNCLAIMED:
         return await _exchange_unclaimed(kind, credential, found, decide, issued_at)
     release = functools.partial(oauth_claims.release_shielded, ch, key, holder)
@@ -895,8 +888,7 @@ async def _decide_refresh(grant: dict[str, Any]) -> dict[str, Any]:
     """The grant a refresh mints from. The grant is a sign-in snapshot; each
     refresh re-checks the account is still active and re-derives its roles,
     so neither a released account nor a removed host rides a rolling 30-day
-    chain, and drops a namespace a grant was taken away on for good: the new
-    token's iat would pass the cutoff, and so would every later refresh."""
+    chain."""
     from server.auth.login import refreshed_roles
 
     # exp is always saved as mint time + _REFRESH_TTL.
@@ -920,14 +912,6 @@ def _logged_unavailable(
     return _unavailable()
 
 
-def _access_denied(refusal: TooManySpellingsError) -> HTTPException:
-    """A sign-in refused until an operator acts, in the OAuth envelope."""
-    return HTTPException(
-        status_code=403,
-        detail={"error": "access_denied", "error_description": refusal.message},
-    )
-
-
 def _unavailable(retry_after: int = 5) -> HTTPException:
     return HTTPException(
         status_code=503,
@@ -938,30 +922,18 @@ def _unavailable(retry_after: int = 5) -> HTTPException:
 
 async def _mint_namespaces(grant: dict[str, Any], issued_at: int) -> list[str]:
     """The namespaces a token minted from `grant` may claim, `issued_at` being
-    when the grant was decided. Refused when the subject was revoked since;
-    without the namespaces a grant was taken away on since, unless restricted
-    and still granted (a restricted namespace is read only by a token naming
-    it, and the live grant is checked on every call). Read from ClickHouse:
-    a token minted past a revocation this process has not seen keeps it."""
-    from server.auth.login import restricted_grant_namespaces
-    from server.auth.revocation import read_grant_cutoffs, subjects_revoked
+    when the grant was decided; refused when the subject was revoked since.
+    Read from ClickHouse: a token minted past a revocation this process has
+    not seen keeps it."""
+    from server.auth.revocation import subjects_revoked
 
-    org, subject = grant["org"], grant["subject"]
-    namespaces = list(grant["namespaces"])
     try:
-        if await subjects_revoked([subject], issued_at=issued_at):
-            raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
-        ended = await read_grant_cutoffs(org, subject, namespaces, issued_at=issued_at)
-        if ended:
-            ended -= set(await restricted_grant_namespaces(subject, org, strict=True))
-    except HTTPException:
-        raise
-    except TooManySpellingsError as e:  # permanent: no retry mints past it
-        detail = {"error": "invalid_grant", "error_description": e.message}
-        raise HTTPException(status_code=400, detail=detail) from e
+        revoked = await subjects_revoked([grant["subject"]], issued_at=issued_at)
     except Exception as e:  # no token is minted past a revocation it could not read
         raise _logged_unavailable("mint-time read", e, grant) from e
-    return [ns for ns in namespaces if ns not in ended]
+    if revoked:
+        raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
+    return list(grant["namespaces"])
 
 
 def attach(app: Any) -> None:
