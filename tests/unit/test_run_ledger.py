@@ -406,7 +406,7 @@ def test_a_resent_begin_that_moves_session_drops_the_cost_budget(env) -> None:
     )
     row = next(rows[0] for table, rows in fake.inserted if table == "loom.agent_runs")
     assert row["session_id"] == "s2" and row["budget_usd"] == 0.0 and row["budget_seconds"] == 600
-    assert "budget_usd was dropped" in out.next
+    assert "budget_usd was dropped" in out.next and "session_id=s2" in out.next
 
 
 def test_a_resent_begin_without_a_budget_keeps_the_runs_budget(env) -> None:
@@ -699,3 +699,6 @@ def test_a_cost_budget_is_kept_to_six_places() -> None:
         org="o", namespace="n", agent="a", goal="g", session_id="s1", budget_usd=1.23456789
     )
     assert inp.budget_usd == 1.234568
+    # One that would round to no budget is refused, not read as "keep the old one".
+    with pytest.raises(ValidationError):
+        RunBeginInput(org="o", namespace="n", agent="a", goal="g", session_id="s1", budget_usd=4e-7)

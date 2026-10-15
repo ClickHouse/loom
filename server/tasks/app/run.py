@@ -411,7 +411,7 @@ async def _open_run(
     prior_usd = float(prior.get("budget_usd") or 0.0)
     kept_usd = prior_usd if session_id == prior_session else 0.0
     budget_usd = input.budget_usd or kept_usd
-    dropped_usd = prior_usd > 0 and not budget_usd
+    dropped_usd = prior_usd > 0 and budget_usd == 0
     budget_seconds = input.budget_seconds or int(prior.get("budget_seconds") or 0)
     # The begin row in the ledger carries the run it opened, so begin and complete join
     # on `run_id` (the body names none; the transport's fallback is the header run, empty
@@ -467,7 +467,7 @@ async def _open_run(
     if dropped_usd:
         next_step += (
             " The run moved to another session, so its budget_usd was dropped;"
-            " re-send budget_usd with this session_id to set one."
+            f" re-send budget_usd with session_id={session_id} to set one."
         )
     return RunBeginOutput(run_id=run_id, status="active", started_at=_iso(started), next=next_step)
 

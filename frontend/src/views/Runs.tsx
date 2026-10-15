@@ -126,7 +126,8 @@ export const EMPTY_WHY = {
 /** Dollars to the 6 places cost and budgets are kept to, so a spend just past its budget
  * never reads as at it: "$2.50", "$1.000004". */
 function usd(amount: number): string {
-  return `$${amount.toFixed(6).replace(/0{1,4}$/, "")}`;
+  const text = amount.toLocaleString("en-US", { minimumFractionDigits: 6, maximumFractionDigits: 6 });
+  return `$${text.replace(/0{1,4}$/, "")}`;
 }
 
 /** The budget run.begin set and the time used against it, e.g. "$1.00 · 30m 0s · 42s

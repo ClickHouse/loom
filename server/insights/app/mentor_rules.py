@@ -268,6 +268,11 @@ def _unlisted(ops: tuple[str, ...]) -> str:
     return ""
 
 
+def _usd(amount: float) -> str:
+    """Dollars to the 6 places cost and budgets are kept to: "$2.50", "$1.000004"."""
+    return "$" + re.sub("0{1,4}$", "", f"{amount:,.6f}")
+
+
 def _byname(op: str) -> str:
     """The op as written in a hint; the listing note rides the hint's tail."""
     return op
@@ -900,12 +905,6 @@ def _rule_set_large_value(
         "knowledge.upsert the body and keep a one-paragraph pointer row under this key."
         + _unlisted(("knowledge.upsert",)),
     )
-
-
-def _usd(amount: float) -> str:
-    # Cost and budgets are kept to 6 places; showing all of them means a spend
-    # just past its budget never reads as at it. "$2.50", "$1.000004".
-    return "$" + re.sub("0{1,4}$", "", f"{amount:,.6f}")
 
 
 def _rule_run_over_budget(

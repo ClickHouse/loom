@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from server.core.naming import SENTINEL, names_session
 from server.operations.base import MCP_HIDDEN
@@ -61,12 +61,18 @@ class RunBeginInput(BaseModel):
     # Seconds the run may take (0 = none, kept on a re-sent begin of the same run_id).
     budget_seconds: int = Field(default=0, ge=0, le=30 * 86400)
 
+    @field_validator("budget_usd")
+    @classmethod
+    def _to_six_places(cls, v: float) -> float:
+        # run.get rounds cost to 6 places, so the budget is kept to the same.
+        if 0 < v < 0.000001:
+            raise ValueError("budget_usd is kept to 6 places; the smallest is 0.000001")
+        return round(v, 6)
+
     @model_validator(mode="after")
     def _cost_budget_has_a_session(self) -> RunBeginInput:
         if self.budget_usd > 0 and not names_session(self.session_id):
             raise ValueError("budget_usd needs a session_id: a run's spend is its session's turns")
-        # To the 6 places run.get rounds cost to, so the two compare like for like.
-        self.budget_usd = round(self.budget_usd, 6)
         return self
 
 

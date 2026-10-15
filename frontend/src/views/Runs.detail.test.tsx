@@ -184,6 +184,15 @@ describe("Runs page", () => {
     expect(await within(dialog).findByTitle(EMPTY_WHY.budget)).toHaveTextContent("$1.00 · over cost");
   });
 
+  it("spells a large spend with thousands separators, as the hint does", async () => {
+    listRuns.mockResolvedValue([full]);
+    getRun.mockResolvedValue(detail({ cost_usd: 12345 }));
+    render(<Runs />);
+    fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText("$12,345.00")).toBeInTheDocument();
+  });
+
   it("a run with a time budget that has just begun shows 0s elapsed", async () => {
     const budgeted = { ...full, budget_seconds: 60 };
     listRuns.mockResolvedValue([budgeted]);
