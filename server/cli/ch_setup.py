@@ -148,7 +148,9 @@ def reader_status(reader: str) -> tuple[bool | None, str]:
     actual = {row[0]: _setting(*row[1:]) for row in rows}
     # `readonly` cannot be changed under readonly anyway, so only its value counts.
     actual["readonly"] = Setting(actual["readonly"].value)
-    if name != reader or actual != profile:
+    if name != reader:
+        return True, f"its login lands as {name!r}, not {reader!r}"
+    if actual != profile:
         return True, "its profile does not match the current caps and constraints"
     if grants != [f"GRANT SELECT ON {preflight.DATABASE}.* TO {reader}"]:
         return True, f"its grants are not SELECT on {preflight.DATABASE}.* alone"

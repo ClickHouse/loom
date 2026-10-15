@@ -697,15 +697,23 @@ _WIDER = "its grants are not SELECT on loom.* alone"
 
 
 @pytest.mark.parametrize(
-    ("reader", "grants", "problem"),
+    ("reader", "grants", "problem", "lands_as"),
     [
-        ("loom_reader", ["GRANT SELECT ON loom.* TO loom_reader"], ""),
+        ("loom_reader", ["GRANT SELECT ON loom.* TO loom_reader"], "", "loom_reader"),
         # ClickHouse quotes a name like this one in SHOW GRANTS.
-        ("loom-reader", ["GRANT SELECT ON loom.* TO `loom-reader`"], ""),
+        ("loom-reader", ["GRANT SELECT ON loom.* TO `loom-reader`"], "", "loom-reader"),
+        # An auth mapping that logs the reader in as someone else.
+        (
+            "loom_reader",
+            ["GRANT SELECT ON loom.* TO loom_reader"],
+            "its login lands as 'mapped_user', not 'loom_reader'",
+            "mapped_user",
+        ),
         (
             "loom_reader",
             ["GRANT SELECT ON loom.* TO loom_reader", "GRANT SELECT ON *.* TO loom_reader"],
             _WIDER,
+            "loom_reader",
         ),
         # Narrowed by an admin: not the reader ch-setup makes either.
         (
@@ -715,11 +723,16 @@ _WIDER = "its grants are not SELECT on loom.* alone"
                 "REVOKE SELECT ON loom.memory FROM loom_reader",
             ],
             _WIDER,
+            "loom_reader",
         ),
     ],
 )
 def test_the_reader_holds_select_on_loom_alone(
-    monkeypatch: pytest.MonkeyPatch, reader: str, grants: list[str], problem: str
+    monkeypatch: pytest.MonkeyPatch,
+    reader: str,
+    grants: list[str],
+    problem: str,
+    lands_as: str,
 ) -> None:
     import clickhouse_connect
 
@@ -731,7 +744,7 @@ def test_the_reader_holds_select_on_loom_alone(
 
     class Reader:
         def command(self, sql: str) -> Any:
-            return reader
+            return lands_as
 
         def query(self, sql: str, **_: Any) -> SimpleNamespace:
             if sql == "SHOW GRANTS":

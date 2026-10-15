@@ -44,7 +44,9 @@ Sizing (web replicas, uvicorn processes, the workers container) is in
 - **The password.** Set `LOOM_CH_PASSWORD`, or answer the prompt, which does not echo;
   one in the URL works too, but `ps` and the shell history see it. It is written only to
   `.env`, which is mode 600, double-quoted with `\`, `"` and `$` escaped so Compose reads
-  it back exactly.
+  it back exactly. That `.env` is for Compose: run Loom commands through
+  `docker compose --project-directory ~/.loom run --rm loom loom …`, not by pointing a
+  checkout's `LOOM_ENV_FILE` at it, which reads the escapes differently.
 - **Setup.** With a server of your own the installer runs `loom ch-setup` before it
   starts Loom. It creates the `loom` database and the read-only `loom_reader` user
   (below), and checks the version and the grants. Run it again at any time with

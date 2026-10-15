@@ -8,7 +8,9 @@ from pathlib import Path
 
 from tests.unit.schema_ddl import ddl, tables
 
-MIGRATIONS = Path(__file__).resolve().parents[2] / "schemas" / "migrations"
+ROOT = Path(__file__).resolve().parents[2]
+MIGRATIONS = ROOT / "schemas" / "migrations"
+SHAPES = ROOT / "tests" / "analyzer" / "shapes.txt"
 
 
 def _settings(name: str) -> str:
@@ -25,10 +27,14 @@ def test_every_merge_tree_table_keeps_insert_dedup_tokens() -> None:
 
 
 def test_the_lightweight_update_tables_carry_block_columns() -> None:
-    for name in ("memory", "memory_embeddings"):
+    # Every table Loom runs a lightweight UPDATE on, from the statement corpus:
+    # without both columns the UPDATE quietly becomes a mutation per call.
+    updated = sorted(set(re.findall(r"\bUPDATE loom\.(\w+) SET\b", SHAPES.read_text())))
+    assert updated
+    for name in updated:
         line = _settings(name)
-        assert "enable_block_number_column = 1" in line
-        assert "enable_block_offset_column = 1" in line
+        assert "enable_block_number_column = 1" in line, name
+        assert "enable_block_offset_column = 1" in line, name
 
 
 def test_the_tables_the_dump_leaves_out_keep_insert_dedup_tokens_too() -> None:
