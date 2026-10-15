@@ -1,5 +1,5 @@
 """The preflight's grant checks against a real server: a user given everything
-on loom.* passes the migration check. From 26.9 the ALTER group holds the
+on loom.* (as the admin SQL grants it) passes the migration check. From 26.9 the ALTER group holds the
 global-only ALTER HANDLER, so `CHECK GRANT ALTER ON loom.*` fails for such a
 user; the migration grants name ALTER TABLE and ALTER VIEW instead."""
 
@@ -24,7 +24,8 @@ def loom_scoped_user() -> Any:
     except Exception as e:  # noqa: BLE001 — a login without access management cannot run this
         pytest.skip(f"cannot create users here: {str(e)[:120]}")
     try:
-        admin.command(f"GRANT ALL ON loom.* TO {name}")
+        # What the admin SQL grants; Cloud refuses GRANT ALL.
+        admin.command(f"GRANT CURRENT GRANTS ON loom.* TO {name}")
         user = ch_client_from_env(username=name, password=password, database="")
         yield user
         user.close()

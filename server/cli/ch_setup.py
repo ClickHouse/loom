@@ -338,7 +338,12 @@ def _set_up(ch: Any, user: str, reader: str | None) -> int:
 
     print(
         "· Keeper: "
-        + ("present" if server.keeper else "absent; leases and run ids use the fallbacks")
+        + (
+            "present"
+            if server.keeper
+            else "absent; leases, run ids, OAuth exchanges and grant changes use the "
+            "fallbacks (docs/operations/deployment.md)"
+        )
     )
     print(
         "· lightweight UPDATE: "
