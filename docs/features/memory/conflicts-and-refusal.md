@@ -159,23 +159,24 @@ that fail, `loom reconcile-status` finds the divergence). A point write (`memory
 The Review queue's **Auto-resolved** tab lists the last 30 days, a page of 20 records at
 a time, and its Undo calls `memory.restore` with `if_superseded_by`: the row comes back
 `active` and `memory.unsupersede` is recorded only while it is still retired behind the
-memory the record names; a row deleted, revived or retired again since shows "No longer
-retired". The Undo holds the key's write lock from its read of the row to its insert,
+memory the record names; a row deleted, revived or retired again since shows "Changed
+since". The Undo holds the key's write lock from its read of the row to its insert,
 as a conditional write (`if_match_sha256`) does: a conditional revision made meanwhile
-lands first and the Undo shows "No longer retired", or waits for the Undo. An
+lands first and the Undo shows "Changed since", or waits for the Undo. An
 unconditional write takes no lock, and the later of the two wins. When another
 conditional write holds the lock past its wait, the Undo answers 412 ("another
 conditional write to this key is still running; re-read and retry"). An Undo opens again the
 graph facts the restored row still holds (see the
 [entity graph](../entity-graph.md)). To mark rows
 already restored, the tab reads up to 2,500 `memory.unsupersede` records (5 pages of 500) back to the oldest retirement it shows. Past that, an older row still offers Undo,
-and undoing a row that is already live shows "No longer retired". An Undo is not
+and undoing a row that is already live shows "Changed since". An Undo is not
 remembered: a later write of the same key is judged again, and can retire the row again
 if it is the later statement. A row the re-read could not confirm is marked "may not
 have taken effect". The memory inspector's **Restore** on a superseded row sends
 `only_if_superseded`, and `if_superseded_by` when it can see the successor: a read
 narrowed below the namespace shows none for a successor outside its scope, and either
-way a delete since is never undone.
+way a delete since is never undone. When it finds nothing to restore, the inspector re-reads the
+row and shows it as it is now.
 
 ## Duplicates
 

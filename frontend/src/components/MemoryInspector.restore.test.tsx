@@ -176,6 +176,45 @@ describe("MemoryInspector restore of a superseded row", () => {
     expect(onChanged).not.toHaveBeenCalled();
   });
 
+  it("re-reads the row when the restore finds nothing, so Restore is not offered again", async () => {
+    seed("writer");
+    await open();
+    vi.mocked(restoreMemory).mockResolvedValue({ restored: false, from_status: "" });
+    // Restored by someone else since the drawer read it.
+    vi.mocked(getMemory).mockResolvedValue({ ...SUPERSEDED, status: "active" });
+    await userEvent.click(await screen.findByRole("button", { name: "Restore" }));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Nothing to restore", "info"));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Restore" })).toBeNull());
+  });
+
+  it("offers Restore on the next memory while a restore of the last one is pending", async () => {
+    seed("writer");
+    const other: MemoryDetail = { ...SUPERSEDED, value: "works at Acme", memory_id: "m-job-1" };
+    vi.mocked(getMemory).mockImplementation(async (_id, key) => (key === "user_job" ? other : SUPERSEDED));
+    const view = render(
+      <MemoryInspector identity={identity} memoryKey="user_city" onClose={() => {}} onChanged={() => {}} />,
+    );
+    await screen.findByText("lives in Lisbon");
+    const finish: Array<(v: { restored: boolean }) => void> = [];
+    vi.mocked(restoreMemory).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish.push(resolve);
+        }),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Restore" }));
+    view.rerender(<MemoryInspector identity={identity} memoryKey="user_job" onClose={() => {}} onChanged={() => {}} />);
+    await screen.findByText("works at Acme");
+    const button = await screen.findByRole("button", { name: "Restore" });
+    expect(button).not.toBeDisabled();
+    await userEvent.click(button);
+    expect(button).toBeDisabled();
+    // The first memory's reply does not end the second one's restore.
+    finish[0]?.({ restored: true });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(button).toBeDisabled();
+  });
+
   it("offers no Restore to a viewer", async () => {
     seed("viewer");
     await open();

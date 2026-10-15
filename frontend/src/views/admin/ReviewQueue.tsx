@@ -78,7 +78,6 @@ export function ReviewQueue() {
     (signal, live) => {
       setProbedLearnings(null);
       setProbedExceptions(null);
-      setProbedAuto(null);
       setTab("conflicts");
       listLearnings({ org: identity.org, namespace: identity.namespace }, "pending", 50, { signal })
         .then((r) => {
@@ -96,7 +95,11 @@ export function ReviewQueue() {
   useAbortableEffect(
     (signal, live) => {
       setProbedAuto(null);
-      if (!auditReadable) return;
+      if (!auditReadable) {
+        // The Auto-resolved tab goes with the access: leave it for Conflicts.
+        setTab((t) => (t === "auto" ? "conflicts" : t));
+        return;
+      }
       listAutoResolved({ org: identity.org, namespace: identity.namespace }, { signal })
         .then((r) => {
           if (live()) setProbedAuto({ rows: r.rows || [], next_cursor: r.next_cursor, scope: scopeKey });
@@ -450,7 +453,7 @@ interface AutoResolvedPage {
 type UndoOutcome = "restored" | "gone";
 
 // One retirement record: a memory retired twice shows up once per record.
-const entryKey = (r: AutoResolvedRow) => `${r.memory_id}@${r.ts}`;
+const entryKey = (r: AutoResolvedRow) => `${r.memory_id}@${r.ts}>${r.superseded_by}`;
 
 /** Newest restore per id across two reads. */
 function mergeUndone(a: Map<string, string>, b: Map<string, string>): Map<string, string> {
@@ -476,18 +479,19 @@ function AutoResolvedPanel({ initial }: { initial: AutoResolvedPage }) {
   const [undoneSince, setUndoneSince] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<Map<string, UndoOutcome>>(new Map());
   const [busy, setBusy] = useState<Set<string>>(new Set());
-  // Bumped when the namespace changes or the panel goes: a reply for the old scope is dropped.
-  const scope = useRef(0);
+  // What the live region last said: one region for the panel, so rows changing are quiet.
+  const [announcement, setAnnouncement] = useState("");
+  // The panel is keyed by namespace, so a reply that lands after it goes is dropped.
+  const mounted = useRef(true);
   const loadingRef = useRef(false);
   const oldest = rows.reduce((m, r) => (m === "" || r.ts < m ? r.ts : m), "");
 
   useEffect(() => {
-    scope.current += 1;
-    const mine = scope.current;
+    mounted.current = true;
     return () => {
-      if (scope.current === mine) scope.current += 1;
+      mounted.current = false;
     };
-  }, [identity.org, identity.namespace]);
+  }, []);
 
   useAbortableEffect(
     (signal, live) => {
@@ -518,18 +522,17 @@ function AutoResolvedPanel({ initial }: { initial: AutoResolvedPage }) {
   const loadMore = async () => {
     if (!cursor || loadingRef.current) return;
     loadingRef.current = true;
-    const mine = scope.current;
     setLoadingMore(true);
     try {
       const page = await listAutoResolved({ org: identity.org, namespace: identity.namespace }, { cursor });
-      if (scope.current !== mine) return;
+      if (!mounted.current) return;
       setRows((rs) => [...rs, ...page.rows]);
       setCursor(page.next_cursor);
     } catch (e) {
-      if (scope.current === mine) toast(`Failed: ${humanizeError(e)}`, "error");
+      if (mounted.current) toast(`Failed: ${humanizeError(e)}`, "error");
     } finally {
       loadingRef.current = false;
-      if (scope.current === mine) setLoadingMore(false);
+      if (mounted.current) setLoadingMore(false);
     }
   };
 
@@ -544,7 +547,6 @@ function AutoResolvedPanel({ initial }: { initial: AutoResolvedPage }) {
   const undo = async (r: AutoResolvedRow) => {
     const k = entryKey(r);
     if (busy.has(k)) return;
-    const mine = scope.current;
     setBusyFor(k, true);
     try {
       const out = await restoreMemory(
@@ -552,11 +554,12 @@ function AutoResolvedPanel({ initial }: { initial: AutoResolvedPage }) {
         r.memory_key,
         { user_id: r.user_id, session_id: r.session_id, if_superseded_by: r.superseded_by },
       );
-      if (scope.current !== mine) return;
+      if (!mounted.current) return;
       setOutcome((m) => new Map(m).set(k, out.restored ? "restored" : "gone"));
+      setAnnouncement(out.restored ? `Restored ${r.memory_key}` : `${r.memory_key} changed since; nothing undone`);
       if (out.restored) toast("Restored", "ok");
     } catch (e) {
-      if (scope.current === mine) toast(`Failed: ${humanizeError(e)}`, "error");
+      if (mounted.current) toast(`Failed: ${humanizeError(e)}`, "error");
     } finally {
       setBusyFor(k, false);
     }
@@ -565,7 +568,7 @@ function AutoResolvedPanel({ initial }: { initial: AutoResolvedPage }) {
   const status = (r: AutoResolvedRow) => {
     const o = outcome.get(entryKey(r));
     if (o === "gone") {
-      return <span className="text-sm text-[var(--color-text-muted)] px-2 py-1.5">No longer retired</span>;
+      return <span className="text-sm text-[var(--color-text-muted)] px-2 py-1.5">Changed since</span>;
     }
     if (o === "restored" || undoneBefore(r)) {
       return (
@@ -577,11 +580,7 @@ function AutoResolvedPanel({ initial }: { initial: AutoResolvedPage }) {
     // Without the row it retired behind, an Undo could only be an unguarded restore.
     if (!canRestore || !r.superseded_by) return null;
     if (!known(r)) {
-      return (
-        <span className="text-sm text-[var(--color-text-muted)] px-2 py-1.5" role="status" aria-label="Checking">
-          …
-        </span>
-      );
+      return <span className="text-sm text-[var(--color-text-muted)] px-2 py-1.5">Checking…</span>;
     }
     return (
       <button
@@ -601,6 +600,9 @@ function AutoResolvedPanel({ initial }: { initial: AutoResolvedPage }) {
         Memories Loom retired on its own in the last 30 days. They no longer come back in recall, but history keeps
         them. Undo brings one back.
       </p>
+      <p className="sr-only" aria-live="polite">
+        {announcement}
+      </p>
       <div className="space-y-1.5">
         {rows.map((r) => (
           <div
@@ -618,8 +620,7 @@ function AutoResolvedPanel({ initial }: { initial: AutoResolvedPage }) {
                 {r.unconfirmed ? " · may not have taken effect" : null}
               </div>
             </div>
-            {/* Announces Restored / No longer retired when an Undo lands. */}
-            <div aria-live="polite">{status(r)}</div>
+            <div>{status(r)}</div>
           </div>
         ))}
       </div>

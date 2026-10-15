@@ -138,6 +138,8 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
   const [provenance, setProvenance] = useState<MemoryProvenance | null>(null);
   const [conflictCount, setConflictCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
+  // A Restore in flight for the memory on screen; reset when the drawer moves on.
+  const [restoring, setRestoring] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [diffVersion, setDiffVersion] = useState<number | null>(null);
@@ -247,6 +249,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
   useEffect(() => {
     setLoading(true);
     setRenaming(false);
+    setRestoring(false);
     setDetail(null);
     setHistory(null);
     setRelated(null);
@@ -543,7 +546,6 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
   };
 
   // A superseded row (Loom retired it, or a later write replaced it) comes back live.
-  const [restoring, setRestoring] = useState(false);
   const onRestore = async () => {
     if (!detail || restoring) return;
     const mine = inspection.current;
@@ -559,19 +561,19 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
         only_if_superseded: true,
       });
       if (stale()) return;
-      if (!r.restored) {
-        toast("Nothing to restore", "info");
-        return;
-      }
+      // Nothing to restore means the row changed since it was read: show it as it is now.
+      if (!r.restored) toast("Nothing to restore", "info");
       const fresh = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
       if (stale()) return;
-      toast("Restored", "ok");
       setDetail(fresh);
-      onChanged();
+      if (r.restored) {
+        toast("Restored", "ok");
+        onChanged();
+      }
     } catch (e) {
       if (!stale()) toast(`Restore failed: ${humanizeError(e)}`, "error");
     } finally {
-      setRestoring(false);
+      if (!stale()) setRestoring(false);
     }
   };
 

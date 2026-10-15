@@ -5,6 +5,7 @@ import type { AllowlistRow, AutoResolvedRow, ConflictRow, LearningEntry, MyNames
 import { ApiError } from "../../lib/errors";
 import { resetNamespaceRoleCache } from "../../lib/namespaceRole";
 import { useStore } from "../../lib/state";
+import { axeViolations } from "../../test/axe";
 import { ReviewQueue } from "./ReviewQueue";
 
 // The review queue is keyed to the namespace in the header: a reload after a decision
@@ -295,7 +296,7 @@ describe("ReviewQueue", () => {
       expect.objectContaining({ if_superseded_by: "id-third" }),
     );
     await userEvent.click(screen.getByRole("button", { name: "Undo retirement of user_city" }));
-    expect(await screen.findByText("No longer retired", {}, WAIT)).toBeTruthy();
+    expect(await screen.findByText("Changed since", {}, WAIT)).toBeTruthy();
     expect(restoreMemory).toHaveBeenLastCalledWith(
       expect.anything(),
       "user_city",
@@ -334,7 +335,7 @@ describe("ReviewQueue", () => {
     render(<ReviewQueue />);
     await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
     await userEvent.click(await screen.findByRole("button", { name: "Undo retirement of user_city" }, WAIT));
-    expect(await screen.findByText("No longer retired", {}, WAIT)).toBeTruthy();
+    expect(await screen.findByText("Changed since", {}, WAIT)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Undo retirement of user_city" })).toBeNull();
   });
 
@@ -352,7 +353,7 @@ describe("ReviewQueue", () => {
     await waitFor(() => expect(restoreMemory).toHaveBeenCalledTimes(1), WAIT);
     await waitFor(() => expect(undo).not.toBeDisabled(), WAIT);
     expect(screen.queryByText("Restored")).toBeNull();
-    expect(screen.queryByText("No longer retired")).toBeNull();
+    expect(screen.queryByText("Changed since")).toBeNull();
   });
 
   it("offers Undo only for a record that names the row it retired behind", async () => {
@@ -365,7 +366,7 @@ describe("ReviewQueue", () => {
     await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
     await screen.findByRole("button", { name: "Undo retirement of user_city" }, WAIT);
     expect(screen.getAllByRole("button", { name: /Undo retirement/ })).toHaveLength(1);
-    expect(screen.queryByText("No longer retired")).toBeNull();
+    expect(screen.queryByText("Changed since")).toBeNull();
   });
 
   it("shows a viewer the retirements without an Undo", async () => {
@@ -434,13 +435,13 @@ describe("ReviewQueue", () => {
     // The newer row's Undo stays while the older stretch's restores are read; the older
     // row waits for them.
     expect(screen.getByRole("button", { name: "Undo retirement of newer" })).toBeTruthy();
-    expect(screen.getByLabelText("Checking")).toBeTruthy();
+    expect(screen.getByText("Checking…")).toBeTruthy();
     expect(screen.getByText("Nothing older within 30 days.")).toBeTruthy();
     await act(async () => {
       finishOlderRestores(new Map([["id-older", "2026-09-02T10:00:00Z"]]));
     });
     expect(await screen.findByText("Restored", {}, WAIT)).toBeTruthy();
-    expect(screen.queryByLabelText("Checking")).toBeNull();
+    expect(screen.queryByText("Checking…")).toBeNull();
   });
 
   it("drops an older page that lands after a namespace switch", async () => {
@@ -475,10 +476,10 @@ describe("ReviewQueue", () => {
     render(<ReviewQueue />);
     await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
     await userEvent.click(await screen.findByRole("button", { name: "Undo retirement of user_city" }, WAIT));
-    await screen.findByText("No longer retired", {}, WAIT);
+    await screen.findByText("Changed since", {}, WAIT);
     await userEvent.click(screen.getByRole("tab", { name: /Conflicts/ }));
     await userEvent.click(screen.getByRole("tab", { name: /Auto-resolved/ }));
-    expect(screen.getByText("No longer retired")).toBeTruthy();
+    expect(screen.getByText("Changed since")).toBeTruthy();
     expect(listAutoResolved).toHaveBeenCalledTimes(1);
   });
 
@@ -499,5 +500,51 @@ describe("ReviewQueue", () => {
     await screen.findByText("No conflicts", {}, WAIT);
     await waitFor(() => expect(listAutoResolved).toHaveBeenCalled(), WAIT);
     expect(screen.queryByRole("tab", { name: /Auto-resolved/ })).toBeNull();
+  });
+  it("announces an Undo's outcome in one live region for the panel", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listAutoResolved).mockResolvedValue(page([retired("user_city"), retired("user_job")]));
+    vi.mocked(restoreMemory).mockResolvedValue({ restored: false, from_status: "" });
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
+    await screen.findByRole("button", { name: "Undo retirement of user_city" }, WAIT);
+    const panel = screen.getByRole("tabpanel", { name: /Auto-resolved/ });
+    // Rows changing (the restores read, a page loaded) announce nothing.
+    expect(panel.querySelectorAll("[aria-live]")).toHaveLength(1);
+    expect(panel.querySelectorAll('[role="status"]')).toHaveLength(0);
+    await userEvent.click(screen.getByRole("button", { name: "Undo retirement of user_city" }));
+    await screen.findByText("Changed since", {}, WAIT);
+    expect(panel.querySelector("[aria-live]")?.textContent).toBe("user_city changed since; nothing undone");
+    expect(await axeViolations(panel)).toEqual([]);
+  });
+
+  it("falls back to Conflicts when the audit log stops being readable on the Auto-resolved tab", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listAutoResolved).mockResolvedValue(page([retired("user_city")]));
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
+    await screen.findByText("user_city", {}, WAIT);
+    seed("ns-a");
+    expect(await screen.findByText("No conflicts", {}, WAIT)).toBeTruthy();
+    expect(screen.queryByText("user_city")).toBeNull();
+  });
+
+  it("keeps apart two records of one memory at one time behind different rows", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listAutoResolved).mockResolvedValue(
+      page([retired("user_city", { superseded_by: "id-a" }), retired("user_city", { superseded_by: "id-b" })]),
+    );
+    vi.mocked(restoreMemory).mockResolvedValue({ restored: true, from_status: "superseded" });
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
+    const undos = await screen.findAllByRole("button", { name: "Undo retirement of user_city" }, WAIT);
+    expect(undos).toHaveLength(2);
+    await userEvent.click(undos[0]);
+    await screen.findByText("Restored", {}, WAIT);
+    expect(screen.getAllByText("Restored")).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Undo retirement of user_city" })).toHaveLength(1);
   });
 });

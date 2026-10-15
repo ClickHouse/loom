@@ -106,16 +106,22 @@ describe("hasAutoResolved", () => {
     vi.unstubAllGlobals();
   });
 
-  it("asks for one record's time in the last 30 days", async () => {
-    const bodies = stubAudit([{ rows: [{ ts: "2026-10-02T00:00:00Z", subject: "" }] }, { rows: [] }]);
+  it("counts only a record with a retirement the tab can show, in the tab's first page", async () => {
+    const shown = JSON.stringify({ reason: "refines", retired: [entry("a")] });
+    const malformed = JSON.stringify({ reason: "refines", retired: [{ memory_key: "no_id" }] });
+    const bodies = stubAudit([
+      { rows: [{ ts: "2026-10-02T00:00:00Z", subject: shown }] },
+      { rows: [{ ts: "2026-10-02T00:00:00Z", subject: malformed }] },
+    ]);
     expect(await hasAutoResolved({ org: "o", namespace: "n" })).toBe(true);
+    // The Auto-resolved tab drops an entry with no id or key: so does the sidebar.
     expect(await hasAutoResolved({ org: "o", namespace: "n" })).toBe(false);
     expect(bodies[0]).toMatchObject({
       org: "o",
       namespace: "n",
       event_type: "memory.auto_supersede",
-      limit: 1,
-      fields: ["ts"],
+      limit: 20,
+      fields: ["ts", "subject"],
     });
     const since = Date.parse(String(bodies[0]?.["since"]));
     expect(Date.now() - since).toBeGreaterThan(29 * 24 * 3600 * 1000);
