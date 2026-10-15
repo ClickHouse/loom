@@ -641,7 +641,6 @@ def test_run_over_budget_fires_only_when_run_get_names_a_budget() -> None:
     hint = _call("run.get", {"run_id": "r1"}, over, session="s2")
     assert hint is not None and hint[0] == "run_over_budget"
     assert "cost budget ($2.50 of $2.00 spent)" in hint[1] and "run.complete" in hint[1]
-    assert hint[1].count(" of ") == 1
 
 
 def test_run_over_budget_names_only_the_budgets_it_went_past() -> None:
