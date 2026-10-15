@@ -33,12 +33,21 @@ def test_the_lightweight_update_tables_carry_block_columns() -> None:
 
 def test_the_tables_the_dump_leaves_out_keep_insert_dedup_tokens_too() -> None:
     # The schema dump skips `_`-prefixed tables (the migrator's own, the provider
-    # participants); read their CREATEs from the migrations instead.
+    # participants); read them from the migrations: the window in the CREATE, or
+    # set by an ALTER.
     sql = "\n".join(p.read_text() for p in sorted(MIGRATIONS.glob("*.sql")))
-    hidden = re.findall(
-        r"CREATE TABLE IF NOT EXISTS loom\.(_\w+)\s*\(.*?\)\s*ENGINE\s*=\s*\w*MergeTree", sql, re.S
+    creates = dict(
+        re.findall(
+            r"CREATE TABLE IF NOT EXISTS loom\.(_\w+)\s*(\(.*?\)\s*ENGINE\s*=\s*\w*MergeTree.*?);",
+            sql,
+            re.S,
+        )
     )
-    assert hidden
-    window = "MODIFY SETTING non_replicated_deduplication_window = 1000"
-    missing = [t for t in hidden if f"ALTER TABLE loom.{t} {window}" not in sql]
+    assert creates
+    window = "non_replicated_deduplication_window = 1000"
+    missing = [
+        t
+        for t, body in creates.items()
+        if window not in body and f"ALTER TABLE loom.{t} MODIFY SETTING {window}" not in sql
+    ]
     assert not missing, f"set the window on {missing}"
