@@ -6,8 +6,10 @@ row there; where it holds one, the claim is capped at that grant
 read per (org, subject), every spelling of the person included, is kept for
 `grant_cache_ttl_seconds`.
 
-A grant write in this process drops its org's entries at once; another process
-sees it within the TTL. A failed re-read serves the old entry while it is
+A grant write in this process drops its org's entries at once (a writer knows
+the spelling it wrote, not the ones a token may carry); another process sees it
+within the TTL. A miss reads the org's grant rows, so a busy org pays one such
+read per active subject per TTL. A failed re-read serves the old entry while it is
 younger than `jwt_revocation_max_stale_seconds`, the bound a token check already
 lives with, and refuses (503) past it.
 """

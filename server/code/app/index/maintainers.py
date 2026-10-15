@@ -222,11 +222,17 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
 
 
 async def revoke_repo_maintainer(
-    org: str, namespace: str, subject: str, *, ch: Any | None = None
+    org: str,
+    namespace: str,
+    subject: str,
+    *,
+    ch: Any | None = None,
+    granted_before: datetime | None = None,
 ) -> int:
     """Revoke `subject`'s active admin grant on every other branch of the
-    repository; a branch where they are the only active admin keeps them
-    (the same guard `grants.revoke` applies). Returns rows written."""
+    repository, or only those granted no later than `granted_before`; a branch
+    where they are the only active admin keeps them (the same guard
+    `grants.revoke` applies). Returns rows written."""
     branches = [b for b in branch_namespaces(org, namespace) if b != namespace]
     if not branches:
         return 0
@@ -243,7 +249,7 @@ async def revoke_repo_maintainer(
     out: list[dict[str, Any]] = []
     for ns in branches:
         mine = admins[ns].get(subject)
-        if mine is None:
+        if mine is None or (granted_before is not None and mine["granted_at"] > granted_before):
             continue
         if len(admins[ns]) <= 1:
             log.warning(

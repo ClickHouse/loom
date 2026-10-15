@@ -315,21 +315,41 @@ async def test_a_sibling_that_fails_does_not_stop_the_revoke_of_the_others(
     assert [r["namespace"] for r in ch.inserted] == ["code-x-26-6"]
 
 
-async def test_a_retried_revoke_finishes_the_fan_out(
-    _handler_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("spelling", ["alice", "alice@x.io"])
+async def test_a_retried_revoke_finishes_the_fan_out_under_either_spelling(
+    _handler_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch, spelling: str
 ) -> None:
+    # The row is stored under the login handle; the retry may name the email.
     async def _none(*_a: Any, **_k: Any) -> None:
         return None
 
-    async def _revoked_admin(*_a: Any, **_k: Any) -> bool:
-        return True
+    async def _handle(org: str, subject: str, **_k: Any) -> str:
+        return "alice"
+
+    async def _revoked_at(org: str, ns: str, subject: str, **_k: Any) -> datetime | None:
+        return T0 if subject == "alice" else None
 
     monkeypatch.setattr(grants_repo, "find_any_grant", _none)
-    monkeypatch.setattr(grants_repo, "is_revoked_admin", _revoked_admin)
+    monkeypatch.setattr(grants_repo, "admin_revoked_at", _revoked_at)
+    monkeypatch.setattr("server.auth.aliases.canonical_subject", _handle)
     out = await grants_mod.handle_grants_revoke(
-        GrantsRevokeInput(org="clickhouse", namespace="code-x", subject="alice")
+        GrantsRevokeInput(org="clickhouse", namespace="code-x", subject=spelling)
     )
     assert not out.revoked and _handler_env["revoke"] == [("clickhouse", "code-x", "alice")]
+
+
+async def test_a_finishing_fan_out_leaves_an_admin_grant_newer_than_the_revoke() -> None:
+    ch = _FakeCH(
+        [
+            _admin("code-x-26-5", "alice", at=T0 - timedelta(hours=1)),
+            _admin("code-x-26-6", "alice", at=T0 + timedelta(hours=1)),
+            *(_admin(ns, "bob") for ns in ("code-x-26-5", "code-x-26-6")),
+        ]
+    )
+    await maintainers.revoke_repo_maintainer(
+        "clickhouse", "code-x", "alice", ch=ch, granted_before=T0
+    )
+    assert [r["namespace"] for r in ch.inserted] == ["code-x-26-5"]
 
 
 async def test_a_mirror_onto_a_new_branch_does_not_override_a_lowering_on_another() -> None:

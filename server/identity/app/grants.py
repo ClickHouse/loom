@@ -283,9 +283,7 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
             if row is not None:
                 now = await _write_revoke(input, subject, row)
     if row is None or now is None:
-        # A retry of a revoke whose branch fan-out failed finishes it.
-        if await grants_repo.is_revoked_admin(input.org, input.namespace, subject):
-            await maintainers.revoke_repo_maintainer(input.org, input.namespace, subject)
+        await _finish_revoke_fan_out(input)
         return GrantsRevokeOutput(revoked=False)
     # The tokens this person minted lose their own grants here. Best-effort: the
     # person's revoke has landed; a failed cascade is logged, never a 500.
@@ -306,6 +304,23 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
         # answers an error, and a retry of the revoke finishes the fan-out.
         await maintainers.revoke_repo_maintainer(input.org, input.namespace, subject)
     return GrantsRevokeOutput(revoked=True, revoked_at=now)
+
+
+async def _finish_revoke_fan_out(input: GrantsRevokeInput) -> None:
+    """A retry of a revoke whose branch fan-out failed finishes it, under
+    whichever spelling the revoked admin row is stored: it revokes the sibling
+    admin grants no newer than that revocation."""
+    from server.auth.aliases import canonical_subject
+    from server.code.app.index import maintainers
+
+    canonical = await canonical_subject(input.org, input.subject)
+    for subject in dict.fromkeys((canonical, input.subject)):
+        revoked_at = await grants_repo.admin_revoked_at(input.org, input.namespace, subject)
+        if revoked_at is not None:
+            await maintainers.revoke_repo_maintainer(
+                input.org, input.namespace, subject, granted_before=revoked_at
+            )
+            return
 
 
 async def _write_revoke(input: GrantsRevokeInput, subject: str, row: GrantState) -> datetime:

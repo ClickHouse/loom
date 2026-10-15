@@ -8,6 +8,7 @@ one; revocation is a separate INSERT with `revoked_at` populated
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from server.core import grant_cache
@@ -180,21 +181,22 @@ async def find_any_grant(
     return None if row is None else GrantState.from_row(row)
 
 
-async def is_revoked_admin(
+async def admin_revoked_at(
     org: str, namespace: str, subject: str, *, ch: _CHClient | None = None
-) -> bool:
-    """Whether the subject's grant row here is a revoked admin grant."""
+) -> datetime | None:
+    """When the subject's admin grant here was revoked; None when its grant
+    row is not a revoked admin grant."""
     ch = ch or _default_client()
     row = await ch.query_one(
         """
-        SELECT 1 AS x FROM loom.namespace_grants FINAL
+        SELECT revoked_at FROM loom.namespace_grants FINAL
         WHERE org = {org:String} AND namespace = {ns:String}
           AND subject = {sub:String} AND role = 'admin' AND revoked_at IS NOT NULL
         LIMIT 1
         """,
         params={"org": org, "ns": namespace, "sub": subject},
     )
-    return row is not None
+    return None if row is None else row["revoked_at"]
 
 
 async def count_active_admins(

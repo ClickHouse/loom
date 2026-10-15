@@ -337,21 +337,11 @@ async def _caller_defaults(
     if auth is not None:
         auth_info = cast("AuthInfo", auth)
         subject = auth_info.subject
-        if subject:
-            org = (
-                auth_info.org
-                if auth_info.org and auth_info.org != "*"
-                else settings.self_signup_org
-            )
-            claimed_namespaces = await live_claims(
-                auth_info, org, getattr(auth_info, "namespaces", None) or ()
-            )
-        else:
-            return None
-    elif settings.effective_identity_provider() == "single-user":
-        subject = "you"
-        org = settings.self_signup_org
-        claimed_namespaces = []
+        named = [n for n in (getattr(auth_info, "namespaces", None) or ()) if n and n != "*"]
+        try:
+            claimed_namespaces = await live_claims(auth_info, org, named)
+        except Exception:  # noqa: BLE001 — defaults fail open; the gate still decides access
+            claimed_namespaces = named
     else:
         subject = "you"
         claimed_namespaces = []
