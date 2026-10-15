@@ -657,6 +657,36 @@ def test_a_qualified_mention_finds_its_candidates_under_the_bare_name() -> None:
     assert links == [fn] and waiting == []
 
 
+@pytest.mark.asyncio
+async def test_a_qualified_mention_links_through_the_candidates_the_index_names(
+    monkeypatch,
+) -> None:
+    from server.code.domain.anchor import Definition
+
+    files = code_link_pass.RepoReads("o", "code-a")
+
+    async def at(commit, path):
+        return _file(path, "def fetch_rows(n):\n    return n\n") if path == "pkg/a.py" else None
+
+    async def candidates(org, cns, *, names):
+        assert names == ["fetch_rows"]
+        return [Definition("pkg/a.py", "pkg.a::fetch_rows", "fetch_rows")]
+
+    async def indexed_head(org, cns):
+        return "c1"
+
+    _reads(monkeypatch, files, at)
+    monkeypatch.setattr(code_links.code, "indexed_head", indexed_head)
+    monkeypatch.setattr(code_links.code, "candidates", candidates)
+    memory = _row("m", value="`pkg.a::fetch_rows` reads one page")
+    memory["inputs"] = "i"
+    rows, gone = await code_links._link("o", "code-a", [memory], {}, files)
+    assert [(r["path"], r["qualified_name"], r["state"]) for r in rows] == [
+        ("pkg/a.py", "pkg.a::fetch_rows", "fresh")
+    ]
+    assert gone == []
+
+
 def test_exactly_the_cap_of_mentions_is_not_cut() -> None:
     from server.code.domain.anchor import Mention
 
