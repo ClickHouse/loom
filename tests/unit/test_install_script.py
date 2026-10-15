@@ -112,6 +112,19 @@ def test_a_query_string_after_the_port_is_ignored(install) -> None:
     assert (_env(target)["LOOM_CH_HOST"], _env(target)["LOOM_CH_PORT"]) == ("h.example", "8443")
 
 
+@pytest.mark.parametrize(
+    ("url", "host", "port"),
+    [
+        ("https://loom:pw@[2001:db8::1]", "[2001:db8::1]", "8443"),
+        ("http://loom:pw@[2001:db8::1]:9000", "[2001:db8::1]", "9000"),
+    ],
+)
+def test_an_ipv6_host_is_parsed_with_or_without_a_port(install, url, host, port) -> None:
+    run, target = install
+    assert run("--clickhouse", url).returncode == 0
+    assert (_env(target)["LOOM_CH_HOST"], _env(target)["LOOM_CH_PORT"]) == (host, port)
+
+
 def test_the_password_can_come_from_the_environment(install) -> None:
     run, target = install
     result = run(LOOM_CH_URL="http://loom@ch.internal", LOOM_CH_PASSWORD="from-env")
@@ -188,7 +201,10 @@ def test_an_upgrade_keeps_env_and_an_older_install_stays_bundled(install) -> Non
     env_path = target / ".env"
     lines = [line for line in env_path.read_text().splitlines() if "COMPOSE_PROFILES" not in line]
     env_path.write_text(
-        "\n".join(lines + ["LOOM_JWT_SECRET=kept", "LOOM_CH_HOST=localhost"]) + "\n"
+        "\n".join(
+            lines + ["LOOM_JWT_SECRET=kept", "LOOM_CH_HOST=localhost", "LOOM_CH_TIMEOUT_READ_S=45"]
+        )
+        + "\n"
     )
     (target / "clickhouse-config").mkdir()  # the layout before deploy/
     result = run()
@@ -198,6 +214,7 @@ def test_an_upgrade_keeps_env_and_an_older_install_stays_bundled(install) -> Non
     assert env["LOOM_JWT_SECRET"] == "kept" and env["LOOM_VERSION"] == "9.9.9"
     # The old compose file pinned the connection, so a stray line stays inert.
     assert "LOOM_CH_HOST" not in env
+    assert env["LOOM_CH_TIMEOUT_READ_S"] == "45"  # the old stack honoured this one
     assert "# ignored before profiles: LOOM_CH_HOST=localhost" in (target / ".env").read_text()
     assert not (target / "clickhouse-config").exists()
 

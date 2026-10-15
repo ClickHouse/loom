@@ -93,7 +93,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     rc = await boot.run_fenced_boot_migrations(
         ch,
         # The preflight already ran above, before the first connect.
-        functools.partial(_migrate_mod.main, preflight=False),
+        functools.partial(_migrate_mod.main, check_server=False),
         settings.boot_migrate_lock_path,
         enabled=bool(settings.boot_migrate),
         pending=_migrate_mod.pending_names,

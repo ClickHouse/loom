@@ -113,7 +113,9 @@ def caller_shaped() -> Iterator[None]:
         caller_shaped_var.reset(token)
 
 
-def _caller_shaped_ceilings() -> dict[str, float]:
+def caller_shaped_ceilings() -> dict[str, float]:
+    """The ceilings a caller-shaped read runs under (0 = none); `loom ch-setup`
+    pins the same ones in the reader's settings profile."""
     return {
         "max_execution_time": float(settings.ch_caller_shaped_max_execution_s),
         "max_memory_usage": float(settings.ch_caller_shaped_max_memory_bytes),
@@ -128,7 +130,7 @@ def _apply_caller_ceilings(out: dict[str, Any], cls: str) -> None:
     same statements `_reader_auth` sends as the reader user."""
     if not caller_shaped_var.get() or cls != "read":
         return
-    for name, ceiling in _caller_shaped_ceilings().items():
+    for name, ceiling in caller_shaped_ceilings().items():
         if ceiling <= 0:
             continue
         asked = float(out.get(name) or 0)

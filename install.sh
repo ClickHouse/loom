@@ -90,6 +90,8 @@ parse_clickhouse_url() {
   esac
   rest=${rest%%[/?#]*}
   case $rest in
+    \[*\]:*) CH_HOST=${rest%]:*}] CH_PORT=${rest##*]:} ;; # [IPv6]:port
+    \[*\]) CH_HOST=$rest ;;
     *:*) CH_HOST=${rest%:*} CH_PORT=${rest##*:} ;;
     *) CH_HOST=$rest ;;
   esac
@@ -228,10 +230,11 @@ else
   had_env=1
   set_env LOOM_VERSION "$version"
   # An install from before profiles always ran the bundled ClickHouse, and its
-  # compose file ignored any LOOM_CH_* lines in .env: keep it that way.
+  # compose file pinned the connection settings, ignoring those lines in .env:
+  # keep it that way. Other LOOM_CH_* settings it honoured stay as they are.
   if ! grep -q '^COMPOSE_PROFILES=' "$INSTALL_DIR/.env"; then
     set_env COMPOSE_PROFILES bundled
-    awk '/^LOOM_CH_[A-Z_]*=/ { print "# ignored before profiles: " $0; next } { print }' \
+    awk '/^LOOM_CH_(HOST|PORT|USER|PASSWORD|READER_USER|DATABASE|SECURE)=/ { print "# ignored before profiles: " $0; next } { print }' \
       "$INSTALL_DIR/.env" >"$tmp_dir/env.updated"
     mv "$tmp_dir/env.updated" "$INSTALL_DIR/.env"
   fi

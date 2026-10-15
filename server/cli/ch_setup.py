@@ -38,14 +38,10 @@ def _number(value: float) -> str:
 
 
 def _caps() -> dict[str, float]:
-    """The reader profile's caps: Loom's caller-shaped ceilings (0 = none)."""
-    from server.settings import settings
+    """The reader profile's caps: the caller-shaped ceilings Loom applies."""
+    from server.core.ch import caller_shaped_ceilings
 
-    return {
-        "max_execution_time": float(settings.ch_caller_shaped_max_execution_s),
-        "max_memory_usage": float(settings.ch_caller_shaped_max_memory_bytes),
-        "max_rows_to_read": float(settings.ch_caller_shaped_max_rows_to_read),
-    }
+    return caller_shaped_ceilings()
 
 
 def reader_sql(reader: str, password: str) -> list[str]:
